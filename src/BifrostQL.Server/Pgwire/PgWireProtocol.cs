@@ -117,6 +117,7 @@ namespace BifrostQL.Server.Pgwire
         // stays usable (autocommit), unlike the "FATAL" handshake rejections above.
         public const string SqlStateSyntaxError = "42601";    // syntax_error (unrecognized SQL)
         public const string SqlStateInternalError = "XX000";  // internal_error (execution fault)
+        public const string SqlStateInsufficientPrivilege = "42501"; // insufficient_privilege (authorization denial)
 
         // SQLSTATE codes used by the extended query protocol + connection admission (slice 5).
         public const string SqlStateQueryCanceled = "57014";        // query_canceled (CancelRequest matched)
@@ -141,6 +142,16 @@ namespace BifrostQL.Server.Pgwire
         /// error) forwards its curated message. Fail-closed toward this string.
         /// </summary>
         public const string InternalQueryErrorMessage = "internal error during query execution.";
+
+        /// <summary>
+        /// Client-safe ErrorResponse message for a query refused by the authorization
+        /// policy. Deliberately identifier-free: the caller learns the CATEGORY of the
+        /// refusal — and, via SQLSTATE 42501, that retrying is pointless — but never which
+        /// table or column it was denied, so the message cannot be used to enumerate a
+        /// schema the caller cannot read. See
+        /// <c>.claude/rules/protocol-adapter-security.md</c> invariants 3 and 10.
+        /// </summary>
+        public const string AccessDeniedErrorMessage = "permission denied.";
 
         /// <summary>ErrorResponse severity for a handshake rejection: the connection closes.</summary>
         public const string SeverityFatal = "FATAL";

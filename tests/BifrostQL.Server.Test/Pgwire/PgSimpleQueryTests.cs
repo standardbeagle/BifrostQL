@@ -151,6 +151,35 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task AuthorizationDenial_MapsToInsufficientPrivilege_NotInternalError()
+        {
+            // A policy denial is tagged at the throw site with AccessDeniedCode
+            // (PolicyFilterTransformer), but the wire funnel used to ignore the tag and
+            // report XX000 internal_error — the SQLSTATE that tells a driver "server
+            // fault, retry". A denial can never succeed on retry, and Postgres already
+            // has the right code for it, so it must map to 42501.
+            //
+            // The message stays generic: per invariant 3 the caller learns the category,
+            // never the identifier it was denied.
+            var executor = ThrowingExecutor(UsersTable(),
+                new BifrostExecutionError("Access denied on table main.users column salary")
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode });
+            await using var fixture = await PgSession.StartAsync(executor);
+
+            await fixture.Client.SendQueryAsync("SELECT id FROM users");
+            var errored = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            errored.HasError.Should().BeTrue();
+            errored.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInsufficientPrivilege);
+            errored.ErrorMessage.Should().Be(PgWireProtocol.AccessDeniedErrorMessage);
+            // No identifier from the internal message reaches the wire.
+            errored.ErrorMessage.Should().NotContain("users");
+            errored.ErrorMessage.Should().NotContain("salary");
+            errored.ErrorMessage.Should().NotContain("main.");
+            errored.TransactionStatus.Should().Be('I');
+        }
+
+        [Fact]
         public async Task ExecutionThrowsSensitiveText_WireMessageIsGenericSanitized_NotRawDetail_AndSessionSurvives()
         {
             // A BifrostExecutionError whose message wraps raw DB detail is the exact leak

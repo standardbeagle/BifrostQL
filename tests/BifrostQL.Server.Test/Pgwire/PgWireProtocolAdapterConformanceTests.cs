@@ -20,9 +20,10 @@ namespace BifrostQL.Server.Test.Pgwire
     /// skipped by design — an honest reflection of the adapter's surface, not an opt-out.</para>
     ///
     /// <para><b>Sanitized rejections.</b> Per protocol-adapter-security invariant 3 the wire
-    /// maps every non-translation fault (tenant-context-required, policy-read-deny) to a single
-    /// generic internal_error string; the specific reason is logged server-side, never sent to
-    /// the client. So <see cref="ExpectedRejectionFragment"/> is overridden to the sanitized
+    /// maps every non-translation fault to a generic internal_error string, and per invariant 10
+    /// it maps an authorization denial (tenant-context-required, policy-read-deny) by CONDITION
+    /// to 42501 insufficient_privilege; either way the specific reason is logged server-side,
+    /// never sent to the client. So <see cref="ExpectedRejectionFragment"/> is overridden to the sanitized
     /// wire text: the fail-closed facts still prove the read is REJECTED (the wire returns an
     /// ErrorResponse and <see cref="ExecuteReadAsync"/> throws — zero rows delivered), while
     /// honoring the adapter's no-leak contract. The positive facts (tenant sees only its own
@@ -44,8 +45,13 @@ namespace BifrostQL.Server.Test.Pgwire
 
         // The wire withholds the specific rejection reason (invariant 3); the fail-closed
         // facts assert the sanitized text the client actually receives.
+        // Both fail-closed conditions the kit exercises (tenant-context-required and
+        // policy-read-deny) are authorization denials, which the wire maps by CONDITION to
+        // SQLSTATE 42501 rather than the XX000 internal-fault bucket — XX000 tells a driver
+        // the server faulted and the query is worth retrying, which a denial never is. The
+        // message stays identifier-free, so invariant 3 is unaffected.
         protected override string ExpectedRejectionFragment(string canonicalServerFragment)
-            => PgWireProtocol.InternalQueryErrorMessage;
+            => PgWireProtocol.AccessDeniedErrorMessage;
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

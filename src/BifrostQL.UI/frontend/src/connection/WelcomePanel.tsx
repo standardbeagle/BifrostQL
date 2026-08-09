@@ -116,7 +116,23 @@ export const WelcomePanel: React.FC<WelcomePanelProps> = ({
             onMouseLeave={() => setHoveredId(null)}
             data-testid="try-it-card"
           >
-            <div className="welcome-card__icon welcome-card__icon--hero">&#9654;</div>
+            {/* Inline SVG, not a &#9654; glyph: Windows WebView2 gives U+25B6 emoji
+                presentation, and background-clip:text cannot clip a color-emoji
+                outline — the icon collapsed to a bare gradient square. */}
+            <div className="welcome-card__icon welcome-card__icon--hero" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28" role="presentation">
+                <defs>
+                  <linearGradient id="welcome-play-gradient" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stopColor="#3b82f6" />
+                    <stop offset="1" stopColor="#8b5cf6" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M8 5.5a1 1 0 0 1 1.52-.85l10 6.5a1 1 0 0 1 0 1.7l-10 6.5A1 1 0 0 1 8 18.5v-13Z"
+                  fill="url(#welcome-play-gradient)"
+                />
+              </svg>
+            </div>
             <div className="welcome-card__body">
               <h3 className="welcome-card__title">Try It Now</h3>
               <p className="welcome-card__subtitle">Explore a ready-made database with GraphQL in seconds</p>

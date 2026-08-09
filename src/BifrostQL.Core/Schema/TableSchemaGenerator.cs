@@ -457,10 +457,18 @@ namespace BifrostQL.Core.Schema
                 var filterType = ResolveFieldType(column, false, FieldTypeKind.Filter);
                 builder.AppendLine($"\t{column.GraphQlName} : {filterType}");
             }
+            // Filter-through-a-relationship is addressed by the LINK's field name, not
+            // the parent table's: a table with two foreign keys to the same parent has
+            // one field per key (billing_address / shipping_address) and no field named
+            // for the table. Emitting the table name here produced a duplicate field and
+            // failed schema construction outright for such a table.
+            var emittedLinkFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var link in _table.SingleLinks)
             {
                 if (IsEnumColumnLink(link.Value)) continue;
-                builder.AppendLine($"\t{link.Value.ParentTable.GraphQlName} : {link.Value.ParentTable.TableFilterTypeName}");
+                var fieldName = link.Value.ParentFieldName;
+                if (!emittedLinkFilters.Add(fieldName)) continue;
+                builder.AppendLine($"\t{fieldName} : {link.Value.ParentTable.TableFilterTypeName}");
             }
             // Full-text search is TABLE-scoped (it spans several columns), so it belongs on
             // the table's filter input — NOT on any per-column FilterType…Input — and only

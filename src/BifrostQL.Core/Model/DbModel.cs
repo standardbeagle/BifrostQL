@@ -600,6 +600,14 @@ namespace BifrostQL.Core.Model
         /// <summary>Optional GraphQL field override used when navigating from parent to child.</summary>
         public string? ChildFieldNameOverride { get; init; }
         /// <summary>
+        /// Optional GraphQL field override used when navigating from child to parent.
+        /// Set when a table references the same parent through more than one foreign
+        /// key (orders -> addresses for both billing and shipping): the parent's own
+        /// name can only describe one of them, so each link is named for its FK role
+        /// instead. Null for the ordinary single-FK case, which keeps the parent name.
+        /// </summary>
+        public string? ParentFieldNameOverride { get; init; }
+        /// <summary>
         /// When set, this link is polymorphic: the child join is additionally
         /// constrained by a constant equality (e.g. <c>notes.entity_type = 'company'</c>)
         /// so a single shared child table surfaces as a distinct navigable
@@ -607,7 +615,7 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public LinkConstantPredicate? TypePredicate { get; init; }
         /// <summary>The GraphQL field name used when navigating from child to parent.</summary>
-        public string ParentFieldName => ParentTable.GraphQlName;
+        public string ParentFieldName => ParentFieldNameOverride ?? ParentTable.GraphQlName;
         /// <summary>The GraphQL field name used when navigating from parent to child.</summary>
         public string ChildFieldName => ChildFieldNameOverride
             ?? (string.Equals(ParentTable.GraphQlName, ChildTable.GraphQlName, StringComparison.OrdinalIgnoreCase)

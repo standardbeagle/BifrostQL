@@ -153,6 +153,9 @@ namespace BifrostQL.Core.QueryModel
             var parentTable = model.GetTableByFullGraphQlName(NormalizeColumnName(parent.Name));
             if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out var singleLink)
                 || (singleLink = parentTable.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                // The TABLE name, not the link's field name: the caller feeds this
+                // straight into a table lookup. Which of several links to that table
+                // was navigated is recovered later, by field name, in ConnectLinks.
                 return singleLink.ParentTable.GraphQlName;
 
             if (parentTable.MultiLinks.TryGetValue(normalizedFieldName, out var multiLink)

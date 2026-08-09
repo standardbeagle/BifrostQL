@@ -280,11 +280,23 @@ namespace BifrostQL.Core.Model.Relationships
             junctionTargetCol = null!;
             targetCol = null!;
 
-            // Find junction column referencing source (via SingleLinks on junction)
-            if (!junctionTable.SingleLinks.TryGetValue(sourceTable.GraphQlName, out var sourceLink))
+            // Resolve by the link's PARENT TABLE rather than by field name. A junction
+            // that references the same table twice — the shape of every self-referencing
+            // M:N, e.g. friendships(user_a_id, user_b_id) -> users — has no link named
+            // after that table at all: each is named for its own FK role. Matching on
+            // the table also keeps a self-referencing junction from resolving both
+            // sides to one column, which a name lookup did silently.
+            var sourceLinks = LinksTo(junctionTable, sourceTable);
+            var targetLinks = LinksTo(junctionTable, targetTable);
+            if (sourceLinks.Count == 0 || targetLinks.Count == 0)
                 return false;
-            // Find junction column referencing target (via SingleLinks on junction)
-            if (!junctionTable.SingleLinks.TryGetValue(targetTable.GraphQlName, out var targetLink))
+
+            var sourceLink = sourceLinks[0];
+            // Self-referencing junction: the two sides must be DIFFERENT foreign keys.
+            var targetLink = ReferenceEquals(sourceTable, targetTable)
+                ? targetLinks.FirstOrDefault(l => !ReferenceEquals(l, sourceLink))
+                : targetLinks[0];
+            if (targetLink is null)
                 return false;
 
             junctionSourceCol = sourceLink.ChildId;
@@ -293,6 +305,17 @@ namespace BifrostQL.Core.Model.Relationships
             targetCol = targetLink.ParentId;
             return true;
         }
+
+        /// <summary>
+        /// Every single-link on <paramref name="table"/> whose parent is
+        /// <paramref name="parent"/>, in a stable order. There can be more than one when
+        /// the table carries several foreign keys to the same target.
+        /// </summary>
+        private static IReadOnlyList<TableLinkDto> LinksTo(IDbTable table, IDbTable parent) =>
+            table.SingleLinks.Values
+                .Where(l => string.Equals(l.ParentTable.GraphQlName, parent.GraphQlName, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(l => l.ParentFieldName, StringComparer.Ordinal)
+                .ToArray();
 
         private static void AddManyToManyLink(
             IDbTable sourceTable, IDbTable junctionTable, IDbTable targetTable,

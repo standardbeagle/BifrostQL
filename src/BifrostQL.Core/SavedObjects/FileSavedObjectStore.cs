@@ -4,11 +4,21 @@ namespace BifrostQL.Core.SavedObjects;
 
 /// <summary>
 /// File-backed saved-object store for the desktop shell: one JSON file per object at
-/// <c>&lt;baseDir&gt;/saved-objects/&lt;type&gt;/&lt;id&gt;.json</c>. Writes are atomic
-/// (temp file + rename) so a crash never leaves a half-written object, and every path
+/// <c>&lt;baseDir&gt;/saved-objects/&lt;owner&gt;/&lt;type&gt;/&lt;id&gt;.json</c>. Writes are
+/// atomic (temp file + rename) so a crash never leaves a half-written object, and every path
 /// segment is sanitized so an <c>id</c>/<c>type</c> can never escape the base directory.
 /// A process-wide lock serializes writes so the read-modify-version-check-write cycle
 /// is not interleaved within one process.
+///
+/// <para>The owner segment is VALIDATED by <see cref="SavedObjectOwner.Require"/>, not sanitized
+/// like the id: sanitizing it would let two distinct owners collapse onto the same directory and
+/// silently share a partition, which is precisely the isolation failure the owner exists to
+/// prevent. Because it is validated it is already a safe segment and is used verbatim.</para>
+///
+/// <para><b>Objects written before the owner dimension existed</b> live one level up, at
+/// <c>&lt;baseDir&gt;/saved-objects/&lt;type&gt;/&lt;id&gt;.json</c>. They are UNREACHABLE through
+/// this store — never listed, read, overwritten or deleted — and are left untouched on disk rather
+/// than adopted or removed. See the type-level remarks on why.</para>
 /// </summary>
 public sealed class FileSavedObjectStore : ISavedObjectStore
 {
@@ -24,11 +34,11 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
         _maxDefinitionBytes = maxDefinitionBytes;
     }
 
-    private string TypeDir(SavedObjectType type)
-        => Path.Combine(_baseDir, RootFolder, type.ToString().ToLowerInvariant());
+    private string TypeDir(string owner, SavedObjectType type)
+        => Path.Combine(_baseDir, RootFolder, SavedObjectOwner.Require(owner), type.ToString().ToLowerInvariant());
 
-    private string PathFor(SavedObjectType type, string id)
-        => Path.Combine(TypeDir(type), SanitizeSegment(id) + ".json");
+    private string PathFor(string owner, SavedObjectType type, string id)
+        => Path.Combine(TypeDir(owner, type), SanitizeSegment(id) + ".json");
 
     /// <summary>
     /// Reduces an id to a safe single path segment: every invalid filename character
@@ -46,13 +56,13 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
         return result.Length == 0 ? "_" : result;
     }
 
-    public async Task<IReadOnlyList<SavedObject>> ListAsync(SavedObjectType? type, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SavedObject>> ListAsync(string owner, SavedObjectType? type, CancellationToken cancellationToken = default)
     {
         var types = type.HasValue ? new[] { type.Value } : Enum.GetValues<SavedObjectType>();
         var result = new List<SavedObject>();
         foreach (var t in types)
         {
-            var dir = TypeDir(t);
+            var dir = TypeDir(owner, t);
             if (!Directory.Exists(dir))
                 continue;
             foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
@@ -66,20 +76,20 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
         return result;
     }
 
-    public async Task<SavedObject?> GetAsync(SavedObjectType type, string id, CancellationToken cancellationToken = default)
+    public async Task<SavedObject?> GetAsync(string owner, SavedObjectType type, string id, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
-        return await ReadFileAsync(PathFor(type, id), cancellationToken);
+        return await ReadFileAsync(PathFor(owner, type, id), cancellationToken);
     }
 
-    public async Task<SavedObject> PutAsync(SavedObject obj, CancellationToken cancellationToken = default)
+    public async Task<SavedObject> PutAsync(string owner, SavedObject obj, CancellationToken cancellationToken = default)
     {
         SavedObjectJson.Validate(obj, _maxDefinitionBytes);
 
         await _writeLock.WaitAsync(cancellationToken);
         try
         {
-            var path = PathFor(obj.Type, obj.Id);
+            var path = PathFor(owner, obj.Type, obj.Id);
             var existing = await ReadFileAsync(path, cancellationToken);
             var nextVersion = ResolveNextVersion(obj, existing);
 
@@ -99,10 +109,10 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
         }
     }
 
-    public Task DeleteAsync(SavedObjectType type, string id, CancellationToken cancellationToken = default)
+    public Task DeleteAsync(string owner, SavedObjectType type, string id, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
-        var path = PathFor(type, id);
+        var path = PathFor(owner, type, id);
         if (File.Exists(path))
             File.Delete(path);
         return Task.CompletedTask;

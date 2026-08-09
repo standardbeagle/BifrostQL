@@ -40,6 +40,12 @@ namespace BifrostQL.Server
     /// </list>
     /// Resolves <see cref="ISavedObjectStore"/> from request services, so the deployment
     /// chooses the file- or DB-backed impl at composition time.
+    ///
+    /// <para>Every route is scoped to the caller's OWNER partition (<see cref="SavedObjectOwner"/>),
+    /// derived from the identity <see cref="BifrostIdentityGate"/> projected. There is no route,
+    /// parameter or header by which a caller can name a different owner. The endpoint previously
+    /// had no owner dimension at all: any accepted caller could list, read, overwrite and delete
+    /// every other caller's objects.</para>
     /// </summary>
     public sealed class BifrostSavedObjectsMiddleware
     {
@@ -74,6 +80,21 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // Every store operation below is scoped to this owner. It is derived from the projected
+            // identity and NEVER from the request body, a header, or the path -- a client-supplied
+            // owner is an impersonation parameter, not isolation. A projected identity that yields
+            // no stable owner key is refused rather than treated as a shared/global owner, which
+            // would merge every such caller into one bucket. The anonymous partition is reachable
+            // only through the explicit RequireAuth=false opt-in.
+            var owner = outcome == BifrostIdentityOutcome.Projected
+                ? SavedObjectOwner.FromUserContext(userContext)
+                : SavedObjectOwner.Anonymous;
+            if (owner == null)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
             var store = context.RequestServices.GetService(typeof(ISavedObjectStore)) as ISavedObjectStore;
             if (store == null)
             {
@@ -85,7 +106,7 @@ namespace BifrostQL.Server
 
             try
             {
-                await DispatchAsync(context, store, segments);
+                await DispatchAsync(context, store, owner, segments);
             }
             catch (SavedObjectValidationException ex)
             {
@@ -97,7 +118,7 @@ namespace BifrostQL.Server
             }
         }
 
-        private async Task DispatchAsync(HttpContext context, ISavedObjectStore store, string[] segments)
+        private async Task DispatchAsync(HttpContext context, ISavedObjectStore store, string owner, string[] segments)
         {
             var method = context.Request.Method;
 
@@ -108,18 +129,18 @@ namespace BifrostQL.Server
                     var type = context.Request.Query.TryGetValue("type", out var t) && !string.IsNullOrEmpty(t)
                         ? SavedObjectJson.ParseType(t!)
                         : (SavedObjectType?)null;
-                    await WriteJson(context, StatusCodes.Status200OK, SavedObjectJson.SerializeList(await store.ListAsync(type, context.RequestAborted)));
+                    await WriteJson(context, StatusCodes.Status200OK, SavedObjectJson.SerializeList(await store.ListAsync(owner, type, context.RequestAborted)));
                     return;
                 }
                 if (segments.Length == 1)
                 {
                     var type = SavedObjectJson.ParseType(segments[0]);
-                    await WriteJson(context, StatusCodes.Status200OK, SavedObjectJson.SerializeList(await store.ListAsync(type, context.RequestAborted)));
+                    await WriteJson(context, StatusCodes.Status200OK, SavedObjectJson.SerializeList(await store.ListAsync(owner, type, context.RequestAborted)));
                     return;
                 }
                 if (segments.Length == 2)
                 {
-                    var found = await store.GetAsync(SavedObjectJson.ParseType(segments[0]), segments[1], context.RequestAborted);
+                    var found = await store.GetAsync(owner, SavedObjectJson.ParseType(segments[0]), segments[1], context.RequestAborted);
                     if (found == null)
                     {
                         await WriteError(context, StatusCodes.Status404NotFound, $"Saved object '{segments[0]}/{segments[1]}' not found.");
@@ -136,13 +157,13 @@ namespace BifrostQL.Server
                 var incoming = SavedObjectJson.Deserialize(body);
                 if (incoming.Type != type || !string.Equals(incoming.Id, segments[1], StringComparison.Ordinal))
                     throw new SavedObjectValidationException("Saved object 'type'/'id' in the body must match the URL path.");
-                var stored = await store.PutAsync(incoming, context.RequestAborted);
+                var stored = await store.PutAsync(owner, incoming, context.RequestAborted);
                 await WriteJson(context, StatusCodes.Status200OK, SavedObjectJson.Serialize(stored));
                 return;
             }
             else if (HttpMethods.IsDelete(method) && segments.Length == 2)
             {
-                await store.DeleteAsync(SavedObjectJson.ParseType(segments[0]), segments[1], context.RequestAborted);
+                await store.DeleteAsync(owner, SavedObjectJson.ParseType(segments[0]), segments[1], context.RequestAborted);
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 return;
             }

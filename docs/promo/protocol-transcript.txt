@@ -1,0 +1,85 @@
+### One SQLite database. Three wire protocols. No per-protocol code.
+
+--- GraphQL (HTTP) ---
+$ curl -s localhost:5099/graphql -d '{"query":"{products(limit:3,sort:[price_desc]){data{name price}}}"}'
+{"data":{"products":{"data":[{"name":"Comfort Laptop X","price":1917.6},{"name":"Modern Laptop Gold","price":1912.39},{"name":"Modern Laptop Neo","price":1888.56}]}}}
+--- PostgreSQL wire protocol (psql, TLS + SCRAM-SHA-256) ---
+$ psql -c 'SELECT name, price FROM products ORDER BY price DESC LIMIT 3;'
+        name        |  price  
+--------------------+---------
+ Comfort Laptop X   |  1917.6
+ Modern Laptop Gold | 1912.39
+ Modern Laptop Neo  | 1888.56
+(3 rows)
+
+
+$ psql -c '\dt'
+           List of relations
+ Schema |    Name     | Type  |  Owner  
+--------+-------------+-------+---------
+ main   | addresses   | table | bifrost
+ main   | categories  | table | bifrost
+ main   | customers   | table | bifrost
+ main   | order_items | table | bifrost
+ main   | orders      | table | bifrost
+ main   | products    | table | bifrost
+ main   | reviews     | table | bifrost
+(7 rows)
+
+
+--- Redis wire protocol (redis-cli) ---
+$ redis-cli -p 6399 --user demo --pass ****** HGETALL products:1
+product_id
+1
+name
+Premium Laptop X
+slug
+premium-laptop-x-1
+description
+Premium laptop with x features. High quality and great value.
+sku
+LAP-0001
+price
+1670.07
+
+$ redis-cli -p 6399 SCAN 0 MATCH 'categories:*' COUNT 5
+WyI1Il0=
+categories:1
+categories:2
+categories:3
+categories:4
+categories:5
+
+--- OData v4 (what Excel and Power BI speak) ---
+$ curl -s -u demo:****** 'localhost:5099/odata/products?$filter=price gt 1800&$select=name,price&$orderby=price desc'
+{
+    "@odata.context": "http://127.0.0.1:5099/odata/$metadata#products(name,price)",
+    "value": [
+        {
+            "name": "Comfort Laptop X",
+            "price": 1917.6
+        },
+        {
+            "name": "Modern Laptop Gold",
+            "price": 1912.39
+        },
+        {
+            "name": "Modern Laptop Neo",
+            "price": 1888.56
+        }
+    ],
+
+--- Same guards on every door ---
+$ redis-cli -p 6399 HGETALL products:1      # no AUTH
+NOAUTH Authentication required.
+
+
+$ redis-cli -p 6399 --user demo --pass ****** SET products:1 hacked
+ERR write commands are disabled
+
+
+$ psql -c 'DROP TABLE products;'
+ERROR:  pgwire: unsupported SQL — only SELECT statements are supported.
+
+$ curl -s 'localhost:5099/odata/$metadata'   # no credentials
+{"error":{"code":"Unauthorized","message":"Authentication is required."}}

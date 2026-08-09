@@ -408,3 +408,6 @@ src/BifrostQL.UI/wwwroot/index.html
 # tman shims
 /test
 /test.cmd
+
+# Playwright MCP scratch (capture scripts, recorded video)
+.playwright-mcp/

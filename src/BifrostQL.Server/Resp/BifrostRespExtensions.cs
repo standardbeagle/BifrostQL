@@ -70,8 +70,13 @@ namespace BifrostQL.Server.Resp
                 new ProtocolAdapterHostedService(sp.GetRequiredService<RespWireAdapter>()));
 
             // Bind a plain-TCP listener; the handler speaks RESP directly on the raw socket.
+            //
+            // Bound to RespWireOptions.BindAddress, which DEFAULTS TO LOOPBACK. This was
+            // ListenAnyIP (0.0.0.0) with no override, so registering the adapter published a Redis
+            // front door on every network the host sits on — a posture decision nobody made.
+            // Widening it is now explicit in the host's own startup code.
             services.PostConfigure<KestrelServerOptions>(kestrel =>
-                kestrel.ListenAnyIP(options.Port, listen =>
+                kestrel.Listen(options.BindAddress, options.Port, listen =>
                     listen.UseConnectionHandler<RespConnectionHandler>()));
 
             return services;

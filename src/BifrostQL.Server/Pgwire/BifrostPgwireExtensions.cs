@@ -59,8 +59,13 @@ namespace BifrostQL.Server.Pgwire
 
             // Bind a plain-TCP listener; the handler answers SSLRequest and upgrades to
             // TLS itself (STARTTLS-style), which Kestrel HTTPS cannot express.
+            //
+            // Bound to PgWireOptions.BindAddress, which DEFAULTS TO LOOPBACK. This was ListenAnyIP
+            // (0.0.0.0) with no override, so registering the adapter published a PostgreSQL front
+            // door on every network the host sits on — a posture decision nobody made. Widening it
+            // is now explicit in the host's own startup code.
             services.PostConfigure<KestrelServerOptions>(kestrel =>
-                kestrel.ListenAnyIP(options.Port, listen =>
+                kestrel.Listen(options.BindAddress, options.Port, listen =>
                     listen.UseConnectionHandler<PgConnectionHandler>()));
 
             return services;

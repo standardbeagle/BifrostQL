@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace BifrostQL.Server.Grpc
 {
     /// <summary>
@@ -27,6 +29,20 @@ namespace BifrostQL.Server.Grpc
         /// registered it is required and an unknown path fails fast (no silent fallback).
         /// </summary>
         public string? Endpoint { get; set; }
+
+        /// <summary>
+        /// The IP address this listener binds to. <b>Defaults to loopback (127.0.0.1)</b>: the
+        /// adapter is reachable only from the host until an operator deliberately widens it.
+        ///
+        /// <para>This is a DEFAULT CHANGE. The listener previously bound <c>ListenAnyIP</c>
+        /// (0.0.0.0) with no way to narrow it, so merely registering the adapter exposed a
+        /// database front door to every network the host sits on — an ambient decision nobody
+        /// made. Per the project's exposure-posture rule, an undeclared posture IS loopback, and
+        /// widening it (loopback -> LAN -> public) is an operator decision, not an ambient
+        /// default. Set <c>IPAddress.Any</c> (or a specific interface) to opt in, which now
+        /// appears explicitly in the host's own startup code where it can be reviewed.</para>
+        /// </summary>
+        public IPAddress BindAddress { get; set; } = IPAddress.Loopback;
 
         /// <summary>
         /// Maximum number of concurrent connections the HTTP/2 listener accepts. Kestrel's default

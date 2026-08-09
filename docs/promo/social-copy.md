@@ -106,16 +106,15 @@ S3 and Prometheus adapters not stood up live here) and 624 `edit-db`.
 
 ## Do not claim
 
-Verification turned up real limits. Keep them out of the copy — and note that
-beat 5 uses **Products**, not Orders, for the foreign-key claim, because:
+Verification turned up real limits. Keep them out of the copy.
 
-- **Two foreign keys to the same table collapse to one join.** `orders` has both
-  `billing_address_id` and `shipping_address_id`, but only a single `addresses`
-  join is generated, silently bound to the shipping FK. In the Orders grid the
-  billing column therefore renders a raw id while shipping renders a street
-  label, and the generated form gives shipping a dropdown and billing a bare
-  number box. Never say "foreign keys render as labels, not raw ids" over a
-  frame showing the Orders grid.
+**Fixed since filming:** two foreign keys to the same table used to collapse into
+one join, so the Orders grid showed a raw id for billing and a street label for
+shipping. `orders` now exposes `billing_address` and `shipping_address`
+separately and both resolve to labels. The footage predates the fix, which is why
+beat 5 films Products rather than Orders — re-shoot that beat before reusing the
+foreign-key caption over an Orders frame.
+
 - **`psql \d <table>` is not supported** — it issues a regex (`~`) query outside
   the SQL subset. `\dt` works. Do not promise unqualified BI-tool introspection.
 - **OData key access (`/odata/products(1)`) returns `NotImplemented`.** Collection

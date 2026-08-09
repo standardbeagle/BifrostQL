@@ -349,7 +349,12 @@ export async function probeBridgeAvailability(): Promise<boolean> {
   }
   try {
     const response = await fetch(HTTP_BRIDGE_PREFIX, { method: "GET" });
-    httpBridgeAvailable = response.ok;
+    // A 200 is NOT enough. The UI host serves the SPA from a catch-all fallback,
+    // so an unknown path answers 200 with index.html — probing on status alone
+    // reports the bridge as present on every host, showing panes whose every
+    // call then fails. Require the endpoint's own marker in a JSON body.
+    const body = response.ok ? await response.json().catch(() => null) : null;
+    httpBridgeAvailable = body?.enabled === true;
   } catch {
     // A host without the flag simply has no such route; that is the normal case,
     // not an error worth surfacing.

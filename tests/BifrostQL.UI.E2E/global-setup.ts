@@ -78,6 +78,13 @@ export default async function globalSetup() {
   const serverProcess: ChildProcess = spawn('dotnet', [
     'run', '--no-build', '--project', PROJECT_PATH, '--',
     '--headless', '--port', port.toString(),
+    // The SQL console, visual query builder and form builder are gated on the
+    // Photino bridge, which does not exist headless. This exposes the same
+    // handlers over loopback HTTP so those panes are reachable here. It is a
+    // test-only flag — the bridge runs arbitrary SQL with no authentication of
+    // its own — and the server it enables is bound to loopback and torn down
+    // with the suite.
+    '--enable-http-bridge',
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     // `dotnet run` execs the application as a CHILD, so serverProcess.pid is the

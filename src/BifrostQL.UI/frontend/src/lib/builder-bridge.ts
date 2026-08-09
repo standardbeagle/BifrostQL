@@ -11,7 +11,7 @@
  */
 
 import {
-  isBridgeAvailable,
+  isAnyBridgeAvailable,
   sendBridgeRequest,
   type BridgeRequestOptions,
 } from "./native-bridge";
@@ -62,9 +62,14 @@ export interface BuilderSchema {
   manyToMany?: BuilderManyToMany[];
 }
 
-/** Whether the builder channel is usable (i.e. running inside Photino). */
+/**
+ * Whether the builder channel is usable — inside Photino, or against a host
+ * started with `--enable-http-bridge`. Shares one probe with the raw-SQL
+ * channel: both ride the same bridge, so a second, independently-answered
+ * predicate would let the panes disagree about whether the bridge exists.
+ */
 export function isBuilderBridgeAvailable(): boolean {
-  return isBridgeAvailable();
+  return isAnyBridgeAvailable();
 }
 
 /**

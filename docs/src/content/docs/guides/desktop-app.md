@@ -116,6 +116,25 @@ The window is more than a playground — it's a full database navigator. The edi
 - **Many-to-many picker** — attach and detach junction-table links directly, with optional payload-column editing on the join row.
 - **Raw SQL console** — arbitrary SQL (including DML/DDL) over the same in-process execution path the builder uses.
 
+### Why these panes are desktop-only
+
+The query builder, form builder and SQL console run over the Photino bridge, in
+process, and never touch the HTTP/GraphQL surface. That is what lets them execute
+arbitrary SQL with no authentication of their own: inside the desktop app the only
+possible caller is the window the host itself opened.
+
+That also means they do not exist in a browser pointed at a headless host — there
+is no `window.external` to talk to — which left them unreachable from the
+end-to-end suite. `--enable-http-bridge` exposes the same bridge handlers over
+loopback HTTP so the panes work headless, and the suite passes it when it starts
+its server.
+
+**It is a testing flag, not a deployment option.** Enabling it puts a surface that
+runs arbitrary SQL against the active connection onto a socket, which removes the
+assumption the bridge's design rests on. It is off by default, binds only where
+the UI host already binds, and logs a warning at startup. Do not enable it on a
+host anyone else can reach.
+
 ## Theming the editor
 
 The data editor ships as an embeddable React component (see [Embeddable Data Editor](/BifrostQL/guides/embedded-editor/)) and is themed through a **CSS custom-property contract** layered with `@layer` so host styles win without specificity fights. Override any of the `--ui-*` tokens — `--ui-background`, `--ui-foreground`, `--ui-primary`, `--ui-border`, `--ui-accent`, `--ui-destructive`, and their `-foreground` pairs — to re-skin every grid and form. The desktop app uses this contract to apply its Norse-industrial dark palette.

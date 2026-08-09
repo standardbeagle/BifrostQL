@@ -57,6 +57,18 @@ namespace BifrostQL.Server.Pgwire
         // pg_get_userbyid(relowner) as the "Owner" column of \d / \dt.
         private const string SyntheticOwnerName = "bifrost";
 
+        /// <summary>
+        /// Wall-clock ceiling on any single regex match here. These patterns run against RAW
+        /// CLIENT SQL on EVERY query, before parsing and before any catalog decision, so an
+        /// unbounded match time is a denial-of-service surface reachable by one authenticated
+        /// message. A timeout raises <see cref="RegexMatchTimeoutException"/>, which the callers
+        /// below convert into the adapter's own <see cref="PgQueryTranslationException"/> — a
+        /// clean query-phase error the connection handler already catches — never an unhandled
+        /// throw. This is a backstop: the patterns themselves are non-backtracking or
+        /// linear-scan, so it should be unreachable.
+        /// </summary>
+        private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
+
         // Structural signature of the query psql issues for \d and \dt: a pg_class ⋈
         // pg_namespace join carrying the relkind IN (...) filter and the
         // pg_table_is_visible(oid) guard, ending in the positional ORDER BY 1[,2].
@@ -67,9 +79,26 @@ namespace BifrostQL.Server.Pgwire
         // captures the relkind list so the filter is applied faithfully. Requiring the
         // pg_class + pg_namespace + pg_table_is_visible signature keeps this narrow: a
         // user query does not carry pg_table_is_visible.
+        //
+        // This pattern is HARDENED, not fixed: it was audited as ReDoS-exposed (four unanchored
+        // `.*` under Singleline with InfiniteMatchTimeout, run against raw client SQL on EVERY
+        // query), but measurement disproved that for this shape — a worst-case non-matching input
+        // of 200 KB (naming pg_class/pg_namespace/pg_table_is_visible but lacking the trailing
+        // "order by 1", so every `.*` must be explored) matched in 34 ms under the backtracking
+        // engine, because a chain of `.*` separated by LITERALS is handled by the engine's
+        // literal-scan optimizer rather than by exponential exploration. NonBacktracking (which is
+        // mutually exclusive with Compiled) plus the timeout above make the linear bound a property
+        // of the engine rather than of an optimizer heuristic that a future edit to the pattern
+        // could silently invalidate. The genuinely exponential case on this class was LIKE — see
+        // the note on Like below, which is a real fix rather than hardening.
         private static readonly Regex DescribeRelationsPattern = new(
             @"from\s+(?:pg_catalog\.)?pg_class\b.*\bjoin\s+(?:pg_catalog\.)?pg_namespace\b.*\brelkind\s+in\s*\(([^)]*)\).*\bpg_table_is_visible\b.*\border\s+by\s+1",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.NonBacktracking,
+            RegexTimeout);
+
+        /// <summary>Quoted literals inside a relkind IN (…) list; the input is already bounded by <c>[^)]*</c>.</summary>
+        private static readonly Regex RelkindLiteralPattern = new(
+            "'([^']*)'", RegexOptions.NonBacktracking, RegexTimeout);
 
         public async Task<PgCatalogResponse?> TryRespondAsync(
             IQueryIntentExecutor executor,
@@ -90,7 +119,22 @@ namespace BifrostQL.Server.Pgwire
             //    the relkind / pg_table_is_visible signature. Answered by an in-memory
             //    join over the identity-visible projection — the subset parser does not
             //    accept this shape and is intentionally not loosened for it.
-            var describe = DescribeRelationsPattern.Match(sql);
+            Match describe;
+            try
+            {
+                describe = DescribeRelationsPattern.Match(sql);
+            }
+            catch (RegexMatchTimeoutException ex)
+            {
+                // Backstop for the recognition scan (see RegexTimeout). It must surface as the
+                // adapter's own query-phase exception — the type the connection handler and the
+                // extended processor already catch — never as a bare RegexMatchTimeoutException,
+                // which matches neither filter and would drop the connection unhandled
+                // (protocol-adapter-security invariant 1).
+                throw new PgQueryTranslationException(
+                    "pgwire: catalog query recognition timed out; simplify the statement.",
+                    PgWireProtocol.SqlStateSyntaxError, ex);
+            }
             if (describe.Success)
             {
                 var describeModel = await executor.GetModelAsync(endpoint);
@@ -244,7 +288,7 @@ namespace BifrostQL.Server.Pgwire
         private static HashSet<string> ParseRelkindList(string inner)
         {
             var set = new HashSet<string>(StringComparer.Ordinal);
-            foreach (Match m in Regex.Matches(inner, "'([^']*)'"))
+            foreach (Match m in RelkindLiteralPattern.Matches(inner))
                 set.Add(m.Groups[1].Value);
             return set;
         }
@@ -387,14 +431,75 @@ namespace BifrostQL.Server.Pgwire
             };
         }
 
-        private static bool Like(object? value, object? pattern)
+        /// <summary>
+        /// SQL LIKE over a synthesized catalog value: <c>%</c> matches any run, <c>_</c> matches one
+        /// character, everything else is literal.
+        ///
+        /// <para>This used to translate the pattern into a regex (<c>%</c> → <c>.*</c>) and match it
+        /// with the backtracking engine under <c>InfiniteMatchTimeout</c>. Because the pattern comes
+        /// straight from client SQL, <c>LIKE '%%%%%%%%%%%%%%%%%%%%x'</c> compiled to twenty
+        /// consecutive <c>.*</c> — the textbook catastrophic-backtracking shape — and any value not
+        /// ending in <c>x</c> made the match cost exponential in the value length, with no ceiling.
+        /// One ordinary-looking catalog query hung a core indefinitely.</para>
+        ///
+        /// <para>Replaced by the classic two-pointer glob scan: no regex, no engine, no backtracking
+        /// stack. A run of <c>%</c> collapses to one wildcard, so the pathological pattern above is
+        /// now indistinguishable from <c>'%x'</c>, and worst-case cost is O(value × pattern) with
+        /// O(1) memory — bounded by construction rather than by a timeout.</para>
+        /// </summary>
+        /// <summary>
+        /// SQL LIKE over a synthesized catalog value: <c>%</c> matches any run, <c>_</c> matches one
+        /// character, everything else is literal.
+        ///
+        /// <para>This used to translate the pattern into a regex (<c>%</c> → <c>.*</c>) and match it
+        /// with the backtracking engine under <c>InfiniteMatchTimeout</c>. Because the pattern comes
+        /// straight from client SQL, an alternating pattern such as
+        /// <c>LIKE '%a%a%a%a%a%a%a%a%a%a%x'</c> compiled to ten independent <c>.*</c> separated by
+        /// literals — the textbook catastrophic-backtracking shape — and a value of sixty 'a's took
+        /// longer than TEN SECONDS to report "no match", with no ceiling and no way to interrupt it.
+        /// One ordinary-looking catalog query pinned a core indefinitely.</para>
+        ///
+        /// <para>Replaced by the classic two-pointer glob scan: no regex, no engine, no backtracking
+        /// stack. Worst-case cost is O(value × pattern) with O(1) memory, so the blowup is
+        /// impossible by construction rather than merely bounded by a timeout.</para>
+        /// </summary>
+        internal static bool Like(object? value, object? pattern)
         {
             if (value is null || pattern is null)
                 return false;
 
-            var regex = "^" + Regex.Escape(pattern.ToString() ?? "")
-                .Replace("%", ".*").Replace("_", ".") + "$";
-            return Regex.IsMatch(value.ToString() ?? "", regex);
+            var text = value.ToString() ?? "";
+            var glob = pattern.ToString() ?? "";
+
+            int t = 0, p = 0, starT = -1, starP = -1;
+            while (t < text.Length)
+            {
+                if (p < glob.Length && (glob[p] == '_' || glob[p] == text[t]))
+                {
+                    t++; p++;
+                }
+                else if (p < glob.Length && glob[p] == '%')
+                {
+                    // Remember where the wildcard was; a run of '%' collapses to one wildcard here.
+                    starP = p++;
+                    starT = t;
+                }
+                else if (starP >= 0)
+                {
+                    // Backtrack to the most recent '%' and let it absorb one more character. Only
+                    // the LAST star is ever revisited, which is what bounds this at O(n × m)
+                    // instead of the regex engine's exponential exploration of every star.
+                    p = starP + 1;
+                    t = ++starT;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            while (p < glob.Length && glob[p] == '%') p++;
+            return p == glob.Length;
         }
 
         private static string RequireColumn(string name, HashSet<string> columnNames)

@@ -37,6 +37,17 @@ namespace BifrostQL.Server.Pgwire
         }
 
         /// <summary>
+        /// Wraps an underlying fault (e.g. a regex match timeout in the catalog recognizer) so it
+        /// reaches the wire as this adapter's own query-phase type — the one the connection handler
+        /// and extended processor already catch — while the real cause stays server-side in the log.
+        /// </summary>
+        public PgQueryTranslationException(string message, string sqlState, Exception innerException)
+            : base(message, innerException)
+        {
+            SqlState = sqlState;
+        }
+
+        /// <summary>
         /// The pg SQLSTATE to answer with. Defaults to <c>syntax_error</c> (an
         /// unrecognized statement); recognized-but-out-of-subset constructs
         /// (GROUP BY, UNION, functions, subqueries, non-INNER joins) set

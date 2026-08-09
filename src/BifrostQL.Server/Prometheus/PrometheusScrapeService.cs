@@ -240,8 +240,16 @@ namespace BifrostQL.Server.Prometheus
         // The cache key partitions by endpoint + model version + series identity + security mode +
         // IDENTITY PARTITION. Omitting the identity partition would let one identity's cached series
         // be served to another — a cross-tenant cache leak (criterion 2, BLOCKER-class).
+        //
+        // Components are joined with a delimiter no component can contain, so no two distinct
+        // component tuples can concatenate to the same key — a cache key that can ambiguate ACROSS
+        // SECURITY PARTITIONS is the same class of defect as omitting a component. The delimiter is
+        // a NAMED constant rather than a bare control-character literal: that literal renders as an
+        // empty string in most editors and has already been misread in review as an absent delimiter.
+        private const string CacheKeyDelimiter = "\u0001"; // ASCII SOH; unrepresentable in any component
+
         internal string CacheKey(string modelToken, PrometheusMetricConfig config, IDictionary<string, object?>? userContext) =>
-            string.Join("",
+            string.Join(CacheKeyDelimiter,
                 _options.Endpoint,
                 modelToken,
                 config.SeriesKey,

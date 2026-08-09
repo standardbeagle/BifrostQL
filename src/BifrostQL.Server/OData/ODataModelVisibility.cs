@@ -21,139 +21,61 @@ namespace BifrostQL.Server.OData
     internal sealed record ODataNavigation(string Name, string TargetEntity, bool IsCollection);
 
     /// <summary>
-    /// Projects an <see cref="IDbModel"/> to the entity types/sets a given identity may READ,
-    /// using the SAME authoritative check the query path enforces —
-    /// <see cref="PolicyEvaluator"/> over the per-table <see cref="TablePolicy"/> that
-    /// <see cref="PolicyConfigCollector"/> parses, with identity reconstructed by the shared
-    /// <see cref="PolicyIdentity"/> projection. This is deliberately NOT a second, weaker
-    /// "it's just metadata" rule: a table the caller could not read is never listed in the
-    /// service document or <c>$metadata</c>, or the introspection surface would leak the
-    /// existence of relations the identity cannot query
-    /// (.claude/rules/protocol-adapter-security.md invariant 4). Mirrors the pgwire catalog
-    /// visibility filter (<c>PgCatalogVisibility</c>) — the same Core seam, a different wire.
-    ///
-    /// <para><b>Fail closed.</b> A table whose policy cannot be evaluated (malformed policy
-    /// metadata, any evaluation fault) is EXCLUDED, never included on a benefit-of-the-doubt
-    /// basis — even for admin, since <see cref="PolicyConfigCollector.FromTable"/> throws before
-    /// the evaluator runs. Column read-deny is applied identically, so a read-denied column is
-    /// absent from every emitted type. A navigation whose target table is not visible to the
-    /// caller is omitted, so the metadata never advertises an unreachable/unauthorized
-    /// endpoint.</para>
+    /// Renders the shared <see cref="SchemaReadVisibility"/> projection — the single funnel every
+    /// introspection surface shares, calling the SAME evaluator the query path enforces — into the
+    /// OData entity/navigation shape the service document and <c>$metadata</c> are built from. The
+    /// authorization decision, and its fail-closed handling of an unparseable policy, live in
+    /// Core; only the entity/navigation modelling is OData's
+    /// (.claude/rules/protocol-adapter-security.md invariant 4).
     /// </summary>
     internal static class ODataModelVisibility
     {
-        private static readonly PolicyEvaluator Evaluator = new();
-
         /// <summary>
         /// Returns the visible entity types/sets for <paramref name="userContext"/>. A table
         /// whose Read is denied — or whose policy cannot be evaluated — is omitted entirely, as
-        /// is any navigation to such a table.
+        /// is any navigation whose far end is not fully visible.
         /// </summary>
         public static IReadOnlyList<ODataEntity> Project(
             IDbModel model, IDictionary<string, object?> userContext)
         {
-            if (model is null) throw new ArgumentNullException(nameof(model));
-            if (userContext is null) throw new ArgumentNullException(nameof(userContext));
+            var visible = SchemaReadVisibility.Project(model, userContext);
 
-            var identity = PolicyIdentity.FromUserContext(userContext);
-
-            // First pass: the set of tables the caller may read. Navigation endpoints are
-            // filtered against this set so a link to a hidden/denied table never surfaces.
-            var visibleTables = new List<IDbTable>();
-            foreach (var table in model.Tables)
+            var result = new List<ODataEntity>(visible.Count);
+            foreach (var entry in visible)
             {
-                if (CanRead(table, identity))
-                    visibleTables.Add(table);
-            }
-
-            var visibleNames = new HashSet<string>(
-                visibleTables.Select(t => t.GraphQlName), StringComparer.Ordinal);
-
-            var result = new List<ODataEntity>(visibleTables.Count);
-            foreach (var table in visibleTables)
-            {
-                var columns = VisibleColumns(table, identity);
-                var visibleColumnNames = new HashSet<string>(
-                    columns.Select(c => c.DbName), StringComparer.OrdinalIgnoreCase);
-
-                // Key columns are the visible subset of the table's key — every key column is
-                // emitted (composite keys represented in full), never a first-column guess.
-                var keyColumns = table.KeyColumns
-                    .Where(c => visibleColumnNames.Contains(c.DbName))
-                    .ToList();
-
-                var navigations = VisibleNavigations(table, visibleNames);
-                result.Add(new ODataEntity(table, columns, keyColumns, navigations));
-            }
-
-            return result;
-        }
-
-        private static bool CanRead(IDbTable table, AppIdentity identity)
-        {
-            try
-            {
-                var policy = PolicyConfigCollector.FromTable(table);
-                return Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed;
-            }
-            catch
-            {
-                // Fail closed: a table whose policy cannot be parsed/evaluated is hidden.
-                return false;
-            }
-        }
-
-        private static IReadOnlyList<ColumnDto> VisibleColumns(IDbTable table, AppIdentity identity)
-        {
-            TablePolicy policy;
-            try
-            {
-                policy = PolicyConfigCollector.FromTable(table);
-            }
-            catch
-            {
-                // Survived CanRead but the policy no longer parses: treat as no visible columns.
-                return Array.Empty<ColumnDto>();
-            }
-
-            var result = new List<ColumnDto>();
-            foreach (var column in table.Columns)
-            {
-                bool allowed;
-                try
-                {
-                    allowed = Evaluator.IsColumnAllowed(policy, column.DbName, PolicyDirection.Read, identity).Allowed;
-                }
-                catch
-                {
-                    allowed = false; // fail closed on any column-evaluation fault
-                }
-
-                if (allowed)
-                    result.Add(column);
+                result.Add(new ODataEntity(
+                    entry.Table,
+                    entry.Columns,
+                    // Every key column the caller may read is emitted (composite keys represented
+                    // in full), never a first-column guess.
+                    entry.KeyColumns,
+                    VisibleNavigations(entry.Table, visible)));
             }
 
             return result;
         }
 
         /// <summary>
-        /// Builds navigation properties for the table's foreign-key links whose target entity is
-        /// itself visible. Single links (many-to-one) become single-valued navigations; multi
-        /// links (one-to-many) become collection-valued ones. Many-to-many links (through a
-        /// hidden junction table) are an unsupported shape here and are deterministically OMITTED
-        /// rather than reduced to a single-column guess. Each navigation name is the link's own
-        /// key in the table's link dictionary, which is unique per table.
+        /// Builds navigation properties for the table's foreign-key links the caller may see.
+        /// Single links (many-to-one) become single-valued navigations; multi links (one-to-many)
+        /// become collection-valued ones. Many-to-many links (through a hidden junction table) are
+        /// an unsupported shape here and are deterministically OMITTED rather than reduced to a
+        /// single-column guess. Each navigation name is the link's own key in the table's link
+        /// dictionary, which is unique per table.
+        ///
+        /// <para>An edge survives only when <see cref="SchemaReadVisibility.IsLinkVisible"/> holds
+        /// — both end tables AND every participating key column visible — so the metadata never
+        /// advertises an unreachable endpoint, nor names a column the data path would refuse.</para>
         /// </summary>
         private static IReadOnlyList<ODataNavigation> VisibleNavigations(
-            IDbTable table, HashSet<string> visibleTableNames)
+            IDbTable table, IReadOnlyList<VisibleTable> visible)
         {
             var result = new List<ODataNavigation>();
             var takenNames = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var (name, link) in table.SingleLinks)
             {
-                var target = link.ParentTable;
-                if (target is null || !visibleTableNames.Contains(target.GraphQlName))
+                if (link?.ParentTable is not { } target || !SchemaReadVisibility.IsLinkVisible(link, visible))
                     continue;
                 if (takenNames.Add(name))
                     result.Add(new ODataNavigation(name, target.GraphQlName, IsCollection: false));
@@ -161,8 +83,7 @@ namespace BifrostQL.Server.OData
 
             foreach (var (name, link) in table.MultiLinks)
             {
-                var target = link.ChildTable;
-                if (target is null || !visibleTableNames.Contains(target.GraphQlName))
+                if (link?.ChildTable is not { } target || !SchemaReadVisibility.IsLinkVisible(link, visible))
                     continue;
                 if (takenNames.Add(name))
                     result.Add(new ODataNavigation(name, target.GraphQlName, IsCollection: true));

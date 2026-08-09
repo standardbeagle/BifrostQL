@@ -30,6 +30,28 @@ namespace BifrostQL.Core.QueryModel
         public List<TableFilter> Or { get; init; } = new();
 
         /// <summary>
+        /// When this node is a relationship TRAVERSAL (<see cref="ColumnName"/> names a
+        /// <see cref="IDbTable.SingleLinks"/> entry rather than a column), this carries
+        /// the TRAVERSED PARENT table's own transformer-derived row filter — tenant
+        /// scoping, soft-delete, policy — ANDed into the sub-query the traversal renders.
+        ///
+        /// Without it the sub-query was <c>SELECT DISTINCT id AS joinid FROM parent WHERE
+        /// &lt;caller predicate&gt;</c> over the WHOLE parent table, so a caller matched
+        /// child rows through parent rows it could not see. The parent's existence and
+        /// field values then leak through the child result set: probing
+        /// <c>comments(filter: { posts: { title: {_eq: …} } })</c> reads another tenant's
+        /// (or a soft-deleted) post title one guess at a time. The column guards already
+        /// recurse into these sub-filters and assert each column against ITS OWN table's
+        /// policy; this is the row-filter half of the same traversal.
+        ///
+        /// Populated by <c>QueryTransformerService</c> (the only component holding the
+        /// user context and transformer set) at the same time it computes the node
+        /// query's own filter, and consumed by <see cref="BuildSqlParameterized"/>. Null
+        /// when no transformer applies to the traversed table.
+        /// </summary>
+        internal TableFilter? TraversedTableFilter { get; set; }
+
+        /// <summary>
         /// True when this node is a LEAF column predicate — <c>column: { _op: value }</c>,
         /// whose <see cref="Next"/> is the terminal <see cref="FilterType.Relation"/>
         /// operator node. False for an AND/OR wrapper (<see cref="Next"/> is null) and
@@ -448,7 +470,7 @@ namespace BifrostQL.Core.QueryModel
                 throw new BifrostExecutionError(
                     $"Filter references unknown single-link relationship '{ColumnName}' on table '{TableName}'.{hint}");
             }
-            var (joinSql, joinParams) = BuildSqlParameterized(Next, link, dialect, parameters, includeValue: false);
+            var (joinSql, joinParams) = BuildSqlParameterized(Next, link, ctx, aliases, TraversedTableFilter, includeValue: false);
             var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";
             return new FilterParts(fullJoin, "", joinParams.ToList());
@@ -549,24 +571,51 @@ namespace BifrostQL.Core.QueryModel
         /// schema-qualified FROM without an alias still exposes the bare table name in
         /// every supported dialect. <paramref name="valueProjection"/> (already
         /// including its leading comma) adds the optional value column for
-        /// value-returning contexts; <paramref name="tail"/> is the trailing
-        /// <c>INNER JOIN …</c> / <c>WHERE …</c> fragment (empty for none).
+        /// value-returning contexts; <paramref name="joins"/> carries any
+        /// <c>INNER JOIN …</c> fragments (empty for none) and <paramref name="wheres"/>
+        /// the predicates ANDed into the sub-query's WHERE.
+        ///
+        /// Joins and WHERE are assembled here rather than by the callers so that the
+        /// traversed table's security predicate cannot be dropped by a branch that
+        /// happens to build only a join — every branch goes through one assembler.
         /// </summary>
-        private static string RelationshipSubquery(TableLinkDto link, ISqlDialect dialect, string tail, string valueProjection = "")
+        private static string RelationshipSubquery(
+            TableLinkDto link, ISqlDialect dialect, string joins, IReadOnlyList<string> wheres, string valueProjection = "")
         {
             var ejoinid = dialect.EscapeIdentifier("joinid");
             var parentTableRef = dialect.TableReference(link.ParentTable.TableSchema, link.ParentTable.DbName);
-            var tailPart = string.IsNullOrEmpty(tail) ? "" : " " + tail;
-            return $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{valueProjection} FROM {parentTableRef}{tailPart}";
+            var joinPart = string.IsNullOrWhiteSpace(joins) ? "" : " " + joins.Trim();
+            var kept = wheres.Where(w => !string.IsNullOrWhiteSpace(w)).ToList();
+            var wherePart = kept.Count == 0 ? "" : " WHERE " + string.Join(" AND ", kept.Select(w => $"({w})"));
+            return $"SELECT DISTINCT {dialect.EscapeIdentifier(link.ParentId.ColumnName)} AS {ejoinid}{valueProjection} FROM {parentTableRef}{joinPart}{wherePart}";
         }
+
+        /// <summary>
+        /// Renders the traversed parent table's own transformer filter
+        /// (<see cref="TraversedTableFilter"/>) as a fragment for the relationship
+        /// sub-query. The filter is evaluated against the PARENT table, aliased by its
+        /// bare table name to match how <see cref="RelationshipSubquery"/> qualifies
+        /// columns in an unaliased FROM. A transformer may itself emit a
+        /// relationship-shaped filter, so joins are returned alongside the predicate
+        /// rather than assumed away.
+        /// </summary>
+        private static FilterParts RenderTraversedTableFilter(
+            TableFilter? traversedFilter, TableLinkDto link, SqlBuildContext ctx, JoinAliasAllocator aliases)
+            => traversedFilter == null
+                ? new FilterParts("", "", new List<SqlParameterInfo>())
+                : traversedFilter.RenderParts(ctx, link.ParentTable.DbName, aliases);
 
         private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
             TableFilter filter,
             TableLinkDto link,
-            ISqlDialect dialect,
-            SqlParameterCollection parameters,
+            SqlBuildContext ctx,
+            JoinAliasAllocator aliases,
+            TableFilter? traversedTableFilter,
             bool includeValue = false)
         {
+            var dialect = ctx.Dialect;
+            var parameters = ctx.Parameters;
+            var scope = RenderTraversedTableFilter(traversedTableFilter, link, ctx, aliases);
             if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
             {
                 var ej = dialect.EscapeIdentifier("j");
@@ -587,8 +636,8 @@ namespace BifrostQL.Core.QueryModel
                             $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' " +
                             "cannot combine multiple predicates in a value-returning context.");
                     var pred = BuildRelationshipLeafPredicate(filter, link, dialect, parameters);
-                    var combined = RelationshipSubquery(link, dialect, $"WHERE {pred.Sql}");
-                    return (combined, pred.Parameters.ToList());
+                    var combined = RelationshipSubquery(link, dialect, scope.Joins, new[] { pred.Sql, scope.Where });
+                    return (combined, pred.Parameters.Concat(scope.Parameters).ToList());
                 }
 
                 switch (filter.FilterType)
@@ -596,10 +645,15 @@ namespace BifrostQL.Core.QueryModel
                     case FilterType.Join
                         when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
                         {
-                            var (nextSql, nextParams) = BuildSqlParameterized(filter.Next!, nextLink, dialect, parameters);
+                            // Each hop carries its OWN traversed table's scope; the next
+                            // hop's comes from the nested node, not from this one.
+                            var (nextSql, nextParams) = BuildSqlParameterized(
+                                filter.Next!, nextLink, ctx, aliases, filter.Next!.TraversedTableFilter);
                             var innerJoin = $"INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
-                            var sql = RelationshipSubquery(link, dialect, innerJoin, valueProjection: includeValue ? $", {evalue}" : "");
-                            return (sql, nextParams);
+                            var sql = RelationshipSubquery(
+                                link, dialect, $"{innerJoin}{scope.Joins}", new[] { scope.Where },
+                                valueProjection: includeValue ? $", {evalue}" : "");
+                            return (sql, nextParams.Concat(scope.Parameters).ToList());
                         }
                     case FilterType.Join:
                         // Map the GraphQL column name to its DB name (and pick up its
@@ -609,15 +663,16 @@ namespace BifrostQL.Core.QueryModel
                         if (includeValue)
                         {
                             return (
-                                RelationshipSubquery(link, dialect, tail: "", valueProjection: $", {dialect.EscapeIdentifier(parentColumn.DbName)} AS {evalue}"),
-                                new List<SqlParameterInfo>());
+                                RelationshipSubquery(link, dialect, scope.Joins, new[] { scope.Where },
+                                    valueProjection: $", {dialect.EscapeIdentifier(parentColumn.DbName)} AS {evalue}"),
+                                scope.Parameters.ToList());
                         }
                         else
                         {
                             var filterResult = GetSingleFilterParameterized(dialect, parameters, link.ParentTable.DbName, parentColumn.DbName, filter.Next!.RelationName, filter.Next.Value, parentColumn.DataType);
                             return (
-                                RelationshipSubquery(link, dialect, $"WHERE {filterResult.Sql}"),
-                                filterResult.Parameters.ToList());
+                                RelationshipSubquery(link, dialect, scope.Joins, new[] { filterResult.Sql, scope.Where }),
+                                filterResult.Parameters.Concat(scope.Parameters).ToList());
                         }
                 }
             }

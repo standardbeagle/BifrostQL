@@ -146,11 +146,67 @@ public sealed class QueryTransformerService : IQueryTransformerService
             }
         }
 
+        // A filter can TRAVERSE a relationship into another table
+        // (`comments(filter: { posts: { title: {_eq: …} } })`), which renders a
+        // sub-query over that PARENT table. That sub-query needs the parent's own
+        // row scoping, or the caller matches child rows through parent rows it
+        // cannot see and reads the parent back out of the child result set.
+        // query.Filter is walked AFTER the node's own filter was ANDed in above, so
+        // a transformer that itself emits a relationship-shaped filter gets its
+        // traversal scoped on the same pass.
+        ScopeFilterTraversals(query.Filter, query.DbTable, model, userContext, query);
+
         // Recursively apply to joined/linked tables
         foreach (var join in query.Joins)
         {
             ApplyTransformersRecursive(join.ConnectedTable, model, userContext, isNested: true);
         }
+    }
+
+    /// <summary>
+    /// Walks a filter tree and attaches each relationship traversal's TRAVERSED
+    /// table's combined transformer filter to that node, for the SQL renderer to AND
+    /// into the sub-query. The traversal decision uses
+    /// <see cref="TableFilter.IsLeafColumnPredicate"/> — the same predicate the
+    /// renderer and the column-guard collector use — so the scoped set and the
+    /// emitted SQL cannot diverge.
+    /// </summary>
+    private void ScopeFilterTraversals(
+        TableFilter? filter,
+        IDbTable table,
+        IDbModel model,
+        IDictionary<string, object?> userContext,
+        GqlObjectQuery query)
+    {
+        if (filter == null)
+            return;
+
+        if (filter.Next == null)
+        {
+            foreach (var branch in filter.And)
+                ScopeFilterTraversals(branch, table, model, userContext, query);
+            foreach (var branch in filter.Or)
+                ScopeFilterTraversals(branch, table, model, userContext, query);
+            return;
+        }
+
+        if (filter.IsLeafColumnPredicate)
+            return;
+
+        if (!table.SingleLinks.TryGetValue(filter.ColumnName, out var link))
+            return;
+
+        var traversedContext = new QueryTransformContext
+        {
+            Model = model,
+            UserContext = userContext,
+            QueryType = query.QueryType,
+            Path = query.Path,
+            IsNestedQuery = true,
+        };
+        filter.TraversedTableFilter = _filterTransformers.GetCombinedFilter(link.ParentTable, traversedContext);
+
+        ScopeFilterTraversals(filter.Next, link.ParentTable, model, userContext, query);
     }
 
     private static TableFilter CombineFilters(TableFilter existing, TableFilter additional)

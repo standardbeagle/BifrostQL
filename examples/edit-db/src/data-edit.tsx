@@ -462,7 +462,14 @@ export function DataEdit(): ReactElement {
     if (!table) return <div>Table missing</div>;
 
     // Route-driven edit (deep links, header "New"): close returns up the route.
-    return <DataEditDialog table={table} editId={editId ?? ''} onClose={() => navigate('../..')} />;
+    // This component serves both '/:table/edit/:editId' (edit) and '/:table/edit'
+    // (add), which differ by one segment, so the climb has to differ too. A fixed
+    // '../..' overshoots the add route by one and dumps the user on the table list
+    // instead of the grid they opened the form from. Climbing relatively (rather
+    // than jumping to `/${table}`) keeps the drill-down variants — e.g.
+    // '/:table/from/:filterTable/:id/edit/:editId' — landing on their own parent.
+    const closePath = editId ? '../..' : '..';
+    return <DataEditDialog table={table} editId={editId ?? ''} onClose={() => navigate(closePath)} />;
 }
 
 /**

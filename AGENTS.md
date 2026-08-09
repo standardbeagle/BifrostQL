@@ -53,6 +53,25 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 
 非 GraphQL 前門（protocol adapters）：adapter 僅擁 wire + codec。讀經 `IQueryIntentExecutor`（內delegate `SqlExecutionManager.ExecuteIntentAsync`），寫經 `IMutationIntentExecutor`（內 delegate `TableMutationPipeline`）；transformers 於彼二處套，adapter 無 API 可繞。identity 必經 `IBifrostAuthContextFactory`（諸 transport gates 共享，fail-closed）。非 HTTP 宿 Kestrel `ConnectionHandler` + `IHostedService`；contract 無 `HttpContext`。詳 docs concepts/protocol-adapters、guides/protocol-adapters。
 
+### Listener Exposure Posture
+
+每 network listener 必declare exposure 與 concrete caps。**未declare 即 `loopback`**；widening（loopback → lan → public）乃 operator 之決，非 agent 之決。以下為 shipped defaults，非 recommendation ceiling：
+
+| Listener | Port | Posture | Bind default | Max connections | Pre-auth deadline | Idle deadline | Max message |
+|----------|------|---------|--------------|-----------------|-------------------|---------------|-------------|
+| pgwire | 5432 | `loopback` | `PgWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConnections` 100 | `HandshakeTimeout` 30 s | none (authenticated session = pooled connection) | `PgProtocolIO.MaxMessageLength` 1 MiB |
+| RESP | 6379 | `loopback` | `RespWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConnections` 100 | `AuthenticationTimeout` 30 s | `IdleTimeout` 10 min | `MaxBulkLength` 1 MiB |
+| gRPC | 5090 | `loopback` | `GrpcWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConcurrentConnections` 100 (Kestrel) | Kestrel HTTP/2 defaults | Kestrel HTTP/2 defaults | Kestrel HTTP/2 defaults |
+| HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host's Kestrel | 隨 host 之 Kestrel 配置；BifrostQL 不自binds | — | host | host | host | host |
+
+規約，凡新 `IProtocolAdapter` 必守：
+
+- **Bind default 必 loopback。** `ListenAnyIP` 禁；用 `kestrel.Listen(options.BindAddress, …)`。`ProtocolListenerPostureTests` 釘之。
+- **Admission slot 必取於 ACCEPT**，先於 read、TLS handshake、authentication。cap 若後施，僅bound admitted sessions，不bound unauthenticated peer 所能forced 之work——非 cap。用 `ProtocolConnectionLimiter`，且每 adapter 自有 subtype（共用 base type 於 DI 則二 front doors 共一 counter）。
+- **Pre-auth deadline 必有。** slot 既取於 accept，silent peer 即 denial of service，無需credentials，無需bytes。authenticated 之後宜放寬或去之——idle authenticated session 乃 pooled client。
+- **Per-session state 必 capped**（pgwire `MaxPreparedStatements`/`MaxPortals`）：session-lifetime 之 map 無 cap，則一 peer 於一 connection 內即可耗memory，connection cap 不救。
+- **Untrusted input 之 regex 必 bounded**：`RegexOptions.NonBacktracking` 或 match timeout，且 timeout 必 map 為 adapter 自有 exception type（見 `.claude/rules/protocol-adapter-security.md` invariant 1）。client-supplied pattern（LIKE 等）宜以 non-regex scan 行之。
+
 ### Key Components
 
 | Component | Location | Purpose |

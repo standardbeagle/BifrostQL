@@ -52,3 +52,32 @@ Render the resulting transcript into a page and record it with
 - Before reusing a caption, re-read `../social-copy.md`'s "Do not claim"
   section. At least one caption there was moved off the Orders grid because the
   frame visibly contradicted it.
+
+## Recording the desktop shell (the bridge-only panes)
+
+The SQL console, visual query builder and form builder only exist when
+`window.external` is present, so they cannot be captured in a browser — the
+desktop shell has to run. Two things make that work headlessly, and both are
+non-obvious:
+
+1. **Force software rendering.** WebKitGTK under Xvfb fails to get a GL screen
+   (`MESA: error: ZINK: failed to choose pdev`) and the window never maps. Run
+   with `LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
+   WEBKIT_DISABLE_COMPOSITING_MODE=1 GDK_BACKEND=x11`.
+2. **Resize before the first paint.** With no window manager on the virtual
+   display nothing honours Photino's size request, so the window maps at
+   400x400. Resizing it *after* the page has painted leaves WebKit showing a
+   stale blank surface — the window has to be caught and resized the moment it
+   appears, before content loads. Poll `xdotool search --name BifrostQL` every
+   100 ms from just before launch, and make sure no window from a previous run
+   is still around or the poll matches the stale one.
+
+Drive it with `xdotool` by coordinate (the webview exposes no DOM to a
+harness) and read positions off a screenshot of the same window at the same
+size. Connecting the database over HTTP first does not help: the webview keeps
+its own sessionStorage, so the Quick Start flow has to be clicked in the native
+window too.
+
+One trap worth knowing when filming the query builder: it refuses to run a
+query that projects no columns, so a script that adds tables and clicks Run
+without ticking any column captures only the validation banner.

@@ -760,19 +760,26 @@ public class QuickStartEndToEndTests : IDisposable
                 var fkCol = link.ChildId.GraphQlName;
                 var destPk = link.ParentId.GraphQlName;
                 var destTable = link.ParentTable.GraphQlName;
+                // Address the join by its RELATIONSHIP FIELD, not the destination
+                // table. They differ whenever a table references the same target
+                // through more than one foreign key: orders carries billing_address
+                // and shipping_address and has no field called addresses at all.
+                // Because this walks every SingleLink, using the field name also
+                // makes the loop cover each key separately rather than one of them.
+                var linkField = link.ParentFieldName;
                 var pk = table.Columns.First(c => c.IsPrimaryKey).GraphQlName;
 
-                var query = $"query {{ {table.GraphQlName} {{ data {{ {pk} {fkCol} {destTable} {{ id: {destPk} }} }} }} }}";
-                _output.WriteLine($"[{schema}] {table.GraphQlName} → {destTable}: {query}");
+                var query = $"query {{ {table.GraphQlName} {{ data {{ {pk} {fkCol} {linkField} {{ id: {destPk} }} }} }} }}";
+                _output.WriteLine($"[{schema}] {table.GraphQlName} → {linkField} ({destTable}): {query}");
 
                 var result = await ctx.ExecuteAsync(query);
                 result.Errors.Should().BeNullOrEmpty(
-                    $"single-link join from '{table.GraphQlName}' to '{destTable}' should work");
+                    $"single-link join '{linkField}' from '{table.GraphQlName}' to '{destTable}' should work");
 
                 var rows = ExtractPagedData(result, table.GraphQlName);
                 rows.Should().NotBeEmpty();
-                rows[0].Should().ContainKey(destTable,
-                    $"row should have nested '{destTable}' join result");
+                rows[0].Should().ContainKey(linkField,
+                    $"row should have nested '{linkField}' join result");
             }
         }
     }

@@ -87,12 +87,24 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // Identity is projected ONCE, up front, through the shared gate — before any overlay is
+            // loaded — so an identity this deployment cannot project is refused with 401 rather than
+            // faulting mid-response. The sibling /_saved-objects gate has always answered 401 here;
+            // this endpoint used to let the fault escape to the host (invariant 1's shape), and the
+            // two now share one implementation so they cannot diverge again.
+            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            if (outcome == BifrostIdentityOutcome.Unprojectable)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
             // An empty overlay is served when none is registered, so the
             // endpoint always returns the stable contract rather than 404.
             var overlay = context.RequestServices.GetService<Lazy<Task<AppMetadataModel>>>();
             var model = overlay != null ? await overlay.Value : new AppMetadataModel();
 
-            model = await FilterForCallerAsync(context, model);
+            model = await FilterForCallerAsync(context, model, userContext);
 
             var json = AppMetadataJson.Serialize(model);
 
@@ -102,11 +114,11 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Narrows the overlay to what THIS caller may read. Identity is projected through the
-        /// shared <see cref="IBifrostAuthContextFactory"/> — the same seam every other transport
-        /// gate uses, so the projection cannot drift — and the projection is applied by
-        /// <see cref="AppMetadataVisibility"/> using the evaluator the query path calls
-        /// (.claude/rules/protocol-adapter-security.md invariant 4).
+        /// Narrows the overlay to what THIS caller may read, from the <paramref name="userContext"/>
+        /// already projected through the shared <see cref="BifrostIdentityGate"/> — the same
+        /// <see cref="IBifrostAuthContextFactory"/> seam every other transport gate uses, so the
+        /// projection cannot drift — applied by <see cref="AppMetadataVisibility"/> using the
+        /// evaluator the query path calls (.claude/rules/protocol-adapter-security.md invariant 4).
         ///
         /// <para>Filtering needs a schema model to authorize against. When no
         /// <see cref="IQueryIntentExecutor"/> is registered, this process hosts no Bifrost data
@@ -116,7 +128,8 @@ namespace BifrostQL.Server
         /// resolved, the request fails rather than silently degrading to an unfiltered
         /// overlay.</para>
         /// </summary>
-        private async Task<AppMetadataModel> FilterForCallerAsync(HttpContext context, AppMetadataModel overlay)
+        private async Task<AppMetadataModel> FilterForCallerAsync(
+            HttpContext context, AppMetadataModel overlay, IDictionary<string, object?> userContext)
         {
             if (overlay.Entities.Count == 0)
                 return overlay;
@@ -125,7 +138,6 @@ namespace BifrostQL.Server
             if (reads is null)
                 return overlay;
 
-            var userContext = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
             var model = await reads.GetModelAsync(_options.GraphQlEndpoint);
             return AppMetadataVisibility.Project(overlay, model, userContext);
         }

@@ -90,15 +90,31 @@ public sealed class AppMetadataConformanceTests : IAsyncLifetime
     public async Task An_identity_the_shared_factory_cannot_project_never_receives_the_overlay()
     {
         // A token from an OIDC issuer this deployment never mapped. IsAuthenticated is true, so
-        // the gate lets it past — the projection is what must stop it. The requirement is only
-        // that NO overlay reaches the caller; the endpoint currently satisfies it by letting the
-        // projection fault propagate rather than answering 401 the way /_saved-objects does.
+        // the gate lets it past — the projection is what must stop it, and no overlay may reach
+        // the caller.
         var client = await StartAsync(registerDataPath: true, authFactory: new ThrowingAuthFactory());
 
         var body = await SafeGetAsync(client, Authenticated("/_app-metadata"));
 
         body.Should().NotContain("main.members",
             "an identity the shared seam cannot project must never be served the overlay");
+    }
+
+    [Fact]
+    public async Task An_identity_the_shared_factory_cannot_project_is_refused_with_401_not_a_host_fault()
+    {
+        // Serving nothing is necessary but not sufficient. This endpoint used to satisfy the fact
+        // above by letting the projection fault ESCAPE the middleware to the host: a 500, and a
+        // stack trace wherever a developer exception page is enabled — invariant 1's shape, an
+        // unhandled fault reaching the host on an identity-dependent path. The sibling
+        // /_saved-objects gate catches the identical fault and answers 401; both now go through
+        // ONE shared gate, so the two cannot drift apart again.
+        var client = await StartAsync(registerDataPath: true, authFactory: new ThrowingAuthFactory());
+
+        using var response = await client.SendAsync(Authenticated("/_app-metadata"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "an unprojectable identity is refused at the gate, not escalated into a host fault");
     }
 
     // ---- helpers ---------------------------------------------------------

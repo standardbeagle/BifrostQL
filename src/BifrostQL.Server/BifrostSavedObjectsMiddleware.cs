@@ -60,7 +60,15 @@ namespace BifrostQL.Server
                 return;
             }
 
-            if (_options.RequireAuth && !HasBifrostIdentity(context))
+            // Identity through the SHARED gate — the same seam every other transport gate uses.
+            // An IsAuthenticated flag on its own is not an identity: a subject-less principal, or
+            // one from an OIDC issuer with no registered claim mapper, projects to an EMPTY context
+            // (or throws), and either must be a 401 here exactly as it is on the GraphQL, binary,
+            // gRPC and MCP gates. A projection FAULT is refused even when RequireAuth is cleared —
+            // opting out of authentication is not opting into accepting a broken credential.
+            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            if (outcome == BifrostIdentityOutcome.Unprojectable
+                || (_options.RequireAuth && outcome != BifrostIdentityOutcome.Projected))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
@@ -86,30 +94,6 @@ namespace BifrostQL.Server
             catch (SavedObjectVersionConflictException ex)
             {
                 await WriteError(context, StatusCodes.Status409Conflict, ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Projects the caller through the SHARED <see cref="IBifrostAuthContextFactory"/> — the same
-        /// seam every other transport gate uses — and fails closed. An <c>IsAuthenticated</c> flag on
-        /// its own is not an identity: a subject-less principal, or one from an OIDC issuer with no
-        /// registered claim mapper, projects to an EMPTY context (or throws), and either must be a
-        /// 401 here exactly as it is on the GraphQL, binary, gRPC, and MCP gates. This endpoint had
-        /// no identity projection at all.
-        /// </summary>
-        private static bool HasBifrostIdentity(HttpContext context)
-        {
-            if (!(context.User?.Identity?.IsAuthenticated ?? false))
-                return false;
-
-            try
-            {
-                return BifrostAuthContextFactory.Resolve(context).CreateUserContext(context).Count > 0;
-            }
-            catch
-            {
-                // Unmapped issuer / malformed principal — fail closed, never fall through as authorized.
-                return false;
             }
         }
 

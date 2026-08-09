@@ -1,6 +1,8 @@
 using System.Reflection;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.SavedObjects;
 using BifrostQL.Server;
+using BifrostQL.UI.Vault;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.UI.Web
@@ -81,6 +83,14 @@ namespace BifrostQL.UI.Web
             // Binary WebSocket transport engine — required by UseBifrostBinary below.
             builder.Services.AddBifrostEngine();
 
+            // Saved objects (the designer's saved queries) live on disk beside the
+            // vault, so they survive restarts and follow --vault when it relocates the
+            // config directory.
+            var savedObjectsDir = state.VaultPath is { Length: > 0 } vaultPath
+                ? Path.GetDirectoryName(Path.GetFullPath(vaultPath)) ?? VaultStore.DefaultConfigDir
+                : VaultStore.DefaultConfigDir;
+            builder.Services.AddBifrostSavedObjects(new FileSavedObjectStore(savedObjectsDir));
+
             builder.Services.AddCors();
             builder.Services.AddEndpointsApiExplorer();
 
@@ -105,6 +115,15 @@ namespace BifrostQL.UI.Web
                 .AllowAnyMethod()
                 .AllowAnyHeader()
                 .SetIsOriginAllowed(_ => false));
+
+            // /_saved-objects must be registered BEFORE the static-file and SPA-fallback
+            // handlers below. Without it the designer's GET /_saved-objects/query fell
+            // through to index.html and the rail rendered the browser's raw JSON-parse
+            // SyntaxError. RequireAuth is cleared to match this host's posture: it runs
+            // with BifrostQL:DisableAuth, so no request ever carries a Bifrost identity
+            // and the default-closed gate would 401 every call. As with the vault and
+            // SSH APIs, that posture is what --expose warns about.
+            app.UseBifrostSavedObjects(o => o.RequireAuth = false);
 
             app.MapMetadataEndpoints(state);
             app.MapConnectionEndpoints(state);

@@ -97,7 +97,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     Console.WriteLine($"BifrostQL server started at {serverUrl}");
     if (expose)
         Console.WriteLine("WARNING: --expose binds 0.0.0.0 with authentication disabled. " +
-                          "The GraphQL, connection, SSH, and vault APIs are reachable by any host on the LAN.");
+                          "The GraphQL, connection, SSH, vault, and saved-object APIs are reachable by any host on the LAN.");
     if (!string.IsNullOrEmpty(connectionString))
     {
         Console.WriteLine($"GraphQL endpoint: {localUrl}/graphql");

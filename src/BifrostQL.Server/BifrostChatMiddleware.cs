@@ -291,8 +291,10 @@ namespace BifrostQL.Server
             {
                 // Chat metadata/config faults (no chat pair, title without a
                 // chat-title column) are deployment misconfiguration — loud, not 4xx.
+                // The message is NOT wire-safe (invariant 3): it can name tables, columns and
+                // connector internals. It is logged above; the wire gets an adapter-owned string.
                 _logger.LogError(ex, "Chat conversation create failed on configuration.");
-                await WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "configuration-error", ex.Message);
+                await WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "configuration-error", InternalMessage);
             }
         }
 
@@ -367,9 +369,11 @@ namespace BifrostQL.Server
                 {
                     // Connector misconfiguration (tool-name collisions, invalid tool
                     // names/schemas) is a deployment fault — loud, before any persist.
+                    // Message logged, never forwarded: connector faults name tools and schemas
+                    // (invariant 3).
                     _logger.LogError(ex, "Chat connector tool-set build failed on configuration.");
                     await WriteErrorAsync(context, StatusCodes.Status500InternalServerError,
-                        "configuration-error", ex.Message);
+                        "configuration-error", InternalMessage);
                     return;
                 }
 
@@ -465,9 +469,10 @@ namespace BifrostQL.Server
             catch (InvalidOperationException ex)
             {
                 // Connector/model misconfiguration is a deployment fault — loud.
+                // The table name belongs in the log, not on the wire (invariant 3).
                 _logger.LogError(ex, "Chat media fetch for table {Table} failed on configuration.", tableName);
                 await WriteErrorAsync(context, StatusCodes.Status500InternalServerError,
-                    "configuration-error", ex.Message);
+                    "configuration-error", InternalMessage);
             }
         }
 
@@ -775,19 +780,45 @@ namespace BifrostQL.Server
         private static Task WriteNotFoundAsync(HttpContext context) =>
             WriteErrorAsync(context, StatusCodes.Status404NotFound, "not-found", "Conversation not found.");
 
+        /// <summary>Adapter-owned, client-facing message for an authorization denial.</summary>
+        private const string DeniedMessage = "Access is denied.";
+
+        /// <summary>Adapter-owned, client-facing message for an internal failure.</summary>
+        private const string InternalMessage = "The request could not be completed.";
+
         /// <summary>
         /// Maps store failures raised BEFORE the SSE stream started to HTTP codes:
         /// the typed not-found is 404 (cross-tenant and nonexistent identical), an
-        /// authorization denial (tenant/policy) is 403, anything else is 500 with the
-        /// error's authored, transport-safe message.
+        /// authorization denial (tenant/policy) is 403, anything else is 500.
+        ///
+        /// <para>The STATUS carries the whole client-facing signal; the MESSAGE is always
+        /// one this adapter owns. A <see cref="BifrostExecutionError"/> message is never
+        /// forwarded verbatim (invariant 3): no type-level signal separates a curated one
+        /// from one carrying schema or infrastructure detail, and
+        /// <c>TenantFilterTransformer</c> is the proof — it tags its denial with the same
+        /// <see cref="BifrostExecutionError.AccessDeniedCode"/> the policy transformer uses
+        /// while embedding the qualified table name and the tenant context-key name. The
+        /// 5xx family is worse still: <c>ConnectionFailed</c>/<c>SchemaError</c> embed
+        /// caller-supplied detail, and <c>FromDatabaseException</c> surfaces raw driver text
+        /// whenever <c>BIFROST_EXPOSE_DB_ERRORS</c> is set. Full detail is logged
+        /// server-side, at the level the condition deserves.</para>
         /// </summary>
-        private static Task WriteExecutionErrorAsync(HttpContext context, BifrostExecutionError ex) => ex switch
+        private Task WriteExecutionErrorAsync(HttpContext context, BifrostExecutionError ex)
         {
-            ChatConversationNotFoundException => WriteNotFoundAsync(context),
-            _ when ex.ErrorCode == BifrostExecutionError.AccessDeniedCode =>
-                WriteErrorAsync(context, StatusCodes.Status403Forbidden, "denied", ex.Message),
-            _ => WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "execution-error", ex.Message),
-        };
+            if (ex is ChatConversationNotFoundException)
+                return WriteNotFoundAsync(context);
+
+            if (ex.ErrorCode == BifrostExecutionError.AccessDeniedCode)
+            {
+                // Expected under normal operation (a cross-tenant or unscoped caller), so
+                // Debug — it must not fill an error log with routine denials.
+                _logger.LogDebug(ex, "Chat request denied by an authorization transformer.");
+                return WriteErrorAsync(context, StatusCodes.Status403Forbidden, "denied", DeniedMessage);
+            }
+
+            _logger.LogError(ex, "Chat request failed during execution.");
+            return WriteErrorAsync(context, StatusCodes.Status500InternalServerError, "execution-error", InternalMessage);
+        }
 
         private static Task WriteErrorAsync(HttpContext context, int statusCode, string code, string message) =>
             WriteJsonAsync(context, statusCode, new { code, message });

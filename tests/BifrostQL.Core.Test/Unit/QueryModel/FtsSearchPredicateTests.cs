@@ -34,14 +34,18 @@ public class FtsSearchPredicateTests
                 .WithMetadata(MetadataKeys.Fts.Search, "Title,Body"))
             .Build();
 
+    // The alias defaults to the table name, which is what every case below that does not
+    // care about aliasing wants. Note that passing "Articles" makes a qualified reference
+    // and a bare one INDISTINGUISHABLE in the emitted text — which is why the alias tests
+    // further down pass a DIFFERENT alias.
     private static (string sql, IReadOnlyList<SqlParameterInfo> parameters) RenderSearch(
-        ISqlDialect dialect, string search)
+        ISqlDialect dialect, string search, string alias = "Articles")
     {
         var model = SearchableModel();
         var filter = TableFilter.FromObject(
             new Dictionary<string, object?> { { FilterOperators.Search, search } }, "Articles");
         var parameters = new SqlParameterCollection();
-        var rendered = filter.ToSqlParameterized(model, dialect, parameters, "Articles");
+        var rendered = filter.ToSqlParameterized(model, dialect, parameters, alias);
         return (rendered.Sql, rendered.Parameters.ToList());
     }
 
@@ -132,9 +136,11 @@ public class FtsSearchPredicateTests
     {
         // Structural coverage for MySQL (the harness parser cannot model IN BOOLEAN MODE):
         // MATCH over the configured columns, boolean mode (so SQL-level AND honors the
-        // pinned multi-term semantic), one bound parameter per term.
+        // pinned multi-term semantic), one bound parameter per term. The columns are
+        // alias-qualified — this case's alias is the table name, and it previously pinned
+        // the UNQUALIFIED shape, which is what let three dialects drop the alias entirely.
         var (sql, parameters) = RenderSearch(MySqlDialect.Instance, "quick brown");
-        sql.Should().Contain("MATCH(`Title`, `Body`) AGAINST(@p0 IN BOOLEAN MODE)");
+        sql.Should().Contain("MATCH(`Articles`.`Title`, `Articles`.`Body`) AGAINST(@p0 IN BOOLEAN MODE)");
         sql.Should().Contain("AGAINST(@p1 IN BOOLEAN MODE)");
         parameters.Should().HaveCount(2);
     }
@@ -194,6 +200,56 @@ public class FtsSearchPredicateTests
 
         act.Should().Throw<BifrostExecutionError>().WithMessage("*single-column primary key*");
     }
+
+    // ---- table-alias qualification -------------------------------------------------
+    //
+    // A _search predicate is not always rendered into a single-table SELECT: it can land
+    // in a relationship sub-query, a self-join, or beside another table exposing the same
+    // column names. Every dialect must therefore qualify its column references with the
+    // alias it was given. The fixture above defaults the alias to the TABLE NAME, which
+    // makes a qualified and an unqualified reference render identically — so these cases
+    // pass a distinct alias, which is the only way the difference is observable.
+
+    [Theory]
+    [MemberData(nameof(Dialects))]
+    public void Search_QualifiesEveryColumnReferenceWithTheGivenAlias(ISqlDialect dialect, SqlFlavor flavor)
+    {
+        var (sql, _) = RenderSearch(dialect, "quick", alias: "j0");
+
+        var qualified = $"{dialect.EscapeIdentifier("j0")}.";
+        sql.Should().Contain(qualified,
+            "the search predicate must reference the aliased table, not a bare column name");
+
+        // No column of the searchable set may appear unqualified. Checked per column so a
+        // dialect that qualifies one reference and not another cannot pass.
+        foreach (var column in SearchableColumnReferences(dialect, flavor))
+        {
+            sql.Replace(qualified + column, "").Should().NotContain(column,
+                $"every reference to {column} must carry the alias");
+        }
+        _ = flavor;
+    }
+
+    [Theory]
+    [MemberData(nameof(ParsableDialects))]
+    public void Search_WithDistinctAlias_GeneratesSyntacticallyValidSql(ISqlDialect dialect, SqlFlavor flavor)
+    {
+        var (sql, _) = RenderSearch(dialect, "quick brown", alias: "j0");
+        var tableRef = dialect.TableReference(null, "Articles");
+
+        SqlSyntax.AssertValid(
+            $"SELECT * FROM {tableRef} AS {dialect.EscapeIdentifier("j0")} WHERE {sql}", flavor,
+            "the aliased full-text predicate must be valid SQL for the engine");
+    }
+
+    /// <summary>
+    /// The identifiers each dialect's predicate must qualify: the searchable columns for
+    /// the three that reference them directly, and the correlating key column for SQLite
+    /// (whose predicate references the companion FTS5 table instead).
+    /// </summary>
+    private static IEnumerable<string> SearchableColumnReferences(ISqlDialect dialect, SqlFlavor flavor)
+        => (flavor == SqlFlavor.Sqlite ? new[] { "Id" } : new[] { "Title", "Body" })
+            .Select(dialect.EscapeIdentifier);
 
     [Fact]
     public void Search_Postgres_PhraseUsesPhraseToTsquery()

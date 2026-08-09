@@ -59,7 +59,9 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
     {
         RequireSearchable(request);
         var start = request.Parameters.Parameters.Count();
-        var columnList = string.Join(", ", request.ColumnNames.Select(EscapeIdentifier));
+        // Alias-qualified: MATCH's columns must all resolve to the one indexed table,
+        // which a bare name does not guarantee once another table is in scope.
+        var columnList = string.Join(", ", request.ColumnNames.Select(c => SearchColumnRef(request, c)));
 
         var predicates = request.Terms.Select(term =>
         {

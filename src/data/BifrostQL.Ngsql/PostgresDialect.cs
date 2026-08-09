@@ -175,8 +175,10 @@ public sealed class PostgresDialect : StandardConcatDialectBase
         RequireSearchable(request);
         var start = request.Parameters.Parameters.Count();
 
+        // Alias-qualified so the tsvector is built from the searched table's columns and
+        // not from a same-named column of another relation in scope.
         var doc = string.Join(" || ' ' || ",
-            request.ColumnNames.Select(c => $"coalesce({EscapeIdentifier(c)}, '')"));
+            request.ColumnNames.Select(c => $"coalesce({SearchColumnRef(request, c)}, '')"));
 
         string? langRef = null;
         if (!string.IsNullOrWhiteSpace(request.Language))

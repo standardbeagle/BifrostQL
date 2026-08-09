@@ -65,9 +65,7 @@ public sealed class SqliteDialect : StandardConcatDialectBase
         var start = request.Parameters.Parameters.Count();
         var ftsTable = EscapeIdentifier($"{request.TableName}_fts");
         var rowId = EscapeIdentifier("rowid");
-        var keyRef = request.TableAlias is null
-            ? EscapeIdentifier(request.KeyColumnNames[0])
-            : $"{EscapeIdentifier(request.TableAlias)}.{EscapeIdentifier(request.KeyColumnNames[0])}";
+        var keyRef = SearchColumnRef(request, request.KeyColumnNames[0]);
 
         var predicates = request.Terms.Select(term =>
         {

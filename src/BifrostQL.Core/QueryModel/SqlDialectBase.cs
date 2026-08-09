@@ -253,6 +253,25 @@ public abstract class SqlDialectBase : ISqlDialect
     /// <see cref="BifrostExecutionError"/> rather than letting an empty column list splice
     /// into invalid SQL.
     /// </summary>
+    /// <summary>
+    /// Renders one column reference for a <c>_search</c> predicate, qualified by the
+    /// request's table alias when it has one.
+    ///
+    /// A <c>_search</c> predicate does not always sit in a single-table SELECT: it can
+    /// land inside a relationship sub-query, a self-referencing join, or beside another
+    /// table's columns, where a bare column name is ambiguous — MySQL's
+    /// <c>MATCH(cols)</c> and SQL Server's <c>CONTAINS((cols), …)</c> require every
+    /// column to resolve to the indexed table, and Postgres's <c>to_tsvector</c> over a
+    /// bare column resolves against whichever relation happens to expose that name. Three
+    /// of the four dialects emitted the bare name and so bound to the wrong table or
+    /// failed outright; SQLite already qualified its key reference. Routing every dialect
+    /// through this one helper is what keeps them from diverging again.
+    /// </summary>
+    protected string SearchColumnRef(FtsPredicateRequest request, string columnName)
+        => string.IsNullOrEmpty(request.TableAlias)
+            ? EscapeIdentifier(columnName)
+            : $"{EscapeIdentifier(request.TableAlias)}.{EscapeIdentifier(columnName)}";
+
     protected static void RequireSearchable(FtsPredicateRequest request)
     {
         if (request.Terms.Count == 0)

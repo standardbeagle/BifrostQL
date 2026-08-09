@@ -142,7 +142,9 @@ public sealed class SqlServerDialect : SqlDialectBase
     {
         RequireSearchable(request);
         var start = request.Parameters.Parameters.Count();
-        var columnList = string.Join(", ", request.ColumnNames.Select(EscapeIdentifier));
+        // Alias-qualified so the predicate resolves to the indexed table when it is
+        // rendered beside another (a relationship sub-query, a self-join).
+        var columnList = string.Join(", ", request.ColumnNames.Select(c => SearchColumnRef(request, c)));
 
         var predicates = request.Terms.Select(term =>
         {

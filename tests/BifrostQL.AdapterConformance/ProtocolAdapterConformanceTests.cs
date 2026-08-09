@@ -6,6 +6,7 @@ using BifrostQL.Server;
 using BifrostQL.Server.Auth;
 using BifrostQL.Sqlite;
 using FluentAssertions;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -140,6 +141,28 @@ namespace BifrostQL.AdapterConformance
         protected abstract void RegisterAdapter(BifrostMultiDbOptions options);
 
         /// <summary>
+        /// Extra service registrations the surface under test needs beyond the endpoint itself
+        /// (e.g. <c>AddBifrostEngine()</c> for the binary WebSocket transport, or a test
+        /// authentication scheme). Default: none — an <see cref="IProtocolAdapter"/> hosted by its
+        /// own connection handler needs nothing here.
+        /// </summary>
+        protected virtual void ConfigureAdapterServices(IServiceCollection services) { }
+
+        /// <summary>
+        /// The HTTP pipeline the surface under test needs mounted. Default: EMPTY — an
+        /// <see cref="IProtocolAdapter"/> is hosted by a Kestrel connection handler /
+        /// <c>IHostedService</c> and has no HTTP pipeline at all, which is why every existing
+        /// derivation leaves this alone.
+        ///
+        /// <para>A front door that IS HTTP middleware (the binary WebSocket transport at
+        /// <c>/bifrost-ws</c>) mounts itself here and is otherwise a full kit citizen: it executes
+        /// arbitrary reads/writes against the fixture tables through its own real wire, so every
+        /// fact applies unchanged. The hook exists so such a surface can derive the kit HONESTLY
+        /// rather than being excused from it for a hosting-shape reason.</para>
+        /// </summary>
+        protected virtual void ConfigureAdapterPipeline(IApplicationBuilder app) { }
+
+        /// <summary>
         /// Executes a read through the adapter's real request path and returns the
         /// decoded rows. Server-side rejections must propagate as exceptions whose
         /// message chain contains the server error text.
@@ -270,8 +293,9 @@ namespace BifrostQL.AdapterConformance
                         o.AddQueryObservers(new IQueryObserver[] { _sqlCapture });
                         RegisterAdapter(o);
                     });
+                    ConfigureAdapterServices(services);
                 });
-                web.Configure(_ => { });
+                web.Configure(ConfigureAdapterPipeline);
             });
             return await builder.StartAsync();
         }

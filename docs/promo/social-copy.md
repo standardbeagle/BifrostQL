@@ -11,6 +11,7 @@ the "Verified" and "Do not claim" sections below say exactly how far that goes.
 | `bifrostql-demo-1080x1350.mp4` | 1080x1350 portrait (4:5) | ~40s | Feed-native cut of the same demo |
 | `bifrostql-protocols-1920x1080.mp4` | 1920x1080 landscape | ~18s | Multi-protocol demo — the strongest differentiator |
 | `bifrostql-protocols-1080x1350.mp4` | 1080x1350 portrait (4:5) | ~18s | Feed-native cut of the same |
+| `bifrostql-desktop-builders-1920x1080.mp4` | 1920x1080 landscape | ~39s | The desktop-only builders — SQL console, visual query builder, form builder |
 | `protocol-transcript.txt` | text | — | The verbatim session the protocol video renders |
 
 Both landscape cuts are captioned with burned-in text and read fine muted.
@@ -26,6 +27,15 @@ invented numbers.
 
 - **Edit:** one injected CSS rule hides the welcome screen's saved-connection
   list, which holds real customer hostnames. Nothing else is altered.
+
+**Desktop builders video.** The Photino desktop shell (`./bifrostui`) against the
+same SQLite database. These three panes are gated behind the desktop bridge and
+are unreachable over HTTP by design — the designer never calls the network — so
+they cannot appear in a browser capture and are absent from the demo video
+above.
+
+- **Edit:** none. It is driven by synthetic clicks because the webview exposes no
+  DOM to a harness, but nothing on screen is altered.
 
 **Protocol video.** A rendering of `protocol-transcript.txt` — a verbatim
 capture of a real session against a running host that exposes one SQLite
@@ -47,6 +57,15 @@ over real TCP sockets.
 7. Orders grid — 800 rows, sortable and paged
 8. Schema-generated edit form — required markers and FK pickers
 9. GraphiQL — `orders -> customers` and `orders -> order_items -> products`
+
+## What the desktop-builders video shows
+
+1. Raw SQL console — a real grouped/joined query, syntax highlighting, row count
+   and timing (`8 row(s) · 39 ms`), result grid, CSV/JSON export
+2. Visual query builder — two tables added from the palette, the join
+   `main.orders.(customer_id) = main.customers.(customer_id)` **derived from the
+   schema's foreign key**, not typed
+3. Form builder — the table picker listing every table in the model
 
 ## Verified before filming
 
@@ -71,6 +90,16 @@ Live, against the running stack:
   `WRONGPASS`; RESP writes disabled by default; `DROP TABLE` over pgwire →
   clean "only SELECT statements are supported" with the connection surviving;
   OData with no credentials → 401 **including `$metadata`**.
+- **Authorization, cross-protocol** (this is what earns the "same authorization
+  pipeline" line in the LinkedIn copy — it was written before it was checked).
+  With a role-qualified column policy on `products`
+  (`policy-read-deny: price,compare_at_price; policy-read-deny-roles: analyst`),
+  the same table read by two identities on three doors: the full identity reads
+  `price` over pgwire, RESP and OData; the `analyst` identity is refused it on
+  every one, while still reading the columns it is allowed. OData goes furthest —
+  the analyst's CSDL `$metadata` has no `price` property at all, so the column is
+  not merely denied but invisible, and `$select=price` comes back as an *unknown*
+  property rather than a denied one.
 
 Test suites run green alongside: 1,409 `BifrostQL.Server.Test` (covers the gRPC,
 S3 and Prometheus adapters not stood up live here) and 624 `edit-db`.
@@ -94,6 +123,15 @@ beat 5 uses **Products**, not Orders, for the foreign-key claim, because:
 - **pgwire TLS is client-initiated**, as in real Postgres: a client asking for
   `sslmode=disable` gets a plaintext session. The listener is loopback by
   default; anyone widening that posture needs TLS terminated in front.
+- **A column policy costs an RESP caller the whole row.** RESP has no column
+  projection, so `HGETALL` asks for every column and the read guard refuses the
+  lot: the analyst reads *nothing* from `products` over RESP while reading the
+  permitted columns fine over pgwire and OData. Do not describe column-level
+  policy as behaving uniformly across the doors — the enforcement is uniform, the
+  granularity is not.
+- **Declaring any policy on a table denies every non-admin caller until
+  `policy-actions` grants the action.** Worth knowing before demoing policy live;
+  it looks like a broken build.
 
 ## Caption — X / Twitter (product demo)
 

@@ -14,6 +14,7 @@ dotnet test
 dotnet test --filter "FullyQualifiedName=TestName"
 ./bifrostui "connection-string"  # Desktop UI
 dotnet run --project src/BifrostQL.Host  # Web server
+./scripts/kill-dev-processes.sh [--kill]  # 收此 checkout 之遊魂 dev processes（默認 dry-run）
 ```
 
 ### Test tiers: epic vs release

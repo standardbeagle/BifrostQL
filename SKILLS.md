@@ -543,6 +543,11 @@ dotnet test --filter "FullyQualifiedName=GqlObjectQuerySqlTest.TestJoinWithCompo
 
 # Run the Host web server
 dotnet run --project src/BifrostQL.Host
+
+# Reap this checkout's stray dev processes (E2E server, dotnet watch, Vite
+# watchers, orphaned Playwright browsers). Dry run by default.
+./scripts/kill-dev-processes.sh
+./scripts/kill-dev-processes.sh --kill
 ```
 
 ---

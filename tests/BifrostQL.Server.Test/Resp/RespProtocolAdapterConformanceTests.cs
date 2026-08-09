@@ -33,8 +33,9 @@ namespace BifrostQL.Server.Test.Resp
     /// so the two INSERT-specific facts are skipped honestly rather than faked through an update.</para>
     ///
     /// <para><b>Sanitized rejections.</b> Per protocol-adapter-security invariant 3 the RESP handler maps
-    /// every unexpected server-side fault (tenant-context-required, policy-read-deny) to a single generic
-    /// <c>ERR internal error</c>; the specific reason is logged server-side, never sent to the client. So
+    /// every unexpected server-side fault to a single generic <c>ERR internal error</c>, and per invariant
+    /// 10 it maps an authorization denial (tenant-context-required, policy-read-deny) by CONDITION to
+    /// <c>-NOPERM</c>. Either way the specific reason is logged server-side, never sent to the client. So
     /// <see cref="ExpectedRejectionFragment"/> is overridden to that sanitized wire text — the fail-closed
     /// facts still prove the read is REJECTED (the wire returns <c>-ERR</c> and <see cref="ExecuteReadAsync"/>
     /// throws — zero rows delivered), while honoring the no-leak contract, exactly like pgwire.</para>
@@ -57,8 +58,14 @@ namespace BifrostQL.Server.Test.Resp
 
         // The wire withholds the specific rejection reason (invariant 3); the fail-closed facts assert
         // the sanitized text the client actually receives.
+        // Both fail-closed conditions the kit exercises (tenant-context-required and
+        // policy-read-deny) are authorization denials, and the RESP error funnel maps that
+        // CONDITION to -NOPERM rather than the generic internal-error bucket: a denial is
+        // terminal, and reporting it as a server fault invites the client to retry
+        // something that can never succeed. The reason is still withheld — NOPERM names no
+        // table or column — so invariant 3 holds; this only makes the category honest.
         protected override string ExpectedRejectionFragment(string canonicalServerFragment)
-            => RespProtocol.InternalError;
+            => RespProtocol.AccessDeniedError;
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

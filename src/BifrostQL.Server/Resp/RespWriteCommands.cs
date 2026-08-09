@@ -67,7 +67,7 @@ namespace BifrostQL.Server.Resp
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 LogFailure(context, ex);
-                return RespValue.Err(RespProtocol.InternalError);
+                return RespValue.Err(RespCommandError.Map(ex));
             }
         }
 

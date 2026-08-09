@@ -78,7 +78,7 @@ namespace BifrostQL.Server.Resp
                 (context.Services.GetService(typeof(ILoggerFactory)) as ILoggerFactory)
                     ?.CreateLogger("BifrostQL.Server.Resp." + GetType().Name)
                     .LogWarning(ex, "resp {Command} command failed", Name);
-                return RespValue.Err(RespProtocol.InternalError);
+                return RespValue.Err(RespCommandError.Map(ex));
             }
         }
 

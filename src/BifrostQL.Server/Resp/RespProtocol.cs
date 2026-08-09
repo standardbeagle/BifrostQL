@@ -175,6 +175,15 @@ namespace BifrostQL.Server.Resp
         public const string InternalError = "ERR internal error";
 
         /// <summary>
+        /// Refusal for a command the authorization policy denied. Uses Redis's own
+        /// <c>-NOPERM</c> prefix, which clients already treat as a terminal permission
+        /// failure rather than a retryable server fault. Deliberately identifier-free: the
+        /// caller learns the category of the refusal, never which table or column it was
+        /// denied, so the error cannot enumerate a schema the caller cannot read.
+        /// </summary>
+        public const string AccessDeniedError = "NOPERM this user has no permissions to access the requested resource";
+
+        /// <summary>
         /// Refusal for a connection arriving when <see cref="RespWireOptions.MaxConnections"/> is
         /// already reached. Written on the raw socket at ACCEPT — before the codec reads a byte and
         /// before AUTH — then the connection closes. Redis answers over-limit clients with

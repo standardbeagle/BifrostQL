@@ -277,6 +277,77 @@ namespace BifrostQL.Server.Test.Resp
                 Ctx(services, session, "DEL", "users:1", "users:999"), CancellationToken.None);
 
             reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(1);
+            // The RESP integer reply is the count of keys that ACTUALLY deleted a row, which must
+            // survive the move to the batch API — TotalAffected, not the number of keys supplied.
+            executor.BatchIntents.Should().ContainSingle();
+        }
+
+        [Fact]
+        public async Task Del_MultipleKeys_RunsAsOneBatch_NotOneCommittedIntentPerKey()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespDelCommandHandler().HandleAsync(
+                Ctx(services, session, "DEL", "users:1", "users:2"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(2);
+
+            // A loop of single-row intents commits each key independently: N transactions and N
+            // round-trips, with no way to roll the earlier keys back. One batch = one transaction.
+            executor.Intents.Should().BeEmpty("a multi-key DEL must not issue per-key single intents");
+            var batch = executor.BatchIntents.Should().ContainSingle().Which;
+            batch.Table.Should().Be("users");
+            batch.Actions.Should().HaveCount(2);
+            batch.Actions.Should().OnlyContain(a => a.Action == MutationIntentAction.Delete);
+            // Identity travels with the batch, so the pipeline narrows scope from the caller.
+            batch.UserContext.Should().ContainKey("tenantId");
+        }
+
+        [Fact]
+        public async Task Del_MultipleKeys_WhenOneKeyIsVetoed_DeletesNothing()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            // The SECOND key's write is vetoed (as a policy/tenant mutation transformer would).
+            // Looping one committed intent per key, the FIRST key's delete has already committed by
+            // then and cannot be undone — a partially applied DEL. As one batch it rolls back whole.
+            executor.FailBatchActionAtIndex = 1;
+
+            var reply = await new RespDelCommandHandler().HandleAsync(
+                Ctx(services, session, "DEL", "users:1", "users:2"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>();
+            executor.Row("users", 1).Should().NotBeNull("a vetoed batch must roll the earlier keys back");
+            executor.Row("users", 2).Should().NotBeNull();
+        }
+
+        [Fact]
+        public async Task Del_SingleKey_StillUsesASingleRowIntent()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            await new RespDelCommandHandler().HandleAsync(
+                Ctx(services, session, "DEL", "users:1"), CancellationToken.None);
+
+            // One key is already one transaction; wrapping it in a batch would buy nothing and
+            // would subject it to the table's batch-size machinery for no reason.
+            executor.Intents.Should().ContainSingle();
+            executor.BatchIntents.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task Del_KeysAcrossTables_BatchesPerTable()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespDelCommandHandler().HandleAsync(
+                Ctx(services, session, "DEL", "users:1", "order_items:10:2", "users:2"),
+                CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(3);
+
+            // MutationBatchIntent is per-table, so the maximum available atomicity is one batch per
+            // distinct table. Keys are grouped, not interleaved into per-key intents.
+            executor.Intents.Should().BeEmpty();
+            executor.BatchIntents.Should().HaveCount(2);
+            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(new[] { "users", "order_items" });
+            executor.BatchIntents.Single(b => b.Table == "users").Actions.Should().HaveCount(2);
         }
 
         [Fact]
@@ -535,9 +606,55 @@ namespace BifrostQL.Server.Test.Resp
             return Task.FromResult(new MutationIntentResult { Value = affected });
         }
 
+        /// <summary>
+        /// Recorded batch intents, and the switch that makes a batch FAIL midway so atomicity is
+        /// observable. A fake that could not fail partway through would make any "the batch rolls
+        /// back" assertion vacuous — the loop-per-key implementation would pass it too.
+        /// </summary>
+        public List<MutationBatchIntent> BatchIntents { get; } = new();
+
+        /// <summary>When set, the batch action at this index throws, as a transformer veto would.</summary>
+        public int? FailBatchActionAtIndex { get; set; }
+
+        /// <summary>
+        /// Models BatchMutationPipeline: every action runs inside ONE transaction, so a failure
+        /// anywhere rolls the whole batch back and the store is left exactly as it was.
+        /// </summary>
         public Task<MutationBatchIntentResult> ExecuteBatchAsync(
-            MutationBatchIntent intent, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("the RESP write slice does not use batch intents");
+            MutationBatchIntent intent, CancellationToken cancellationToken = default)
+        {
+            BatchIntents.Add(intent);
+            var table = _model.Tables.First(t => string.Equals(t.DbName, intent.Table, StringComparison.OrdinalIgnoreCase));
+            var keyColumns = table.KeyColumns.ToList();
+            var rows = _store[intent.Table];
+
+            // Snapshot for rollback: the batch commits as a unit or not at all.
+            var snapshot = rows.Select(r => new Dictionary<string, object?>(r, StringComparer.Ordinal)).ToList();
+
+            var totalAffected = 0;
+            for (var i = 0; i < intent.Actions.Count; i++)
+            {
+                if (FailBatchActionAtIndex == i)
+                {
+                    _store[intent.Table] = snapshot; // roll back
+                    throw new BifrostExecutionError("batch action vetoed");
+                }
+
+                var action = intent.Actions[i];
+                var match = rows.FirstOrDefault(r =>
+                    keyColumns.All(c =>
+                        action.Data.TryGetValue(c.ColumnName, out var v) && Token(r[c.ColumnName]) == Token(v))
+                    && Visible(r, intent.UserContext));
+                if (match is null)
+                    continue;
+
+                if (action.Action == MutationIntentAction.Delete) rows.Remove(match);
+                else foreach (var kv in action.Data) match[kv.Key] = kv.Value;
+                totalAffected++;
+            }
+
+            return Task.FromResult(new MutationBatchIntentResult { TotalAffected = totalAffected });
+        }
 
         private static bool Visible(IReadOnlyDictionary<string, object?> row, IDictionary<string, object?> userContext) =>
             !row.ContainsKey("tenant_id")

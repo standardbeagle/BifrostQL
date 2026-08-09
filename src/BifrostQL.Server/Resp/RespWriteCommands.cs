@@ -208,13 +208,39 @@ namespace BifrostQL.Server.Resp
                 keys.Add(parse.Key!);
             }
 
-            var deleted = 0;
-            foreach (var key in keys)
+            // ONE key is already one transaction, so it stays a single-row intent: wrapping it in a
+            // batch would buy no atomicity and would subject it to the table's batch-size machinery
+            // for nothing.
+            if (keys.Count == 1)
             {
-                var result = await executor.ExecuteAsync(
-                    RespWriteEngine.DeleteIntent(key, context.Session.UserContext, context.Endpoint), cancellationToken);
-                deleted += RespWriteEngine.DeletedRowCount(result);
+                var single = await executor.ExecuteAsync(
+                    RespWriteEngine.DeleteIntent(keys[0], context.Session.UserContext, context.Endpoint), cancellationToken);
+                return RespValue.Int(RespWriteEngine.DeletedRowCount(single));
             }
+
+            // MULTI-KEY: one batch per table, NOT one committed intent per key. Looping single-row
+            // intents commits each key independently, so a transformer veto or database failure on
+            // key N leaves keys 1..N-1 already deleted with no way to undo them — a partially
+            // applied DEL the caller is never told about — and costs N round-trips.
+            // ExecuteBatchAsync runs every action of a batch inside ONE transaction, so a veto
+            // anywhere rolls the whole batch back.
+            //
+            // MutationBatchIntent is per-table, so keys spanning tables are GROUPED into one batch
+            // each: that is the maximum atomicity the seam offers. A DEL naming two tables is
+            // therefore atomic within each table but not across them — stated plainly rather than
+            // implied, because the RESP key space lets a client mix tables freely.
+            var deleted = 0;
+            foreach (var group in keys.GroupBy(k => k.Table.DbName, StringComparer.Ordinal))
+            {
+                var result = await executor.ExecuteBatchAsync(
+                    RespWriteEngine.DeleteBatchIntent(group.Key, group, context.Session.UserContext, context.Endpoint),
+                    cancellationToken);
+                deleted += result.TotalAffected;
+            }
+
+            // The RESP contract for DEL is the count of keys that ACTUALLY deleted a row — a key
+            // whose row is missing or narrowed out of the caller's scope by the pipeline affects
+            // zero rows and is not counted. TotalAffected preserves that exactly.
             return RespValue.Int(deleted);
         }
     }
@@ -254,6 +280,31 @@ namespace BifrostQL.Server.Resp
                 Action = MutationIntentAction.Delete,
                 Data = new Dictionary<string, object?>(),
                 PrimaryKey = key.KeyValues,
+                UserContext = new Dictionary<string, object?>(userContext),
+                Endpoint = endpoint,
+            };
+
+        /// <summary>
+        /// Builds the multi-key DELETE batch for ONE table: every key becomes a Delete action whose
+        /// Data is the positional primary key resolved through
+        /// <see cref="MutationArgumentBinder.ResolvePrimaryKey"/> — the SAME zip-against-KeyColumns
+        /// the single-row path uses, so composite keys stay in schema order and the arity guard is
+        /// not reimplemented here. The adapter supplies ONLY the key plus the session identity and
+        /// builds no predicate of its own; the pipeline narrows scope from the identity, so an
+        /// out-of-scope key matches zero rows structurally (invariant 7).
+        /// </summary>
+        public static MutationBatchIntent DeleteBatchIntent(
+            string table, IEnumerable<RespKey> keys, IDictionary<string, object?> userContext, string? endpoint) =>
+            new()
+            {
+                Table = table,
+                Actions = keys
+                    .Select(key => new MutationBatchAction(
+                        MutationIntentAction.Delete,
+                        MutationArgumentBinder.ResolvePrimaryKey(key.Table, key.KeyValues)
+                            ?? throw new BifrostExecutionError(
+                                $"RESP DEL key for '{table}' resolved no primary key values.")))
+                    .ToList(),
                 UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
             };

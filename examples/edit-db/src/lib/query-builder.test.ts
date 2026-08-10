@@ -17,10 +17,11 @@ import {
     resolveDrillDown,
     unwrapDrillDownPage,
     canFlatFilterDrill,
+    pickIndexedSortColumn,
     type ColumnFilterValue,
 } from './query-builder';
 import { buildPkEqFilter } from './row-id';
-import type { Table, SchemaContextValue, Column, Join } from '../types/schema';
+import type { Table, SchemaContextValue, Column, Join, TableIndex } from '../types/schema';
 
 // ── Test Fixtures ──────────────────────────────────────────────
 
@@ -1448,5 +1449,73 @@ describe('single-join label selection with aliased relationship fields', () => {
         const q = buildQuery(plain, makeSchema([plain, addresses]), '', [], undefined)!;
 
         expect(q).toContain('billing_address_id addresses {');
+    });
+});
+
+/**
+ * Index-aware default sort. A keyless table's fabricated first-column sort
+ * re-sorts the entire table per page (8.7s/page observed on 13M rows); the
+ * leading column of any index pages in milliseconds. Preference order is
+ * clustered (the physical row order) > unique > any, and an index leading on
+ * an unsortable (LOB/JSON) column must be passed over, not partially used.
+ */
+describe('pickIndexedSortColumn', () => {
+    const col = (name: string, dbType = 'varchar'): Column => ({
+        dbName: name, graphQlName: name, name, label: name,
+        paramType: 'String', dbType, isPrimaryKey: false, isIdentity: false,
+        isNullable: true, isReadOnly: false, metadata: {},
+    } as Column);
+
+    const tableWith = (indexes: TableIndex[], columns: Column[]): Table => ({
+        dbName: 'T', graphQlName: 't', name: 't', label: 'T', labelColumn: 'a',
+        primaryKeys: [], isEditable: false, metadata: {}, columns,
+        multiJoins: [], singleJoins: [], indexes,
+    } as Table);
+
+    const ix = (name: string, columns: string[], flags: Partial<TableIndex> = {}): TableIndex => ({
+        name, isUnique: false, isClustered: false, isPrimaryKey: false, columns, ...flags,
+    });
+
+    it('prefers the clustered index leading column over unique and plain ones', () => {
+        const table = tableWith(
+            [ix('plain', ['c']), ix('uq', ['b'], { isUnique: true }), ix('cl', ['a'], { isClustered: true })],
+            [col('a'), col('b'), col('c')],
+        );
+        expect(pickIndexedSortColumn(table)).toBe('a');
+    });
+
+    it('falls back to a unique index when nothing is clustered', () => {
+        const table = tableWith(
+            [ix('plain', ['c']), ix('uq', ['b'], { isUnique: true })],
+            [col('b'), col('c')],
+        );
+        expect(pickIndexedSortColumn(table)).toBe('b');
+    });
+
+    it('uses only the LEADING key column of a composite index', () => {
+        const table = tableWith(
+            [ix('comp', ['lead', 'rest'], { isClustered: true })],
+            [col('lead'), col('rest')],
+        );
+        expect(pickIndexedSortColumn(table)).toBe('lead');
+    });
+
+    it('passes over an index whose leading column is not sortable', () => {
+        const table = tableWith(
+            [ix('cl', ['blob'], { isClustered: true }), ix('plain', ['a'])],
+            [col('blob'), col('a')],
+        );
+        expect(pickIndexedSortColumn(table, (c) => c.name !== 'blob')).toBe('a');
+    });
+
+    it('returns null when the table reports no indexes (older server)', () => {
+        const table = tableWith([], [col('a')]);
+        delete (table as { indexes?: TableIndex[] }).indexes;
+        expect(pickIndexedSortColumn(table)).toBeNull();
+    });
+
+    it('returns null when no index leads on a known column', () => {
+        const table = tableWith([ix('ghost', ['gone'])], [col('a')]);
+        expect(pickIndexedSortColumn(table)).toBeNull();
     });
 });

@@ -3,7 +3,7 @@
  * Extracted from useDataTable for testability.
  */
 
-import type { Table, Column, Join, SchemaContextValue } from '../types/schema';
+import type { Table, Column, Join, SchemaContextValue, TableIndex } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult } from './row-id';
 import { coerceForGql } from './fk';
@@ -290,6 +290,42 @@ export function getPkTypes(table: Table): PkTypeInfo[] {
         name: pk,
         gqlType: byName.get(pk)?.paramType?.replace("!", "") ?? "String",
     }));
+}
+
+/**
+ * Picks the best index-served sort column for a table with no usable primary
+ * key: the leading key column of the clustered index if any (it IS the row
+ * order — sorting by it is free), else of a unique index, else of any index.
+ * Only sortable columns qualify — an index leading on a LOB/JSON column can't
+ * drive the grid's ORDER BY. Returns null when no index leads on a sortable,
+ * visible column; the caller falls back to its positional heuristic. Sorting a
+ * large table by an unindexed column re-sorts every row on every page turn, so
+ * this choice is a correctness-of-experience matter, not a micro-optimization.
+ */
+export function pickIndexedSortColumn(
+    table: Table,
+    isSortable: (col: Column) => boolean = () => true,
+): string | null {
+    const indexes = table.indexes ?? [];
+    if (indexes.length === 0) return null;
+    const byName = new Map(table.columns.map((c) => [c.name, c] as const));
+    const leadOf = (ix: { columns: string[] }): string | null => {
+        const lead = ix.columns[0];
+        const col = lead ? byName.get(lead) : undefined;
+        return col && isSortable(col) ? col.name : null;
+    };
+    for (const pick of [
+        (ix: TableIndex) => ix.isClustered,
+        (ix: TableIndex) => ix.isUnique,
+        () => true,
+    ]) {
+        for (const ix of indexes) {
+            if (!pick(ix)) continue;
+            const lead = leadOf(ix);
+            if (lead) return lead;
+        }
+    }
+    return null;
 }
 
 /**

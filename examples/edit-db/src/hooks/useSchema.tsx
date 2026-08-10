@@ -45,6 +45,8 @@ interface DbSchemaItem {
     multiJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
     singleJoins: { name: string; fieldName?: string; sourceColumnNames: string[]; destinationTable: string; destinationColumnNames: string[] }[];
     manyToManyJoins?: ManyToManyJoin[];
+    // Carried onto Table by the `...s` spread below.
+    indexes?: { name: string; isUnique: boolean; isClustered: boolean; isPrimaryKey: boolean; columns: string[] }[];
 }
 
 interface DbSchemaResponse {

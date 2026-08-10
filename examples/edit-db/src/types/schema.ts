@@ -175,6 +175,27 @@ export interface Table {
   singleJoins: Join[];
   /** Many-to-many bridges through junction tables (optional; absent on older servers). */
   manyToManyJoins?: ManyToManyJoin[];
+  /** Database indexes (optional; absent on older servers). */
+  indexes?: TableIndex[];
+}
+
+/**
+ * A database index on a table, key columns in key order (GraphQL names).
+ * Lets the grid pick a default sort an index can serve — sorting a large
+ * table by an unindexed column re-sorts every row on every page.
+ * @interface TableIndex
+ */
+export interface TableIndex {
+  /** Index name in the database catalog. */
+  name: string;
+  /** True when the index enforces uniqueness (includes PK indexes). */
+  isUnique: boolean;
+  /** True when the index defines the physical row order — the cheapest sort. */
+  isClustered: boolean;
+  /** True when the index backs the primary key constraint. */
+  isPrimaryKey: boolean;
+  /** Key column GraphQL names in key order; the leading column can be sorted for free. */
+  columns: string[];
 }
 
 /**

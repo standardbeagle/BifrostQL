@@ -27,6 +27,7 @@ import {
     exportableColumns,
     buildPkEqVariables,
     getPkTypes,
+    pickIndexedSortColumn,
     resolveDrillDown,
     unwrapDrillDownPage,
     canFlatFilterDrill,
@@ -580,6 +581,12 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         if (!table) return 'id';
         const pk = getPkTypes(table)[0]?.name;
         if (pk && table.columns.some((c) => c.name === pk)) return pk;
+        // No PK: prefer the leading column of an index (clustered first — it is
+        // the physical row order — then unique, then any). An arbitrary column
+        // forces the database to re-sort the whole table on EVERY page: observed
+        // 8.7s/page on a 13M-row keyless table vs milliseconds on an indexed one.
+        const indexed = pickIndexedSortColumn(table, (c) => !isLargeValueColumn(c) && !isJsonColumn(c));
+        if (indexed) return indexed;
         const sortable = table.columns.find(
             (c) => !isLargeValueColumn(c) && !isJsonColumn(c),
         );

@@ -61,5 +61,12 @@ query dbSchema {
       targetColumnNames
       hasPayload
     }
+    indexes {
+      name
+      isUnique
+      isClustered
+      isPrimaryKey
+      columns
+    }
   }
 }`;

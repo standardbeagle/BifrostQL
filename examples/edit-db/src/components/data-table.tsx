@@ -448,18 +448,24 @@ export function DataTable<TData>({
                 </DropdownMenu>
                 </div>
             </div>
-            <div ref={scrollRef} className="relative flex-1 overflow-auto min-h-0" aria-busy={fetching || loading}>
-                {fetching && (
+            {/* Zero-height wrapper OUTSIDE the scroll container: the bar overlays the
+                grid's top edge without adding to the scrollable content height — a
+                sticky bar inside the container contributed its 2px and summoned a
+                vertical scrollbar on grids that otherwise fit exactly. */}
+            {fetching && (
+                <div className="relative h-0 z-20">
                     <div
                         data-testid="fetch-indicator"
                         role="progressbar"
                         aria-label="Loading page"
-                        className="sticky top-0 left-0 right-0 h-0.5 z-20 overflow-hidden bg-primary/20"
+                        className="absolute inset-x-0 top-0 h-0.5 overflow-hidden bg-primary/20"
                     >
-                        <div className="h-full w-1/3 bg-primary animate-pulse" style={{ animation: 'edit-db-indeterminate 1.2s ease-in-out infinite' }} />
+                        <div className="h-full w-1/3 bg-primary" style={{ animation: 'edit-db-indeterminate 1.2s ease-in-out infinite' }} />
                         <style>{'@keyframes edit-db-indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }'}</style>
                     </div>
-                )}
+                </div>
+            )}
+            <div ref={scrollRef} className="relative flex-1 overflow-auto min-h-0" aria-busy={fetching || loading}>
                 <Table style={{ tableLayout: 'fixed', width: table.getTotalSize() }}>
                     {/* Column widths live on <colgroup> under table-layout:fixed so
                         body cells don't each carry a width style — that keeps the

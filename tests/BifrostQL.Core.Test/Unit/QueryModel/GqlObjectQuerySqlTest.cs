@@ -572,9 +572,12 @@ public sealed class GqlObjectQuerySqlTest
         // Act
         query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
 
-        // Assert
+        // Assert — unfiltered on SQL Server takes the catalog-backed fast count
+        // (sys.partitions), with a true COUNT(*) as the ISNULL fallback for a
+        // caller whose permissions hide the catalog rows.
         sqls.Should().ContainKey("Users=>count");
-        sqls["Users=>count"].Sql.Should().StartWith("SELECT COUNT(*) FROM");
+        sqls["Users=>count"].Sql.Should().Contain("sys.partitions");
+        sqls["Users=>count"].Sql.Should().Contain("SELECT COUNT(*) FROM", "the fallback must be the honest count, never zero");
     }
 
     [Fact]

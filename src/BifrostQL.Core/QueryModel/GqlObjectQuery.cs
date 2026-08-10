@@ -256,7 +256,13 @@ namespace BifrostQL.Core.QueryModel
 
             if (IncludeResult)
             {
-                var countSql = $"SELECT COUNT(*) FROM {tableRef}";
+                // Unfiltered totals may use the dialect's catalog-backed count
+                // (SQL Server: sys.partitions) — COUNT(*) scans the table on
+                // every page turn. Any filter (user, tenant, soft-delete) must
+                // flow into a real COUNT(*): a catalog counter cannot see it.
+                var countSql = string.IsNullOrEmpty(filter.Sql)
+                    ? dialect.UnfilteredCountSql(SchemaName, TableName) ?? $"SELECT COUNT(*) FROM {tableRef}"
+                    : $"SELECT COUNT(*) FROM {tableRef}";
                 sqls[$"{sqlKeyName}=>count"] = new ParameterizedSql(countSql, Array.Empty<SqlParameterInfo>()).Append(filter);
             }
 

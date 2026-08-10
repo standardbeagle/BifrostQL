@@ -51,6 +51,19 @@ public interface ISqlDialect
     string Pagination(IEnumerable<string>? sortColumns, int? offset, int? limit);
 
     /// <summary>
+    /// A metadata-backed row count for a table when the query has NO filter, or
+    /// null to use <c>SELECT COUNT(*)</c>. Only consulted for unfiltered totals:
+    /// with any predicate present the count must reflect the predicate, and a
+    /// catalog counter cannot. SQL Server overrides this — COUNT(*) scans the
+    /// whole table per page (~340ms on 13M rows, re-paid on EVERY page turn),
+    /// while the partition catalog answers instantly.
+    /// </summary>
+    /// <param name="schema">The schema name, or null/empty for the default schema.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <returns>A complete single-value SELECT statement, or null when the dialect has no fast path.</returns>
+    string? UnfilteredCountSql(string? schema, string tableName);
+
+    /// <summary>
     /// Builds a per-parent paged connected-collection query. Each parent gets
     /// its own paged window: a per-parent row number (for offset/limit) and a
     /// per-parent total carried as a column. The window columns are computed at

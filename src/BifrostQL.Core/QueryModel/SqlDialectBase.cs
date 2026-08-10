@@ -77,6 +77,15 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <inheritdoc />
     /// <remarks>
+    /// No fast path by default: Postgres's reltuples and MySQL's information_schema
+    /// counts are estimates that can drift far from the truth (both are refreshed
+    /// by statistics jobs, not maintained per-write), so COUNT(*) stays the honest
+    /// default. SQL Server's partition catalog is write-maintained and overrides this.
+    /// </remarks>
+    public virtual string? UnfilteredCountSql(string? schema, string tableName) => null;
+
+    /// <inheritdoc />
+    /// <remarks>
     /// Default implementation uses LIMIT/OFFSET syntax (PostgreSQL, MySQL, SQLite style).
     /// Override for SQL Server's OFFSET/FETCH syntax.
     /// </remarks>

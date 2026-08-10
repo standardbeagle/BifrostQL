@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using FluentAssertions;
+using Xunit;
 
 namespace BifrostQL.Server.Test
 {
@@ -157,7 +159,7 @@ namespace BifrostQL.Server.Test
         /// frame carrying GraphQL errors) is thrown, never swallowed — the kit's fail-closed facts
         /// are only meaningful if the suite cannot mistake a rejection for an empty result set.
         /// </summary>
-        private async Task<byte[]> SendAsync(BifrostMessageType type, string query, ClaimsPrincipal? principal)
+        private async Task<byte[]> SendAsync(BifrostMessageType type, string query, ClaimsPrincipal? principal, string variablesJson = "")
         {
             var client = Host.GetTestServer().CreateWebSocketClient();
             client.ConfigureRequest = context =>
@@ -174,6 +176,7 @@ namespace BifrostQL.Server.Test
                 RequestId = ++_requestId,
                 Type = type,
                 Query = query,
+                VariablesJson = variablesJson,
             };
             var bytes = request.ToBytes();
             await socket.SendAsync(bytes, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
@@ -263,6 +266,37 @@ namespace BifrostQL.Server.Test
                 }
                 return (IReadOnlyDictionary<string, object?>)decoded;
             }).ToArray();
+        }
+
+        /// <summary>
+        /// A variable-carrying paged query must execute over the binary wire. The
+        /// middleware once parsed VariablesJson with bare System.Text.Json, handing
+        /// GraphQL.NET JsonElement values it cannot coerce ("Unable to convert
+        /// '(object)' to 'Int'") — every grid read the UI's binary toggle routes
+        /// (all carry $sort/$limit/$offset) failed, while variable-less queries
+        /// passed, so no conformance fact tripped. Variables must go through the
+        /// registered GraphQL serializer exactly as the HTTP frontend's do.
+        /// </summary>
+        [Fact]
+        public async Task VariableCarryingPagedQuery_ExecutesOverTheBinaryWire()
+        {
+            var table = await TableAsync("orders");
+            var query = $"query Page($sort: [{table.GraphQlName}SortEnum!], $limit: Int, $offset: Int) " +
+                        $"{{ {table.GraphQlName}(sort: $sort limit: $limit offset: $offset) {{ total data {{ id }} }} }}";
+
+            // orders is tenant-scoped in the kit fixture; tenant-a owns rows 1, 2
+            // and soft-deleted 4, so the visible window is deterministic.
+            var payload = await SendAsync(
+                BifrostMessageType.Query, query, TenantPrincipal("user-1", "tenant-a"),
+                variablesJson: """{"sort":["id_desc"],"limit":2,"offset":0}""");
+
+            using var document = JsonDocument.Parse(payload);
+            var paged = document.RootElement.GetProperty("data").GetProperty(table.GraphQlName);
+            paged.GetProperty("total").GetInt32().Should().BeGreaterThan(1);
+            var ids = paged.GetProperty("data").EnumerateArray()
+                .Select(r => r.GetProperty("id").GetInt64()).ToArray();
+            ids.Should().HaveCount(2);
+            ids.Should().BeInDescendingOrder("the $sort variable must actually reach the executor");
         }
 
         // ---- principal transport over the upgrade request -------------------

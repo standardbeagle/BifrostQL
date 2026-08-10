@@ -610,7 +610,7 @@ namespace BifrostQL.Server
             IReadOnlyDictionary<string, object?>? variables;
             try
             {
-                variables = ParseVariables(request.VariablesJson);
+                variables = ParseVariables(request.VariablesJson, httpContext);
             }
             catch (JsonException)
             {
@@ -694,14 +694,25 @@ namespace BifrostQL.Server
             return ms.ToArray();
         }
 
-        private static IReadOnlyDictionary<string, object?>? ParseVariables(string variablesJson)
+        private static IReadOnlyDictionary<string, object?>? ParseVariables(string variablesJson, HttpContext httpContext)
         {
             if (string.IsNullOrEmpty(variablesJson))
                 return null;
 
+            // Deserialize with the registered GraphQL serializer — the SAME path the
+            // HTTP frontend takes — so variable values arrive as the native graph the
+            // executor can coerce (Inputs). A bare System.Text.Json pass leaves every
+            // value as a JsonElement, which GraphQL.NET rejects with "Unable to
+            // convert '(object)' to '<Type>'" — every variable-carrying binary query
+            // (any paged grid read: $sort/$limit/$offset) failed on it while
+            // variable-less queries sailed through, which is why the gap survived.
+            //
             // Malformed variables JSON must surface as an error rather than silently
             // executing the operation with no variables (which would run against
             // wrong/default inputs). The caller maps JsonException to an Error reply.
+            var serializer = httpContext.RequestServices?.GetService<IGraphQLTextSerializer>();
+            if (serializer != null)
+                return serializer.Deserialize<Inputs>(variablesJson);
             return JsonSerializer.Deserialize<Dictionary<string, object?>>(variablesJson);
         }
 

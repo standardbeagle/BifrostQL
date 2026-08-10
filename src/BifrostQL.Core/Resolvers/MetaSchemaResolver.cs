@@ -108,6 +108,25 @@ namespace BifrostQL.Core.Resolvers
                                     metadata = c.Metadata
                                 };
                             }),
+                            // Index columns are translated to GraphQL names so clients
+                            // can match them against the columns list / sort enums
+                            // directly. An index whose key includes a column the model
+                            // does not expose (hidden or filtered) is omitted: a client
+                            // cannot sort by a column it cannot see, so a partial
+                            // column list would misrepresent the access path.
+                            indexes = t.Indexes
+                                .Select(ix => new
+                                {
+                                    name = ix.Name,
+                                    isUnique = ix.IsUnique,
+                                    isClustered = ix.IsClustered,
+                                    isPrimaryKey = ix.IsPrimaryKey,
+                                    columns = ix.ColumnNames
+                                        .Select(n => t.Columns.FirstOrDefault(c => Equal(c.DbName, n))?.GraphQlName)
+                                        .ToArray(),
+                                })
+                                .Where(ix => ix.columns.All(c => c != null))
+                                .Select(ix => new { ix.name, ix.isUnique, ix.isClustered, ix.isPrimaryKey, columns = ix.columns.Cast<string>().ToArray() }),
                             multiJoins = t.MultiLinks.Values.Select(j => new
                             {
                                 name = j.Name,

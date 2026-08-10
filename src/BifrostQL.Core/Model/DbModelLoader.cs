@@ -76,6 +76,7 @@ namespace BifrostQL.Model
             // build starts from the pristine schema and produces an independent
             // model — the contract that makes read-once/build-many safe.
             var tables = read.Tables.Cast<DbTable>().Select(CloneForBuild).ToList();
+            AttachIndexes(tables, read.Indexes);
 
             var model = DbModel.FromTables(
                 tables,
@@ -91,6 +92,37 @@ namespace BifrostQL.Model
             // surface only as a runtime BifrostExecutionError on the first query.
             ModelConfigValidator.Validate(model);
             return model;
+        }
+
+        /// <summary>
+        /// Attaches the schema read's indexes to their tables. Kept separate from
+        /// the clone so index data lives once on the read and every per-profile
+        /// build re-attaches the same immutable records.
+        /// </summary>
+        private static void AttachIndexes(IEnumerable<DbTable> tables, IReadOnlyList<DbIndex> indexes)
+        {
+            if (indexes.Count == 0)
+                return;
+            var byTable = indexes
+                .GroupBy(i => (Schema: i.TableSchema, Table: i.TableName), TupleIgnoreCase.Instance)
+                .ToDictionary(g => g.Key, g => (IReadOnlyList<DbIndex>)g.ToList(), TupleIgnoreCase.Instance);
+            foreach (var table in tables)
+            {
+                if (byTable.TryGetValue((table.TableSchema, table.DbName), out var tableIndexes))
+                    table.Indexes = tableIndexes;
+            }
+        }
+
+        private sealed class TupleIgnoreCase : IEqualityComparer<(string Schema, string Table)>
+        {
+            public static readonly TupleIgnoreCase Instance = new();
+            public bool Equals((string Schema, string Table) x, (string Schema, string Table) y) =>
+                string.Equals(x.Schema, y.Schema, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.Table, y.Table, StringComparison.OrdinalIgnoreCase);
+            public int GetHashCode((string Schema, string Table) obj) =>
+                HashCode.Combine(
+                    StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Schema),
+                    StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Table));
         }
 
         /// <summary>
@@ -117,6 +149,7 @@ namespace BifrostQL.Model
                 ColumnLookup = columns,
                 GraphQlLookup = columns.Values.ToDictionary(c => c.GraphQlName, c => c),
                 ColumnPrefixGroups = source.ColumnPrefixGroups,
+                Indexes = source.Indexes,
             };
         }
 

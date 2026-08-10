@@ -59,6 +59,14 @@ namespace BifrostQL.Core.Model
         public IDictionary<string, TableLinkDto> MultiLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IDictionary<string, ManyToManyLink> ManyToManyLinks { get; init; } = new Dictionary<string, ManyToManyLink>(StringComparer.InvariantCultureIgnoreCase);
         public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
+
+        /// <summary>
+        /// Indexes on this table, attached at model build from the schema read.
+        /// Mutable (not init-only) because the loader clones tables first and
+        /// attaches the read's indexes to the clones afterwards.
+        /// </summary>
+        public IReadOnlyList<DbIndex> Indexes { get; set; } = Array.Empty<DbIndex>();
+
         public string DbTableRef => string.IsNullOrWhiteSpace(TableSchema) ? $"[{DbName}]" : $"[{TableSchema}].[{DbName}]";
 
         /// <summary>
@@ -148,6 +156,7 @@ namespace BifrostQL.Core.Model
                 MultiLinks = MultiLinks,
                 ManyToManyLinks = ManyToManyLinks,
                 ColumnPrefixGroups = ColumnPrefixGroups,
+                Indexes = Indexes,
             };
         }
 
@@ -171,6 +180,7 @@ namespace BifrostQL.Core.Model
                 MultiLinks = MultiLinks,
                 ManyToManyLinks = ManyToManyLinks,
                 ColumnPrefixGroups = ColumnPrefixGroups,
+                Indexes = Indexes,
             };
         }
 
@@ -193,6 +203,7 @@ namespace BifrostQL.Core.Model
                 MultiLinks = MultiLinks,
                 ManyToManyLinks = ManyToManyLinks,
                 ColumnPrefixGroups = prefixGroups,
+                Indexes = Indexes,
             };
         }
     }

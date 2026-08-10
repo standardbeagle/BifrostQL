@@ -86,4 +86,33 @@ public class MetadataSchemaGeneratorTests
     {
         ManyToManySchemaBlock().Should().Contain(field);
     }
+
+    private static string IndexSchemaBlock()
+    {
+        var sdl = MetadataSchemaGenerator.Generate();
+        var start = sdl.IndexOf("type dbIndexSchema {", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, "dbIndexSchema type should be generated");
+        var end = sdl.IndexOf('}', start);
+        end.Should().BeGreaterThan(start);
+        return sdl.Substring(start, end - start);
+    }
+
+    [Fact]
+    public void DbTableSchema_ExposesIndexes()
+    {
+        // edit-db queries table.indexes to pick a sort an index can serve;
+        // omitting the field from the SDL rejects the whole schema query.
+        MetadataSchemaGenerator.Generate().Should().Contain("indexes: [dbIndexSchema!]!");
+    }
+
+    [Theory]
+    [InlineData("name: String!")]
+    [InlineData("isUnique: Boolean!")]
+    [InlineData("isClustered: Boolean!")]
+    [InlineData("isPrimaryKey: Boolean!")]
+    [InlineData("columns: [String!]!")]
+    public void DbIndexSchema_DeclaresExpectedFields(string field)
+    {
+        IndexSchemaBlock().Should().Contain(field);
+    }
 }

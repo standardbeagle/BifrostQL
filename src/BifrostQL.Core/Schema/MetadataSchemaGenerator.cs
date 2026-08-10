@@ -26,6 +26,19 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tsingleJoins: [dbJoinSchema!]!");
         sb.AppendLine("\tmanyToManyJoins: [dbManyToManyJoinSchema!]!");
         sb.AppendLine("\tcolumns: [dbColumnSchema!]!");
+        sb.AppendLine("\tindexes: [dbIndexSchema!]!");
+        sb.AppendLine("}");
+
+        // Access-path metadata: lets a client choose a sort an index can serve
+        // (leading column first). On big tables an unindexed ORDER BY re-sorts
+        // the whole table per page; the leading column of any index pages in
+        // milliseconds.
+        sb.AppendLine("type dbIndexSchema {");
+        sb.AppendLine("\tname: String!");
+        sb.AppendLine("\tisUnique: Boolean!");
+        sb.AppendLine("\tisClustered: Boolean!");
+        sb.AppendLine("\tisPrimaryKey: Boolean!");
+        sb.AppendLine("\tcolumns: [String!]!");
         sb.AppendLine("}");
 
         sb.AppendLine("type dbManyToManyJoinSchema {");

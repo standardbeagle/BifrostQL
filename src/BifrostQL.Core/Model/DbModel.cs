@@ -550,6 +550,13 @@ namespace BifrostQL.Core.Model
         IDictionary<string, TableLinkDto> MultiLinks { get; init; }
         IDictionary<string, ManyToManyLink> ManyToManyLinks { get; init; }
         IEnumerable<ColumnDto> KeyColumns { get; }
+
+        /// <summary>
+        /// Indexes on this table (key columns in key order), read from the
+        /// database catalog. Empty when the provider supplies no index data.
+        /// </summary>
+        IReadOnlyList<DbIndex> Indexes { get; }
+
         string DbTableRef { get; }
 
         bool MatchName(string fullName);

@@ -119,6 +119,34 @@ INNER JOIN information_schema.key_column_usage ccu ON
 WHERE tc.constraint_type = 'FOREIGN KEY'
   AND tc.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position;
+
+-- Indexes (key columns in key order). Expression keys (attnum 0) and partial
+-- indexes are excluded — neither can serve an arbitrary client ORDER BY.
+-- indisclustered reflects the last CLUSTER command; invalid indexes (failed
+-- CREATE INDEX CONCURRENTLY) cannot serve queries and are excluded.
+SELECT
+    ns.nspname          AS table_schema,
+    t.relname           AS table_name,
+    ci.relname          AS index_name,
+    ix.indisunique      AS is_unique,
+    ix.indisclustered   AS is_clustered,
+    ix.indisprimary     AS is_primary_key,
+    a.attname           AS column_name,
+    k.ord               AS key_ordinal
+FROM pg_index ix
+JOIN pg_class ci ON ci.oid = ix.indexrelid
+JOIN pg_class t  ON t.oid = ix.indrelid
+JOIN pg_namespace ns ON ns.oid = t.relnamespace
+JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+    ON k.ord <= ix.indnkeyatts
+JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+WHERE ns.nspname NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
+  AND ix.indisvalid
+  AND ix.indpred IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM unnest(ix.indkey) WITH ORDINALITY AS ek(attnum, ord)
+      WHERE ek.ord <= ix.indnkeyatts AND ek.attnum = 0)
+ORDER BY ns.nspname, t.relname, ci.relname, k.ord;
 ";
 
     /// <inheritdoc />
@@ -151,7 +179,40 @@ ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_posi
 
         var foreignKeys = await ReadForeignKeysAsync(reader);
 
-        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys);
+        await reader.NextResultAsync();
+
+        var indexes = await ReadIndexesAsync(reader);
+
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys, indexes);
+    }
+
+    private static async Task<IReadOnlyList<DbIndex>> ReadIndexesAsync(DbDataReader reader)
+    {
+        var rows = new List<(string Schema, string Table, string Name, bool IsUnique, bool IsClustered, bool IsPrimaryKey, string Column)>();
+        while (await reader.ReadAsync())
+        {
+            rows.Add((
+                (string)reader["table_schema"],
+                (string)reader["table_name"],
+                (string)reader["index_name"],
+                (bool)reader["is_unique"],
+                (bool)reader["is_clustered"],
+                (bool)reader["is_primary_key"],
+                (string)reader["column_name"]));
+        }
+        return rows
+            .GroupBy(r => (r.Schema, r.Table, r.Name))
+            .Select(g => new DbIndex
+            {
+                Name = g.Key.Name,
+                TableSchema = g.Key.Schema,
+                TableName = g.Key.Table,
+                IsUnique = g.First().IsUnique,
+                IsClustered = g.First().IsClustered,
+                IsPrimaryKey = g.First().IsPrimaryKey,
+                ColumnNames = g.Select(r => r.Column).ToArray(),
+            })
+            .ToList();
     }
 
     private static async Task<IReadOnlyList<DbForeignKey>> ReadForeignKeysAsync(DbDataReader reader)

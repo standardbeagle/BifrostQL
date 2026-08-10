@@ -19,6 +19,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
         var allColumns = new List<ColumnDto>();
         var columnConstraints = new Dictionary<ColumnRef, List<ColumnConstraintDto>>();
         var foreignKeys = new List<DbForeignKey>();
+        var indexes = new List<DbIndex>();
 
         // Get all tables
         var tablesCmd = connection.CreateCommand();
@@ -36,6 +37,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
         {
             // First, collect all constraints for this table
             await CollectConstraintsAsync(connection, tableName, columnConstraints, foreignKeys);
+            await CollectIndexesAsync(connection, tableName, indexes);
 
             // Then read columns (which will use the constraints)
             var columnsCmd = connection.CreateCommand();
@@ -109,7 +111,70 @@ public sealed class SqliteSchemaReader : ISchemaReader
             tables.Add(dbTable);
         }
 
-        return new SchemaData(columnConstraints, allColumns.ToArray(), tables, foreignKeys);
+        return new SchemaData(columnConstraints, allColumns.ToArray(), tables, foreignKeys, indexes);
+    }
+
+    /// <summary>
+    /// Collects every index on <paramref name="tableName"/> (unique and not).
+    /// Partial indexes are skipped — they cover a subset of rows, so they cannot
+    /// serve an arbitrary ORDER BY. Expression-key indexes are skipped for the
+    /// same reason: index_info reports a NULL column name for expression keys,
+    /// and there is no column a client could sort by. SQLite rowid tables are
+    /// physically ordered by rowid, so no index is marked clustered.
+    /// </summary>
+    private static async Task CollectIndexesAsync(DbConnection connection, string tableName, List<DbIndex> indexes)
+    {
+        var listCmd = connection.CreateCommand();
+        listCmd.CommandText = $"PRAGMA index_list({tableName})";
+
+        var indexRows = new List<(string Name, bool IsUnique, string Origin)>();
+        await using (var listReader = await listCmd.ExecuteReaderAsync())
+        {
+            while (await listReader.ReadAsync())
+            {
+                if ((long)listReader["partial"] == 1)
+                    continue;
+                indexRows.Add((
+                    (string)listReader["name"],
+                    (long)listReader["unique"] == 1,
+                    (string)listReader["origin"]));
+            }
+        }
+
+        foreach (var (indexName, isUnique, origin) in indexRows)
+        {
+            var infoCmd = connection.CreateCommand();
+            infoCmd.CommandText = $"PRAGMA index_info({indexName})";
+
+            var columnNames = new List<string>();
+            var hasExpressionKey = false;
+            await using (var infoReader = await infoCmd.ExecuteReaderAsync())
+            {
+                while (await infoReader.ReadAsync())
+                {
+                    if (infoReader["name"] is DBNull)
+                    {
+                        hasExpressionKey = true;
+                        break;
+                    }
+                    columnNames.Add((string)infoReader["name"]);
+                }
+            }
+
+            if (hasExpressionKey || columnNames.Count == 0)
+                continue;
+
+            indexes.Add(new DbIndex
+            {
+                Name = indexName,
+                TableSchema = "main",
+                TableName = tableName,
+                IsUnique = isUnique,
+                IsClustered = false,
+                IsPrimaryKey = origin == "pk",
+                ColumnNames = columnNames,
+            });
+        }
     }
 
     private static async Task CollectConstraintsAsync(DbConnection connection, string tableName, Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints, List<DbForeignKey> foreignKeys)

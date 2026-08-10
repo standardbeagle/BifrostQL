@@ -93,6 +93,29 @@ INNER JOIN sys.columns cc ON cc.object_id = fkc.parent_object_id     AND cc.colu
 INNER JOIN sys.columns pc ON pc.object_id = fkc.referenced_object_id AND pc.column_id = fkc.referenced_column_id
 INNER JOIN sys.tables  rt ON rt.object_id = fkc.referenced_object_id
 ORDER BY SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fkc.parent_object_id), fk.name, fkc.constraint_column_id;
+
+-- Indexes (key columns in key order; included columns excluded — they carry no
+-- ordering). Heaps (index_id 0) have no name and are skipped; hypothetical and
+-- disabled indexes cannot serve queries so they are skipped too.
+SELECT
+    SCHEMA_NAME(t.schema_id) AS table_schema,
+    t.name                   AS table_name,
+    i.name                   AS index_name,
+    i.is_unique              AS is_unique,
+    CASE WHEN i.type = 1 THEN 1 ELSE 0 END AS is_clustered,
+    i.is_primary_key         AS is_primary_key,
+    c.name                   AS column_name,
+    ic.key_ordinal           AS key_ordinal
+FROM sys.indexes i
+INNER JOIN sys.tables t ON i.object_id = t.object_id
+INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+WHERE i.type > 0
+  AND i.is_hypothetical = 0
+  AND i.is_disabled = 0
+  AND ic.key_ordinal > 0
+  AND t.is_ms_shipped = 0
+ORDER BY SCHEMA_NAME(t.schema_id), t.name, i.index_id, ic.key_ordinal;
 ";
 
     /// <inheritdoc />
@@ -125,7 +148,40 @@ ORDER BY SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fkc.parent_object_id), fk.name, 
 
         var foreignKeys = await ReadForeignKeysAsync(reader);
 
-        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys);
+        await reader.NextResultAsync();
+
+        var indexes = await ReadIndexesAsync(reader);
+
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys, indexes);
+    }
+
+    private static async Task<IReadOnlyList<DbIndex>> ReadIndexesAsync(DbDataReader reader)
+    {
+        var rows = new List<(string Schema, string Table, string Name, bool IsUnique, bool IsClustered, bool IsPrimaryKey, string Column)>();
+        while (await reader.ReadAsync())
+        {
+            rows.Add((
+                (string)reader["table_schema"],
+                (string)reader["table_name"],
+                (string)reader["index_name"],
+                (bool)reader["is_unique"],
+                Convert.ToInt32(reader["is_clustered"]) == 1,
+                (bool)reader["is_primary_key"],
+                (string)reader["column_name"]));
+        }
+        return rows
+            .GroupBy(r => (r.Schema, r.Table, r.Name))
+            .Select(g => new DbIndex
+            {
+                Name = g.Key.Name,
+                TableSchema = g.Key.Schema,
+                TableName = g.Key.Table,
+                IsUnique = g.First().IsUnique,
+                IsClustered = g.First().IsClustered,
+                IsPrimaryKey = g.First().IsPrimaryKey,
+                ColumnNames = g.Select(r => r.Column).ToArray(),
+            })
+            .ToList();
     }
 
     private static async Task<IReadOnlyList<DbForeignKey>> ReadForeignKeysAsync(DbDataReader reader)

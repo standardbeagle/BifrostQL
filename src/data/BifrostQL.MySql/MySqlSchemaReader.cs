@@ -104,6 +104,23 @@ FROM information_schema.key_column_usage kcu
 WHERE kcu.table_schema = DATABASE()
   AND kcu.referenced_table_name IS NOT NULL
 ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position;
+
+-- Indexes (key columns in key order). Expression-key entries have a NULL
+-- column_name and are filtered in code (the whole index is dropped there —
+-- a partial column list would misrepresent the access path). InnoDB clusters
+-- rows by the PRIMARY key, so that index is flagged clustered.
+SELECT
+    s.table_schema,
+    s.table_name,
+    s.index_name,
+    (s.non_unique = 0)          AS is_unique,
+    (s.index_name = 'PRIMARY')  AS is_clustered,
+    (s.index_name = 'PRIMARY')  AS is_primary_key,
+    s.column_name,
+    s.seq_in_index              AS key_ordinal
+FROM information_schema.statistics s
+WHERE s.table_schema = DATABASE()
+ORDER BY s.table_schema, s.table_name, s.index_name, s.seq_in_index;
 ";
 
     /// <inheritdoc />
@@ -136,7 +153,43 @@ ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_posi
 
         var foreignKeys = await ReadForeignKeysAsync(reader);
 
-        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys);
+        await reader.NextResultAsync();
+
+        var indexes = await ReadIndexesAsync(reader);
+
+        return new SchemaData(columnConstraints, rawColumns, tables.Cast<IDbTable>().ToList(), foreignKeys, indexes);
+    }
+
+    private static async Task<IReadOnlyList<DbIndex>> ReadIndexesAsync(DbDataReader reader)
+    {
+        var rows = new List<(string Schema, string Table, string Name, bool IsUnique, bool IsClustered, bool IsPrimaryKey, string? Column)>();
+        while (await reader.ReadAsync())
+        {
+            rows.Add((
+                (string)reader["table_schema"],
+                (string)reader["table_name"],
+                (string)reader["index_name"],
+                Convert.ToBoolean(reader["is_unique"]),
+                Convert.ToBoolean(reader["is_clustered"]),
+                Convert.ToBoolean(reader["is_primary_key"]),
+                reader["column_name"] is DBNull ? null : (string)reader["column_name"]));
+        }
+        return rows
+            .GroupBy(r => (r.Schema, r.Table, r.Name))
+            // Functional (expression) index parts report a NULL column name;
+            // drop the whole index — see the SQL comment.
+            .Where(g => g.All(r => r.Column != null))
+            .Select(g => new DbIndex
+            {
+                Name = g.Key.Name,
+                TableSchema = g.Key.Schema,
+                TableName = g.Key.Table,
+                IsUnique = g.First().IsUnique,
+                IsClustered = g.First().IsClustered,
+                IsPrimaryKey = g.First().IsPrimaryKey,
+                ColumnNames = g.Select(r => r.Column!).ToArray(),
+            })
+            .ToList();
     }
 
     private static async Task<IReadOnlyList<DbForeignKey>> ReadForeignKeysAsync(DbDataReader reader)

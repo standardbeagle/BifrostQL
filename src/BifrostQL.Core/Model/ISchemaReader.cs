@@ -24,18 +24,32 @@ public interface ISchemaReader
 /// database catalog. Required so the foreign-key relationship strategy can
 /// build single-link/multi-link entries (including self-references); leaving
 /// it empty falls back to name-based inference, which cannot detect self-FKs.</param>
+/// <param name="Indexes">Indexes discovered from the database catalog, key
+/// columns in key order. Attached to their tables at model build and exposed
+/// via <c>_dbSchema</c> so clients can pick index-served sort columns; an
+/// empty list simply means no index information is available.</param>
 public sealed record SchemaData(
     IDictionary<ColumnRef, List<ColumnConstraintDto>> ColumnConstraints,
     ColumnDto[] RawColumns,
     List<IDbTable> Tables,
-    IReadOnlyList<DbForeignKey> ForeignKeys
+    IReadOnlyList<DbForeignKey> ForeignKeys,
+    IReadOnlyList<DbIndex> Indexes
 )
 {
     public SchemaData(
         IDictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints,
         ColumnDto[] rawColumns,
         List<IDbTable> tables)
-        : this(columnConstraints, rawColumns, tables, Array.Empty<DbForeignKey>())
+        : this(columnConstraints, rawColumns, tables, Array.Empty<DbForeignKey>(), Array.Empty<DbIndex>())
+    {
+    }
+
+    public SchemaData(
+        IDictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints,
+        ColumnDto[] rawColumns,
+        List<IDbTable> tables,
+        IReadOnlyList<DbForeignKey> foreignKeys)
+        : this(columnConstraints, rawColumns, tables, foreignKeys, Array.Empty<DbIndex>())
     {
     }
 }

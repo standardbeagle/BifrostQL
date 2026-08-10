@@ -193,6 +193,7 @@ public sealed class DbModelTestFixture
         // fixture must not be stricter than the model it stands in for.
         private readonly Dictionary<string, ColumnDto> _columns = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, object?> _metadata = new();
+        private readonly List<DbIndex> _indexes = new();
 
         public TableBuilder(string tableName)
         {
@@ -245,6 +246,21 @@ public sealed class DbModelTestFixture
             return WithColumn(name, dataType, isPrimaryKey: true);
         }
 
+        public TableBuilder WithIndex(string name, bool isUnique = false, bool isClustered = false, bool isPrimaryKey = false, params string[] columns)
+        {
+            _indexes.Add(new DbIndex
+            {
+                Name = name,
+                TableSchema = _schema ?? string.Empty,
+                TableName = _tableName,
+                IsUnique = isUnique,
+                IsClustered = isClustered,
+                IsPrimaryKey = isPrimaryKey,
+                ColumnNames = columns,
+            });
+            return this;
+        }
+
         public DbTable Build()
         {
             var table = new DbTable
@@ -255,6 +271,7 @@ public sealed class DbModelTestFixture
                 TableSchema = _schema ?? string.Empty,
                 ColumnLookup = _columns,
                 GraphQlLookup = _columns.Values.ToDictionary(c => c.GraphQlName, c => c),
+                Indexes = _indexes,
             };
             foreach (var (key, value) in _metadata)
             {

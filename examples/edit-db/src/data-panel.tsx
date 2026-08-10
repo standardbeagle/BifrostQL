@@ -163,7 +163,10 @@ export function DataPanel() {
                                 onKeyDown={detailSplit.onKeyDown}
                             />
                             <div
-                                className="min-h-0 overflow-hidden flex flex-col"
+                                // Scrolls (not clips): nested detail levels each keep a
+                                // usable minimum height, so a deep chain overflows this
+                                // fixed-height region instead of halving into slivers.
+                                className="min-h-0 overflow-y-auto flex flex-col"
                                 style={{ flex: `0 0 ${detailSplit.size}px` }}
                             >
                                 <DetailPanel

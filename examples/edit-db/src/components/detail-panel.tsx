@@ -47,7 +47,11 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
     const childHasMultiJoins = (childTable?.multiJoins?.length ?? 0) > 0;
 
     return (
-        <div className="border-t-2 border-primary/20 flex flex-col min-h-0 flex-1 overflow-hidden">
+        // No overflow-hidden here: the outermost detail region (data-panel)
+        // owns scrolling, and each level contributes a minimum height below.
+        // Clipping at every level is what made nesting invisible — level 2
+        // rendered at ~70px, which reads as "drill-down stops at one level".
+        <div className="border-t-2 border-primary/20 flex flex-col flex-1 shrink-0">
             <div className="flex items-center gap-1 px-2 py-1 bg-muted/30 border-b border-border shrink-0">
                 <Button
                     variant="ghost"
@@ -115,7 +119,7 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                 )}
             </div>
             {!collapsed && (
-                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                <div className="flex-1 flex flex-col">
                     {activeTab.kind === 'child' && !childTable ? (
                         // The child's destination table isn't in the published schema
                         // (e.g. hidden by visibility metadata) — show a notice instead
@@ -125,9 +129,7 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                         </div>
                     ) : activeTab.kind === 'child' ? (
                         <>
-                            <div className={childHasMultiJoins && childSelectedRowId
-                                ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col'
-                                : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
+                            <div className="flex-1 min-h-[11rem] overflow-hidden flex flex-col">
                                 <TableView
                                     key={`${activeTab.key}-${selectedRowId}`}
                                     table={childTable!}
@@ -145,7 +147,7 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
                                 />
                             </div>
                             {childHasMultiJoins && childSelectedRowId && (
-                                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                                <div className="flex-1 flex flex-col">
                                     <DetailPanel
                                         parentTable={childTable!}
                                         selectedRowId={childSelectedRowId}

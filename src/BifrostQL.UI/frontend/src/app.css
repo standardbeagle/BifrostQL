@@ -20,6 +20,13 @@
 
 /* App palette primitives — unlayered constants consumed by both layers below. */
 :root {
+  /* The app is permanently dark; without this the browser paints native
+     chrome (scrollbars, form controls, autofill) for a light page — glaring
+     white scrollbars over the void palette. scrollbar-color additionally
+     matches the thumb/track to the surface tokens where supported. */
+  color-scheme: dark;
+  scrollbar-color: var(--void-elevated) transparent;
+
   --void: #0f172a;
   --void-surface: #1e293b;
   --void-elevated: #334155;

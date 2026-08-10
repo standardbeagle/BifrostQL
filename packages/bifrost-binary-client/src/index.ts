@@ -438,7 +438,10 @@ interface StreamingState {
  * Result of a BifrostQL query or mutation.
  */
 export interface BifrostQueryResult {
-  /** Parsed JSON response data, or null if the response contained no payload. */
+  /**
+   * The GraphQL `data` payload (the response envelope is unwrapped by the
+   * client), or null if the response contained no payload.
+   */
   data: unknown;
   /** Error messages from the server, empty array on success. */
   errors: string[];
@@ -1585,9 +1588,26 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     this.unary.delete(response.requestId);
 
     let data: unknown = null;
+    let envelopeErrors: string[] = [];
     if (response.payload.length > 0) {
       try {
-        data = JSON.parse(new TextDecoder().decode(response.payload));
+        // The payload is the standard GraphQL response envelope ({"data": ...,
+        // "errors"?: [...]}) — the server renders it with the same registered
+        // GraphQL serializer its HTTP endpoint uses, and its conformance tests
+        // pin that wire shape. Unwrap exactly ONE envelope level,
+        // unconditionally: shape-sniffing would misread a root field aliased
+        // "data", and a payload that isn't an envelope is a server bug, not a
+        // shape this client should silently accommodate. Resolving the RAW
+        // envelope instead (the old behavior) double-wrapped every result and
+        // white-screened the desktop editor's binary mode: callers read
+        // result.data.<field> and found the envelope's "data" key instead.
+        const envelope = JSON.parse(
+          new TextDecoder().decode(response.payload)
+        ) as { data?: unknown; errors?: Array<{ message?: string } | string> };
+        data = envelope.data ?? null;
+        envelopeErrors = (envelope.errors ?? []).map((e) =>
+          typeof e === "string" ? e : e.message ?? "Unknown GraphQL error"
+        );
       } catch (err) {
         // A malformed payload must reject the promise. The timer was already
         // cleared and the entry removed above, so without this the caller's
@@ -1603,7 +1623,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       }
     }
 
-    pending.resolve({ data, errors: response.errors });
+    // Frame errors are authoritative (the server always mirrors execution
+    // errors onto the frame); envelope errors only fill in if a server ever
+    // reports a partial failure solely inside the envelope.
+    const errors = response.errors.length > 0 ? response.errors : envelopeErrors;
+    pending.resolve({ data, errors });
   }
 
   /**

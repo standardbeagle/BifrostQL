@@ -673,7 +673,11 @@ namespace BifrostQL.Server
         {
             var serializer = httpContext.RequestServices?.GetService<IGraphQLSerializer>();
             if (serializer == null)
-                return JsonSerializer.SerializeToUtf8Bytes(result.Data);
+                // Same {"data":...} envelope as the serializer path below: the client
+                // unwraps exactly one envelope level unconditionally, so the wire shape
+                // must be uniform — a bare-data payload here would make the client's
+                // unwrap eat the caller's first result field.
+                return JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?> { ["data"] = result.Data });
 
             // Executed must be true or the GraphQL serializer omits the "data" field entirely.
             var executionResult = new ExecutionResult { Data = result.Data, Executed = true };

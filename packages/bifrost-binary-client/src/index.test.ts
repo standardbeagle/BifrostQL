@@ -31,8 +31,14 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
   };
 }
 
+/**
+ * Encodes a Result-frame payload the way the real server does: the standard
+ * GraphQL response envelope. The client unwraps exactly one envelope level, so
+ * a fake emitting bare data would test a wire shape the server never sends
+ * (that mismatch is precisely the bug the envelope unwrap fixed).
+ */
 function jsonPayload(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value));
+  return new TextEncoder().encode(JSON.stringify({ data: value }));
 }
 
 describe("encodeMessage / decodeMessage", () => {
@@ -879,9 +885,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ rows: ["a", "b", "c"], n: 3 })
-        ),
+        payload: jsonPayload({ rows: ["a", "b", "c"], n: 3 }),
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       expect(frames.length).toBeGreaterThanOrEqual(3);
@@ -908,9 +912,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ ordered: false, value: 42 })
-        ),
+        payload: jsonPayload({ ordered: false, value: 42 }),
       });
       const frames = buildChunkFrames(sentId, inner, 7);
       expect(frames.length).toBeGreaterThanOrEqual(3);
@@ -933,7 +935,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(JSON.stringify({ x: 1 })),
+        payload: jsonPayload({ x: 1 }),
       });
       const frames = buildChunkFrames(sentId, inner, 6);
       // Corrupt the second frame: re-encode with a bogus checksum.
@@ -1002,9 +1004,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ rows: ["a", "b", "c", "d"], n: 4 })
-        ),
+        payload: jsonPayload({ rows: ["a", "b", "c", "d"], n: 4 }),
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       expect(frames.length).toBeGreaterThanOrEqual(3);
@@ -1063,9 +1063,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ rows: ["a", "b", "c", "d"], n: 4 })
-        ),
+        payload: jsonPayload({ rows: ["a", "b", "c", "d"], n: 4 }),
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       expect(frames.length).toBeGreaterThanOrEqual(3);
@@ -1138,9 +1136,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ rows: ["a", "b", "c", "d", "e"], n: 5 })
-        ),
+        payload: jsonPayload({ rows: ["a", "b", "c", "d", "e"], n: 5 }),
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       expect(frames.length).toBeGreaterThanOrEqual(3);
@@ -1249,9 +1245,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ rows: ["a", "b", "c"] })
-        ),
+        payload: jsonPayload({ rows: ["a", "b", "c"] }),
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       const assertion = expect(promise).rejects.toThrowError(
@@ -1325,9 +1319,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(
-          JSON.stringify({ rows: "x".repeat(120), n: 12 })
-        ),
+        payload: jsonPayload({ rows: "x".repeat(120), n: 12 }),
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       // More chunks than the server's default ack window (8): without acks the
@@ -1362,7 +1354,7 @@ describe("BifrostBinaryClient", () => {
       const inner = emptyMessage({
         requestId: sentId,
         type: BifrostMessageType.Result,
-        payload: new TextEncoder().encode(JSON.stringify({ partial: true })),
+        payload: jsonPayload({ partial: true }),
       });
       const frames = buildChunkFrames(sentId, inner, 6);
       // Deliver only the first frame, then close mid-flight.

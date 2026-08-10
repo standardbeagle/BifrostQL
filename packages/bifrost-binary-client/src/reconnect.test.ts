@@ -36,8 +36,10 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
   };
 }
 
+// Result-frame payloads mirror the real server wire shape: the GraphQL
+// response envelope, which the client unwraps exactly once.
 function jsonPayload(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value));
+  return new TextEncoder().encode(JSON.stringify({ data: value }));
 }
 
 /**
@@ -673,10 +675,13 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
 
     // Build 4 chunks; deliver 0 and 1, then drop the connection.
+    // Chunk-mechanics fixture: these assertions consume raw chunk sequence
+    // numbers, never parsed content, so the payload only needs a fixed byte
+    // length (26 bytes / chunk size 8 = exactly 4 chunks).
     const inner = emptyMessage({
       requestId,
       type: BifrostMessageType.Result,
-      payload: jsonPayload({ rows: ["a", "b", "c", "d"] }),
+      payload: new TextEncoder().encode("01234567890123456789012345"),
     });
     const frames = buildChunkFrames(requestId, inner, 8);
     expect(frames.length).toBe(4);
@@ -896,10 +901,13 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     const stream = client.stream("{ download }");
     const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
 
+    // Chunk-mechanics fixture: these assertions consume raw chunk sequence
+    // numbers, never parsed content, so the payload only needs a fixed byte
+    // length (26 bytes / chunk size 8 = exactly 4 chunks).
     const inner = emptyMessage({
       requestId,
       type: BifrostMessageType.Result,
-      payload: jsonPayload({ rows: ["a", "b", "c", "d"] }),
+      payload: new TextEncoder().encode("01234567890123456789012345"),
     });
     const frames = buildChunkFrames(requestId, inner, 8);
     expect(frames.length).toBe(4);

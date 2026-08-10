@@ -16,6 +16,7 @@ import {
     type DrillFrame,
 } from './lib/drill-stack';
 import { detailTabs } from './lib/m2m';
+import { usePanelSize } from './hooks/usePanelSize';
 
 function getTable(data: Table[], tableName: string): Table | undefined {
     return data.find((x) => x.name === tableName);
@@ -26,6 +27,10 @@ export function DataPanel() {
     const { table: tableName, id, filterTable } = params as { table: string; id: string; filterTable: string };
     const { loading, error, data } = useSchema();
     const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+    // Detail split height in px; the handle sits ABOVE the panel, so dragging
+    // up must grow it (invert). Clamped so neither the grid nor the detail
+    // can be collapsed to nothing.
+    const detailSplit = usePanelSize({ key: 'detail-height', initial: 300, min: 120, max: 800, axis: 'y', invert: true });
     const [openColumns, setOpenColumns] = useState<DrillFrame[]>([]);
     // Parent/child drill-down ("stacking") mode. When off, FK/multi-join cells
     // render as flat values and the grid behaves as a standard single-table view.
@@ -138,21 +143,37 @@ export function DataPanel() {
     // No drill stack open: keep the standard single-table view (with the m2m
     // detail panel below when applicable). Unchanged behavior.
     if (openColumns.length === 0) {
+        const detailOpen = hasMultiJoins && selectedRowId;
         return (
             <div className="flex flex-col flex-1 min-h-0">
                 <div ref={mainRef} className="flex flex-col flex-1 min-h-0 min-w-0">
-                    <div className={hasMultiJoins && selectedRowId ? 'flex-1 min-h-0 max-h-[50%] overflow-hidden flex flex-col' : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                         {mainGrid}
                     </div>
-                    {hasMultiJoins && selectedRowId && (
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            <DetailPanel
-                                parentTable={table}
-                                selectedRowId={selectedRowId}
-                                onClose={() => setSelectedRowId(null)}
-                                onOpenColumn={drillHandler}
+                    {detailOpen && (
+                        <>
+                            <div
+                                role="separator"
+                                aria-orientation="horizontal"
+                                aria-label="Resize detail panel"
+                                tabIndex={0}
+                                data-testid="detail-resize-handle"
+                                className="h-1.5 shrink-0 cursor-row-resize select-none touch-none hover:bg-primary/40 focus-visible:bg-primary/60 focus-visible:outline-none"
+                                onPointerDown={detailSplit.onPointerDown}
+                                onKeyDown={detailSplit.onKeyDown}
                             />
-                        </div>
+                            <div
+                                className="min-h-0 overflow-hidden flex flex-col"
+                                style={{ flex: `0 0 ${detailSplit.size}px` }}
+                            >
+                                <DetailPanel
+                                    parentTable={table}
+                                    selectedRowId={selectedRowId}
+                                    onClose={() => setSelectedRowId(null)}
+                                    onOpenColumn={drillHandler}
+                                />
+                            </div>
+                        </>
                     )}
                 </div>
             </div>

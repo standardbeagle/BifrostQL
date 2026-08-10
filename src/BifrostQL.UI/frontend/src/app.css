@@ -420,3 +420,29 @@
     color: var(--text-muted);
   }
 }
+
+@layer app-shell {
+  /* Drag separators for resizable shell panels. Thin, invisible until
+     hovered/focused; keyboard-focusable (arrow keys resize). */
+  .bifrost-resize-handle {
+    flex: 0 0 auto;
+    user-select: none;
+    touch-action: none;
+    background: transparent;
+  }
+  .bifrost-resize-handle:hover,
+  .bifrost-resize-handle:focus-visible {
+    background: var(--accent-action);
+    opacity: 0.5;
+    outline: none;
+  }
+  .bifrost-resize-handle--col {
+    width: 6px;
+    cursor: col-resize;
+    align-self: stretch;
+  }
+  .bifrost-resize-handle--row {
+    height: 6px;
+    cursor: row-resize;
+  }
+}

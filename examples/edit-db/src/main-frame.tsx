@@ -6,6 +6,7 @@ import { Header } from './header';
 import { DataEdit } from './data-edit';
 import { ErrorBoundary } from './error-boundary';
 import { ColumnNavProvider } from './hooks/useColumnNav';
+import { usePanelSize } from './hooks/usePanelSize';
 import { Button } from '@/components/ui/button';
 import { PanelLeft, Database, Table2, MousePointerClick, Loader2 } from 'lucide-react';
 import { useSchema } from './hooks/useSchema';
@@ -113,11 +114,15 @@ function SchemaGate({ children }: { children: React.ReactNode }) {
 
 function Layout() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
+    const sidebar = usePanelSize({ key: 'sidebar-width', initial: 240, min: 150, max: 560, axis: 'x' });
 
     return (
         <SchemaGate>
         <ColumnNavProvider>
-            <div className={`grid h-full flex-1 min-h-0 grid-rows-[auto_1fr] ${sidebarOpen ? 'grid-cols-[minmax(150px,min-content)_1fr]' : 'grid-cols-[0px_1fr]'} md:grid-cols-[minmax(150px,min-content)_1fr] transition-[grid-template-columns] duration-200`}>
+            <div
+                className="grid h-full flex-1 min-h-0 grid-rows-[auto_1fr]"
+                style={{ gridTemplateColumns: sidebarOpen ? `${sidebar.size}px 1fr` : '0px 1fr' }}
+            >
                 <div className="col-span-full sticky top-0 z-50 bg-background border-b border-border flex items-center">
                     <Button
                         variant="ghost"
@@ -139,10 +144,20 @@ function Layout() {
                         </ErrorBoundary>
                     </div>
                 </div>
-                <nav aria-label="Tables" className={`border-r border-border overflow-hidden min-h-0 ${sidebarOpen ? '' : 'hidden'} md:block`}>
+                <nav aria-label="Tables" className={`relative border-r border-border overflow-hidden min-h-0 ${sidebarOpen ? '' : 'hidden'} md:block`}>
                     <ErrorBoundary section="Table List">
                         <TableList />
                     </ErrorBoundary>
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Resize table list"
+                        tabIndex={0}
+                        data-testid="sidebar-resize-handle"
+                        className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize select-none touch-none hover:bg-primary/40 focus-visible:bg-primary/60 focus-visible:outline-none"
+                        onPointerDown={sidebar.onPointerDown}
+                        onKeyDown={sidebar.onKeyDown}
+                    />
                 </nav>
                 <main className="flex flex-col overflow-hidden min-h-0 px-1 py-0.5">
                     <ErrorBoundary section="Data Panel">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SavedObject } from "@standardbeagle/edit-db";
 import { isAbortError, listSavedQueries } from "./saved-query-store";
+import { usePanelSize } from "../hooks/usePanelSize";
 
 interface SavedQueryListProps {
   /** Id of the query currently open in the designer, highlighted in the list. */
@@ -17,6 +18,7 @@ interface SavedQueryListProps {
  * when the pane says the store changed.
  */
 export function SavedQueryList({ activeId, reloadToken, onOpen }: SavedQueryListProps) {
+  const width = usePanelSize({ key: "saved-query-list-width", initial: 200, min: 140, max: 480, axis: "x" });
   const [queries, setQueries] = useState<SavedObject[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [skipped, setSkipped] = useState(0);
@@ -47,6 +49,19 @@ export function SavedQueryList({ activeId, reloadToken, onOpen }: SavedQueryList
   const open = useCallback((q: SavedObject) => onOpen(q), [onOpen]);
 
   return (
+    <div style={{ ...styles.outer, width: width.size }}>
+      {/* Handle lives on the non-scrolling wrapper so it stays pinned to the
+          panel edge when the list itself scrolls. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize saved query list"
+        tabIndex={0}
+        className="bifrost-resize-handle bifrost-resize-handle--col"
+        style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: 6 }}
+        onPointerDown={width.onPointerDown}
+        onKeyDown={width.onKeyDown}
+      />
     <nav style={styles.root} aria-label="Saved queries">
       <h2 style={styles.heading}>Saved queries</h2>
       {error && <div role="alert" style={styles.error}>{error}</div>}
@@ -76,11 +91,13 @@ export function SavedQueryList({ activeId, reloadToken, onOpen }: SavedQueryList
         ))}
       </ul>
     </nav>
+    </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { width: 200, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, padding: "8px 0", borderRight: "1px solid var(--border, #d1d5db)", overflow: "auto" },
+  outer: { position: "relative", flexShrink: 0, display: "flex", minHeight: 0, borderRight: "1px solid var(--border, #d1d5db)" },
+  root: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4, padding: "8px 0", overflow: "auto" },
   heading: { margin: 0, padding: "0 12px 6px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em", color: "#6b7280" },
   list: { listStyle: "none", margin: 0, padding: 0 },
   item: { display: "block", width: "100%", textAlign: "left", padding: "6px 12px", border: "none", background: "transparent", cursor: "pointer", font: "inherit", fontSize: 13, color: "inherit" },

@@ -5,6 +5,7 @@ import { Prec } from '@codemirror/state';
 import { sql } from '@codemirror/lang-sql';
 import { BridgeError } from './lib/native-bridge';
 import { execSql, isSqlBridgeAvailable, type SqlResult } from './lib/sql-bridge';
+import { usePanelSize } from './hooks/usePanelSize';
 import { getBuilderSchema, type BuilderSchema } from './lib/builder-bridge';
 import { createSqlLanguageSupport } from './lib/sql-completion';
 import { dialectForProvider } from './lib/sql-dialect';
@@ -80,6 +81,7 @@ const sqlEditorTheme = EditorView.theme(
 export function SqlConsole({ provider }: SqlConsoleProps) {
   // SQLite is the neutral parsing default until the connection provider is known.
   const activeProvider: Provider = provider ?? 'sqlite';
+  const editorHeight = usePanelSize({ key: 'sql-editor-height', initial: 240, min: 140, max: 700, axis: 'y' });
   const bridgeAvailable = isSqlBridgeAvailable();
 
   const cmRef = useRef<ReactCodeMirrorRef>(null);
@@ -175,7 +177,7 @@ export function SqlConsole({ provider }: SqlConsoleProps) {
 
   return (
     <div className="sql-console">
-      <div className="sql-console__editor">
+      <div className="sql-console__editor" style={{ height: editorHeight.size }}>
         <CodeMirror
           ref={cmRef}
           value={value}
@@ -187,6 +189,15 @@ export function SqlConsole({ provider }: SqlConsoleProps) {
           placeholder="SELECT * FROM …   (Ctrl+Enter to run; select text to run only the selection)"
         />
       </div>
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize SQL editor"
+        tabIndex={0}
+        className="bifrost-resize-handle bifrost-resize-handle--row"
+        onPointerDown={editorHeight.onPointerDown}
+        onKeyDown={editorHeight.onKeyDown}
+      />
 
       <div className="sql-console__toolbar">
         <button

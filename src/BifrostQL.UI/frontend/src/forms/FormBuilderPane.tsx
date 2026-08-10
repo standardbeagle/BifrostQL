@@ -29,6 +29,7 @@ import {
   deleteForm,
   type SavedForm,
 } from "./forms-storage";
+import { usePanelSize } from "../hooks/usePanelSize";
 
 const CONTROL_OPTIONS: { value: FormControlType; label: string }[] = [
   { value: "text", label: "Text" },
@@ -53,6 +54,7 @@ const CONTROL_OPTIONS: { value: FormControlType; label: string }[] = [
  * the pane.
  */
 export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
+  const editorWidth = usePanelSize({ key: "form-editor-width", initial: 560, min: 320, max: 1100, axis: "x" });
   const [schema, setSchema] = useState<BuilderSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [def, setDef] = useState<FormDefinition | null>(null);
@@ -203,7 +205,18 @@ export function FormBuilderPane({ fetcher }: { fetcher?: GraphQLFetcher }) {
         <div style={styles.unavailable}>Choose a table to start a form, or open a saved one.</div>
       ) : (
         <div style={styles.split}>
-          <FieldEditor def={def} setDef={setDef} />
+          <div style={{ flex: `0 0 ${editorWidth.size}px`, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <FieldEditor def={def} setDef={setDef} />
+          </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize form editor"
+            tabIndex={0}
+            className="bifrost-resize-handle bifrost-resize-handle--col"
+            onPointerDown={editorWidth.onPointerDown}
+            onKeyDown={editorWidth.onKeyDown}
+          />
           <FormPreview def={def} />
         </div>
       )}
@@ -361,7 +374,7 @@ const styles: Record<string, React.CSSProperties> = {
   toolLabel: { display: "flex", flexDirection: "column", gap: 2, fontSize: 12, color: "#6b7280" },
   spacer: { flex: 1 },
   split: { display: "flex", flex: 1, minHeight: 0 },
-  editor: { width: "55%", minWidth: 0, overflow: "auto", borderRight: "1px solid var(--border, #d1d5db)", padding: 12 },
+  editor: { flex: 1, minWidth: 0, overflow: "auto", borderRight: "1px solid var(--border, #d1d5db)", padding: 12 },
   editorHeader: { display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap" },
   fieldTable: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
   th: { textAlign: "left", padding: "4px 6px", borderBottom: "1px solid var(--border, #d1d5db)", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" },

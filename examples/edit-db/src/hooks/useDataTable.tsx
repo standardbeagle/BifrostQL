@@ -471,6 +471,12 @@ interface UseDataTableResult {
     exportRows: ExportRunner;
     /** Whether data is currently loading (no rows to show yet) */
     loading: boolean;
+    /**
+     * A refresh is in flight while previous rows remain on screen as
+     * placeholder data (page turn, sort, filter change). Drives the grid's
+     * in-flight indicator; `loading` alone blanks the rows.
+     */
+    fetching: boolean;
     /** Error object if the query failed */
     error: Error | null;
     /** Update sorting state */
@@ -626,7 +632,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         ...cfVariables,
     }), [appliedSort, pageSize, offset, id, table, schema, filterTable, filterColumn, filterVariables, cfVariables]);
 
-    const { isLoading, error, data } = useQuery({
+    const { isLoading, isFetching, error, data } = useQuery({
         queryKey: ['tableData', table?.name, query, queryVariables],
         queryFn: ({ signal }) => fetcher.query<QueryData>(query!, queryVariables, { signal }),
         enabled: !!query && !!table && appliedSort.length > 0,
@@ -774,6 +780,9 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         totalRows,
         exportRows,
         loading: isLoading,
+        // In flight while previous rows are shown as placeholder (page turn,
+        // sort, filter). Distinct from `loading`, which blanks the grid.
+        fetching: isFetching && !isLoading,
         // The filter failure takes precedence: it is why no query ran at all.
         error: filterError ?? (error as Error | null),
         onSortingChange,

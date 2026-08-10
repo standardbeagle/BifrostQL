@@ -61,6 +61,7 @@ const enrollmentRows: EnrollmentRow[] = [
 
 interface RenderOverrides {
     primaryKeys?: string[];
+    fetching?: boolean;
 }
 
 function renderDataTable(overrides: RenderOverrides = {}) {
@@ -74,6 +75,7 @@ function renderDataTable(overrides: RenderOverrides = {}) {
             sorting={[]}
             columnFilters={[]}
             primaryKeys={overrides.primaryKeys ?? ['student_id', 'course_id']}
+            fetching={overrides.fetching}
             onSortingChange={() => { /* noop */ }}
             onColumnFiltersChange={() => { /* noop */ }}
             onPageIndexChange={() => { /* noop */ }}
@@ -337,5 +339,27 @@ describe('DataTable column-sizing persistence', () => {
         // And the new table must not immediately write back its just-loaded sizing.
         vi.advanceTimersByTime(400);
         expect(localStorage.getItem('bifrost-col-sizes:other_table')).toBeNull();
+    });
+});
+
+/**
+ * A slow page turn keeps the previous rows on screen (placeholderData), so
+ * without a distinct in-flight signal the click reads as dead — on a 13M-row
+ * table each page took ~10s with zero feedback. The indicator must show
+ * WITHOUT hiding the stale rows; blanking them is what placeholderData exists
+ * to prevent.
+ */
+describe('DataTable in-flight page indicator', () => {
+    it('shows the progress bar while fetching, keeping previous rows visible', () => {
+        renderDataTable({ fetching: true });
+
+        expect(screen.getByTestId('fetch-indicator')).toBeInTheDocument();
+        expect(screen.getByTestId('grade-1-cs-101')).toBeInTheDocument();
+    });
+
+    it('hides the progress bar when idle', () => {
+        renderDataTable();
+
+        expect(screen.queryByTestId('fetch-indicator')).toBeNull();
     });
 });

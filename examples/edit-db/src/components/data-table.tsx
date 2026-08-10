@@ -80,8 +80,14 @@ interface DataTableProps<TData> {
     sorting: SortingState;
     /** Active column filters */
     columnFilters: ColumnFiltersState;
-    /** Whether data is currently loading */
+    /** Whether data is currently loading (no rows to show yet) */
     loading?: boolean;
+    /**
+     * Whether a page/sort/filter refresh is in flight while the previous rows
+     * stay on screen. `loading` covers only the no-rows-yet case; without this
+     * flag a slow page turn gives zero feedback and reads as a dead click.
+     */
+    fetching?: boolean;
     /** Enable row selection checkboxes */
     selectable?: boolean;
     /**
@@ -167,6 +173,7 @@ export function DataTable<TData>({
     sorting,
     columnFilters,
     loading,
+    fetching = false,
     selectable = false,
     primaryKeys = [],
     selectedRowId,
@@ -441,7 +448,18 @@ export function DataTable<TData>({
                 </DropdownMenu>
                 </div>
             </div>
-            <div ref={scrollRef} className="flex-1 overflow-auto min-h-0">
+            <div ref={scrollRef} className="relative flex-1 overflow-auto min-h-0" aria-busy={fetching || loading}>
+                {fetching && (
+                    <div
+                        data-testid="fetch-indicator"
+                        role="progressbar"
+                        aria-label="Loading page"
+                        className="sticky top-0 left-0 right-0 h-0.5 z-20 overflow-hidden bg-primary/20"
+                    >
+                        <div className="h-full w-1/3 bg-primary animate-pulse" style={{ animation: 'edit-db-indeterminate 1.2s ease-in-out infinite' }} />
+                        <style>{'@keyframes edit-db-indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }'}</style>
+                    </div>
+                )}
                 <Table style={{ tableLayout: 'fixed', width: table.getTotalSize() }}>
                     {/* Column widths live on <colgroup> under table-layout:fixed so
                         body cells don't each carry a width style — that keeps the

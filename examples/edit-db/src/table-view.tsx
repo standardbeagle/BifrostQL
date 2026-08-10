@@ -103,6 +103,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         totalRows,
         exportRows,
         loading,
+        fetching,
         error,
         onSortingChange,
         onColumnFiltersChange,
@@ -342,6 +343,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 sorting={sorting}
                 columnFilters={columnFilters}
                 loading={loading}
+                fetching={fetching}
                 primaryKeys={table.primaryKeys ?? []}
                 selectable={isEditable}
                 selectedRowId={selectedRowId}

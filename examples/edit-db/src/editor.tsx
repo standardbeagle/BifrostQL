@@ -26,6 +26,12 @@ interface EditorProps {
      * list. Off by default — it issues a row-count query per table. Defaults to false.
      */
     showStats?: boolean;
+    /**
+     * Restrict the editor to these tables, by GraphQL name or db name. Omit to
+     * expose every table the server returns, including any bookkeeping tables a
+     * managed host adds to the database.
+     */
+    tables?: string[];
 }
 
 /**
@@ -58,12 +64,20 @@ export function Editor({
     uiPath,
     onLocate,
     showStats = false,
+    tables,
 }: EditorProps) {
     const resolvedFetcher = useMemo(() => {
         if (fetcher) return fetcher;
         if (!uri) return null;
         return new HttpGraphQLFetcher(uri);
     }, [uri, fetcher]);
+
+    // Memoized: the config context feeds the schema filter and every grid, so a
+    // fresh object each render would re-run those consumers for nothing.
+    const config = useMemo(
+        () => ({ showStats, tables }),
+        [showStats, tables],
+    );
 
     const queryClient = useMemo(() => new QueryClient({
         defaultOptions: {
@@ -83,7 +97,7 @@ export function Editor({
     return (
         <QueryClientProvider client={queryClient}>
             <FetcherProvider value={resolvedFetcher}>
-                <EditorConfigProvider config={{ showStats }}>
+                <EditorConfigProvider config={config}>
                     <ToastProvider>
                         <PathProvider path={uiPath || "/"}>
                             <SchemaProvider>

@@ -4,6 +4,7 @@ import { createContext, useContext, useMemo, ReactNode } from "react";
 import { SchemaContextValue, Table, Column, TableMetadata, ManyToManyJoin } from '../types/schema';
 import { useFetcher } from "../common/fetcher";
 import { humanizeName } from "../lib/humanize";
+import { useEditorConfig } from "./useEditorConfig";
 
 interface MetadataItem {
     key: string;
@@ -91,8 +92,20 @@ export function useSchema() {
     return useContext(SchemaContext);
 }
 
+/**
+ * Keep only the tables a host allow-listed, matching on either name and ignoring
+ * case so a host can list them the way they read in its own docs. An empty or
+ * absent list means no restriction.
+ */
+export function filterAllowedTables(tables: Table[], allowed?: string[]): Table[] {
+    if (!allowed || allowed.length === 0) return tables;
+    const wanted = new Set(allowed.map((name) => name.toLowerCase()));
+    return tables.filter((t) => wanted.has(t.graphQlName.toLowerCase()) || wanted.has(t.dbName.toLowerCase()));
+}
+
 function useSchemaLoader(): SchemaContextValue {
     const fetcher = useFetcher();
+    const { tables: allowedTables } = useEditorConfig();
 
     const { isLoading, error, data: dbData } = useQuery({
         queryKey: ['dbSchema'],
@@ -105,7 +118,7 @@ function useSchemaLoader(): SchemaContextValue {
         if (error) return { loading: false, error: { message: (error as Error).message }, data: [], findTable: () => undefined };
         if (!dbData) return { loading: false, error: null, data: [], findTable: () => undefined };
 
-        const tables = dbData._dbSchema.map((s: DbSchemaItem): Table => ({
+        const allTables = dbData._dbSchema.map((s: DbSchemaItem): Table => ({
             ...s,
             name: s.graphQlName,
             label: humanizeName(s.dbName),
@@ -119,11 +132,13 @@ function useSchemaLoader(): SchemaContextValue {
             }))
         }));
 
+        const tables = filterAllowedTables(allTables, allowedTables);
+
         const findTable = (tableName: string): Table | undefined =>
             tables.find((t: Table) => t.graphQlName === tableName);
 
         return { loading: false, error: null, data: tables, findTable };
-    }, [isLoading, error, dbData]);
+    }, [isLoading, error, dbData, allowedTables]);
 }
 
 function parseMetadata(metadata: MetadataItem[]): Record<string, string | TableMetadata['type']> {

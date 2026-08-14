@@ -484,19 +484,12 @@ namespace BifrostQL.Core.Schema
         }
 
         /// <summary>
-        /// The scalar a mutation field returns. For a single-key table the resolver
-        /// returns the KEY of the affected row (see TableMutationPipeline), so a
-        /// bigint key needs a BigInt field: through the historical `Int` it threw
-        /// OverflowException while SERIALIZING the result, failing every insert and
-        /// update on a bigint-keyed table after the write had already landed.
-        /// Composite-key tables return an affected-row count, which stays Int.
+        /// The scalar this table's mutation field declares. Delegates to
+        /// <see cref="MutationResultScalar"/>, which the resolver also uses to coerce
+        /// the returned value — declaration and value must come from one rule or they
+        /// drift, and the drift only shows on a table with an unusual key type.
         /// </summary>
-        private string MutationResultType()
-        {
-            var keys = _table.KeyColumns.ToList();
-            if (keys.Count != 1) return "Int";
-            return _typeMapper.GetGraphQlType(keys[0].EffectiveDataType) == "BigInt" ? "BigInt" : "Int";
-        }
+        private string MutationResultType() => MutationResultScalar.Name(_table, _typeMapper);
 
         public string GetInputFieldDefinition()
         {

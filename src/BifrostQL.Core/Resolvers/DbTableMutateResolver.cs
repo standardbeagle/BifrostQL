@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Schema;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
@@ -39,21 +40,22 @@ namespace BifrostQL.Core.Resolvers
             var mutationTransformers = BifrostProfileRegistry.FilterBy(
                 context.RequestServices!.GetRequiredService<IMutationTransformers>(), context.UserContext);
 
-            switch (MutationActionSelector.FromContext(context))
+            var result = MutationActionSelector.FromContext(context) switch
             {
-                case MutationAction.Sync:
-                    return await SyncObject(context, table, mutationTransformers, model, conFactory, dialect);
-                case MutationAction.Insert:
-                    return await InsertObject(context, table, mutationTransformers, model, conFactory);
-                case MutationAction.Update:
-                    return await UpdateObject(context, table, mutationTransformers, model, conFactory);
-                case MutationAction.Delete:
-                    return await DeleteObject(context, mutationTransformers, table, model, conFactory);
-                case MutationAction.Upsert:
-                    return await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect);
-                default:
-                    return null;
-            }
+                MutationAction.Sync => await SyncObject(context, table, mutationTransformers, model, conFactory, dialect),
+                MutationAction.Insert => await InsertObject(context, table, mutationTransformers, model, conFactory),
+                MutationAction.Update => await UpdateObject(context, table, mutationTransformers, model, conFactory),
+                MutationAction.Delete => await DeleteObject(context, mutationTransformers, table, model, conFactory),
+                MutationAction.Upsert => await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect),
+                _ => null,
+            };
+
+            // This field carries two different meanings — the affected row's KEY, or
+            // an affected-row COUNT for a delete or a composite key — through ONE
+            // declared scalar. Coercing here, by the same rule that chose the
+            // declaration, is what stops a value the scalar cannot serialize from
+            // throwing AFTER the write has already committed.
+            return MutationResultScalar.Coerce(result, MutationResultScalar.Name(table, model.TypeMapper));
         }
 
         private async Task<object?> UpsertObject(IBifrostFieldContext context, IDbTable table,
@@ -248,7 +250,21 @@ namespace BifrostQL.Core.Resolvers
         {
             var data = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
             var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
-            return await TableMutationPipeline.InsertAsync(table, data, ctx);
+            var generated = await TableMutationPipeline.InsertAsync(table, data, ctx);
+
+            // The driver's last-insert-id only means something for an IDENTITY key.
+            // On a table whose single key is client-supplied (a string code, a
+            // natural key) it is whatever the engine happens to hold — SQLite hands
+            // back a hidden rowid, SQL Server hands back null — so the field would
+            // answer with a number that identifies no row the caller can address.
+            // Prefer the key that was actually written, as the sync path already does.
+            var keys = table.KeyColumns.ToList();
+            if (keys.Count == 1 && !keys[0].IsIdentity)
+            {
+                var supplied = RootKeyValue(table, data);
+                if (supplied != null) return supplied;
+            }
+            return generated;
         }
     }
 }

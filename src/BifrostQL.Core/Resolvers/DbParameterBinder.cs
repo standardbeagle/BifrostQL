@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Globalization;
+using System.Numerics;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 
@@ -112,11 +114,31 @@ namespace BifrostQL.Core.Resolvers
 
             var p = cmd.CreateParameter();
             p.ParameterName = name;
-            p.Value = value ?? DBNull.Value;
+            p.Value = ToProviderValue(value) ?? DBNull.Value;
             if (dbType != null)
                 p.DbType = Enum.Parse<System.Data.DbType>(dbType);
             cmd.Parameters.Add(p);
         }
+
+        /// <summary>
+        /// Converts a value to something an ADO.NET provider can bind.
+        ///
+        /// GraphQL's <c>BigInt</c> scalar hands us a <see cref="BigInteger"/>, which no
+        /// provider maps — binding one throws "No mapping exists from object type
+        /// System.Numerics.BigInteger to a known managed provider native type" and fails
+        /// the request AFTER validation passed. That made every filter on a bigint
+        /// column fail at the database, whatever value was supplied.
+        ///
+        /// A value outside <see cref="long"/> range cannot be stored in a bigint column,
+        /// so it is bound as text: it matches no row (the truthful answer) instead of
+        /// being truncated into a different, valid-looking key.
+        /// </summary>
+        private static object? ToProviderValue(object? value) => value switch
+        {
+            BigInteger big when big >= long.MinValue && big <= long.MaxValue => (long)big,
+            BigInteger big => big.ToString(CultureInfo.InvariantCulture),
+            _ => value,
+        };
 
         /// <summary>
         /// Identity values come back as <see cref="decimal"/> from some providers;

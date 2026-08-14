@@ -483,12 +483,27 @@ namespace BifrostQL.Core.Schema
             return builder.ToString();
         }
 
+        /// <summary>
+        /// The scalar a mutation field returns. For a single-key table the resolver
+        /// returns the KEY of the affected row (see TableMutationPipeline), so a
+        /// bigint key needs a BigInt field: through the historical `Int` it threw
+        /// OverflowException while SERIALIZING the result, failing every insert and
+        /// update on a bigint-keyed table after the write had already landed.
+        /// Composite-key tables return an affected-row count, which stays Int.
+        /// </summary>
+        private string MutationResultType()
+        {
+            var keys = _table.KeyColumns.ToList();
+            if (keys.Count != 1) return "Int";
+            return _typeMapper.GetGraphQlType(keys[0].EffectiveDataType) == "BigInt" ? "BigInt" : "Int";
+        }
+
         public string GetInputFieldDefinition()
         {
             var result = new StringBuilder();
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();

@@ -34,9 +34,9 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoaderCircle, Save, X, AlertCircle } from "lucide-react";
 import { ContentEditor } from "@/components/content-editor";
 import { isBinaryDbType, isLongTextDbType, isJsonColumn } from "@/lib/content-detect";
+import { isExactScalar, isIntegerScalar, isNumericScalar } from "@/lib/scalar-types";
 
 const booleanTypes = ["Boolean", "Boolean!"];
-const numericTypes = ["Int", "Int!", "Float", "Float!"];
 
 // Sentinel for the "(none)" option in FK/enum selects. Radix's Select rejects an
 // empty-string item value, so we round-trip this and map it back to null on change.
@@ -571,7 +571,7 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
     // Composite-FK member columns are driven by the anchor's CompositeParentField — hide the input.
     if (fkRole === 'member-composite') return null;
     const isDate = isDateColumn(column);
-    const isNumeric = numericTypes.some(t => t === column.paramType);
+    const isNumeric = isNumericScalar(column.paramType);
     const showCharCounter = column.maxLength && column.maxLength > 0 && !isDate && !isNumeric;
 
     // Use enum values if available
@@ -595,8 +595,15 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
     // Determine input type based on schema metadata or paramType. Datetime columns get a
     // datetime-local input so the time-of-day is editable and preserved on save; a bare
     // date column keeps a date input.
+    // A bigint/decimal field keeps a TEXT input: `type="number"` lets the browser
+    // normalize the value through a double, which is the rounding the exact-value
+    // path exists to avoid. inputMode still brings up a numeric keypad.
+    const isExact = isExactScalar(column.paramType);
     const inputType = column.inputType
-        || (isDate ? (isDateTimeColumn(column) ? "datetime-local" : "date") : isNumeric ? "number" : "text");
+        || (isDate ? (isDateTimeColumn(column) ? "datetime-local" : "date")
+            : isExact ? "text"
+            : isNumeric ? "number" : "text");
+    const inputMode = isExact ? (isIntegerScalar(column.paramType) ? "numeric" : "decimal") : undefined;
 
     const errorId = `${name}-error`;
 
@@ -615,6 +622,7 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
                     <Input
                         id={name}
                         type={inputType}
+                        inputMode={inputMode}
                         value={(field.state.value as string | number) ?? ''}
                         onChange={(e) => field.handleChange(e.target.value)}
                         onBlur={field.handleBlur}

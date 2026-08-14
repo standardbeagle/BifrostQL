@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import type { ColumnFilterValue } from '@/hooks/useDataTable';
 import { useDebouncedCommit } from '../../hooks/useDebouncedCommit';
+import { isExactScalar, isIntegerScalar, parseScalarNumber } from '@/lib/scalar-types';
 
 const operatorLabels: Record<string, string> = {
     _eq: 'Equals',
@@ -30,53 +31,27 @@ interface NumberFilterProps<TData, TValue> {
     column: Column<TData, TValue>;
 }
 
-/** Whole-number columns: the input accepts digits only, no decimal point. */
-const INTEGER_PARAM_TYPES = new Set(['Int', 'Short', 'Byte', 'BigInt']);
-
-/**
- * Columns whose typed value is kept as text here rather than parsed to a number. A
- * JS number is an IEEE-754 double: it rounds a bigint past 2^53 (9007199254740993
- * becomes ...992, so the filter would silently target a different row) and drops
- * exact-decimal precision. Keeping the digits lets `buildColumnFilters` decide —
- * it sends the number when a double carries the value exactly, and REFUSES the
- * filter (with a reason) when it does not, instead of rounding it.
- */
-const EXACT_PARAM_TYPES = new Set(['BigInt', 'Decimal']);
-
 function paramTypeOf<TData, TValue>(column: Column<TData, TValue>): string {
-    return ((column.columnDef.meta as { paramType?: string })?.paramType ?? '').replace('!', '');
-}
-
-function isIntColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    return INTEGER_PARAM_TYPES.has(paramTypeOf(column));
-}
-
-function isExactColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    return EXACT_PARAM_TYPES.has(paramTypeOf(column));
+    return (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
 }
 
 /**
  * Validates the typed text and returns the value to filter by: the digits
- * unchanged for an exact column, otherwise a number. Returns null when the text is
- * not (yet) a complete numeric literal, which the caller reads as "no filter".
+ * unchanged for a bigint/decimal column (a JS number would round them), otherwise
+ * a number. Null means the text is not (yet) a complete numeric literal, which the
+ * caller reads as "no filter". Thin wrapper over the shared classifier so the
+ * filter, the edit form and the write path all agree on what a column accepts.
  */
-export function parseNumeric(raw: string, isInt: boolean, exact = false): number | string | null {
-    const text = raw.trim();
-    if (text === '' || text === '-' || text === '+') return null;
-    const valid = isInt
-        ? /^[+-]?\d+$/.test(text)
-        : /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/.test(text);
-    if (!valid) return null;
-    if (exact) return text;
-    const n = Number(text);
-    return Number.isFinite(n) ? n : null;
+export function parseNumeric(raw: string, paramType: string): number | string | null {
+    return parseScalarNumber(raw, paramType);
 }
 
 export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData, TValue>) {
     const operators = (column.columnDef.meta as { filterOperators?: string[] })?.filterOperators ?? [];
     const numericOperators = operators.filter((op) => op in operatorLabels);
-    const isInt = isIntColumn(column);
-    const isExact = isExactColumn(column);
+    const paramType = paramTypeOf(column);
+    const isInt = isIntegerScalar(paramType);
+    const isExact = isExactScalar(paramType);
 
     const currentFilter = column.getFilterValue() as ColumnFilterValue | undefined;
 
@@ -107,7 +82,7 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
             return;
         }
 
-        const parsed = parseNumeric(val, isInt, isExact);
+        const parsed = parseNumeric(val, paramType);
         if (parsed === null) {
             cancel();
             column.setFilterValue(undefined);
@@ -118,8 +93,8 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
     };
 
     const applyBetweenFilter = (min: string, max: string) => {
-        const parsedMin = parseNumeric(min, isInt, isExact);
-        const parsedMax = parseNumeric(max, isInt, isExact);
+        const parsedMin = parseNumeric(min, paramType);
+        const parsedMax = parseNumeric(max, paramType);
 
         if (parsedMin === null || parsedMax === null) {
             cancel();

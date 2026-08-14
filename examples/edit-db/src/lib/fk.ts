@@ -1,4 +1,5 @@
 import type { Column, Join, Table } from '../types/schema';
+import { baseParamType, isExactScalar, isIntegerScalar } from './scalar-types';
 
 export interface FkEqFilterResult {
     filterText: string;
@@ -14,17 +15,15 @@ export interface FkEqFilterResult {
  */
 export function coerceForGql(value: unknown, gqlType: string): unknown {
     if (value === null || value === undefined) return null;
-    switch (gqlType) {
-        // Short/Byte are smallint/tinyint. They are declared as their own scalars,
-        // which reject a string the way Int does — and unlike BigInt/Decimal they
-        // always fit a JS number exactly, so there is nothing to preserve by
-        // keeping them textual.
-        case 'Int':
-        case 'Short':
-        case 'Byte': {
-            const n = typeof value === 'number' ? value : Number(value);
-            return Number.isFinite(n) ? Math.trunc(n) : value;
-        }
+    // BigInt/Decimal keep their digits: routed through a JS number they would round
+    // (see isExactScalar). Every other numeric scalar is declared as a type that
+    // rejects a string, so it must arrive as a number.
+    if (isExactScalar(gqlType)) return String(value);
+    if (isIntegerScalar(gqlType)) {
+        const n = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(n) ? Math.trunc(n) : value;
+    }
+    switch (baseParamType(gqlType)) {
         case 'Float': {
             const n = typeof value === 'number' ? value : Number(value);
             return Number.isFinite(n) ? n : value;

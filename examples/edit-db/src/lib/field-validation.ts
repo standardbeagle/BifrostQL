@@ -1,4 +1,5 @@
 import type { Column } from '../types/schema';
+import { isIntegerScalar, isNumericScalar } from './scalar-types';
 
 /**
  * Client-side field validation that mirrors the server's BifrostFormValidator
@@ -12,12 +13,8 @@ import type { Column } from '../types/schema';
  *  - inputType email/url are validated (the server checks these too).
  */
 
-const numericParamTypes = new Set(['Int', 'Int!', 'Float', 'Float!', 'Decimal', 'Decimal!']);
-
-const integerParamTypes = new Set(['Int', 'Int!']);
-
 function isNumericColumn(column: Column): boolean {
-    return numericParamTypes.has(column.paramType);
+    return isNumericScalar(column.paramType);
 }
 
 /**
@@ -26,7 +23,7 @@ function isNumericColumn(column: Column): boolean {
  * without that parity the value passes validation and dies silently at Save.
  */
 function isIntegerColumn(column: Column): boolean {
-    return integerParamTypes.has(column.paramType);
+    return isIntegerScalar(column.paramType);
 }
 
 /**

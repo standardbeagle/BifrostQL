@@ -6,6 +6,7 @@ import type { PkFilter } from "../lib/row-id";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 import { assertGraphQlName } from "../lib/query-builder";
+import { baseParamType, isExactScalar, isIntegerScalar } from "../lib/scalar-types";
 
 export type DeleteInput = PkFilter | string | number;
 
@@ -23,8 +24,12 @@ function isPkFilter(value: DeleteInput): value is PkFilter {
 function coerceValue(value: unknown, paramType: string | undefined): unknown {
     if (value === null || value === undefined) return null;
     if (!paramType) return value;
-    const base = paramType.replace('!', '');
-    if (base === 'Int') {
+    const base = baseParamType(paramType);
+    // BigInt/Decimal keys stay text (a JS number would round them into a DIFFERENT
+    // row — and this deletes rows). Short/Byte are whole numbers like Int; they used
+    // to fall through to String, which their own scalar rejects.
+    if (isExactScalar(paramType)) return String(value);
+    if (isIntegerScalar(paramType)) {
         const n = typeof value === 'number' ? value : Number(value);
         return Number.isFinite(n) ? Math.trunc(n) : value;
     }

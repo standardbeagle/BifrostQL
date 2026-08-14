@@ -20,6 +20,7 @@ import { DateFilter } from '@/components/filters/date-filter';
 import { BooleanFilter } from '@/components/filters/boolean-filter';
 import { FkFilter } from '@/components/filters/fk-filter';
 import type { Column as ColumnSchema } from '@/types/schema';
+import { isNumericScalar, isTimestampScalar } from '@/lib/scalar-types';
 
 function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string {
     const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
@@ -30,22 +31,18 @@ function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string 
 // predicates, or its column shows NO Filter submenu at all — the failure is silent,
 // because the header still renders and the sort commands still work. smallint
 // (Short), tinyint (Byte), bigint (BigInt), decimal/numeric (Decimal) and
-// datetimeoffset (DateTimeOffset) were all unclaimed. Keep in step with
-// `columnFilterOperators` in query-builder.ts, which decides the operators and the
-// declared variable type for the same set.
-const NUMERIC_PARAM_TYPES = new Set(['Int', 'Float', 'Short', 'Byte', 'BigInt', 'Decimal']);
-const DATE_PARAM_TYPES = new Set(['DateTime', 'DateTimeOffset']);
-
+// datetimeoffset (DateTimeOffset) were all unclaimed. The classification lives in
+// lib/scalar-types.ts, shared with the forms, the write path and quick search.
 function isStringColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
     return getBaseParamType(column) === 'String';
 }
 
 function isNumericColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    return NUMERIC_PARAM_TYPES.has(getBaseParamType(column));
+    return isNumericScalar(getBaseParamType(column));
 }
 
 function isDateColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    return DATE_PARAM_TYPES.has(getBaseParamType(column));
+    return isTimestampScalar(getBaseParamType(column));
 }
 
 function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
@@ -113,8 +110,8 @@ function getTypeIcon(col: ColumnSchema) {
     const baseType = col.paramType.replace('!', '');
     
     if (col.isPrimaryKey) return <Key className="size-3.5" />;
-    if (baseType === 'Int' || baseType === 'Float') return <Hash className="size-3.5" />;
-    if (baseType === 'DateTime') return <Calendar className="size-3.5" />;
+    if (isNumericScalar(baseType)) return <Hash className="size-3.5" />;
+    if (isTimestampScalar(baseType)) return <Calendar className="size-3.5" />;
     if (baseType === 'Boolean') return <ToggleLeft className="size-3.5" />;
     return <Type className="size-3.5" />;
 }

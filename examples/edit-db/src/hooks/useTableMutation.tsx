@@ -7,24 +7,28 @@ import { isJsonColumn } from "../lib/content-detect";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 import { assertGraphQlName } from "../lib/query-builder";
+import { baseParamType, isExactScalar, isIntegerScalar, isNumericScalar } from "../lib/scalar-types";
 
-const numericTypes = ["Int", "Int!", "Float", "Float!"];
-// BigInt exceeds Number's 2^53 safe-integer range: coercing through +val /
-// Number() silently rounds large keys and values. The read path (fk.ts /
-// row-id.ts coerceForGql) already passes BigInt as strings, so the write path
-// must too — otherwise an edited BigInt PK targets the wrong row.
-const bigIntTypes = ["BigInt", "BigInt!"];
+// BigInt/Decimal exceed what a JS number holds exactly: coercing through +val /
+// Number() silently rounds a large key and drops decimal precision. The read path
+// (fk.ts / row-id.ts coerceForGql) passes them as strings, so the write path must
+// too — otherwise an edited key targets the wrong row. Every OTHER numeric scalar
+// is declared as a type that rejects a string and must arrive as a number; Short
+// and Byte (smallint/tinyint) used to miss this list entirely and were written as
+// strings their `Short!`/`Byte!` input rejects.
+const isPlainNumeric = (paramType: string) => isNumericScalar(paramType) && !isExactScalar(paramType);
 const booleanTypes = ["Boolean", "Boolean!"];
 
 function coerceNumericValue(value: unknown, paramType: string, columnName: string): number {
-    const baseType = paramType.replace('!', '');
+    const baseType = baseParamType(paramType);
+    const wholeNumber = isIntegerScalar(paramType);
     if (typeof value === 'number') {
-        if (Number.isFinite(value) && (baseType !== 'Int' || Number.isInteger(value))) return value;
+        if (Number.isFinite(value) && (!wholeNumber || Number.isInteger(value))) return value;
         throw new Error(`Invalid ${baseType} value for column '${columnName}'.`);
     }
 
     const text = String(value).trim();
-    const valid = baseType === 'Int'
+    const valid = wholeNumber
         ? /^[+-]?\d+$/.test(text)
         : /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/.test(text);
     if (!valid) throw new Error(`Invalid ${baseType} value for column '${columnName}'.`);
@@ -52,7 +56,7 @@ function coerceDetail(
             coerced[col.name] = isInsert ? undefined : null;
             continue;
         }
-        if (numericTypes.some(t => t === col.paramType)) {
+        if (isPlainNumeric(col.paramType)) {
             const val = coerced[col.name];
             // An empty field means "no value": on update clear it with null
             // rather than coercing "" to 0 (a silent, wrong data write); on
@@ -63,7 +67,7 @@ function coerceDetail(
                 : val === "" ? (isInsert ? undefined : null)
                 : coerceNumericValue(val, col.paramType, col.name);
         }
-        if (bigIntTypes.some(t => t === col.paramType)) {
+        if (isExactScalar(col.paramType)) {
             const val = coerced[col.name];
             // Same empty-value semantics as numeric, but the value itself is
             // passed as a string to preserve precision beyond 2^53.
@@ -94,11 +98,11 @@ function coerceDetail(
     if (!isInsert && pkFilter) {
         for (const col of idColumns) {
             const raw = pkFilter[col.name];
-            if (numericTypes.some(t => t === col.paramType)) {
+            if (isPlainNumeric(col.paramType)) {
                 coerced[col.name] = raw == null ? null : coerceNumericValue(raw, col.paramType, col.name);
             } else {
-                // Strings — including BigInt PKs, which must stay strings so a
-                // key above 2^53 targets the exact row it was read from.
+                // Strings — including BigInt/Decimal PKs, which must stay strings so
+                // a key above 2^53 targets the exact row it was read from.
                 coerced[col.name] = raw;
             }
         }

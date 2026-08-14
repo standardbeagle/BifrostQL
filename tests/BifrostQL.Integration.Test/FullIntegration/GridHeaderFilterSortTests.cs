@@ -288,6 +288,36 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
     }
 
     /// <summary>
+    /// The WRITE path, not a read: the edit form and the delete action bind values
+    /// through the same scalars. A smallint/tinyint value used to be sent as text
+    /// (its `Short!`/`Byte!` input rejects that), and a bigint key had to be text to
+    /// survive 2^53 — so one document exercises both rules at once.
+    /// </summary>
+    [Fact]
+    public async Task Write_MixedScalars_AcceptsNumbersAndExactText()
+    {
+        const string mutation =
+            "mutation UpdateLedger($id: BigInt!, $note: String!) " +
+            "{ ledger(update: {entry_id: $id, note: $note}) }";
+        var result = await ExecuteQueryAsync(mutation, new Dictionary<string, object?>
+        {
+            ["id"] = "9007199254740993",
+            ["note"] = "edited",
+        });
+
+        result.Errors.Should().BeNullOrEmpty();
+
+        var check = await ExecuteQueryAsync(
+            "query GetSingleRow_ledger($pk_entry_id: BigInt) " +
+            "{ value: ledger(filter: {entry_id: {_eq: $pk_entry_id}}) { data { note } } }",
+            new Dictionary<string, object?> { ["pk_entry_id"] = "9007199254740993" });
+        check.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)check.Data!).ToValue() as Dictionary<string, object?>;
+        var rows = (System.Collections.IList)((Dictionary<string, object?>)data!["value"]!)["data"]!;
+        ((Dictionary<string, object?>)rows[0]!)["note"].Should().Be("edited");
+    }
+
+    /// <summary>
     /// `_null` is emitted as a literal, not a variable, so it must work on every column
     /// kind the menu offers it for.
     /// </summary>

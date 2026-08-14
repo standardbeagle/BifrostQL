@@ -15,6 +15,7 @@ import {
 import { ChevronLeft, Filter, Plus, Search, X, Loader2, Home } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { humanizeName } from './lib/humanize';
+import { isNumericScalar, isStringScalar, parseScalarNumber } from './lib/scalar-types';
 
 interface HeaderRouteParams {
     table?: string;
@@ -40,14 +41,12 @@ export function Header() {
     const hasOpenColumns = columns.length > 0;
     const tableSchema = useMemo(() => schema?.find((t: Table) => t.graphQlName === tableName), [schema, tableName]);
     // Quick search only supports the text/number operators built below, so limit
-    // the column picker to String/Int/Float. DateTime and Boolean still filter via
-    // the per-column grid header filters; offering them here would silently no-op.
+    // the column picker to String and the numeric scalars. DateTime and Boolean
+    // still filter via the per-column grid header filters; offering them here would
+    // silently no-op.
     const options: ColumnOption[] | undefined = useMemo(
         () => tableSchema?.columns
-            ?.filter((c: Column) => {
-                const base = c.paramType.replace('!', '');
-                return base === 'String' || base === 'Int' || base === 'Float';
-            })
+            ?.filter((c: Column) => isStringScalar(c.paramType) || isNumericScalar(c.paramType))
             .map((c: Column) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })),
         [tableSchema]
     );
@@ -62,12 +61,14 @@ export function Header() {
         // No column selected (e.g. table has no searchable column) — nothing to do.
         if (!type) return;
         const base = type.replace("!", "");
-        if (base === "Int" || base === "Float") {
+        if (isNumericScalar(base)) {
             // Guard against interpolating non-numeric input straight into the
-            // filter JSON (which produced a malformed param).
-            const n = Number(searchVal);
-            if (!Number.isFinite(n)) return;
-            navigate(`?filter=["${columnName}", "_eq", ${n}, "${type}"]`);
+            // filter JSON (which produced a malformed param). parseScalarNumber
+            // also keeps a bigint/decimal search term as its digits — through a
+            // JS number it would round and search for a different value.
+            const parsed = parseScalarNumber(searchVal, base);
+            if (parsed === null) return;
+            navigate(`?filter=["${columnName}", "_eq", ${JSON.stringify(parsed)}, "${type}"]`);
         } else if (base === "String") {
             // JSON.stringify escapes quotes/backslashes so a search term can't
             // break out of the filter string.

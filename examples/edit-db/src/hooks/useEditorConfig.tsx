@@ -20,6 +20,18 @@ export interface EditorConfig {
      * routing and FK lookups too, not just out of the list.
      */
     tables?: string[];
+    /**
+     * Columns visible by default per table, keyed by table name; every other
+     * column starts hidden. Only the starting point — a viewer's own choices are
+     * stored per table and win from then on.
+     */
+    defaultColumns?: Record<string, string[]>;
+    /**
+     * Columns to move to the right end of every grid, in this order. For audit
+     * stamps (created/modified) that are read far less often than the data they
+     * annotate but sit in the middle of the natural column order.
+     */
+    trailingColumns?: string[];
 }
 
 const defaultConfig: EditorConfig = { showStats: false };

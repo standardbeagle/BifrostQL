@@ -32,6 +32,14 @@ interface EditorProps {
      * managed host adds to the database.
      */
     tables?: string[];
+    /**
+     * Columns visible by default per table, keyed by table name (`{ workshops:
+     * ['id', 'number'] }`). Every other column of that table starts hidden.
+     * A viewer's own column choices are stored per table and take over from there.
+     */
+    defaultColumns?: Record<string, string[]>;
+    /** Columns to move to the right end of every grid, in this order (e.g. audit stamps). */
+    trailingColumns?: string[];
 }
 
 /**
@@ -65,6 +73,8 @@ export function Editor({
     onLocate,
     showStats = false,
     tables,
+    defaultColumns,
+    trailingColumns,
 }: EditorProps) {
     const resolvedFetcher = useMemo(() => {
         if (fetcher) return fetcher;
@@ -75,8 +85,8 @@ export function Editor({
     // Memoized: the config context feeds the schema filter and every grid, so a
     // fresh object each render would re-run those consumers for nothing.
     const config = useMemo(
-        () => ({ showStats, tables }),
-        [showStats, tables],
+        () => ({ showStats, tables, defaultColumns, trailingColumns }),
+        [showStats, tables, defaultColumns, trailingColumns],
     );
 
     const queryClient = useMemo(() => new QueryClient({

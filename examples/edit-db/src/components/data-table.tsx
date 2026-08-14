@@ -5,7 +5,6 @@ import {
     Row,
     RowSelectionState,
     SortingState,
-    VisibilityState,
     flexRender,
     getCoreRowModel,
     useReactTable,
@@ -31,6 +30,8 @@ import {
     DropdownMenu,
     DropdownMenuCheckboxItem,
     DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -55,8 +56,14 @@ import {
     COL_MAX_AUTO_WIDTH,
     COL_DEFAULT_WIDTH,
 } from '@/hooks/useColumnSizingPersistence';
+import {
+    useColumnVisibilityPersistence,
+    visibilityFromDefaults,
+} from '@/hooks/useColumnVisibilityPersistence';
 import { useRowHoverActions } from '@/hooks/useRowHoverActions';
 import { useFitMode, FIT_SENTINEL } from '@/hooks/useFitMode';
+import { useEditorConfig } from '@/hooks/useEditorConfig';
+import { orderColumns } from '@/lib/column-order';
 
 /**
  * Props for the DataTable component.
@@ -200,7 +207,7 @@ export function DataTable<TData>({
         onPressMove,
         cancelPress,
     } = useRowHoverActions();
-    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const { defaultColumns, trailingColumns } = useEditorConfig();
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
     const { columnSizing, setColumnSizing } = useColumnSizingPersistence(tableName);
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -259,9 +266,31 @@ export function DataTable<TData>({
                 size: 32,
             });
         }
-        cols.push(...columns);
+        // The host's default column list doubles as the order for those columns:
+        // they were named in the order they read best.
+        cols.push(...orderColumns(columns, {
+            leading: tableName ? defaultColumns?.[tableName] : undefined,
+            trailing: trailingColumns,
+        }));
         return cols;
-    }, [columns, selectable]);
+    }, [columns, selectable, defaultColumns, tableName, trailingColumns]);
+
+    // Host defaults for this table, expanded against the columns it actually has.
+    // Only consulted while the viewer has no stored selection.
+    const defaultVisibility = useMemo(
+        () => visibilityFromDefaults(
+            allColumns
+                // Columns that can't be hidden (the selection checkbox) are left out
+                // of the map entirely rather than defaulted to hidden.
+                .filter((c) => c.enableHiding !== false)
+                .map((c) => c.id)
+                .filter((id): id is string => id !== undefined),
+            tableName ? defaultColumns?.[tableName] : undefined,
+        ),
+        [allColumns, defaultColumns, tableName],
+    );
+    const { columnVisibility, setColumnVisibility, resetColumnVisibility } =
+        useColumnVisibilityPersistence(tableName, defaultVisibility);
 
     const table = useReactTable({
         data,
@@ -444,6 +473,10 @@ export function DataTable<TData>({
                                     </DropdownMenuCheckboxItem>
                                 );
                             })}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={resetColumnVisibility}>
+                            Reset to default columns
+                        </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
                 </div>

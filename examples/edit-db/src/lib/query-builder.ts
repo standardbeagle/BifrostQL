@@ -56,21 +56,34 @@ interface RowData {
     [key: string]: unknown;
 }
 
-// BigInt/Decimal share the numeric operator set (no _contains). They intentionally
-// mirror Int/Float exactly — including omitting _in, whose array-valued path is not
-// wired through buildColumnFilters or the number-filter UI. Without an entry here a
-// BigInt/Decimal column falls through to the String set below, offering _contains and
-// sending its value under a String variable declaration → server validation error /
-// empty grid.
+const NUMERIC_OPERATORS = ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"];
+
+// Every scalar a type mapper can produce needs an entry. A column type that is
+// MISSING here falls through to the String set below, which offers _contains and
+// declares the value under a `String` variable — and a String variable in a
+// `FilterType<T>Input` position is a hard GraphQL validation error, so the whole
+// grid query fails and the column reads as "filter does nothing". Short/Byte
+// (smallint/tinyint) and DateTimeOffset used to be exactly that gap; the header
+// menu also has to recognize them (see data-table-column-header.tsx) or the
+// Filter submenu never renders at all.
+//
+// The numeric types intentionally omit _in, whose array-valued path is not wired
+// through buildColumnFilters or the number-filter UI.
 const columnFilterOperators: Record<string, string[]> = {
-    String:   ["_eq", "_neq", "_contains", "_starts_with", "_ends_with", "_null"],
-    Int:      ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-    Float:    ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-    BigInt:   ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-    Decimal:  ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
-    Boolean:  ["_eq", "_null"],
-    DateTime: ["_eq", "_neq", "_gt", "_gte", "_lt", "_lte", "_between", "_null"],
+    String:         ["_eq", "_neq", "_contains", "_starts_with", "_ends_with", "_null"],
+    Int:            NUMERIC_OPERATORS,
+    Float:          NUMERIC_OPERATORS,
+    Short:          NUMERIC_OPERATORS,
+    Byte:           NUMERIC_OPERATORS,
+    BigInt:         NUMERIC_OPERATORS,
+    Decimal:        NUMERIC_OPERATORS,
+    Boolean:        ["_eq", "_null"],
+    DateTime:       NUMERIC_OPERATORS,
+    DateTimeOffset: NUMERIC_OPERATORS,
 };
+
+/** Column types whose filter bounds are timestamps, so a date-only bound must be widened to a day. */
+const timestampTypes = new Set(["DateTime", "DateTimeOffset"]);
 
 const graphQlNamePattern = /^[_A-Za-z][_0-9A-Za-z]*$/;
 const graphQlTypePattern = /^[_A-Za-z][_0-9A-Za-z]*!?$/;
@@ -154,20 +167,139 @@ export function getRowPkValue(row: RowData, table: Table, rowIndex = 0): string 
     return rowIdOf(row as Record<string, unknown>, table, rowIndex);
 }
 
+/**
+ * The GraphQL type a filter/lookup VARIABLE must be declared as for a column of
+ * this paramType. It has to be the column's own scalar: the variable is used in a
+ * `FilterType<T>Input` field position, and GraphQL rejects any variable whose
+ * declared type is not that exact scalar — "Variable '$cf_x_0' of type 'String'
+ * used in position expecting type 'DateTime'" fails the WHOLE document, so one
+ * mistyped column empties the grid rather than degrading that one predicate.
+ *
+ */
 export function getGraphQlType(paramType: string): string {
     const baseType = paramType.replace("!", "");
     switch (baseType) {
-        case "Int": return "Int";
-        case "Float": return "Float";
-        case "Boolean": return "Boolean";
-        // BigInt/Decimal keep their own scalar so the variable declaration matches
-        // the column type. Values still travel as strings on the wire (coerceForGql's
-        // default branch stringifies), which is BigInt-safe past 2^53 and preserves
-        // Decimal precision.
-        case "BigInt": return "BigInt";
-        case "Decimal": return "Decimal";
-        case "DateTime": return "String";
+        case "Int":
+        case "Float":
+        case "Short":
+        case "Byte":
+        case "Boolean":
+        case "BigInt":
+        case "Decimal":
+        case "DateTime":
+        case "DateTimeOffset":
+            return baseType;
         default: return "String";
+    }
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Column types carried on the wire as a JSON number that a double may not hold exactly. */
+const exactNumericTypes = new Set(["BigInt", "Decimal"]);
+
+/**
+ * The most significant digits a JSON number (an IEEE-754 double) carries without
+ * loss. 9007199254740993 is the smallest integer that does not survive one.
+ */
+const MAX_EXACT_DIGITS = 15;
+
+/**
+ * A BigInt/Decimal bound as the JSON number the server's scalar accepts, or null
+ * when a double cannot hold it exactly.
+ *
+ * Null is the point. Sending the rounded number would filter for a value the user
+ * never asked for — 9007199254740993 becomes ...992, matching a DIFFERENT row while
+ * the header still shows the typed bound as active. The caller reports it as a
+ * filter that cannot be applied, which stops the query, rather than returning a
+ * confidently wrong result set.
+ */
+export function exactNumericValue(value: unknown): number | null {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value !== "string") return null;
+    const text = value.trim();
+    if (!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(text)) return null;
+    const digits = text.replace(/^[+-]/, "").replace(".", "").replace(/^0+(?=\d)/, "");
+    if (digits.length > MAX_EXACT_DIGITS) return null;
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** `-780` (minutes behind UTC, as getTimezoneOffset reports it) → `"+13:00"`. */
+function formatUtcOffset(offsetMinutes: number): string {
+    const sign = offsetMinutes <= 0 ? "+" : "-";
+    const abs = Math.abs(offsetMinutes);
+    const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+    const mm = String(abs % 60).padStart(2, "0");
+    return `${sign}${hh}:${mm}`;
+}
+
+/**
+ * Widens a date-only bound ("2024-02-01") to the instant at the requested edge of
+ * that LOCAL day, in the ISO-8601 form the server's DateTime/DateTimeOffset scalars
+ * require.
+ *
+ * The date filter's control is `<input type="date">`, so its value carries no time
+ * — but the column it filters is a timestamp. Sent verbatim the value is not
+ * ISO-8601-complete and the scalar rejects it outright; sent as midnight it silently
+ * means "the first instant of the day", so "on or before 1 Feb" excludes everything
+ * recorded ON 1 Feb. Each operator therefore takes the edge that makes it true for
+ * the whole day.
+ */
+export function dayBoundary(
+    date: string,
+    edge: "start" | "end",
+    gqlType: string,
+    offsetMinutes?: number,
+): string {
+    const time = edge === "start" ? "00:00:00.000" : "23:59:59.999";
+    const stamp = `${date}T${time}`;
+    if (gqlType !== "DateTimeOffset") return stamp;
+    const offset = offsetMinutes ?? new Date(`${date}T00:00:00`).getTimezoneOffset();
+    return `${stamp}${formatUtcOffset(offset)}`;
+}
+
+/**
+ * The wire form of one column filter: the operator actually emitted and its
+ * value(s). Everything passes through unchanged except a date-only bound on a
+ * timestamp column, where the operator may widen to a day RANGE (`_eq` on a
+ * timestamp column matches nothing otherwise — no row is recorded at exactly
+ * midnight).
+ */
+export function toWireFilter(
+    operator: string,
+    value: unknown,
+    gqlType: string,
+    offsetMinutes?: number,
+): { operator: string; value: unknown } {
+    if (!timestampTypes.has(gqlType)) return { operator, value };
+
+    const start = (v: unknown) => dayBoundary(String(v), "start", gqlType, offsetMinutes);
+    const end = (v: unknown) => dayBoundary(String(v), "end", gqlType, offsetMinutes);
+    const isDateOnly = (v: unknown) => typeof v === "string" && DATE_ONLY.test(v);
+
+    if (operator === "_between") {
+        const range = Array.isArray(value) ? value : null;
+        if (!range || range.length !== 2) return { operator, value };
+        return {
+            operator,
+            value: [
+                isDateOnly(range[0]) ? start(range[0]) : range[0],
+                isDateOnly(range[1]) ? end(range[1]) : range[1],
+            ],
+        };
+    }
+
+    if (!isDateOnly(value)) return { operator, value };
+
+    switch (operator) {
+        // "on that day" / "not on that day" are day-wide ranges, not instants.
+        case "_eq": return { operator: "_between", value: [start(value), end(value)] };
+        case "_neq": return { operator: "_nbetween", value: [start(value), end(value)] };
+        // After/on-or-before include the whole day; on-or-after/before start at it.
+        case "_gt":
+        case "_lte": return { operator, value: end(value) };
+        default: return { operator, value: start(value) };
     }
 }
 
@@ -209,24 +341,49 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
             continue;
         }
 
-        if (filterValue.operator === "_between") {
-            const range = filterValue.value as [unknown, unknown];
+        // Validated as the UI operator above; emitted as the WIRE operator here,
+        // which for a date-only bound on a timestamp column may widen to a range.
+        const wire = toWireFilter(filterValue.operator, filterValue.value, gqlType);
+
+        // A BigInt/Decimal bound travels as a JSON number, so a value a double
+        // cannot hold exactly must fail the filter rather than be rounded into a
+        // predicate the user did not ask for.
+        const exact = (v: unknown): unknown => {
+            if (!exactNumericTypes.has(gqlType)) return v;
+            const n = exactNumericValue(v);
+            if (n === null) {
+                errors.push(
+                    `The value '${String(v)}' is too precise to filter column '${cf.id}' by — ` +
+                    "it cannot be sent without rounding to a different value.",
+                );
+                return undefined;
+            }
+            return n;
+        };
+
+        if (wire.operator === "_between" || wire.operator === "_nbetween") {
+            const range = wire.value as [unknown, unknown];
             if (!Array.isArray(range) || range.length !== 2) {
                 errors.push(`The range filter on column '${cf.id}' needs exactly two bounds.`);
                 continue;
             }
+            const lo = exact(range[0]);
+            const hi = exact(range[1]);
+            if (lo === undefined || hi === undefined) continue;
             const loVar = `${varName}_lo`;
             const hiVar = `${varName}_hi`;
-            variables[loVar] = range[0];
-            variables[hiVar] = range[1];
+            variables[loVar] = lo;
+            variables[hiVar] = hi;
             params.push(`$${loVar}: ${gqlType}`, `$${hiVar}: ${gqlType}`);
-            filterTexts.push(`{${cf.id}: {_between: [$${loVar}, $${hiVar}]}}`);
+            filterTexts.push(`{${cf.id}: {${wire.operator}: [$${loVar}, $${hiVar}]}}`);
             continue;
         }
 
-        variables[varName] = filterValue.value;
+        const bound = exact(wire.value);
+        if (bound === undefined) continue;
+        variables[varName] = bound;
         params.push(`$${varName}: ${gqlType}`);
-        filterTexts.push(`{${cf.id}: {${filterValue.operator}: $${varName}}}`);
+        filterTexts.push(`{${cf.id}: {${wire.operator}: $${varName}}}`);
     }
 
     return { variables, params, filterTexts, errors };

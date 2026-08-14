@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { DataTableColumnHeader } from './data-table-column-header';
 import type { Column, Table } from '@tanstack/react-table';
 import type { Column as ColumnSchema } from '@/types/schema';
+import { getFilterOperators } from '@/lib/query-builder';
 
 // Mock the UI components
 vi.mock('@/components/ui/button', () => ({
@@ -16,7 +17,9 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+    <div onClick={onClick} role="menuitem">{children}</div>
+  ),
   DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuSeparator: () => <hr />,
   DropdownMenuSub: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -69,14 +72,23 @@ function createMockColumn(overrides: Partial<ColumnSchema> = {}): ColumnSchema {
   };
 }
 
-function createMockTanStackColumn(columnSchema: ColumnSchema | undefined): Column<unknown, unknown> {
+function createMockTanStackColumn(
+  columnSchema: ColumnSchema | undefined,
+  options: { isSorted?: 'asc' | 'desc' | false } = {},
+): Column<unknown, unknown> {
   return {
     id: 'test_column',
     columnDef: {
-      meta: columnSchema ? { column: columnSchema, paramType: columnSchema.paramType } : undefined,
+      meta: columnSchema
+        ? {
+            column: columnSchema,
+            paramType: columnSchema.paramType,
+            filterOperators: getFilterOperators(columnSchema.paramType),
+          }
+        : undefined,
     },
     getCanSort: () => true,
-    getIsSorted: () => false,
+    getIsSorted: () => options.isSorted ?? false,
     getFilterValue: () => undefined,
     getCanHide: () => true,
     toggleSorting: vi.fn(),
@@ -125,6 +137,70 @@ describe('DataTableColumnHeader', () => {
     
     // Hover card content should not be rendered
     expect(screen.queryByTestId('hover-card-content')).not.toBeInTheDocument();
+  });
+});
+
+// Each scalar a type mapper can emit must reach its filter control. A type no
+// predicate claims renders NO Filter submenu at all — and silently: the header
+// still draws and its sort commands still work, so the column just looks like one
+// nobody can filter. smallint/tinyint/bigint/decimal/datetimeoffset were all in
+// that state.
+describe('DataTableColumnHeader filter controls per column type', () => {
+  const cases: [string, string][] = [
+    ['String', 'TextFilter'],
+    ['Int', 'NumberFilter'],
+    ['Float', 'NumberFilter'],
+    ['Short', 'NumberFilter'],
+    ['Byte', 'NumberFilter'],
+    ['BigInt', 'NumberFilter'],
+    ['Decimal', 'NumberFilter'],
+    ['Boolean', 'BooleanFilter'],
+    ['DateTime', 'DateFilter'],
+    ['DateTimeOffset', 'DateFilter'],
+  ];
+
+  it.each(cases)('offers a filter for a %s column', (paramType, expectedFilter) => {
+    const column = createMockTanStackColumn(createMockColumn({ paramType }));
+
+    render(<DataTableColumnHeader column={column} table={createMockTable()} title="Test Column" />);
+
+    expect(screen.getByText(expectedFilter)).toBeInTheDocument();
+  });
+
+  it.each(cases)('offers a filter for a non-null %s column', (paramType, expectedFilter) => {
+    const column = createMockTanStackColumn(createMockColumn({ paramType: `${paramType}!` }));
+
+    render(<DataTableColumnHeader column={column} table={createMockTable()} title="Test Column" />);
+
+    expect(screen.getByText(expectedFilter)).toBeInTheDocument();
+  });
+});
+
+describe('DataTableColumnHeader sort commands', () => {
+  it('sorts ascending, descending, and clears', () => {
+    const column = createMockTanStackColumn(createMockColumn(), { isSorted: 'asc' });
+
+    render(<DataTableColumnHeader column={column} table={createMockTable()} title="Test Column" />);
+
+    fireEvent.click(screen.getByText('Asc'));
+    expect(column.toggleSorting).toHaveBeenCalledWith(false);
+
+    fireEvent.click(screen.getByText('Desc'));
+    expect(column.toggleSorting).toHaveBeenCalledWith(true);
+
+    fireEvent.click(screen.getByText('Clear'));
+    expect(column.clearSorting).toHaveBeenCalled();
+  });
+
+  // Clear is the only command that would do nothing on an unsorted column, so it
+  // is the one that must not be offered there.
+  it('offers no Clear command when the column is not sorted', () => {
+    const column = createMockTanStackColumn(createMockColumn());
+
+    render(<DataTableColumnHeader column={column} table={createMockTable()} title="Test Column" />);
+
+    expect(screen.getByText('Asc')).toBeInTheDocument();
+    expect(screen.queryByText('Clear')).not.toBeInTheDocument();
   });
 });
 

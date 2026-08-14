@@ -18,6 +18,7 @@ import {
     unwrapDrillDownPage,
     canFlatFilterDrill,
     pickIndexedSortColumn,
+    dayBoundary,
     type ColumnFilterValue,
 } from './query-builder';
 import { buildPkEqFilter } from './row-id';
@@ -214,9 +215,19 @@ describe('getGraphQlType', () => {
     it('maps Int! correctly', () => expect(getGraphQlType('Int!')).toBe('Int'));
     it('maps Float correctly', () => expect(getGraphQlType('Float')).toBe('Float'));
     it('maps Boolean correctly', () => expect(getGraphQlType('Boolean')).toBe('Boolean'));
-    it('maps DateTime to String', () => expect(getGraphQlType('DateTime')).toBe('String'));
     it('maps String to String', () => expect(getGraphQlType('String')).toBe('String'));
     it('maps unknown types to String', () => expect(getGraphQlType('Foo')).toBe('String'));
+    // A variable declared as anything but the column's own scalar is rejected in a
+    // FilterType<T>Input position — "Variable of type 'String' used in position
+    // expecting type 'DateTime'" fails the WHOLE document, so the grid empties.
+    // These four were the types with no entry at all, and so no header filter.
+    it('maps every timestamp and small-integer scalar to itself', () => {
+        expect(getGraphQlType('DateTime')).toBe('DateTime');
+        expect(getGraphQlType('DateTime!')).toBe('DateTime');
+        expect(getGraphQlType('DateTimeOffset')).toBe('DateTimeOffset');
+        expect(getGraphQlType('Short')).toBe('Short');
+        expect(getGraphQlType('Byte')).toBe('Byte');
+    });
     it('maps BigInt and Decimal to their own scalar (not String)', () => {
         expect(getGraphQlType('BigInt')).toBe('BigInt');
         expect(getGraphQlType('BigInt!')).toBe('BigInt');
@@ -226,6 +237,24 @@ describe('getGraphQlType', () => {
     it('strips ! from all types', () => {
         expect(getGraphQlType('Float!')).toBe('Float');
         expect(getGraphQlType('Boolean!')).toBe('Boolean');
+    });
+});
+
+// ── dayBoundary ────────────────────────────────────────────────
+
+describe('dayBoundary', () => {
+    it('carries no offset for a DateTime column', () => {
+        expect(dayBoundary('2024-02-01', 'start', 'DateTime')).toBe('2024-02-01T00:00:00.000');
+        expect(dayBoundary('2024-02-01', 'end', 'DateTime')).toBe('2024-02-01T23:59:59.999');
+    });
+
+    // A DateTimeOffset bound without an offset is not a valid value for that
+    // scalar, and the day the user picked is their LOCAL day — getTimezoneOffset
+    // reports minutes BEHIND UTC, so +13:00 arrives as -780.
+    it('stamps the local offset for a DateTimeOffset column', () => {
+        expect(dayBoundary('2024-02-01', 'start', 'DateTimeOffset', -780)).toBe('2024-02-01T00:00:00.000+13:00');
+        expect(dayBoundary('2024-02-01', 'end', 'DateTimeOffset', 330)).toBe('2024-02-01T23:59:59.999-05:30');
+        expect(dayBoundary('2024-02-01', 'start', 'DateTimeOffset', 0)).toBe('2024-02-01T00:00:00.000+00:00');
     });
 });
 
@@ -288,6 +317,102 @@ describe('buildColumnFilters', () => {
         expect(result.variables).toEqual({ cf_age_0_lo: 10, cf_age_0_hi: 20 });
         expect(result.params).toEqual(['$cf_age_0_lo: Int', '$cf_age_0_hi: Int']);
         expect(result.filterTexts).toEqual(['{age: {_between: [$cf_age_0_lo, $cf_age_0_hi]}}']);
+    });
+
+    // A header filter on a type with no operator entry used to fall through to the
+    // String set: _contains on a smallint, declared `String`, rejected by the
+    // server. Each of these must now declare its OWN scalar.
+    it('declares each numeric scalar as itself, not String', () => {
+        const typed = makeTable({
+            columns: [
+                makeColumn({ name: 'small', paramType: 'Short' }),
+                makeColumn({ name: 'tiny', paramType: 'Byte' }),
+                makeColumn({ name: 'big', paramType: 'BigInt' }),
+                makeColumn({ name: 'money', paramType: 'Decimal' }),
+            ],
+        });
+        const result = buildColumnFilters([
+            { id: 'small', value: { operator: '_eq', value: 6 } as ColumnFilterValue },
+            { id: 'tiny', value: { operator: '_eq', value: 1 } as ColumnFilterValue },
+            { id: 'big', value: { operator: '_eq', value: '4200000000' } as ColumnFilterValue },
+            { id: 'money', value: { operator: '_gt', value: '19.99' } as ColumnFilterValue },
+        ], typed);
+        expect(result.errors).toEqual([]);
+        expect(result.params).toEqual([
+            '$cf_small_0: Short',
+            '$cf_tiny_1: Byte',
+            '$cf_big_2: BigInt',
+            '$cf_money_3: Decimal',
+        ]);
+        // BigInt/Decimal bounds travel as JSON numbers — the scalars reject text.
+        expect(result.variables.cf_big_2).toBe(4200000000);
+        expect(result.variables.cf_money_3).toBe(19.99);
+    });
+
+    // Rounding the bound would filter for a value the user never typed while the
+    // header still shows theirs as active. Refusing the filter stops the query and
+    // says why, which is the same contract every other unbuildable filter follows.
+    it('refuses a bound a JSON number cannot carry exactly, instead of rounding it', () => {
+        const typed = makeTable({ columns: [makeColumn({ name: 'big', paramType: 'BigInt' })] });
+        const result = buildColumnFilters(
+            [{ id: 'big', value: { operator: '_eq', value: '9007199254740993' } as ColumnFilterValue }],
+            typed,
+        );
+        expect(result.filterTexts).toEqual([]);
+        expect(result.params).toEqual([]);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('too precise');
+    });
+
+    describe('date-only bounds on a timestamp column', () => {
+        const dated = makeTable({
+            columns: [makeColumn({ name: 'created_at', paramType: 'DateTime' })],
+        });
+
+        const build = (operator: string, value: unknown) =>
+            buildColumnFilters([{ id: 'created_at', value: { operator, value } as ColumnFilterValue }], dated);
+
+        // The control is <input type="date">, so its value has no time part — which
+        // is not ISO-8601-complete and the DateTime scalar rejects it outright.
+        it('widens "on" to the whole local day', () => {
+            const result = build('_eq', '2024-02-01');
+            expect(result.errors).toEqual([]);
+            expect(result.filterTexts).toEqual(['{created_at: {_between: [$cf_created_at_0_lo, $cf_created_at_0_hi]}}']);
+            expect(result.variables).toEqual({
+                cf_created_at_0_lo: '2024-02-01T00:00:00.000',
+                cf_created_at_0_hi: '2024-02-01T23:59:59.999',
+            });
+        });
+
+        it('widens "not on" to a negated day range', () => {
+            expect(build('_neq', '2024-02-01').filterTexts)
+                .toEqual(['{created_at: {_nbetween: [$cf_created_at_0_lo, $cf_created_at_0_hi]}}']);
+        });
+
+        // "On or before 1 Feb" must include rows recorded DURING 1 Feb; midnight
+        // would exclude every one of them.
+        it('takes the day-end edge for the operators that include the day', () => {
+            expect(build('_lte', '2024-02-01').variables.cf_created_at_0).toBe('2024-02-01T23:59:59.999');
+            expect(build('_gt', '2024-02-01').variables.cf_created_at_0).toBe('2024-02-01T23:59:59.999');
+        });
+
+        it('takes the day-start edge for the operators that exclude the day', () => {
+            expect(build('_gte', '2024-02-01').variables.cf_created_at_0).toBe('2024-02-01T00:00:00.000');
+            expect(build('_lt', '2024-02-01').variables.cf_created_at_0).toBe('2024-02-01T00:00:00.000');
+        });
+
+        it('spans a range from the start of the first day to the end of the last', () => {
+            const result = build('_between', ['2024-02-01', '2024-02-29']);
+            expect(result.variables).toEqual({
+                cf_created_at_0_lo: '2024-02-01T00:00:00.000',
+                cf_created_at_0_hi: '2024-02-29T23:59:59.999',
+            });
+        });
+
+        it('leaves a bound that already carries a time untouched', () => {
+            expect(build('_gte', '2024-02-01T08:30:00').variables.cf_created_at_0)
+                .toBe('2024-02-01T08:30:00');
+        });
     });
 
     // An unset bound is not a failure — the filter row exists but asserts nothing.

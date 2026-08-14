@@ -30,18 +30,44 @@ interface NumberFilterProps<TData, TValue> {
     column: Column<TData, TValue>;
 }
 
-function isIntColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
-    return paramType.replace('!', '') === 'Int';
+/** Whole-number columns: the input accepts digits only, no decimal point. */
+const INTEGER_PARAM_TYPES = new Set(['Int', 'Short', 'Byte', 'BigInt']);
+
+/**
+ * Columns whose typed value is kept as text here rather than parsed to a number. A
+ * JS number is an IEEE-754 double: it rounds a bigint past 2^53 (9007199254740993
+ * becomes ...992, so the filter would silently target a different row) and drops
+ * exact-decimal precision. Keeping the digits lets `buildColumnFilters` decide —
+ * it sends the number when a double carries the value exactly, and REFUSES the
+ * filter (with a reason) when it does not, instead of rounding it.
+ */
+const EXACT_PARAM_TYPES = new Set(['BigInt', 'Decimal']);
+
+function paramTypeOf<TData, TValue>(column: Column<TData, TValue>): string {
+    return ((column.columnDef.meta as { paramType?: string })?.paramType ?? '').replace('!', '');
 }
 
-export function parseNumeric(raw: string, isInt: boolean): number | null {
+function isIntColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+    return INTEGER_PARAM_TYPES.has(paramTypeOf(column));
+}
+
+function isExactColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+    return EXACT_PARAM_TYPES.has(paramTypeOf(column));
+}
+
+/**
+ * Validates the typed text and returns the value to filter by: the digits
+ * unchanged for an exact column, otherwise a number. Returns null when the text is
+ * not (yet) a complete numeric literal, which the caller reads as "no filter".
+ */
+export function parseNumeric(raw: string, isInt: boolean, exact = false): number | string | null {
     const text = raw.trim();
     if (text === '' || text === '-' || text === '+') return null;
     const valid = isInt
         ? /^[+-]?\d+$/.test(text)
         : /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/.test(text);
     if (!valid) return null;
+    if (exact) return text;
     const n = Number(text);
     return Number.isFinite(n) ? n : null;
 }
@@ -50,6 +76,7 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
     const operators = (column.columnDef.meta as { filterOperators?: string[] })?.filterOperators ?? [];
     const numericOperators = operators.filter((op) => op in operatorLabels);
     const isInt = isIntColumn(column);
+    const isExact = isExactColumn(column);
 
     const currentFilter = column.getFilterValue() as ColumnFilterValue | undefined;
 
@@ -80,7 +107,7 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
             return;
         }
 
-        const parsed = parseNumeric(val, isInt);
+        const parsed = parseNumeric(val, isInt, isExact);
         if (parsed === null) {
             cancel();
             column.setFilterValue(undefined);
@@ -91,8 +118,8 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
     };
 
     const applyBetweenFilter = (min: string, max: string) => {
-        const parsedMin = parseNumeric(min, isInt);
-        const parsedMax = parseNumeric(max, isInt);
+        const parsedMin = parseNumeric(min, isInt, isExact);
+        const parsedMax = parseNumeric(max, isInt, isExact);
 
         if (parsedMin === null || parsedMax === null) {
             cancel();
@@ -158,6 +185,11 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
 
     const isBetween = operator === '_between';
     const isNull = operator === '_null';
+    // An exact column keeps a TEXT input: `type="number"` lets the browser
+    // normalize the value through a double, which is the very rounding the
+    // decimal-string path exists to avoid.
+    const inputType = isExact ? 'text' : 'number';
+    const inputMode = isExact ? (isInt ? 'numeric' : 'decimal') : undefined;
 
     return (
         <div className="flex flex-col gap-2 p-2 min-w-[220px]">
@@ -175,7 +207,8 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
             </Select>
             {!isNull && !isBetween && (
                 <Input
-                    type="number"
+                    type={inputType}
+                    inputMode={inputMode}
                     placeholder="Filter value..."
                     value={inputValue}
                     onChange={(e) => handleInputChange(e.target.value)}
@@ -186,7 +219,8 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
             {isBetween && (
                 <div className="flex gap-2">
                     <Input
-                        type="number"
+                        type={inputType}
+                        inputMode={inputMode}
                         placeholder="Min"
                         value={minValue}
                         onChange={(e) => handleMinChange(e.target.value)}
@@ -194,7 +228,8 @@ export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData,
                         autoFocus
                     />
                     <Input
-                        type="number"
+                        type={inputType}
+                        inputMode={inputMode}
                         placeholder="Max"
                         value={maxValue}
                         onChange={(e) => handleMaxChange(e.target.value)}

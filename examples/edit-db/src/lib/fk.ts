@@ -15,7 +15,13 @@ export interface FkEqFilterResult {
 export function coerceForGql(value: unknown, gqlType: string): unknown {
     if (value === null || value === undefined) return null;
     switch (gqlType) {
-        case 'Int': {
+        // Short/Byte are smallint/tinyint. They are declared as their own scalars,
+        // which reject a string the way Int does — and unlike BigInt/Decimal they
+        // always fit a JS number exactly, so there is nothing to preserve by
+        // keeping them textual.
+        case 'Int':
+        case 'Short':
+        case 'Byte': {
             const n = typeof value === 'number' ? value : Number(value);
             return Number.isFinite(n) ? Math.trunc(n) : value;
         }

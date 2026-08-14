@@ -26,17 +26,26 @@ function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string 
     return paramType.replace('!', '');
 }
 
+// Every scalar a type mapper can produce must be claimed by exactly one of these
+// predicates, or its column shows NO Filter submenu at all — the failure is silent,
+// because the header still renders and the sort commands still work. smallint
+// (Short), tinyint (Byte), bigint (BigInt), decimal/numeric (Decimal) and
+// datetimeoffset (DateTimeOffset) were all unclaimed. Keep in step with
+// `columnFilterOperators` in query-builder.ts, which decides the operators and the
+// declared variable type for the same set.
+const NUMERIC_PARAM_TYPES = new Set(['Int', 'Float', 'Short', 'Byte', 'BigInt', 'Decimal']);
+const DATE_PARAM_TYPES = new Set(['DateTime', 'DateTimeOffset']);
+
 function isStringColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
     return getBaseParamType(column) === 'String';
 }
 
 function isNumericColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    const base = getBaseParamType(column);
-    return base === 'Int' || base === 'Float';
+    return NUMERIC_PARAM_TYPES.has(getBaseParamType(column));
 }
 
 function isDateColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
-    return getBaseParamType(column) === 'DateTime';
+    return DATE_PARAM_TYPES.has(getBaseParamType(column));
 }
 
 function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
@@ -253,145 +262,155 @@ export function DataTableColumnHeader<TData, TValue>({
 
     return (
         <HoverCard openDelay={400} closeDelay={200}>
-            <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                    <HoverCardTrigger asChild>
-                        {headerButton}
-                    </HoverCardTrigger>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                    {/* Column metadata, also surfaced here (not only in the pointer-only
-                        HoverCard) so keyboard and touch users can read type/nullability/FK. */}
-                    {columnSchema && (
-                        <>
-                            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                                {formatDataType(columnSchema)}
-                                {columnSchema.isNullable ? ' · nullable' : ' · required'}
-                                {columnSchema.isPrimaryKey ? ' · PK' : ''}
-                                {fkMeta ? ` · FK → ${fkMeta.joinTable}` : ''}
-                            </DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                        </>
-                    )}
-                    <DropdownMenuItem onClick={() => column.toggleSorting(false)}>
-                        <ArrowUp className="size-3.5 text-muted-foreground" />
-                        Asc
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => column.toggleSorting(true)}>
-                        <ArrowDown className="size-3.5 text-muted-foreground" />
-                        Desc
-                    </DropdownMenuItem>
-                    {sorted && (
-                        <DropdownMenuItem onClick={() => column.clearSorting()}>
-                            <ArrowUpDown className="size-3.5 text-muted-foreground" />
-                            Clear
-                        </DropdownMenuItem>
-                    )}
-                    {showTextFilter && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                    <Filter className={cn(
-                                        'size-3.5',
-                                        hasFilter ? 'text-primary' : 'text-muted-foreground'
-                                    )} />
-                                    Filter
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                    <TextFilter column={column} />
-                                </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                        </>
-                    )}
-                    {showNumericFilter && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                    <Filter className={cn(
-                                        'size-3.5',
-                                        hasFilter ? 'text-primary' : 'text-muted-foreground'
-                                    )} />
-                                    Filter
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                    <NumberFilter column={column} />
-                                </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                        </>
-                    )}
-                    {showDateFilter && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                    <Filter className={cn(
-                                        'size-3.5',
-                                        hasFilter ? 'text-primary' : 'text-muted-foreground'
-                                    )} />
-                                    Filter
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                    <DateFilter column={column} />
-                                </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                        </>
-                    )}
-                    {showBooleanFilter && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                    <Filter className={cn(
-                                        'size-3.5',
-                                        hasFilter ? 'text-primary' : 'text-muted-foreground'
-                                    )} />
-                                    Filter
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                    <BooleanFilter column={column} />
-                                </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                        </>
-                    )}
-                    {fkMeta && fkFilterColumn && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                    <Filter className={cn(
-                                        'size-3.5',
-                                        hasFilter ? 'text-primary' : 'text-muted-foreground'
-                                    )} />
-                                    Filter
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent>
-                                    <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} joinFkColumn={fkFilterColumn} />
-                                </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                        </>
-                    )}
-                    {column.getCanHide() && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={() => column.toggleVisibility(false)}>
-                                <EyeOff className="size-3.5 text-muted-foreground" />
-                                Hide
+            {/* Each Radix trigger needs its OWN DOM node. Composing both onto the
+                button (DropdownMenuTrigger asChild > HoverCardTrigger asChild > Button)
+                collapses two Popper.Anchors onto one element: the outer trigger's ref
+                never reaches the node, so the menu's anchor and triggerRef stay null,
+                Floating UI never measures, and the menu renders at its unpositioned
+                placeholder (translate(0, -200%)) — off-screen top-left, which reads to
+                users as "clicking the header does nothing". Anchor the HoverCard to a
+                wrapping span and leave the button to the DropdownMenu. */}
+            <HoverCardTrigger asChild>
+                <span className="inline-flex">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            {headerButton}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                            {/* Column metadata, also surfaced here (not only in the pointer-only
+                                HoverCard) so keyboard and touch users can read type/nullability/FK. */}
+                            {columnSchema && (
+                                <>
+                                    <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                        {formatDataType(columnSchema)}
+                                        {columnSchema.isNullable ? ' · nullable' : ' · required'}
+                                        {columnSchema.isPrimaryKey ? ' · PK' : ''}
+                                        {fkMeta ? ` · FK → ${fkMeta.joinTable}` : ''}
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuSeparator />
+                                </>
+                            )}
+                            <DropdownMenuItem onClick={() => column.toggleSorting(false)}>
+                                <ArrowUp className="size-3.5 text-muted-foreground" />
+                                Asc
                             </DropdownMenuItem>
-                        </>
-                    )}
-                    {onResetColumnWidths && (
-                        <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={onResetColumnWidths}>
-                                <RotateCcw className="size-3.5 text-muted-foreground" />
-                                Reset column widths
+                            <DropdownMenuItem onClick={() => column.toggleSorting(true)}>
+                                <ArrowDown className="size-3.5 text-muted-foreground" />
+                                Desc
                             </DropdownMenuItem>
-                        </>
-                    )}
-                </DropdownMenuContent>
-            </DropdownMenu>
+                            {sorted && (
+                                <DropdownMenuItem onClick={() => column.clearSorting()}>
+                                    <ArrowUpDown className="size-3.5 text-muted-foreground" />
+                                    Clear
+                                </DropdownMenuItem>
+                            )}
+                            {showTextFilter && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Filter className={cn(
+                                                'size-3.5',
+                                                hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                            )} />
+                                            Filter
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <TextFilter column={column} />
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
+                            {showNumericFilter && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Filter className={cn(
+                                                'size-3.5',
+                                                hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                            )} />
+                                            Filter
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <NumberFilter column={column} />
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
+                            {showDateFilter && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Filter className={cn(
+                                                'size-3.5',
+                                                hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                            )} />
+                                            Filter
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <DateFilter column={column} />
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
+                            {showBooleanFilter && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Filter className={cn(
+                                                'size-3.5',
+                                                hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                            )} />
+                                            Filter
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <BooleanFilter column={column} />
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
+                            {fkMeta && fkFilterColumn && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Filter className={cn(
+                                                'size-3.5',
+                                                hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                            )} />
+                                            Filter
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} joinFkColumn={fkFilterColumn} />
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
+                            {column.getCanHide() && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={() => column.toggleVisibility(false)}>
+                                        <EyeOff className="size-3.5 text-muted-foreground" />
+                                        Hide
+                                    </DropdownMenuItem>
+                                </>
+                            )}
+                            {onResetColumnWidths && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onClick={onResetColumnWidths}>
+                                        <RotateCcw className="size-3.5 text-muted-foreground" />
+                                        Reset column widths
+                                    </DropdownMenuItem>
+                                </>
+                            )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </span>
+            </HoverCardTrigger>
             {columnSchema && (
                 <HoverCardContent align="start" className="w-64">
                     <ColumnMetadataTooltip column={columnSchema} fkMeta={fkMeta} />

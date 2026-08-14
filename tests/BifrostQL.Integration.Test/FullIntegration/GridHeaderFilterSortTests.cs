@@ -48,6 +48,11 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
         var statements = new[]
         {
             "DROP TABLE IF EXISTS widgets",
+            "DROP TABLE IF EXISTS ledger",
+            @"CREATE TABLE ledger (
+                entry_id BIGINT PRIMARY KEY,
+                note TEXT NOT NULL
+            )",
             @"CREATE TABLE widgets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -73,11 +78,18 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
     {
         var cmd = new SqliteCommand(
             @"INSERT INTO widgets (name, qty, small_qty, tiny_flag, big_ref, price, ratio, active, created_at) VALUES
-                ('alpha', 10, 5, 1, 4200000001, 19.99, 1.5, 1, '2024-01-15 08:00:00'),
-                ('beta',  20, 6, 0, 4200000002, 29.99, 2.5, 0, '2024-02-15 08:00:00'),
-                ('gamma', 30, 7, 1, 4200000003, 39.99, 3.5, 1, '2024-03-15 08:00:00')",
+                ('alpha', 10, 5, 1, 9007199254740993, 19.99, 1.5, 1, '2024-01-15 08:00:00'),
+                ('beta',  20, 6, 0, 9007199254740994, 29.99, 2.5, 0, '2024-02-15 08:00:00'),
+                ('gamma', 30, 7, 1, 9007199254740995, 39.99, 3.5, 1, '2024-03-15 08:00:00')",
             (SqliteConnection)conn);
         await cmd.ExecuteNonQueryAsync();
+
+        var ledger = new SqliteCommand(
+            @"INSERT INTO ledger (entry_id, note) VALUES
+                (9007199254740993, 'first'),
+                (9007199254740995, 'third')",
+            (SqliteConnection)conn);
+        await ledger.ExecuteNonQueryAsync();
     }
 
     /// <summary>
@@ -118,8 +130,8 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
         { "qty",         "_gte",       "Int",         20,                    2 },
         { "small_qty",   "_eq",        "Short",       6,                     1 },
         { "tiny_flag",   "_eq",        "Byte",        1,                     2 },
-        { "big_ref",     "_eq",        "BigInt",      4200000003L,           1 },
-        { "price",       "_gt",        "Decimal",     20.00m,                2 },
+        { "big_ref",     "_eq",        "BigInt",      "9007199254740995",    1 },
+        { "price",       "_gt",        "Decimal",     "20.00",               2 },
         { "ratio",       "_lt",        "Float",       2.0,                   1 },
         { "active",      "_eq",        "Boolean",     true,                  2 },
         // The date control is date-only, so query-builder widens the bound to a
@@ -216,6 +228,63 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
         var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
         var page = data!["widgets"] as Dictionary<string, object?>;
         Convert.ToInt32(page!["total"]).Should().Be(expected);
+    }
+
+    /// <summary>
+    /// A bigint bound past 2^53 must survive the wire EXACTLY. JSON has one numeric
+    /// type — a double — so a browser can only send such a value as text; routed
+    /// through a number, 9007199254740993 arrives as ...992 and matches a different
+    /// row while the header still shows the typed bound.
+    /// </summary>
+    [Theory]
+    [InlineData("9007199254740993", "alpha")]
+    [InlineData("9007199254740995", "gamma")]
+    public async Task HeaderFilter_BigIntBeyondDoublePrecision_MatchesTheExactRow(string value, string expectedName)
+    {
+        var result = await ExecuteQueryAsync(FilterQuery("big_ref", "_eq", "BigInt"), FilterVariables("big_ref", value));
+
+        result.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
+        var page = data!["widgets"] as Dictionary<string, object?>;
+        Convert.ToInt32(page!["total"]).Should().Be(1);
+        var rows = (System.Collections.IList)page["data"]!;
+        ((Dictionary<string, object?>)rows[0]!)["name"].Should().Be(expectedName);
+    }
+
+    /// <summary>
+    /// A decimal bound keeps every digit it was given. Through a double, an exact
+    /// fixed-point value silently becomes its nearest representable neighbour.
+    /// </summary>
+    [Fact]
+    public async Task HeaderFilter_DecimalAsText_ComparesExactly()
+    {
+        var total = await RunFilterAsync("price", "_gte", "Decimal", "29.99");
+        total.Should().Be(2);
+    }
+
+    /// <summary>
+    /// The grid's ROW LINK, not a filter: opening a row builds the same single-row
+    /// lookup <c>buildSingleRowQuery</c> emits, binding the primary key through the
+    /// column's own scalar. On a bigint-keyed table the client sends that key as
+    /// text (row-id.ts carries key values as decimal strings so a URL round-trip
+    /// cannot round them), so a number-only BigInt scalar made every such row
+    /// unreachable — the filter fix and this share one cause.
+    /// </summary>
+    [Theory]
+    [InlineData("9007199254740993", "first")]
+    [InlineData("9007199254740995", "third")]
+    public async Task RowLink_BigIntPrimaryKeyAsText_OpensTheExactRow(string key, string expectedNote)
+    {
+        const string query = "query GetSingleRow_ledger($pk_entry_id: BigInt) " +
+                             "{ value: ledger(filter: {entry_id: {_eq: $pk_entry_id}}) { data { entry_id note } } }";
+        var result = await ExecuteQueryAsync(query, new Dictionary<string, object?> { ["pk_entry_id"] = key });
+
+        result.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
+        var page = data!["value"] as Dictionary<string, object?>;
+        var rows = (System.Collections.IList)page!["data"]!;
+        rows.Count.Should().Be(1);
+        ((Dictionary<string, object?>)rows[0]!)["note"].Should().Be(expectedNote);
     }
 
     /// <summary>

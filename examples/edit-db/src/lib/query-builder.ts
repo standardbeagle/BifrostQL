@@ -175,6 +175,10 @@ export function getRowPkValue(row: RowData, table: Table, rowIndex = 0): string 
  * used in position expecting type 'DateTime'" fails the WHOLE document, so one
  * mistyped column empties the grid rather than degrading that one predicate.
  *
+ * BigInt/Decimal values travel as decimal STRINGS (coerceForGql's default branch
+ * stringifies): a JSON number is a double, which rounds a bigint key past 2^53 and
+ * drops exact-decimal precision. The server's BigInt/Decimal scalars accept the
+ * string form for exactly this reason — see ExactNumericScalars.cs.
  */
 export function getGraphQlType(paramType: string): string {
     const baseType = paramType.replace("!", "");
@@ -195,35 +199,6 @@ export function getGraphQlType(paramType: string): string {
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Column types carried on the wire as a JSON number that a double may not hold exactly. */
-const exactNumericTypes = new Set(["BigInt", "Decimal"]);
-
-/**
- * The most significant digits a JSON number (an IEEE-754 double) carries without
- * loss. 9007199254740993 is the smallest integer that does not survive one.
- */
-const MAX_EXACT_DIGITS = 15;
-
-/**
- * A BigInt/Decimal bound as the JSON number the server's scalar accepts, or null
- * when a double cannot hold it exactly.
- *
- * Null is the point. Sending the rounded number would filter for a value the user
- * never asked for — 9007199254740993 becomes ...992, matching a DIFFERENT row while
- * the header still shows the typed bound as active. The caller reports it as a
- * filter that cannot be applied, which stops the query, rather than returning a
- * confidently wrong result set.
- */
-export function exactNumericValue(value: unknown): number | null {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    if (typeof value !== "string") return null;
-    const text = value.trim();
-    if (!/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(text)) return null;
-    const digits = text.replace(/^[+-]/, "").replace(".", "").replace(/^0+(?=\d)/, "");
-    if (digits.length > MAX_EXACT_DIGITS) return null;
-    const parsed = Number(text);
-    return Number.isFinite(parsed) ? parsed : null;
-}
 
 /** `-780` (minutes behind UTC, as getTimezoneOffset reports it) → `"+13:00"`. */
 function formatUtcOffset(offsetMinutes: number): string {
@@ -345,43 +320,22 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
         // which for a date-only bound on a timestamp column may widen to a range.
         const wire = toWireFilter(filterValue.operator, filterValue.value, gqlType);
 
-        // A BigInt/Decimal bound travels as a JSON number, so a value a double
-        // cannot hold exactly must fail the filter rather than be rounded into a
-        // predicate the user did not ask for.
-        const exact = (v: unknown): unknown => {
-            if (!exactNumericTypes.has(gqlType)) return v;
-            const n = exactNumericValue(v);
-            if (n === null) {
-                errors.push(
-                    `The value '${String(v)}' is too precise to filter column '${cf.id}' by — ` +
-                    "it cannot be sent without rounding to a different value.",
-                );
-                return undefined;
-            }
-            return n;
-        };
-
         if (wire.operator === "_between" || wire.operator === "_nbetween") {
             const range = wire.value as [unknown, unknown];
             if (!Array.isArray(range) || range.length !== 2) {
                 errors.push(`The range filter on column '${cf.id}' needs exactly two bounds.`);
                 continue;
             }
-            const lo = exact(range[0]);
-            const hi = exact(range[1]);
-            if (lo === undefined || hi === undefined) continue;
             const loVar = `${varName}_lo`;
             const hiVar = `${varName}_hi`;
-            variables[loVar] = lo;
-            variables[hiVar] = hi;
+            variables[loVar] = range[0];
+            variables[hiVar] = range[1];
             params.push(`$${loVar}: ${gqlType}`, `$${hiVar}: ${gqlType}`);
             filterTexts.push(`{${cf.id}: {${wire.operator}: [$${loVar}, $${hiVar}]}}`);
             continue;
         }
 
-        const bound = exact(wire.value);
-        if (bound === undefined) continue;
-        variables[varName] = bound;
+        variables[varName] = wire.value;
         params.push(`$${varName}: ${gqlType}`);
         filterTexts.push(`{${cf.id}: {${wire.operator}: $${varName}}}`);
     }

@@ -334,7 +334,7 @@ describe('buildColumnFilters', () => {
         const result = buildColumnFilters([
             { id: 'small', value: { operator: '_eq', value: 6 } as ColumnFilterValue },
             { id: 'tiny', value: { operator: '_eq', value: 1 } as ColumnFilterValue },
-            { id: 'big', value: { operator: '_eq', value: '4200000000' } as ColumnFilterValue },
+            { id: 'big', value: { operator: '_eq', value: '9007199254740993' } as ColumnFilterValue },
             { id: 'money', value: { operator: '_gt', value: '19.99' } as ColumnFilterValue },
         ], typed);
         expect(result.errors).toEqual([]);
@@ -344,24 +344,11 @@ describe('buildColumnFilters', () => {
             '$cf_big_2: BigInt',
             '$cf_money_3: Decimal',
         ]);
-        // BigInt/Decimal bounds travel as JSON numbers — the scalars reject text.
-        expect(result.variables.cf_big_2).toBe(4200000000);
-        expect(result.variables.cf_money_3).toBe(19.99);
-    });
-
-    // Rounding the bound would filter for a value the user never typed while the
-    // header still shows theirs as active. Refusing the filter stops the query and
-    // says why, which is the same contract every other unbuildable filter follows.
-    it('refuses a bound a JSON number cannot carry exactly, instead of rounding it', () => {
-        const typed = makeTable({ columns: [makeColumn({ name: 'big', paramType: 'BigInt' })] });
-        const result = buildColumnFilters(
-            [{ id: 'big', value: { operator: '_eq', value: '9007199254740993' } as ColumnFilterValue }],
-            typed,
-        );
-        expect(result.filterTexts).toEqual([]);
-        expect(result.params).toEqual([]);
-        expect(result.errors).toHaveLength(1);
-        expect(result.errors[0]).toContain('too precise');
+        // BigInt/Decimal bounds travel as decimal STRINGS. Through a JSON number
+        // (a double) 9007199254740993 becomes ...992, filtering for a row the user
+        // never asked for; the server's scalars accept the text form for this reason.
+        expect(result.variables.cf_big_2).toBe('9007199254740993');
+        expect(result.variables.cf_money_3).toBe('19.99');
     });
 
     describe('date-only bounds on a timestamp column', () => {

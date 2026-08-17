@@ -121,8 +121,45 @@ namespace BifrostQL.Server.Test.Ldap
                 response.ResultCode.Should().Be(LdapResultCode.Success);
             }
 
+            /// <summary>
+            /// Sends one SearchRequest and drains the whole response sequence: every
+            /// SearchResultEntry up to and including the single SearchResultDone that terminates
+            /// it. Asserting on the collected entries rather than on one read is what makes a
+            /// "this DN never appeared" claim mean anything.
+            /// </summary>
+            public async Task<SearchResult> SearchAsync(byte[] request, int messageId = 2, byte[]? controls = null)
+            {
+                await Fixture.Client.SendAsync(LdapWire.Message(messageId, request, controls));
+
+                var entries = new List<LdapResponse>();
+                while (true)
+                {
+                    var response = await ReadAsync(Fixture);
+                    response.MessageId.Should().Be(messageId, "every response belongs to the request that asked for it");
+                    if (response.OpTag == LdapProtocol.SearchResultDone)
+                        return new SearchResult(entries, response);
+                    response.OpTag.Should().Be(LdapProtocol.SearchResultEntry);
+                    entries.Add(response);
+                }
+            }
+
             public ValueTask DisposeAsync() => Fixture.DisposeAsync();
         }
+
+        /// <summary>One search's entries plus its terminating Done.</summary>
+        private sealed record SearchResult(IReadOnlyList<LdapResponse> Entries, LdapResponse Done)
+        {
+            public LdapResultCode ResultCode => Done.ResultCode!.Value;
+
+            public IEnumerable<string> Dns => Entries.Select(e => e.ObjectName!);
+        }
+
+        /// <summary>A whole-subtree search of the directory's base DN — the shape every client sends.</summary>
+        private static byte[] Subtree(
+            string baseObject = "dc=example,dc=com", byte[]? filter = null, string[]? attributes = null,
+            int sizeLimit = 0) =>
+            LdapWire.SearchRequest(
+                baseObject, LdapSearchScope.WholeSubtree, filter, attributes, sizeLimit);
 
         private static async Task<LdapResponse> ReadAsync(LdapFixture fixture)
         {
@@ -150,8 +187,7 @@ namespace BifrostQL.Server.Test.Ldap
 
             var malformed = LdapWire.Controls(LdapWire.Control(
                 "1.2.840.113556.1.4.319", criticality: false)); // supported OID, absent value
-            await directory.Fixture.Client.SendAsync(
-                LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "dc=example,dc=com"), malformed));
+            await directory.Fixture.Client.SendAsync(LdapWire.Message(2, Subtree(), malformed));
 
             var response = await ReadAsync(directory.Fixture);
             response.MessageId.Should().Be(2);
@@ -160,11 +196,9 @@ namespace BifrostQL.Server.Test.Ldap
 
             // A malformed control is a fault of ONE operation, not a framing desync: the message
             // was consumed whole, so the session is still in sync and usable.
-            await directory.Fixture.Client.SendAsync(
-                LdapWire.Message(3, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
-            var next = await ReadAsync(directory.Fixture);
-            next.MessageId.Should().Be(3);
+            var next = await directory.SearchAsync(Subtree(), messageId: 3);
             next.ResultCode.Should().Be(LdapResultCode.Success);
+            next.Entries.Should().HaveCount(2, "the session is still in sync and serving");
         }
     }
 }

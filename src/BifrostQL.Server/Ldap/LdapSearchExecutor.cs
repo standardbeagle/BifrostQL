@@ -111,8 +111,12 @@ namespace BifrostQL.Server.Ldap
             }
             catch (LdapProtocolException)
             {
-                // A malformed control. Re-thrown so the connection loop's own handler answers it —
-                // the adapter's curated protocol text is the one message class that is client-safe.
+                // A malformed control. Re-thrown so the SEARCH op class answers it as a
+                // SearchResultDone carrying protocolError — the adapter's curated protocol text is
+                // the one message class that is client-safe. It must not be swallowed into a
+                // generic operationsError here: the client asked for a control this server does
+                // implement and encoded it wrongly, which is a different thing to tell it than
+                // "something went wrong on the server".
                 throw;
             }
             catch (Exception ex)

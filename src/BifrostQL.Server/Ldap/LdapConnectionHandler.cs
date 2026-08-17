@@ -288,7 +288,30 @@ namespace BifrostQL.Server.Ldap
                 return;
             }
 
-            var outcome = await _search.ExecuteAsync(search, request.Controls, session, ct);
+            LdapSearchOutcome outcome;
+            try
+            {
+                outcome = await _search.ExecuteAsync(search, request.Controls, session, ct);
+            }
+            catch (Exception ex) when (ex is LdapProtocolException or FormatException or OverflowException or ArgumentException)
+            {
+                // A malformed REQUEST CONTROL. The message itself framed correctly — the reader
+                // consumed it whole — so the session is still in sync and this is a fault of ONE
+                // operation, not a reason to tear the connection down. Answering it here is what
+                // keeps this op class symmetric with its siblings (Bind answers a BindResponse,
+                // StartTLS an ExtendedResponse) and keeps the promise above: exactly one
+                // SearchResultDone on every path (protocol-adapter-security invariants 9 and 10).
+                //
+                // Nothing has been written for this operation yet — the executor returns a whole
+                // outcome before the first entry goes out — so the Done is still the only message
+                // this search produces. Only the adapter's OWN curated protocol text reaches the
+                // wire; a BCL parse fault sanitizes to a generic string (invariant 3).
+                var detail = ex is LdapProtocolException ? ex.Message : "malformed request control";
+                _logger.LogDebug(ex, "ldap search refused: {Detail}", detail);
+                await SendAsync(stream, LdapMessageWriter.SearchResultDone(
+                    request.MessageId, LdapResultCode.ProtocolError, detail), ct);
+                return;
+            }
 
             foreach (var entry in outcome.Entries)
                 await SendAsync(stream, LdapMessageWriter.SearchResultEntry(request.MessageId, entry), ct);

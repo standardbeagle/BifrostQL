@@ -14,7 +14,24 @@ namespace BifrostQL.Server.Test.Ldap
     /// echoed message ID, the protocolOp application tag, and — for the result-bearing ops
     /// (BindResponse / SearchResultDone / ExtendedResponse) — the inlined result code.
     /// </summary>
-    internal sealed record LdapResponse(int MessageId, byte OpTag, LdapResultCode? ResultCode);
+    internal sealed record LdapResponse(int MessageId, byte OpTag, LdapResultCode? ResultCode)
+    {
+        /// <summary>The entry DN, for a SearchResultEntry; null for every other op.</summary>
+        public string? ObjectName { get; init; }
+
+        /// <summary>A SearchResultEntry's attributes, by type. Empty for every other op.</summary>
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> Attributes { get; init; } =
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The raw response-controls element bytes when the envelope carried any.</summary>
+        public byte[]? Controls { get; init; }
+
+        /// <summary>The paged-results cookie carried by the response controls, or null.</summary>
+        public byte[]? PagedCookie { get; init; }
+
+        public string? Value(string attribute) =>
+            Attributes.TryGetValue(attribute, out var values) ? values.FirstOrDefault() : null;
+    }
 
     /// <summary>
     /// Hand-built LDAP request/BER bytes for the codec and connection tests. Requests are composed
@@ -173,8 +190,76 @@ namespace BifrostQL.Server.Test.Ldap
                 var opContent = seq.Child(op);
                 resultCode = (LdapResultCode)opContent.Integer(opContent.ReadElement(LdapProtocol.Enumerated));
             }
-            return new LdapResponse(messageId, op.Tag, resultCode);
+
+            string? objectName = null;
+            var attributes = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+            if (op.Tag == LdapProtocol.SearchResultEntry)
+            {
+                var entry = seq.Child(op);
+                objectName = entry.String(entry.ReadElement(LdapProtocol.OctetString));
+                var list = entry.Child(entry.ReadElement(LdapProtocol.Sequence));
+                while (list.HasMore)
+                {
+                    var attribute = list.Child(list.ReadElement(LdapProtocol.Sequence));
+                    var type = attribute.String(attribute.ReadElement(LdapProtocol.OctetString));
+                    var values = new List<string>();
+                    var set = attribute.Child(attribute.ReadElement(LdapProtocol.Set));
+                    while (set.HasMore)
+                        values.Add(set.String(set.ReadElement(LdapProtocol.OctetString)));
+                    attributes[type] = values;
+                }
+            }
+
+            // Response controls ride on the ENVELOPE, after the protocolOp.
+            byte[]? controls = null;
+            byte[]? pagedCookie = null;
+            if (seq.HasMore && seq.PeekTag == LdapProtocol.ControlsTag)
+            {
+                var element = seq.ReadElement(LdapProtocol.ControlsTag);
+                controls = seq.Content(element);
+                pagedCookie = PagedCookieOf(controls);
+            }
+
+            return new LdapResponse(messageId, op.Tag, resultCode)
+            {
+                ObjectName = objectName,
+                Attributes = attributes,
+                Controls = controls,
+                PagedCookie = pagedCookie,
+            };
         }
+
+        /// <summary>
+        /// Extracts the simple paged-results cookie from a response-controls element, decoded
+        /// independently of the server's own encoder so a cookie can be replayed or tampered with
+        /// exactly as a client would.
+        /// </summary>
+        private static byte[]? PagedCookieOf(byte[] controls)
+        {
+            var cursor = new BerCursor(controls, 0, controls.Length);
+            while (cursor.HasMore)
+            {
+                var control = cursor.Child(cursor.ReadElement(LdapProtocol.Sequence));
+                var oid = control.String(control.ReadElement(LdapProtocol.OctetString));
+                if (!string.Equals(oid, "1.2.840.113556.1.4.319", StringComparison.Ordinal) || !control.HasMore)
+                    continue;
+
+                var value = control.Content(control.ReadElement(LdapProtocol.OctetString));
+                var inner = new BerCursor(value, 0, value.Length);
+                var sequence = inner.Child(inner.ReadElement(LdapProtocol.Sequence));
+                sequence.ReadElement(LdapProtocol.Integer); // size, always 0 in a response
+                return sequence.Content(sequence.ReadElement(LdapProtocol.OctetString));
+            }
+            return null;
+        }
+
+        /// <summary>A request-side paged-results control carrying a page size and a resume cookie.</summary>
+        public static byte[] PagedControl(int size, byte[]? cookie = null)
+            => BerWriter.Sequence(
+                BerWriter.OctetString("1.2.840.113556.1.4.319"),
+                BerWriter.Tlv(LdapProtocol.OctetString, BerWriter.Sequence(
+                    BerWriter.Integer(size),
+                    BerWriter.Tlv(LdapProtocol.OctetString, cookie ?? Array.Empty<byte>()))));
     }
 
     /// <summary>

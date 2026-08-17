@@ -136,14 +136,19 @@ namespace BifrostQL.Server.Ldap
 
         /// <summary>
         /// Decodes an element's content as a BER Boolean (control criticality, typesOnly…). A Boolean
-        /// carries exactly one content byte; any nonzero byte is true. A zero-length Boolean is a clean
+        /// carries exactly one content byte; any nonzero byte is true. Any other length is a clean
         /// protocol error, never an out-of-bounds read — the boundary an unchecked <c>Content(...)[0]</c>
         /// would leak past the connection handler's catch filter as an uncaught IndexOutOfRangeException
         /// on an unauthenticated peer's malformed control (protocol-adapter-security invariant 5).
+        ///
+        /// <para>The length is checked for EQUALITY, not merely for emptiness: LDAP mandates the DER
+        /// encoding of BOOLEAN (RFC 4511 §5.1), so a multi-octet Boolean is a wire violation. Reading
+        /// only its first octet would silently admit a second spelling of the same value — an
+        /// ambiguity an unauthenticated peer chooses and any middlebox may read differently.</para>
         /// </summary>
         public bool Boolean(BerElement element)
         {
-            if (element.ContentLength == 0)
+            if (element.ContentLength != 1)
                 throw new LdapProtocolException("BER Boolean must have exactly one content byte.");
             return _buffer[element.ContentStart] != 0;
         }

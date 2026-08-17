@@ -43,15 +43,32 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
-        public async Task SearchRequest_IsAnswered_SearchResultDone_UnwillingToPerform()
+        public async Task SearchRequest_BeforeAnyBind_IsRefusedForLackOfRights()
         {
+            // A bind establishes the identity every read is scoped by, so a search before one has
+            // no scope to narrow from. It is refused rather than executed against an empty context,
+            // and the refusal is the same whatever the base names — it never reaches the model, so
+            // it cannot report whether that base exists.
             await using var fixture = await LdapFixture.StartAsync();
 
             await fixture.Client.SendAsync(LdapWire.Message(3, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
             var response = await ReadAsync(fixture);
 
             response.OpTag.Should().Be(LdapProtocol.SearchResultDone);
-            response.ResultCode.Should().Be(LdapResultCode.UnwillingToPerform);
+            response.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights);
+        }
+
+        [Fact]
+        public async Task SearchRequest_ForAnUnknownBase_IsAnsweredIdenticallyBeforeBind()
+        {
+            // The pre-bind refusal must not distinguish a real base from an invented one, or the
+            // unauthenticated surface becomes a naming-context oracle.
+            await using var fixture = await LdapFixture.StartAsync();
+
+            await fixture.Client.SendAsync(LdapWire.Message(4, LdapWire.SearchRequest(baseObject: "dc=nowhere,dc=invalid")));
+            var response = await ReadAsync(fixture);
+
+            response.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights);
         }
 
         [Fact]

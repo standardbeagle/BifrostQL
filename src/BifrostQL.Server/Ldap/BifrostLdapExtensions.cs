@@ -1,3 +1,4 @@
+using BifrostQL.Core.Resolvers;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -67,11 +68,25 @@ namespace BifrostQL.Server.Ldap
                         observer: sp.GetService<ILdapBindObserver>(),
                         clock: null,
                         logger: sp.GetService<ILogger<LdapBindAuthenticator>>());
+                // Search exists only when a read seam is registered. Absent one there is no ambient
+                // read path at all: the handler answers every search with unwillingToPerform, so a
+                // listener registered without BifrostQL serves no data rather than serving it
+                // unscoped.
+                var reads = sp.GetService<IQueryIntentExecutor>();
+                var search = reads is null
+                    ? null
+                    : new LdapSearchExecutor(
+                        reads, options,
+                        cookieSecret: null,
+                        clock: null,
+                        logger: sp.GetService<ILogger<LdapSearchExecutor>>());
+
                 return new LdapConnectionHandler(
                     options,
                     sp.GetRequiredService<LdapBoundedCounter>(),
                     authenticator,
                     sp.GetService<LdapTlsProvider>(),
+                    search,
                     sp.GetService<ILogger<LdapConnectionHandler>>());
             });
 

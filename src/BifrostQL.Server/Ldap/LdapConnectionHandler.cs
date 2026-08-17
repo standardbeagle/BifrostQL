@@ -39,6 +39,7 @@ namespace BifrostQL.Server.Ldap
         private readonly LdapBoundedCounter _connections;
         private readonly LdapBindAuthenticator? _authenticator;
         private readonly LdapTlsProvider? _tls;
+        private readonly LdapSearchExecutor? _search;
         private readonly ILogger<LdapConnectionHandler> _logger;
 
         public LdapConnectionHandler(
@@ -46,12 +47,14 @@ namespace BifrostQL.Server.Ldap
             LdapBoundedCounter? connectionLimiter = null,
             LdapBindAuthenticator? authenticator = null,
             LdapTlsProvider? tls = null,
+            LdapSearchExecutor? search = null,
             ILogger<LdapConnectionHandler>? logger = null)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _connections = connectionLimiter ?? new LdapBoundedCounter(options.MaxConnections, "MaxConnections");
             _authenticator = authenticator;
             _tls = tls;
+            _search = search;
             _logger = logger ?? NullLogger<LdapConnectionHandler>.Instance;
         }
 
@@ -203,8 +206,12 @@ namespace BifrostQL.Server.Ldap
                     return LdapDispatch.Close; // no response; the client is closing the connection
 
                 case LdapAbandonRequest:
-                    // No executed operation can be outstanding this slice, so there is nothing to
-                    // cancel. Abandon carries no response by protocol — acknowledge by continuing.
+                    // The loop answers one request at a time, so by the time an Abandon is decoded
+                    // the operation it names has already completed — there is nothing left to
+                    // cancel. Cancellation of a search that IS in flight comes from the connection
+                    // token and the search's own deadline, both of which the executor links; a
+                    // client that drops the connection stops the work rather than leaving it
+                    // running against the database. Abandon carries no response by protocol.
                     return LdapDispatch.Continue;
 
                 case LdapBindRequest bind:
@@ -212,20 +219,7 @@ namespace BifrostQL.Server.Ldap
                     return LdapDispatch.Continue; // a bind (success or failure) leaves the connection open for retry
 
                 case LdapSearchRequest search:
-                    // Criterion 4: an admitted anonymous session may read only the RootDSE and the
-                    // subschema. Anything else is refused for lack of rights BEFORE any search
-                    // execution exists, so the later search slice inherits the restriction instead of
-                    // having to remember it.
-                    if (session.IsAnonymous && !IsDiscoveryBase(search.BaseObject))
-                    {
-                        await SendAsync(stream, LdapMessageWriter.SearchResultDone(
-                            request.MessageId, LdapResultCode.InsufficientAccessRights,
-                            "anonymous access is limited to the RootDSE and the subschema"), ct);
-                        return LdapDispatch.Continue;
-                    }
-                    await SendAsync(stream, LdapMessageWriter.SearchResultDone(
-                        request.MessageId, LdapResultCode.UnwillingToPerform,
-                        "search is not enabled on this listener"), ct);
+                    await HandleSearchAsync(stream, request, search, session, ct);
                     return LdapDispatch.Continue;
 
                 case LdapExtendedRequest { RequestName: LdapProtocol.StartTlsOid }:
@@ -246,6 +240,61 @@ namespace BifrostQL.Server.Ldap
                         LdapResultCode.ProtocolError, $"unsupported protocolOp 0x{request.ProtocolOpTag:X2}"), ct);
                     return LdapDispatch.Close;
             }
+        }
+
+        /// <summary>
+        /// Answers a SearchRequest: zero or more SearchResultEntry messages, then exactly one
+        /// SearchResultDone. The Done is sent on EVERY path — success, refusal, or fault — so a
+        /// client is never left waiting on a search that has already finished.
+        ///
+        /// <list type="bullet">
+        /// <item><b>Unauthenticated</b> — refused. A bind establishes the identity every read is
+        /// scoped by, so a search before one has no scope to narrow from and is never executed.</item>
+        /// <item><b>Anonymous</b> — limited to the RootDSE and the subschema. The check runs here
+        /// AND in the executor: this one keeps an unmapped base from reaching the model at all, and
+        /// the executor's keeps the restriction attached to execution rather than to one call site.</item>
+        /// <item><b>No search executor configured</b> — <c>unwillingToPerform</c>. There is no
+        /// ambient read path; a listener registered without one serves no data.</item>
+        /// </list>
+        /// </summary>
+        private async Task HandleSearchAsync(
+            LdapBufferedStream stream,
+            LdapRequest request,
+            LdapSearchRequest search,
+            LdapSessionState session,
+            CancellationToken ct)
+        {
+            if (!session.Authenticated)
+            {
+                await SendAsync(stream, LdapMessageWriter.SearchResultDone(
+                    request.MessageId, LdapResultCode.InsufficientAccessRights,
+                    "bind before searching"), ct);
+                return;
+            }
+
+            if (session.IsAnonymous && !IsDiscoveryBase(search.BaseObject))
+            {
+                await SendAsync(stream, LdapMessageWriter.SearchResultDone(
+                    request.MessageId, LdapResultCode.InsufficientAccessRights,
+                    "anonymous access is limited to the RootDSE and the subschema"), ct);
+                return;
+            }
+
+            if (_search is null)
+            {
+                await SendAsync(stream, LdapMessageWriter.SearchResultDone(
+                    request.MessageId, LdapResultCode.UnwillingToPerform,
+                    "search is not enabled on this listener"), ct);
+                return;
+            }
+
+            var outcome = await _search.ExecuteAsync(search, request.Controls, session, ct);
+
+            foreach (var entry in outcome.Entries)
+                await SendAsync(stream, LdapMessageWriter.SearchResultEntry(request.MessageId, entry), ct);
+
+            await SendAsync(stream, LdapMessageWriter.SearchResultDone(
+                request.MessageId, outcome.ResultCode, outcome.Diagnostic, outcome.ResponseControls), ct);
         }
 
         /// <summary>

@@ -78,10 +78,72 @@ namespace BifrostQL.Server.Ldap
         public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
-        /// Registered BifrostQL endpoint path whose directory model the later search slice serves.
-        /// Null selects the single registered endpoint. Carried but unused by this codec/lifecycle slice.
+        /// Registered BifrostQL endpoint path whose directory model this front door serves.
+        /// Null selects the single registered endpoint.
         /// </summary>
         public string? Endpoint { get; set; }
+
+        // ---- search execution ----
+
+        /// <summary>
+        /// Hard ceiling on the entries ONE search may return, applied whatever the client asked
+        /// for. A client's own <c>sizeLimit</c> can only narrow this, never raise it, so an
+        /// authenticated peer cannot turn a single request into an unbounded read. A search that
+        /// reaches the ceiling answers <c>sizeLimitExceeded</c> with the entries found so far.
+        /// Default 1000.
+        /// </summary>
+        public int MaxSearchResults { get; set; } = 1000;
+
+        /// <summary>
+        /// Largest page a client may request through the paged-results control. A larger request is
+        /// silently narrowed to this — narrowing a page size costs the client only another round
+        /// trip, whereas honouring it would let the control bypass <see cref="MaxSearchResults"/>.
+        /// Default 500.
+        /// </summary>
+        public int MaxPageSize { get; set; } = 500;
+
+        /// <summary>
+        /// Rows fetched from the query pipeline per round trip while filling a page. The filter
+        /// pushdown is a sound OVER-approximation, so some fetched rows are dropped by the exact
+        /// evaluation and a page may need more than one batch. Default 200.
+        /// </summary>
+        public int SearchBatchSize { get; set; } = 200;
+
+        /// <summary>
+        /// Wall-clock ceiling on ONE search, whatever the client's <c>timeLimit</c> asked for. A
+        /// client can only narrow it. A search that runs out of time answers
+        /// <c>timeLimitExceeded</c> rather than holding the connection. Default 30 seconds.
+        /// </summary>
+        public TimeSpan MaxSearchDuration { get; set; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Hard cap on the member DNs resolved for ONE group entry. Group membership is a fan-out:
+        /// without a bound, a single search over a large group table multiplies into an
+        /// arbitrarily large read. A group with more members than this returns
+        /// <c>adminLimitExceeded</c> for the search rather than a silently truncated member list —
+        /// a truncated list would misreport who is in the group. Default 1000.
+        /// </summary>
+        public int MaxMembersPerEntry { get; set; } = 1000;
+
+        /// <summary>
+        /// Whether an entry publishes the reverse <c>memberOf</c> attribute. Off by default: it
+        /// costs an extra bounded query per search and most clients do not read it.
+        /// </summary>
+        public bool MemberOfEnabled { get; set; }
+
+        /// <summary>
+        /// Secret keying the HMAC over paged-results cookies. Leaving it unset generates a random
+        /// per-process key, which is safe but invalidates outstanding cookies whenever the process
+        /// restarts or across instances behind a load balancer — set it explicitly for either.
+        /// </summary>
+        public string? PagedResultsCookieSecret { get; set; }
+
+        /// <summary>
+        /// How long a paged-results cookie stays valid. A stale cookie is refused exactly like a
+        /// forged one, so the window bounds how long a leaked cookie is worth anything.
+        /// Default 10 minutes.
+        /// </summary>
+        public TimeSpan PagedResultsCookieTtl { get; set; } = TimeSpan.FromMinutes(10);
 
         // ---- bind authentication (slice 3) ----
 

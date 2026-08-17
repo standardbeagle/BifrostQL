@@ -20,9 +20,21 @@ namespace BifrostQL.Server.Ldap
         public static byte[] BindResponse(int messageId, LdapResultCode code, string diagnosticMessage)
             => Message(messageId, Result(LdapProtocol.BindResponse, code, diagnosticMessage));
 
-        /// <summary>A SearchResultDone (<c>[APPLICATION 5]</c>) carrying an inlined LDAPResult.</summary>
-        public static byte[] SearchResultDone(int messageId, LdapResultCode code, string diagnosticMessage)
-            => Message(messageId, Result(LdapProtocol.SearchResultDone, code, diagnosticMessage));
+        /// <summary>
+        /// A SearchResultDone (<c>[APPLICATION 5]</c>) carrying an inlined LDAPResult, plus the
+        /// optional response controls (the paged-results cookie) on the LDAPMessage envelope.
+        /// </summary>
+        public static byte[] SearchResultDone(
+            int messageId, LdapResultCode code, string diagnosticMessage, byte[]? responseControls = null)
+        {
+            var op = Result(LdapProtocol.SearchResultDone, code, diagnosticMessage);
+            return responseControls is null
+                ? Message(messageId, op)
+                : BerWriter.Sequence(
+                    BerWriter.Integer(messageId),
+                    op,
+                    BerWriter.Constructed(LdapProtocol.ControlsTag, responseControls));
+        }
 
         /// <summary>
         /// An ExtendedResponse (<c>[APPLICATION 24]</c>): an inlined LDAPResult plus an optional

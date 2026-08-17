@@ -87,7 +87,27 @@ namespace BifrostQL.Server.Ldap
         /// </summary>
         OperationsError = 1,
         ProtocolError = 2,
+
+        /// <summary>
+        /// The search hit the server's own result ceiling. Returned with the entries found so far,
+        /// so a client learns the answer is partial instead of mistaking it for the whole set.
+        /// </summary>
+        SizeLimitExceeded = 4,
+
+        /// <summary>The search exceeded its effective time limit; partial entries may precede it.</summary>
+        TimeLimitExceeded = 3,
+
         UnavailableCriticalExtension = 12,
+
+        /// <summary>
+        /// The base object names nothing this directory publishes. Deliberately the SAME answer for
+        /// a malformed DN, a DN outside the base, an undeclared container, and an entry whose row
+        /// the bound identity cannot see — so it never becomes an existence oracle.
+        /// </summary>
+        NoSuchObject = 32,
+
+        /// <summary>A server-side limit unrelated to the result count — an unbounded membership fan-out.</summary>
+        AdminLimitExceeded = 11,
 
         /// <summary>
         /// The operation requires a confidential transport. Answered to a credentialed simple bind on

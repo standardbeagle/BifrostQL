@@ -255,6 +255,22 @@ namespace BifrostQL.Server.Test.Ldap
             request.CertificateExtensions.Add(subjectAlternativeName.Build());
             return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1));
         }
+
+        /// <summary>
+        /// A certificate carrying NO private key. Self-ISSUED through a signature generator rather
+        /// than CreateSelfSigned, because only that path returns a certificate with no key attached.
+        /// Stands in for the operator who deployed a public certificate and expected a handshake.
+        /// </summary>
+        public static X509Certificate2 WithoutPrivateKey()
+        {
+            using var key = RSA.Create(2048);
+            var request = new CertificateRequest("CN=no-private-key", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            var generator = X509SignatureGenerator.CreateForRSA(key, RSASignaturePadding.Pkcs1);
+            return request.Create(
+                request.SubjectName, generator,
+                DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30),
+                new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+        }
     }
 
     /// <summary>Loopback socket pair with an <see cref="LdapConnectionHandler"/> pumping the server end.</summary>

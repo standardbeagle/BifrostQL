@@ -123,5 +123,19 @@ namespace BifrostQL.Server.Ldap
         /// seconds, matching the pgwire handshake and RESP authentication deadlines.
         /// </summary>
         public TimeSpan AuthenticationTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+        // ---- transport security ----
+
+        /// <summary>
+        /// DEVELOPMENT ONLY. When true, a credentialed simple bind is admitted on a CLEARTEXT
+        /// connection — the presented password crosses the wire in the clear, readable by anything on
+        /// the path. Default FALSE: without LDAPS or a completed StartTLS, a credentialed bind is
+        /// refused with <c>confidentialityRequired</c> before the credential is read.
+        ///
+        /// <para>Enabling it is a deliberate posture change and is announced with a startup WARNING;
+        /// it is never inferred from a missing certificate, because a silent cleartext fallback is
+        /// exactly the downgrade the gate exists to prevent.</para>
+        /// </summary>
+        public bool AllowInsecureSimpleBind { get; set; }
     }
 }

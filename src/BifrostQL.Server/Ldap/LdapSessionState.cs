@@ -15,6 +15,14 @@ namespace BifrostQL.Server.Ldap
     /// </summary>
     internal sealed class LdapSessionState
     {
+        /// <summary>
+        /// Whether this connection is confidential: it arrived on the LDAPS listener, or it completed
+        /// a StartTLS upgrade. A credentialed bind is refused unless this is true (the deployment can
+        /// override that for development only). It is set once and never cleared — there is no path
+        /// that returns an upgraded connection to cleartext.
+        /// </summary>
+        public bool TlsEstablished { get; set; }
+
         /// <summary>Whether a bind on this connection has succeeded (credentialed or admitted-anonymous).</summary>
         public bool Authenticated { get; set; }
 

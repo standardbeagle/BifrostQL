@@ -24,7 +24,7 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
-        public async Task BindRequest_IsAnswered_UnwillingToPerform_ConnectionStaysOpen()
+        public async Task BindRequest_IsAnswered_ConnectionStaysOpen()
         {
             await using var fixture = await LdapFixture.StartAsync();
 
@@ -33,7 +33,9 @@ namespace BifrostQL.Server.Test.Ldap
 
             response.MessageId.Should().Be(1);
             response.OpTag.Should().Be(LdapProtocol.BindResponse);
-            response.ResultCode.Should().Be(LdapResultCode.UnwillingToPerform);
+            // Cleartext connection: the transport gate answers before the listener's own
+            // "no authenticator" refusal ever runs (see LdapTransportSecurityTests).
+            response.ResultCode.Should().Be(LdapResultCode.ConfidentialityRequired);
 
             // The connection is still usable: a second request is answered on the same socket.
             await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest()));

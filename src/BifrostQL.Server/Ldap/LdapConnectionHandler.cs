@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -61,8 +62,14 @@ namespace BifrostQL.Server.Ldap
         /// runs identically over a real socket (tests, production). Admission is refused past the
         /// connection cap; every accepted connection reads/answers messages until Unbind, EOF, a
         /// fatal protocol error, or idle timeout.
+        ///
+        /// <para><paramref name="tlsEstablished"/> declares that <paramref name="stream"/> is already
+        /// confidential — an LDAPS connection whose handshake completed before the first byte of LDAP
+        /// was read. It only ever moves in that direction: nothing in the loop returns a session to
+        /// cleartext.</para>
         /// </summary>
-        internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct, string source = "unknown")
+        internal async Task HandleConnectionAsync(
+            Stream stream, CancellationToken ct, string source = "unknown", bool tlsEstablished = false)
         {
             if (!_connections.TryAcquire())
             {
@@ -81,7 +88,7 @@ namespace BifrostQL.Server.Ldap
                 _options.MaxMessageLength, _options.MaxNestingDepth, _options.MaxFilterComponents, _options.MaxSearchAttributes);
             // Session state for THIS connection: whether a bind has authenticated it, and whether that
             // bind was anonymous (an anonymous session is limited to the RootDSE/subschema — criterion 4).
-            var session = new LdapSessionState();
+            var session = new LdapSessionState { TlsEstablished = tlsEstablished };
             // Pre-auth deadline: the admission slot was taken at accept, so an unauthenticated peer
             // must not be able to hold it past this even while sending traffic (failing binds keep the
             // connection non-idle, so the idle timeout alone does not reclaim the slot).
@@ -212,7 +219,8 @@ namespace BifrostQL.Server.Ldap
 
         /// <summary>
         /// Authenticates a BindRequest through the configured <see cref="LdapBindAuthenticator"/> and
-        /// answers a BindResponse. When no authenticator is registered the listener is fail-closed for
+        /// answers a BindResponse. The transport gate runs first: a credentialed bind is refused with
+        /// <c>confidentialityRequired</c> unless the connection is confidential. When no authenticator is registered the listener is fail-closed for
         /// authentication: bind is refused with <c>unwillingToPerform</c> (there is no default ambient
         /// credential store — criterion 1). Every authenticated failure class returns the SAME uniform
         /// <c>invalidCredentials</c> the authenticator produces; the connection stays open for retry
@@ -221,6 +229,31 @@ namespace BifrostQL.Server.Ldap
         private async Task HandleBindAsync(
             Stream stream, int messageId, LdapBindRequest bind, LdapSessionState session, string source, CancellationToken ct)
         {
+            // TRANSPORT GATE — deliberately the FIRST statement of the bind path, ahead of the
+            // authenticator, the rate limiter, the credential store and the hasher. A credentialed
+            // bind on a cleartext connection is refused without the presented credential being
+            // resolved, compared, or used to select a code path, so the secret is never acted on
+            // where a passive observer already has it. The password bytes the decoder captured are
+            // zeroed here rather than carried further (secret hygiene).
+            //
+            // An ANONYMOUS bind is exempt: it carries no secret to protect. The refusal talks about
+            // the transport only — identical for a real DN and a fabricated one — so it cannot become
+            // an account-enumeration oracle, and it leaves the connection open so the client can
+            // StartTLS and retry. There is no path that infers "cleartext is fine" from a missing
+            // certificate: only the explicit development override opens one.
+            if (!bind.IsAnonymous && !session.TlsEstablished && !_options.AllowInsecureSimpleBind)
+            {
+                if (bind.SimplePassword is { Length: > 0 })
+                    CryptographicOperations.ZeroMemory(bind.SimplePassword);
+                _logger.LogWarning(
+                    "ldap credentialed bind from {Source} refused: the connection is not confidential. "
+                    + "Use LDAPS or StartTLS.", source);
+                await SendAsync(stream, LdapMessageWriter.BindResponse(
+                    messageId, LdapResultCode.ConfidentialityRequired,
+                    "a credentialed bind requires a confidential transport (LDAPS or StartTLS)"), ct);
+                return;
+            }
+
             if (_authenticator is null)
             {
                 await SendAsync(stream, LdapMessageWriter.BindResponse(

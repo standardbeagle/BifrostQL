@@ -31,6 +31,15 @@ namespace BifrostQL.Server.Ldap
         {
             Validate(_options);
 
+            // A posture change worth shouting about: credentialed binds are being accepted on a
+            // cleartext wire, so every password presented to this front door is readable by anything
+            // on the network path. Warned at every startup, never inferred from configuration.
+            if (_options.AllowInsecureSimpleBind)
+                _logger.LogWarning(
+                    "ldap AllowInsecureSimpleBind is ENABLED: credentialed binds are admitted on CLEARTEXT "
+                    + "connections and presented passwords cross the wire in the clear. This is a development-only "
+                    + "setting; production deployments must use LDAPS or StartTLS instead.");
+
             _logger.LogInformation(
                 "ldap front door ready on port {Port} (codec + connection lifecycle only; bind auth, search, " +
                 "TLS, SASL, and writes are not enabled in this slice). Limits: max message {MaxMessage} bytes, " +

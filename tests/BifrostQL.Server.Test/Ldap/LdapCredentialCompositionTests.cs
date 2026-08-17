@@ -59,7 +59,9 @@ namespace BifrostQL.Server.Test.Ldap
             await using var provider = services.BuildServiceProvider();
             var handler = provider.GetRequiredService<LdapConnectionHandler>();
 
-            await using var fixture = await LdapFixture.StartAsync(handler: handler);
+            // Confidential transport, so the refusal proved here is the MISSING-SEAM one and not the
+            // transport gate that would otherwise answer first.
+            await using var fixture = await LdapFixture.StartAsync(handler: handler, tls: true);
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
 
             var response = await fixture.Client.ReadResponseAsync().WaitAsync(Timeout);

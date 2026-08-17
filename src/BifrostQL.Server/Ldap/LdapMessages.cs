@@ -27,7 +27,25 @@ namespace BifrostQL.Server.Ldap
     /// verify (secret hygiene): an interned/immutable string could not be wiped. It is <c>null</c> for
     /// SASL / unknown / absent auth choices, and a zero-length array for an empty Simple password.
     /// </summary>
-    internal sealed record LdapBindRequest(int Version, string Name, LdapBindAuthKind AuthKind, byte[]? SimplePassword) : LdapOperation;
+    internal sealed record LdapBindRequest(int Version, string Name, LdapBindAuthKind AuthKind, byte[]? SimplePassword) : LdapOperation
+    {
+        /// <summary>
+        /// The RFC 4513 §5.1.1 ANONYMOUS bind: a simple auth choice with an empty name AND an empty
+        /// password — a request to be no-one, carrying no credential. Everything else is a
+        /// CREDENTIALED bind attempt, including an "unauthenticated bind" (a name with an empty
+        /// password) and any SASL/unknown choice.
+        ///
+        /// <para>Defined once here because two independent decisions turn on it: the transport gate
+        /// (an anonymous bind has no secret to protect, so it is exempt from the confidentiality
+        /// requirement) and the verifier (an anonymous bind is admitted only when anonymous binds are
+        /// explicitly enabled). Two spellings of "anonymous" could drift into a gap where a request
+        /// is exempt from the gate but treated as credentialed afterwards.</para>
+        /// </summary>
+        public bool IsAnonymous =>
+            AuthKind == LdapBindAuthKind.Simple
+            && string.IsNullOrEmpty(Name)
+            && SimplePassword is { Length: 0 };
+    }
 
     /// <summary>Which authentication choice a BindRequest carried.</summary>
     internal enum LdapBindAuthKind { Simple, Sasl, Unknown }

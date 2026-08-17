@@ -71,10 +71,26 @@ namespace BifrostQL.Server.Ldap
     internal enum LdapResultCode
     {
         Success = 0,
+
+        /// <summary>
+        /// The request was legal but arrived in a session state that cannot serve it — used for a
+        /// StartTLS that is out of order (TLS already installed, or the session is already bound).
+        /// </summary>
+        OperationsError = 1,
         ProtocolError = 2,
         UnavailableCriticalExtension = 12,
+
+        /// <summary>
+        /// The operation requires a confidential transport. Answered to a credentialed simple bind on
+        /// a cleartext connection: the credential is refused before it is read, so this is a statement
+        /// about the TRANSPORT and never about whether the account exists.
+        /// </summary>
+        ConfidentialityRequired = 13,
         InvalidCredentials = 49,
         InsufficientAccessRights = 50,
+
+        /// <summary>The server cannot provide the requested extension — a StartTLS with no configured certificate.</summary>
+        Unavailable = 52,
         UnwillingToPerform = 53,
     }
 }

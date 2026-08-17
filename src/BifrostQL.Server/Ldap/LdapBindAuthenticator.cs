@@ -74,7 +74,7 @@ namespace BifrostQL.Server.Ldap
             try
             {
                 // Anonymous bind (zero-length DN + zero-length password): gated separately (criterion 4).
-                if (IsAnonymous(bind))
+                if (bind.IsAnonymous)
                     return Anonymous(account, source);
 
                 // Rate limit BOTH axes before any hash work; a trip costs nothing (criterion 3).
@@ -129,14 +129,6 @@ namespace BifrostQL.Server.Ldap
                     CryptographicOperations.ZeroMemory(password);
             }
         }
-
-        // Anonymous = RFC 4513 anonymous bind: a simple auth choice with an empty name AND an empty
-        // password. A non-empty name with an empty password is an "unauthenticated bind", refused as
-        // invalidCredentials by the empty-password check on the credentialed path.
-        private static bool IsAnonymous(LdapBindRequest bind) =>
-            bind.AuthKind == LdapBindAuthKind.Simple
-            && string.IsNullOrEmpty(bind.Name)
-            && bind.SimplePassword is { Length: 0 };
 
         private LdapBindResult Anonymous(string account, string source)
         {

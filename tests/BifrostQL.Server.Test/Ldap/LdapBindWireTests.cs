@@ -66,7 +66,7 @@ namespace BifrostQL.Server.Test.Ldap
         [Fact]
         public async Task ValidSimpleBind_AnswersSuccess_ConnectionStaysOpen()
         {
-            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator());
+            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator(), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
             var response = await ReadAsync(fixture);
@@ -85,7 +85,7 @@ namespace BifrostQL.Server.Test.Ldap
         [InlineData("uid=alice", "wrong")]    // wrong password
         public async Task FailedSimpleBind_AnswersUniform_InvalidCredentials_ConnectionStaysOpen(string dn, string password)
         {
-            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator());
+            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator(), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(9, LdapWire.BindRequest(name: dn, password: password)));
             var response = await ReadAsync(fixture);
@@ -112,7 +112,7 @@ namespace BifrostQL.Server.Test.Ldap
                 AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
                 IdleTimeout = TimeSpan.FromSeconds(30),
             };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "wrong")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.InvalidCredentials);
@@ -131,7 +131,7 @@ namespace BifrostQL.Server.Test.Ldap
                 AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
                 IdleTimeout = TimeSpan.FromSeconds(30),
             };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
@@ -145,7 +145,7 @@ namespace BifrostQL.Server.Test.Ldap
         [Fact]
         public async Task AnonymousBind_DefaultOff_AnswersInvalidCredentials()
         {
-            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator());
+            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator(), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(3, LdapWire.BindRequest(name: "", password: "")));
             var response = await ReadAsync(fixture);
@@ -158,7 +158,7 @@ namespace BifrostQL.Server.Test.Ldap
         public async Task AnonymousBind_WhenEnabled_AnswersSuccess()
         {
             await using var fixture = await LdapFixture.StartAsync(
-                authenticator: Authenticator(new LdapWireOptions { AnonymousBindEnabled = true }));
+                authenticator: Authenticator(new LdapWireOptions { AnonymousBindEnabled = true }), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(4, LdapWire.BindRequest(name: "", password: "")));
             var response = await ReadAsync(fixture);
@@ -174,7 +174,7 @@ namespace BifrostQL.Server.Test.Ldap
             // subschema. A data-scoped base is refused for lack of rights — a session-state decision,
             // distinct from the listener-wide "search is not enabled" refusal.
             var options = new LdapWireOptions { AnonymousBindEnabled = true };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
@@ -194,7 +194,7 @@ namespace BifrostQL.Server.Test.Ldap
         public async Task AnonymousSession_ReadingDiscoverySurface_IsNotRefusedForRights(string baseObject)
         {
             var options = new LdapWireOptions { AnonymousBindEnabled = true };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
@@ -212,7 +212,7 @@ namespace BifrostQL.Server.Test.Ldap
         {
             // The restriction is anonymous-specific: an authenticated identity is not rights-refused
             // here (its data access is the search slice's policy decision, not this gate's).
-            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator());
+            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator(), tls: true);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);

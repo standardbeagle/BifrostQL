@@ -1,5 +1,9 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using BifrostQL.Server.Ldap;
 
@@ -138,9 +142,26 @@ namespace BifrostQL.Server.Test.Ldap
     /// </summary>
     internal sealed class LdapTestClient
     {
-        private readonly Stream _stream;
+        private Stream _stream;
 
         public LdapTestClient(Stream stream) => _stream = stream;
+
+        /// <summary>
+        /// Completes the client half of a TLS handshake on this connection, as a real client does
+        /// after a successful StartTLS response (and as an LDAPS client does immediately). The
+        /// server's certificate is self-signed in tests, so chain validation is accepted here — the
+        /// facts under test are the server's state machine, not PKI.
+        /// </summary>
+        public async Task UpgradeToTlsAsync(CancellationToken ct = default)
+        {
+            var ssl = new SslStream(_stream, leaveInnerStreamOpen: false, (_, _, _, _) => true);
+            await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            {
+                TargetHost = "localhost",
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+            }, ct);
+            _stream = ssl;
+        }
 
         public async Task SendAsync(byte[] message)
         {
@@ -212,23 +233,55 @@ namespace BifrostQL.Server.Test.Ldap
         }
     }
 
+    /// <summary>
+    /// An ephemeral self-signed certificate for the loopback TLS tests, generated in-process so the
+    /// suite carries no key material on disk and nothing to expire. One per test run.
+    /// </summary>
+    internal static class LdapTestCertificate
+    {
+        private static readonly Lazy<X509Certificate2> Lazy = new(Create, isThreadSafe: true);
+
+        public static X509Certificate2 Instance => Lazy.Value;
+
+        private static X509Certificate2 Create()
+        {
+            using var key = RSA.Create(2048);
+            var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
+            request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(
+                new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") }, false)); // serverAuth
+            var subjectAlternativeName = new SubjectAlternativeNameBuilder();
+            subjectAlternativeName.AddDnsName("localhost");
+            request.CertificateExtensions.Add(subjectAlternativeName.Build());
+            return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1));
+        }
+    }
+
     /// <summary>Loopback socket pair with an <see cref="LdapConnectionHandler"/> pumping the server end.</summary>
     internal sealed class LdapFixture : IAsyncDisposable
     {
         private readonly TcpListener _listener;
         private readonly TcpClient _clientSocket;
         private readonly TcpClient _serverSocket;
-        private readonly Task _serverTask;
 
         public LdapTestClient Client { get; }
 
-        private LdapFixture(TcpListener listener, TcpClient clientSocket, TcpClient serverSocket, Task serverTask)
+        /// <summary>The server-side connection loop, so a test can assert it ends (cleanly, and without throwing).</summary>
+        public Task ServerTask { get; }
+
+        /// <summary>Cancels the server-side connection token, standing in for host shutdown.</summary>
+        public CancellationTokenSource Cancellation { get; }
+
+        private LdapFixture(
+            TcpListener listener, TcpClient clientSocket, TcpClient serverSocket,
+            Task serverTask, LdapTestClient client, CancellationTokenSource cancellation)
         {
             _listener = listener;
             _clientSocket = clientSocket;
             _serverSocket = serverSocket;
-            _serverTask = serverTask;
-            Client = new LdapTestClient(clientSocket.GetStream());
+            ServerTask = serverTask;
+            Client = client;
+            Cancellation = cancellation;
         }
 
         /// <summary>
@@ -240,7 +293,8 @@ namespace BifrostQL.Server.Test.Ldap
             LdapWireOptions? options = null,
             LdapBoundedCounter? connectionLimiter = null,
             LdapBindAuthenticator? authenticator = null,
-            LdapConnectionHandler? handler = null)
+            LdapConnectionHandler? handler = null,
+            bool tls = false)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -253,21 +307,45 @@ namespace BifrostQL.Server.Test.Ldap
             await connectTask;
 
             var connectionHandler = handler ?? new LdapConnectionHandler(options, connectionLimiter, authenticator);
+            var client = new LdapTestClient(clientSocket.GetStream());
+            var cancellation = new CancellationTokenSource();
+
+            // tls: the LDAPS shape — the handshake completes before the first LDAP byte, so the
+            // session starts already confidential (no StartTLS involved).
+            Stream serverStream = serverSocket.GetStream();
+            if (tls)
+            {
+                var ssl = new SslStream(serverStream, leaveInnerStreamOpen: false);
+                var serverHandshake = ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = LdapTestCertificate.Instance,
+                    ClientCertificateRequired = false,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                });
+                await Task.WhenAll(serverHandshake, client.UpgradeToTlsAsync());
+                serverStream = ssl;
+            }
+
             var serverTask = Task.Run(async () =>
             {
-                try { await connectionHandler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None, source: "test-client:1"); }
+                try
+                {
+                    await connectionHandler.HandleConnectionAsync(
+                        serverStream, cancellation.Token, source: "test-client:1", tlsEstablished: tls);
+                }
                 finally { serverSocket.Close(); }
             });
-            return new LdapFixture(listener, clientSocket, serverSocket, serverTask);
+            return new LdapFixture(listener, clientSocket, serverSocket, serverTask, client, cancellation);
         }
 
         public async ValueTask DisposeAsync()
         {
             _clientSocket.Dispose();
-            try { await _serverTask.WaitAsync(TimeSpan.FromSeconds(5)); }
+            try { await ServerTask.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch { /* teardown races are expected on dispose */ }
             _serverSocket.Dispose();
             _listener.Stop();
+            Cancellation.Dispose();
         }
     }
 }

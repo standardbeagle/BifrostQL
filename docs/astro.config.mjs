@@ -79,6 +79,8 @@ export default defineConfig({
 						{ label: 'pgwire BI-Tool Smoke Runbook', slug: 'guides/pgwire-bi-smoke' },
 						{ label: 'Redis Wire Protocol (RESP)', slug: 'guides/resp' },
 						{ label: 'RESP Smoke Runbook', slug: 'guides/resp-smoke' },
+						{ label: 'LDAP Directory Endpoint', slug: 'guides/ldap' },
+						{ label: 'LDAP Smoke Runbook', slug: 'guides/ldap-smoke' },
 						{ label: 'S3-Compatible Object Endpoint', slug: 'guides/s3' },
 						{ label: 'gRPC Endpoint', slug: 'guides/grpc' },
 						{ label: 'Prometheus Metrics Endpoint', slug: 'guides/prometheus' },

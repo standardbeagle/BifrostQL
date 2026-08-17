@@ -41,15 +41,17 @@ namespace BifrostQL.Server.Ldap
                     + "setting; production deployments must use LDAPS or StartTLS instead.");
 
             _logger.LogInformation(
-                "ldap front door ready on port {Port} (StartTLS {StartTls}; LDAPS {Ldaps}; search execution and " +
-                "writes are not enabled yet). Limits: max message {MaxMessage} bytes, nesting depth {Depth}, " +
-                "connections {MaxConnections}, idle {Idle}.",
+                "ldap front door ready on port {Port} (StartTLS {StartTls}; LDAPS {Ldaps}; writes are not " +
+                "enabled). Limits: max message {MaxMessage} bytes, nesting depth {Depth}, connections " +
+                "{MaxConnections}, idle {Idle}, search results {MaxResults} in {MaxDuration}, members per " +
+                "entry {MaxMembers}.",
                 _options.Port,
                 _options.ServerCertificate is not null || !string.IsNullOrWhiteSpace(_options.TlsCertificatePath)
                     ? "available" : "unavailable (no certificate configured)",
                 _options.LdapsPort is { } ldapsPort ? $"on port {ldapsPort}" : "disabled",
                 _options.MaxMessageLength, _options.MaxNestingDepth,
-                _options.MaxConnections, _options.IdleTimeout);
+                _options.MaxConnections, _options.IdleTimeout,
+                _options.MaxSearchResults, _options.MaxSearchDuration, _options.MaxMembersPerEntry);
             return Task.CompletedTask;
         }
 
@@ -85,6 +87,28 @@ namespace BifrostQL.Server.Ldap
             if (options.IdleTimeout <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.IdleTimeout), options.IdleTimeout,
                     "ldap IdleTimeout must be positive.");
+            // Search bounds. Each of these is a DoS guard on an authenticated but untrusted peer, so
+            // a value that would disable one aborts startup rather than quietly serving unbounded
+            // reads — the same rule the pre-auth limits above follow.
+            if (options.MaxSearchResults < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxSearchResults), options.MaxSearchResults,
+                    "ldap MaxSearchResults must be at least 1.");
+            if (options.MaxPageSize < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxPageSize), options.MaxPageSize,
+                    "ldap MaxPageSize must be at least 1.");
+            if (options.SearchBatchSize < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.SearchBatchSize), options.SearchBatchSize,
+                    "ldap SearchBatchSize must be at least 1.");
+            if (options.MaxMembersPerEntry < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxMembersPerEntry), options.MaxMembersPerEntry,
+                    "ldap MaxMembersPerEntry must be at least 1.");
+            if (options.MaxSearchDuration <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxSearchDuration), options.MaxSearchDuration,
+                    "ldap MaxSearchDuration must be positive.");
+            if (options.PagedResultsCookieTtl <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.PagedResultsCookieTtl), options.PagedResultsCookieTtl,
+                    "ldap PagedResultsCookieTtl must be positive.");
+
             if (options.MaxPasswordLength < 1)
                 throw new ArgumentOutOfRangeException(nameof(options.MaxPasswordLength), options.MaxPasswordLength,
                     "ldap MaxPasswordLength must be at least 1.");

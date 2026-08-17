@@ -55,11 +55,14 @@ namespace BifrostQL.Server.Ldap
         public int MaxSearchAttributes { get; set; } = 1024;
 
         /// <summary>
-        /// Maximum number of concurrent connections across the whole front door. The N+1th connection
-        /// is refused cleanly and closed — never left to crash or hang — enforced lock-free by
-        /// <see cref="LdapBoundedCounter"/>. Default 1000.
+        /// Maximum number of concurrent connections across the whole front door — BOTH the cleartext
+        /// and LDAPS listeners, so opening the second port does not double the ceiling. The N+1th
+        /// connection is refused cleanly and closed — never left to crash or hang — enforced
+        /// lock-free by <see cref="LdapBoundedCounter"/>. Default 100, matching the pgwire and RESP
+        /// listeners: these caps bound what an unauthenticated peer can make the host hold, so they
+        /// are set per front door, not per protocol's taste.
         /// </summary>
-        public int MaxConnections { get; set; } = 1000;
+        public int MaxConnections { get; set; } = 100;
 
         /// <summary>
         /// Maximum number of simultaneously-outstanding operations on a single connection, bounding a

@@ -33,5 +33,20 @@ namespace BifrostQL.Server.Test.Ldap
             // 30 seconds, matching the pgwire handshake and RESP authentication deadlines.
             new LdapWireOptions().AuthenticationTimeout.Should().Be(TimeSpan.FromSeconds(30));
         }
+
+        [Fact]
+        public void LdapListener_DeclaresTheSameConnectionCap_AsEveryOtherFrontDoor()
+        {
+            // 100, as pgwire and RESP declare. The cap bounds what an unauthenticated peer can make
+            // the host hold, so it is a front-door property rather than a per-protocol preference.
+            new LdapWireOptions().MaxConnections.Should().Be(100);
+        }
+
+        [Fact]
+        public void LdapListener_DeclaresAConcreteTlsHandshakeDeadline()
+        {
+            // The admission slot is held while the handshake runs, so it needs its own bound.
+            new LdapWireOptions().TlsHandshakeTimeout.Should().Be(TimeSpan.FromSeconds(30));
+        }
     }
 }

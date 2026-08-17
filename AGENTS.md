@@ -61,6 +61,8 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 |----------|------|---------|--------------|-----------------|-------------------|---------------|-------------|
 | pgwire | 5432 | `loopback` | `PgWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConnections` 100 | `HandshakeTimeout` 30 s | none (authenticated session = pooled connection) | `PgProtocolIO.MaxMessageLength` 1 MiB |
 | RESP | 6379 | `loopback` | `RespWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConnections` 100 | `AuthenticationTimeout` 30 s | `IdleTimeout` 10 min | `MaxBulkLength` 1 MiB |
+| LDAP | 389 | `loopback` | `LdapWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConnections` 100（與 LDAPS 共此 counter） | `AuthenticationTimeout` 30 s；`TlsHandshakeTimeout` 30 s | `IdleTimeout` 5 min | `MaxMessageLength` 1 MiB |
+| LDAPS | `LdapsPort`（默 null＝off，慣用 636） | `loopback` | 同 `LdapWireOptions.BindAddress` | 同上（共 counter） | `TlsHandshakeTimeout` 30 s（取 slot 於 accept，先於 handshake） | `IdleTimeout` 5 min | `MaxMessageLength` 1 MiB |
 | gRPC | 5090 | `loopback` | `GrpcWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConcurrentConnections` 100 (Kestrel) | Kestrel HTTP/2 defaults | Kestrel HTTP/2 defaults | Kestrel HTTP/2 defaults |
 | HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host's Kestrel | 隨 host 之 Kestrel 配置；BifrostQL 不自binds | — | host | host | host | host |
 
@@ -70,6 +72,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 - **Admission slot 必取於 ACCEPT**，先於 read、TLS handshake、authentication。cap 若後施，僅bound admitted sessions，不bound unauthenticated peer 所能forced 之work——非 cap。用 `ProtocolConnectionLimiter`，且每 adapter 自有 subtype（共用 base type 於 DI 則二 front doors 共一 counter）。
 - **Pre-auth deadline 必有。** slot 既取於 accept，silent peer 即 denial of service，無需credentials，無需bytes。authenticated 之後宜放寬或去之——idle authenticated session 乃 pooled client。
 - **Per-session state 必 capped**（pgwire `MaxPreparedStatements`/`MaxPortals`）：session-lifetime 之 map 無 cap，則一 peer 於一 connection 內即可耗memory，connection cap 不救。
+- **Credential 必不受於 cleartext transport。** 凡 adapter 之 handshake 以 wire 載 credential（LDAP simple bind、RESP AUTH、pgwire password 之屬），必於**讀、查、比 credential 之前**拒非 confidential connection，且 refusal 唯言 transport（勿因帳號存否而異，否則成 enumeration oracle）。development override 得存，然默 OFF、必 startup warning、且不得由「無 cert」推得。TLS 之 in-band upgrade（StartTLS 之屬）唯一 legal pre-bind state 受之；buffer 殘餘即 protocol error 斷線（pipelined plaintext 不得越 upgrade），handshake 敗即斷，無 cleartext 退路。
 - **Untrusted input 之 regex 必 bounded**：`RegexOptions.NonBacktracking` 或 match timeout，且 timeout 必 map 為 adapter 自有 exception type（見 `.claude/rules/protocol-adapter-security.md` invariant 1）。client-supplied pattern（LIKE 等）宜以 non-regex scan 行之。
 
 ### Key Components

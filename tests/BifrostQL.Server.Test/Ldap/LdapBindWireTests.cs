@@ -102,6 +102,44 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task RateLimitedBind_IsByteIdenticalToABadCredential_OnTheWire()
+        {
+            // The per-account cap is a hardening measure, not a signal. If a rate-limited attempt
+            // answered differently from a wrong password, an attacker would learn exactly when it
+            // tripped — and, worse, could distinguish a REAL account (which has a per-account
+            // counter to trip) from an unknown one. The cap must be invisible on the wire.
+            var options = new LdapWireOptions
+            {
+                MaxBindAttemptsPerAccount = 2,
+                MaxBindAttemptsPerSource = 1000,
+                BindRateLimitWindow = TimeSpan.FromMinutes(5),
+                AuthenticationTimeout = TimeSpan.FromSeconds(30),
+            };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+
+            var codes = new List<LdapResultCode?>();
+            for (var attempt = 1; attempt <= 4; attempt++)
+            {
+                await fixture.Client.SendAsync(LdapWire.Message(
+                    attempt, LdapWire.BindRequest(name: "uid=alice", password: "wrong")));
+                var response = await ReadAsync(fixture);
+                response.OpTag.Should().Be(LdapProtocol.BindResponse);
+                codes.Add(response.ResultCode);
+            }
+
+            // Attempts 1-2 are verified and fail; 3-4 are refused by the cap before any hash work.
+            codes.Should().AllBeEquivalentTo(LdapResultCode.InvalidCredentials,
+                "a tripped rate limit is indistinguishable from a wrong password");
+
+            // And the cap really did trip: the CORRECT password is now refused too, which it
+            // would not be if the counter had never reached its bound.
+            await fixture.Client.SendAsync(LdapWire.Message(
+                5, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.InvalidCredentials,
+                "the account is rate limited, so even a valid credential is refused");
+        }
+
+        [Fact]
         public async Task UnauthenticatedConnection_IsClosed_AtThePreAuthDeadline()
         {
             // A peer holds an admission slot from ACCEPT. Failing binds is traffic, so the idle

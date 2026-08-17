@@ -13,8 +13,12 @@ namespace BifrostQL.Server.Ldap
     /// a thrown <see cref="StartAsync"/> aborts host startup (the <see cref="IProtocolAdapter"/>
     /// contract), so a misconfigured front door never comes up half-listening. A socket bind failure
     /// (port in use) is surfaced by Kestrel's own listener at host start for the same fail-fast
-    /// result. Note this slice does not authenticate binds or execute searches; it is a codec +
-    /// connection-lifecycle surface only.</para>
+    /// result.</para>
+    ///
+    /// <para><b>What the front door serves.</b> Simple bind (via the required
+    /// <see cref="ILdapCredentialStore"/> / <see cref="ILdapPasswordHasher"/> seams), search over
+    /// the mapped directory, StartTLS, Unbind and Abandon. There is no write verb: add, modify,
+    /// delete and modifyDN are non-goals, and SASL is refused with the other extended operations.</para>
     /// </summary>
     public sealed class LdapWireAdapter : IProtocolAdapter
     {

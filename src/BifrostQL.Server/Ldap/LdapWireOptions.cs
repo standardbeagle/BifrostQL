@@ -4,11 +4,10 @@ using System.Security.Cryptography.X509Certificates;
 namespace BifrostQL.Server.Ldap
 {
     /// <summary>
-    /// Configuration for the LDAPv3 protocol front door (slice 2: BER codec + bounded connection
-    /// lifecycle). The front door is opt-in — it exists only when a host calls
-    /// <c>AddBifrostLdap</c>. Bind authentication, search execution, TLS, SASL, and writes are
-    /// non-goals of this slice: the loop decodes every request and answers the ones it does not yet
-    /// execute with <c>unwillingToPerform</c>, never hanging.
+    /// Configuration for the LDAPv3 protocol front door. The front door is opt-in — it exists only
+    /// when a host calls <c>AddBifrostLdap</c>. It serves simple bind, search, StartTLS/LDAPS,
+    /// Unbind and Abandon; SASL and every write verb are non-goals, answered with
+    /// <c>unwillingToPerform</c> rather than left to hang.
     ///
     /// <para>Every limit here is a pre-auth DoS guard on an unauthenticated wire; the defaults are
     /// generous for real LDAP traffic yet reject the pathological inputs those guards exist for.</para>

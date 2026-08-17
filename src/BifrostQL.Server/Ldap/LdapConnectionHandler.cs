@@ -9,18 +9,20 @@ namespace BifrostQL.Server.Ldap
 {
     /// <summary>
     /// Kestrel connection handler for the LDAPv3 front door: the connection lifecycle, the message
-    /// codec, bind authentication, and the StartTLS transport upgrade. Search execution and writes
-    /// are not enabled yet. The loop reads one LDAPMessage, answers it, and repeats, bounded on
-    /// every axis of an unauthenticated wire:
+    /// codec, bind authentication, search execution, and the StartTLS transport upgrade. There is
+    /// no write verb — add, modify, delete and modifyDN are non-goals. The loop reads one
+    /// LDAPMessage, answers it, and repeats, bounded on every axis of an unauthenticated wire:
     ///
     /// <list type="bullet">
     /// <item>A malformed message closes predictably: the loop sends a Notice of Disconnection and
     /// returns, so a wire violation from a hostile peer never escapes to Kestrel as an unhandled
     /// throw (protocol-adapter-security invariant 1) and never leaves the client hanging
     /// (criterion 4).</item>
-    /// <item>Every operation the slice understands but does not yet execute — Bind, Search,
-    /// ExtendedRequest — is answered with <c>unwillingToPerform</c>; an unrecognized protocolOp is a
-    /// fatal protocol error. The client always gets a reply, never a hang (criterion 4).</item>
+    /// <item>Every operation is answered, including the ones this front door declines: an extended
+    /// operation other than StartTLS, and a bind or search on a listener registered without the
+    /// seams that would serve it, are answered with <c>unwillingToPerform</c>; an unrecognized
+    /// protocolOp is a fatal protocol error. The client always gets a reply, never a hang
+    /// (criterion 4).</item>
     /// <item>An idle connection is closed after <see cref="LdapWireOptions.IdleTimeout"/>; the front
     /// door admits at most <see cref="LdapWireOptions.MaxConnections"/> connections and each
     /// connection at most <see cref="LdapWireOptions.MaxOutstandingOperations"/> in-flight

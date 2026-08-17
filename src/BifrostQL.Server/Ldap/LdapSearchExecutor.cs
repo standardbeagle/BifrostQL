@@ -277,33 +277,53 @@ namespace BifrostQL.Server.Ldap
                     if (batch.Count == 0)
                         break;
 
-                    offset += batch.Count;
-
                     // The pushdown is an over-approximation, so the exact evaluation runs here and
                     // is what decides membership of the result set.
-                    var matched = batch.Where(row => LdapFilterEvaluator.Matches(request.Filter, target, row))
-                        .ToList();
+                    // Identity comparison, not value comparison: two distinct rows can hold equal
+                    // values, and only the specific fetched instance is meant here.
+                    var matchedSet = new HashSet<IReadOnlyDictionary<string, object?>>(
+                        ReferenceEqualityComparer.Instance);
+                    var matched = new List<IReadOnlyDictionary<string, object?>>();
+                    foreach (var row in batch)
+                    {
+                        if (!LdapFilterEvaluator.Matches(request.Filter, target, row))
+                            continue;
+                        matchedSet.Add(row);
+                        matched.Add(row);
+                    }
 
                     var members = await ResolveMembersIfRequestedAsync(
                         membership, target, matched, selection, userContext, ct);
                     var memberOf = await ResolveMemberOfIfRequestedAsync(
                         membership, target, matched, selection, userContext, ct);
 
-                    foreach (var row in matched)
+                    // The resume offset counts SOURCE rows consumed, not entries emitted, and not
+                    // the size of the batch that was fetched. Advancing by the batch size would skip
+                    // every row the page had no room for; advancing by the entry count would repeat
+                    // every row the exact evaluation dropped. Both are silently wrong across a page
+                    // boundary, which is exactly where a paging bug hides.
+                    var consumed = 0;
+                    foreach (var row in batch)
                     {
                         if (entries.Count >= pageSize)
                         {
                             truncated = true;
                             break;
                         }
+                        consumed++;
+
+                        if (!matchedSet.Contains(row))
+                            continue;
+
                         var entry = LdapEntryProjector.Project(
                             target, row, selection, request.TypesOnly,
                             MemberDns(members, target, row), MemberDns(memberOf, target, row));
                         if (entry is not null)
                             entries.Add(entry);
                     }
+                    offset += consumed;
 
-                    if (entries.Count >= pageSize)
+                    if (truncated || entries.Count >= pageSize)
                     {
                         truncated = true;
                         position = new LdapPagePosition(targetIndex, offset);

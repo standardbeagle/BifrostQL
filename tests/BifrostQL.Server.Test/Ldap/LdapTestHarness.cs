@@ -306,7 +306,10 @@ namespace BifrostQL.Server.Test.Ldap
             var serverSocket = await listener.AcceptTcpClientAsync();
             await connectTask;
 
-            var connectionHandler = handler ?? new LdapConnectionHandler(options, connectionLimiter, authenticator);
+            // The handler gets whatever TLS the options describe, exactly as the registration builds
+            // it: a fixture with a certificate can StartTLS, one without answers it unavailable.
+            var connectionHandler = handler
+                ?? new LdapConnectionHandler(options, connectionLimiter, authenticator, LdapTlsProvider.Create(options));
             var client = new LdapTestClient(clientSocket.GetStream());
             var cancellation = new CancellationTokenSource();
 

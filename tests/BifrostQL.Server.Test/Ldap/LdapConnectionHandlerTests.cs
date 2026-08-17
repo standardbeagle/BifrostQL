@@ -55,11 +55,13 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
-        public async Task ExtendedRequest_StartTls_IsAnswered_ExtendedResponse_UnwillingToPerform()
+        public async Task ExtendedRequest_UnsupportedOid_IsAnswered_ExtendedResponse_UnwillingToPerform()
         {
             await using var fixture = await LdapFixture.StartAsync();
 
-            await fixture.Client.SendAsync(LdapWire.Message(4, LdapWire.ExtendedRequest(LdapProtocol.StartTlsOid)));
+            // A well-known extended op this front door does not implement (Password Modify). StartTLS
+            // has its own state machine and its own result codes — see LdapStartTlsTests.
+            await fixture.Client.SendAsync(LdapWire.Message(4, LdapWire.ExtendedRequest("1.3.6.1.4.1.4203.1.11.1")));
             var response = await ReadAsync(fixture);
 
             response.OpTag.Should().Be(LdapProtocol.ExtendedResponse);

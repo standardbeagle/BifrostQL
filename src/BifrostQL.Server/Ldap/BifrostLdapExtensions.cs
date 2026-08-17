@@ -31,7 +31,19 @@ namespace BifrostQL.Server.Ldap
             LdapWireAdapter.Validate(options);
             services.AddSingleton(options);
 
-            // One process-wide connection limiter shared across every connection.
+            // Resolve the certificate ONCE, here, before any listener binds: a configured-but-unusable
+            // certificate throws now rather than degrading a confidential listener to cleartext later.
+            // Null means the deployment configured none — a cleartext-only front door.
+            var tls = LdapTlsProvider.Create(options);
+            if (tls is null && options.LdapsPort is { } unusablePort)
+                throw new LdapConfigurationException(
+                    $"ldap LdapsPort {unusablePort} was configured but no TLS certificate was: set ServerCertificate "
+                    + "or TlsCertificatePath. Refusing to start an LDAPS listener with nothing to present.");
+            if (tls is not null)
+                services.TryAddSingleton(tls);
+
+            // One process-wide connection limiter shared across every connection — BOTH listeners, so
+            // MaxConnections stays this front door's TOTAL ceiling rather than doubling per open port.
             services.TryAddSingleton(new LdapBoundedCounter(options.MaxConnections, "MaxConnections"));
 
             // The simple-bind authenticator exists ONLY when a deployment has registered BOTH
@@ -59,8 +71,19 @@ namespace BifrostQL.Server.Ldap
                     options,
                     sp.GetRequiredService<LdapBoundedCounter>(),
                     authenticator,
+                    sp.GetService<LdapTlsProvider>(),
                     sp.GetService<ILogger<LdapConnectionHandler>>());
             });
+
+            // The LDAPS listener, when a port was configured. It reuses the cleartext handler's
+            // session loop after its handshake, so both surfaces enforce one set of rules.
+            if (tls is not null && options.LdapsPort is not null)
+                services.TryAddSingleton(sp => new LdapsConnectionHandler(
+                    options,
+                    sp.GetRequiredService<LdapBoundedCounter>(),
+                    tls,
+                    sp.GetRequiredService<LdapConnectionHandler>(),
+                    sp.GetService<ILogger<LdapsConnectionHandler>>()));
 
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<LdapWireAdapter>();
@@ -71,8 +94,16 @@ namespace BifrostQL.Server.Ldap
             // bind address is the declared exposure posture — loopback unless the host widened it
             // explicitly — never an ambient wildcard (AGENTS.md "Listener exposure posture").
             services.PostConfigure<KestrelServerOptions>(kestrel =>
+            {
                 kestrel.Listen(options.BindAddress, options.Port, listen =>
-                    listen.UseConnectionHandler<LdapConnectionHandler>()));
+                    listen.UseConnectionHandler<LdapConnectionHandler>());
+
+                // LDAPS: implicit TLS on its own port, same declared bind address, so both ports of
+                // this front door carry one exposure posture.
+                if (options.LdapsPort is { } ldapsPort)
+                    kestrel.Listen(options.BindAddress, ldapsPort, listen =>
+                        listen.UseConnectionHandler<LdapsConnectionHandler>());
+            });
 
             return services;
         }

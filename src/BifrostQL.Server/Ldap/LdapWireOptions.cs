@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 
 namespace BifrostQL.Server.Ldap
 {
@@ -137,5 +138,41 @@ namespace BifrostQL.Server.Ldap
         /// exactly the downgrade the gate exists to prevent.</para>
         /// </summary>
         public bool AllowInsecureSimpleBind { get; set; }
+
+        /// <summary>
+        /// The server certificate presented on the LDAPS listener and by a StartTLS upgrade. One
+        /// certificate serves both surfaces so they cannot diverge. Takes precedence over
+        /// <see cref="TlsCertificatePath"/>; leaving both unset means a cleartext-only front door,
+        /// where StartTLS is answered <c>unavailable</c> and every credentialed bind is refused.
+        /// </summary>
+        public X509Certificate2? ServerCertificate { get; set; }
+
+        /// <summary>
+        /// Path to a PKCS#12 (.pfx) file holding the server certificate AND its private key, used
+        /// when <see cref="ServerCertificate"/> is not supplied. A path that cannot be loaded aborts
+        /// startup — it is never treated as "no certificate configured", because that would silently
+        /// downgrade a listener the operator meant to be confidential.
+        /// </summary>
+        public string? TlsCertificatePath { get; set; }
+
+        /// <summary>Password for <see cref="TlsCertificatePath"/>, when the file is protected.</summary>
+        public string? TlsCertificatePassword { get; set; }
+
+        /// <summary>
+        /// TCP port for the implicit-TLS (LDAPS) listener, conventionally 636. Null (the default)
+        /// means no LDAPS listener: the front door serves the cleartext port only, where StartTLS is
+        /// the route to confidentiality. Setting it REQUIRES a configured certificate — an LDAPS port
+        /// with nothing to present is a startup failure, not a cleartext port. It binds the same
+        /// <see cref="BindAddress"/> as the cleartext listener, so both share one declared posture.
+        /// </summary>
+        public int? LdapsPort { get; set; }
+
+        /// <summary>
+        /// Deadline for a TLS handshake to complete, on the LDAPS listener and on a StartTLS upgrade.
+        /// The admission slot is already held when the handshake starts, so a peer that stalls
+        /// mid-handshake would otherwise hold it for the whole idle window. Default 30 seconds,
+        /// matching <see cref="AuthenticationTimeout"/>.
+        /// </summary>
+        public TimeSpan TlsHandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
     }
 }

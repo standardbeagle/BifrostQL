@@ -41,10 +41,14 @@ namespace BifrostQL.Server.Ldap
                     + "setting; production deployments must use LDAPS or StartTLS instead.");
 
             _logger.LogInformation(
-                "ldap front door ready on port {Port} (codec + connection lifecycle only; bind auth, search, " +
-                "TLS, SASL, and writes are not enabled in this slice). Limits: max message {MaxMessage} bytes, " +
-                "nesting depth {Depth}, connections {MaxConnections}, idle {Idle}.",
-                _options.Port, _options.MaxMessageLength, _options.MaxNestingDepth,
+                "ldap front door ready on port {Port} (StartTLS {StartTls}; LDAPS {Ldaps}; search execution and " +
+                "writes are not enabled yet). Limits: max message {MaxMessage} bytes, nesting depth {Depth}, " +
+                "connections {MaxConnections}, idle {Idle}.",
+                _options.Port,
+                _options.ServerCertificate is not null || !string.IsNullOrWhiteSpace(_options.TlsCertificatePath)
+                    ? "available" : "unavailable (no certificate configured)",
+                _options.LdapsPort is { } ldapsPort ? $"on port {ldapsPort}" : "disabled",
+                _options.MaxMessageLength, _options.MaxNestingDepth,
                 _options.MaxConnections, _options.IdleTimeout);
             return Task.CompletedTask;
         }
@@ -96,6 +100,19 @@ namespace BifrostQL.Server.Ldap
             if (options.AuthenticationTimeout <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.AuthenticationTimeout), options.AuthenticationTimeout,
                     "ldap AuthenticationTimeout must be positive.");
+            if (options.TlsHandshakeTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.TlsHandshakeTimeout), options.TlsHandshakeTimeout,
+                    "ldap TlsHandshakeTimeout must be positive.");
+            if (options.LdapsPort is { } ldapsPort)
+            {
+                if (ldapsPort is < 1 or > 65535)
+                    throw new ArgumentOutOfRangeException(nameof(options.LdapsPort), ldapsPort,
+                        "ldap LdapsPort must be 1..65535.");
+                if (ldapsPort == options.Port)
+                    throw new LdapConfigurationException(
+                        $"ldap LdapsPort and Port are both {ldapsPort}: the cleartext and implicit-TLS listeners "
+                        + "cannot share a port. One of them would never bind, and which one is undefined.");
+            }
             if (options.BindAddress is null)
                 throw new ArgumentNullException(nameof(options.BindAddress),
                     "ldap BindAddress must be set; it defaults to loopback and widening it is explicit.");

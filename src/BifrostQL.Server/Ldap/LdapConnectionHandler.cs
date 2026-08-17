@@ -8,10 +8,10 @@ using BifrostQL.Server.Pgwire; // DuplexPipeStream: shared Kestrel IDuplexPipe�
 namespace BifrostQL.Server.Ldap
 {
     /// <summary>
-    /// Kestrel connection handler for the LDAPv3 front door. Slice 2 owns the connection lifecycle
-    /// and the message codec; it does not authenticate binds, execute searches, or write. The loop
-    /// reads one LDAPMessage, answers it, and repeats, bounded on every axis of an unauthenticated
-    /// wire:
+    /// Kestrel connection handler for the LDAPv3 front door: the connection lifecycle, the message
+    /// codec, bind authentication, and the StartTLS transport upgrade. Search execution and writes
+    /// are not enabled yet. The loop reads one LDAPMessage, answers it, and repeats, bounded on
+    /// every axis of an unauthenticated wire:
     ///
     /// <list type="bullet">
     /// <item>A malformed message closes predictably: the loop sends a Notice of Disconnection and
@@ -25,6 +25,9 @@ namespace BifrostQL.Server.Ldap
     /// door admits at most <see cref="LdapWireOptions.MaxConnections"/> connections and each
     /// connection at most <see cref="LdapWireOptions.MaxOutstandingOperations"/> in-flight
     /// operations (criteria 2, 3).</item>
+    /// <item>A credential is never accepted on a cleartext transport: a credentialed bind is
+    /// refused with <c>confidentialityRequired</c> before the presented secret is read, unless the
+    /// connection is confidential (LDAPS, or a completed StartTLS).</item>
     /// </list>
     ///
     /// <para>UnbindRequest and AbandonRequest carry no response by protocol: Unbind closes the
@@ -35,17 +38,20 @@ namespace BifrostQL.Server.Ldap
         private readonly LdapWireOptions _options;
         private readonly LdapBoundedCounter _connections;
         private readonly LdapBindAuthenticator? _authenticator;
+        private readonly LdapTlsProvider? _tls;
         private readonly ILogger<LdapConnectionHandler> _logger;
 
         public LdapConnectionHandler(
             LdapWireOptions options,
             LdapBoundedCounter? connectionLimiter = null,
             LdapBindAuthenticator? authenticator = null,
+            LdapTlsProvider? tls = null,
             ILogger<LdapConnectionHandler>? logger = null)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _connections = connectionLimiter ?? new LdapBoundedCounter(options.MaxConnections, "MaxConnections");
             _authenticator = authenticator;
+            _tls = tls;
             _logger = logger ?? NullLogger<LdapConnectionHandler>.Instance;
         }
 
@@ -78,14 +84,30 @@ namespace BifrostQL.Server.Ldap
                     LdapResultCode.UnavailableCriticalExtension, "server connection limit reached"), ct);
                 return;
             }
+            try
+            {
+                await RunSessionAsync(stream, ct, source, tlsEstablished);
+            }
+            finally
+            {
+                _connections.Release();
+            }
+        }
 
+        /// <summary>
+        /// Runs the message loop of ONE admitted connection: read a message, answer it, repeat, until
+        /// Unbind, EOF, a fatal protocol error, or a deadline. The caller owns admission — the LDAPS
+        /// listener takes its slot before the TLS handshake, which is earlier than this method could —
+        /// and owns the transport's lifetime.
+        /// </summary>
+        internal async Task RunSessionAsync(Stream stream, CancellationToken ct, string source, bool tlsEstablished)
+        {
             var outstanding = new LdapBoundedCounter(_options.MaxOutstandingOperations, "MaxOutstandingOperations");
             // Read through a buffer so the framing reader costs one socket read per burst instead of
             // one per byte — and so anything the peer PIPELINED behind the current message is visible
             // to this process rather than sitting unseen in the kernel (see LdapBufferedStream).
             var wire = new LdapBufferedStream(stream);
-            var reader = new LdapMessageReader(
-                _options.MaxMessageLength, _options.MaxNestingDepth, _options.MaxFilterComponents, _options.MaxSearchAttributes);
+            var reader = NewReader();
             // Session state for THIS connection: whether a bind has authenticated it, and whether that
             // bind was anonymous (an anonymous session is limited to the RootDSE/subschema — criterion 4).
             var session = new LdapSessionState { TlsEstablished = tlsEstablished };
@@ -142,8 +164,17 @@ namespace BifrostQL.Server.Ldap
                     }
                     try
                     {
-                        if (!await DispatchAsync(wire, request, session, source, ct))
+                        var dispatch = await DispatchAsync(wire, request, session, source, ct);
+                        if (!dispatch.KeepOpen)
                             return; // Unbind / fatal op: close the connection
+                        if (dispatch.Upgraded is { } upgraded)
+                        {
+                            // StartTLS completed. Everything after this reads and writes through the
+                            // confidential stream, framed by a FRESH reader over a FRESH buffer, so no
+                            // byte and no decoder state can survive the upgrade (RFC 4511 §4.14.3.1).
+                            wire = upgraded;
+                            reader = NewReader();
+                        }
                     }
                     finally
                     {
@@ -155,10 +186,6 @@ namespace BifrostQL.Server.Ldap
             {
                 _logger.LogDebug(ex, "ldap connection ended: {Reason}", ex.Message);
             }
-            finally
-            {
-                _connections.Release();
-            }
         }
 
         /// <summary>
@@ -167,22 +194,22 @@ namespace BifrostQL.Server.Ldap
         /// result (their execution is a non-goal this slice); Unbind closes; Abandon is a no-op; an
         /// unrecognized protocolOp is a fatal protocol error that closes the connection.
         /// </summary>
-        private async Task<bool> DispatchAsync(
-            Stream stream, LdapRequest request, LdapSessionState session, string source, CancellationToken ct)
+        private async Task<LdapDispatch> DispatchAsync(
+            LdapBufferedStream stream, LdapRequest request, LdapSessionState session, string source, CancellationToken ct)
         {
             switch (request.Operation)
             {
                 case LdapUnbindRequest:
-                    return false; // no response; the client is closing the connection
+                    return LdapDispatch.Close; // no response; the client is closing the connection
 
                 case LdapAbandonRequest:
                     // No executed operation can be outstanding this slice, so there is nothing to
                     // cancel. Abandon carries no response by protocol — acknowledge by continuing.
-                    return true;
+                    return LdapDispatch.Continue;
 
                 case LdapBindRequest bind:
                     await HandleBindAsync(stream, request.MessageId, bind, session, source, ct);
-                    return true; // a bind (success or failure) leaves the connection open for retry
+                    return LdapDispatch.Continue; // a bind (success or failure) leaves the connection open for retry
 
                 case LdapSearchRequest search:
                     // Criterion 4: an admitted anonymous session may read only the RootDSE and the
@@ -194,27 +221,119 @@ namespace BifrostQL.Server.Ldap
                         await SendAsync(stream, LdapMessageWriter.SearchResultDone(
                             request.MessageId, LdapResultCode.InsufficientAccessRights,
                             "anonymous access is limited to the RootDSE and the subschema"), ct);
-                        return true;
+                        return LdapDispatch.Continue;
                     }
                     await SendAsync(stream, LdapMessageWriter.SearchResultDone(
                         request.MessageId, LdapResultCode.UnwillingToPerform,
                         "search is not enabled on this listener"), ct);
-                    return true;
+                    return LdapDispatch.Continue;
+
+                case LdapExtendedRequest { RequestName: LdapProtocol.StartTlsOid }:
+                    return await HandleStartTlsAsync(stream, request.MessageId, session, ct);
 
                 case LdapExtendedRequest extended:
-                    // StartTLS and every other extended op are refused (TLS/SASL are non-goals).
+                    // Every other extended op is refused (SASL and the rest are non-goals). The name is
+                    // echoed from the caller's own request, so nothing internal reaches the wire.
                     await SendAsync(stream, LdapMessageWriter.ExtendedResponse(
                         request.MessageId, LdapResultCode.UnwillingToPerform,
                         $"extended operation '{extended.RequestName}' is not supported"), ct);
-                    return true;
+                    return LdapDispatch.Continue;
 
                 default:
                     // An application tag the codec does not model: a fatal protocol error. Send the
                     // unsolicited Notice of Disconnection and close rather than guess a response shape.
                     await SendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
                         LdapResultCode.ProtocolError, $"unsupported protocolOp 0x{request.ProtocolOpTag:X2}"), ct);
-                    return false;
+                    return LdapDispatch.Close;
             }
+        }
+
+        /// <summary>
+        /// Handles the StartTLS extended operation (RFC 4511 §4.14, RFC 4513 §3.1). The pre-bind,
+        /// not-yet-confidential state is the ONLY one that negotiates; every other state is refused
+        /// with the session left exactly as it was, so there is no sequence of requests that reaches
+        /// a mixed or downgraded transport:
+        ///
+        /// <list type="bullet">
+        /// <item><b>No certificate configured</b> — <c>unavailable</c>. The listener stays cleartext
+        /// and credentialed binds stay refused; it never pretends to have upgraded.</item>
+        /// <item><b>Already confidential</b> (LDAPS, or a second StartTLS) — <c>operationsError</c>,
+        /// existing TLS untouched. Renegotiating would mean tearing down a working confidential
+        /// stream on an unauthenticated peer's request.</item>
+        /// <item><b>Already bound</b> — <c>operationsError</c>. RFC 4513 §3.1.1 requires the
+        /// authentication state to be reconsidered when TLS is installed under an existing
+        /// association; refusing outright is the state-confusion-free reading of that, and costs a
+        /// correct client nothing (StartTLS belongs before bind).</item>
+        /// <item><b>Pipelined plaintext</b> — anything the peer sent behind the StartTLS request is a
+        /// fatal protocol error, before the success response and before any handshake. Those bytes
+        /// were written in the clear on the assumption they would be processed; carrying them across
+        /// the upgrade would let an attacker inject cleartext requests that a client believes were
+        /// protected (the "plaintext command injection" shape). The connection closes.</item>
+        /// </list>
+        ///
+        /// <para>On the negotiating path the success response is sent FIRST (the client cannot know
+        /// to start a handshake otherwise), then the handshake runs under its own deadline. A failed
+        /// handshake CLOSES the connection: there is no path back to cleartext, and nothing further
+        /// is written, since the peer is mid-TLS and cannot read an LDAP message.</para>
+        /// </summary>
+        private async Task<LdapDispatch> HandleStartTlsAsync(
+            LdapBufferedStream stream, int messageId, LdapSessionState session, CancellationToken ct)
+        {
+            if (_tls is null)
+            {
+                await SendAsync(stream, LdapMessageWriter.ExtendedResponse(
+                    messageId, LdapResultCode.Unavailable,
+                    "StartTLS is not available on this listener"), ct);
+                return LdapDispatch.Continue;
+            }
+
+            if (session.TlsEstablished)
+            {
+                await SendAsync(stream, LdapMessageWriter.ExtendedResponse(
+                    messageId, LdapResultCode.OperationsError,
+                    "TLS is already established on this connection"), ct);
+                return LdapDispatch.Continue;
+            }
+
+            if (session.Authenticated)
+            {
+                await SendAsync(stream, LdapMessageWriter.ExtendedResponse(
+                    messageId, LdapResultCode.OperationsError,
+                    "StartTLS must precede a bind on this connection"), ct);
+                return LdapDispatch.Continue;
+            }
+
+            if (stream.BufferedByteCount > 0)
+            {
+                _logger.LogWarning(
+                    "ldap StartTLS refused: {Count} byte(s) were pipelined behind the request; closing the connection.",
+                    stream.BufferedByteCount);
+                await TrySendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
+                    LdapResultCode.ProtocolError, "data was pipelined after a StartTLS request"), ct);
+                return LdapDispatch.Close;
+            }
+
+            await SendAsync(stream, LdapMessageWriter.ExtendedResponse(
+                messageId, LdapResultCode.Success, string.Empty, LdapProtocol.StartTlsOid), ct);
+
+            System.Net.Security.SslStream ssl;
+            try
+            {
+                ssl = await _tls.AuthenticateAsync(stream, _options.TlsHandshakeTimeout, ct);
+            }
+            catch (Exception ex) when (ex is System.Security.Authentication.AuthenticationException
+                                          or IOException
+                                          or OperationCanceledException
+                                          or InvalidOperationException
+                                          or ObjectDisposedException)
+            {
+                // Sanitized: the handshake failure is logged here and never described on the wire.
+                _logger.LogDebug(ex, "ldap StartTLS handshake failed; closing the connection.");
+                return LdapDispatch.Close;
+            }
+
+            session.TlsEstablished = true;
+            return LdapDispatch.Upgrade(new LdapBufferedStream(ssl));
         }
 
         /// <summary>
@@ -274,6 +393,9 @@ namespace BifrostQL.Server.Ldap
             await SendAsync(stream, LdapMessageWriter.BindResponse(messageId, result.ResultCode, result.DiagnosticMessage), ct);
         }
 
+        private LdapMessageReader NewReader() => new(
+            _options.MaxMessageLength, _options.MaxNestingDepth, _options.MaxFilterComponents, _options.MaxSearchAttributes);
+
         /// <summary>
         /// Whether a search base is part of the anonymous discovery surface: the RootDSE (the empty
         /// DN) or the subschema subentry. Everything else is directory data.
@@ -315,5 +437,20 @@ namespace BifrostQL.Server.Ldap
             try { await SendAsync(stream, message, ct); }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
         }
+    }
+
+    /// <summary>
+    /// What the connection loop does after one dispatched request: keep reading, close, or keep
+    /// reading through a REPLACED stream (a completed StartTLS upgrade). Returning the upgraded
+    /// stream rather than mutating shared state keeps the swap on the loop's own single-threaded
+    /// path — the loop is the only thing that ever reads or writes the session's transport.
+    /// </summary>
+    internal readonly record struct LdapDispatch(bool KeepOpen, LdapBufferedStream? Upgraded)
+    {
+        public static LdapDispatch Continue => new(KeepOpen: true, Upgraded: null);
+
+        public static LdapDispatch Close => new(KeepOpen: false, Upgraded: null);
+
+        public static LdapDispatch Upgrade(LdapBufferedStream stream) => new(KeepOpen: true, Upgraded: stream);
     }
 }

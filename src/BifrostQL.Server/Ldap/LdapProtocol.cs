@@ -53,7 +53,11 @@ namespace BifrostQL.Server.Ldap
         public const byte FilterExtensibleMatch = 0xA9; // [9] MatchingRuleAssertion
 
         // ---- well-known OIDs ----
-        /// <summary>StartTLS extended request OID — refused this slice (TLS is a non-goal).</summary>
+        /// <summary>
+        /// StartTLS extended request OID (RFC 4511 §4.14): the in-band upgrade of a cleartext
+        /// connection to TLS. Accepted only pre-bind, on a not-yet-confidential connection, with a
+        /// certificate configured.
+        /// </summary>
         public const string StartTlsOid = "1.3.6.1.4.1.1466.20037";
 
         /// <summary>Notice of Disconnection OID — the unsolicited response sent before a fatal close.</summary>

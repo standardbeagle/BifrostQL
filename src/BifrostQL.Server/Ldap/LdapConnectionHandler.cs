@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using BifrostQL.Core.Model;
 using BifrostQL.Server.Pgwire; // DuplexPipeStream: shared Kestrel IDuplexPipe→Stream glue, not pgwire-specific.
 
 namespace BifrostQL.Server.Ldap
@@ -172,7 +173,18 @@ namespace BifrostQL.Server.Ldap
                     await HandleBindAsync(stream, request.MessageId, bind, session, source, ct);
                     return true; // a bind (success or failure) leaves the connection open for retry
 
-                case LdapSearchRequest:
+                case LdapSearchRequest search:
+                    // Criterion 4: an admitted anonymous session may read only the RootDSE and the
+                    // subschema. Anything else is refused for lack of rights BEFORE any search
+                    // execution exists, so the later search slice inherits the restriction instead of
+                    // having to remember it.
+                    if (session.IsAnonymous && !IsDiscoveryBase(search.BaseObject))
+                    {
+                        await SendAsync(stream, LdapMessageWriter.SearchResultDone(
+                            request.MessageId, LdapResultCode.InsufficientAccessRights,
+                            "anonymous access is limited to the RootDSE and the subschema"), ct);
+                        return true;
+                    }
                     await SendAsync(stream, LdapMessageWriter.SearchResultDone(
                         request.MessageId, LdapResultCode.UnwillingToPerform,
                         "search is not enabled on this listener"), ct);
@@ -224,6 +236,14 @@ namespace BifrostQL.Server.Ldap
             }
             await SendAsync(stream, LdapMessageWriter.BindResponse(messageId, result.ResultCode, result.DiagnosticMessage), ct);
         }
+
+        /// <summary>
+        /// Whether a search base is part of the anonymous discovery surface: the RootDSE (the empty
+        /// DN) or the subschema subentry. Everything else is directory data.
+        /// </summary>
+        private static bool IsDiscoveryBase(string baseObject) =>
+            baseObject.Length == 0
+            || string.Equals(baseObject, LdapDirectoryModel.SubschemaSubentryDn, StringComparison.OrdinalIgnoreCase);
 
         // Reads the next message, closing the connection if nothing arrives before <paramref
         // name="deadline"/> — the idle timeout, or the shorter remaining pre-auth deadline while the

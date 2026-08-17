@@ -167,5 +167,58 @@ namespace BifrostQL.Server.Test.Ldap
             response.ResultCode.Should().Be(LdapResultCode.Success);
         }
 
+        [Fact]
+        public async Task AnonymousSession_SearchingDirectoryData_IsRefused_InsufficientAccessRights()
+        {
+            // Criterion 4's second half: an ADMITTED anonymous session reads only the RootDSE and the
+            // subschema. A data-scoped base is refused for lack of rights — a session-state decision,
+            // distinct from the listener-wide "search is not enabled" refusal.
+            var options = new LdapWireOptions { AnonymousBindEnabled = true };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
+            var response = await ReadAsync(fixture);
+
+            response.OpTag.Should().Be(LdapProtocol.SearchResultDone);
+            response.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights,
+                "an anonymous session may not reach directory data");
+        }
+
+        [Theory]
+        [InlineData("")]              // RootDSE
+        [InlineData("cn=subschema")]  // subschema subentry
+        [InlineData("CN=SubSchema")]  // DNs are case-insensitive
+        public async Task AnonymousSession_ReadingDiscoverySurface_IsNotRefusedForRights(string baseObject)
+        {
+            var options = new LdapWireOptions { AnonymousBindEnabled = true };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: baseObject)));
+            var response = await ReadAsync(fixture);
+
+            // Search execution itself arrives with the search slice; what is pinned here is that the
+            // discovery surface is NOT the rights-refused path an anonymous data search takes.
+            response.ResultCode.Should().Be(LdapResultCode.UnwillingToPerform);
+        }
+
+        [Fact]
+        public async Task CredentialedSession_SearchingDirectoryData_IsNotRefusedForRights()
+        {
+            // The restriction is anonymous-specific: an authenticated identity is not rights-refused
+            // here (its data access is the search slice's policy decision, not this gate's).
+            await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator());
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.UnwillingToPerform);
+        }
     }
 }

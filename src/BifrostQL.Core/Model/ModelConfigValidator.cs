@@ -1779,6 +1779,18 @@ namespace BifrostQL.Core.Model
 
             if (table.ManyToManyLinks.TryGetValue(relationship, out var m2mLink))
             {
+                // Same rule on the bridge: ManyToManyLink records one column per leg, so a
+                // composite leg is a FIRST-COLUMN join. Membership joined on a partial key
+                // matches rows agreeing on that column alone — across the tenant discriminator
+                // the remaining columns carry — and the group would publish member DNs naming
+                // FOREIGN entries. Rejected by name, never silently narrowed.
+                if (m2mLink.IsComposite)
+                {
+                    errors.Add(Problem(table, MetadataKeys.Ldap.Member, relationship,
+                        "names a composite-key many-to-many relationship; composite group-membership " +
+                        "relationships are not supported in this slice. Use a single-column relationship."));
+                    return;
+                }
                 RequireMappedMemberTarget(table, relationship, m2mLink.TargetTable, errors);
                 return;
             }

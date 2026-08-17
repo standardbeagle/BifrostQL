@@ -53,7 +53,8 @@ namespace BifrostQL.Core.Model.Relationships
 
                     // Try to find junction columns via SingleLinks
                     if (!TryFindJunctionColumns(sourceTable, junctionTable, targetTable,
-                            out var sourceCol, out var junctionSourceCol, out var junctionTargetCol, out var targetCol))
+                            out var sourceCol, out var junctionSourceCol, out var junctionTargetCol, out var targetCol,
+                            out var isComposite))
                         continue;
 
                     // Payload = junction columns that are neither a primary key nor one
@@ -73,7 +74,11 @@ namespace BifrostQL.Core.Model.Relationships
                         JunctionSourceColumn = junctionSourceCol,
                         JunctionTargetColumn = junctionTargetCol,
                         TargetColumn = targetCol,
-                        HasPayload = hasPayload
+                        HasPayload = hasPayload,
+                        // Recorded, not rejected: a composite bridge stays navigable for the
+                        // consumers that tolerate a first-column join, while a consumer that
+                        // needs the join to be EXACT can refuse it (see ManyToManyLink.IsComposite).
+                        IsComposite = isComposite
                     };
 
                     sourceTable.ManyToManyLinks.TryAdd(targetTable.GraphQlName, link);
@@ -273,12 +278,14 @@ namespace BifrostQL.Core.Model.Relationships
         private static bool TryFindJunctionColumns(
             IDbTable sourceTable, IDbTable junctionTable, IDbTable targetTable,
             out ColumnDto sourceCol, out ColumnDto junctionSourceCol,
-            out ColumnDto junctionTargetCol, out ColumnDto targetCol)
+            out ColumnDto junctionTargetCol, out ColumnDto targetCol,
+            out bool isComposite)
         {
             sourceCol = null!;
             junctionSourceCol = null!;
             junctionTargetCol = null!;
             targetCol = null!;
+            isComposite = false;
 
             // Resolve by the link's PARENT TABLE rather than by field name. A junction
             // that references the same table twice — the shape of every self-referencing
@@ -299,6 +306,11 @@ namespace BifrostQL.Core.Model.Relationships
             if (targetLink is null)
                 return false;
 
+            // ChildId / ParentId are the FIRST column of a composite key, so a composite leg
+            // is recorded here as a partial join. Report that up rather than hiding it: the
+            // link is still built (metadata declared it deliberately), but a consumer whose
+            // correctness needs an exact join can refuse it at model load.
+            isComposite = sourceLink.IsComposite || targetLink.IsComposite;
             junctionSourceCol = sourceLink.ChildId;
             sourceCol = sourceLink.ParentId;
             junctionTargetCol = targetLink.ChildId;

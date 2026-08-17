@@ -700,6 +700,24 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public bool HasPayload { get; init; }
 
+        /// <summary>
+        /// True when either leg of the bridge rests on a COMPOSITE foreign key, so the
+        /// single <see cref="SourceColumn"/>/<see cref="JunctionSourceColumn"/> (and target)
+        /// pairs recorded here describe only the FIRST column of that key.
+        ///
+        /// <para>This type cannot represent a multi-column leg, and the columns above are
+        /// what every consumer joins on — so on a composite bridge the join is broader than
+        /// the relationship: it matches every row agreeing on the first column while ignoring
+        /// the rest of the key (a tenant discriminator, typically). Auto-detection never
+        /// produces such a link (it filters composite FKs out); only an explicit
+        /// <c>many-to-many:</c> metadata declaration can, because it resolves its legs through
+        /// <c>SingleLink.ChildId</c>/<c>ParentId</c>. The flag exists so a consumer whose
+        /// correctness depends on the join being EXACT — LDAP group membership, where a
+        /// too-broad join publishes foreign entries' DNs — can refuse the link at model load
+        /// instead of silently joining on a partial key.</para>
+        /// </summary>
+        public bool IsComposite { get; init; }
+
         public override string ToString() =>
             $"M:N[{SourceTable.DbName}.{SourceColumn.ColumnName} -> {JunctionTable.DbName}({JunctionSourceColumn.ColumnName},{JunctionTargetColumn.ColumnName}) -> {TargetTable.DbName}.{TargetColumn.ColumnName}]";
     }

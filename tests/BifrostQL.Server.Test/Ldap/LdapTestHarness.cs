@@ -95,6 +95,15 @@ namespace BifrostQL.Server.Test.Ldap
         public static byte[] ControlWithEmptyCriticalityBoolean(string oid)
             => BerWriter.Sequence(BerWriter.OctetString(oid), BerWriter.Tlv(LdapProtocol.Boolean, Array.Empty<byte>()));
 
+        /// <summary>
+        /// A control whose criticality Boolean carries MORE than one content byte. LDAP mandates the
+        /// DER encoding of a BOOLEAN — exactly one octet — so this is a wire violation, not a second
+        /// spelling of "true".
+        /// </summary>
+        public static byte[] ControlWithMultiByteCriticalityBoolean(string oid)
+            => BerWriter.Sequence(BerWriter.OctetString(oid),
+                BerWriter.Tlv(LdapProtocol.Boolean, new byte[] { 0xFF, 0x00, 0x00 }));
+
         // Minimal BER content bytes of a small non-negative integer (message IDs are small).
         private static byte[] IntContent(int value)
         {

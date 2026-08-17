@@ -147,6 +147,22 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task Controls_MultiByteCriticalityBoolean_IsCleanProtocolError()
+        {
+            // LDAP mandates the DER encoding of BOOLEAN: exactly ONE content octet (RFC 4511 §5.1).
+            // The length-checked accessor rejected only the zero-length case, so a 3-byte Boolean was
+            // accepted leniently and only its first octet read — two wire spellings of the same
+            // criticality, which a decoder on an unauthenticated wire must not offer. The accessor's
+            // own documentation already claimed "exactly one content byte"; the code did not enforce it.
+            var control = LdapWire.ControlWithMultiByteCriticalityBoolean("1.2.840.113556.1.4.319");
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(), LdapWire.Controls(control));
+
+            var act = async () => await Reader().ReadRequestAsync(new MemoryStream(message), default);
+
+            await act.Should().ThrowAsync<LdapProtocolException>().WithMessage("*Boolean*");
+        }
+
+        [Fact]
         public async Task NegativeMessageId_IsRejected()
         {
             // Arrange: message ID -1 is illegal; the decoder must refuse it, not wrap it.

@@ -222,10 +222,16 @@ namespace BifrostQL.Server.Test.Ldap
             Client = new LdapTestClient(clientSocket.GetStream());
         }
 
+        /// <summary>
+        /// Starts a loopback connection driven by a handler. Pass <paramref name="handler"/> to drive a
+        /// handler composed elsewhere (e.g. resolved from DI, to prove the COMPOSED listener's
+        /// behaviour); otherwise one is built from the supplied options/limiter/authenticator.
+        /// </summary>
         public static async Task<LdapFixture> StartAsync(
             LdapWireOptions? options = null,
             LdapBoundedCounter? connectionLimiter = null,
-            LdapBindAuthenticator? authenticator = null)
+            LdapBindAuthenticator? authenticator = null,
+            LdapConnectionHandler? handler = null)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -237,10 +243,10 @@ namespace BifrostQL.Server.Test.Ldap
             var serverSocket = await listener.AcceptTcpClientAsync();
             await connectTask;
 
-            var handler = new LdapConnectionHandler(options, connectionLimiter, authenticator);
+            var connectionHandler = handler ?? new LdapConnectionHandler(options, connectionLimiter, authenticator);
             var serverTask = Task.Run(async () =>
             {
-                try { await handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None, source: "test-client:1"); }
+                try { await connectionHandler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None, source: "test-client:1"); }
                 finally { serverSocket.Close(); }
             });
             return new LdapFixture(listener, clientSocket, serverSocket, serverTask);

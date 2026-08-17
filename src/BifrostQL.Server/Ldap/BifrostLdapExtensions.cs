@@ -67,9 +67,11 @@ namespace BifrostQL.Server.Ldap
             services.AddSingleton<IHostedService>(sp =>
                 new ProtocolAdapterHostedService(sp.GetRequiredService<LdapWireAdapter>()));
 
-            // Bind a plain-TCP listener; the handler speaks LDAP/BER directly on the raw socket.
+            // Bind a plain-TCP listener; the handler speaks LDAP/BER directly on the raw socket. The
+            // bind address is the declared exposure posture — loopback unless the host widened it
+            // explicitly — never an ambient wildcard (AGENTS.md "Listener exposure posture").
             services.PostConfigure<KestrelServerOptions>(kestrel =>
-                kestrel.ListenAnyIP(options.Port, listen =>
+                kestrel.Listen(options.BindAddress, options.Port, listen =>
                     listen.UseConnectionHandler<LdapConnectionHandler>()));
 
             return services;

@@ -102,6 +102,47 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task UnauthenticatedConnection_IsClosed_AtThePreAuthDeadline()
+        {
+            // A peer holds an admission slot from ACCEPT. Failing binds is traffic, so the idle
+            // timeout never fires — without a pre-auth deadline such a peer keeps its slot for the
+            // whole idle window (30 s here) while never authenticating.
+            var options = new LdapWireOptions
+            {
+                AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30),
+            };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "wrong")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.InvalidCredentials);
+
+            (await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5)))
+                .Should().BeNull("a connection that has not authenticated is closed at the pre-auth deadline");
+        }
+
+        [Fact]
+        public async Task AuthenticatedConnection_SurvivesPastThePreAuthDeadline()
+        {
+            // The deadline reclaims slots from UNAUTHENTICATED peers only; an authenticated session is
+            // a legitimate client session, bounded thereafter by the idle timeout.
+            var options = new LdapWireOptions
+            {
+                AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30),
+            };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options));
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            await Task.Delay(TimeSpan.FromMilliseconds(900));
+
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
+            (await ReadAsync(fixture)).MessageId.Should().Be(2, "an authenticated session outlives the pre-auth deadline");
+        }
+
+        [Fact]
         public async Task AnonymousBind_DefaultOff_AnswersInvalidCredentials()
         {
             await using var fixture = await LdapFixture.StartAsync(authenticator: Authenticator());
@@ -125,5 +166,6 @@ namespace BifrostQL.Server.Test.Ldap
             response.OpTag.Should().Be(LdapProtocol.BindResponse);
             response.ResultCode.Should().Be(LdapResultCode.Success);
         }
+
     }
 }

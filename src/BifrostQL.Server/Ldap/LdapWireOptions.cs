@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace BifrostQL.Server.Ldap
 {
     /// <summary>
@@ -14,6 +16,15 @@ namespace BifrostQL.Server.Ldap
     {
         /// <summary>TCP port the front door listens on. Default 389 (the LDAP port).</summary>
         public int Port { get; set; } = 389;
+
+        /// <summary>
+        /// Address the front door binds. Default <see cref="IPAddress.Loopback"/>: an undeclared
+        /// exposure posture IS loopback, so merely registering this database front door never
+        /// publishes it to every network the host sits on. Widening it (loopback -> LAN -> public) is
+        /// an operator decision that has to be written down here. See AGENTS.md "Listener exposure
+        /// posture".
+        /// </summary>
+        public IPAddress BindAddress { get; set; } = IPAddress.Loopback;
 
         /// <summary>
         /// Hard cap on the byte length of a single LDAPMessage, applied on the UNAUTHENTICATED path.
@@ -102,5 +113,15 @@ namespace BifrostQL.Server.Ldap
 
         /// <summary>The fixed window over which the per-source and per-account bind caps are counted. Default 1 minute.</summary>
         public TimeSpan BindRateLimitWindow { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
+        /// Pre-auth deadline: how long a connection may stay UNAUTHENTICATED before it is closed. The
+        /// admission slot is taken at accept, so a peer that never authenticates would otherwise hold
+        /// it for the whole <see cref="IdleTimeout"/> window while failing binds keep the connection
+        /// non-idle — an unauthenticated slot-exhaustion vector the idle timeout does not cover. Once a
+        /// bind succeeds the session is bounded by <see cref="IdleTimeout"/> instead. Default 30
+        /// seconds, matching the pgwire handshake and RESP authentication deadlines.
+        /// </summary>
+        public TimeSpan AuthenticationTimeout { get; set; } = TimeSpan.FromSeconds(30);
     }
 }

@@ -84,6 +84,12 @@ namespace BifrostQL.Server.Ldap
             if (options.BindRateLimitWindow <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.BindRateLimitWindow), options.BindRateLimitWindow,
                     "ldap BindRateLimitWindow must be positive.");
+            if (options.AuthenticationTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.AuthenticationTimeout), options.AuthenticationTimeout,
+                    "ldap AuthenticationTimeout must be positive.");
+            if (options.BindAddress is null)
+                throw new ArgumentNullException(nameof(options.BindAddress),
+                    "ldap BindAddress must be set; it defaults to loopback and widening it is explicit.");
         }
     }
 }

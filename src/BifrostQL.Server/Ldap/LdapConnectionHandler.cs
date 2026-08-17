@@ -74,14 +74,35 @@ namespace BifrostQL.Server.Ldap
             var outstanding = new LdapBoundedCounter(_options.MaxOutstandingOperations, "MaxOutstandingOperations");
             var reader = new LdapMessageReader(
                 _options.MaxMessageLength, _options.MaxNestingDepth, _options.MaxFilterComponents, _options.MaxSearchAttributes);
+            // Session state for THIS connection: whether a bind has authenticated it, and whether that
+            // bind was anonymous (an anonymous session is limited to the RootDSE/subschema — criterion 4).
+            var session = new LdapSessionState();
+            // Pre-auth deadline: the admission slot was taken at accept, so an unauthenticated peer
+            // must not be able to hold it past this even while sending traffic (failing binds keep the
+            // connection non-idle, so the idle timeout alone does not reclaim the slot).
+            var preAuthDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
             try
             {
                 while (true)
                 {
+                    var readTimeout = _options.IdleTimeout;
+                    if (!session.Authenticated)
+                    {
+                        var remaining = preAuthDeadline - DateTimeOffset.UtcNow;
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            _logger.LogDebug("ldap connection did not authenticate within {Timeout}; closing.",
+                                _options.AuthenticationTimeout);
+                            return;
+                        }
+                        if (remaining < readTimeout)
+                            readTimeout = remaining;
+                    }
+
                     LdapRequest? request;
                     try
                     {
-                        request = await ReadWithIdleTimeoutAsync(reader, stream, ct);
+                        request = await ReadWithDeadlineAsync(reader, stream, readTimeout, ct);
                     }
                     catch (Exception ex) when (ex is LdapProtocolException or FormatException or OverflowException or ArgumentException)
                     {
@@ -109,7 +130,7 @@ namespace BifrostQL.Server.Ldap
                     }
                     try
                     {
-                        if (!await DispatchAsync(stream, request, source, ct))
+                        if (!await DispatchAsync(stream, request, session, source, ct))
                             return; // Unbind / fatal op: close the connection
                     }
                     finally
@@ -134,7 +155,8 @@ namespace BifrostQL.Server.Ldap
         /// result (their execution is a non-goal this slice); Unbind closes; Abandon is a no-op; an
         /// unrecognized protocolOp is a fatal protocol error that closes the connection.
         /// </summary>
-        private async Task<bool> DispatchAsync(Stream stream, LdapRequest request, string source, CancellationToken ct)
+        private async Task<bool> DispatchAsync(
+            Stream stream, LdapRequest request, LdapSessionState session, string source, CancellationToken ct)
         {
             switch (request.Operation)
             {
@@ -147,7 +169,7 @@ namespace BifrostQL.Server.Ldap
                     return true;
 
                 case LdapBindRequest bind:
-                    await HandleBindAsync(stream, request.MessageId, bind, source, ct);
+                    await HandleBindAsync(stream, request.MessageId, bind, session, source, ct);
                     return true; // a bind (success or failure) leaves the connection open for retry
 
                 case LdapSearchRequest:
@@ -180,7 +202,8 @@ namespace BifrostQL.Server.Ldap
         /// <c>invalidCredentials</c> the authenticator produces; the connection stays open for retry
         /// (bounded by the per-source / per-account rate limits).
         /// </summary>
-        private async Task HandleBindAsync(Stream stream, int messageId, LdapBindRequest bind, string source, CancellationToken ct)
+        private async Task HandleBindAsync(
+            Stream stream, int messageId, LdapBindRequest bind, LdapSessionState session, string source, CancellationToken ct)
         {
             if (_authenticator is null)
             {
@@ -191,24 +214,34 @@ namespace BifrostQL.Server.Ldap
             }
 
             var result = await _authenticator.AuthenticateAsync(bind, source, ct);
+            // RFC 4513: a failed bind leaves the session UNAUTHENTICATED — it never downgrades an
+            // already-authenticated session to anonymous, and it never authenticates one.
+            if (result.Succeeded)
+            {
+                session.Authenticated = true;
+                session.IsAnonymous = result.IsAnonymous;
+                session.UserContext = result.UserContext;
+            }
             await SendAsync(stream, LdapMessageWriter.BindResponse(messageId, result.ResultCode, result.DiagnosticMessage), ct);
         }
 
-        // Reads the next message, closing the connection if it stays idle past the configured
-        // timeout. A read cancelled by the idle deadline (not the outer connection token) surfaces as
-        // a clean end-of-connection, not a protocol error.
-        private async Task<LdapRequest?> ReadWithIdleTimeoutAsync(LdapMessageReader reader, Stream stream, CancellationToken ct)
+        // Reads the next message, closing the connection if nothing arrives before <paramref
+        // name="deadline"/> — the idle timeout, or the shorter remaining pre-auth deadline while the
+        // session is unauthenticated. A read cancelled by that deadline (not the outer connection
+        // token) surfaces as a clean end-of-connection, not a protocol error.
+        private async Task<LdapRequest?> ReadWithDeadlineAsync(
+            LdapMessageReader reader, Stream stream, TimeSpan deadline, CancellationToken ct)
         {
             using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            idle.CancelAfter(_options.IdleTimeout);
+            idle.CancelAfter(deadline);
             try
             {
                 return await reader.ReadRequestAsync(stream, idle.Token);
             }
             catch (OperationCanceledException) when (idle.IsCancellationRequested && !ct.IsCancellationRequested)
             {
-                _logger.LogDebug("ldap connection idle past {Timeout}; closing.", _options.IdleTimeout);
-                return null; // treat idle timeout as a clean close
+                _logger.LogDebug("ldap connection reached its {Deadline} read deadline; closing.", deadline);
+                return null; // treat a read deadline as a clean close
             }
         }
 

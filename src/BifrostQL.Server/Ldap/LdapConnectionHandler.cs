@@ -73,6 +73,10 @@ namespace BifrostQL.Server.Ldap
             }
 
             var outstanding = new LdapBoundedCounter(_options.MaxOutstandingOperations, "MaxOutstandingOperations");
+            // Read through a buffer so the framing reader costs one socket read per burst instead of
+            // one per byte — and so anything the peer PIPELINED behind the current message is visible
+            // to this process rather than sitting unseen in the kernel (see LdapBufferedStream).
+            var wire = new LdapBufferedStream(stream);
             var reader = new LdapMessageReader(
                 _options.MaxMessageLength, _options.MaxNestingDepth, _options.MaxFilterComponents, _options.MaxSearchAttributes);
             // Session state for THIS connection: whether a bind has authenticated it, and whether that
@@ -103,7 +107,7 @@ namespace BifrostQL.Server.Ldap
                     LdapRequest? request;
                     try
                     {
-                        request = await ReadWithDeadlineAsync(reader, stream, readTimeout, ct);
+                        request = await ReadWithDeadlineAsync(reader, wire, readTimeout, ct);
                     }
                     catch (Exception ex) when (ex is LdapProtocolException or FormatException or OverflowException or ArgumentException)
                     {
@@ -113,7 +117,7 @@ namespace BifrostQL.Server.Ldap
                         // Disconnection, then close — the client learns the reason instead of only an EOF.
                         var detail = ex is LdapProtocolException ? ex.Message : "malformed BER";
                         _logger.LogDebug(ex, "ldap protocol error; closing connection: {Detail}", detail);
-                        await TrySendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
+                        await TrySendAsync(wire, LdapMessageWriter.NoticeOfDisconnection(
                             LdapResultCode.ProtocolError, detail), ct);
                         return;
                     }
@@ -125,13 +129,13 @@ namespace BifrostQL.Server.Ldap
                     {
                         _logger.LogWarning("ldap connection exceeded the {Max}-outstanding-operation cap; closing.",
                             _options.MaxOutstandingOperations);
-                        await TrySendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
+                        await TrySendAsync(wire, LdapMessageWriter.NoticeOfDisconnection(
                             LdapResultCode.UnwillingToPerform, "too many outstanding operations"), ct);
                         return;
                     }
                     try
                     {
-                        if (!await DispatchAsync(stream, request, session, source, ct))
+                        if (!await DispatchAsync(wire, request, session, source, ct))
                             return; // Unbind / fatal op: close the connection
                     }
                     finally

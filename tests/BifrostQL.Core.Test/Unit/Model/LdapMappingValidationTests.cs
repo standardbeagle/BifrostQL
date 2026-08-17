@@ -353,6 +353,59 @@ public class LdapMappingValidationTests
     }
 
     [Fact]
+    public void Validate_CompositeManyToManyMembershipRelationship_Throws()
+    {
+        // The many-to-many sibling of the multi-link case above, and the one the model type
+        // cannot express: ManyToManyLink carries ONE column per leg, so a metadata-declared
+        // bridge over COMPOSITE foreign keys resolves each leg to its FIRST column
+        // (TryFindJunctionColumns reads SingleLink.ChildId / .ParentId). A group whose
+        // membership rides that bridge would then match every row sharing only the first key
+        // column — across the tenant discriminator the second column carries — so the group's
+        // 'member' values would name FOREIGN entries. Rejected at model load, exactly as the
+        // composite multi-link is: no first-column shortcut on any membership leg
+        // (.claude/rules/composite-pk-compliance.md).
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Ldap.BaseDn, "dc=example,dc=com")
+            .WithTable("groups", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Tenant", "int", isPrimaryKey: true)
+                .WithColumn("name", "nvarchar")
+                .WithMetadata(MetadataKeys.Relationships.ManyToMany, "users:user_groups")
+                .WithMetadata(MetadataKeys.Ldap.ObjectClass, "groupOfNames")
+                .WithMetadata(MetadataKeys.Ldap.DnTemplate, "cn={name},ou=groups")
+                .WithMetadata(MetadataKeys.Ldap.Attributes, "cn=name")
+                .WithMetadata(MetadataKeys.Ldap.Member, "users"))
+            .WithTable("users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Tenant", "int", isPrimaryKey: true)
+                .WithColumn("username", "nvarchar")
+                .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
+                .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={username},ou=people")
+                .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username"))
+            .WithTable("user_groups", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("GroupId", "int")
+                .WithColumn("GroupTenant", "int")
+                .WithColumn("UserId", "int")
+                .WithColumn("UserTenant", "int"))
+            .WithForeignKey("fk_ug_grp",
+                "dbo", "user_groups", new[] { "GroupId", "GroupTenant" },
+                "dbo", "groups", new[] { "Id", "Tenant" })
+            .WithForeignKey("fk_ug_usr",
+                "dbo", "user_groups", new[] { "UserId", "UserTenant" },
+                "dbo", "users", new[] { "Id", "Tenant" })
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(MetadataKeys.Ldap.Member).And.Contain("composite");
+    }
+
+    [Fact]
     public void Validate_MembershipTargetNotMapped_Throws()
     {
         // The membership target table is not LDAP-mapped, so a member DN cannot be constructed.

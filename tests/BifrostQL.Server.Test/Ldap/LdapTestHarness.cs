@@ -352,7 +352,8 @@ namespace BifrostQL.Server.Test.Ldap
             LdapBoundedCounter? connectionLimiter = null,
             LdapBindAuthenticator? authenticator = null,
             LdapConnectionHandler? handler = null,
-            bool tls = false)
+            bool tls = false,
+            LdapSearchExecutor? search = null)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -367,7 +368,8 @@ namespace BifrostQL.Server.Test.Ldap
             // The handler gets whatever TLS the options describe, exactly as the registration builds
             // it: a fixture with a certificate can StartTLS, one without answers it unavailable.
             var connectionHandler = handler
-                ?? new LdapConnectionHandler(options, connectionLimiter, authenticator, LdapTlsProvider.Create(options));
+                ?? new LdapConnectionHandler(
+                    options, connectionLimiter, authenticator, LdapTlsProvider.Create(options), search);
             var client = new LdapTestClient(clientSocket.GetStream());
             var cancellation = new CancellationTokenSource();
 

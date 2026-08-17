@@ -50,8 +50,34 @@ namespace BifrostQL.Server.Ldap
     /// <summary>Which authentication choice a BindRequest carried.</summary>
     internal enum LdapBindAuthKind { Simple, Sasl, Unknown }
 
-    /// <summary>SearchRequest: the base object and the parsed filter tree (execution is a non-goal this slice — decoded for cap enforcement).</summary>
-    internal sealed record LdapSearchRequest(string BaseObject, int Scope, LdapFilter Filter, IReadOnlyList<string> Attributes) : LdapOperation;
+    /// <summary>
+    /// SearchRequest (RFC 4511 §4.5.1). Every field the server's behaviour depends on is carried:
+    /// the base object and scope, the client's own size/time limits, <c>typesOnly</c>, the parsed
+    /// filter tree, and the requested attribute selection.
+    ///
+    /// <para><see cref="SizeLimit"/> / <see cref="TimeLimit"/> are the CLIENT's requested ceilings;
+    /// zero means "no client limit" and the server's own configured cap applies. The effective
+    /// limit is always the smaller of the two, so a client can only ever narrow what the server
+    /// permits — it can never raise it. <see cref="DerefAliases"/> is decoded for completeness but
+    /// alias dereferencing is a declared non-goal, so it never changes resolution.</para>
+    /// </summary>
+    internal sealed record LdapSearchRequest(
+        string BaseObject,
+        int Scope,
+        int DerefAliases,
+        int SizeLimit,
+        int TimeLimit,
+        bool TypesOnly,
+        LdapFilter Filter,
+        IReadOnlyList<string> Attributes) : LdapOperation;
+
+    /// <summary>The <c>scope</c> enumeration of a SearchRequest (RFC 4511 §4.5.1.2).</summary>
+    internal static class LdapSearchScope
+    {
+        public const int BaseObject = 0;
+        public const int SingleLevel = 1;
+        public const int WholeSubtree = 2;
+    }
 
     /// <summary>UnbindRequest: no fields — the client is closing the connection.</summary>
     internal sealed record LdapUnbindRequest : LdapOperation;
@@ -78,6 +104,20 @@ namespace BifrostQL.Server.Ldap
         internal sealed record Not(LdapFilter Child) : LdapFilter;
         internal sealed record Present(string Attribute) : LdapFilter;
         internal sealed record Comparison(byte Tag, string Attribute, byte[] Value) : LdapFilter;
+
+        /// <summary>
+        /// A substring assertion (RFC 4511 §4.5.1.7.2): an optional <c>initial</c> anchor, any
+        /// number of unanchored <c>any</c> fragments in order, and an optional <c>final</c> anchor.
+        ///
+        /// <para>Each fragment is a RAW OCTET STRING, already un-escaped by the client's own RFC
+        /// 4515 encoder before it reached the wire. An <c>*</c> byte inside a fragment is therefore
+        /// a LITERAL asterisk the client escaped as <c>\2a</c> — never a second wildcard — and the
+        /// same holds for every SQL metacharacter. Anything that turns a fragment back into a
+        /// pattern must escape it first; see <c>LdapFilterCompiler</c>.</para>
+        /// </summary>
+        internal sealed record Substrings(
+            string Attribute, byte[]? Initial, IReadOnlyList<byte[]> Any, byte[]? Final) : LdapFilter;
+
         internal sealed record Other(byte Tag) : LdapFilter;
     }
 

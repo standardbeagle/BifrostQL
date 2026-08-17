@@ -118,10 +118,13 @@ namespace BifrostQL.Server.Ldap
         {
             var baseObject = search.String(search.ReadElement(LdapProtocol.OctetString));
             var scope = (int)search.Integer(search.ReadElement(LdapProtocol.Enumerated));
-            search.ReadElement(LdapProtocol.Enumerated); // derefAliases
-            search.ReadElement(LdapProtocol.Integer);    // sizeLimit
-            search.ReadElement(LdapProtocol.Integer);    // timeLimit
-            search.ReadElement(LdapProtocol.Boolean);    // typesOnly
+            var derefAliases = (int)search.Integer(search.ReadElement(LdapProtocol.Enumerated));
+            // The client's own sizeLimit / timeLimit. Both are non-negative by the protocol, and a
+            // negative value is a wire violation rather than something to clamp silently: these
+            // bound the server's work, so a value it cannot interpret must not be guessed at.
+            var sizeLimit = NonNegative(search.Int32(search.ReadElement(LdapProtocol.Integer)), "sizeLimit");
+            var timeLimit = NonNegative(search.Int32(search.ReadElement(LdapProtocol.Integer)), "timeLimit");
+            var typesOnly = search.Boolean(search.ReadElement(LdapProtocol.Boolean));
 
             var componentBudget = MaxFilterComponents;
             var filter = DecodeFilter(search, search.ReadElement(), depth: 0, ref componentBudget);
@@ -140,8 +143,14 @@ namespace BifrostQL.Server.Ldap
                 }
             }
 
-            return new LdapSearchRequest(baseObject, scope, filter, attributes);
+            return new LdapSearchRequest(
+                baseObject, scope, derefAliases, sizeLimit, timeLimit, typesOnly, filter, attributes);
         }
+
+        private static int NonNegative(int value, string field) =>
+            value >= 0
+                ? value
+                : throw new LdapProtocolException($"SearchRequest {field} {value} must be non-negative.");
 
         // Recursively decodes the filter tree. The depth guard runs BEFORE descending into a
         // connective's children (invariant 6): a filter nested past MaxNestingDepth is refused as a
@@ -177,11 +186,81 @@ namespace BifrostQL.Server.Ldap
                     var value = ava.Content(ava.ReadElement(LdapProtocol.OctetString));
                     return new LdapFilter.Comparison(element.Tag, attribute, value);
                 }
+                case LdapProtocol.FilterSubstrings:
+                    return DecodeSubstrings(parent, element, ref componentBudget);
                 default:
-                    // substrings / extensibleMatch and any other filter type: recorded as a leaf so
-                    // the tree is complete, but not modeled in detail (search execution is a non-goal).
+                    // extensibleMatch and any other filter type: recorded as a leaf so the tree is
+                    // complete, but not modeled in detail (extensibleMatch is a declared non-goal).
                     return new LdapFilter.Other(element.Tag);
             }
+        }
+
+        /// <summary>
+        /// Decodes a SubstringFilter (RFC 4511 §4.5.1.7.2):
+        /// <c>SEQUENCE { type AttributeDescription, substrings SEQUENCE SIZE(1..MAX) OF CHOICE {
+        /// initial [0], any [1], final [2] } }</c>.
+        ///
+        /// <para>Every fragment is charged against the shared component budget BEFORE it is added to
+        /// the list, so the fragment sequence — which the wire declares no count for — cannot grow
+        /// the parse past the same node ceiling the connective tree obeys. The list grows
+        /// incrementally: nothing is pre-allocated from a client-declared size (invariant 6, tail).
+        /// The grammar is enforced rather than tolerated: at most one <c>initial</c> (first) and at
+        /// most one <c>final</c> (last), and at least one fragment overall. A substring assertion
+        /// with no fragments is <c>(attr=*)</c> written the long way — a presence test that the
+        /// client should have encoded as such — and admitting it here would give the same query two
+        /// spellings with two compilation paths.</para>
+        /// </summary>
+        private LdapFilter DecodeSubstrings(BerCursor parent, BerElement element, ref int componentBudget)
+        {
+            var substring = parent.Child(element);
+            var attribute = substring.String(substring.ReadElement(LdapProtocol.OctetString));
+
+            var fragments = substring.Child(substring.ReadElement(LdapProtocol.Sequence));
+            byte[]? initial = null;
+            byte[]? final = null;
+            var any = new List<byte[]>();
+            var seen = 0;
+
+            while (fragments.HasMore)
+            {
+                if (--componentBudget < 0)
+                    throw new LdapProtocolException(
+                        $"search filter exceeds the {MaxFilterComponents}-component cap.");
+
+                var fragment = fragments.ReadElement();
+                var value = fragments.Content(fragment);
+                switch (fragment.Tag)
+                {
+                    case LdapProtocol.SubstringInitial:
+                        if (seen != 0)
+                            throw new LdapProtocolException(
+                                "SubstringFilter 'initial' must be the first substring component.");
+                        initial = value;
+                        break;
+                    case LdapProtocol.SubstringAny:
+                        if (final is not null)
+                            throw new LdapProtocolException(
+                                "SubstringFilter 'final' must be the last substring component.");
+                        any.Add(value);
+                        break;
+                    case LdapProtocol.SubstringFinal:
+                        if (final is not null)
+                            throw new LdapProtocolException(
+                                "SubstringFilter carries more than one 'final' substring component.");
+                        final = value;
+                        break;
+                    default:
+                        throw new LdapProtocolException(
+                            $"SubstringFilter component tag 0x{fragment.Tag:X2} is not initial/any/final.");
+                }
+                seen++;
+            }
+
+            if (seen == 0)
+                throw new LdapProtocolException(
+                    "SubstringFilter carries no substring components; use a presence filter instead.");
+
+            return new LdapFilter.Substrings(attribute, initial, any, final);
         }
 
         private IReadOnlyList<LdapFilter> DecodeFilterSet(BerCursor parent, BerElement element, int depth, ref int componentBudget)

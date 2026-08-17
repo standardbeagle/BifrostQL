@@ -79,6 +79,116 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task SearchRequest_Decodes_ClientSizeTimeLimitsAndTypesOnly()
+        {
+            // These three fields bound what the server does with the request, so the decoder has to
+            // carry them: a discarded sizeLimit silently becomes "no client limit", which is the
+            // OPPOSITE of what the client asked for whenever it asked for a small page.
+            var message = LdapWire.Message(2, LdapWire.SearchRequest(
+                sizeLimit: 25, timeLimit: 7, typesOnly: true));
+
+            var search = (await DecodeAsync(message)).Operation.Should().BeOfType<LdapSearchRequest>().Subject;
+
+            search.SizeLimit.Should().Be(25);
+            search.TimeLimit.Should().Be(7);
+            search.TypesOnly.Should().BeTrue();
+        }
+
+        [Theory]
+        [InlineData(-1, 0)]
+        [InlineData(0, -1)]
+        public async Task SearchRequest_NegativeSizeOrTimeLimit_IsProtocolError(int sizeLimit, int timeLimit)
+        {
+            // A negative limit is a wire violation, not something to clamp. These bound the server's
+            // work; silently reinterpreting an uninterpretable value is how a limit stops limiting.
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(sizeLimit: sizeLimit, timeLimit: timeLimit));
+
+            var act = async () => await DecodeAsync(message);
+
+            await act.Should().ThrowAsync<LdapProtocolException>();
+        }
+
+        [Fact]
+        public async Task SubstringFilter_Decodes_InitialAnyFinalInOrder()
+        {
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(
+                filter: LdapWire.FilterSubstrings("cn", initial: "jo", any: new[] { "n", "at" }, final: "an")));
+
+            var search = (await DecodeAsync(message)).Operation.Should().BeOfType<LdapSearchRequest>().Subject;
+
+            var substrings = search.Filter.Should().BeOfType<LdapFilter.Substrings>().Subject;
+            substrings.Attribute.Should().Be("cn");
+            System.Text.Encoding.UTF8.GetString(substrings.Initial!).Should().Be("jo");
+            substrings.Any.Select(a => System.Text.Encoding.UTF8.GetString(a)).Should().Equal("n", "at");
+            System.Text.Encoding.UTF8.GetString(substrings.Final!).Should().Be("an");
+        }
+
+        [Fact]
+        public async Task SubstringFilter_LiteralAsteriskInAFragment_StaysOneFragment()
+        {
+            // A client escapes a literal '*' as \2a, so it arrives as a raw 0x2A byte INSIDE a
+            // fragment. The decoder must not read it as a fragment separator: the wire already
+            // carries the structure, and re-splitting on the byte would turn one literal assertion
+            // into a two-fragment wildcard pattern the client never wrote.
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(
+                filter: LdapWire.FilterSubstrings("cn", initial: "a*b")));
+
+            var search = (await DecodeAsync(message)).Operation.Should().BeOfType<LdapSearchRequest>().Subject;
+
+            var substrings = search.Filter.Should().BeOfType<LdapFilter.Substrings>().Subject;
+            System.Text.Encoding.UTF8.GetString(substrings.Initial!).Should().Be("a*b");
+            substrings.Any.Should().BeEmpty();
+            substrings.Final.Should().BeNull();
+        }
+
+        [Fact]
+        public async Task SubstringFilter_WithNoComponents_IsProtocolError()
+        {
+            // RFC 4511 requires SIZE(1..MAX). An empty component list is '(attr=*)' spelled the long
+            // way; admitting it would give one query two spellings and two compilation paths.
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(
+                filter: LdapWire.FilterSubstringsRaw("cn")));
+
+            var act = async () => await DecodeAsync(message);
+
+            await act.Should().ThrowAsync<LdapProtocolException>();
+        }
+
+        [Fact]
+        public async Task SubstringFilter_InitialAfterAny_IsProtocolError()
+        {
+            // 'initial' anchors the start, so it can only be the first component. Tolerating a
+            // misplaced one would silently re-anchor the match somewhere the client did not ask for.
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(
+                filter: LdapWire.FilterSubstringsRaw("cn",
+                    LdapWire.SubstringFragment(LdapProtocol.SubstringAny, "x"),
+                    LdapWire.SubstringFragment(LdapProtocol.SubstringInitial, "y"))));
+
+            var act = async () => await DecodeAsync(message);
+
+            await act.Should().ThrowAsync<LdapProtocolException>();
+        }
+
+        [Fact]
+        public async Task SubstringFilter_ComponentsAreChargedAgainstTheComponentCap()
+        {
+            // The substring component sequence declares no count on the wire, so it is a second
+            // node-explosion vector alongside the connective tree. It must draw on the SAME budget:
+            // a cap that only counts connectives is not a cap on the filter.
+            var fragments = Enumerable.Range(0, 8)
+                .Select(i => LdapWire.SubstringFragment(LdapProtocol.SubstringAny, $"f{i}"))
+                .ToArray();
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(
+                filter: LdapWire.FilterSubstringsRaw("cn", fragments)));
+
+            // Budget 4: the Substrings node itself plus three fragments, then refusal.
+            var act = async () => await DecodeAsync(message, Reader(filterComponents: 4));
+
+            await act.Should().ThrowAsync<LdapProtocolException>()
+                .WithMessage("*component cap*");
+        }
+
+        [Fact]
         public async Task UnbindRequest_Decodes()
         {
             var request = await DecodeAsync(LdapWire.Message(3, LdapWire.UnbindRequest()));

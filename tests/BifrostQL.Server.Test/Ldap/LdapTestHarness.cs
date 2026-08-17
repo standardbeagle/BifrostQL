@@ -46,18 +46,20 @@ namespace BifrostQL.Server.Test.Ldap
                 BerWriter.TaggedString(LdapProtocol.ExtendedRequestName, requestName));
 
         /// <summary>A SearchRequest whose filter is supplied as pre-encoded BER (default: <c>(objectClass=*)</c>).</summary>
-        public static byte[] SearchRequest(string baseObject = "", int scope = 0, byte[]? filter = null, string[]? attributes = null)
+        public static byte[] SearchRequest(
+            string baseObject = "", int scope = 0, byte[]? filter = null, string[]? attributes = null,
+            int sizeLimit = 0, int timeLimit = 0, bool typesOnly = false, int derefAliases = 0)
         {
             filter ??= FilterPresent("objectClass");
             var attrElements = (attributes ?? Array.Empty<string>())
                 .Select(BerWriter.OctetString).ToArray();
             return BerWriter.Tlv(LdapProtocol.SearchRequest, BerWriter.Concat(
                 BerWriter.OctetString(baseObject),
-                BerWriter.Enumerated(scope),   // scope
-                BerWriter.Enumerated(0),       // derefAliases
-                BerWriter.Integer(0),          // sizeLimit
-                BerWriter.Integer(0),          // timeLimit
-                Boolean(false),                // typesOnly
+                BerWriter.Enumerated(scope),
+                BerWriter.Enumerated(derefAliases),
+                BerWriter.Integer(sizeLimit),
+                BerWriter.Integer(timeLimit),
+                Boolean(typesOnly),
                 filter,
                 BerWriter.Sequence(attrElements)));
         }
@@ -65,6 +67,46 @@ namespace BifrostQL.Server.Test.Ldap
         // ---- filters ----
         public static byte[] FilterPresent(string attribute)
             => BerWriter.TaggedString(LdapProtocol.FilterPresent, attribute);
+
+        /// <summary>An AttributeValueAssertion filter — equality by default, or a relational tag.</summary>
+        public static byte[] FilterCompare(string attribute, string value, byte tag = LdapProtocol.FilterEqualityMatch)
+            => BerWriter.Constructed(tag, BerWriter.OctetString(attribute), BerWriter.OctetString(value));
+
+        public static byte[] FilterEquality(string attribute, string value)
+            => FilterCompare(attribute, value);
+
+        public static byte[] FilterOr(params byte[][] children)
+            => BerWriter.Constructed(LdapProtocol.FilterOr, children);
+
+        /// <summary>
+        /// A SubstringFilter. Fragments are supplied already un-escaped, exactly as a client's RFC
+        /// 4515 encoder would place them on the wire, so a literal <c>*</c> in a fragment here is a
+        /// literal asterisk — not a second wildcard.
+        /// </summary>
+        public static byte[] FilterSubstrings(
+            string attribute, string? initial = null, string[]? any = null, string? final = null)
+        {
+            var fragments = new List<byte[]>();
+            if (initial is not null)
+                fragments.Add(BerWriter.TaggedString(LdapProtocol.SubstringInitial, initial));
+            foreach (var fragment in any ?? Array.Empty<string>())
+                fragments.Add(BerWriter.TaggedString(LdapProtocol.SubstringAny, fragment));
+            if (final is not null)
+                fragments.Add(BerWriter.TaggedString(LdapProtocol.SubstringFinal, final));
+
+            return BerWriter.Constructed(LdapProtocol.FilterSubstrings,
+                BerWriter.OctetString(attribute),
+                BerWriter.Sequence(fragments.ToArray()));
+        }
+
+        /// <summary>A SubstringFilter whose components are supplied raw, to exercise grammar rejection.</summary>
+        public static byte[] FilterSubstringsRaw(string attribute, params byte[][] fragments)
+            => BerWriter.Constructed(LdapProtocol.FilterSubstrings,
+                BerWriter.OctetString(attribute),
+                BerWriter.Sequence(fragments));
+
+        public static byte[] SubstringFragment(byte tag, string value)
+            => BerWriter.TaggedString(tag, value);
 
         public static byte[] FilterAnd(params byte[][] children)
             => BerWriter.Constructed(LdapProtocol.FilterAnd, children);

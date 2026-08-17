@@ -52,6 +52,11 @@ namespace BifrostQL.Server.Ldap
         public const byte FilterApproxMatch = 0xA8;     // [8] AttributeValueAssertion
         public const byte FilterExtensibleMatch = 0xA9; // [9] MatchingRuleAssertion
 
+        // ---- SubstringFilter component tags (RFC 4511 §4.5.1.7.2), all primitive octet strings ----
+        public const byte SubstringInitial = 0x80;   // [0] initial — anchored at the start, at most one, first
+        public const byte SubstringAny = 0x81;       // [1] any     — unanchored, ordered, any number
+        public const byte SubstringFinal = 0x82;     // [2] final   — anchored at the end, at most one, last
+
         // ---- well-known OIDs ----
         /// <summary>
         /// StartTLS extended request OID (RFC 4511 §4.14): the in-band upgrade of a cleartext

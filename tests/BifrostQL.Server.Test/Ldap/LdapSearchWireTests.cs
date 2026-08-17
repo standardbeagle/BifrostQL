@@ -1,9 +1,5 @@
-using System.Security.Claims;
-using System.Text;
-using BifrostQL.Core.Model;
 using BifrostQL.Server.Ldap;
 using FluentAssertions;
-using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Ldap
@@ -22,57 +18,6 @@ namespace BifrostQL.Server.Test.Ldap
     {
         private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
         private static readonly DateTimeOffset Now = new(2026, 8, 17, 12, 0, 0, TimeSpan.Zero);
-
-        // ---- identity: two accounts in two tenants, one directory ----
-
-        private sealed class Hasher : ILdapPasswordHasher
-        {
-            public string DecoyHash => "hash:$decoy$";
-            public bool Verify(ReadOnlySpan<byte> password, string passwordHash) =>
-                passwordHash != DecoyHash && passwordHash == "hash:" + Encoding.UTF8.GetString(password);
-        }
-
-        private sealed class Store : ILdapCredentialStore
-        {
-            public Task<LdapCredentialRecord?> FindAsync(string bindDn, CancellationToken ct)
-            {
-                var tenant = bindDn switch
-                {
-                    "uid=alice,ou=people,dc=example,dc=com" => "acme",
-                    "uid=bob,ou=people,dc=example,dc=com" => "globex",
-                    _ => null,
-                };
-                if (tenant is null)
-                    return Task.FromResult<LdapCredentialRecord?>(null);
-
-                var principal = new ClaimsPrincipal(new ClaimsIdentity(
-                    new[]
-                    {
-                        new Claim(ClaimTypes.Name, bindDn),
-                        new Claim("tenant", tenant),
-                    }, "ldap"));
-                return Task.FromResult<LdapCredentialRecord?>(
-                    new LdapCredentialRecord("hash:s3cret", principal, Enabled: true));
-            }
-        }
-
-        private sealed class Factory : IBifrostAuthContextFactory
-        {
-            public IDictionary<string, object?> CreateUserContext(HttpContext context)
-            {
-                var sub = context.User.FindFirst(ClaimTypes.Name)?.Value;
-                if (string.IsNullOrEmpty(sub))
-                    return new Dictionary<string, object?>();
-                return new Dictionary<string, object?>
-                {
-                    ["sub"] = sub,
-                    ["tenant"] = context.User.FindFirst("tenant")?.Value,
-                };
-            }
-
-            public IDictionary<string, object?> CreateUserContext(HttpContext context, IDictionary<string, object?> existing)
-                => CreateUserContext(context);
-        }
 
         /// <summary>
         /// A whole front door: options, the directory model, a tenant-scoping pipeline stand-in, a
@@ -104,7 +49,9 @@ namespace BifrostQL.Server.Test.Ldap
                 seed?.Invoke(pipeline);
 
                 var search = new LdapSearchExecutor(pipeline, options, clock: () => Now);
-                var authenticator = new LdapBindAuthenticator(new Store(), new Hasher(), new Factory(), options);
+                var authenticator = new LdapBindAuthenticator(
+                    new LdapTestIdentity.Store(), new LdapTestIdentity.Hasher(),
+                    new LdapTestIdentity.Factory(), options);
                 var fixture = await LdapFixture.StartAsync(
                     options, authenticator: authenticator, tls: true, search: search);
 
@@ -115,7 +62,7 @@ namespace BifrostQL.Server.Test.Ldap
             public async Task BindAsync(string uid, int messageId = 1)
             {
                 await Fixture.Client.SendAsync(LdapWire.Message(messageId, LdapWire.BindRequest(
-                    name: $"uid={uid},ou=people,dc=example,dc=com", password: "s3cret")));
+                    name: LdapTestIdentity.Dn(uid), password: LdapTestIdentity.Password)));
                 var response = await ReadAsync(Fixture);
                 response.OpTag.Should().Be(LdapProtocol.BindResponse);
                 response.ResultCode.Should().Be(LdapResultCode.Success);

@@ -1,0 +1,11 @@
+# One beat per line, paired with the `workbench-erd` scene in capture.mjs.
+# Facts checked against the blog schema the workbench scenes connect to
+# (src/BifrostQL.UI/Schemas/blog.sql): six tables, foreign keys from posts to
+# authors and categories and from comments to posts, self references on
+# categories and comments, and post_tags as the junction between posts and tags.
+The workbench draws the ER diagram from the schema it already introspected. There is no extra call and no new endpoint.
+Every table becomes a node with its primary key. Posts point at authors and categories, comments point at posts, and categories and comments each point back at themselves.
+Posts and tags are joined through the post_tags table. The diagram draws that pair as one edge and keeps the junction table out of the picture.
+A node lists its columns on demand, so the diagram stays readable until you ask for the detail.
+For a wide schema, pick a table and a hop count. The diagram then shows only that table and the neighbors within that many joins.
+Clear the filter to get the whole schema back. The diagram is read only and it is drawn from the connection you already have, so it always matches the database in front of you.

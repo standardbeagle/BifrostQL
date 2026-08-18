@@ -71,6 +71,7 @@ start.
 | `workbench-pivot` | `BifrostQL.UI` headless | Pivot wells → server-computed cross tabulation → save |
 | `workbench-charts` | `BifrostQL.UI` headless | Aggregate chart, chart type, save, dashboard tile, reopen |
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
+| `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
 
 The `quickstart` scene seeds `blog.db` from `src/BifrostQL.UI/Schemas/blog.sql`
 plus `blog-seed-sample.sql` — the same two files the getting-started article
@@ -88,20 +89,18 @@ than the HTTP/GraphQL surface.
 
 ## Scenes deliberately omitted
 
-**ER diagram.** The pane cannot load against the current tree. `ErdPane.tsx`
-requests `isPolymorphic`, `polymorphicTypeColumn`, and `polymorphicTypeValue`
-on `dbJoinSchema`; `MetadataSchemaGenerator.cs` declares all three in the SDL,
-but the `singleJoins` projection in
-`src/BifrostQL.Core/Resolvers/MetaSchemaResolver.cs` (~lines 146-156) does not
-populate them, while the `multiJoins` projection (~lines 130-145) does. The
-pane therefore renders `Could not load diagram: Error trying to resolve field
-'isPolymorphic'`. This is a product defect, not a harness limitation — add the
-scene once the resolver is fixed. (`dbJoinSchema.metadata` is unpopulated in
-both projections and will fail the same way if it is ever requested.)
-
 **MCP tools.** The MCP server speaks over stdio, so there is no browser surface
 to record and a terminal capture would need a different harness entirely. It is
 omitted rather than faked with a staged terminal.
+
+The ER diagram used to be listed here: the pane could not load because the
+`singleJoins` projection in `src/BifrostQL.Core/Resolvers/MetaSchemaResolver.cs`
+did not populate the `isPolymorphic`, `polymorphicTypeColumn`, and
+`polymorphicTypeValue` fields that the SDL declares on `dbJoinSchema` and that
+`ErdPane.tsx` selects, so the pane rendered `Could not load diagram: Error
+trying to resolve field 'isPolymorphic'`. That defect is fixed and the scene is
+recorded. (`dbJoinSchema.metadata` is still unpopulated in both projections and
+will fail the same way if it is ever requested.)
 
 ## Adding a scene
 
@@ -113,4 +112,4 @@ omitted rather than faked with a staged terminal.
 3. `node docs/videos/capture.mjs <id>`, check the poster, then embed with
    `<DemoVideo scene="<id>" title="…" description="…" />`.
 
-Keep the committed total under ~30 MB; the current five scenes are about 13 MB.
+Keep the committed total under ~30 MB; the current six scenes are about 15 MB.

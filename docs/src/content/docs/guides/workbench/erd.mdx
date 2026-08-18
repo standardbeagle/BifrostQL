@@ -3,6 +3,14 @@ title: "Automatic ER Diagram from a Database"
 description: "An automatic ER diagram from a database, laid out for you: foreign keys, many-to-many pairs, name-based links, and polymorphic edges each drawn distinctly."
 ---
 
+import DemoVideo from '../../../../components/DemoVideo.astro';
+
+<DemoVideo
+  scene="workbench-erd"
+  title="The diagram the workbench draws for a connected database"
+  description="Six tables laid out from the introspected schema: foreign keys, the posts–tags pair with its junction collapsed, an expanded column list, and the N-hop neighbourhood filter."
+/>
+
 The workbench draws an **automatic ER diagram from a database** as soon as you
 connect: a read-only diagram built with React Flow and an ELK layered layout over
 the same introspected relationship data the editor already consumes — it adds no schema-mutating call

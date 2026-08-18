@@ -1,0 +1,7 @@
+# One beat per line, paired with the `workbench-sql` scene in capture.mjs.
+# The console runs over the desktop bridge, so the harness starts the headless
+# host with --enable-http-bridge.
+Generated queries do not cover everything, so the workbench also keeps a raw SQL console.
+The editor knows the connected schema. Table and column names complete as you type, and the statement runs against the connection already open.
+Control Enter runs the statement. Selecting part of the text runs only the selection.
+Results come back as a grid with the column names the query produced. This is the same connection the rest of the workbench uses, so nothing has to be configured twice.

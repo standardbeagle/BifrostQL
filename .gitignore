@@ -414,3 +414,6 @@ src/BifrostQL.UI/wwwroot/index.html
 
 # Windows publish + installer output (scripts/build-windows-installer.sh)
 /dist/
+
+# Demo-video harness working files (seeded db, tts wavs, raw recordings, logs)
+docs/videos/.work/

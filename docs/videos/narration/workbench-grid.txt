@@ -1,0 +1,7 @@
+# One beat per line, paired with the `workbench-grid` scene in capture.mjs.
+The BifrostQL workbench opens a database in the browser. The sidebar lists every table it found, with the column count, the row count, and the number of foreign keys.
+Posts has eleven columns and five hundred rows. Opening it loads the data through the generated GraphQL API.
+Foreign keys arrive resolved. The author and category columns show the label from the joined row, not the raw numeric key.
+The grid is not a local copy. Paging is a query argument, so each page is one request against five hundred rows, and nothing is downloaded up front.
+Grouping is a separate aggregate query. Pick a column and the server returns one row per group.
+Three groups: three hundred and ninety nine published, sixty five draft, thirty six archived. Inline editing switches off while grouping is active, because a group row is a summary with no single record behind it.

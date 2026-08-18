@@ -1,0 +1,10 @@
+# One beat per line. Beat N pairs with beat N of the `quickstart` scene in
+# capture.mjs. Facts here are checked against the live responses this scene
+# records, and against docs-research/devto-drafts/01-graphql-api-in-5-minutes.md.
+BifrostQL turns a SQL database into a GraphQL API. It reads the schema when the server starts, and builds the API from it.
+This database is a plain SQLite file with a blog schema: authors, categories, posts, comments, and tags. No schema file was written, and no code was generated.
+Every table became a query field. This asks for three authors, sorted by name, with the total row count.
+Ten authors in the table, three returned. Total counts the whole result, not the page, so paging never costs you a second query.
+Every foreign key became a nested field. Posts can reach its author, its category, and its comments in the same request.
+One request, four tables. Forty-five of the fifty posts are published, and each one carries its author and its comment count.
+Nothing here was hand written. Change a column in the database, restart, and the API changes with it.

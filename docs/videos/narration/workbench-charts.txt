@@ -1,0 +1,6 @@
+# One beat per line, paired with the `workbench-charts` scene in capture.mjs.
+The chart pane plots aggregates from the same generated API the grid and the pivot use.
+Choose a table and a dimension. The dimension is the column the data groups by, and the chart draws as soon as the aggregate returns.
+The chart type is independent of the query. Switching between bar, line, area, and pie changes only how the same result is drawn.
+A named chart can be saved, and a saved chart can be placed on a dashboard. A dashboard holds chart, count, and table tiles, and is saved under its own name.
+Reopening a saved chart restores the table, the dimension, and the chart type together, so a view worth keeping survives a reconnect.

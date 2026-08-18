@@ -1,0 +1,7 @@
+# One beat per line, paired with the `workbench-pivot` scene in capture.mjs.
+The pivot pane cross tabulates a table without writing any SQL. It reads the same schema the grid uses, so every table and column is already there.
+Pick a source table. The wells below decide which columns become rows, which become columns, and which one is measured.
+Category goes into the rows well. Every distinct category becomes one row of the result.
+Status goes into the columns well. The pivot is now a category by status grid.
+The value well picks what is measured. Counting post identifiers fills the cells, and the whole aggregate is computed on the server, not in the browser.
+A pivot can be named and saved, and reopened later from the same pane.

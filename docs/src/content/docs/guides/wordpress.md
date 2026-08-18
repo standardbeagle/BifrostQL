@@ -1,17 +1,26 @@
 ---
 title: "GraphQL API for a WordPress Database"
-description: "Serve a WordPress MySQL database as a GraphQL API, with schema auto-detection, injected foreign keys, postmeta flattening, and PHP serialized value decoding."
+description: "Serve a WordPress MySQL database as a GraphQL API, with schema auto-detection, ten injected foreign keys, postmeta flattening, and friendly table labels."
 ---
 
 BifrostQL auto-detects WordPress databases and configures the GraphQL API to match WordPress's data model. Connect to the database and the API is ready — no mapping files, no manual FK definitions.
 
 ## Quick start
 
-Point BifrostQL at your WordPress database:
+Point BifrostQL at your WordPress database, and set the `Provider` explicitly:
 
+```json
+{
+  "ConnectionStrings": {
+    "bifrost": "Server=localhost;Database=wordpress;Uid=wp_user;Pwd=xxx;"
+  },
+  "BifrostQL": {
+    "Provider": "mysql"
+  }
+}
 ```
-Server=localhost;Database=wordpress;User Id=wp_user;Password=xxx;
-```
+
+Always set `Provider` (`mysql` or `mariadb`) for a WordPress database. When the key is absent, BifrostQL infers the provider from the connection string, and that inference is narrow for MySQL: it matches on `Uid=`, on `Pwd=` without `User Id=`, or on `SslMode=` together with `Port=3306`. A conventional string like `Server=localhost;Database=wordpress;User Id=wp;Password=xxx;` is inferred as SQL Server, and you get T-SQL generated against MySQL.
 
 BifrostQL detects the WordPress schema, applies the configuration, and publishes the API. Open the GraphQL playground and query immediately.
 
@@ -23,34 +32,36 @@ BifrostQL identifies the WordPress prefix by scanning for `{prefix}users`, `{pre
 
 ### Foreign key injection
 
-WordPress doesn't declare foreign keys in its DDL. BifrostQL injects the following relationships:
+WordPress doesn't declare foreign keys in its DDL. BifrostQL injects the following ten relationships:
 
 | Source column | Target table | Target column |
 |--------------|-------------|--------------|
 | `wp_posts.post_author` | `wp_users` | `ID` |
 | `wp_posts.post_parent` | `wp_posts` | `ID` |
 | `wp_postmeta.post_id` | `wp_posts` | `ID` |
+| `wp_usermeta.user_id` | `wp_users` | `ID` |
 | `wp_comments.comment_post_ID` | `wp_posts` | `ID` |
 | `wp_comments.user_id` | `wp_users` | `ID` |
 | `wp_commentmeta.comment_id` | `wp_comments` | `comment_ID` |
-| `wp_term_relationships.term_taxonomy_id` | `wp_term_taxonomy` | `term_taxonomy_id` |
+| `wp_termmeta.term_id` | `wp_terms` | `term_id` |
 | `wp_term_taxonomy.term_id` | `wp_terms` | `term_id` |
-| `wp_usermeta.user_id` | `wp_users` | `ID` |
+| `wp_term_relationships.term_taxonomy_id` | `wp_term_taxonomy` | `term_taxonomy_id` |
 
 These injected FKs enable join navigation in GraphQL without any manual configuration.
 
 ### Hidden tables
 
-Internal WordPress tables that aren't useful through a GraphQL API are hidden automatically:
-
-- Action Scheduler tables (`wp_actionscheduler_*`)
-- Other infrastructure tables used by WordPress internals
+Four Action Scheduler tables are hidden automatically: `wp_actionscheduler_actions`, `wp_actionscheduler_claims`, `wp_actionscheduler_groups`, and `wp_actionscheduler_logs`. They are matched by exact name against the detected prefix, not by wildcard, so a plugin table named `wp_actionscheduler_something_else` stays visible.
 
 Hidden tables don't appear in the GraphQL schema but remain accessible in the database.
 
 ### Friendly labels
 
-Tables and columns receive human-readable labels. For example, `wp_posts` becomes "Posts", `post_author` becomes "Author".
+The twelve core tables receive human-readable labels: `wp_posts` becomes "Posts", `wp_postmeta` becomes "Post Meta", `wp_term_taxonomy` becomes "Term Taxonomy", and so on. Columns are not labeled — column names appear as-is (subject to the naming rule below).
+
+### Column naming: `ID` becomes `iD`
+
+GraphQL field names for columns pass through a sanitizer that lowercases the first character. `post_title` survives unchanged, but the WordPress `ID` column becomes `iD` in every query and response. Querying `ID` returns an error: `Cannot query field 'ID' on type 'wp_posts'. Did you mean 'iD'?` Table names such as `wp_posts` start lowercase already and are unaffected.
 
 ## Multisite support
 
@@ -74,7 +85,7 @@ BifrostQL flattens these into a `_meta` field on the parent type. Instead of que
 {
   wp_posts(limit: 5) {
     data {
-      ID
+      iD
       post_title
       _meta
     }
@@ -90,7 +101,7 @@ Returns:
     "wp_posts": {
       "data": [
         {
-          "ID": 1,
+          "iD": 1,
           "post_title": "Hello world!",
           "_meta": {
             "_edit_last": "1",
@@ -106,9 +117,9 @@ Returns:
 
 The `_meta` field is available on posts, users, comments, and terms.
 
-## PHP deserialization
+## PHP serialized values are returned as stored
 
-WordPress stores structured data using PHP's `serialize()` format in meta values and options. BifrostQL automatically detects and converts these to JSON:
+WordPress stores structured data using PHP's `serialize()` format in meta values and options. BifrostQL returns these values **as stored** — no deserialization happens on the read path today:
 
 ```graphql
 {
@@ -121,22 +132,16 @@ WordPress stores structured data using PHP's `serialize()` format in meta values
 }
 ```
 
-A raw PHP serialized value like:
-
-```
-a:2:{i:0;s:19:"akismet/akismet.php";i:1;s:29:"classic-editor/classic-editor.php";}
-```
-
-Is returned as JSON:
+Returns the raw serialized string:
 
 ```json
 {
   "option_name": "active_plugins",
-  "option_value": ["akismet/akismet.php", "classic-editor/classic-editor.php"]
+  "option_value": "a:2:{i:0;s:19:\"akismet/akismet.php\";i:1;s:33:\"classic-editor/classic-editor.php\";}"
 }
 ```
 
-This applies to all meta tables and the options table. Values that aren't PHP serialized are returned unchanged.
+Plan to decode these client-side. The detector does mark the affected columns — `wp_options.option_value` plus the `meta_value` column of the four meta tables — with `type: php_serialized` and `format: php`, so a consumer can find them from the schema metadata instead of hard-coding a list. The repository ships a `PhpSerializer` with a working `ToJson`, but it is not yet wired into the read path.
 
 ## Example queries
 
@@ -146,7 +151,7 @@ This applies to all meta tables and the options table. Values that aren't PHP se
 {
   wp_posts(filter: { post_status: { _eq: "publish" } }, limit: 10) {
     data {
-      ID
+      iD
       post_title
       post_date
       wp_users {
@@ -164,7 +169,7 @@ This applies to all meta tables and the options table. Values that aren't PHP se
 {
   wp_posts(filter: { post_type: { _eq: "post" } }, limit: 5) {
     data {
-      ID
+      iD
       post_title
       _meta
       wp_postmeta(filter: { meta_key: { _eq: "_thumbnail_id" } }) {
@@ -201,7 +206,7 @@ This applies to all meta tables and the options table. Values that aren't PHP se
 {
   wp_users(limit: 10) {
     data {
-      ID
+      iD
       user_login
       display_name
       _meta

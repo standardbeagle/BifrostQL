@@ -1,6 +1,6 @@
 ---
 title: "Rotating Field-Encryption Keys"
-description: "Rotate a data-encryption key and re-encrypt live rows with no read downtime, using version-tagged ciphertext and an online sweep through the mutation pipeline."
+description: "Rotate a data-encryption key and re-encrypt rows with no read downtime, using version-tagged ciphertext and an operator-driven sweep through the mutation pipeline."
 ---
 
 This guide covers **key rotation** for [field-level
@@ -9,9 +9,9 @@ encrypted columns yet, read the concept page first — this page assumes you
 already have a `key-ref` with encrypted data.
 
 Rotation is **online**: a rotated key-ref keeps serving reads for every existing
-row while new writes move to the fresh key, and a background sweep re-encrypts
-the older rows in place. No read ever fails and no window returns ciphertext as
-plaintext.
+row while new writes move to the fresh key, and an operator-driven sweep
+re-encrypts the older rows in place. No read ever fails and no window returns
+ciphertext as plaintext.
 
 ## The two kinds of rotation
 
@@ -22,9 +22,11 @@ plaintext.
 
 **Root-key rotation** swaps the base secret the DEKs are wrapped with. Because
 the root key only ever wraps DEKs (it never encrypts field values directly),
-re-wrapping the DEKs is enough — the stored ciphertext does not change. Rotate
-the root key by re-wrapping each stored DEK under the new root and swapping the
-`IRootKeyProvider`; no sweep is needed.
+re-wrapping the DEKs is enough — the stored ciphertext does not change, and no
+sweep is needed. **There is no shipped API for this**: the procedure — re-wrap
+each stored DEK under the new root, then swap the `IRootKeyProvider` — is code
+you write against your key store; no re-wrap or root-rotate method exists in
+the codebase today.
 
 The rest of this guide is about **DEK rotation**, where the key that actually
 encrypts field values changes and existing rows must migrate to it.
@@ -85,7 +87,9 @@ never two divergent keys.
 ## The online re-encryption sweep
 
 Rotation alone leaves older rows readable but still on the old key. The
-`CryptoReEncryptionSweep` moves them onto the current version:
+`CryptoReEncryptionSweep` moves them onto the current version. It is **library
+code an operator drives** — no hosted service or production code path calls it,
+so you supply the job runner that selects rows and invokes it:
 
 ```csharp
 var sweep = new CryptoReEncryptionSweep(mutationIntentExecutor, keyManager);
@@ -109,6 +113,11 @@ For each row, the sweep:
    positional primary key plus the decrypted plaintext. The
    `EncryptOnWriteMutationTransformer` in the pipeline re-encrypts that plaintext
    under the **current** version.
+
+The sweep has **no batching, cursor, or checkpoint** of its own: the caller
+hands it the rows as an `IEnumerable`, and "resumable" means idempotent — a
+re-run is safe, but nothing tracks progress for you. For a large table, select
+and feed the rows in batches yourself.
 
 ### Security properties of the sweep
 

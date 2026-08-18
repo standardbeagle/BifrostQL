@@ -30,8 +30,10 @@ implicit default window, ever.
 ```
 
 Durations are a positive integer followed by `d` (days) or `h` (hours): `90d`, `12h`. A
-zero, negative, or malformed duration is a configuration error and the table is skipped
-fail-closed (see [Fail-closed behavior](#fail-closed-behavior)).
+zero, negative, or malformed duration (e.g. `retain: 0d`) is rejected by **model
+validation**: model load fails, the purge pass fails as a whole and is retried on the
+next interval, and nothing is purged (see
+[Fail-closed behavior](#fail-closed-behavior)).
 
 ### `retain` — hard-purge already-soft-deleted rows
 
@@ -90,8 +92,8 @@ No feature flag turns it on — declaring `retain` or `ttl` on a table is the sw
 
 The loop self-disables. On its first pass, a model where no table declares `retain` or
 `ttl` makes the engine log a debug line and return, so the loop stops rather than polling
-forever. A table whose retention config fails to parse counts as not opting in, so a
-broken policy never keeps the loop alive and never deletes anything.
+forever. A retention config that fails to parse is caught by model validation, so a
+broken policy makes the pass fail wholesale and retry — it never deletes anything.
 
 The service starts detached, so a slow first pass never delays app start, and a failed
 pass is logged and retried on the next interval rather than thrown at the host. Stopping
@@ -154,9 +156,13 @@ Two properties follow, and are worth checking when you audit a deployment:
 
 Every failure mode fails safe — toward **not purging** — never toward an unscoped delete:
 
-- An **invalid config** on a table (bad duration, `retain` without soft-delete, `ttl`
-  without its anchor, a non-timestamp anchor) skips **only that table** for the pass and is
-  logged; it never aborts the whole sweep and never widens a purge.
+- An **invalid config** (bad duration, `retain` without soft-delete, `ttl` without its
+  anchor, a non-timestamp anchor) is rejected by **model validation**: model load fails,
+  so the purge pass **fails as a whole**, is logged, and is retried on the next interval —
+  no per-table skip, and nothing is purged until the config is fixed. The engine keeps a
+  per-table fail-closed skip as a backstop for a config error that only surfaces at sweep
+  time; that skip is logged and never widens a purge. Both layers fail toward **not
+  purging**.
 - A **scoped-away** delete (an out-of-tenant primary key) affects zero rows and is counted
   as zero purged — it neither deletes nor tombstones a trail it never touched.
 - If a table declares no retention at all, it is never touched.

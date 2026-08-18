@@ -1,9 +1,10 @@
 ---
-title: Change Data Capture & Outbound Events
-description: Emit insert/update/delete domain events through a transactional outbox so webhooks, queues, and search indexers stay in sync without polling — metadata-driven, exactly-once, no app dual-writes.
+title: "Change Data Capture from SQL Tables"
+description: "Capture insert, update, and delete events from SQL tables through a transactional outbox, so webhooks, queues, and search indexers stay in sync without polling."
 ---
 
-BifrostQL can emit a **domain event** every time a row is inserted, updated, or
+Change data capture from SQL tables lets BifrostQL emit a **domain event**
+every time a row is inserted, updated, or
 deleted, so downstream systems — webhooks, message queues, search indexers —
 stay in sync without polling the database.
 

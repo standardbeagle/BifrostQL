@@ -1,6 +1,6 @@
 ---
-title: "Application Schema Detection"
-description: "How BifrostQL automatically detects known application schemas like WordPress and applies optimized configurations — explicit foreign keys, hidden internal tables, and EAV flattening."
+title: "Automatic Application Schema Detection"
+description: "BifrostQL detects known application schemas such as WordPress and applies a tuned configuration: foreign keys, hidden internal tables, and EAV flattening."
 ---
 
 BifrostQL can recognize the database schema of known applications and apply pre-built configurations automatically. When you connect to a WordPress database, BifrostQL detects the `wp_` prefix, injects the correct foreign key relationships, hides internal tables, and enables meta flattening — no manual configuration required.

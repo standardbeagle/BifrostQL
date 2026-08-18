@@ -1,6 +1,6 @@
 ---
-title: "App Metadata Overlay"
-description: "The app-metadata overlay describes how SPA and React Native clients should present BifrostQL entities — labels, forms, grids, and relationships — as a standalone JSON layer that coexists with schema metadata."
+title: "App Metadata Overlay for Client UIs"
+description: "The app metadata overlay tells SPA and React Native clients how to present entities. Labels, forms, grids, and relationships ship as a standalone JSON layer."
 ---
 
 The **app-metadata overlay** is a presentation layer that describes *how an application client should render* the entities BifrostQL exposes: human-readable labels, form widgets, list grids, saved views, and relationship presentation. It is standalone JSON, served to SPA and React Native clients, and it sits on top of — without replacing — the existing schema-metadata system.

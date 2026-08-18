@@ -1,6 +1,6 @@
 ---
-title: "Protocol Adapters: One Pipeline, Many Front Doors"
-description: "Why BifrostQL protocol adapters own only the wire and its codec, while every read and write — GraphQL or not — travels the same intent-executor pipeline with tenant isolation, soft-delete, and policy guards applied unconditionally."
+title: "One Pipeline, Many Database Front Doors"
+description: "A BifrostQL protocol adapter owns only the wire and codec. Every read and write crosses the same intent-executor seam, so tenant and policy guards always apply."
 ---
 
 BifrostQL can expose the same database through front doors other than GraphQL-over-HTTP: OData, gRPC, a custom binary framing, an in-process pipe — anything that can be decoded into a read or write request. Each front door is a **protocol adapter**. This page explains the architectural rule that makes adapters safe: *there is exactly one query pipeline, and no adapter is ever allowed to own a second one*.

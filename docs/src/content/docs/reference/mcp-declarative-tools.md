@@ -1,6 +1,6 @@
 ---
-title: Declarative MCP Tool Document
-description: The full DSL for authoring domain-specific MCP tools over a BifrostQL database — params, root/byId reads, includes, aggregates, detail gating, per-tool policy, and off-by-default mutation tools — every key matched to the loader and validator, with the narrow-never-widen security guarantee.
+title: "Declarative MCP Tool Document Reference"
+description: "The full DSL for declarative MCP tools over a database: params, root and byId reads, includes, aggregates, per-tool policy, and off-by-default mutation tools."
 ---
 
 The declarative MCP tool document lets you ship **domain-specific** agent tools

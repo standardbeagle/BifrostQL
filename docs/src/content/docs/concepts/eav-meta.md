@@ -1,6 +1,6 @@
 ---
-title: EAV Attributes & the _meta Field
-description: Surface Entity-Attribute-Value side tables (like WordPress wp_postmeta) as a single _meta JSON field on the parent type — metadata-driven, no name guessing, returned as a real nested object.
+title: "EAV Tables as a GraphQL JSON _meta Field"
+description: "Surface entity-attribute-value tables such as WordPress wp_postmeta as one _meta JSON field on the parent GraphQL type. Metadata-driven, with no name guessing."
 ---
 
 Many schemas keep a row's dynamic, open-ended attributes in a key/value **side table** — the classic Entity-Attribute-Value (EAV) pattern. WordPress's `wp_postmeta` is the canonical example: one row per attribute, joined back to the post by `post_id`.

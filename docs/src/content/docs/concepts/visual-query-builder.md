@@ -1,6 +1,6 @@
 ---
-title: "Visual Query Builder"
-description: "The Access-style visual query builder lets desktop users assemble multi-table SELECTs — tables, joins, columns, sorting, and criteria — that BifrostQL turns into parameterized SQL via the dialect layer and runs over the in-process Photino bridge."
+title: "Access-Style Visual Query Builder for SQL"
+description: "Assemble multi-table SELECTs by dragging tables, joins, columns, and criteria. BifrostQL lowers the design to parameterized SQL through its dialect layer."
 ---
 
 The **visual query builder** is a Microsoft Access–style query designer in the BifrostQL desktop app. Users pick tables, wire joins, choose columns, and set sorting and criteria in a grid; BifrostQL generates a correct, parameterized `SELECT` for the active database and runs it — all without writing SQL, and without the query ever touching an HTTP or GraphQL endpoint.

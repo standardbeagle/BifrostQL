@@ -1,9 +1,9 @@
 ---
-title: "Pivot / Cross-Tab Queries"
-description: "Turn a long-form table into a cross-tab through the schema-generated <table>Pivot GraphQL field — server-side pivoting across all four SQL dialects, with a distinct-value cardinality cap."
+title: "Server-Side Pivot and Cross-Tab Queries"
+description: "Run server-side pivot and cross-tab queries through the generated table pivot GraphQL field on all four SQL dialects, under a distinct-value cardinality cap."
 ---
 
-BifrostQL exposes a **pivot (cross-tab)** query for every table through a
+BifrostQL generates a **server-side pivot (cross-tab)** query for every table through a
 schema-generated root field, `<table>Pivot`. The server does all of the
 pivoting — it discovers the distinct pivot-column values, generates a
 parameterized cross-tab, and returns the result. The client never cross-tabs

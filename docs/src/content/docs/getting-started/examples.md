@@ -1,6 +1,6 @@
 ---
-title: Example Projects
-description: Runnable example projects in the BifrostQL repository — schema-driven HTML forms, the embeddable React editor, and a minimal host app.
+title: "BifrostQL Example Projects You Can Run"
+description: "Runnable BifrostQL example projects: schema-driven HTML forms, the embeddable React editor, and a minimal ASP.NET host. Clone the repo and start each one."
 ---
 
 The [BifrostQL repository](https://github.com/standardbeagle/BifrostQL) ships runnable examples under `examples/`. Clone the repo and run them directly — they're the fastest way to see a feature working before wiring it into your own project.

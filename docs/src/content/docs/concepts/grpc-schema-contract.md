@@ -1,9 +1,10 @@
 ---
-title: "gRPC Schema Contract: Descriptor Strategy & the Field-Number Manifest"
-description: "The architectural decision behind BifrostQL's gRPC surface — why the descriptor is built dynamically from the cached DbModel but numbered from a checked-in field-number manifest, so the wire contract stays stable across schema drift without a code-generation step."
+title: "Stable gRPC Wire Contract from a Database"
+description: "BifrostQL builds its gRPC descriptor from the DbModel but numbers fields from a checked-in manifest, so the wire contract survives schema drift without codegen."
 ---
 
-This is an **architecture decision record**. It fixes the compatibility model of
+This is an **architecture decision record**. It fixes the stable gRPC wire
+contract BifrostQL derives from a database — the compatibility model of
 BifrostQL's gRPC surface *before* any runtime server is written, so that the
 first line of wire-facing code inherits a stable contract instead of
 back-filling one later. No runtime server, generated client, mutation RPC, or

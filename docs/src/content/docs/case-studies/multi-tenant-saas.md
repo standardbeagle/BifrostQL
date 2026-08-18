@@ -1,10 +1,10 @@
 ---
-title: "Case Study: Multi-Tenant SaaS Back Office"
-description: A simulated walkthrough of a field-service SaaS where tenant isolation, soft delete, and audit are enforced entirely server-side — client code never mentions a tenant.
+title: "Multi-Tenant SaaS Back Office on SQL"
+description: "A walkthrough of a field-service SaaS back office where tenant isolation, soft delete, and audit run entirely server-side, so client code never names a tenant."
 ---
 
 :::note[Simulated case study]
-Fieldstone is fictional; the tenant-isolation configuration is real. This walkthrough shows the pattern behind most multi-tenant BifrostQL deployments: one database, a `tenant_id` column, and a server that makes cross-tenant access structurally impossible rather than merely discouraged.
+Fieldstone is fictional; the tenant-isolation configuration is real. This walkthrough shows the pattern behind a multi-tenant SaaS back office on BifrostQL: one database, a `tenant_id` column, and a server that makes cross-tenant access structurally impossible rather than merely discouraged.
 :::
 
 ## The situation

@@ -1,9 +1,9 @@
 ---
-title: Schema Generation
-description: How BifrostQL reads your database and builds a GraphQL schema.
+title: "Automatic GraphQL Schema from a Database"
+description: "BifrostQL builds an automatic GraphQL schema from a database at startup. Introspection produces the types, query fields, and mutation fields. No mapping files."
 ---
 
-BifrostQL generates its entire GraphQL schema from your database metadata. There are no mapping files, no code generation steps, and no manual type definitions. The database is the single source of truth.
+BifrostQL builds an automatic GraphQL schema from a database. It generates the entire schema from your database metadata. There are no mapping files, no code generation steps, and no manual type definitions. The database is the single source of truth.
 
 ## How it works
 

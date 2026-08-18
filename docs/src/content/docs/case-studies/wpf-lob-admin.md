@@ -1,10 +1,10 @@
 ---
-title: "Case Study: Web Admin for a WPF LOB App"
-description: A simulated walkthrough of putting a browser-based admin site next to a legacy WPF order-management app — without touching the desktop app or the database schema.
+title: "Web Admin for a Legacy WPF App"
+description: "A walkthrough of putting a browser admin site beside a legacy WPF order-management app, without touching the desktop client and without a schema change."
 ---
 
 :::note[Simulated case study]
-Meridian Supply Co. is fictional, but every configuration block and component in this walkthrough is real and runnable. The scenario is modeled on the most common BifrostQL deployment: a healthy legacy database that needs a second, web-based front end.
+Meridian Supply Co. is fictional, but every configuration block and component in this walkthrough is real and runnable. The scenario is a web admin for a legacy WPF app, the most common BifrostQL deployment: a healthy legacy database that needs a second, web-based front end.
 :::
 
 ## The situation

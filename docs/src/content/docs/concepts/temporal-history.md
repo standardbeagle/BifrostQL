@@ -1,9 +1,10 @@
 ---
-title: Temporal Change History
-description: Record who changed which field, from what to what, and when — a metadata-driven before/after trail written atomically with the change, beyond the created/updated audit columns.
+title: "Field-Level Change History for SQL Tables"
+description: "Record field-level change history for SQL tables: who changed which column, from what to what, and when, written atomically inside the same transaction."
 ---
 
-The audit-column module stamps *who touched a row last*. **Temporal change history**
+The audit-column module stamps *who touched a row last*. **Field-level change
+history** for SQL tables
 records the rest: **which fields changed, from what value to what value, by whom, and
 when** — one history row per recorded mutation, written in the *same database
 transaction* as the change itself, so the trail can never disagree with the data.

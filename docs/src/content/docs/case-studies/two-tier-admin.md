@@ -1,10 +1,10 @@
 ---
-title: "Case Study: Two Admin Sections — App API vs. Raw SQL"
-description: A simulated walkthrough of one admin portal with two rooms — a curated admin built on the application-shaped GraphQL API for support staff, and a role-gated raw SQL console for on-call engineers.
+title: "Curated Admin Plus a Raw SQL Console"
+description: "A walkthrough of one admin portal with two rooms: a curated GraphQL-backed admin for support staff, and a role-gated raw SQL console for the on-call engineers."
 ---
 
 :::note[Simulated case study]
-Brightline Bookings is fictional; the configuration, roles, and queries are real. This walkthrough shows the two ends of the BifrostQL spectrum living in one deployment: the **shaped application API** and the **raw SQL escape hatch** — and why you'd want both, fenced differently.
+Brightline Bookings is fictional; the configuration, roles, and queries are real. This walkthrough pairs a curated admin with a raw SQL console in one deployment, the two ends of the BifrostQL spectrum: the **shaped application API** and the **raw SQL escape hatch** — and why you'd want both, fenced differently.
 :::
 
 ## The situation

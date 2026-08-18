@@ -1,6 +1,6 @@
 ---
 title: "Solving the GraphQL N+1 Query Problem"
-description: "How BifrostQL eliminates the N+1 query problem by compiling GraphQL requests into batched SQL — one query per table, one database round-trip, zero configuration."
+description: "BifrostQL solves the GraphQL N+1 query problem by compiling a request into batched SQL: one query per table, one database round-trip, and no DataLoader setup."
 ---
 
 The N+1 query problem is the most common performance issue in GraphQL APIs. BifrostQL solves it at the architecture level — no DataLoader, no manual batching, no per-resolver wiring.

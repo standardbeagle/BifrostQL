@@ -1,9 +1,9 @@
 ---
-title: SQL Dialects
-description: Database-specific behavior across SQL Server, PostgreSQL, MySQL, and SQLite.
+title: "Cross-Database SQL Dialect Support"
+description: "How BifrostQL differs across SQL Server, PostgreSQL, MySQL, and SQLite: a dialect matrix covering identifier quoting, paging, concatenation, and upserts."
 ---
 
-BifrostQL abstracts database-specific SQL generation through the `ISqlDialect` interface. Each dialect handles identifier quoting, pagination syntax, type mapping, and upsert strategies for its target database.
+Cross-database SQL dialect support comes from one seam: BifrostQL abstracts database-specific SQL generation behind the `ISqlDialect` interface. Each dialect handles identifier quoting, pagination syntax, type mapping, and upsert strategies for its target database.
 
 ## Supported databases
 

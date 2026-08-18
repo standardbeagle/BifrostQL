@@ -1,9 +1,9 @@
 ---
-title: Case Studies Overview
-description: Simulated, end-to-end walkthroughs of real deployment shapes — legacy desktop apps, two-tier admin portals, and multi-tenant SaaS back offices.
+title: "BifrostQL Deployment Patterns in Practice"
+description: "Walkthroughs of real BifrostQL deployment shapes: a legacy desktop app given a web admin, a two-tier admin portal, and a multi-tenant SaaS back office."
 ---
 
-The guides section documents each BifrostQL feature in isolation. This section does the opposite: each page here takes a **realistic, simulated scenario** — a company, a legacy database, a set of constraints — and walks it end to end, showing how the features compose into a shipped system.
+The guides section documents each BifrostQL feature in isolation. This section shows BifrostQL deployment patterns instead: each page takes a **realistic, simulated scenario** — a company, a legacy database, a set of constraints — and walks it end to end, showing how the features compose into a shipped system.
 
 The companies and databases are invented, but every configuration block, metadata rule, query, and component in these pages is real and runnable against the current release.
 

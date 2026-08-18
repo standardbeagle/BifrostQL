@@ -1,6 +1,6 @@
 ---
-title: Lookup-table enums
-description: Mark a lookup table with enum metadata and BifrostQL emits a GraphQL enum type; columns that reference it become typed, filterable, and writable as that enum.
+title: "Lookup Table to GraphQL Enum Conversion"
+description: "Mark a lookup table with enum metadata and BifrostQL emits a GraphQL enum type. Columns that reference it become typed, filterable, and writable as that enum."
 ---
 
 A lookup table — a small table whose rows are a fixed set of allowed values (`status`, `priority`, `category`) — can be surfaced as a real GraphQL enum instead of a free-form string. Mark the table with `enum:` metadata and BifrostQL emits a GraphQL enum type named `{Table}Values`. Every column that references that table is then typed as the enum, can be filtered by enum name, and is written by enum name on insert/update/upsert.

@@ -1,9 +1,9 @@
 ---
-title: Chat over Your Tables
-description: Declare a chat schema — conversations and messages — over tables you already own, with tenant isolation, field encryption, and change history composing like on any other table.
+title: "LLM Chat over Your Own Database Tables"
+description: "Run LLM chat over your own database tables. Conversations and messages are ordinary tables, so tenant isolation, encryption, and change history still apply."
 ---
 
-The **chat module** publishes a chat schema over **user-supplied tables**: you bring a
+The **chat module** runs LLM chat over your own database tables. It publishes a chat schema over **user-supplied tables**: you bring a
 conversations table and a messages table (any names, any extra columns), and metadata
 maps them onto the roles the chat surface needs. Because the tables are ordinary
 published tables you own, the rest of BifrostQL composes with them unchanged —

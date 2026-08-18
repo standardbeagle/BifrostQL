@@ -1,6 +1,6 @@
 ---
-title: "Saved Objects (Queries, Forms, Reports, Dashboards)"
-description: "The unified saved-object store persists user-authored queries, forms, reports, and dashboards through a dedicated /_saved-objects CRUD endpoint — a separate pipeline from schema metadata and from the read-only app-metadata overlay."
+title: "Saved Queries, Forms, Reports, Dashboards"
+description: "One saved-object store keeps user-authored queries, forms, reports, and dashboards behind a /_saved-objects CRUD endpoint, apart from schema and app metadata."
 ---
 
 The desktop workbench lets users author **queries, forms, reports, and

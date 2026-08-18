@@ -47,7 +47,59 @@ sides expose their full column lists; where they do not, the subform surfaces an
 explicit **"unsupported relationship"** state rather than silently guessing with
 `column[0]`.
 
+## The server-side form and view builders
+
+BifrostQL.Core ships a second way to put a form over a table, for pages that run
+without JavaScript. `BifrostFormBuilder` (`src/BifrostQL.Core/Forms/`) plus
+`ListViewBuilder` and `DetailViewBuilder` (`src/BifrostQL.Core/Views/`) each
+return a **string of HTML-encoded markup** generated from the `DbModel`:
+
+- `GenerateForm(table, FormMode.Insert|Update|Delete, values, errors, foreignKeyOptions)`
+  emits a `<form method="POST">` whose action is
+  `{basePath}/form/{table}/{mode}[/{id}]`, adding
+  `enctype="multipart/form-data"` when the table has a binary column.
+- `GenerateListView(table, records, PaginationInfo, sort, dir, search)` emits a
+  search form, a sortable table, and pagination links.
+- `GenerateDetailView(table, recordData)` emits a `<dl>` field list plus
+  edit/delete/list action links.
+
+`BifrostFormValidator.Validate(...)` returns a `ValidationResult` of
+`ValidationError(fieldName, message)` you feed back into `GenerateForm` to
+re-render with per-field errors.
+
+### One model, two form stacks
+
+The server builders and the form runner above read the **same `DbModel` and the
+same schema metadata**. Server-rendered inputs take their HTML validation
+attributes from `ValidationRules.ForColumn` — the `min`, `max`, `step`,
+`minlength`, `maxlength`, `pattern`, `pattern-message`, `input-type`, and
+`required` metadata keys. A column marked `populate` is dropped from the form
+entirely. File inputs follow the `file` and `storage` keys.
+
+They diverge above that shared floor. The form runner builds its own
+`FormDefinition` JSON in the browser
+(`src/BifrostQL.UI/frontend/src/forms/form-state.ts`), reads schema over the
+Photino `get-builder-schema` bridge or the GraphQL `_dbSchema` field, and keeps
+definitions in browser local storage. The C# builders emit finished HTML and
+read neither that JSON nor that storage. Treat them as two independent lineages
+over one model: reach for the server builders when you want a server-rendered
+CRUD page in an existing ASP.NET app, and for the form runner when you want the
+desktop or SPA surface this page documents.
+
+### Wiring the builders
+
+The builders carry **no DI registration and no mapped endpoint**. You construct
+them with an `IDbModel` and route them yourself.
+`examples/forms-sample/Program.cs` is the complete worked wiring: minimal-API
+routes for list, view, insert, update, and delete, each returning
+`Results.Content(html, "text/html")`.
+
 ## Related
 
+- [Tabular reports](/BifrostQL/guides/workbench/printable-tables/) — print the
+  records a form maintains.
+- [Saved queries](/BifrostQL/guides/workbench/saved-queries/) — a form's source
+  can be a saved query.
+- [ER diagram](/BifrostQL/guides/workbench/erd/) — see which relationships a
+  subform can bind to.
 - [Data workbench overview](/BifrostQL/guides/workbench/)
-- [Tabular reports](/BifrostQL/guides/workbench/printable-tables/)

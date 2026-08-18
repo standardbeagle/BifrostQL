@@ -51,6 +51,8 @@ export default defineConfig({
 					label: 'Getting Started',
 					items: [
 						{ label: 'Installation & Setup', slug: 'getting-started' },
+						{ label: 'Connect a Database', slug: 'getting-started/connect-a-database' },
+						{ label: 'App Schemas', slug: 'getting-started/app-schemas' },
 						{ label: 'Example Projects', slug: 'getting-started/examples' },
 					],
 				},
@@ -77,6 +79,7 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
+						{ label: 'Developer Guide', slug: 'guides/developer-guide' },
 						{ label: 'Queries', slug: 'guides/queries' },
 						{ label: 'Aggregate Queries (GROUP BY)', slug: 'guides/aggregate-queries' },
 						{ label: 'Joins', slug: 'guides/joins' },
@@ -86,10 +89,14 @@ export default defineConfig({
 						{ label: 'Extending BifrostQL (Hooks & Providers)', slug: 'guides/extensibility' },
 						{ label: 'Building SQL Expressions (SqlExpr)', slug: 'guides/expression-builder' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
+						{ label: 'Authorization Policies', slug: 'guides/authorization' },
 						{ label: 'Multi-Tenant Org Model', slug: 'guides/org-model' },
+						{ label: 'File Storage', slug: 'guides/file-storage' },
 						{ label: 'State Machines', slug: 'guides/state-machines' },
 						{ label: 'Workflows', slug: 'guides/workflows' },
 						{ label: 'Workflow Mutations & Audit Trail', slug: 'guides/workflow-mutations' },
+						{ label: 'Approval Workflows', slug: 'guides/approval-workflows' },
+						{ label: 'Deferred Effects', slug: 'guides/deferred-effects' },
 						{ label: 'Emitting Change Events (CDC)', slug: 'guides/cdc-events' },
 						{ label: 'Recording Change History', slug: 'guides/change-history' },
 						{ label: 'Rotating Field-Encryption Keys', slug: 'guides/field-encryption' },

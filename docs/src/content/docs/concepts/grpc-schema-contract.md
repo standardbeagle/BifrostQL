@@ -245,9 +245,17 @@ This slice decides the compatibility model only. Explicitly **out of scope**:
   written.
 - **No generated client.** No client stubs, SDK, or descriptor-fetch tooling
   ships here.
-- **No mutation RPC.** The contract describes reads (row messages,
-  `Get{Table}` shape) only. Writes route through `IMutationIntentExecutor` when a
-  later slice adds them and are governed by the adapter write invariants — not
-  designed in this slice.
+- **No mutation RPC.** The contract as decided here describes reads (row
+  messages, `Get{Table}` shape) only. Writes were left to a later slice, governed
+  by the adapter write invariants.
 - **No gRPC-Web.** Browser-facing gRPC-Web framing and the JSON-transcoding
   number/precision concerns it raises are a separate, later decision.
+
+:::note[Since this decision]
+The write RPCs shipped. `Insert`, `Update`, and `Delete` route through
+`IMutationIntentExecutor` as the non-goal anticipated, and they are off by
+default behind a global `EnableWrites` opt-in plus a per-table gate. The
+descriptor and field-number rules decided above govern them unchanged. For the
+running server — hosting, reflection, `grpcurl`, and the write gates — see
+[gRPC endpoint over your database](/BifrostQL/guides/grpc/).
+:::

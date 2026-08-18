@@ -3,6 +3,10 @@ title: "pgwire BI-Tool Smoke Runbook"
 description: "Verify the PostgreSQL wire endpoint by hand: connect Grafana, Metabase, and psql over a real socket, introspect the schema, and chart a table end to end."
 ---
 
+This runbook verifies the endpoint documented in
+[Postgres Wire Protocol Emulation](/BifrostQL/guides/pgwire/). Start there for setup, auth
+mapping, and the supported SQL subset.
+
 BifrostQL exposes a PostgreSQL wire-protocol front door (pgwire) so any tool that
 speaks the postgres frontend/backend protocol — psql, Grafana's postgres
 datasource, Metabase's postgres driver — can read your tables as if BifrostQL

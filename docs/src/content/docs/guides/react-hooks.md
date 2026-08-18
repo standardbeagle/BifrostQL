@@ -3,7 +3,7 @@ title: "React Hooks for a GraphQL Database API"
 description: "Query and mutate a BifrostQL API from React with typed hooks for reads, writes, infinite scroll, and subscriptions, plus a headless TanStack Query table."
 ---
 
-`@bifrostql/react` is an **experimental** React client for BifrostQL APIs. It is not the client used by the shipped editor — the desktop app's editor is built on `@standardbeagle/edit-db`, which has its own data layer. Use `@bifrostql/react` for standalone experiments; expect its API to change. It's built on [TanStack Query](https://tanstack.com/query), so you get caching, background refetching, and optimistic updates for free — you just describe the table, fields, filter, and sort.
+`@bifrostql/react` is an **experimental** React client for BifrostQL APIs. It is not the client used by the shipped editor — the desktop app's editor is built on `@standardbeagle/edit-db`, which has its own data layer. The companion `@bifrostql/app-shell` package is experimental too, and currently has no importers. Use `@bifrostql/react` for standalone experiments; expect its API to change. It's built on [TanStack Query](https://tanstack.com/query), so you get caching, background refetching, and optimistic updates for free — you just describe the table, fields, filter, and sort.
 
 ## Install
 

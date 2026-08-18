@@ -5,6 +5,8 @@ description: "Set up local user login, OIDC providers, and JWT bearer tokens, an
 
 BifrostQL supports three authentication paths: local DB-backed user login, OIDC providers (Microsoft 365 and Google), and raw JWT bearer tokens. Every path produces the same provider-agnostic identity, which drives tenant isolation, audit column population, and any custom modules that depend on user context.
 
+This guide covers identity — establishing *who* the caller is. What that identity may then read or write is a separate layer: see [Row and Column Authorization Policies](/BifrostQL/guides/authorization/).
+
 ## The shared identity contract
 
 No matter how a user signs in, the authentication layer produces an `AppIdentity` — a provider-neutral record consumed by the security modules. Local login, OIDC, and JWT all converge on this one shape, so a module never has to know which provider authenticated the request.

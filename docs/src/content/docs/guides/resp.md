@@ -1,6 +1,6 @@
 ---
-title: "Redis Wire Protocol (RESP)"
-description: "Point redis-cli, StackExchange.Redis, or any RESP client at BifrostQL and read your tables as key-addressed rows. Covers operator setup and auth mapping, the supported command map, the <table>:<pk> key format, the opt-in write surface, unsupported-command behavior, and the security guarantees that make reads travel the same pipeline as GraphQL."
+title: "Redis Wire Protocol for SQL Rows"
+description: "Point redis-cli or StackExchange.Redis at BifrostQL and read rows by table:pk key, with a documented command map, auth mapping, and an opt-in write surface."
 ---
 
 BifrostQL can answer the Redis serialization protocol (RESP2 and RESP3) on a TCP

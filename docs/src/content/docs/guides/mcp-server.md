@@ -1,6 +1,6 @@
 ---
-title: "MCP Server: Your Database as Agent Tools"
-description: "Expose a BifrostQL database to an LLM agent over the Model Context Protocol. Covers stdio setup for Claude Code and local agents, HTTP + bearer hosting for shared deployments, the auth and write opt-in flags, the fixed tool surface (schema, query, aggregate, search, and the opt-in write tools), and the tool-design rationale — chunky fixed surface, densified payloads, and errors-as-prompts — plus the security posture every tool inherits from the shared intent pipeline."
+title: "Database MCP Server for AI Agents"
+description: "Expose a database to Claude Code and other agents over the Model Context Protocol, with stdio or HTTP bearer hosting, a fixed tool set, and opt-in write tools."
 ---
 
 BifrostQL can present your database to an LLM agent as a set of

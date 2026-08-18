@@ -1,6 +1,6 @@
 ---
-title: Recording Change History
-description: Configure a table to record who changed which field, from what to what — a before/after trail written in the same transaction as the change, across single-row, batch, and nested (TreeSync) writes.
+title: "Recording Row Change History"
+description: "Record who changed which field, from what value to what value, in the same transaction as the write, across single-row, batch, and nested TreeSync mutations."
 ---
 
 BifrostQL can record a **before/after trail** of every change to a table: which fields

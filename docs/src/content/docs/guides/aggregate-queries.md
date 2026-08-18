@@ -1,6 +1,6 @@
 ---
-title: "Aggregate Queries (GROUP BY)"
-description: "Group rows and compute count/sum/avg/min/max through the schema-generated <table>Aggregate field — server-side aggregation with the same tenant-isolation and soft-delete filters as row queries."
+title: "GraphQL GROUP BY Aggregate Queries"
+description: "Group rows and compute count, sum, avg, min, and max in one generated GraphQL field, under the same tenant-isolation and soft-delete filters row queries use."
 ---
 
 Every table gets a **grouped-aggregate** root field, `<table>Aggregate`, that

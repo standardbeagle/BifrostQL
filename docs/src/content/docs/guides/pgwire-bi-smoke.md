@@ -1,6 +1,6 @@
 ---
 title: "pgwire BI-Tool Smoke Runbook"
-description: "Manually verify that Grafana, Metabase, and psql can connect to the BifrostQL PostgreSQL wire-protocol endpoint over a real network socket, introspect the schema, and chart a table — the end-to-end path the automated tests deliberately do not fake."
+description: "Verify the PostgreSQL wire endpoint by hand: connect Grafana, Metabase, and psql over a real socket, introspect the schema, and chart a table end to end."
 ---
 
 BifrostQL exposes a PostgreSQL wire-protocol front door (pgwire) so any tool that

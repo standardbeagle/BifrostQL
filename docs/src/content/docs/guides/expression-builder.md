@@ -1,6 +1,6 @@
 ---
-title: Building SQL Expressions (SqlExpr)
-description: Construct portable, parameterized column expressions with the public SqlExprBuilder — one fluent tree that lowers to correct SQL on SQL Server, PostgreSQL, MySQL, and SQLite. Node set, eager build-time validation, per-dialect support matrix, and a worked module example.
+title: "Portable SQL Expression Builder"
+description: "Build parameterized column expressions with the SqlExprBuilder fluent API: one tree that lowers to correct SQL on SQL Server, Postgres, MySQL, and SQLite."
 ---
 
 BifrostQL represents a column-level SQL expression — the kind a computed column or a custom

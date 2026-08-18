@@ -1,11 +1,11 @@
 ---
-title: "SQL Editor"
-description: "A CodeMirror 6 SQL editor in the desktop shell with dialect-aware syntax and schema-aware autocomplete — execution stays on the desktop Photino bridge; no server-side arbitrary-SQL path is opened."
+title: "Schema-Aware SQL Editor"
+description: "A schema-aware SQL editor in the desktop shell: dialect-aware highlighting, table and column autocomplete, and execution confined to the Photino bridge."
 ---
 
-The desktop shell's SQL console is a **CodeMirror 6 editor** with dialect-aware
-highlighting and **schema-aware autocomplete** fed from the introspected schema
-the shell already loads.
+The desktop shell's SQL console is a **schema-aware SQL editor** built on
+CodeMirror 6: dialect-aware highlighting, plus autocomplete fed from the
+introspected schema the shell already loads.
 
 ## What it does
 
@@ -34,4 +34,9 @@ mutates schema.
 ## Related
 
 - [Export](/BifrostQL/guides/workbench/export/) — export console result sets.
+- [ER diagram](/BifrostQL/guides/workbench/erd/) — read the schema the
+  autocomplete draws on.
+- [Saved queries](/BifrostQL/guides/workbench/saved-queries/) — keep an executed
+  statement as a saved object.
 - [Desktop app](/BifrostQL/guides/desktop-app/)
+- [Data workbench overview](/BifrostQL/guides/workbench/)

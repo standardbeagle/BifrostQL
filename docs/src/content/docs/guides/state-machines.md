@@ -1,6 +1,6 @@
 ---
-title: State Machines
-description: Enforce lifecycle transitions with metadata-defined state machines.
+title: "Metadata-Defined State Machines"
+description: "Declare the allowed status transitions in table metadata and let the mutation pipeline reject every write that would move a row into an illegal next state."
 ---
 
 BifrostQL can enforce row lifecycle rules from table metadata. A state machine names the state column, the initial insert state, the allowed states, and the transitions that may move a row from one state to another.

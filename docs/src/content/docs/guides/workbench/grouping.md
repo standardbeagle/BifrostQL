@@ -1,11 +1,11 @@
 ---
-title: "Grid Grouping"
-description: "Group the data grid by one or more columns with server-computed group counts and totals — never a client-side sum over a partial page — with URL-persisted grouping state and per-group member expansion."
+title: "Grouping Rows in the Data Grid"
+description: "Grouping rows in the data grid by one or more columns, with server-computed group counts and totals, URL-persisted state, and per-group member expansion."
 ---
 
-The data grid can **group by** one or more columns, with group header rows whose
-counts and totals are computed **on the server**, not by summing the rows
-currently on the page. This keeps totals correct on large tables.
+Grouping rows in the data grid works by one or more columns, with group header
+rows whose counts and totals are computed **on the server**, not by summing the
+rows currently on the page. This keeps totals correct on large tables.
 
 ## Two-tier fetch
 
@@ -33,5 +33,11 @@ the grouping, so totals match the filtered SQL.
 
 ## Related
 
-- [Data workbench overview](/BifrostQL/guides/workbench/)
+- [Export](/BifrostQL/guides/workbench/export/) — a grouped grid exports every
+  matching row, not the visible page.
+- [Chart panel](/BifrostQL/guides/workbench/charts/) — plot the same grouped
+  aggregate.
+- [Tabular reports](/BifrostQL/guides/workbench/printable-tables/) — the same
+  grouping, printed as bands with subtotals.
 - [Aggregate queries](/BifrostQL/guides/aggregate-queries/)
+- [Data workbench overview](/BifrostQL/guides/workbench/)

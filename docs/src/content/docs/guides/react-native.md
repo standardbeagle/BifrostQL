@@ -1,6 +1,6 @@
 ---
-title: React Native
-description: React Native feasibility for @bifrostql/react — what works today, the auth refresh / session-failure model, and known gaps.
+title: "React Native Client Support"
+description: "Run the BifrostQL React client on React Native: what works today, how token refresh and session failure behave, and which gaps are still open on mobile."
 ---
 
 The `@bifrostql/react` runtime transport is **React Native compatible**. The

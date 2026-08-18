@@ -1,6 +1,6 @@
 ---
-title: "Full-Text Search (_search)"
-description: "Expose cross-dialect full-text search with the table-scoped _search filter operator: declare searchable columns with the search metadata, understand the pinned multi-term/phrase semantic, wire the required per-database full-text index (SQL Server catalog, Postgres GIN, MySQL FULLTEXT, SQLite FTS5), and rely on _search composing safely (ANDed) with tenant, policy, and soft-delete scoping."
+title: "Cross-Database Full-Text Search in GraphQL"
+description: "Add the _search filter operator to a table and map it onto a SQL Server catalog, Postgres GIN, MySQL FULLTEXT, or SQLite FTS5 without changing the query text."
 ---
 
 BifrostQL exposes cross-dialect full-text search through a single table-scoped filter

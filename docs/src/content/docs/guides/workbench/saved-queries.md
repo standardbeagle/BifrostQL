@@ -1,10 +1,11 @@
 ---
-title: "Saved Queries"
-description: "Persist a visual-query-builder design as a saved-object query, then list, reopen, and run it — with non-destructive schema-drift handling when a referenced table or column disappears."
+title: "Saving and Reusing Database Queries"
+description: "Saving and reusing database queries: persist a visual query design as a saved object, reopen and run it, and handle schema drift without rewriting it."
 ---
 
-The [visual query builder](/BifrostQL/concepts/visual-query-builder/) designs a
-multi-table `SELECT` without writing SQL. **Saved queries** let you persist that
+Saving and reusing database queries starts in the
+[visual query builder](/BifrostQL/concepts/visual-query-builder/), which designs
+a multi-table `SELECT` without writing SQL. **Saved queries** persist that
 design, reopen it later, and run it — backed by the unified
 [saved-object store](/BifrostQL/concepts/saved-objects/) as `type: query`.
 
@@ -39,6 +40,10 @@ definition cannot be silently written back to the store.
 
 ## Related
 
-- [Data workbench overview](/BifrostQL/guides/workbench/)
 - [Saved objects](/BifrostQL/concepts/saved-objects/) — the store and its
   optimistic-concurrency model.
+- [Tabular reports](/BifrostQL/guides/workbench/printable-tables/) — a report
+  takes a saved query as its source.
+- [Pivot UI](/BifrostQL/guides/workbench/pivot-ui/) — so does a pivot.
+- [Dashboards](/BifrostQL/guides/workbench/dashboards/) — so does a table tile.
+- [Data workbench overview](/BifrostQL/guides/workbench/)

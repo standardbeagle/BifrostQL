@@ -1,6 +1,6 @@
 ---
-title: "Syndication Feeds (RSS & Atom)"
-description: "Publish any table as an opt-in RSS 2.0 / Atom 1.0 feed: feed-* metadata, AddBifrostFeeds registration, URL/query/format behavior, absolute-link configuration, Bearer vs host-owned revocable token identity, conditional-GET caching, and the explicit non-goals (no WebSub, aggregation, sanitization, or writes)."
+title: "RSS and Atom Feeds from SQL Tables"
+description: "Publish a table as an opt-in RSS 2.0 or Atom 1.0 feed with feed metadata, absolute-link configuration, revocable feed tokens, and conditional-GET caching."
 ---
 
 BifrostQL can publish a table as a syndication feed — RSS 2.0 or Atom 1.0 — over an opt-in HTTP front door mounted on its own branch (default `/feeds`). Like every other non-GraphQL front door it **owns only its wire and codec**: reads execute through `IQueryIntentExecutor`, so tenant isolation, soft-delete, and policy scope apply unskippably, and identity is projected through the shared `IBifrostAuthContextFactory`. See [Authoring a Protocol Adapter](/BifrostQL/guides/protocol-adapters/) for the underlying contract.

@@ -1,6 +1,6 @@
 ---
-title: Joins
-description: Automatic and explicit table joins in BifrostQL.
+title: "Automatic Table Joins in GraphQL"
+description: "Traverse foreign keys as nested GraphQL fields, configure joins where no key exists, and link many-to-many tables, including composite keys, without SQL."
 ---
 
 BifrostQL exposes relationships directly on generated table types. Foreign-key and name-based relationships become fields on the row, and many-to-many relationships become list fields.

@@ -1,6 +1,6 @@
 ---
-title: Extending BifrostQL — Hooks & Providers
-description: Plug your own C# logic into the BifrostQL pipeline — filter transformers, mutation transformers, before-commit veto hooks, async server validation, computed columns, and query observers. Generic AddBifrostQL registration, no boilerplate.
+title: "Extending the Pipeline with C# Hooks"
+description: "Plug your own C# logic into the BifrostQL pipeline: before-commit veto hooks, async server validation, provider-backed computed columns, and query observers."
 ---
 
 BifrostQL generates the whole GraphQL API from your schema, but real apps need *their own* rules: a filter the metadata can't express, a mutation that must be vetoed under a business condition, an async call to an external service before a write commits. Every one of these is a small, typed C# class that you register with one line.

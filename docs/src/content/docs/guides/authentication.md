@@ -1,6 +1,6 @@
 ---
-title: Authentication
-description: Local-user login, OIDC providers, JWT bearer tokens, and the shared identity contract in BifrostQL.
+title: "GraphQL API Authentication and OIDC"
+description: "Set up local user login, OIDC providers, and JWT bearer tokens, and see how every BifrostQL transport shares one identity contract before authorization runs."
 ---
 
 BifrostQL supports three authentication paths: local DB-backed user login, OIDC providers (Microsoft 365 and Google), and raw JWT bearer tokens. Every path produces the same provider-agnostic identity, which drives tenant isolation, audit column population, and any custom modules that depend on user context.

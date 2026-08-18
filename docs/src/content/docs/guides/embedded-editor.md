@@ -1,6 +1,6 @@
 ---
-title: Embeddable Data Editor
-description: Drop a complete, schema-driven database editor into any React app with @standardbeagle/edit-db — automatic forms, validated CRUD, foreign-key navigation, and full theming via the --ui-* CSS contract.
+title: "Embeddable No-Code CRUD Editor"
+description: "Drop a schema-driven database editor into any React app with @standardbeagle/edit-db: automatic forms, validated CRUD, and theming through CSS variables."
 ---
 
 The same navigator that powers the [BifrostQL desktop app](/BifrostQL/guides/desktop-app/) ships as a standalone React component, `@standardbeagle/edit-db`. Point it at a GraphQL endpoint and you get a fully functional admin UI — data grid, generated forms, validation, and foreign-key navigation — with **zero configuration**. It reads the schema and builds the screens.

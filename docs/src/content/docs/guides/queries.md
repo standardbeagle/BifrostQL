@@ -1,6 +1,6 @@
 ---
-title: Queries
-description: Filtering, sorting, and pagination in BifrostQL.
+title: "GraphQL Filtering, Sorting, and Paging"
+description: "Query generated GraphQL fields with the full filter operator set, sort on several columns in order, and page a result set with limit, offset, and a total count."
 ---
 
 Every table query in BifrostQL returns paged results. The table name is the query field, and results live inside a `data` array.

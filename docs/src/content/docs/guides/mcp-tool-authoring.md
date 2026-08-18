@@ -1,6 +1,6 @@
 ---
-title: Authoring MCP Tools
-description: How to design declarative MCP tools for a BifrostQL database — consolidate related lookups into one rich tool instead of many thin ones, stay under the tool budget, fold related data with includes, and add off-by-default write tools with confirmation.
+title: "Designing MCP Tools for a Database"
+description: "Design declarative MCP tools that stay inside an agent's tool budget: consolidate thin lookups, fold related rows with includes, and gate every write tool."
 ---
 
 BifrostQL ships a small, fixed set of generic MCP tools (schema, query,

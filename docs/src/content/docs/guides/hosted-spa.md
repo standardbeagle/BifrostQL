@@ -1,6 +1,6 @@
 ---
-title: Hosted SPA / API Mode
-description: Serve a single-page app and a BifrostQL GraphQL API from one ASP.NET process — local dev proxy and production static hosting.
+title: "Hosting an SPA and GraphQL API Together"
+description: "Serve a single-page app and its BifrostQL GraphQL API from one ASP.NET process, with a dev-time proxy, production static hosting, and the right routing order."
 ---
 
 BifrostQL can host a single-page application (SPA) and a GraphQL API from a

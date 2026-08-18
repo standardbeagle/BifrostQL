@@ -1,6 +1,6 @@
 ---
-title: Mutations
-description: Insert, update, upsert, and delete operations in BifrostQL.
+title: "GraphQL Insert, Update, Upsert, Delete"
+description: "Write rows through generated GraphQL mutations: single and batch operations, upsert semantics, and nested TreeSync writes that span several related tables."
 ---
 
 BifrostQL exposes one mutation field per table that has a primary key. The table field accepts one of four operation arguments: `insert`, `update`, `upsert`, or `delete`. It also exposes a `<table>_batch` field for applying several operations in one request.

@@ -1,6 +1,6 @@
 ---
-title: "gRPC Endpoint"
-description: "Expose your tables over gRPC (HTTP/2) with server reflection, so any gRPC client can discover and read them with no local .proto files. Covers opt-in registration, HTTP/2 + TLS, bearer-metadata auth, the grpcurl/reflection client workflow, the DbModel-to-proto3 type map, the field-number manifest lifecycle, the read-surface limits, the opt-in write RPCs, and the RPC / operator / status matrices — every call routed through the same pipeline as GraphQL."
+title: "gRPC Endpoint over Your Database"
+description: "Serve your tables over gRPC with server reflection, so grpcurl and generated clients read them with no local .proto file and no second security pipeline."
 ---
 
 BifrostQL can expose your tables through a **gRPC (HTTP/2)** front door, so any

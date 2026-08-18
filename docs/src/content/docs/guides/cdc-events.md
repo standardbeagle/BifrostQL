@@ -1,6 +1,6 @@
 ---
-title: Emitting Change Events (CDC)
-description: Configure a table to emit insert/update/delete events into a transactional outbox, across single-row, batch, and nested (TreeSync) writes.
+title: "Emitting Change Events from Tables"
+description: "Configure a table to emit insert, update, and delete events into a transactional outbox, across single-row writes, batch writes, and nested TreeSync writes."
 ---
 
 BifrostQL can emit a domain event for every row change so downstream systems stay

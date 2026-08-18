@@ -1,11 +1,12 @@
 ---
-title: "Dashboards"
-description: "Compose chart, count-card, and table tiles into a saved dashboard — each tile fetches independently and fails soft, edit mode is separated from a read-only view mode, and deleting a referenced saved object never cascades."
+title: "Building Database Dashboards"
+description: "Building database dashboards from chart, count-card and table tiles: each tile fetches independently and fails soft, and edit mode is split from view mode."
 ---
 
-A **dashboard** is a tile grid of saved-object references — chart, count-card,
-and table tiles — persisted as a [saved object](/BifrostQL/concepts/saved-objects/)
-of `type: dashboard`.
+Building database dashboards takes three tile kinds and a grid. A **dashboard**
+is a tile grid of saved-object references — chart, count-card, and table tiles —
+persisted as a [saved object](/BifrostQL/concepts/saved-objects/) of
+`type: dashboard`.
 
 ## Tiles
 
@@ -38,4 +39,10 @@ reopening restores each tile's `{ x, y, w, h }` exactly.
 ## Related
 
 - [Saved objects](/BifrostQL/concepts/saved-objects/)
-- [Chart panel](/BifrostQL/guides/workbench/charts/)
+- [Chart panel](/BifrostQL/guides/workbench/charts/) — the tile that plots a
+  server aggregate.
+- [Pivot UI](/BifrostQL/guides/workbench/pivot-ui/) — cross-tab designer over
+  the same sources.
+- [Saved queries](/BifrostQL/guides/workbench/saved-queries/) — what a table
+  tile reads.
+- [Data workbench overview](/BifrostQL/guides/workbench/)

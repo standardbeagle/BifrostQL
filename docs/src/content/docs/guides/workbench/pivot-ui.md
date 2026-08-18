@@ -1,11 +1,12 @@
 ---
-title: "Pivot UI"
-description: "A drag-and-drop pivot designer — Rows, Columns, and Values field wells — over the server-side <table>Pivot GraphQL surface, with debounced re-queries, a surfaced cardinality-guard error, and table-or-saved-query sources."
+title: "Drag-and-Drop Pivot Table Designer"
+description: "A drag-and-drop pivot table designer over the server pivot surface: Rows, Columns and Values wells, debounced re-queries, and table or saved-query sources."
 ---
 
-The **pivot UI** is a drag-and-drop cross-tab designer over the server
-[pivot](/BifrostQL/concepts/pivot/) surface. The server does all cross-tabbing;
-the UI never groups fetched rows itself. A pivot configuration saves as a
+The **pivot UI** is a drag-and-drop pivot table designer over the server
+[pivot](/BifrostQL/concepts/pivot/) surface — the table's `<table>Pivot` root
+field. The server does all cross-tabbing; the UI never groups fetched rows
+itself. A pivot configuration saves as a
 [saved object](/BifrostQL/concepts/saved-objects/).
 
 ## Field wells
@@ -37,4 +38,10 @@ Export uses the shared [export](/BifrostQL/guides/workbench/export/) utility.
 
 - [Pivot / cross-tab queries](/BifrostQL/concepts/pivot/) — the GraphQL surface
   this UI drives.
+- [Chart panel](/BifrostQL/guides/workbench/charts/) — one dimension, plotted
+  instead of tabulated.
+- [Dashboards](/BifrostQL/guides/workbench/dashboards/) — pin a saved pivot
+  source to a tile.
+- [Saved queries](/BifrostQL/guides/workbench/saved-queries/) — the other pivot
+  source kind.
 - [Data workbench overview](/BifrostQL/guides/workbench/)

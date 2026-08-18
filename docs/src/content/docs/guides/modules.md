@@ -1,6 +1,6 @@
 ---
-title: Module System
-description: Cross-cutting concerns via filter transformers, mutation transformers, and query observers.
+title: "Cross-Cutting Modules and Transformers"
+description: "Add cross-cutting behavior with filter transformers, mutation transformers, and query observers, and pick the priority band that decides when each one runs."
 ---
 
 BifrostQL's module system handles cross-cutting concerns through metadata configuration. No custom code required for common patterns like tenant isolation, claim-based filters, soft-delete, and audit columns.

@@ -1,6 +1,6 @@
 ---
 title: "Rotating Field-Encryption Keys"
-description: "Rotate a data-encryption key and re-encrypt live data with zero read downtime. Covers key-version-in-ciphertext, version-directed decryption, the online re-encryption sweep through the mutation pipeline (no direct SQL, no tenant-scope bypass), root-key vs DEK rotation, and exactly what a denied role can and cannot observe through a rotation."
+description: "Rotate a data-encryption key and re-encrypt live rows with no read downtime, using version-tagged ciphertext and an online sweep through the mutation pipeline."
 ---
 
 This guide covers **key rotation** for [field-level

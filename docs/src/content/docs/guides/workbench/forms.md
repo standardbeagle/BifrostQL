@@ -1,10 +1,10 @@
 ---
-title: "Forms & Subforms"
-description: "The form runner renders a saved form over live data with record navigation and CRUD, and binds Access-style subforms to child records through schema-known foreign keys — composite-PK safe."
+title: "Database Forms and Subforms"
+description: "Database forms and subforms: run a saved form over live data with record navigation, CRUD through the grid's mutation hooks, and composite-key-safe binding."
 ---
 
-The **form runner** turns a saved form definition into a working data-entry
-surface: it renders one record at a time, navigates between records, and
+Database forms and subforms run in the workbench's **form runner**, which turns a
+saved form definition into a working data-entry surface: it renders one record at a time, navigates between records, and
 creates, edits, and deletes rows through the same mutation hooks and validation
 the grid uses. Forms persist as [saved objects](/BifrostQL/concepts/saved-objects/)
 (`type: form`).

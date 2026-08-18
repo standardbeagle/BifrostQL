@@ -1,9 +1,9 @@
 ---
-title: Desktop App (BifrostQL.UI)
-description: A native desktop database explorer with built-in GraphQL playground.
+title: "Desktop Database Explorer App"
+description: "Browse a local database in a native Photino desktop shell that carries a built-in GraphQL playground, a schema tree, and the same editor the hosted SPA serves."
 ---
 
-BifrostQL includes a desktop application built on [Photino.NET](https://www.tryphotino.io/) — a lightweight native window that wraps a web view. Point it at any SQL Server and you get a GraphQL playground with zero setup.
+BifrostQL ships a desktop database explorer app built on [Photino.NET](https://www.tryphotino.io/) — a lightweight native window that wraps a web view. Point it at any SQL Server and you get a GraphQL playground with zero setup.
 
 ## Install
 

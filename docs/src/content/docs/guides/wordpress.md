@@ -1,6 +1,6 @@
 ---
-title: "WordPress Database Guide"
-description: "How to connect BifrostQL to a WordPress MySQL database — auto-detection, foreign key injection, meta flattening, and PHP deserialization."
+title: "GraphQL API for a WordPress Database"
+description: "Serve a WordPress MySQL database as a GraphQL API, with schema auto-detection, injected foreign keys, postmeta flattening, and PHP serialized value decoding."
 ---
 
 BifrostQL auto-detects WordPress databases and configures the GraphQL API to match WordPress's data model. Connect to the database and the API is ready — no mapping files, no manual FK definitions.

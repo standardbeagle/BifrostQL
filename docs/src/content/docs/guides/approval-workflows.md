@@ -1,5 +1,6 @@
 ---
-title: Approval workflows
+title: "Maker-Checker Approval for Row Edits"
+description: "Divert risky writes into a pending queue, then approve or reject each one through GraphQL, replaying the approved change through the pipeline as its requester."
 ---
 
 # Approval workflows

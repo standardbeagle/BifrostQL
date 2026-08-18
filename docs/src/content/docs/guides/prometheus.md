@@ -1,6 +1,6 @@
 ---
-title: "Prometheus Metrics Endpoint"
-description: "Expose declared per-table business metrics — plus BifrostQL's own engine self-metrics — over a Prometheus /metrics scrape endpoint. Covers the metric metadata (name/help/count/sum/labels/max-cardinality/security-mode), the credential gate and aggregate vs per-tenant scoping, the single-flight cache, cardinality and timeout bounds, the bifrostql_engine_* self-metric namespace, AddBifrostPrometheus/UseBifrostPrometheus registration, and the honest non-goals — every aggregate routed through the same transformer pipeline as GraphQL."
+title: "Prometheus Metrics from Database Tables"
+description: "Declare per-table business metrics and scrape them at /metrics, with a credential gate, an explicit tenant scope per series, and BifrostQL engine self-metrics."
 ---
 
 BifrostQL can expose your tables as **Prometheus metrics** over an opt-in

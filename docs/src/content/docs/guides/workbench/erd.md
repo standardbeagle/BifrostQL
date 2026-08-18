@@ -1,11 +1,11 @@
 ---
-title: "ER Diagram"
-description: "A read-only entity-relationship diagram of the connected database, laid out automatically over the introspected relationship data — foreign keys, many-to-many pairs, name-based links, and polymorphic relationships each rendered as a distinct edge kind."
+title: "Automatic ER Diagram from a Database"
+description: "An automatic ER diagram from a database, laid out for you: foreign keys, many-to-many pairs, name-based links, and polymorphic edges each drawn distinctly."
 ---
 
-The workbench includes a **read-only ER diagram** of the connected database,
-built with React Flow and an ELK layered layout over the same introspected
-relationship data the editor already consumes — it adds no schema-mutating call
+The workbench draws an **automatic ER diagram from a database** as soon as you
+connect: a read-only diagram built with React Flow and an ELK layered layout over
+the same introspected relationship data the editor already consumes — it adds no schema-mutating call
 and no new server endpoint.
 
 ## What it renders
@@ -35,6 +35,10 @@ time.
 
 ## Related
 
-- [Data workbench overview](/BifrostQL/guides/workbench/)
 - [Schema generation](/BifrostQL/concepts/schema-generation/) — where the
   relationship data comes from.
+- [SQL editor](/BifrostQL/guides/workbench/sql-editor/) — the other
+  DBeaver-style pane.
+- [Forms and subforms](/BifrostQL/guides/workbench/forms/) — the relationships
+  the diagram shows are the ones subforms bind to.
+- [Data workbench overview](/BifrostQL/guides/workbench/)

@@ -1,11 +1,15 @@
 ---
-title: "Data Workbench Overview"
-description: "The BifrostQL desktop app is a data workbench: Access-style queries, forms and reports, DBeaver-style SQL editor and ER diagram, and a light BI slice of charts, pivots, and dashboards — all over your existing database."
+title: "Headless CRUD Admin Over Your Database"
+description: "A headless CRUD admin over your database: Access-style saved queries, forms and reports, a SQL editor and ER diagram, plus charts, pivots and dashboards."
 ---
 
 The BifrostQL desktop app (the [Desktop Navigator](/BifrostQL/guides/desktop-app/))
-is more than a GraphQL playground. It is a **data workbench** that blends three
-familiar tools over your existing database:
+is a **headless CRUD admin over your database**. Point it at a connection string
+and you get browse, search, edit, and report surfaces without writing a screen.
+Every pane reads the live schema at runtime, so a new column shows up on the next
+connect and your codebase stays free of scaffolded UI.
+
+The workbench blends three familiar tools over your existing database:
 
 - **Access parity** — [saved queries](/BifrostQL/guides/workbench/saved-queries/)
   from the visual designer, [forms](/BifrostQL/guides/workbench/forms/) with

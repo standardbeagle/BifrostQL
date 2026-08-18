@@ -1,6 +1,6 @@
 ---
-title: "Authoring a Protocol Adapter"
-description: "Implement IProtocolAdapter to expose BifrostQL over a non-GraphQL protocol: register with AddProtocolAdapter, project identity through IBifrostAuthContextFactory, execute via the query/mutation intent executors, host raw TCP under Kestrel, and prove safety with the shared conformance kit."
+title: "Authoring a Custom Protocol Adapter"
+description: "Implement IProtocolAdapter to serve BifrostQL over a non-GraphQL wire: identity projection, the intent executor seams, Kestrel hosting, and a conformance kit."
 ---
 
 A protocol adapter lets BifrostQL answer requests on a wire that isn't GraphQL-over-HTTP — OData, gRPC, a custom binary framing, an in-process pipe. This guide walks the full authoring surface: the hosting contract, registration, identity, the intent APIs, Kestrel hosting for raw TCP, and the conformance suite every adapter must pass.

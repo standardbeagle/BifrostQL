@@ -1,5 +1,6 @@
 ---
-title: Deferred effects
+title: "Deferred and Reversible Change Sets"
+description: "Capture a reverse delta for every write, review pending change sets, and undo a committed change through GraphQL while its CDC events stay held until release."
 ---
 
 # Deferred effects

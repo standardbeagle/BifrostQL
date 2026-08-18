@@ -1,6 +1,6 @@
 ---
-title: Chat Connectors
-description: Expose tables to the chat LLM as Claude tools — explore reads, inline media, and human-gated plan writes — with metadata reference, caps, the confirmation protocol, and custom connector registration.
+title: "Chat Connectors for Your Tables"
+description: "Expose tables to the chat LLM as Claude tools with explore reads, inline media, and human-gated plan writes, then register connectors of your own design."
 ---
 
 Chat connectors turn tables into **Claude tools the chat LLM can call

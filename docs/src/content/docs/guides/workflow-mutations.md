@@ -1,6 +1,6 @@
 ---
-title: Workflow Mutations & Audit Trail
-description: A convention for adding higher-level operations beyond raw table CRUD — sidecar workflow endpoints under the shared policy engine, with a tenant-scoped audit log queryable through Bifrost.
+title: "Workflow Mutations and Audit Trail"
+description: "Add operations beyond table CRUD as sidecar workflow endpoints under the shared policy engine, with a tenant-scoped audit log you can query through Bifrost."
 ---
 
 BifrostQL generates one mutation field per table: `insert`, `update`, `upsert`, `delete`. That generated CRUD is the right tool for most writes. But some operations are not a single-row write — *renew a membership*, *check in an attendee*, *invite a user*, *record a payment*. These touch several rows, enforce business rules, and must leave an audit trail. This guide defines the convention for those **workflow mutations** and the **audit-log** that records them.

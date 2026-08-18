@@ -1,6 +1,6 @@
 ---
 title: "RESP (Redis) Smoke Runbook"
-description: "Manually verify that redis-cli and a real StackExchange.Redis app can connect to the BifrostQL Redis wire-protocol endpoint over a real network socket, read rows with GET/HGETALL/SCAN, and stay tenant-scoped — the end-to-end path the automated tests exercise in-process."
+description: "Verify the Redis wire endpoint by hand: read rows with redis-cli GET, HGETALL, and SCAN, run a StackExchange.Redis client, and confirm reads stay tenant-scoped."
 ---
 
 BifrostQL exposes a Redis RESP wire-protocol front door so any tool that speaks

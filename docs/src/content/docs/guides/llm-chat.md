@@ -1,6 +1,6 @@
 ---
-title: LLM Chat Endpoints
-description: Serve streaming LLM chat over your own conversation tables with fail-closed tenancy, SSE, and typed terminal contracts.
+title: "Streaming LLM Chat Endpoints"
+description: "Serve streaming LLM chat over your own conversation tables with server-sent events, fail-closed tenancy, and typed terminal contracts a client can depend on."
 ---
 
 BifrostQL can host an LLM chat surface directly over two tables in your database. You declare a conversations/messages pair with `chat-*` metadata, opt in with `UseBifrostChat`, and BifrostQL exposes two HTTP endpoints: one to create conversations and one that appends the caller's message and streams the assistant completion back as [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).

@@ -1,6 +1,6 @@
 ---
-title: "Binary Transport Guide"
-description: "Connect to BifrostQL over a protobuf-over-WebSocket endpoint with chunked streaming, automatic resume across transient disconnects, and TypeScript codegen from a .proto schema."
+title: "Protobuf over WebSocket Transport"
+description: "Stream large result sets over a protobuf WebSocket endpoint with chunked delivery, automatic resume across transient disconnects, and TypeScript codegen."
 ---
 
 BifrostQL ships an alternative WebSocket transport that exchanges GraphQL queries and responses as protobuf-encoded binary frames instead of JSON over HTTP. It is roughly 60% smaller on the wire for binary or large payloads, supports async-iterator streaming so consumers can process chunks as they arrive, and automatically resumes interrupted transfers across transient network drops.

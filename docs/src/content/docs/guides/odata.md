@@ -1,6 +1,6 @@
 ---
-title: "OData v4 Endpoint"
-description: "Point Excel, Power BI, or any OData v4 client at BifrostQL and read your tables as an OData service. Covers opt-in endpoint registration, Bearer/Basic auth, the service document and $metadata, the supported query-option subset ($select/$orderby/$top/$skip/$filter/$count/$expand), server-driven paging, the bounded-resource limits, the deterministic error contract, and the security guarantees that route every read through the same pipeline as GraphQL."
+title: "OData v4 Endpoint for SQL Tables"
+description: "Connect Excel, Power BI, or any OData v4 client to your tables, with a service document, $metadata, the supported query options, and server-driven paging."
 ---
 
 BifrostQL can expose your tables through an **OData v4** HTTP endpoint, so any

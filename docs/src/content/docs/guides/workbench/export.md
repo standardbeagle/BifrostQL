@@ -1,12 +1,12 @@
 ---
-title: "Export Everywhere"
-description: "One shared CSV/JSON export utility wired into the grid, the SQL console, and the report runner — full-result-set export across all pages, RFC4180-correct quoting, BigInt-safe JSON, and an optional Excel BOM."
+title: "CSV and JSON Data Export"
+description: "CSV and JSON data export from every result surface: the full result set across all pages, RFC 4180 quoting, BigInt-safe JSON, and an optional Excel BOM."
 ---
 
-Every result surface in the workbench — the edit-db grid, the
-[SQL console](/BifrostQL/guides/workbench/sql-editor/), and the
-[report runner](/BifrostQL/guides/workbench/printable-tables/) — exposes CSV and
-JSON export, all backed by **one shared utility**
+CSV and JSON data export reaches every result surface in the workbench — the
+edit-db grid, the [SQL console](/BifrostQL/guides/workbench/sql-editor/), and the
+[report runner](/BifrostQL/guides/workbench/printable-tables/) — all backed by
+**one shared utility**
 (`examples/edit-db/src/lib/export.ts`). There is no second export implementation
 in the repo.
 
@@ -34,6 +34,10 @@ through the native save-file bridge.
 
 ## Related
 
-- [Data workbench overview](/BifrostQL/guides/workbench/)
+- [Grid grouping](/BifrostQL/guides/workbench/grouping/) — grouping composes
+  with export; the filter applies to both.
+- [Tabular reports](/BifrostQL/guides/workbench/printable-tables/) — report CSV
+  rides this same utility.
 - [Composite-PK compliance](/BifrostQL/concepts/schema-generation/) — why
   BigInt and composite keys are carried as strings.
+- [Data workbench overview](/BifrostQL/guides/workbench/)

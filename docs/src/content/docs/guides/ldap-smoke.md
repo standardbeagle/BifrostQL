@@ -1,6 +1,6 @@
 ---
 title: "LDAP Smoke Runbook"
-description: "Manually verify that ldapsearch and a real Grafana LDAP login can reach the BifrostQL LDAP endpoint over a real network socket, complete a bind over LDAPS and StartTLS, read entries, and stay tenant-isolated — the end-to-end path the automated tests deliberately do not fake."
+description: "Verify the LDAP endpoint by hand: bind over LDAPS and StartTLS with ldapsearch, run a real Grafana LDAP login, and confirm tenant isolation on a live socket."
 ---
 
 The [LDAP front door](/BifrostQL/guides/ldap/) answers LDAPv3 on a TCP port and

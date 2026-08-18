@@ -1,6 +1,6 @@
 ---
-title: "LDAP Directory Endpoint"
-description: "Point ldapsearch, Grafana, or any LDAPv3 client at BifrostQL and read your users and groups as directory entries. Covers the mapping metadata that publishes a table as an entry, DN design, the required password-verifier seams, LDAPS and StartTLS, bind auditing and rate limits, search bounds and paged results, how tenant isolation actually works in a single DN namespace, and the supported operation, filter, and result-code matrices."
+title: "LDAP Directory Server from a Database"
+description: "Publish users and groups from SQL tables as LDAPv3 entries, so ldapsearch, Grafana, and other directory clients can bind and search over LDAPS or StartTLS."
 ---
 
 BifrostQL can answer LDAPv3 on a TCP port, so any tool that speaks LDAP —

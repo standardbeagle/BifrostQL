@@ -1,6 +1,6 @@
 ---
-title: Workflows
-description: Define and run metadata-driven workflows through the BifrostQL mutation pipeline.
+title: "Metadata-Driven Database Workflows"
+description: "Define workflows in table metadata and run them through the BifrostQL mutation pipeline, so each step inherits the same tenant, policy, and audit behavior."
 ---
 
 BifrostQL workflows are declarative operation sequences stored in the app-metadata overlay. They let an application describe a named business operation without hand-writing a new data access path.

@@ -1,11 +1,11 @@
 ---
-title: "Tabular Reports"
-description: "The report runner renders a saved query or table with group bands, server-computed subtotals and grand totals, print CSS, and CSV export — subtotals always come from a grouped aggregate query, never from summing the visible page."
+title: "Printable Tabular Reports"
+description: "Printable tabular reports with group bands, server-computed subtotals and grand totals, print CSS, and CSV export of the full result set across all pages."
 ---
 
-The **report runner** produces Access-style tabular reports: a source query,
-group bands with subtotals, grand totals, page headers and footers, and a print
-stylesheet. Reports persist as [saved objects](/BifrostQL/concepts/saved-objects/)
+The **report runner** produces printable tabular reports in the Access sense: a
+source query, group bands with subtotals, grand totals, page headers and footers,
+and a print stylesheet. Reports persist as [saved objects](/BifrostQL/concepts/saved-objects/)
 (`type: report`).
 
 ## Report definition
@@ -37,6 +37,12 @@ derived, so interleaved groups cannot split a band.
 
 ## Related
 
-- [Data workbench overview](/BifrostQL/guides/workbench/)
+- [Grid grouping](/BifrostQL/guides/workbench/grouping/) — the same server
+  grouping in the grid.
+- [Export](/BifrostQL/guides/workbench/export/) — the shared CSV utility a
+  report exports through.
+- [Forms and subforms](/BifrostQL/guides/workbench/forms/) — the data-entry side
+  of the same saved query.
 - [Aggregate queries](/BifrostQL/guides/aggregate-queries/) — the surface the
   totals ride.
+- [Data workbench overview](/BifrostQL/guides/workbench/)

@@ -1,6 +1,6 @@
 ---
-title: "PostgreSQL Wire Protocol (pgwire)"
-description: "Point psql, JDBC/libpq, Grafana, or Metabase at BifrostQL as if it were a PostgreSQL server. Covers operator setup and auth mapping, the SAFE read-only SQL subset it accepts, the honest-error contract, and the security guarantees that make reads travel the same pipeline as GraphQL."
+title: "Postgres Wire Protocol Emulation"
+description: "Point psql, JDBC, Grafana, or Metabase at BifrostQL as if it were a PostgreSQL server: operator setup, auth mapping, and the read-only SQL subset it accepts."
 ---
 
 BifrostQL can answer the PostgreSQL frontend/backend protocol on a TCP port, so any

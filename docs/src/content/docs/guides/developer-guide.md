@@ -1,9 +1,9 @@
 ---
-title: Developer Guide
-description: Guide for developers working on BifrostQL - debugging, logging, and development workflows.
+title: "Contributing to BifrostQL"
+description: "Set up a local BifrostQL development loop: the build and test commands, debugging entry points, logging switches, and the conventions a pull request must meet."
 ---
 
-This guide covers development workflows, debugging techniques, and best practices for working with BifrostQL.
+This guide covers what you need before contributing to BifrostQL: the local development loop, debugging techniques, and the practices the codebase expects.
 
 ## Development Setup
 

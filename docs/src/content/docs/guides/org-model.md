@@ -1,6 +1,6 @@
 ---
-title: Multi-Tenant Org Model
-description: A reusable tenant/organization data model — canonical claims, deployment models, metadata rules, and tenant-owned mutation behavior — adoptable with metadata alone, no custom resolver code.
+title: "Multi-Tenant Organization Data Model"
+description: "Adopt a reusable tenant data model with metadata alone: canonical tenant claims, deployment shapes, and tenant-owned mutations that need no custom resolver."
 ---
 
 BifrostQL ships a reusable multi-tenant organization model: a small set of tables (tenants, app users, memberships, roles, role permissions, invitations) plus a metadata recipe that enforces tenant isolation on reads and mutations. The model is adoptable with metadata alone — no custom resolver code — because tenant isolation is delivered by the built-in `tenant-filter` and `auto-filter` modules and the audit module.

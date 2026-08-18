@@ -1,6 +1,6 @@
 ---
-title: "Data Retention & Right-to-Erasure"
-description: "Configure metadata-driven retention purges: retain (hard-purge already-soft-deleted rows) vs ttl (expire live rows), how the purge routes through the mutation pipeline for tenant-safe deletes, how the change-history trail is tombstoned on erasure so no PII is left behind, and the dry-run you run before enabling a policy."
+title: "Data Retention and Right to Erasure"
+description: "Purge data on a schedule with retain and ttl policies, tombstone the change-history trail on erasure, and dry-run a policy before the purge service enacts it."
 ---
 
 BifrostQL can purge data on a schedule, driven entirely by table metadata. A retention

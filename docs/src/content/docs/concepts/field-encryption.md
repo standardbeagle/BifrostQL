@@ -1,12 +1,13 @@
 ---
-title: Field-Level Encryption & Masking
-description: Encrypt sensitive columns at rest with envelope encryption (AES-256-GCM), bind each ciphertext to its cell, search encrypted columns via a blind index, and mask values per role — the design and key hierarchy.
+title: "Database Column Encryption at Rest"
+description: "Encrypt database columns at rest with AES-256-GCM envelope encryption, search them by equality through a blind index, and mask the value per role on every read."
 ---
 
-BifrostQL can encrypt sensitive columns **at rest** and reveal them only to
-authorized roles, masking or redacting the value for everyone else. This is the
-design and key-management foundation; the encrypt-on-write transformer and the
-decrypt/mask-on-read guard are later slices.
+Database column encryption at rest lets BifrostQL protect sensitive columns and
+reveal them only to authorized roles, masking or redacting the value for everyone
+else. This page covers the design and the key hierarchy behind it: how a value is
+encrypted on write, how it is decrypted or masked on read, and how an equality
+search still works through a blind index.
 
 ## Key hierarchy (envelope encryption)
 
@@ -91,23 +92,40 @@ only the masked value leaves the process.
 
 ## No plaintext oracle
 
-An encrypted column may be **selected** for output (it is decrypted/masked as
-above) but may **not** be used in a `filter`, `_order` (sort), or aggregate
-position — those are rejected. A non-deterministic ciphertext used as a predicate
-would be either useless or an information oracle (a WHERE that changes the result
-set leaks whether a guessed value matches). Equality search is intended to run
-through the `blind-index` sibling column; server-side rewrite of an equality
-predicate onto the blind index is a planned enhancement (the index is populated on
-write today; the query-side routing is the remaining piece).
+An encrypted column may be **selected** for output (it is decrypted or masked as
+above) but the ciphertext itself is never usable as a predicate. A
+non-deterministic ciphertext used in a WHERE clause would be either useless or an
+information oracle — a filter that changes the result set leaks whether a guessed
+value matches. Sorts and aggregates on an encrypted column are therefore rejected,
+and so is any filter that a blind index cannot serve.
 
 ## Searching encrypted columns
 
-Because the ciphertext is non-deterministic, you cannot filter or sort on it — and
-attempting to would leak information, so those paths are rejected (a later slice).
-For **equality** search, configure a **blind index**: a sibling column holding a
-deterministic keyed hash (HMAC-SHA-256 under the blind-index key) of the plaintext.
-Equality queries match on the blind index; the hash is one-way, so the column
-still never exposes plaintext.
+Equality search runs through a **blind index**: a sibling column holding a
+deterministic keyed hash (HMAC-SHA-256 under the blind-index key) of the
+plaintext. The hash is one-way, so the sibling column never exposes plaintext.
+
+Query-side routing is in place. When a filter names an encrypted column that
+declares a `blind-index` sibling, BifrostQL rewrites the predicate onto the
+sibling column before the query runs, hashing each supplied value with the same
+derivation used on write. The rewrite walks nested `and` / `or` groups and joined
+single-link filters, so a blind-index equality works wherever a normal filter does.
+
+Two operators are routed:
+
+| Operator | Behavior |
+|---|---|
+| `_eq` (non-null value) | Rewritten to `_eq` on the blind-index column. |
+| `_in` | Rewritten to `_in` on the blind-index column, one token per value. |
+
+Everything else is refused. `_contains`, ranges, `_eq: null`, sorts, aggregates,
+an encrypted column with no `blind-index` sibling, and a configuration whose key
+manager or `key-ref` is missing all fail closed with an `ACCESS_DENIED` error
+rather than falling through to the raw column. A blind index answers "is this
+value present", never "which values are near it".
+
+For the operational side — rotating the data key and re-encrypting live rows —
+see [rotating field-encryption keys](/BifrostQL/guides/field-encryption/).
 
 ## Metadata
 
@@ -139,7 +157,9 @@ column, or any encryption key set on a column without `encrypt`.
 
 - **Root key rotation** re-wraps each DEK under the new root key — no field data is
   touched.
-- **DEK rotation** requires re-encrypting the affected columns (read with the old
-  DEK, write with the new). The versioned ciphertext envelope leaves room to run
-  old and new DEKs side by side during a rollout. The re-encryption tooling is a
-  later slice.
+- **DEK rotation** re-encrypts the affected columns (read with the old DEK, write
+  with the new). The versioned ciphertext envelope carries its key version, so old
+  and new DEKs serve reads side by side for the length of the rollout.
+
+For the rotation procedure and the online re-encryption sweep, see
+[rotating field-encryption keys](/BifrostQL/guides/field-encryption/).

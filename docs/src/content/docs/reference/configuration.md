@@ -1,9 +1,9 @@
 ---
-title: Configuration
-description: Complete settings reference for BifrostQL.
+title: "BifrostQL Configuration Reference"
+description: "Every BifrostQL appsettings option in one reference: connection strings, schema and metadata sources, protocol adapter settings, and the feature toggles."
 ---
 
-BifrostQL is configured through `appsettings.json` (or any ASP.NET Core configuration source). All settings live under the `BifrostQL` key.
+This configuration reference covers every BifrostQL setting. BifrostQL is configured through `appsettings.json` (or any ASP.NET Core configuration source). All settings live under the `BifrostQL` key.
 
 ## Full example
 
@@ -39,7 +39,7 @@ BifrostQL is configured through `appsettings.json` (or any ASP.NET Core configur
 |---------|------|---------|-------------|
 | `ConnectionStrings:bifrost` | string | *required* | Database connection string |
 | `BifrostQL:Path` | string | `/graphql` | GraphQL endpoint path |
-| `BifrostQL:Playground` | string | `/graphiql` | GraphiQL playground path |
+| `BifrostQL:Playground` | string | `/` | GraphiQL playground path. The example above overrides it to `/graphiql`. |
 | `BifrostQL:DisableAuth` | bool | `false` | Disable authentication checks |
 | `BifrostQL:Provider` | string | `sqlserver` | Database provider: `sqlserver`, `postgres`, `mysql`, `sqlite` |
 | `BifrostQL:Metadata` | string[] | `[]` | Array of metadata configuration rules |

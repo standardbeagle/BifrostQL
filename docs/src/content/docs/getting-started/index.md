@@ -1,7 +1,15 @@
 ---
-title: Getting Started
-description: Install BifrostQL and serve your first GraphQL API in under five minutes.
+title: "Database to GraphQL API in Five Minutes"
+description: "Install BifrostQL, point it at a database, and run your first GraphQL query in five minutes. One connection string turns any SQL database into a GraphQL API."
 ---
+
+BifrostQL turns a database into a GraphQL API in about five minutes. You install
+two packages, put a connection string in `appsettings.json`, and wire four lines
+of `Program.cs`. There is no schema file to write and no code to generate — the
+database is the contract.
+
+This page uses SQL Server. For the other three engines, see
+[connect a database](/BifrostQL/getting-started/connect-a-database/).
 
 ## Install
 
@@ -32,14 +40,19 @@ Add your connection string and BifrostQL settings to `appsettings.json`:
 }
 ```
 
-Replace `sqlserver` with `postgres` or `mysql` if you're using a different database.
+Replace `sqlserver` with `postgres`, `mysql`, or `sqlite` if you're using a different database. `Provider` is optional; BifrostQL infers the engine from the connection string when it is absent, and fails fast when it cannot.
 
 ## Wire up
 
 Replace the contents of `Program.cs`:
 
 ```csharp
+using BifrostQL.Core.Model;
 using BifrostQL.Server;
+using BifrostQL.SqlServer;
+
+// Dialect packages do not self-register. Register the provider you installed.
+DbConnFactoryResolver.Register(BifrostDbProvider.SqlServer, cs => new SqlServerDbConnFactory(cs));
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddBifrostQL(o => o.BindStandardConfig(builder.Configuration));
@@ -52,6 +65,10 @@ await app.RunAsync();
 ```
 
 That's the entire application. BifrostQL reads your database schema at startup and generates the complete GraphQL API.
+
+The `DbConnFactoryResolver.Register` call is required. Without it, startup fails
+with `No factory registered for provider …`. Each engine has its own factory
+type — see [connect a database](/BifrostQL/getting-started/connect-a-database/).
 
 ## Run
 
@@ -94,6 +111,8 @@ bifrost config-generate --connection "..."
 
 ## Next steps
 
+- [Connect a Database](/BifrostQL/getting-started/connect-a-database/) -- SQL Server, PostgreSQL, MySQL, and SQLite wiring
+- [Ready-Made Schemas](/BifrostQL/getting-started/app-schemas/) -- eight sample databases to explore
 - [Example Projects](/BifrostQL/getting-started/examples/) -- runnable samples in the repository
 - [Case Studies](/BifrostQL/case-studies/) -- end-to-end walkthroughs of complete deployments
 - [Schema Generation](/BifrostQL/concepts/schema-generation/) -- how BifrostQL maps database types to GraphQL

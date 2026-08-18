@@ -1,19 +1,37 @@
 ---
-title: Computed columns and server validation
-description: Add SQL-based virtual fields, provider-backed .NET computed fields, and default-on server validation to BifrostQL schemas.
+title: "SQL Computed Columns in GraphQL"
+description: "Expose SQL computed columns as GraphQL fields with portable parameterized expressions, .NET provider-backed values, and validation that runs on every write."
 ---
 
-BifrostQL can expose table-level virtual fields without changing the database schema. The same module surface also supports server-side mutation validation.
+SQL computed columns let BifrostQL expose table-level virtual fields in GraphQL without changing the database schema. Declare the field in metadata, and it appears in the generated type as a selectable field backed by an expression. The same module surface also supports server-side mutation validation.
 
-## SQL computed columns
+Three kinds of computed column exist. Use `computed-expr` for SQL expressions, `computed-plugin` for values a .NET provider produces, and `file-folder` for a storage folder rendered as JSON.
 
-Use `computed-sql` table metadata for simple cross-platform expressions. Each entry is:
+## Expression computed columns
+
+`computed-expr` table metadata is the supported way to declare a SQL computed column. Each entry is:
 
 ```text
 fieldName:GraphQlType:expression
 ```
 
-Reference physical columns with `{column}` placeholders. BifrostQL resolves placeholders through the table schema and quotes them with the active SQL dialect.
+```text
+dbo.contacts {
+  computed-expr: fullName:String:UPPER(firstName) || ' ' || lastName
+}
+```
+
+The expression is not a SQL string. BifrostQL parses it into a `SqlExpr` tree, resolves each name against the table (GraphQL field name first, then physical column name), and asks the active dialect to lower the tree through `ISqlDialect.LowerExpression`. Each dialect spells concatenation, function names, and casts its own way, so one declaration runs on SQL Server, PostgreSQL, MySQL, and SQLite alike.
+
+Every literal in the expression binds as a SQL parameter. There is no path by which expression text reaches the database verbatim, and a name that matches no column fails at model load rather than at query time.
+
+Expression fields are read-only. They are projected into the SELECT list and are not added to mutation inputs.
+
+To build the same expression trees from C# instead of metadata text, see the [portable SQL expression builder](/BifrostQL/guides/expression-builder/).
+
+## Raw-SQL computed columns (deprecated)
+
+`computed-sql` metadata takes a raw SQL fragment with `{column}` placeholders:
 
 ```text
 dbo.orders {
@@ -21,7 +39,9 @@ dbo.orders {
 }
 ```
 
-`totalWithTax` is emitted as a selectable GraphQL field and projected in SQL as an expression. SQL computed fields are read-only; they are not added to mutation inputs.
+This kind is **deprecated**. `ComputedColumnKind.Sql` and its renderer both carry `[Obsolete]`, and the collector refuses to build a raw-SQL computed column unless model-level `raw-sql` metadata is switched on — it defaults to off, and a table that declares one without the switch fails model load with an access-denied error.
+
+Raw-SQL fragments carry verbatim text into the generated statement and are not portable across dialects. Migrate each one to `computed-expr`, which parameterizes every value and validates every name.
 
 ## Provider computed columns
 

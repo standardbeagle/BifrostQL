@@ -3,6 +3,14 @@ title: "Grouping Rows in the Data Grid"
 description: "Grouping rows in the data grid by one or more columns, with server-computed group counts and totals, URL-persisted state, and per-group member expansion."
 ---
 
+import DemoVideo from '../../../../components/DemoVideo.astro';
+
+<DemoVideo
+  scene="workbench-grid"
+  title="Grouping a 500-row table by column"
+  description="Server-computed group counts: 399 published, 65 draft, 36 archived, with inline editing switched off while grouping is active."
+/>
+
 Grouping rows in the data grid works by one or more columns, with group header
 rows whose counts and totals are computed **on the server**, not by summing the
 rows currently on the page. This keeps totals correct on large tables.

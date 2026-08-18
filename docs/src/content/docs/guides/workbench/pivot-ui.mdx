@@ -3,6 +3,14 @@ title: "Drag-and-Drop Pivot Table Designer"
 description: "A drag-and-drop pivot table designer over the server pivot surface: Rows, Columns and Values wells, debounced re-queries, and table or saved-query sources."
 ---
 
+import DemoVideo from '../../../../components/DemoVideo.astro';
+
+<DemoVideo
+  scene="workbench-pivot"
+  title="Building a cross tabulation in the pivot wells"
+  description="Category into Rows, status into Columns, a counted measure into Values. The server cross-tabs; only the summary comes back."
+/>
+
 The **pivot UI** is a drag-and-drop pivot table designer over the server
 [pivot](/BifrostQL/concepts/pivot/) surface — the table's `<table>Pivot` root
 field. The server does all cross-tabbing; the UI never groups fetched rows

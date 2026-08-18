@@ -3,6 +3,14 @@ title: "Schema-Aware SQL Editor"
 description: "A schema-aware SQL editor in the desktop shell: dialect-aware highlighting, table and column autocomplete, and execution confined to the Photino bridge."
 ---
 
+import DemoVideo from '../../../../components/DemoVideo.astro';
+
+<DemoVideo
+  scene="workbench-sql"
+  title="Running a statement in the SQL console"
+  description="A GROUP BY over the connected database, executed on the in-process bridge and returned as a result grid."
+/>
+
 The desktop shell's SQL console is a **schema-aware SQL editor** built on
 CodeMirror 6: dialect-aware highlighting, plus autocomplete fed from the
 introspected schema the shell already loads.

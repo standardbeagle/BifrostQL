@@ -1,0 +1,79 @@
+---
+/**
+ * A narrated demo recording captured by `docs/videos/capture.mjs`.
+ *
+ * Every clip is produced from the real app driven by Playwright, so the asset
+ * names here match the scene ids in that harness: `docs/public/videos/<id>.webm`
+ * plus `<id>-poster.png`.
+ *
+ * Playback is deliberately user-initiated. There is no `autoplay` and no `loop`,
+ * so a reader who prefers reduced motion simply sees the poster frame until they
+ * press play — the reduced-motion case needs no separate code path, and the
+ * media query below only removes the transition on the wrapper.
+ *
+ * `preload="none"` keeps the page weight at the poster image until a reader
+ * actually asks for the video.
+ */
+interface Props {
+  /** Scene id — the basename of the webm and poster in `public/videos/`. */
+  scene: string;
+  /** Accessible title, also shown as the caption above the player. */
+  title: string;
+  /** One-line description of what the recording shows. */
+  description?: string;
+}
+
+const { scene, title, description } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const src = `${base}/videos/${scene}.webm`;
+const poster = `${base}/videos/${scene}-poster.png`;
+---
+
+<figure class="demo-video">
+  <video
+    controls
+    preload="none"
+    playsinline
+    poster={poster}
+    aria-label={title}
+    width="1280"
+    height="800"
+  >
+    <source src={src} type="video/webm" />
+    <p>
+      Your browser cannot play WebM video.
+      <a href={src}>Download the recording</a> instead.
+    </p>
+  </video>
+  <figcaption>
+    <strong>{title}</strong>
+    {description && <span> — {description}</span>}
+  </figcaption>
+</figure>
+
+<style>
+  .demo-video {
+    margin: 1.5rem 0;
+  }
+
+  .demo-video video {
+    width: 100%;
+    height: auto;
+    display: block;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    background: var(--sl-color-black);
+  }
+
+  .demo-video figcaption {
+    margin-top: 0.5rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .demo-video video {
+      transition: none;
+    }
+  }
+</style>

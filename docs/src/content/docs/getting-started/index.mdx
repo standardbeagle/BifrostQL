@@ -3,6 +3,8 @@ title: "Database to GraphQL API in Five Minutes"
 description: "Install BifrostQL, point it at a database, and run your first GraphQL query in five minutes. One connection string turns any SQL database into a GraphQL API."
 ---
 
+import DemoVideo from '../../../components/DemoVideo.astro';
+
 BifrostQL turns a database into a GraphQL API in about five minutes. You install
 two packages, put a connection string in `appsettings.json`, and wire four lines
 of `Program.cs`. There is no schema file to write and no code to generate — the
@@ -10,6 +12,12 @@ database is the contract.
 
 This page uses SQL Server. For the other three engines, see
 [connect a database](/BifrostQL/getting-started/connect-a-database/).
+
+<DemoVideo
+  scene="quickstart"
+  title="From a SQLite file to a nested GraphQL query"
+  description="The blog sample database served through the generated API: a paged query, then one request that joins posts to authors, categories, and comments."
+/>
 
 ## Install
 

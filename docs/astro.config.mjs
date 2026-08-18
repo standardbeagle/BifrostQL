@@ -2,17 +2,45 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
+const SITE = 'https://dev.standardbeagle.com';
+const BASE = '/BifrostQL';
+
 export default defineConfig({
-	site: 'https://dev.standardbeagle.com',
-	base: '/BifrostQL',
+	site: SITE,
+	base: BASE,
+	// Starlight auto-registers @astrojs/sitemap when the user config does not
+	// already include it, so /BifrostQL/sitemap-index.xml is emitted from `site`
+	// + `base`. See node_modules/@astrojs/starlight/index.ts.
 	integrations: [
 		starlight({
 			title: 'BifrostQL',
 			tagline: 'Zero-code GraphQL API for your existing database',
+			// Site-wide fallback <meta name="description"> / og:description for any
+			// page whose frontmatter omits one. Starlight emits the tags itself.
+			description:
+				'BifrostQL turns an existing SQL Server, PostgreSQL, MySQL or SQLite database into a GraphQL API with no code generation and no resolver boilerplate.',
+			// Starlight already emits canonical, og:title/type/url/locale/site_name,
+			// og:description, twitter:card and the sitemap link. Only the social
+			// preview image is missing.
+			head: [
+				{
+					tag: 'meta',
+					attrs: { property: 'og:image', content: `${SITE}${BASE}/og-image.png` },
+				},
+				{
+					tag: 'meta',
+					attrs: { property: 'og:image:alt', content: 'BifrostQL — zero-code GraphQL API for your existing database' },
+				},
+				{
+					tag: 'meta',
+					attrs: { name: 'twitter:image', content: `${SITE}${BASE}/og-image.png` },
+				},
+			],
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/standardbeagle/BifrostQL' },
 			],
 			components: {
+				Head: './src/components/Head.astro',
 				Header: './src/components/Header.astro',
 			},
 			customCss: [

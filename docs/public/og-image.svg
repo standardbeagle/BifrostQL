@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="BifrostQL">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b2e"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7c5cff"/>
+      <stop offset="50%" stop-color="#37b6ff"/>
+      <stop offset="100%" stop-color="#3ddc97"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <path d="M120 470 C 360 250, 840 250, 1080 470" fill="none" stroke="url(#arc)" stroke-width="14" stroke-linecap="round"/>
+  <text x="600" y="300" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="112" font-weight="700" fill="#ffffff">BifrostQL</text>
+  <text x="600" y="372" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="38" font-weight="400" fill="#9aa4b8">Zero-code GraphQL API for your existing database</text>
+</svg>

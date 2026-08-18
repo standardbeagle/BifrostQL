@@ -1,0 +1,54 @@
+---
+/**
+ * Starlight `Head` override.
+ *
+ * Renders Starlight's own head defaults (title, canonical, og:*, twitter:card,
+ * sitemap link) untouched, then appends the structured data Starlight does not
+ * emit:
+ *
+ *  - `SoftwareApplication` on the landing page only.
+ *  - `WebSite` on every other page.
+ *
+ * Starlight's `head` config option is site-wide, so per-page JSON-LD has to be
+ * injected from a component override. Page frontmatter is owned by the docs
+ * content pass and is deliberately not used here.
+ */
+import Default from '@astrojs/starlight/components/Head.astro';
+
+const SITE = 'https://dev.standardbeagle.com';
+const BASE = '/BifrostQL';
+const HOME = `${SITE}${BASE}/`;
+const REPO = 'https://github.com/standardbeagle/BifrostQL';
+const DESCRIPTION =
+	'BifrostQL turns an existing SQL Server, PostgreSQL, MySQL or SQLite database into a GraphQL API with no code generation and no resolver boilerplate.';
+
+// Normalize a trailing slash so `/BifrostQL` and `/BifrostQL/` both read as home.
+const path = Astro.url.pathname.replace(/\/+$/, '');
+const isLanding = path === BASE || path === '';
+
+const website = {
+	'@context': 'https://schema.org',
+	'@type': 'WebSite',
+	name: 'BifrostQL',
+	url: HOME,
+	description: DESCRIPTION,
+};
+
+const softwareApplication = {
+	'@context': 'https://schema.org',
+	'@type': 'SoftwareApplication',
+	name: 'BifrostQL',
+	url: HOME,
+	description: DESCRIPTION,
+	applicationCategory: 'DeveloperApplication',
+	operatingSystem: 'Windows, macOS, Linux',
+	license: 'https://opensource.org/licenses/MIT',
+	codeRepository: REPO,
+	offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+};
+
+const jsonLd = isLanding ? softwareApplication : website;
+---
+
+<Default><slot /></Default>
+<script type="application/ld+json" is:inline set:html={JSON.stringify(jsonLd)} />

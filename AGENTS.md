@@ -12,7 +12,7 @@ BifrostQL 乃 .NET 函庫，以 SQL 資料庫發布為 GraphQL APIs；由資料�
 dotnet build BifrostQL.sln
 dotnet test
 dotnet test --filter "FullyQualifiedName=TestName"
-./bifrostui "connection-string"  # Desktop UI
+./dev-ui.sh [--port 5000]  # Desktop UI dev mode（edit-db watch + .NET backend + Vite；bifrostui 乃 built assembly 名，非 repo command）
 dotnet run --project src/BifrostQL.Host  # Web server
 ./scripts/kill-dev-processes.sh [--kill]  # 收此 checkout 之遊魂 dev processes（默認 dry-run）
 ```

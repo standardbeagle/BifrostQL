@@ -142,14 +142,68 @@ Rotation changes nothing about masking or the no-oracle guarantees. A caller
 
 - Sees the **masked** value (`redact`, `last4`, or `email`) — never the plaintext
   and never the raw ciphertext, before, during, or after rotation.
-- **Cannot filter, sort, or aggregate on an encrypted column at all.** Every such
-  predicate is rejected. There is no `_eq`/`_in` exception routed to the blind
-  index — server-side blind-index read routing is not implemented, so the
-  rejection is a blanket one.
+- **Cannot sort or aggregate on an encrypted column, and can filter it only by
+  equality.** `_eq` and `_in` are rewritten onto the column's blind index (see
+  below); every other predicate is rejected. Filterability is identical for
+  permitted and denied roles, so the rewrite reveals nothing about a row.
 - **Cannot observe the key version.** The key version lives inside the ciphertext,
   which a denied role never receives (it gets the mask). Rotation does not change
   timing, error behavior, or filterability for a denied caller, so it opens no new
   side channel to distinguish an old-key row from a new-key row.
+
+## Searching an encrypted column
+
+Declare a blind index next to the encrypted column to make equality search work:
+
+```text
+dbo.customers.ssn {
+  encrypt: aes-256-gcm
+  key-ref: kms:pii
+  mask: last4
+  unmask-role: compliance
+  blind-index: ssn_bidx
+}
+```
+
+`blind-index` names a real column on the same table; model loading rejects a name that does
+not exist. The convention across the examples and tests is `<column>_bidx`.
+
+On write, the encrypt transformer stores the ciphertext in `ssn` and an HMAC-SHA-256 token
+in `ssn_bidx`. On read, the query transformer rewrites the predicate before the column
+guards run:
+
+```graphql
+{
+  customers(filter: { ssn: { _eq: "123-45-6789" } }) {
+    data { customerId ssn }
+  }
+}
+```
+
+The generated SQL compares `ssn_bidx` against the token for that plaintext. The
+ciphertext column never appears in the WHERE clause.
+
+| Operator | Behavior |
+|---|---|
+| `_eq` with a value | Rewritten onto the blind-index column |
+| `_in` | Every element tokenized, rewritten onto the blind-index column |
+| `_eq: null` | Left in place — hashing an absent value would leak nothing useful |
+| Everything else | Rejected: `_neq`, `_gt`, `_lt`, `_contains`, `_between`, and the rest |
+
+Sorting and aggregating on an encrypted column stay rejected. An encrypted column with no
+`blind-index` sibling rejects `_eq` too, so a partially configured table gives no partial
+oracle. When the key manager or `key-ref` is missing, the rewrite refuses the query rather
+than emitting a raw predicate.
+
+Two properties follow from the key derivation:
+
+- The blind-index key is HKDF-derived from the version-1 DEK with its own label, so it is
+  a distinct key from the one that encrypts the value.
+- It is pinned to version 1, so **rotation never invalidates a blind index**. Rows written
+  under any DEK version still match the same search token.
+
+Tokens are computed from the value as written, with no case or whitespace normalization.
+Normalize on the way in when you want case-insensitive matching.
 
 ## Ciphertext storage across databases
 

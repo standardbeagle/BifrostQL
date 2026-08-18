@@ -77,6 +77,29 @@ so the sweep can fan out one scoped purge per tenant.
 Reads are scoped the same way: the bounded expired-key SELECT runs through the read seam
 under the same per-tenant context, so it only ever sees that tenant's expired rows.
 
+## When purges actually run
+
+Purges run by themselves. `RetentionPurgeHostedService` is registered with every BifrostQL
+host, starts with the app, and drives `RetentionPurgeEngine.RunAsync` in the background.
+No feature flag turns it on — declaring `retain` or `ttl` on a table is the switch.
+
+| Setting | Production value |
+|---|---|
+| Poll interval | 1 hour |
+| Rows per (table, tenant, mode) per pass | 100 |
+
+The loop self-disables. On its first pass, a model where no table declares `retain` or
+`ttl` makes the engine log a debug line and return, so the loop stops rather than polling
+forever. A table whose retention config fails to parse counts as not opting in, so a
+broken policy never keeps the loop alive and never deletes anything.
+
+The service starts detached, so a slow first pass never delays app start, and a failed
+pass is logged and retried on the next interval rather than thrown at the host. Stopping
+the app cancels the loop.
+
+Because the loop is on by default, treat the dry-run below as mandatory: once a policy is
+in metadata, the next pass will act on it within the hour.
+
 ## Bounded, resumable passes
 
 Each pass reads at most a bounded batch of expired keys per (table, tenant, window), and

@@ -3,13 +3,16 @@ title: "Deferred and Reversible Change Sets"
 description: "Capture a reverse delta for every write, review pending change sets, and undo a committed change through GraphQL while its CDC events stay held until release."
 ---
 
-# Deferred effects
+Deferred effects make a committed write reversible. A table marked `deferrable` captures a
+reverse delta inside the same transaction as every write, so a later `undo` mutation can
+replay the inverse through the mutation pipeline. Tables that also declare `hold-events`
+park their CDC events until the undo window closes or a reviewer approves the change set.
 
 ## Decision record: apply then reverse
 
 Deferred changes use **apply-then-reverse**. The original mutation applies through the
-normal mutation pipeline immediately, while a durable `change_set` and its
-`change_set_delta` reverse data are stored atomically with it. An undo applies the named
+normal mutation pipeline immediately, while a durable `change_sets` row and its
+`change_set_deltas` reverse data are stored atomically with it. An undo applies the named
 inverse operation from the stored pre-image, subject to the undo window and concurrency
 checks.
 
@@ -54,11 +57,8 @@ are tenant-scoped, require readable policy on every affected table, and are omit
 configuration or policy evaluation fails. Approval and rejection additionally require
 each table's approver role and honor `self-approve: false`.
 
-Future capture and undo slices must implement this named decision; this guide deliberately
-adds no write-path behavior.
-
-Bulk deferred-effects controls in the edit-db UI remain a follow-up; this guide documents
-server behavior only and does not add a bulk UI workflow.
+Bulk deferred-effects controls in the edit-db UI remain a follow-up. This guide documents
+server behavior only.
 
 ## Metadata contract
 
@@ -84,11 +84,100 @@ partial configuration.
 
 ## Durable-store contract
 
-The `change_set` store uses the constants in `MetadataKeys.Deferred.ChangeSet.Column`:
-`id`, `state`, `undo_window_expires_at`, `requester`, `created_at`, `applied_at`, and
-`reversed_at`.
+Both store tables must exist in the model before any table may declare `deferrable`.
+Model loading rejects a missing store table or a missing column.
 
-The `change_set_delta` reverse store uses
+The `change_sets` store uses the constants in `MetadataKeys.Deferred.ChangeSet.Column`:
+`id`, `state`, `undo_window_expires_at`, `requester`, `tenant`, `tables`, `created_at`,
+`applied_at`, and `reversed_at`. The `tables` column holds a JSON array of the
+`schema.name` values the change set touched.
+
+The `change_set_deltas` reverse store uses
 `MetadataKeys.Deferred.ChangeSetDelta.Column`: `id`, `change_set_id`, `table`, `pk`,
 `op`, `inverse_op`, `before_image`, `after_image`, and `created_at`. Primary keys and
 images are JSON so composite keys and full inverse data remain representable.
+
+## Capture
+
+`DeferredDeltaMutationHook` implements `IInTransactionMutationHook` and runs inside the
+mutation transaction, so a change set and its deltas commit atomically with the write they
+describe. The hook is registered unconditionally and returns immediately for a table that
+is not `deferrable`, so a deployment with no reversible table pays nothing.
+
+One change set covers one mutation transaction. A batch or a nested TreeSync write records
+several deltas against a single `change_sets` row, and every table it touches is appended
+to the `tables` column.
+
+Each delta records the reverse of the write:
+
+| `op` | `inverse_op` | Inverse data |
+|---|---|---|
+| `insert` | `delete` | `after_image` |
+| `update` | `restore` | `before_image` |
+| `delete` | `restore` | `before_image` |
+
+The before-image comes from the history hook, which is why `deferrable` requires
+`history: enabled` over all columns. For a write that leaves a row in place, the hook
+re-reads the stored row to record a true `after_image`, so defaults, triggers, and
+generated concurrency tokens are part of the undo contract. A write whose before-image is
+missing throws rather than storing a delta it cannot reverse.
+
+## Undo
+
+`undo` is emitted whenever any table is `deferrable`:
+
+```graphql
+mutation {
+  undo(changeSetId: 42) {
+    changeSetId
+    undoneRows
+    conflictRows
+    alreadyUndone
+  }
+}
+```
+
+Undo reverses a whole change set. Each delta routes its inverse through
+`IMutationIntentExecutor`, so tenant scoping, policy, soft delete, audit columns, and
+field encryption apply to the reversal exactly as they applied to the original write.
+The engine builds no predicate of its own.
+
+The captured concurrency token travels with each inverse. A row that changed since capture
+fails its optimistic-concurrency check and counts in `conflictRows` instead of being
+overwritten. This is the mechanism behind the LIFO rule above: reverse the newest change
+first, and an older overlapping undo reports a conflict.
+
+A change set moves through `held` while its window is open, `undoing` while a reversal is
+in flight, and then `undone` when every delta reversed or `partial` when any conflicted.
+Undoing an already-undone set returns `alreadyUndone: true` and changes nothing, so a
+retried client request is safe. An interrupted undo resumes: the engine probes each delta
+and skips inverses already applied. A change set whose window expired can no longer be
+undone, while a resumed `undoing` set and a rejected approval hold both proceed.
+
+## Held CDC events and their release
+
+A table that declares `hold-events` writes its outbox rows with `state: pending_hold`.
+The CDC dispatcher only picks up rows in `pending` or with no state, so held events stay
+invisible to subscribers until the change set settles.
+
+- **Timed release.** `DeferredOutboxReleaseHostedService` polls every five seconds, flips
+  each `held` change set whose undo window has passed to `released`, and moves its outbox
+  rows from `pending_hold` to `pending`. Change sets held `until-approved` are excluded.
+- **Approved release.** `approveDeferredChangeSet` releases one change set through the same
+  path.
+- **Suppression on undo.** Undoing a change set moves its undispatched rows to
+  `suppressed`. Events that already went out cannot be recalled, so the engine inserts one
+  `compensate` event per dispatched row, in the same transaction and at most once, letting
+  subscribers unwind what they acted on.
+
+The release service resolves its model per pass and logs and retries on failure, so a bad
+pass never stops the host.
+
+## Related
+
+- [Emitting Change Events from Tables](/BifrostQL/guides/cdc-events/) — configuring the
+  outbox these holds park events in.
+- [Maker-Checker Approval for Row Edits](/BifrostQL/guides/approval-workflows/) — the
+  model to use when unapproved values must stay invisible.
+- [Recording Row Change History](/BifrostQL/guides/change-history/) — the before-image
+  trail capture depends on.

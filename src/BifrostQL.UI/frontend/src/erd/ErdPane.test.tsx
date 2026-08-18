@@ -31,6 +31,12 @@ vi.mock('@xyflow/react', async () => {
     BaseEdge: () => null,
     EdgeLabelRenderer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
     getBezierPath: () => ['M 0 0 L 100 100', 50, 50],
+    // Surfaced as a testable element: React Flow drops every edge whose node
+    // declares no handle, which degrades the diagram to unconnected boxes
+    // without any error. The mock replaces the whole renderer, so nothing else
+    // in this file can observe that.
+    Handle: ({ type }: { type: string }) => <div data-testid={`handle-${type}`} />,
+    Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
   };
 });
 
@@ -53,6 +59,19 @@ describe('ErdPane', () => {
     expect(graph.nodes[0].data.columns[0]).toMatchObject({ name: 'id' });
     expect(graph.edges[0].data?.kind).toBe('name-based');
     expect(GET_ERD_SCHEMA).toMatch(/relationshipKind/);
+  });
+
+  it('gives every table node the handles React Flow needs to attach edges', async () => {
+    // Without a source and a target handle React Flow silently drops every
+    // edge, so the pane renders the tables but none of the relationships —
+    // an ER diagram with no Rs, and no error to say so.
+    const fetcher = { query: vi.fn().mockResolvedValue({ _dbSchema: liveSchemaFixture }) };
+
+    render(<ErdPane fetcher={fetcher as never} onOpenTable={vi.fn()} />);
+    await screen.findByTitle('Open orderItems in editor');
+
+    expect(screen.getAllByTestId('handle-source')).toHaveLength(liveSchemaFixture.length);
+    expect(screen.getAllByTestId('handle-target')).toHaveLength(liveSchemaFixture.length);
   });
 
   it('opens the editor grid and selected table route from a fetched table node', async () => {

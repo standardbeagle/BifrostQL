@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BaseEdge, EdgeLabelRenderer, ReactFlow, Background, Controls, MiniMap, getBezierPath, type EdgeProps, type NodeProps } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, Handle, Position, ReactFlow, Background, Controls, MiniMap, getBezierPath, type EdgeProps, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { GraphQLFetcher } from '@standardbeagle/edit-db';
 import type { ErdSchemaTable, ErdTable as Table } from './types';
@@ -22,7 +22,11 @@ export function normalizeErdSchema(tables: ErdSchemaTable[]): Table[] {
 function TableNode({ data }: NodeProps) {
   const { table, onOpenTable } = data as unknown as { table: Table; onOpenTable: (name: string) => void };
   const [expanded, setExpanded] = useState(false);
-  return <div className="erd-table-node"><button type="button" onClick={() => onOpenTable(table.name)} title={`Open ${table.name} in editor`}><strong>{table.label || table.name}</strong><span className="erd-pk">PK {table.primaryKeys.join(', ') || '—'}</span></button><button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>Columns</button>{expanded && <ul>{table.columns.map((column) => <li key={column.name}>{column.name}</li>)}</ul>}</div>;
+  // React Flow derives every edge's endpoints from the node's handles. Without
+  // them no relationship line can attach, so the diagram degrades silently to a
+  // set of unconnected boxes. The ELK layout runs left-to-right, so the parent
+  // side is the left handle and the child side the right one.
+  return <div className="erd-table-node"><Handle type="target" position={Position.Left} isConnectable={false} /><Handle type="source" position={Position.Right} isConnectable={false} /><button type="button" onClick={() => onOpenTable(table.name)} title={`Open ${table.name} in editor`}><strong>{table.label || table.name}</strong><span className="erd-pk">PK {table.primaryKeys.join(', ') || '—'}</span></button><button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>Columns</button>{expanded && <ul>{table.columns.map((column) => <li key={column.name}>{column.name}</li>)}</ul>}</div>;
 }
 
 /** A focusable edge keeps the relationship's join mapping discoverable without editing it. */

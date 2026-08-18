@@ -153,6 +153,12 @@ namespace BifrostQL.Core.Resolvers
                                 sourceColumnNames = j.ChildIds.Select(c => c.GraphQlName).ToArray(),
                                 destinationTable = j.ParentTable.GraphQlName,
                                 destinationColumnNames = j.ParentIds.Select(p => p.GraphQlName).ToArray(),
+                                // dbJoinSchema backs both join lists, so the discriminator
+                                // fields must be projected here too: a field the SDL
+                                // declares but the projection omits fails the whole query.
+                                isPolymorphic = j.TypePredicate != null,
+                                polymorphicTypeColumn = j.TypePredicate?.Column.GraphQlName,
+                                polymorphicTypeValue = j.TypePredicate?.Value?.ToString(),
                             }),
                             // Many-to-many bridges. The UI uses the junction's MultiLink for
                             // the rows query and these fields to skip to the target entity:

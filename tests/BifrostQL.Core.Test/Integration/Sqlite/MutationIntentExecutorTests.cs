@@ -33,6 +33,10 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         "*.orders.updated_at { populate: updated-on }",
         "*.notes { tenant-filter: tenant_id }",
         "*.events { tenant-filter: tenant_id; soft-delete: deleted_at; soft-delete-hard-role: purge_admin }",
+        // policy-actions omits insert, so PolicyMutationTransformer denies an insert
+        // through the Errors[] path (not a throw) — exercising the batch pipeline's
+        // ErrorCode propagation.
+        "*.locked { policy-actions: read,update }",
     };
 
     public async Task InitializeAsync()
@@ -89,6 +93,15 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
             INSERT INTO events(id, tenant_id, label, deleted_at) VALUES
                 (1, 1, 'live-event', NULL),
                 (2, 1, 'already-soft-deleted', '2000-01-01 00:00:00')
+            """);
+
+        await Exec("DROP TABLE IF EXISTS locked");
+        await Exec(
+            """
+            CREATE TABLE locked (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            )
             """);
     }
 
@@ -509,6 +522,36 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         });
 
         await act.Should().ThrowAsync<Exception>();
+    }
+
+    // ---- batch condition tagging ----------------------------------------
+
+    [Fact]
+    public async Task Batch_TenantDenied_CarriesAccessDeniedCode()
+    {
+        // Parity with the single-row path and rule 10: a tenant-scope denial inside a
+        // BATCH action must carry AccessDeniedCode — the SAME signal the single-row
+        // pipeline throws — so every transport funnel maps it to the denied class
+        // (gRPC PERMISSION_DENIED, chat 403), never a generic INTERNAL/500. The batch
+        // pipeline previously dropped the transformer's ErrorCode on abort.
+        // Non-vacuous: without the ErrorCode propagation the code is null.
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteBatchAsync(new MutationBatchIntent
+        {
+            Table = "locked",
+            Actions = new[]
+            {
+                new MutationBatchAction(MutationIntentAction.Insert,
+                    new Dictionary<string, object?> { ["name"] = "x" }),
+            },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*Access denied by authorization policy*"))
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+        (await ScalarAsync("SELECT COUNT(*) FROM locked")).Should().Be("0", "the denied batch wrote nothing");
     }
 
     [Fact]

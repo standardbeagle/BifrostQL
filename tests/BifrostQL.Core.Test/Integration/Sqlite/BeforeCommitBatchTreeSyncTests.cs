@@ -86,10 +86,12 @@ public sealed class BeforeCommitBatchTreeSyncTests : IAsyncLifetime
     [Fact]
     public async Task Batch_FiresBeforeCommitHook_ForUpsertAction()
     {
-        // Arrange: the batch upsert is driven through the pipeline as an update (the
-        // single-statement ON CONFLICT path), for a new key and an existing key alike.
-        // The before-commit hook must fire for it like any other action — an upsert that
-        // slipped past the hook would be a write no observer saw and no veto could stop.
+        // Arrange: the batch upsert probes existence by primary key and dispatches to
+        // the guarded Insert or Update executor (mirroring the single-row resolver), so
+        // the transformer AdditionalFilter and audit stamps apply. The before-commit
+        // hook must fire for it like any other action — an upsert that slipped past the
+        // hook would be a write no observer saw and no veto could stop — and it fires
+        // with the ACTUAL verb: Update for an existing key, Insert for a new one.
         var hook = new RecordingHook();
 
         // Act
@@ -100,8 +102,8 @@ public sealed class BeforeCommitBatchTreeSyncTests : IAsyncLifetime
 
         // Assert
         result.Errors.Should().BeNullOrEmpty();
-        hook.Seen.Should().Equal(new[] { MutationType.Update, MutationType.Update },
-            "an upsert is driven through the pipeline as an update, whether it inserts or updates");
+        hook.Seen.Should().Equal(new[] { MutationType.Update, MutationType.Insert },
+            "an upsert onto an existing key updates, an upsert onto a new key inserts");
         hook.Tables.Should().Equal("widgets", "widgets");
         hook.SawResult.Should().BeFalse("the write has not happened yet in the before-commit phase");
         (await CountAsync("widgets", "id = 1 AND name = 'upserted'")).Should().Be(1, "the existing row was updated");

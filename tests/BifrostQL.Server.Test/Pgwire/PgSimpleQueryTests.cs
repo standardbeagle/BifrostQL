@@ -486,7 +486,7 @@ namespace BifrostQL.Server.Test.Pgwire
                     .BuildServiceProvider();
 
                 var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
-                var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext };
+                var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true };
 
                 var listener = new TcpListener(IPAddress.Loopback, 0);
                 listener.Start();

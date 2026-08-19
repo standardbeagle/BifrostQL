@@ -41,11 +41,16 @@ namespace BifrostQL.Server.Test.Pgwire
             int maxConnections = 100,
             int maxPreparedStatements = 200,
             int maxPortals = 200,
-            TimeSpan? handshakeTimeout = null)
+            TimeSpan? handshakeTimeout = null,
+            bool allowCleartextWithoutTls = true)
         {
             var options = new PgWireOptions
             {
                 AuthMethod = PgAuthMethod.Cleartext,
+                // These handler-level tests exercise the query path over a plaintext loopback
+                // socket (no TLS), so the dev override is on by default here. The refusal of
+                // cleartext-over-non-TLS is covered explicitly by passing false.
+                AllowCleartextPasswordWithoutTls = allowCleartextWithoutTls,
                 MaxConnections = maxConnections,
                 MaxPreparedStatements = maxPreparedStatements,
                 MaxPortals = maxPortals,

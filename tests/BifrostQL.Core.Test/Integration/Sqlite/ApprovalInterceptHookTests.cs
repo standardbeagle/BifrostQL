@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Crypto;
@@ -138,13 +139,14 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     }
 
     private sealed record PendingRow(
-        string Table, string Op, string Payload, string? Requester, string? Tenant, string State);
+        string Table, string Op, string Payload, string? Requester, string? Tenant, string State,
+        string? RequesterContext);
 
     private async Task<List<PendingRow>> PendingRowsAsync()
     {
         var rows = new List<PendingRow>();
         await using var cmd = new SqliteCommand(
-            "SELECT \"table\", op, intended_payload, requester, tenant, \"state\" FROM pending_changes ORDER BY id",
+            "SELECT \"table\", op, intended_payload, requester, tenant, \"state\", requester_context FROM pending_changes ORDER BY id",
             _keepAlive);
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -154,7 +156,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
                 reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetString(3),
                 reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.GetString(5)));
+                reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6)));
         return rows;
     }
 
@@ -437,6 +440,62 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         pending[0].Tenant.Should().Be("1", "the requester's tenant is persisted for replay scoping");
     }
 
+    // ---- regression: an AUTHENTICATED caller's context carries a raw ClaimsPrincipal ----
+
+    [Fact]
+    public async Task EnqueuedPending_FromAuthenticatedPrincipalContext_Succeeds_AndProjectsPlainRequesterContext()
+    {
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "principal", ["tenant_id"] = 1 },
+            UserContext = PrincipalRequesterContext(),
+            Endpoint = EndpointPath,
+        });
+
+        // The gate must DIVERT (pending approval), not fail on serializing the principal.
+        var thrown = await act.Should().ThrowAsync<BifrostExecutionError>();
+        thrown.Which.ErrorCode.Should().Be(ApprovalInterceptMutationHook.PendingApprovalCode,
+            "an authenticated caller's gated write must divert, not fail on requester-context serialization");
+
+        var pending = await PendingRowsAsync();
+        pending.Should().ContainSingle();
+        pending[0].Requester.Should().Be("alice");
+
+        var requesterContext = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            pending[0].RequesterContext!)!;
+        requesterContext.Keys.Should().BeEquivalentTo(new[] { "user_id", "roles", "tenant_id" },
+            "only the fields the replay consumes are persisted");
+        requesterContext["user_id"].GetString().Should().Be("alice");
+        requesterContext["tenant_id"].GetInt64().Should().Be(1);
+        requesterContext["roles"].EnumerateArray().Select(role => role.GetString())
+            .Should().BeEquivalentTo(new[] { "requester" });
+        pending[0].RequesterContext.Should().NotContain("alice@example.com",
+            "claim PII outside the replay contract must not be persisted");
+        pending[0].RequesterContext.Should().NotContain("Claims",
+            "the raw principal must never be serialized into the store");
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_ReplaysChangeEnqueuedByAuthenticatedPrincipalCaller()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "principal-approved", PrincipalRequesterContext());
+
+        var approver = ApproverContext("bob", "manager");
+        var approved = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", approver);
+
+        approved.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "name = 'principal-approved' AND tenant_id = 1")).Should().Be(1,
+            "the replay runs under the persisted REQUESTER tenant, not the approver's");
+        (await CountAsync("orders", "name = 'principal-approved' AND created_by = 'bob'")).Should().Be(1,
+            "the approver remains the audit actor");
+        (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
+    }
+
     [Fact]
     public async Task GraphQlApprove_SelfApprover_IsDenied_AndLeavesChangePending()
     {
@@ -653,6 +712,38 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
 
     private static IDictionary<string, object?> RequesterContext()
         => new Dictionary<string, object?> { ["tenant_id"] = 1, ["user_id"] = "alice", ["roles"] = new[] { "requester" } };
+
+    /// <summary>
+    /// The user context an AUTHENTICATED GraphQL caller actually carries: the projected
+    /// identity keys PLUS the raw <see cref="ClaimsPrincipal"/> under <c>"user"</c> and the
+    /// per-claim-type arrays, exactly as <c>BifrostContext</c> builds it. A dictionary-only
+    /// fixture cannot manifest the principal-serialization defect (a
+    /// <see cref="Claim.Subject"/> back-reference is an object cycle), so every requester
+    /// context assertion needs this variant to be non-vacuous.
+    /// </summary>
+    private static IDictionary<string, object?> PrincipalRequesterContext(
+        string userId = "alice", string role = "requester", int tenantId = 1)
+    {
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim(ClaimTypes.Email, $"{userId}@example.com"),
+            new Claim("tenant_id", tenantId.ToString()),
+            new Claim(ClaimTypes.Role, role),
+        };
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"));
+        var context = new Dictionary<string, object?>
+        {
+            ["tenant_id"] = tenantId,
+            ["user_id"] = userId,
+            ["roles"] = new[] { role },
+            ["user"] = principal,
+        };
+        foreach (var group in principal.Claims.GroupBy(claim => claim.Type))
+            if (!context.ContainsKey(group.Key))
+                context[group.Key] = group.Select(claim => claim.Value).ToArray();
+        return context;
+    }
 
     private static IDictionary<string, object?> ApproverContext(string userId, string role)
         => new Dictionary<string, object?> { ["tenant_id"] = 2, ["user_id"] = userId, ["roles"] = new[] { role } };

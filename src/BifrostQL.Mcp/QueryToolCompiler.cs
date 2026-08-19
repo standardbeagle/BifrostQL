@@ -116,13 +116,19 @@ namespace BifrostQL.Mcp
         /// Resolves a caller-supplied column name against both name spaces
         /// (GraphQL and raw DB), matching the tolerance of the filter machinery.
         /// </summary>
-        public static ColumnDto ResolveColumn(IDbTable table, string name)
+        public static ColumnDto ResolveColumn(IDbTable table, string name, ISet<string>? visibleColumnNames = null)
         {
-            if (table.GraphQlLookup.TryGetValue(name, out var byGraphQl))
-                return byGraphQl;
-            if (table.ColumnLookup.TryGetValue(name, out var byDb))
-                return byDb;
-            throw new ToolPromptException(SchemaDescriber.UnknownColumnMessage(table, name));
+            ColumnDto? resolved =
+                table.GraphQlLookup.TryGetValue(name, out var byGraphQl) ? byGraphQl :
+                table.ColumnLookup.TryGetValue(name, out var byDb) ? byDb : null;
+            // When a readable-column set is supplied, a column outside it is treated as UNKNOWN: a
+            // read-denied column is indistinguishable from a non-existent one, and the suggestion
+            // lists only readable columns (invariant 4). Callers with no per-caller projection
+            // (declarative tools, the raw-resolved query path) pass null and keep the prior behavior,
+            // where the pipeline is the backstop for a denied column at execution.
+            if (resolved is not null && (visibleColumnNames is null || visibleColumnNames.Contains(resolved.ColumnName)))
+                return resolved;
+            throw new ToolPromptException(SchemaDescriber.UnknownColumnMessage(table, name, visibleColumnNames));
         }
 
         /// <summary>

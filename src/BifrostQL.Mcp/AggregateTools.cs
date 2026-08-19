@@ -131,7 +131,7 @@ namespace BifrostQL.Mcp
             var visibleColumnNames = new HashSet<string>(
                 visibleTable.Columns.Select(c => c.ColumnName), StringComparer.OrdinalIgnoreCase);
 
-            var groupColumns = CompileGroupColumns(table, GetStringArray(args, "groupBy"));
+            var groupColumns = CompileGroupColumns(table, visibleColumnNames, GetStringArray(args, "groupBy"));
             var (includeCount, valueColumns, measureKeys) =
                 CompileMeasures(model, table, visibleColumnNames, GetArgument(args, "measures"));
 
@@ -181,7 +181,7 @@ namespace BifrostQL.Mcp
         }
 
         private static IReadOnlyList<AggregateGroupColumn> CompileGroupColumns(
-            IDbTable table, IReadOnlyList<string>? groupBy)
+            IDbTable table, ISet<string> visibleColumnNames, IReadOnlyList<string>? groupBy)
         {
             if (groupBy is null)
                 return Array.Empty<AggregateGroupColumn>();
@@ -191,7 +191,7 @@ namespace BifrostQL.Mcp
             var result = new List<AggregateGroupColumn>(groupBy.Count);
             foreach (var name in groupBy)
             {
-                var column = QueryToolCompiler.ResolveColumn(table, name);
+                var column = QueryToolCompiler.ResolveColumn(table, name, visibleColumnNames);
                 if (result.All(g => g.Column.DbName != column.DbName))
                     result.Add(new AggregateGroupColumn(column, column.GraphQlName));
             }
@@ -253,7 +253,7 @@ namespace BifrostQL.Mcp
                     throw new ToolPromptException(
                         $"Measure '{fn}' requires 'column', e.g. {{\"fn\":\"{fn}\",\"column\":\"total\"}}.");
 
-                var column = QueryToolCompiler.ResolveColumn(table, columnName);
+                var column = QueryToolCompiler.ResolveColumn(table, columnName, visibleColumnNames);
                 if (!AggregateSurface.IsNumeric(model.TypeMapper.GetGraphQlType(column.EffectiveDataType)))
                 {
                     // Suggest only NUMERIC columns the caller may read — a read-denied numeric

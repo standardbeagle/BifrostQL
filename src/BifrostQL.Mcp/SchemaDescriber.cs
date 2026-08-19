@@ -147,11 +147,15 @@ namespace BifrostQL.Mcp
         /// list, mirroring <see cref="UnknownTableMessage"/> so filter/field/sort
         /// mistakes are self-correctable in one round trip.
         /// </summary>
-        internal static string UnknownColumnMessage(IDbTable table, string requestedColumn)
+        internal static string UnknownColumnMessage(
+            IDbTable table, string requestedColumn, ISet<string>? visibleColumnNames = null)
         {
             var names = table.Columns
                 .OrderBy(c => c.OrdinalPosition)
                 .Select(c => c.ColumnName)
+                // When a readable-column set is supplied, name only readable columns — a
+                // read-denied column must not be disclosed by the suggestion (invariant 4).
+                .Where(n => visibleColumnNames is null || visibleColumnNames.Contains(n))
                 .ToArray();
             return $"Unknown column '{requestedColumn}' on table '{table.DbName}'." +
                 $"{DidYouMean(names, requestedColumn)} Available columns: {string.Join(", ", names)}.";

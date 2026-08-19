@@ -241,7 +241,11 @@ namespace BifrostQL.Core.Modules.Approval
                 [PendingChangeStore.ColRequester] =
                     AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
                 [PendingChangeStore.ColTenant] = ResolveTenant(context)?.ToString(),
-                [PendingChangeStore.ColRequesterContext] = JsonSerializer.Serialize(context.UserContext),
+                // A PROJECTION of the caller's context, never the context itself: a live context
+                // carries the raw ClaimsPrincipal (an object cycle) and other opaque entries.
+                // See RequesterContextProjection for what replay consumes and why.
+                [PendingChangeStore.ColRequesterContext] =
+                    JsonSerializer.Serialize(RequesterContextProjection.Project(context.Model!, context.UserContext)),
                 [PendingChangeStore.ColState] = PendingChangeStore.StatePending,
             };
 

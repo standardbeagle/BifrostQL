@@ -126,10 +126,14 @@ namespace BifrostQL.Mcp
             // "Unknown table", indistinguishable from a non-existent one, so its columns/keys
             // are never enumerated in the argument prompts below (invariant 4), exactly as
             // bifrost_describe_table answers.
-            var table = ResolveVisibleTable(model, userContext, tableName).Table;
+            var visibleTable = ResolveVisibleTable(model, userContext, tableName);
+            var table = visibleTable.Table;
+            var visibleColumnNames = new HashSet<string>(
+                visibleTable.Columns.Select(c => c.ColumnName), StringComparer.OrdinalIgnoreCase);
 
             var groupColumns = CompileGroupColumns(table, GetStringArray(args, "groupBy"));
-            var (includeCount, valueColumns, measureKeys) = CompileMeasures(model, table, GetArgument(args, "measures"));
+            var (includeCount, valueColumns, measureKeys) =
+                CompileMeasures(model, table, visibleColumnNames, GetArgument(args, "measures"));
 
             var query = QueryToolCompiler.BuildQuery(table, Enumerable.Empty<ColumnDto>());
             query.GroupedAggregate = new GroupedAggregate
@@ -202,7 +206,7 @@ namespace BifrostQL.Mcp
         /// </summary>
         private static (bool IncludeCount, IReadOnlyList<AggregateValueColumn> ValueColumns,
             IReadOnlyList<(string Key, string Alias)> MeasureKeys) CompileMeasures(
-            IDbModel model, IDbTable table, JsonElement? measuresElement)
+            IDbModel model, IDbTable table, ISet<string> visibleColumnNames, JsonElement? measuresElement)
         {
             if (measuresElement is not { ValueKind: JsonValueKind.Array } measures || measures.GetArrayLength() == 0)
                 throw new ToolPromptException(
@@ -252,8 +256,12 @@ namespace BifrostQL.Mcp
                 var column = QueryToolCompiler.ResolveColumn(table, columnName);
                 if (!AggregateSurface.IsNumeric(model.TypeMapper.GetGraphQlType(column.EffectiveDataType)))
                 {
+                    // Suggest only NUMERIC columns the caller may read — a read-denied numeric
+                    // column's name must not surface even on an otherwise-readable table (invariant 4).
                     var numeric = AggregateSurface.NumericColumns(table, model.TypeMapper)
-                        .Select(c => c.ColumnName).ToArray();
+                        .Select(c => c.ColumnName)
+                        .Where(visibleColumnNames.Contains)
+                        .ToArray();
                     throw new ToolPromptException(
                         $"Column '{column.ColumnName}' ({column.DataType}) is not numeric, so '{fn}' cannot aggregate it. " +
                         (numeric.Length > 0

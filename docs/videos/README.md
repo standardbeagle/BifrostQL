@@ -112,4 +112,4 @@ will fail the same way if it is ever requested.)
 3. `node docs/videos/capture.mjs <id>`, check the poster, then embed with
    `<DemoVideo scene="<id>" title="…" description="…" />`.
 
-Keep the committed total under ~30 MB; the current six scenes are about 15 MB.
+Keep the committed total under ~30 MB; the current six scenes are about 17 MB.

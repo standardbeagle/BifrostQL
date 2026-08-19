@@ -88,19 +88,21 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         var securityParams = new SqlParameterCollection();
         var securityWhere = "";
 
-        // Resolve the meta table by BOTH schema and DbName. GetTableFromDbName is
-        // DbName-only (first-wins), so it can return a same-named meta table in a
-        // different schema and apply the wrong table's security filter.
-        var metaTable = context.Model.Tables.FirstOrDefault(t =>
-            string.Equals(t.DbName, config.MetaTableDbName, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(t.TableSchema, config.TableSchema, StringComparison.OrdinalIgnoreCase));
-
-        if (metaTable == null)
-            // Without the meta table in the model there is no policy to consult and no
-            // column metadata to drive the crypto projection, so its rows cannot be
-            // shown safely. Refuse rather than emit unguarded, possibly encrypted values.
+        // Resolve the meta table by BOTH schema and DbName via the schema-qualified lookup:
+        // a bare-name lookup can return a same-named meta table in a different schema and
+        // apply the wrong table's security filter. Without the meta table in the model there
+        // is no policy to consult and no column metadata to drive the crypto projection, so
+        // its rows cannot be shown safely — refuse rather than emit unguarded values.
+        IDbTable metaTable;
+        try
+        {
+            metaTable = context.Model.GetTableFromDbName(config.TableSchema, config.MetaTableDbName);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
             throw new BifrostExecutionError(
                 $"The EAV meta table for '{context.Table.GraphQlName}' is not present in the model.");
+        }
 
         var readChain = TableReadChain.For(
             context.Services, context.Model, metaTable, context.UserContext,

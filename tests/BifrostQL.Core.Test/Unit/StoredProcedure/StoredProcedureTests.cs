@@ -918,4 +918,5 @@ internal sealed class TestDbModelWithProcs : IDbModel
     public bool GetMetadataBool(string property, bool defaultValue) => _inner.GetMetadataBool(property, defaultValue);
     public IDbTable GetTableByFullGraphQlName(string fullName) => _inner.GetTableByFullGraphQlName(fullName);
     public IDbTable GetTableFromDbName(string tableName) => _inner.GetTableFromDbName(tableName);
+    public IDbTable GetTableFromDbName(string schema, string dbName) => _inner.GetTableFromDbName(schema, dbName);
 }

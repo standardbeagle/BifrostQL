@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 using FluentAssertions;
 using Xunit;
 
@@ -79,5 +80,57 @@ public sealed class DbModelTableLookupTests
         var act = () => model.GetTableFromDbName("nope");
 
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void GetTableFromDbName_BareName_DefinedInTwoSchemas_FailsFast_NotSilentWrongTable()
+    {
+        // Two tables share the DbName "orders" across schemas. A bare-name lookup cannot
+        // pick the right one; the previous first-wins index silently returned whichever
+        // enumerated first, binding the wrong table's columns/policy/write target. It must
+        // now fail fast with an actionable, schema-hint error instead.
+        var sales = Table("orders", "sales_orders", "sales");
+        var archive = Table("orders", "archive_orders", "archive");
+        var model = BuildModel(sales, archive);
+
+        model.Invoking(m => m.GetTableFromDbName("orders"))
+            .Should().Throw<BifrostExecutionError>()
+            .WithMessage("*ambiguous*")
+            .Which.Message.Should().Contain("schema");
+    }
+
+    [Fact]
+    public void GetTableFromDbName_SchemaQualified_ResolvesEachAmbiguousTable()
+    {
+        var sales = Table("orders", "sales_orders", "sales");
+        var archive = Table("orders", "archive_orders", "archive");
+        var model = BuildModel(sales, archive);
+
+        model.GetTableFromDbName("sales", "orders").Should().BeSameAs(sales);
+        model.GetTableFromDbName("archive", "orders").Should().BeSameAs(archive);
+        // Case-insensitive on both schema and name, like the bare lookup.
+        model.GetTableFromDbName("ARCHIVE", "ORDERS").Should().BeSameAs(archive);
+    }
+
+    [Fact]
+    public void GetTableFromDbName_BareName_StillResolvesWhenUnambiguous()
+    {
+        // A DbName that exists in only one schema is not ambiguous and still resolves by
+        // bare name — the common single-schema case is unaffected.
+        var sales = Table("orders", "sales_orders", "sales");
+        var customers = Table("customers", "customers", "dbo");
+        var model = BuildModel(sales, customers);
+
+        model.GetTableFromDbName("orders").Should().BeSameAs(sales);
+        model.GetTableFromDbName("customers").Should().BeSameAs(customers);
+    }
+
+    [Fact]
+    public void GetTableFromDbName_SchemaQualified_Unknown_Throws()
+    {
+        var model = BuildModel(Table("orders", "orders", "sales"));
+
+        model.Invoking(m => m.GetTableFromDbName("archive", "orders"))
+            .Should().Throw<ArgumentOutOfRangeException>();
     }
 }

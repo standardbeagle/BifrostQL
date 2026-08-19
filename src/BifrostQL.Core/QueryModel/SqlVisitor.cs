@@ -67,15 +67,26 @@ namespace BifrostQL.Core.QueryModel
 
         protected override ValueTask VisitIntValueAsync(GraphQLIntValue value, ISqlContext context)
         {
-            // Parse as Int32 when it fits, else fall back to Int64. A bigint literal
-            // such as `_eq: 5000000000` overflows Int32 and threw OverflowException;
-            // keeping small values as Int32 preserves the `(int?)` casts that read
-            // limit/offset arguments (an Int64 boxed value would fail those casts).
+            // Parse as Int32 when it fits, else Int64, else BigInteger. A literal beyond
+            // Int64 range (e.g. `_eq: 99999999999999999999999999`) previously reached
+            // `long.Parse` and threw OverflowException — an unclassified exception escaping
+            // document parsing to the host — because OverflowException is not FormatException.
+            // BigInteger has no overflow and DbParameterBinder.ToProviderValue already binds
+            // it (in-range as long, out-of-range as string) for BigInt columns. Keeping small
+            // values as Int32 preserves the `(int?)` casts that read limit/offset arguments.
             var text = value.Value.ToString();
-            // Box each branch as object independently: a `cond ? int : long` ternary
-            // has type long, which would box even small values as Int64 and break the
-            // `(int?)` casts that read limit/offset.
-            object parsed = int.TryParse(text, out var i) ? i : (object)long.Parse(text);
+            // Box each branch as object independently: a `cond ? int : long` ternary has type
+            // long, which would box even small values as Int64 and break the `(int?)` casts.
+            object parsed;
+            if (int.TryParse(text, out var i))
+                parsed = i;
+            else if (long.TryParse(text, out var l))
+                parsed = l;
+            else
+                // A GraphQLIntValue is grammar-guaranteed to be an integer literal, so
+                // BigInteger.Parse cannot throw FormatException here — and BigInteger cannot
+                // overflow, so this branch is exception-free for any valid int literal.
+                parsed = System.Numerics.BigInteger.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
             context.Set(parsed);
             context.AddValue(parsed);
             return base.VisitIntValueAsync(value, context);

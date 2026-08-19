@@ -107,12 +107,27 @@ export default function App() {
     setCurrentView('editor');
   }, []);
 
+  // Route the embedded editor is mounted at. edit-db does NOT own a
+  // history-backed router: its PathProvider keeps the route in a reducer seeded
+  // once from the `uiPath` prop, and reads neither window.location nor
+  // popstate. Changing the shell's URL therefore moved nothing — a node click
+  // from the diagram left the editor on its empty "Select a Table" start page.
+  // So the shell feeds the route in as a prop and remounts the editor to make
+  // PathProvider re-seed; the token is separate from `editorKey` so a profile
+  // or transport change still remounts independently.
+  const [editorPath, setEditorPath] = useState('/');
+  const [editorRouteToken, setEditorRouteToken] = useState(0);
+
   const handleOpenDiagramTable = useCallback((tableName: string) => {
     setEditorPane('graphql');
-    // edit-db owns navigation inside its BrowserRouter. A popstate event makes
-    // the embedded route react immediately after the shell changes the URL.
-    window.history.pushState(null, '', `/${encodeURIComponent(tableName)}`);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    const path = `/${encodeURIComponent(tableName)}`;
+    // Keep the address bar honest for the user; the editor is moved by the prop
+    // below, not by this URL.
+    window.history.pushState(null, '', path);
+    setEditorPath(path);
+    // Bump unconditionally: re-opening the same table must re-seed the route
+    // even when the path string is unchanged.
+    setEditorRouteToken((token) => token + 1);
   }, []);
 
   // Grid toolbar sends a shell event so edit-db stays transport-agnostic. Its
@@ -405,7 +420,8 @@ export default function App() {
           // on the mode match keeps the editor off the closed instance until the
           // fresh one is ready, avoiding a "BinaryTransport is closed" query.
           <Editor
-            key={`${editorKey}-${transportMode}`}
+            key={`${editorKey}-${transportMode}-${editorRouteToken}`}
+            uiPath={editorPath}
             fetcher={editorFetcher}
             showStats
             onLocate={(location) => {

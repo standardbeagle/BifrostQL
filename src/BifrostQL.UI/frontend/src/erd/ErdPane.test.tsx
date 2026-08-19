@@ -5,17 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ErdPane, GET_ERD_SCHEMA, normalizeErdSchema } from './ErdPane';
 import { mapSchemaToErd } from './model';
 import type { ErdSchemaTable } from './types';
-import App from '../App';
-
-vi.mock('../connection/session', () => ({ loadSession: () => ({ id: 'connected' }) }));
-vi.mock('../hooks/useConnectionFlows', () => ({ useConnectionFlows: () => ({ setConnectionState: vi.fn(), errorMessage: null, setErrorMessage: vi.fn(), connectionInfo: null, recentConnections: [], vaultServers: [], selectedProvider: null, setSelectedProvider: vi.fn(), isLaunching: false, launchProgress: null, handleTestConnection: vi.fn(), handleConnect: vi.fn(), handleConnectVaultServer: vi.fn(), handleSelectRecentConnection: vi.fn(), handleQuickStartLaunch: vi.fn(), handleClearRecentConnections: vi.fn(), handleDisconnect: vi.fn() }) }));
-vi.mock('../hooks/useHealthCheck', () => ({ useHealthCheck: () => undefined }));
-vi.mock('../hooks/useTransport', () => ({ useTransport: () => ({ transportMode: 'http', toggleTransport: vi.fn(), transport: { mode: 'http' }, transportConnected: true, editorFetcher: { query: vi.fn().mockResolvedValue({ _dbSchema: liveSchemaFixture }) } }) }));
-vi.mock('../profiles/profiles', () => ({ DEFAULT_PROFILES: [{ id: 'raw', serverProfile: '' }], fetchProfiles: vi.fn().mockResolvedValue([{ id: 'raw', serverProfile: '' }]), resolveActiveProfile: (profiles: Array<{ id: string }>) => profiles[0], saveActiveProfileId: vi.fn() }));
-vi.mock('../forms/forms-migration-boot', () => ({ runFormsMigrationOnce: vi.fn() }));
-vi.mock('../EditorHeader', () => ({ EditorHeader: ({ editorPane, onSelectPane }: { editorPane: string; onSelectPane: (pane: 'erd') => void }) => <><output data-testid="editor-pane">{editorPane}</output><button type="button" onClick={() => onSelectPane('erd')}>ER diagram</button></> }));
-vi.mock('@standardbeagle/edit-db', async (importOriginal) => ({ ...(await importOriginal<typeof import('@standardbeagle/edit-db')>()), default: () => <div data-testid="editor-grid" data-route={window.location.pathname}>Editor grid</div> }));
-
 vi.mock('@xyflow/react', async () => {
   return {
     ReactFlow: ({ nodes, edges, nodeTypes, edgeTypes }: { nodes: Array<{ id: string; type: string; data: unknown }>; edges: Array<{ id: string; type?: string; data: unknown }>; nodeTypes: Record<string, ComponentType<{ data: unknown }> >; edgeTypes: Record<string, ComponentType<{ data: unknown; sourceX?: number; sourceY?: number; targetX?: number; targetY?: number }>> }) => <div>{nodes.map((node) => {
@@ -105,15 +94,10 @@ describe('ErdPane', () => {
 
     expect(screen.getByRole('tooltip').textContent).toContain('Join columns: orderId → id');
   });
-
-  it('uses the real App callback to switch from the ER diagram to the selected editor grid route', async () => {
-    window.history.replaceState(null, '', '/');
-
-    render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'ER diagram' }));
-    fireEvent.click(await screen.findByTitle('Open orderItems in editor'));
-
-    expect(screen.getByTestId('editor-pane').textContent).toBe('graphql');
-    expect(screen.getByTestId('editor-grid').getAttribute('data-route')).toBe('/orderItems');
-  });
 });
+
+// The App-level "node click opens the table in the editor" assertion used to
+// live here against a stubbed Editor that reported window.location.pathname.
+// That stub cannot fail: the shell pushes the URL, but the real editor routes
+// from a prop-seeded reducer and ignored it entirely. The honest version, with
+// the real Editor and the real React Flow renderer, is in ErdPane.live.test.tsx.

@@ -182,7 +182,7 @@ namespace BifrostQL.Server.Ldap
 
                 case LdapScopeKind.Subschema:
                     return Discovery(
-                        LdapDirectorySubschema.ForIdentity(index, session), request, selection);
+                        LdapDirectorySubschema.ForIdentity(index, session, model), request, selection);
 
                 default:
                     return await SearchEntriesAsync(

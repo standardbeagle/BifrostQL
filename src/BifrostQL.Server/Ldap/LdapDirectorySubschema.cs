@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Server.Ldap
@@ -22,21 +26,47 @@ namespace BifrostQL.Server.Ldap
     internal static class LdapDirectorySubschema
     {
         /// <summary>
-        /// The subschema entry for <paramref name="session"/>. An ANONYMOUS session sees only the
-        /// structural skeleton — the entry exists and is readable (that is what makes anonymous
-        /// discovery useful) but names no objectClass and no attribute type, so it cannot be used to
-        /// enumerate the directory's shape without binding.
+        /// The subschema entry for <paramref name="session"/>, scoped to what the caller may READ.
+        /// An ANONYMOUS session sees only the structural skeleton — the entry exists and is readable
+        /// (that is what makes anonymous discovery useful) but names no objectClass and no attribute
+        /// type, so it cannot enumerate the directory's shape without binding.
+        ///
+        /// <para>An AUTHENTICATED session previously received the WHOLE model's subschema, so a
+        /// read-denied caller could enumerate the objectClasses and attributeType names of tables
+        /// (and columns) it may not read — the introspection side channel invariant 4 forbids. The
+        /// subschema is now rebuilt from only the tables/columns this identity may read, using the
+        /// SAME <see cref="SchemaReadVisibility"/> projection (the SAME PolicyEvaluator) the query
+        /// path enforces, so the discovery surface can never describe more than the data surface.</para>
         /// </summary>
-        public static LdapSearchResultEntry ForIdentity(LdapDirectoryIndex index, LdapSessionState session)
+        public static LdapSearchResultEntry ForIdentity(
+            LdapDirectoryIndex index, LdapSessionState session, IDbModel model)
         {
             ArgumentNullException.ThrowIfNull(index);
             ArgumentNullException.ThrowIfNull(session);
+            ArgumentNullException.ThrowIfNull(model);
 
             if (session.IsAnonymous || session.UserContext is not { Count: > 0 })
                 return LdapDirectoryEntries.Subschema(
                     new LdapSubschema(Array.Empty<string>(), Array.Empty<LdapAttributeType>()));
 
-            return LdapDirectoryEntries.Subschema(index.Model.Subschema);
+            // Project the model to the tables (and readable columns) this identity may read, then
+            // keep only those that are LDAP-mapped and not hidden — the same mapping filter
+            // LdapDirectoryModel.FromModel applies, further narrowed by the caller's read policy.
+            var visible = SchemaReadVisibility.Project(model, session.UserContext);
+            var mapped = visible
+                .Select(vt => (vt.Table, Config: LdapMappingConfig.FromTable(vt.Table), Visible: vt))
+                .Where(x => x.Config.IsMapped && !LdapDirectoryModel.IsHidden(x.Table))
+                .ToList();
+
+            var visibleColumns = mapped.ToDictionary(
+                x => x.Table,
+                x => new HashSet<string>(x.Visible.Columns.Select(c => c.ColumnName), StringComparer.OrdinalIgnoreCase));
+
+            var subschema = LdapDirectoryModel.BuildSubschema(
+                mapped.Select(x => (x.Table, x.Config)).ToList(),
+                isColumnVisible: (table, column) => visibleColumns[table].Contains(column));
+
+            return LdapDirectoryEntries.Subschema(subschema);
         }
     }
 

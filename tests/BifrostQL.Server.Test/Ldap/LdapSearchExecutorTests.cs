@@ -585,6 +585,41 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task Search_TheSubschema_ExcludesTablesTheCallerMayNotRead()
+        {
+            // Introspection is filtered by the SAME read policy as the data path: a table the caller
+            // cannot READ must not contribute its objectClass or attributeType names to the subschema
+            // (invariant 4). Before the fix an authenticated caller received the WHOLE model's
+            // subschema, enumerating denied tables' shape. Non-vacuous: with the full-model subschema
+            // restored, "secretEntry"/"secretCode" reappear.
+            var builder = LdapModelBuilder.Create()
+                .WithPeople() // readable by anyone (no policy) → objectClass inetOrgPerson, attrs uid/cn/mail
+                .WithTable("secrets", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("ssn", "nvarchar")
+                    .WithMetadata(MetadataKeys.Ldap.ObjectClass, "secretEntry")
+                    .WithMetadata(MetadataKeys.Ldap.DnTemplate, "secretCode={ssn},ou=secrets")
+                    .WithMetadata(MetadataKeys.Ldap.Attributes, "secretCode=ssn")
+                    // policy-actions omits read → a non-admin identity cannot read this table.
+                    .WithMetadata("policy-actions", "update"));
+            var (executor, _) = Build(builder);
+            var request = Search(baseObject: "cn=subschema", scope: LdapSearchScope.BaseObject);
+
+            var outcome = await RunAsync(executor, request, Session()); // alice: authenticated, non-admin
+
+            var entry = outcome.Entries.Single();
+            var objectClasses = entry.Attributes.First(a => a.Type == "objectClasses").Values;
+            var attributeTypes = entry.Attributes.First(a => a.Type == "attributeTypes").Values;
+
+            // The readable table's shape is published.
+            objectClasses.Should().Contain("inetOrgPerson");
+            attributeTypes.Should().Contain("uid").And.Contain("cn");
+            // The read-denied table's shape is NOT — its objectClass and its unique attribute are absent.
+            objectClasses.Should().NotContain("secretEntry", "a denied table's objectClass must not be published");
+            attributeTypes.Should().NotContain("secretCode", "a denied table's attributeType must not be published");
+        }
+
+        [Fact]
         public async Task Search_TheSubschema_NeverNamesTheCredentialColumnOrItsAttribute()
         {
             // The fifth egress path of the slice-1 sweep.

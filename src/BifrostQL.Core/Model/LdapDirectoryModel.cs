@@ -94,7 +94,7 @@ namespace BifrostQL.Core.Model
 
             var mapped = model.Tables
                 .Select(t => (Table: t, Config: LdapMappingConfig.FromTable(t)))
-                .Where(x => x.Config.IsMapped && IsVisible(x.Table))
+                .Where(x => x.Config.IsMapped && !IsHidden(x.Table))
                 .OrderBy(x => $"{x.Table.TableSchema}.{x.Table.DbName}", StringComparer.Ordinal)
                 .ToList();
 
@@ -114,23 +114,39 @@ namespace BifrostQL.Core.Model
                     x.Config.MemberRelationship))
                 .ToList();
 
-            var objectClasses = mapped
-                .SelectMany(x => x.Config.ObjectClasses)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(o => o, StringComparer.Ordinal)
-                .ToList();
-
-            var attributeTypes = BuildAttributeTypes(mapped);
-
             var rootDse = new LdapRootDse(
                 NamingContexts: new[] { baseDn },
                 SupportedLdapVersion: new[] { "3" },
                 SubschemaSubentry: SubschemaSubentryDn,
                 VendorName: VendorName);
 
-            var subschema = new LdapSubschema(objectClasses, attributeTypes);
+            var subschema = BuildSubschema(mapped);
 
             return new LdapDirectoryModel(baseDn, entries, rootDse, subschema);
+        }
+
+        /// <summary>
+        /// Builds the subschema (objectClasses + attributeTypes) from a set of mapped tables.
+        /// Only the tables in <paramref name="mapped"/> contribute, so a caller-scoped subset
+        /// yields a caller-scoped subschema — the seam that lets the LDAP front door publish only
+        /// the objectClasses/attributeTypes a given identity may READ, never the whole directory
+        /// (.claude/rules/protocol-adapter-security.md invariant 4). <paramref name="isColumnVisible"/>,
+        /// when supplied, drops an attribute whose backing column the caller may not read, so a
+        /// denied column's attributeType never surfaces even on an otherwise-visible table.
+        /// FromModel passes the full VISIBLE-by-metadata set with no column predicate (the
+        /// identity-independent directory-wide subschema).
+        /// </summary>
+        public static LdapSubschema BuildSubschema(
+            IReadOnlyList<(IDbTable Table, LdapMappingConfig Config)> mapped,
+            Func<IDbTable, string, bool>? isColumnVisible = null)
+        {
+            var objectClasses = mapped
+                .SelectMany(x => x.Config.ObjectClasses)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(o => o, StringComparer.Ordinal)
+                .ToList();
+
+            return new LdapSubschema(objectClasses, BuildAttributeTypes(mapped, isColumnVisible));
         }
 
         // The published attribute types: every returned attribute across the visible mappings
@@ -140,7 +156,8 @@ namespace BifrostQL.Core.Model
         // that appears on more than one table keeps its first (ordinal-least table) syntax; a
         // genuine cross-table type conflict is a validation error, not resolved here.
         private static IReadOnlyList<LdapAttributeType> BuildAttributeTypes(
-            IReadOnlyList<(IDbTable Table, LdapMappingConfig Config)> mapped)
+            IReadOnlyList<(IDbTable Table, LdapMappingConfig Config)> mapped,
+            Func<IDbTable, string, bool>? isColumnVisible)
         {
             var byName = new Dictionary<string, LdapAttributeType>(StringComparer.OrdinalIgnoreCase);
 
@@ -149,6 +166,11 @@ namespace BifrostQL.Core.Model
                 foreach (var attribute in config.Attributes)
                 {
                     if (byName.ContainsKey(attribute.Attribute))
+                        continue;
+
+                    // Column-level scoping: a denied column's attributeType must not surface even
+                    // when the table itself is readable.
+                    if (isColumnVisible is not null && !isColumnVisible(table, attribute.Column))
                         continue;
 
                     var syntax = table.ColumnLookup.TryGetValue(attribute.Column, out var column)
@@ -170,7 +192,9 @@ namespace BifrostQL.Core.Model
                 .ToList();
         }
 
-        private static bool IsVisible(IDbTable table) =>
-            !table.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden);
+        /// <summary>Whether a table opts out of the directory via <c>visibility: hidden</c> metadata.</summary>
+        public static bool IsHidden(IDbTable table) =>
+            table.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden);
+
     }
 }

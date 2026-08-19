@@ -31,6 +31,7 @@ namespace BifrostQL.Server.Resp
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly IServiceProvider _services;
         private readonly RespWireOptions _options;
+        private readonly Func<DateTimeOffset> _clock;
         private readonly IReadOnlyDictionary<string, IRespCommandHandler> _dataHandlers;
         private readonly RespConnectionLimiter _connectionLimiter;
         private readonly ILogger<RespConnectionHandler> _logger;
@@ -43,8 +44,10 @@ namespace BifrostQL.Server.Resp
             RespWireOptions options,
             IEnumerable<IRespCommandHandler>? dataHandlers = null,
             ILogger<RespConnectionHandler>? logger = null,
-            RespConnectionLimiter? connectionLimiter = null)
+            RespConnectionLimiter? connectionLimiter = null,
+            Func<DateTimeOffset>? clock = null)
         {
+            _clock = clock ?? (() => DateTimeOffset.UtcNow);
             // One handler instance serves every connection (Kestrel resolves it once), so the
             // admission counter lives for the front door's lifetime, as in pgwire.
             _connectionLimiter = connectionLimiter ?? new RespConnectionLimiter(options?.MaxConnections ?? 100);
@@ -93,10 +96,35 @@ namespace BifrostQL.Server.Resp
             }
         }
 
+        /// <summary>
+        /// The read-deadline budget for one loop iteration. Null = no deadline (infinite).
+        /// A non-positive result means the one cumulative pre-auth budget is already spent and
+        /// the caller must drop the connection. Authenticated reads get a fresh idle timeout each
+        /// call (a pooled client legitimately idles); unauthenticated reads get the SHRINKING
+        /// remainder of the single pre-auth budget, so a chatty peer cannot reset it.
+        /// </summary>
+        internal static TimeSpan? ComputeReadDeadline(
+            bool authenticated, DateTimeOffset now, DateTimeOffset? preAuthDeadlineAt, TimeSpan idleTimeout)
+        {
+            if (authenticated)
+                return idleTimeout == Timeout.InfiniteTimeSpan ? null : idleTimeout;
+            if (preAuthDeadlineAt is null)
+                return null; // pre-auth timeout disabled
+            return preAuthDeadlineAt.Value - now;
+        }
+
         private async Task RunConnectionAsync(Stream stream, CancellationToken ct)
         {
             var session = new RespSession(Interlocked.Increment(ref _connectionCounter));
             var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth);
+            // The pre-auth phase gets ONE cumulative deadline from connection start — not a fresh
+            // AuthenticationTimeout per read. Otherwise a peer that sends any cheap frame (a failed
+            // AUTH, a PING that answers NOAUTH) just before each read resets the timer forever and
+            // holds an admission slot it never earned. Absolute deadline, captured once; null when
+            // the timeout is infinite. pgwire bounds its whole pre-auth phase the same way.
+            DateTimeOffset? preAuthDeadlineAt = _options.AuthenticationTimeout == Timeout.InfiniteTimeSpan
+                ? null
+                : _clock() + _options.AuthenticationTimeout;
             try
             {
                 while (true)
@@ -105,18 +133,17 @@ namespace BifrostQL.Server.Resp
                     IReadOnlyList<string> arguments;
 
                     // ---- Read deadline ----
-                    // Two different bounds, because the two states carry different risk. An
-                    // UNAUTHENTICATED peer that stalls holds an admission slot it never earned —
-                    // with the slot now taken at accept, a handful of silent sockets would be a
-                    // complete denial of service needing no credentials and no bytes — so it gets
-                    // the short AuthenticationTimeout. An AUTHENTICATED connection is a normal
-                    // pooled client (Redis clients pool aggressively and sit idle by design), so it
-                    // gets the long IdleTimeout, which reaps abandoned sockets without disturbing
-                    // pools. Expiry cancels the in-flight read and the lifecycle catch closes.
-                    var deadline = session.IsAuthenticated ? _options.IdleTimeout : _options.AuthenticationTimeout;
+                    // Unauthenticated: the REMAINING share of the one pre-auth budget (never reset).
+                    // Authenticated: a fresh IdleTimeout per read — a pooled Redis client legitimately
+                    // sits idle and each command resets the idle clock. Expiry cancels the in-flight
+                    // read and the lifecycle catch closes.
+                    var deadline = ComputeReadDeadline(
+                        session.IsAuthenticated, _clock(), preAuthDeadlineAt, _options.IdleTimeout);
+                    if (deadline is { } exhausted && exhausted <= TimeSpan.Zero)
+                        return; // pre-auth budget spent without authenticating — drop the slot
                     using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    if (deadline != Timeout.InfiniteTimeSpan)
-                        readDeadline.CancelAfter(deadline);
+                    if (deadline is { } budget)
+                        readDeadline.CancelAfter(budget);
                     var readToken = readDeadline.Token;
 
                     try

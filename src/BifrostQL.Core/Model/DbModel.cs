@@ -14,7 +14,20 @@ namespace BifrostQL.Core.Model
         IReadOnlyCollection<IDbTable> Tables { get; }
         IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; }
         IDbTable GetTableByFullGraphQlName(string fullName);
+
+        /// <summary>
+        /// Resolves a table by its bare database name. Throws when the name is defined in
+        /// more than one schema (ambiguous) — use <see cref="GetTableFromDbName(string, string)"/>
+        /// with the schema in that case — and when no table matches.
+        /// </summary>
         IDbTable GetTableFromDbName(string tableName);
+
+        /// <summary>
+        /// Resolves a table by schema AND database name — the unambiguous lookup for callers
+        /// that know the schema (e.g. an EAV meta table, whose bare name may collide with a
+        /// same-named table in another schema).
+        /// </summary>
+        IDbTable GetTableFromDbName(string schema, string dbName);
         IDictionary<string, object?> Metadata { get; init; }
         string? GetMetadataValue(string property);
         bool GetMetadataBool(string property, bool defaultValue);
@@ -52,13 +65,28 @@ namespace BifrostQL.Core.Model
         // initializer after construction; first-write-wins mirrors the previous
         // FirstOrDefault semantics for any duplicate keys.
         private readonly Lazy<IReadOnlyDictionary<string, IDbTable>> _byGraphQlName;
-        private readonly Lazy<IReadOnlyDictionary<string, IDbTable>> _byDbName;
+        private readonly Lazy<DbNameIndex> _byDbName;
 
         public DbModel()
         {
             _byGraphQlName = new Lazy<IReadOnlyDictionary<string, IDbTable>>(BuildGraphQlNameIndex);
-            _byDbName = new Lazy<IReadOnlyDictionary<string, IDbTable>>(BuildDbNameIndex);
+            _byDbName = new Lazy<DbNameIndex>(BuildDbNameIndex);
         }
+
+        /// <summary>
+        /// The DbName lookup, split so a bare-name query can distinguish "not found" from
+        /// "ambiguous". <see cref="Ambiguous"/> holds every DbName defined in more than one
+        /// schema: a bare-name lookup cannot pick the right table for those, and silently
+        /// returning either mis-targets columns, policy metadata and the write target — so
+        /// <see cref="GetTableFromDbName(string)"/> fails fast on them and callers with schema
+        /// context use <see cref="GetTableFromDbName(string, string)"/>.
+        /// </summary>
+        private sealed record DbNameIndex(
+            IReadOnlyDictionary<string, IDbTable> ByBare,
+            IReadOnlyDictionary<string, IDbTable> ByQualified,
+            IReadOnlySet<string> Ambiguous);
+
+        private static string QualifiedDbNameKey(string? schema, string dbName) => $"{schema}.{dbName}";
 
         private IReadOnlyDictionary<string, IDbTable> BuildGraphQlNameIndex()
         {
@@ -77,12 +105,30 @@ namespace BifrostQL.Core.Model
             return dict;
         }
 
-        private IReadOnlyDictionary<string, IDbTable> BuildDbNameIndex()
+        private DbNameIndex BuildDbNameIndex()
         {
-            var dict = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
+            var byBare = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
+            var byQualified = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
+            var ambiguous = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
             foreach (var t in Tables ?? Array.Empty<IDbTable>())
-                dict.TryAdd(t.DbName, t);
-            return dict;
+            {
+                // The schema-qualified key is always unambiguous.
+                byQualified.TryAdd(QualifiedDbNameKey(t.TableSchema, t.DbName), t);
+                // A bare DbName seen for a second distinct table (a different schema) is
+                // ambiguous — record it so a bare lookup fails fast rather than binding the
+                // wrong table's columns/policy. First-wins is kept only so a not-ambiguous
+                // bare lookup still resolves.
+                if (byBare.TryGetValue(t.DbName, out var existing))
+                {
+                    if (!ReferenceEquals(existing, t))
+                        ambiguous.Add(t.DbName);
+                }
+                else
+                {
+                    byBare.Add(t.DbName, t);
+                }
+            }
+            return new DbNameIndex(byBare, byQualified, ambiguous);
         }
 
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
@@ -112,9 +158,25 @@ namespace BifrostQL.Core.Model
         }
         public IDbTable GetTableFromDbName(string tableName)
         {
-            return _byDbName.Value.TryGetValue(tableName, out var table)
+            var index = _byDbName.Value;
+            // Fail fast on a name defined in two schemas: returning either silently
+            // mis-targets columns, policy metadata and the write target. A caller that
+            // knows the schema must use the (schema, dbName) overload.
+            if (index.Ambiguous.Contains(tableName))
+                throw new Resolvers.BifrostExecutionError(
+                    $"Table name '{tableName}' is ambiguous: more than one schema defines a table named " +
+                    $"'{tableName}'. Resolve it with the schema-qualified lookup (schema, name) rather than a bare name.");
+            return index.ByBare.TryGetValue(tableName, out var table)
                 ? table
                 : throw new ArgumentOutOfRangeException(nameof(tableName), tableName, $"failed table lookup on db name: {tableName}");
+        }
+
+        public IDbTable GetTableFromDbName(string schema, string dbName)
+        {
+            return _byDbName.Value.ByQualified.TryGetValue(QualifiedDbNameKey(schema, dbName), out var table)
+                ? table
+                : throw new ArgumentOutOfRangeException(nameof(dbName), $"{schema}.{dbName}",
+                    $"failed table lookup on qualified db name: {schema}.{dbName}");
         }
 
         /// <summary>

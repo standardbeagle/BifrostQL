@@ -618,6 +618,11 @@ public static class TestSchema
         public IDbTable GetTableFromDbName(string tableName) =>
             _tablesByDbName.TryGetValue(tableName, out var t) ? t : throw new KeyNotFoundException($"Table '{tableName}' not found");
 
+        public IDbTable GetTableFromDbName(string schema, string dbName) =>
+            _tablesByDbName.TryGetValue(dbName, out var t)
+                && string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
+                ? t : throw new KeyNotFoundException($"Table '{schema}.{dbName}' not found");
+
         private static DbTable BuildTable(string name, string schema, ColumnDto[] columns)
         {
             var colLookup = columns.ToDictionary(c => c.ColumnName, c => c);

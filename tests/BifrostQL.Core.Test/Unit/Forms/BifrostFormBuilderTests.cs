@@ -1295,6 +1295,12 @@ public class BifrostFormBuilderTests
             string.Equals(_table.DbName, tableName, StringComparison.OrdinalIgnoreCase)
                 ? _table
                 : throw new KeyNotFoundException(tableName);
+
+        public IDbTable GetTableFromDbName(string schema, string dbName) =>
+            string.Equals(_table.DbName, dbName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(_table.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
+                ? _table
+                : throw new KeyNotFoundException($"{schema}.{dbName}");
     }
 
     #endregion

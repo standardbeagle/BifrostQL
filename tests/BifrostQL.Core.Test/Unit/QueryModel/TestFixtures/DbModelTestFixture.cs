@@ -320,6 +320,15 @@ public sealed class DbModelTestFixture
                 return table;
             throw new KeyNotFoundException($"Table with DB name '{dbName}' not found");
         }
+
+        public IDbTable GetTableFromDbName(string schema, string dbName)
+        {
+            foreach (var table in _tables.Values)
+                if (string.Equals(table.DbName, dbName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(table.TableSchema, schema, StringComparison.OrdinalIgnoreCase))
+                    return table;
+            throw new KeyNotFoundException($"Table '{schema}.{dbName}' not found");
+        }
     }
 
     private sealed class NoOpMetadataLoader : IMetadataLoader

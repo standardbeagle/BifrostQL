@@ -107,6 +107,12 @@ The store's columns are `id`, `table`, `op`, `intended_payload`, `requester`, `t
 refused when the store table is absent, so a half-configured deployment fails closed
 rather than writing unreviewed rows.
 
+`requester_context` holds a projection of the requester's identity, not their request
+context: the policy subject (`user_id`), the policy roles, the tenant claim under the
+model's tenant-context key, and the claim named by `user-audit-key`. These are the
+fields the replay re-runs the mutation pipeline with. Other claims, and the raw
+authentication principal, are never stored.
+
 ## Related
 
 - [Deferred and Reversible Change Sets](/BifrostQL/guides/deferred-effects/) — the

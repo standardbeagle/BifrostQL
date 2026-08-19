@@ -75,6 +75,24 @@ public sealed class IdentityContextMapper
     }
 
     /// <summary>
+    /// The user-context keys this mapper OWNS — the security-consumed keys it writes from the
+    /// authenticated identity (tenant, tenant-ids, user-id, roles, permissions, audit id). Includes
+    /// the tenant key even though <see cref="ToUserContext"/> OMITS it when the identity has no
+    /// tenant: a caller merging externally-supplied context must exclude every owned key regardless
+    /// of whether a value happens to be present, or a tenant-less identity's absent tenant slot
+    /// could be filled from the wire (identity spoofing). Case-insensitive.
+    /// </summary>
+    public IReadOnlySet<string> OwnedKeyNames => new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        _tenantContextKey,
+        _rolesContextKey,
+        _userAuditKey,
+        MetadataKeys.Auth.DefaultUserIdContextKey,
+        MetadataKeys.Auth.DefaultPermissionsContextKey,
+        MetadataKeys.Auth.DefaultTenantIdsContextKey,
+    };
+
+    /// <summary>
     /// Maps <paramref name="identity"/> into a fresh user-context dictionary.
     /// </summary>
     public IDictionary<string, object?> ToUserContext(AppIdentity identity)

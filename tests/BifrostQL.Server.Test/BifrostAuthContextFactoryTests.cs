@@ -99,6 +99,28 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void CreateUserContext_MergeOverload_Authenticated_CannotInjectAnOmittedIdentityKey()
+        {
+            // The principal carries no tenant claim, so BifrostContext OMITS the tenant key. A
+            // frontend-parsed context must NOT be able to fill that absent identity-owned slot —
+            // that would let a tenant-less caller inject its own tenant (identity spoofing). Only
+            // excluding keys that are PRESENT (the prior behaviour) left the omitted tenant key open.
+            var context = new DefaultHttpContext { User = AuthenticatedLocalPrincipal() }; // no tenant claim
+            var existing = new Dictionary<string, object?>
+            {
+                ["tenant_id"] = "attacker-tenant",  // identity-owned AND currently absent → must NOT merge
+                ["frontend-extra"] = 42,            // non-identity → must still merge
+            };
+
+            var userContext = Factory.CreateUserContext(context, existing);
+
+            userContext.Should().NotContainKey("tenant_id",
+                "a frontend cannot supply the identity's tenant key, even when the identity omits it");
+            userContext["frontend-extra"].Should().Be(42,
+                "non-identity frontend context still merges — the contract is unchanged for those keys");
+        }
+
+        [Fact]
         public void CreateUserContext_MergeOverload_Unauthenticated_ReturnsExisting()
         {
             // Arrange

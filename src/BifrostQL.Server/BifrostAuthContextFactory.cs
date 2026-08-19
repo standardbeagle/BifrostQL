@@ -68,11 +68,23 @@ namespace BifrostQL.Server
             if (user?.Identity?.IsAuthenticated == true)
             {
                 var bifrostContext = new BifrostContext(context);
-                // Merge frontend-parsed entries without letting them shadow identity keys.
+                // Merge frontend-parsed entries, but NEVER let them supply an identity-owned
+                // security key. Excluding only the keys currently PRESENT is not enough: the
+                // identity mapper omits the tenant key when the identity has no tenant (and the
+                // roles/permissions/tenant-ids keys are likewise identity-owned), so an absent
+                // slot would be fillable from the wire — a tenant-less caller could inject its own
+                // tenant. Exclude the mapper's whole owned-key set (BifrostContext builds the
+                // identity with this same default mapper) plus the raw principal, regardless of
+                // presence, so frontend context can only ever add NON-identity keys.
+                var ownedKeys = new BifrostQL.Core.Auth.IdentityContextMapper().OwnedKeyNames;
                 foreach (var kv in existing)
                 {
-                    if (!bifrostContext.ContainsKey(kv.Key))
-                        bifrostContext[kv.Key] = kv.Value;
+                    if (bifrostContext.ContainsKey(kv.Key))
+                        continue;
+                    if (ownedKeys.Contains(kv.Key)
+                        || string.Equals(kv.Key, "user", StringComparison.Ordinal))
+                        continue;
+                    bifrostContext[kv.Key] = kv.Value;
                 }
                 return bifrostContext;
             }

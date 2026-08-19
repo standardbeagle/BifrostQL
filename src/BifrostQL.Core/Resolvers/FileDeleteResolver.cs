@@ -83,8 +83,7 @@ namespace BifrostQL.Core.Resolvers
             if (mutationTransformers != null)
             {
                 transformResult = await mutationTransformers.TransformAsync(table, MutationType.Update, clearData, transformContext);
-                if (transformResult.Errors.Length > 0)
-                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+                transformResult.ThrowIfDenied();
             }
             else
             {

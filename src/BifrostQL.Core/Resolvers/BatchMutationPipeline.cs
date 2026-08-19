@@ -254,9 +254,7 @@ namespace BifrostQL.Core.Resolvers
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Insert, data, ctx.TransformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors))
-                { ErrorCode = transformResult.ErrorCode };
+            transformResult.ThrowIfDenied();
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
             // enum-name → DB-value mapping — reaches the SQL, rekeyed from GraphQL
@@ -318,9 +316,7 @@ namespace BifrostQL.Core.Resolvers
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the update before any SQL is built; non-empty Errors abort it.
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, updateTransformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors))
-                { ErrorCode = transformResult.ErrorCode };
+            transformResult.ThrowIfDenied();
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
@@ -384,9 +380,7 @@ namespace BifrostQL.Core.Resolvers
                 };
 
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors))
-                { ErrorCode = transformResult.ErrorCode };
+            transformResult.ThrowIfDenied();
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never

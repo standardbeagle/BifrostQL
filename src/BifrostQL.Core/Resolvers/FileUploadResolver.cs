@@ -85,8 +85,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 var preCheck = await mutationTransformers.TransformAsync(
                     table, MutationType.Update, new Dictionary<string, object?>(keyData, StringComparer.OrdinalIgnoreCase), transformContext);
-                if (preCheck.Errors.Length > 0)
-                    throw new BifrostExecutionError(string.Join("; ", preCheck.Errors));
+                preCheck.ThrowIfDenied();
                 preCheckFilter = preCheck.AdditionalFilter;
             }
 
@@ -116,8 +115,10 @@ namespace BifrostQL.Core.Resolvers
                 finalResult = await mutationTransformers.TransformAsync(table, MutationType.Update, updateData, transformContext);
                 if (finalResult.Errors.Length > 0)
                 {
+                    // Remove the just-written blob before aborting so a denied write leaves no orphan,
+                    // then throw through the shared helper so the denial keeps its ErrorCode.
                     await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
-                    throw new BifrostExecutionError(string.Join("; ", finalResult.Errors));
+                    finalResult.ThrowIfDenied();
                 }
             }
             else

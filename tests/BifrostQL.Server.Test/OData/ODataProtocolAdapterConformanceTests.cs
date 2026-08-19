@@ -52,10 +52,11 @@ namespace BifrostQL.Server.Test.OData
     /// path's field-level "not permitted by authorization policy" message.</item>
     /// <item>A <b>missing tenant identity</b> is modelled (as RESP does) by an authenticated
     /// principal carrying no tenant claim, so the request passes auth and reaches the pipeline, where
-    /// the tenant transformer fails closed. That fault is a Bifrost-internal exception, which the
-    /// middleware sanitizes to a generic OData InternalError (invariant 3) rather than forwarding
-    /// verbatim — so the surfaced wire text is the sanitized "internal error", while the read is
-    /// still rejected with no rows.</item>
+    /// the tenant transformer fails closed with an AccessDenied-coded fault. The middleware maps that
+    /// condition to the SAME sanitized 404 "not found" as any other denial — the denied class every
+    /// sibling adapter uses for it (invariant 10) and indistinguishable from a non-existent set
+    /// (invariant 4) — never a generic 500, because a fail-closed denial is not a server bug. The
+    /// read is still rejected with no rows.</item>
     /// </list>
     /// Neither exemption relaxes the requirement that the read is refused — only which text the
     /// thrown rejection carries.</para>
@@ -67,14 +68,13 @@ namespace BifrostQL.Server.Test.OData
         // stays false (default) and the mutation facts are skipped honestly.
         protected override void RegisterAdapter(BifrostMultiDbOptions options) { }
 
-        // See the class remarks: a policy-read-denied table is invisible under invariant 4 (→ a 404
-        // "not found", indistinguishable from a non-existent set), and a pipeline tenant fault is
-        // sanitized to a generic InternalError (invariant 3, → "internal error"). Both still throw
-        // with zero rows — only the surfaced wire text is relaxed, never the fail-closed assertion.
-        protected override string ExpectedRejectionFragment(string canonicalServerFragment)
-            => canonicalServerFragment.Contains("policy", StringComparison.OrdinalIgnoreCase)
-                ? "not found"
-                : "internal error";
+        // Every fail-closed authorization denial — a policy-read-deny AND a missing tenant claim —
+        // maps to OData's sanitized 404 "not found", indistinguishable from a non-existent set
+        // (invariant 4), and the SAME denied class every sibling adapter uses for the same
+        // condition (invariant 10). A denial is not a server bug, so it is never a generic 500.
+        // Both still throw with zero rows — only the surfaced wire text is relaxed from the
+        // canonical server fragment, never the fail-closed assertion.
+        protected override string ExpectedRejectionFragment(string canonicalServerFragment) => "not found";
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

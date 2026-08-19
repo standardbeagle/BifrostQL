@@ -94,6 +94,17 @@ namespace BifrostQL.Server.OData
             {
                 await WriteErrorAsync(context, ex);
             }
+            catch (BifrostExecutionError ex) when (ex.ErrorCode == BifrostExecutionError.AccessDeniedCode)
+            {
+                // A fail-closed authorization denial raised at execution (a missing tenant claim,
+                // a row/column policy deny) must map to the SAME class every other adapter maps it
+                // to — NotFound (404), indistinguishable from a non-existent set so the endpoint is
+                // never an existence oracle — not the generic 500 the catch below would give
+                // (invariant 10: one condition, one wire status across adapters; invariant 4). The
+                // message is not forwarded; only the sanitized NotFound envelope is written.
+                _logger.LogInformation(ex, "OData request denied by authorization policy.");
+                await WriteErrorAsync(context, ODataProtocolException.NotFound());
+            }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
             {
                 // Client went away; nothing to write.

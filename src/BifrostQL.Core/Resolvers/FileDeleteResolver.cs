@@ -180,7 +180,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError($"Failed to retrieve file metadata: {ex.Message}", ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 
@@ -233,7 +233,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError($"Failed to clear database record: {ex.Message}", ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
     }

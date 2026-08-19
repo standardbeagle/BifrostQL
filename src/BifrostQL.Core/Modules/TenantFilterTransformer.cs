@@ -63,10 +63,16 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
     /// </summary>
     public static string ResolveTenantContextKey(IDbModel model)
     {
-        if (model.Metadata.TryGetValue(TenantContextKeyMetadata, out var key) && key is string keyStr)
-        {
+        // Absent metadata → the default claim. But metadata that IS present yet is not a
+        // usable (non-empty) string is a misconfiguration of a SECURITY key: silently
+        // falling back to the default would scope by the wrong claim. Fail fast instead,
+        // consistent with the repo's fail-fast posture for security-relevant config.
+        if (!model.Metadata.TryGetValue(TenantContextKeyMetadata, out var key))
+            return DefaultTenantContextKey;
+        if (key is string keyStr && !string.IsNullOrWhiteSpace(keyStr))
             return keyStr;
-        }
-        return DefaultTenantContextKey;
+        throw new BifrostExecutionError(
+            $"Metadata '{TenantContextKeyMetadata}' must be a non-empty string naming the tenant context key; " +
+            "remove it to use the default, or set a valid key.");
     }
 }

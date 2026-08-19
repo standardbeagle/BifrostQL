@@ -40,6 +40,23 @@ public class BlindIndexQueryRoutingTests
             })
             .Build();
 
+    // A parent table whose `secret` relationship points at the encrypted `secrets` table,
+    // so a filter can nest the encrypted predicate inside a relationship traversal.
+    private static IDbModel AccountsWithSecretModel() =>
+        DbModelTestFixture.Create()
+            .WithTable("secrets", t => t.WithSchema("main")
+                .WithPrimaryKey("id")
+                .WithColumn("ssn", "nvarchar")
+                .WithColumn("ssn_bidx", "nvarchar")
+                .WithColumnMetadata("ssn", MetadataKeys.Crypto.Encrypt, "aes-256-gcm")
+                .WithColumnMetadata("ssn", MetadataKeys.Crypto.KeyRef, KeyRef)
+                .WithColumnMetadata("ssn", MetadataKeys.Crypto.BlindIndex, "ssn_bidx"))
+            .WithTable("accounts", t => t.WithSchema("main")
+                .WithPrimaryKey("id")
+                .WithColumn("secret_id", "int"))
+            .WithSingleLink("accounts", "secret_id", "secrets", "id", "secret")
+            .Build();
+
     private static EnvelopeKeyManager NewManager()
     {
         var root = new byte[FieldCipher.KeySize];
@@ -80,6 +97,43 @@ public class BlindIndexQueryRoutingTests
         // The bound value is the write path's search token for the plaintext.
         var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "123-45-6789");
         parameters.Parameters.Should().ContainSingle().Which.Value.Should().Be(expected);
+    }
+
+    [Fact]
+    public void EqualityOnEncryptedColumn_ViaRelationshipWithSiblingPredicate_IsRewritten_NotRejected()
+    {
+        // The encrypted _eq sits inside a relationship filter next to a SIBLING predicate:
+        // `secret: { ssn: {_eq}, id: {_eq} }`. That produces an AND wrapper whose Next is
+        // null, so the old `Next.Next is null` leaf test mis-classified the RELATIONSHIP node
+        // as a leaf, never routed the nested ssn _eq to its blind-index sibling, and the guard
+        // rejected the whole query. Using the shared IsLeafColumnPredicate, the rewrite now
+        // recurses into the relationship and routes the encrypted _eq like the flat case.
+        var model = AccountsWithSecretModel();
+        var manager = NewManager();
+        var filter = TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            ["secret"] = new Dictionary<string, object?>
+            {
+                ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+                ["id"] = new Dictionary<string, object?> { ["_eq"] = 5 },
+            },
+        }, "accounts");
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(model.GetTableFromDbName("accounts"))
+            .WithColumns("id")
+            .WithFilter(filter)
+            .Build();
+
+        // Before the fix this threw (the guard rejected the unrewritten encrypted _eq).
+        Service(manager).ApplyTransformers(query, model, UserContext());
+
+        var parameters = new SqlParameterCollection();
+        var rendered = query.Filter!.ToSqlParameterized(model, SqliteDialect.Instance, parameters);
+        // The nested encrypted predicate now targets the blind-index sibling, never the ciphertext.
+        rendered.Sql.Should().Contain("ssn_bidx").And.NotContain("\"ssn\"");
+        // Its bound value is the write path's search token for the plaintext.
+        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "123-45-6789");
+        parameters.Parameters.Select(p => p.Value).Should().Contain(expected);
     }
 
     [Fact]

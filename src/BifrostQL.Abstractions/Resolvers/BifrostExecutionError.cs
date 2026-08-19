@@ -98,22 +98,31 @@ namespace BifrostQL.Core.Resolvers
 
         /// <summary>
         /// Walks the exception chain for the fingerprints of a unique/duplicate-key
-        /// violation. Keys off the words every supported driver puts in these
-        /// messages — SQLite/SQL Server "UNIQUE constraint", MySQL "Duplicate
-        /// entry", PostgreSQL "duplicate key ... unique constraint" — plus the
-        /// distinctive Postgres SQLSTATE. Short numeric driver codes (1062, 2627,
-        /// …) are deliberately NOT matched: those digits occur in ordinary error
-        /// text (values, ids, offsets), so a substring test on them misclassifies
-        /// unrelated failures as conflicts.
+        /// violation. Keys off the distinctive PHRASES every supported driver puts in
+        /// these messages, not bare words:
+        /// <list type="bullet">
+        /// <item>SQLite: <c>UNIQUE constraint failed</c></item>
+        /// <item>SQL Server / PostgreSQL: <c>duplicate key</c> ("Cannot insert duplicate
+        /// key" / "duplicate key value violates unique constraint")</item>
+        /// <item>MySQL: <c>Duplicate entry</c></item>
+        /// <item>PostgreSQL SQLSTATE <c>23505</c></item>
+        /// </list>
+        /// Bare "UNIQUE" / "duplicate" are deliberately NOT matched: those words occur in
+        /// ordinary error text — a CHECK constraint named <c>..._unique_...</c>, a column
+        /// or value a driver echoes back ("Duplicate the record?"), a table named
+        /// <c>unique_codes</c> — so a single-word substring test misclassifies unrelated
+        /// failures as conflicts. Short numeric codes (1062, 2627, …) are excluded for the
+        /// same reason: those digits appear in values, ids and offsets.
         /// </summary>
         public static bool IsUniqueViolation(Exception? ex)
         {
             for (var current = ex; current != null; current = current.InnerException)
             {
                 var m = current.Message;
-                if (m.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-                    || m.Contains("duplicate", StringComparison.OrdinalIgnoreCase)
-                    || m.Contains("23505", StringComparison.Ordinal))    // Postgres SQLSTATE unique_violation
+                if (m.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase)  // SQLite
+                    || m.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)          // SQL Server, PostgreSQL
+                    || m.Contains("Duplicate entry", StringComparison.OrdinalIgnoreCase)        // MySQL
+                    || m.Contains("23505", StringComparison.Ordinal))                           // PostgreSQL SQLSTATE unique_violation
                     return true;
             }
             return false;

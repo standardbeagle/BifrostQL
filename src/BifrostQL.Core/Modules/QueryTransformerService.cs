@@ -262,7 +262,13 @@ public sealed class QueryTransformerService : IQueryTransformerService
         }
 
         // Leaf predicate: `column: { _op: value }` — Next is the terminal operator node.
-        if (filter.Next.Next is null)
+        // Use the SHARED IsLeafColumnPredicate, not `Next.Next is null`: the latter is TRUE
+        // for a relationship node whose child is an AND wrapper of sibling predicates
+        // (customer: { ssn: {_eq}, active: {_eq} }), so it mis-classified that relationship
+        // as a leaf, failed the column lookup, and never routed the nested encrypted _eq to
+        // its blind-index sibling — the query then fell to the filter guard. This is the same
+        // divergence the collector already fixed (see TableFilter.IsLeafColumnPredicate).
+        if (filter.IsLeafColumnPredicate)
             return RewriteLeafPredicate(filter, table);
 
         // Relationship chain: ColumnName names a SingleLinks relationship into another

@@ -118,7 +118,14 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (DbException ex)
             {
-                throw new BifrostExecutionError($"SQL execution error: {ex.Message}", ex);
+                // Route through the redaction seam rather than forwarding ex.Message verbatim.
+                // A raw driver message can carry infrastructure detail (server paths, login /
+                // permission text, provider internals) beyond the caller's own SQL syntax — the
+                // same leak rule 3 (.claude/rules/protocol-adapter-security.md) flags on the wire.
+                // FromDatabaseException redacts unless BIFROST_EXPOSE_DB_ERRORS is set, classifies
+                // a unique/duplicate-key violation as a stable CONFLICT, and keeps the original as
+                // InnerException for server-side logging.
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
     }

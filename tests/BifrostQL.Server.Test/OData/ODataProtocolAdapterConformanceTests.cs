@@ -105,6 +105,7 @@ namespace BifrostQL.Server.Test.OData
             var query = BuildQueryString(request, ToProperty);
 
             var ctx = new DefaultHttpContext { User = principal };
+            ctx.Request.Method = "GET";
             ctx.Request.Path = "/" + table.GraphQlName;
             if (query.Length > 0)
                 ctx.Request.QueryString = new QueryString("?" + query);

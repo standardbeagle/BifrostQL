@@ -75,6 +75,16 @@ namespace BifrostQL.Server.OData
                 // the credential comparison cost.
                 context.RequestAborted.ThrowIfCancellationRequested();
 
+                // The OData surface is read-only. Refuse any verb other than GET/HEAD before auth
+                // and dispatch — otherwise a POST/DELETE would authenticate and be served read data
+                // (its body silently ignored), and a HEAD would fall through to a GET body. Mirrors
+                // the Feeds and Prometheus siblings.
+                if (!HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method))
+                {
+                    context.Response.Headers.Allow = "GET, HEAD"; // RFC 7231 §6.5.5: 405 must list allowed methods
+                    throw ODataProtocolException.MethodNotAllowed();
+                }
+
                 // Authenticate first — every request is gated before any operation is dispatched.
                 var userContext = await _authenticator.AuthenticateAsync(context, context.RequestAborted);
 

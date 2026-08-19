@@ -61,6 +61,7 @@ namespace BifrostQL.Server.Test.OData
         {
             var options = new ODataOptions { Realm = "TestRealm" };
             var ctx = new DefaultHttpContext();
+            ctx.Request.Method = "GET";
 
             var (status, contentType, body) = await Run(Build(options: options), ctx);
 
@@ -76,6 +77,7 @@ namespace BifrostQL.Server.Test.OData
             var store = new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
             var ctx = new DefaultHttpContext();
+            ctx.Request.Method = "GET";
             ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, "wrong-password");
 
             var (status, _, body) = await Run(Build(store), ctx);
@@ -85,6 +87,43 @@ namespace BifrostQL.Server.Test.OData
             body.Should().NotContain("wrong-password");
         }
 
+        [Theory]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        public async Task Non_read_method_returns_405_without_serving_data(string method)
+        {
+            // The OData surface is read-only. A write verb must be refused with 405 — never
+            // authenticated-and-served read data with its body ignored. The gate runs before auth,
+            // so an authenticated principal on the context still gets 405, not a 200 read.
+            var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = method;
+            ctx.Request.Path = "/Orders";
+
+            var (status, _, body) = await Run(Build(), ctx);
+
+            status.Should().Be(405);
+            ErrorOf(body).GetProperty("code").GetString().Should().Be("MethodNotAllowed");
+            ctx.Response.Headers.Allow.ToString().Should().Contain("GET").And.Contain("HEAD");
+        }
+
+        [Theory]
+        [InlineData("GET")]
+        [InlineData("HEAD")]
+        public async Task Read_methods_pass_the_method_gate(string method)
+        {
+            // GET/HEAD are the read verbs the surface supports; the gate must let them through to
+            // the normal routing (here a 404 for the unknown set on the stub model), never 405.
+            var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = method;
+            ctx.Request.Path = "/Orders";
+
+            var (status, _, _) = await Run(Build(), ctx);
+
+            status.Should().NotBe(405, "GET and HEAD must pass the read-only method gate");
+        }
+
         [Fact]
         public async Task Unknown_entity_set_path_returns_not_found_404()
         {
@@ -92,6 +131,7 @@ namespace BifrostQL.Server.Test.OData
             // (the stub model has no tables) is a clean 404 — indistinguishable from an unauthorized
             // set, so the endpoint is never an existence oracle.
             var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
             ctx.Request.Path = "/Orders";
 
             var (status, _, body) = await Run(Build(), ctx);
@@ -106,6 +146,7 @@ namespace BifrostQL.Server.Test.OData
             // Single-entity-by-key and navigation paths are later slices; only the collection read is
             // implemented here, so a key predicate is a clean 501 (not an unhandled route).
             var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
             ctx.Request.Path = "/Orders(1)";
 
             var (status, _, body) = await Run(Build(), ctx);
@@ -118,6 +159,7 @@ namespace BifrostQL.Server.Test.OData
         public async Task Cancelled_request_writes_no_body()
         {
             var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
             ctx.RequestAborted = new CancellationToken(canceled: true);
             ctx.Response.Body = new MemoryStream();
 
@@ -136,6 +178,7 @@ namespace BifrostQL.Server.Test.OData
 
             // Authenticated, non-admin caller (no admin role) hitting the endpoint root.
             var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
             ctx.Request.Path = "/";
 
             var (status, contentType, body) = await Run(Build(options: options, reads: harness.Reads), ctx);
@@ -157,6 +200,7 @@ namespace BifrostQL.Server.Test.OData
             var options = new ODataOptions { Endpoint = ODataRealDbHarness.EndpointPath };
 
             var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
             ctx.Request.Path = "/$metadata";
 
             var (status, contentType, body) = await Run(Build(options: options, reads: harness.Reads), ctx);

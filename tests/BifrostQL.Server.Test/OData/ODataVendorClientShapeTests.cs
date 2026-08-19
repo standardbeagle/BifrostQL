@@ -147,6 +147,7 @@ namespace BifrostQL.Server.Test.OData
 
             // A null user models a truly unauthenticated request (no principal on HttpContext.User).
             var ctx = new DefaultHttpContext();
+            ctx.Request.Method = "GET";
             if (user is not null)
                 ctx.User = user;
             ctx.Request.Path = path;

@@ -41,6 +41,15 @@ namespace BifrostQL.Server.OData
             => new("NotImplemented", 501, message);
 
         /// <summary>
+        /// The request used a method other than GET/HEAD. The OData surface is read-only, so any
+        /// other verb is refused with 405 rather than authenticating and serving read data for a
+        /// body-carrying write verb (which the surface would silently ignore). Mirrors the Feeds
+        /// and Prometheus siblings.
+        /// </summary>
+        public static ODataProtocolException MethodNotAllowed(string message = "Only GET and HEAD are supported by the OData endpoint.")
+            => new("MethodNotAllowed", 405, message);
+
+        /// <summary>
         /// A malformed request the caller can correct — an unknown/ambiguous property name, a
         /// non-integer or out-of-range <c>$top</c>/<c>$skip</c>, a duplicated system query option,
         /// or an unsupported one. The message is curated to describe only the shape of the fault,

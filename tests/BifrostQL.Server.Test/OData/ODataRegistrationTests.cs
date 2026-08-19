@@ -107,7 +107,7 @@ namespace BifrostQL.Server.Test.OData
 
         private static DefaultHttpContext RequestFor(string path)
         {
-            var ctx = new DefaultHttpContext { Request = { Path = path } };
+            var ctx = new DefaultHttpContext { Request = { Path = path, Method = "GET" } };
             ctx.Response.Body = new MemoryStream();
             return ctx;
         }

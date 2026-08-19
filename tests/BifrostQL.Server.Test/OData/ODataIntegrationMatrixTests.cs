@@ -199,6 +199,7 @@ namespace BifrostQL.Server.Test.OData
                 next, opts, authenticator, harness.Reads, NullLogger<ODataMiddleware>.Instance);
 
             var ctx = new DefaultHttpContext { User = user ?? ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
             ctx.Request.Path = path;
             if (queryString.Length > 0)
                 ctx.Request.QueryString = new QueryString(queryString.StartsWith('?') ? queryString : "?" + queryString);

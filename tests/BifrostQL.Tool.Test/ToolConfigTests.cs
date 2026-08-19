@@ -46,4 +46,45 @@ public class ToolConfigTests
         implicitServe.TrustServerCertificate.Should().BeTrue();
         implicitServe.CommandArgs.Should().Equal("db.corp", "appdb");
     }
+
+    [Fact]
+    public void Parse_DefaultsHostToLoopback()
+    {
+        // The serve command ships no auth, so it must bind loopback unless the
+        // operator explicitly widens it. The default is fail-secure.
+        var config = ToolConfig.Parse(["serve", "db.corp", "appdb"]);
+
+        config.Host.Should().Be("127.0.0.1");
+        ServeCommand.IsLoopback(config.Host).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Parse_ReadsExplicitHostWidening()
+    {
+        var config = ToolConfig.Parse(["serve", "db.corp", "appdb", "--host", "0.0.0.0"]);
+
+        config.Host.Should().Be("0.0.0.0");
+        ServeCommand.IsLoopback(config.Host).Should().BeFalse(
+            "0.0.0.0 is a wildcard bind, not loopback — it must trigger the exposure warning");
+    }
+
+    [Fact]
+    public void WithImplicitServe_CarriesTheHost()
+    {
+        var config = ToolConfig.Parse(["db.corp", "appdb", "--host", "0.0.0.0"]);
+
+        config.WithImplicitServe().Host.Should().Be("0.0.0.0");
+    }
+
+    [Theory]
+    [InlineData("localhost", true)]
+    [InlineData("127.0.0.1", true)]
+    [InlineData("::1", true)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("192.168.1.10", false)]
+    [InlineData("example.com", false)]
+    public void IsLoopback_ClassifiesHosts(string host, bool expected)
+    {
+        ServeCommand.IsLoopback(host).Should().Be(expected);
+    }
 }

@@ -23,9 +23,19 @@ public sealed class ServeCommand : ICommand
         var configSection = resolved.Value.ConfigSection;
 
         var port = config.Port;
-        var url = $"http://0.0.0.0:{port}";
+        // Bind loopback by default. The serve command ships no authentication, so
+        // exposing it beyond localhost is an explicit operator decision (--host),
+        // announced with a warning — never an ambient 0.0.0.0 default.
+        var host = config.Host;
+        var url = $"http://{host}:{port}";
         var endpointPath = configSection?.Path ?? "/graphql";
         var playgroundPath = configSection?.Playground ?? "/graphiql";
+
+        if (!IsLoopback(host))
+            output.WriteWarning(
+                $"bifrost serve is bound to '{host}', reachable beyond localhost. This server has no " +
+                "authentication; anyone who can reach this interface can read and write the whole database. " +
+                "Bind 127.0.0.1 (the default) unless this exposure is intended.");
 
         if (!output.IsJsonMode)
         {
@@ -55,11 +65,26 @@ public sealed class ServeCommand : ICommand
         builder.Services.AddCors();
 
         var app = builder.Build();
+        // Permissive CORS for the local development playground. Safe because the server
+        // binds loopback by default (see host above); AllowAnyOrigin cannot carry
+        // credentials, and a widened --host bind already warned the operator.
         app.UseCors(x => x.AllowAnyMethod().AllowAnyHeader().AllowAnyOrigin());
         app.UseBifrostQL();
 
         await app.RunAsync();
         return 0;
+    }
+
+    /// <summary>
+    /// True when the bind host is a loopback address (localhost / 127.0.0.0-8 / ::1),
+    /// so a non-loopback bind (LAN/public exposure) can be warned about.
+    /// </summary>
+    internal static bool IsLoopback(string host)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return System.Net.IPAddress.TryParse(host, out var ip)
+            && System.Net.IPAddress.IsLoopback(ip);
     }
 
     private static async Task<ResolvedConnection?> ResolveConnectionString(ToolConfig config, OutputFormatter output)

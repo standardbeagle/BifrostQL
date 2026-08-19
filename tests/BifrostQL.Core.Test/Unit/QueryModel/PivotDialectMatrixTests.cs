@@ -59,6 +59,23 @@ public sealed class PivotDialectMatrixTests
 
     [Theory]
     [MemberData(nameof(Dialects))]
+    public void DistinctValues_WithLimit_IsBounded_AndParses(ISqlDialect dialect, SqlFlavor flavor)
+    {
+        // The distinct-value discovery must be row-bounded so a high-cardinality pivot
+        // column cannot force the entire distinct set into memory before the caller's
+        // cardinality guard runs (a DoS through an otherwise cheap authenticated request).
+        var tableRef = dialect.TableReference("dbo", "orders");
+        var sql = PivotSqlGenerator.GenerateDistinctValuesSql(dialect, "status", tableRef, filter: null, limit: 51);
+
+        SqlSyntax.AssertValid(sql.Sql, flavor, "bounded distinct pivot values SQL");
+        sql.Sql.Should().Contain("DISTINCT");
+        // Every dialect must carry a row cap: SQL Server via FETCH NEXT, the rest via LIMIT.
+        sql.Sql.Should().MatchRegex(@"FETCH NEXT 51 ROWS ONLY|LIMIT 51",
+            "the discovery query must bound the distinct scan to MaxPivotColumns + 1 rows");
+    }
+
+    [Theory]
+    [MemberData(nameof(Dialects))]
     public void EmptyPivot_ParsesForDialect(ISqlDialect dialect, SqlFlavor flavor)
     {
         var tableRef = dialect.TableReference("dbo", "orders");

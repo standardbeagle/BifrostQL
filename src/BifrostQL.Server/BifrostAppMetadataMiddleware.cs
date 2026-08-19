@@ -101,8 +101,8 @@ namespace BifrostQL.Server
 
             // An empty overlay is served when none is registered, so the
             // endpoint always returns the stable contract rather than 404.
-            var overlay = context.RequestServices.GetService<Lazy<Task<AppMetadataModel>>>();
-            var model = overlay != null ? await overlay.Value : new AppMetadataModel();
+            var overlay = context.RequestServices.GetService<AppMetadataCache>();
+            var model = overlay != null ? await overlay.GetAsync() : new AppMetadataModel();
 
             model = await FilterForCallerAsync(context, model, userContext);
 

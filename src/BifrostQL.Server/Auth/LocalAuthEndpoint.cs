@@ -161,7 +161,7 @@ namespace BifrostQL.Server.Auth
         /// In-memory sliding-window failure counter with lockout. Not a substitute for an
         /// edge rate limiter, but denies a naive online brute-force from a single node.
         /// </summary>
-        private sealed class LoginThrottle
+        internal sealed class LoginThrottle
         {
             private sealed class Entry
             {
@@ -170,6 +170,23 @@ namespace BifrostQL.Server.Auth
             }
 
             private readonly ConcurrentDictionary<string, Entry> _entries = new();
+
+            // Soft cap on tracked keys. Entries are only removed on a SUCCESSFUL login for the
+            // exact key, so a peer rotating login strings or source IPs would otherwise grow this
+            // map without bound on the unauthenticated path. When over the cap, RecordFailure
+            // evicts entries whose lockout window has fully elapsed (they carry no live lockout —
+            // IsLockedOut resets them on read anyway — so dropping them changes no decision).
+            internal const int DefaultMaxTrackedKeys = 10_000;
+            private readonly int _maxTrackedKeys;
+
+            public LoginThrottle() : this(DefaultMaxTrackedKeys) { }
+
+            // Test seam: a lower cap makes the prune-when-over-cap behaviour exercisable
+            // without materializing ten thousand entries.
+            internal LoginThrottle(int maxTrackedKeys) => _maxTrackedKeys = maxTrackedKeys;
+
+            /// <summary>Number of tracked keys — for tests asserting the map stays bounded.</summary>
+            internal int TrackedKeyCount => _entries.Count;
 
             public bool IsLockedOut(string key, LocalAuthOptions options)
             {
@@ -206,6 +223,29 @@ namespace BifrostQL.Server.Auth
                         entry.WindowStart = DateTimeOffset.UtcNow;
                     }
                     entry.Failures++;
+                }
+
+                // Only when over the soft cap — never per call — so this is not O(n) on the hot
+                // path. Under an active key-rotation attack (the only way to exceed the cap) it
+                // reclaims the elapsed-window entries that IsLockedOut would reset but never removes.
+                if (_entries.Count > _maxTrackedKeys)
+                    PruneElapsed(options.LockoutWindow);
+            }
+
+            private void PruneElapsed(TimeSpan window)
+            {
+                var now = DateTimeOffset.UtcNow;
+                foreach (var kvp in _entries)
+                {
+                    var entry = kvp.Value;
+                    bool elapsed;
+                    lock (entry)
+                        elapsed = now - entry.WindowStart >= window;
+                    if (elapsed)
+                        // Conditional remove: only drops THIS entry instance, so a key another
+                        // thread just re-activated (replacing nothing — GetOrAdd reuses the object)
+                        // loses at most one in-window count, acceptable under a live flood.
+                        _entries.TryRemove(KeyValuePair.Create(kvp.Key, entry));
                 }
             }
 

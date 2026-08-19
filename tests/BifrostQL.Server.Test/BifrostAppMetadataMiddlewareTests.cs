@@ -30,7 +30,7 @@ namespace BifrostQL.Server.Test
         {
             var services = new ServiceCollection();
             if (overlay != null)
-                services.AddSingleton(new Lazy<Task<AppMetadataModel>>(() => Task.FromResult(overlay)));
+                services.AddSingleton(new AppMetadataCache(() => Task.FromResult(overlay)));
             return services.BuildServiceProvider();
         }
 

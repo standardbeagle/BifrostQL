@@ -17,22 +17,37 @@ namespace BifrostQL.Server.Ldap
     /// </summary>
     internal sealed class LdapBindRateLimiter
     {
+        // Soft cap on tracked (axis+key) counters. Entries are never removed on their own — a
+        // fresh source or account key is created per distinct value — so an account-spraying or
+        // IP-churning peer would grow this map without bound on the unauthenticated bind path.
+        // Over the cap, Increment reclaims counters whose window has already rolled over (Peek
+        // treats them as 0 anyway, so dropping them changes no decision).
+        internal const int DefaultMaxTrackedKeys = 20_000;
+
         private readonly int _maxPerSource;
         private readonly int _maxPerAccount;
         private readonly TimeSpan _window;
         private readonly Func<DateTimeOffset> _clock;
+        private readonly int _maxTrackedKeys;
         private readonly ConcurrentDictionary<string, Window> _windows = new(StringComparer.Ordinal);
 
-        public LdapBindRateLimiter(int maxPerSource, int maxPerAccount, TimeSpan window, Func<DateTimeOffset>? clock = null)
+        public LdapBindRateLimiter(
+            int maxPerSource, int maxPerAccount, TimeSpan window,
+            Func<DateTimeOffset>? clock = null, int maxTrackedKeys = DefaultMaxTrackedKeys)
         {
             if (maxPerSource < 1) throw new ArgumentOutOfRangeException(nameof(maxPerSource));
             if (maxPerAccount < 1) throw new ArgumentOutOfRangeException(nameof(maxPerAccount));
             if (window <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(window));
+            if (maxTrackedKeys < 1) throw new ArgumentOutOfRangeException(nameof(maxTrackedKeys));
             _maxPerSource = maxPerSource;
             _maxPerAccount = maxPerAccount;
             _window = window;
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
+            _maxTrackedKeys = maxTrackedKeys;
         }
+
+        /// <summary>Number of tracked counters — for tests asserting the map stays bounded.</summary>
+        internal int TrackedKeyCount => _windows.Count;
 
         /// <summary>
         /// Counts one bind attempt against both its source and account windows and returns whether it
@@ -54,11 +69,30 @@ namespace BifrostQL.Server.Ldap
         private int Peek(string key, DateTimeOffset now) =>
             _windows.TryGetValue(key, out var w) && now - w.Start < _window ? w.Count : 0;
 
-        private void Increment(string key, DateTimeOffset now) =>
+        private void Increment(string key, DateTimeOffset now)
+        {
             _windows.AddOrUpdate(
                 key,
                 _ => new Window(now, 1),
                 (_, w) => now - w.Start < _window ? w with { Count = w.Count + 1 } : new Window(now, 1));
+
+            // Only when over the soft cap — never per call — so this stays off the hot path.
+            // An account/IP-spraying flood is the only way to exceed it, and that is exactly
+            // when the rolled-over counters it reclaims have accumulated.
+            if (_windows.Count > _maxTrackedKeys)
+                PruneExpired(now);
+        }
+
+        private void PruneExpired(DateTimeOffset now)
+        {
+            foreach (var kvp in _windows)
+            {
+                if (now - kvp.Value.Start >= _window)
+                    // Conditional remove: Window is a value type, so this drops the counter only
+                    // if it has not been replaced by a concurrent Increment since we read it.
+                    _windows.TryRemove(kvp);
+            }
+        }
 
         private readonly record struct Window(DateTimeOffset Start, int Count);
     }

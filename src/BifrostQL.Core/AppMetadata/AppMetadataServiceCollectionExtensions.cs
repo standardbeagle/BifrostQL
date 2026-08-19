@@ -40,9 +40,10 @@ namespace BifrostQL.Core.AppMetadata
             var loader = new AppMetadataLoader(source);
 
             services.AddSingleton(loader);
-            // Memoize the overlay load as a Lazy<Task<>> so it runs once, lazily,
-            // off the request thread — never blocking with GetAwaiter().GetResult().
-            services.AddSingleton(_ => new Lazy<Task<AppMetadataModel>>(() => loader.LoadAsync()));
+            // Memoize the overlay load off the request thread (never GetAwaiter().GetResult()),
+            // but through AppMetadataCache so a transient first-load failure is not cached for
+            // the process lifetime — see AppMetadataCache.
+            services.AddSingleton(sp => new AppMetadataCache(sp.GetRequiredService<AppMetadataLoader>()));
 
             return services;
         }

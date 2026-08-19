@@ -177,10 +177,37 @@ public class AppMetadataLoaderTests
         services.AddBifrostAppMetadata(source);
         using var provider = services.BuildServiceProvider();
 
-        var model = await provider.GetRequiredService<Lazy<Task<AppMetadataModel>>>().Value;
+        var model = await provider.GetRequiredService<AppMetadataCache>().GetAsync();
         model.Entities.Should().ContainKey("dbo.users");
         // Singleton: resolving again returns the same memoized instance.
-        (await provider.GetRequiredService<Lazy<Task<AppMetadataModel>>>().Value).Should().BeSameAs(model);
+        (await provider.GetRequiredService<AppMetadataCache>().GetAsync()).Should().BeSameAs(model);
+    }
+
+    [Fact]
+    public async Task AppMetadataCache_TransientFirstLoadFailure_IsNotCachedForever()
+    {
+        // A bare Lazy<Task<>> caches a faulted task permanently, so one transient IO/DB
+        // error on the first hit would break /_app-metadata for the process lifetime. The
+        // cache must reset on fault and let the next call retry — then memoize the success.
+        var attempts = 0;
+        var loaded = new AppMetadataModel();
+        var cache = new AppMetadataCache(() =>
+        {
+            attempts++;
+            return attempts == 1
+                ? throw new InvalidOperationException("transient load failure")
+                : Task.FromResult(loaded);
+        });
+
+        // First call surfaces the fault.
+        await cache.Invoking(c => c.GetAsync()).Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("transient load failure");
+
+        // Second call retries and succeeds (a bare Lazy would replay the cached fault).
+        (await cache.GetAsync()).Should().BeSameAs(loaded);
+        // Third call is served from the memoized success — no further loads.
+        (await cache.GetAsync()).Should().BeSameAs(loaded);
+        attempts.Should().Be(2, "the successful load is memoized; only the faulted one retried");
     }
 
     [Fact]
@@ -198,7 +225,7 @@ public class AppMetadataLoaderTests
         using var provider = services.BuildServiceProvider();
 
         provider.GetRequiredService<object>().Should().BeSameAs(sentinel);
-        provider.GetService<Lazy<Task<AppMetadataModel>>>().Should().NotBeNull();
+        provider.GetService<AppMetadataCache>().Should().NotBeNull();
         provider.GetService<AppMetadataLoader>().Should().NotBeNull();
     }
 }

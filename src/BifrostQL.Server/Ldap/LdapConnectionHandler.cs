@@ -60,11 +60,24 @@ namespace BifrostQL.Server.Ldap
             _logger = logger ?? NullLogger<LdapConnectionHandler>.Instance;
         }
 
+        /// <summary>
+        /// The per-source rate-limit key. It must identify the CLIENT, not the connection: an
+        /// <see cref="System.Net.IPEndPoint"/>'s <c>ToString()</c> is "ip:port" with an EPHEMERAL
+        /// port, so keying on the whole endpoint would make the per-source cap per-connection —
+        /// a peer opening a fresh connection per bind would evade the cap AND multiply the
+        /// rate-limiter's tracked keys. Key on the IP address alone.
+        /// </summary>
+        internal static string SourceKey(System.Net.EndPoint? remote) => remote switch
+        {
+            System.Net.IPEndPoint ip => ip.Address.ToString(),
+            { } other => other.ToString() ?? "unknown",
+            null => "unknown",
+        };
+
         public override async Task OnConnectedAsync(ConnectionContext connection)
         {
             await using var stream = new DuplexPipeStream(connection.Transport);
-            // The remote endpoint is the per-source rate-limit key for bind attempts.
-            var source = connection.RemoteEndPoint?.ToString() ?? "unknown";
+            var source = SourceKey(connection.RemoteEndPoint);
             await HandleConnectionAsync(stream, connection.ConnectionClosed, source);
         }
 

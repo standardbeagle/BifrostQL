@@ -29,15 +29,44 @@ function TableNode({ data }: NodeProps) {
   return <div className="erd-table-node"><Handle type="target" position={Position.Left} isConnectable={false} /><Handle type="source" position={Position.Right} isConnectable={false} /><button type="button" onClick={() => onOpenTable(table.name)} title={`Open ${table.name} in editor`}><strong>{table.label || table.name}</strong><span className="erd-pk">PK {table.primaryKeys.join(', ') || '—'}</span></button><button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>Columns</button>{expanded && <ul>{table.columns.map((column) => <li key={column.name}>{column.name}</li>)}</ul>}</div>;
 }
 
+/**
+ * A self-referencing foreign key (`parent_id` pointing at its own table) leaves
+ * both endpoints on the same node, and `getBezierPath` then returns a nearly
+ * flat curve that lies entirely INSIDE that node's box. React Flow paints node
+ * divs after the edge layer with `pointer-events: all`, so the node always wins
+ * hit-testing and the edge — line and hover target alike — is unreachable.
+ * Route the loop above the node instead, clear of its box.
+ */
+const SELF_LOOP_HEIGHT = 90;
+function selfLoopPath(sourceX: number, sourceY: number, targetX: number, targetY: number): [string, number, number] {
+  const apexY = sourceY - SELF_LOOP_HEIGHT;
+  // Cubic control points sit a full loop-height above the endpoints, so the
+  // curve's own apex clears the node's half-height with room for the label.
+  return [
+    `M ${sourceX},${sourceY} C ${sourceX + 60},${apexY} ${targetX - 60},${apexY} ${targetX},${targetY}`,
+    (sourceX + targetX) / 2,
+    sourceY - SELF_LOOP_HEIGHT * 0.75,
+  ];
+}
+
 /** A focusable edge keeps the relationship's join mapping discoverable without editing it. */
-function RelationshipEdge({ data, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, markerEnd, style }: EdgeProps) {
+function RelationshipEdge({ data, source, target, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, markerEnd, style }: EdgeProps) {
   const [showColumns, setShowColumns] = useState(false);
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const [path, labelX, labelY] = source === target
+    ? selfLoopPath(sourceX, sourceY, targetX, targetY)
+    : getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
   const columns = (data as ErdEdge['data'] | undefined)?.columns ?? 'Join columns unavailable';
   return <>
     <BaseEdge path={path} markerEnd={markerEnd} style={style} />
     <path d={path} fill="none" stroke="transparent" strokeWidth={20} tabIndex={0} role="img" aria-label={`Relationship join columns: ${columns}`} onMouseEnter={() => setShowColumns(true)} onMouseLeave={() => setShowColumns(false)} onFocus={() => setShowColumns(true)} onBlur={() => setShowColumns(false)} />
-    {showColumns && <EdgeLabelRenderer><div className="erd-edge-tooltip" role="tooltip" style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}>Join columns: {columns}</div></EdgeLabelRenderer>}
+    {/*
+      z-index is inline and load-bearing, not decoration: the edge-label layer
+      is a SIBLING that precedes `.react-flow__nodes` in the same stacking
+      context, and every node div carries `z-index: 0`. At the default `auto`
+      the tooltip renders but is painted over by the node boxes it sits between,
+      which is how the join columns stayed invisible in the running app.
+    */}
+    {showColumns && <EdgeLabelRenderer><div className="erd-edge-tooltip" role="tooltip" style={{ zIndex: 10, transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}>Join columns: {columns}</div></EdgeLabelRenderer>}
   </>;
 }
 

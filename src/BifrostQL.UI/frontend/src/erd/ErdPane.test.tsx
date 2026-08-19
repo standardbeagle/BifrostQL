@@ -85,16 +85,14 @@ describe('ErdPane', () => {
     expect(window.location.pathname).toBe('/orderItems');
   });
 
-  it('shows join columns when a relationship edge is hovered', async () => {
-    const fetcher = { query: vi.fn().mockResolvedValue({ _dbSchema: liveSchemaFixture }) };
-
-    render(<ErdPane fetcher={fetcher as never} onOpenTable={vi.fn()} />);
-    const edge = await screen.findByRole('img', { name: 'Relationship join columns: orderId → id' });
-    fireEvent.mouseEnter(edge);
-
-    expect(screen.getByRole('tooltip').textContent).toContain('Join columns: orderId → id');
-  });
 });
+
+// The edge-hover assertion also moved to ErdPane.live.test.tsx. Driven against
+// this file's mocked ReactFlow/BaseEdge/EdgeLabelRenderer it passed while the
+// shipped pane showed nothing: the mock renders no node layer to occlude the
+// tooltip and no real geometry to route a self-relationship out of, so neither
+// shipped defect could manifest. It also fired `mouseEnter`, which React 18
+// synthesizes from a native `mouseover` a real browser sends and jsdom does not.
 
 // The App-level "node click opens the table in the editor" assertion used to
 // live here against a stubbed Editor that reported window.location.pathname.

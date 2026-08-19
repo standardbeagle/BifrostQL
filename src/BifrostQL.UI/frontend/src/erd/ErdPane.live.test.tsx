@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFlowMeasurement } from './flow-test-env';
 import type { ErdSchemaTable } from './types';
 import App from '../App';
+import { ErdPane } from './ErdPane';
 
 const schemaFixture: ErdSchemaTable[] = [{
   dbName: 'dbo.order_items', graphQlName: 'orderItems', labelColumn: 'id', primaryKeys: ['id'], isEditable: true, metadata: [],
@@ -70,6 +71,40 @@ describe('ER diagram, wired to the real renderer and the real editor', () => {
 
     fireEvent.mouseOver(edge);
 
-    expect(screen.getByRole('tooltip').textContent).toContain('Join columns: orderId → id');
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip.textContent).toContain('Join columns: orderId → id');
+    // The edge-label layer is a sibling that precedes .react-flow__nodes, whose
+    // node divs carry z-index 0. At the default `auto` this tooltip is painted
+    // over by the very nodes it points between — it is in the DOM and invisible.
+    expect(tooltip.style.zIndex).toBe('10');
+  });
+
+  it('routes a self-referencing relationship outside its own node box', async () => {
+    // Both endpoints share one node, so a plain bezier lies inside that node's
+    // box; React Flow paints node divs over the edge layer with pointer-events
+    // all, making the edge and its hover target unreachable in a real browser.
+    const selfJoinSchema = [{
+      dbName: 'dbo.categories', graphQlName: 'categories', labelColumn: 'id', primaryKeys: ['id'], isEditable: true, metadata: [],
+      columns: [{ dbName: 'id', graphQlName: 'id', paramType: 'Int', dbType: 'int', isPrimaryKey: true, isIdentity: true, isNullable: false, isReadOnly: false, metadata: [] }],
+      multiJoins: [], manyToManyJoins: [],
+      singleJoins: [{ name: 'parent', fieldName: 'parent', sourceColumnNames: ['parentCategoryId'], destinationTable: 'categories', destinationColumnNames: ['id'], relationshipKind: 'foreign-key' }],
+    }] as unknown as ErdSchemaTable[];
+    const selfFetcher = { query: vi.fn().mockResolvedValue({ _dbSchema: selfJoinSchema }) };
+
+    render(<ErdPane fetcher={selfFetcher as never} onOpenTable={vi.fn()} />);
+    await screen.findByTitle('Open categories in editor');
+
+    const path = await waitFor(() => {
+      const found = document.querySelector<SVGPathElement>('.react-flow__edge path[role="img"]');
+      if (!found) throw new Error('React Flow rendered no self-relationship edge');
+      return found;
+    });
+
+    const coordinates = (path.getAttribute('d') ?? '').match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+    const ys = coordinates.filter((_, index) => index % 2 === 1);
+    const endpointY = ys[0];
+    // Half the measured node height: anything closer than this is drawn on top
+    // of the node itself.
+    expect(Math.min(...ys)).toBeLessThan(endpointY - 45);
   });
 });

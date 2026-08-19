@@ -5,4 +5,6 @@
 .erd-canvas { flex:1; min-height:400px; }
 .erd-table-node { min-width:200px; text-align:left; border:1px solid #64748b; border-radius:6px; background:#fff; padding:8px; color:#0f172a; cursor:pointer; }
 .erd-table-node strong,.erd-pk { display:block; }.erd-pk { color:#475569; font-size:11px; margin-top:3px; }.erd-table-node ul { margin:6px 0 0; padding-left:18px; font-size:12px; }
-.erd-edge-tooltip { position:absolute; pointer-events:none; background:#0f172a; color:#fff; border-radius:4px; padding:4px 7px; font-size:12px; white-space:nowrap; }
+/* Border and shadow are not decoration: the canvas is the same dark shade as the
+   tooltip fill, so without them the label reads as bare floating text. */
+.erd-edge-tooltip { position:absolute; pointer-events:none; background:#0f172a; color:#fff; border:1px solid #94a3b8; border-radius:4px; padding:4px 7px; font-size:12px; white-space:nowrap; box-shadow:0 2px 6px rgba(15,23,42,0.45); }

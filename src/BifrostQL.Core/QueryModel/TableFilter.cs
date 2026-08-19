@@ -294,15 +294,18 @@ namespace BifrostQL.Core.QueryModel
         private static ParameterizedSql BuildInList(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string? columnType, string op, object? value)
         {
             var sqlOp = dialect.GetOperator(op);
-            var values = (value as IEnumerable<object?>) ?? Array.Empty<object?>();
+            // Materialize once: the value is enumerated for the empty check, the parameter
+            // bind, and the count. A lazy/single-use source would otherwise re-run (or, worse,
+            // yield a different count for TakeLast than was bound).
+            var values = ((value as IEnumerable<object?>) ?? Array.Empty<object?>()).ToList();
             // An empty list makes "col IN ()" / "col NOT IN ()" — a syntax error every
             // dialect rejects, turning a client-supplied empty array into a 500. Emit
             // the equivalent constant predicate instead: nothing is IN an empty set
             // (always false); everything is NOT IN it (always true).
-            if (!values.Any())
+            if (values.Count == 0)
                 return new ParameterizedSql(op == FilterOperators.In ? "1 = 0" : "1 = 1", Array.Empty<SqlParameterInfo>());
             parameters.AddParameters(values);
-            var added = parameters.Parameters.TakeLast(values.Count()).ToList();
+            var added = parameters.Parameters.TakeLast(values.Count).ToList();
             var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));
             return new ParameterizedSql($"{columnRef} {sqlOp} ({paramRefs})", added);
         }

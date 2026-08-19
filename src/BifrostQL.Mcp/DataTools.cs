@@ -399,7 +399,10 @@ namespace BifrostQL.Mcp
 
             var model = await executor.GetModelAsync(endpoint);
             var userContext = userContextProvider();
-            var table = ResolveTable(model, userContext, tableName);
+            // Resolve through the caller's readable projection so a read-denied table is
+            // "Unknown table" — its key shape is not disclosed by the prompt below (invariant 4),
+            // matching bifrost_describe_table.
+            var table = ResolveVisibleTable(model, userContext, tableName).Table;
             var keyColumns = table.KeyColumns.ToList();
             if (keyColumns.Count == 0)
                 throw new ToolPromptException(

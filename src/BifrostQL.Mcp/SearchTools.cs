@@ -255,7 +255,10 @@ namespace BifrostQL.Mcp
             var tables = new List<IDbTable>();
             foreach (var name in requested)
             {
-                var table = ResolveTable(model, visible, name);
+                // Resolve through the caller's readable projection so a read-denied table is
+                // "Unknown table" — its existence and shape are not confirmed by the prompt below
+                // (invariant 4), matching bifrost_describe_table.
+                var table = ResolveVisibleTable(model, visible, name).Table;
                 if (StringColumns(table).Count == 0)
                     throw new ToolPromptException(
                         $"Table '{table.DbName}' has no string columns to search. " +

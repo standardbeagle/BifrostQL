@@ -122,7 +122,11 @@ namespace BifrostQL.Mcp
 
             var model = await executor.GetModelAsync(endpoint);
             var userContext = userContextProvider();
-            var table = ResolveTable(model, userContext, tableName);
+            // Resolve through the caller's readable projection: a read-denied table is
+            // "Unknown table", indistinguishable from a non-existent one, so its columns/keys
+            // are never enumerated in the argument prompts below (invariant 4), exactly as
+            // bifrost_describe_table answers.
+            var table = ResolveVisibleTable(model, userContext, tableName).Table;
 
             var groupColumns = CompileGroupColumns(table, GetStringArray(args, "groupBy"));
             var (includeCount, valueColumns, measureKeys) = CompileMeasures(model, table, GetArgument(args, "measures"));

@@ -45,6 +45,27 @@ namespace BifrostQL.Mcp
             model.Tables.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase))
             ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
 
+        /// <summary>
+        /// Resolves a caller-named table to the caller's READABLE projection of it, or throws the
+        /// same "unknown table" prompt a NON-EXISTENT table gets — so a read-denied table is
+        /// indistinguishable from one that does not exist (invariant 4), exactly as
+        /// <c>bifrost_describe_table</c> already answers. Unlike <see cref="ResolveTable(IDbModel,IDictionary{string,object?},string)"/>
+        /// (which returns the raw table on purpose so a data operation reaches the pipeline for the
+        /// authoritative rejection), the aggregate/search/row-context tools build column/key error
+        /// PROMPTS off the resolved table BEFORE execution; resolving those through the visible
+        /// projection keeps a denied table's column and key names — and its very existence — out of
+        /// those prompts. Returns the <see cref="VisibleTable"/> so callers use its readable columns.
+        /// </summary>
+        internal static VisibleTable ResolveVisibleTable(
+            IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName) =>
+            SchemaReadVisibility.Find(visible, tableName)
+            ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
+
+        /// <inheritdoc cref="ResolveVisibleTable(IDbModel,IReadOnlyList{VisibleTable},string)"/>
+        internal static VisibleTable ResolveVisibleTable(
+            IDbModel model, IDictionary<string, object?> userContext, string tableName) =>
+            ResolveVisibleTable(model, SchemaReadVisibility.Project(model, userContext), tableName);
+
         internal static JsonArray ToJsonRows(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows) =>
             new(rows.Select(r => (JsonNode?)ToJsonRow(r)).ToArray());
 

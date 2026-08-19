@@ -188,6 +188,42 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
+        public async Task Anonymous_DataTools_ReadDeniedTable_AreIndistinguishableFromNonExistent()
+        {
+            // bifrost_aggregate / bifrost_search / bifrost_row_context build column and key error
+            // prompts off the resolved table BEFORE execution. Resolved against the raw model they
+            // enumerated a read-denied table's numeric columns, string-column existence, and key
+            // shape — an introspection oracle (invariant 4). They now resolve through the caller's
+            // readable projection, so a denied table is "Unknown table", exactly as
+            // bifrost_describe_table answers, and no column or key detail leaks.
+            await WithClientAsync(AnonymousProvider(), async client =>
+            {
+                var calls = new[]
+                {
+                    ("bifrost_aggregate", new Dictionary<string, object?>
+                        { ["table"] = "ledger_entries", ["measures"] = new Dictionary<string, object?> { ["count"] = true } }),
+                    ("bifrost_search", new Dictionary<string, object?>
+                        { ["term"] = "xyz", ["tables"] = new object?[] { "ledger_entries" } }),
+                    ("bifrost_row_context", new Dictionary<string, object?>
+                        { ["table"] = "ledger_entries", ["id"] = "1" }),
+                };
+
+                foreach (var (tool, args) in calls)
+                {
+                    var result = await CallAsync(client, tool, args);
+                    result.IsError.Should().BeTrue($"{tool} on a read-denied table must fail");
+                    var text = result.Content.OfType<TextContentBlock>().Single().Text;
+                    text.Should().Contain("Unknown table 'ledger_entries'",
+                        $"{tool} must answer a denied table exactly like a non-existent one");
+                    // The denied table's columns and keys must not surface in the prompt.
+                    text.Should().NotContain("customer_id").And.NotContain("amount")
+                        .And.NotContain("ledger_entries.",
+                            $"{tool} must not disclose the denied table's column or key detail");
+                }
+            });
+        }
+
+        [Fact]
         public async Task Anonymous_DescribeTable_OmitsReadDeniedColumn()
         {
             await WithClientAsync(AnonymousProvider(), async client =>

@@ -80,6 +80,9 @@ namespace BifrostQL.Server.Test
                     Grid = new GridPresetMetadata
                     {
                         DefaultColumns = new[] { "first_name", "salary" },
+                        // A direction-suffixed sort on a VISIBLE column must survive; one on a
+                        // read-denied column (salary) must be dropped like any other reference.
+                        DefaultSort = new[] { "first_name desc", "salary asc" },
                     },
                     Relationships = new Dictionary<string, RelationshipMetadata>
                     {
@@ -127,6 +130,23 @@ namespace BifrostQL.Server.Test
             members.Fields.Should().NotContainKey("salary");
             members.DisplayFields.Should().Equal("first_name");
             members.Grid!.DefaultColumns.Should().Equal("first_name");
+        }
+
+        [Fact]
+        public async Task A_direction_suffixed_default_sort_on_a_visible_column_survives()
+        {
+            // Regression: the visibility filter tested the whole directive ("first_name desc")
+            // as a column name, so HasColumn was always false and EVERY descending/asc-suffixed
+            // default sort was stripped for every caller — a functional bug, not a policy one.
+            // The sort on the read-denied column must still drop.
+            var client = await StartAsync();
+
+            var overlay = await GetOverlay(client, user: "plain-user");
+            var grid = overlay.Entities["main.members"].Grid!;
+
+            // A direction-suffixed sort on a visible column is preserved intact, while the
+            // sort on the read-denied 'salary' column is dropped.
+            grid.DefaultSort.Should().Equal(new[] { "first_name desc" });
         }
 
         [Fact]

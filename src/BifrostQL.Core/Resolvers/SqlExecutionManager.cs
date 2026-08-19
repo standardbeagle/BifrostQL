@@ -541,8 +541,13 @@ namespace BifrostQL.Core.Resolvers
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
             // (1) Discover the distinct pivot-column values WITHIN scope, then guard
-            // cardinality — a hard error above the cap, never a silent truncation.
-            var distinctSql = PivotSqlGenerator.GenerateDistinctValuesSql(dialect, config.PivotColumn, tableRef, filter);
+            // cardinality — a hard error above the cap, never a silent truncation. The
+            // discovery query is bounded to MaxPivotColumns + 1 rows so a high-cardinality
+            // column (e.g. a unique id) cannot force the entire distinct set — potentially
+            // millions of values — into memory before the cardinality guard below runs; the
+            // +1 keeps the over-limit case distinguishable so the guard still fires.
+            var distinctSql = PivotSqlGenerator.GenerateDistinctValuesSql(
+                dialect, config.PivotColumn, tableRef, filter, limit: request.MaxPivotColumns + 1);
             var (_, distinctRows) = await ExecuteRawAsync(connFactory, distinctSql, context.CancellationToken);
             if (distinctRows.Count > request.MaxPivotColumns)
                 throw new BifrostExecutionError(

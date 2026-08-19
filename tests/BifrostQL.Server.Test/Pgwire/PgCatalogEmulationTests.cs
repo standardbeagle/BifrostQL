@@ -375,7 +375,7 @@ namespace BifrostQL.Server.Test.Pgwire
                     .BuildServiceProvider();
 
                 var store = new FakePgCredentialStore().Add("u", "pw", principal);
-                var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext };
+                var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true };
 
                 var listener = new TcpListener(IPAddress.Loopback, 0);
                 listener.Start();

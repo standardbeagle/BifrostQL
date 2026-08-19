@@ -114,6 +114,22 @@ namespace BifrostQL.Server.Pgwire
                     return;
                 }
 
+                // Cleartext auth must never invite a password onto a non-confidential
+                // stream. TLS is client-initiated, so a client that skips SSLRequest is
+                // still on the raw socket here; refuse BEFORE looking up the login or
+                // sending the challenge, so no credential is read and the refusal cannot
+                // vary by account existence (no enumeration oracle). The dev override is
+                // OFF by default and warned about at startup. SCRAM never wires the
+                // password, so it is exempt.
+                if (_options.AuthMethod == PgAuthMethod.Cleartext
+                    && stream is not SslStream
+                    && !_options.AllowCleartextPasswordWithoutTls)
+                {
+                    await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
+                        "cleartext password authentication requires a TLS connection; send SSLRequest first.", ct);
+                    return;
+                }
+
                 var login = await _credentials.FindAsync(username, handshakeToken);
                 bool verified;
                 try

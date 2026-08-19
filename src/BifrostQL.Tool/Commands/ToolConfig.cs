@@ -14,6 +14,15 @@ public sealed class ToolConfig
     public int Port { get; private set; } = 5000;
 
     /// <summary>
+    /// The interface `bifrost serve` binds. Defaults to loopback (127.0.0.1): the
+    /// server ships no authentication, so widening the bind to a LAN/public interface
+    /// is an explicit operator decision (see the repo posture rule "undeclared means
+    /// loopback"). Set with <c>--host</c> (e.g. <c>--host 0.0.0.0</c>); a non-loopback
+    /// value emits a startup warning.
+    /// </summary>
+    public string Host { get; private set; } = "127.0.0.1";
+
+    /// <summary>
     /// Waives TLS certificate validation on a connection string built from the positional
     /// <c>&lt;server&gt; &lt;database&gt;</c> arguments. Off by default: the connection is
     /// encrypted AND the server's identity verified unless the operator says otherwise.
@@ -29,6 +38,7 @@ public sealed class ToolConfig
     ///   --user &lt;username&gt;
     ///   --json
     ///   --port &lt;number&gt;
+    ///   --host &lt;interface&gt;  (default 127.0.0.1; widen only deliberately)
     ///   --trust-server-certificate
     /// </summary>
     public static ToolConfig Parse(string[] args)
@@ -58,6 +68,9 @@ public sealed class ToolConfig
                 case "--port" when i + 1 < args.Length:
                     if (int.TryParse(args[++i], out var port))
                         config.Port = port;
+                    break;
+                case "--host" when i + 1 < args.Length:
+                    config.Host = args[++i];
                     break;
                 default:
                     remaining.Add(args[i]);
@@ -94,6 +107,7 @@ public sealed class ToolConfig
             CommandName = "serve",
             CommandArgs = args,
             Port = Port,
+            Host = Host,
             TrustServerCertificate = TrustServerCertificate,
         };
     }

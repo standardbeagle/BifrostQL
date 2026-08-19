@@ -64,6 +64,29 @@ public sealed class MutationTransformResult
     /// which legitimately affect zero rows and must stay silent.
     /// </summary>
     public bool ConflictOnNoRows { get; init; }
+
+    /// <summary>
+    /// Aborts the mutation when the transformer chain reported <see cref="Errors"/>,
+    /// throwing a <see cref="BifrostQL.Core.Resolvers.BifrostExecutionError"/> that
+    /// carries <see cref="ErrorCode"/>. No-op when there are no errors.
+    ///
+    /// EVERY mutation execution path (single-row pipeline, batch pipeline, tree-sync,
+    /// the file resolvers) MUST funnel its "non-empty Errors → throw" step through this
+    /// one method rather than hand-rolling the throw. The ErrorCode is the CONDITION
+    /// signal every transport funnel maps on (policy/tenant denial → the denied wire
+    /// status); a hand-rolled `throw new BifrostExecutionError(string.Join(...))` that
+    /// forgets `{ ErrorCode = ... }` silently downgrades a denial to a generic INTERNAL
+    /// on one op class — exactly the cross-op-class divergence
+    /// .claude/rules/protocol-adapter-security.md rule 10 exists to prevent, and a bug
+    /// that recurred independently across the batch and file-resolver paths. Centralising
+    /// it here makes the code impossible to forget.
+    /// </summary>
+    public void ThrowIfDenied()
+    {
+        if (Errors.Length == 0)
+            return;
+        throw new Resolvers.BifrostExecutionError(string.Join("; ", Errors)) { ErrorCode = ErrorCode };
+    }
 }
 
 /// <summary>

@@ -223,22 +223,6 @@ public interface ISqlDialect
     string CastParameterReference(string placeholder, string? dataType) => placeholder;
 
     /// <summary>
-    /// Generates an atomic upsert SQL statement that inserts a row or updates it if a
-    /// conflict occurs on the specified key columns. Returns null if the dialect does not
-    /// support native upsert syntax, in which case the caller should fall back to
-    /// application-level insert-or-update logic.
-    /// </summary>
-    /// <param name="tableRef">The escaped, optionally schema-qualified table reference.</param>
-    /// <param name="keyColumns">Primary key or unique constraint column names (unescaped).</param>
-    /// <param name="allColumns">All column names being written (unescaped), including keys.</param>
-    /// <param name="updateColumns">Non-key column names to update on conflict (unescaped).</param>
-    /// <returns>
-    /// A parameterized SQL string using @columnName parameters, or null if not supported.
-    /// </returns>
-    string? UpsertSql(string tableRef, IReadOnlyList<string> keyColumns, IReadOnlyList<string> allColumns, IReadOnlyList<string> updateColumns)
-        => null;
-
-    /// <summary>
     /// DDL that creates an internal Bifrost table only if it does not already exist,
     /// mapping each <see cref="SqlColumnDefinition"/>'s portable <see cref="SqlColumnKind"/>
     /// to the dialect's concrete storage type. Interpreted dialects emit
@@ -257,8 +241,8 @@ public interface ISqlDialect
     /// <see cref="PivotSqlGenerator.GeneratePivot"/> falls back to the portable
     /// CASE WHEN cross-tab. Only SQL Server implements this; keeping the
     /// SQL-Server-specific `PIVOT`/`ISNULL(... NVARCHAR(MAX) ...)` syntax inside the
-    /// dialect (not in Core) is why this is a hook rather than a bool flag. Mirrors
-    /// <see cref="UpsertSql"/>'s null-means-unsupported convention.
+    /// dialect (not in Core) is why this is a hook rather than a bool flag; null
+    /// means the dialect has no native pivot.
     /// </summary>
     /// <param name="config">Pivot query configuration.</param>
     /// <param name="tableRef">Escaped, optionally schema-qualified table reference.</param>

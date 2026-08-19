@@ -168,6 +168,32 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task IntLiteralBeyondInt64_ParsesAsBigInteger_WithoutOverflow()
+        {
+            // A literal beyond Int64 range reached long.Parse and threw OverflowException —
+            // an unclassified exception escaping document parsing (OverflowException is not
+            // FormatException, so no guard caught it). It must now parse as BigInteger, which
+            // cannot overflow; DbParameterBinder binds an out-of-range BigInteger as a string.
+            var ctx = new SqlContext();
+            var visitor = new SqlVisitor();
+            var model = new DbModel { Tables = GetFakeTables() };
+            var ast = Parser.Parse("query { work__shops(filter: { id: { _eq: 99999999999999999999999999 } }) { data { id } } }");
+
+            // Must not throw OverflowException during the visit.
+            await visitor.VisitAsync(ast, ctx);
+
+            var query = ctx.GetFinalQueries(model).Single();
+            var parameters = new SqlParameterCollection();
+            var sqls = new Dictionary<string, ParameterizedSql>();
+            query.AddSqlParameterized(model, SqlServerDialect.Instance, sqls, parameters);
+
+            parameters.Parameters.Should().ContainSingle();
+            // Parsed as BigInteger (no overflow); the filter path binds it directly.
+            parameters.Parameters[0].Value.Should().BeOfType<System.Numerics.BigInteger>()
+                .Which.Should().Be(System.Numerics.BigInteger.Parse("99999999999999999999999999"));
+        }
+
+        [Fact]
         public async Task AliasCountQuerySuccess()
         {
             var ctx = new SqlContext();

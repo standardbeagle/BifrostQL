@@ -162,13 +162,54 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void ConfigureServices_AuthEnabledEndpoint_NoJwtSettings_FailsClosed()
+        {
+            // An auth-requiring endpoint (the fail-secure default) with no JWT settings
+            // bound must refuse to start rather than register no auth handlers while
+            // UseAuthentication is still wired — the silent-no-auth fail-open the
+            // single-database BindStandardConfig guard also prevents.
+            var options = new BifrostMultiDbOptions();
+            options.AddEndpoint(e =>
+            {
+                e.ConnectionString = "Server=localhost;Database=db1;";
+                e.Path = "/graphql/db1";
+                // DisableAuth left at its fail-secure default (false = auth ON).
+            });
+
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            var ex = Assert.Throws<InvalidOperationException>(() => options.ConfigureServices(services));
+            Assert.Contains("no JWT settings", ex.Message);
+        }
+
+        [Fact]
+        public void ConfigureServices_AnonymousEndpoint_NoJwtSettings_Starts()
+        {
+            // The explicit anonymous opt-out is allowed with no JWT settings.
+            var options = new BifrostMultiDbOptions();
+            options.AddEndpoint(e =>
+            {
+                e.ConnectionString = "Data Source=:memory:";
+                e.Path = "/graphql/db1";
+                e.Provider = "sqlite";
+                e.DisableAuth = true;
+            });
+
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            var record = Record.Exception(() => options.ConfigureServices(services));
+            Assert.Null(record);
+        }
+
+        [Fact]
         public void AddEndpoint_DefaultValues_HasCorrectDefaults()
         {
             var config = new BifrostEndpointConfig();
 
             Assert.Equal("/graphql", config.Path);
             Assert.Equal("/", config.PlaygroundPath);
-            Assert.True(config.DisableAuth);
+            // Fail-secure: an endpoint requires auth unless the operator explicitly
+            // opts out, matching the single-database path. Serving anonymously is a
+            // deliberate choice, never the default.
+            Assert.False(config.DisableAuth);
             Assert.Empty(config.Metadata);
             Assert.Null(config.ConnectionString);
         }

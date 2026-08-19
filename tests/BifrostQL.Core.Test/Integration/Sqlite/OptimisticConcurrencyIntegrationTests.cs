@@ -237,24 +237,42 @@ public sealed class OptimisticConcurrencyIntegrationTests : IAsyncLifetime
         (await ScalarAsync("SELECT version FROM widgets WHERE id = 7")).Should().Be("2");
     }
 
-    // ---- batch single-statement upsert path refuses token tables --------
+    // ---- batch upsert on a token table: probe-and-dispatch, token enforced --
 
     [Fact]
-    public async Task Batch_Upsert_OnTokenTable_IsRefused_And_CannotResurrect()
+    public async Task Batch_Upsert_OnTokenTable_MissingKey_InsertsLikeSingleRowResolver()
     {
-        // The row is gone; a naive upsert would INSERT it back. On a token table the
-        // single-statement upsert path (SQLite ON CONFLICT DO UPDATE) cannot render the
-        // token WHERE, so it must refuse rather than silently resurrect the row.
+        // The batch upsert now probes existence and dispatches to the guarded
+        // Insert/Update executor, matching DbTableMutateResolver.UpsertObject. The
+        // row is gone, so the upsert is an INSERT — exactly what the single-row
+        // resolver does for a missing key. The concurrency transformer guards only
+        // updates, so this is a clean insert of the supplied row.
         await Exec("DELETE FROM widgets WHERE id = 7");
 
         var result = await UpdateAsync("mutation { widgets_batch(actions: [{ upsert: { id: 7, name: \"ghost\", version: 5 } }]) }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT name FROM widgets WHERE id = 7")).Should().Be("ghost",
+            "an upsert onto a missing key inserts, in parity with the single-row resolver");
+    }
+
+    [Fact]
+    public async Task Batch_Upsert_OnTokenTable_ExistingKey_StaleToken_Conflicts_AndWritesNothing()
+    {
+        // The guarantee the old native single-statement path could NOT provide: an
+        // upsert onto an EXISTING token-table row is dispatched to the Update
+        // executor, so the concurrency token WHERE is rendered and a stale token
+        // (the row is at version 1, the caller presents 99) CONFLICTs — the row is
+        // untouched. This is the token enforcement the ON CONFLICT path silently dropped.
+        var result = await UpdateAsync("mutation { widgets_batch(actions: [{ upsert: { id: 7, name: \"stomped\", version: 99 } }]) }");
 
         result.Errors.Should().NotBeNullOrEmpty();
         result.Errors!
             .Select(e => e.InnerException as BifrostExecutionError)
             .Should().Contain(e => e!.ErrorCode == "CONFLICT");
-        // The refusal rolled back — no row was resurrected.
-        (await ScalarAsync("SELECT COUNT(*) FROM widgets WHERE id = 7")).Should().Be("0",
-            "a refused upsert must not degrade into an INSERT that resurrects the row");
+        (await ScalarAsync("SELECT name FROM widgets WHERE id = 7")).Should().Be("original",
+            "a stale-token upsert onto an existing row must not overwrite it");
+        (await ScalarAsync("SELECT version FROM widgets WHERE id = 7")).Should().Be("1",
+            "the token must not advance on a rejected upsert");
     }
 }

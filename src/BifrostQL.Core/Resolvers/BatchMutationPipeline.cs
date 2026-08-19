@@ -254,8 +254,7 @@ namespace BifrostQL.Core.Resolvers
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the insert before any SQL is built; non-empty Errors abort it.
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Insert, data, ctx.TransformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+            transformResult.ThrowIfDenied();
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
             // enum-name → DB-value mapping — reaches the SQL, rekeyed from GraphQL
@@ -317,8 +316,7 @@ namespace BifrostQL.Core.Resolvers
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the update before any SQL is built; non-empty Errors abort it.
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, updateTransformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+            transformResult.ThrowIfDenied();
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
@@ -382,8 +380,7 @@ namespace BifrostQL.Core.Resolvers
                 };
 
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
-            if (transformResult.Errors.Length > 0)
-                throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
+            transformResult.ThrowIfDenied();
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never
@@ -441,62 +438,47 @@ namespace BifrostQL.Core.Resolvers
         {
             if (data.Count == 0) return null;
             var table = ctx.Table;
-            var dialect = ctx.Dialect;
 
+            // A true upsert is routed through the real Insert-or-Update decision
+            // rather than a native single-statement UpsertSql — the same decision
+            // DbTableMutateResolver.UpsertObject records: a single statement
+            // (ON CONFLICT / MERGE) cannot express a transformer's AdditionalFilter
+            // — tenant/policy row-scope, soft-delete IS NULL — as a guard on its
+            // INSERT branch, so a caller could take over a row in another tenant or
+            // resurrect a soft-deleted one. It would also run the pipeline as
+            // Update with no CurrentRow, skipping state-machine current-state
+            // validation and insert-required checks. Probing existence by primary
+            // key and dispatching to ExecuteInsert / ExecuteUpdate applies every
+            // one of those enforcements exactly as for a plain insert/update.
+            //
+            // The probe runs inside the batch transaction; the database's
+            // primary-key / unique constraint remains the real arbiter under a
+            // concurrent writer (a lost insert race fails the INSERT, a lost
+            // update race affects 0 rows).
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            // Build the statement in DB-column-name space so sanitized GraphQL
-            // field names resolve to real columns; transform still runs on the
-            // GraphQL-keyed caseData below, and the bound data is rekeyed to match.
-            var dbColumns = caseData.Keys.Select(k => ToDbColumnName(table, k)).ToList();
-            var keyColumns = dbColumns.Where(k => table.ColumnLookup[k].IsPrimaryKey).ToList();
-            var updateColumns = dbColumns.Where(k => !table.ColumnLookup[k].IsPrimaryKey).ToList();
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var upsertSql = dialect.UpsertSql(tableRef, keyColumns, dbColumns, updateColumns);
+            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
+                keyData[ToDbColumnName(table, d.Key)] = d.Value;
 
-            if (upsertSql != null)
-            {
-                // An upsert that resolves to a single statement is gated as an
-                // update: it targets an existing or new row keyed by primary key.
-                var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, ctx.TransformContext);
-                if (transformResult.Errors.Length > 0)
-                    throw new BifrostExecutionError(string.Join("; ", transformResult.Errors));
-
-                // The single-statement upsert (ON CONFLICT / MERGE) neither renders the
-                // transformer's AdditionalFilter nor can express a "fail if the token
-                // moved" WHERE — it always writes. Silently dropping a concurrency-token
-                // guard here would defeat lost-update protection, so refuse the path
-                // rather than bypass the guard. Plain update/upsert (multi-statement)
-                // enforces it correctly.
-                if (transformResult.ConflictOnNoRows)
-                    throw new BifrostExecutionError(
-                        $"Optimistic-concurrency table '{table.TableSchema}.{table.DbName}' cannot be written through the single-statement batch upsert path (the token guard cannot be enforced there). Use a plain update.")
-                    { ErrorCode = "CONFLICT" };
-
-                // Adopt the (possibly rewritten) data so transformer output — e.g.
-                // enum-name → DB-value mapping — reaches the SQL. The key/non-key
-                // split (and therefore upsertSql) is unaffected because transformers
-                // rewrite values, not primary-key membership. When no transformer
-                // applies, Transform returns the same data reference (no-op).
-                var upsertData = ToDbColumnKeys(table, transformResult.Data);
-                // Upsert is keyed by primary key, so upsertData carries the key the event
-                // needs even when the statement inserts a new row.
-                var (affected, upsertPending) = await RunHookedWriteAsync(ctx, MutationType.Update, upsertData, async () =>
-                {
-                    await using var cmd = ctx.Conn.CreateCommand();
-                    cmd.CommandText = upsertSql;
-                    cmd.Transaction = ctx.Transaction;
-                    AddParameters(cmd, upsertData);
-                    return await cmd.ExecuteNonQueryAsync(ctx.Ct);
-                });
-                if (upsertPending is not null)
-                    return new BatchActionOutcome(0, MutationType.Update, upsertData, null, upsertPending);
-                return new BatchActionOutcome(affected, MutationType.Update, upsertData, transformResult.StateTransition);
-            }
-
-            if (keyColumns.Count > 0)
+            if (keyData.Count > 0 && await RowExistsAsync(ctx, keyData))
                 return await ExecuteUpdate(ctx, data);
 
             return await ExecuteInsert(ctx, data);
+        }
+
+        // Probes whether a row keyed by the given primary-key values already exists,
+        // inside the batch's own transaction, so the upsert path can dispatch to the
+        // safe Insert or Update executor (see ExecuteUpsert).
+        private static async Task<bool> RowExistsAsync(BatchExecutionContext ctx, Dictionary<string, object?> keyData)
+        {
+            var tableRef = ctx.Dialect.TableReference(ctx.Table.TableSchema, ctx.Table.DbName);
+            var whereClause = MutationCommandExecutor.BuildKeyPredicate(ctx.Dialect, keyData.Keys);
+            await using var cmd = ctx.Conn.CreateCommand();
+            cmd.CommandText = $"SELECT 1 FROM {tableRef} WHERE {whereClause};";
+            cmd.Transaction = ctx.Transaction;
+            AddParameters(cmd, keyData);
+            var result = await cmd.ExecuteScalarAsync(ctx.Ct);
+            return result != null && result != DBNull.Value;
         }
     }
 }

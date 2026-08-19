@@ -93,7 +93,7 @@ namespace BifrostQL.Server
                 {
                     DefaultColumns = Filter(entity.Grid.DefaultColumns, table),
                     DefaultFilters = Filter(entity.Grid.DefaultFilters, table),
-                    DefaultSort = Filter(entity.Grid.DefaultSort, table),
+                    DefaultSort = FilterSort(entity.Grid.DefaultSort, table),
                 },
                 Relationships = relationships,
             };
@@ -101,6 +101,25 @@ namespace BifrostQL.Server
 
         private static IReadOnlyList<string> Filter(IReadOnlyList<string> names, VisibleTable table)
             => names.Count == 0 ? names : names.Where(table.HasColumn).ToList();
+
+        /// <summary>
+        /// Filters sort directives by the visibility of the COLUMN they sort on. A directive is
+        /// "<c>column</c>" or "<c>column desc</c>"/"<c>column asc</c>" (see
+        /// <see cref="BifrostQL.Core.AppMetadata.GridPresetMetadata.DefaultSort"/>), so the whole
+        /// string is never a column name — testing it verbatim (the previous behaviour) stripped
+        /// EVERY direction-suffixed default sort for every caller, not just denied columns. The
+        /// column token (before the first whitespace) is what must be visible; the directive is
+        /// preserved intact when it is.
+        /// </summary>
+        private static IReadOnlyList<string> FilterSort(IReadOnlyList<string> sorts, VisibleTable table)
+            => sorts.Count == 0 ? sorts : sorts.Where(s => table.HasColumn(SortColumn(s))).ToList();
+
+        private static string SortColumn(string directive)
+        {
+            var trimmed = directive.AsSpan().Trim();
+            var space = trimmed.IndexOf(' ');
+            return (space < 0 ? trimmed : trimmed[..space]).ToString();
+        }
 
         /// <summary>
         /// Resolves an overlay key (a qualified table name, e.g. <c>dbo.users</c>) to the caller's

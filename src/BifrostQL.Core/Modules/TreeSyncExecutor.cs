@@ -127,9 +127,7 @@ public sealed class TreeSyncExecutor
                         Services = services,
                     };
                     var result = await transformers.TransformAsync(op.Table, mutationType, data, ctx);
-                    if (result.Errors.Length > 0)
-                        throw new BifrostExecutionError(string.Join("; ", result.Errors))
-                        { ErrorCode = result.ErrorCode };
+                    result.ThrowIfDenied();
 
                     // Honor a rewritten type (Delete → Update for soft-delete),
                     // the rewritten data (audit-populate / enum mapping), and the

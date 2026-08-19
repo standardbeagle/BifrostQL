@@ -123,19 +123,34 @@ public static class PivotSqlGenerator
     /// <param name="pivotColumn">The column to get distinct values from.</param>
     /// <param name="tableRef">Fully qualified table reference.</param>
     /// <param name="filter">Optional WHERE clause filter.</param>
+    /// <param name="limit">
+    /// Optional row cap. When set, the dialect's pagination (SQL Server OFFSET/FETCH,
+    /// others LIMIT) bounds the distinct scan so a high-cardinality pivot column cannot
+    /// force the whole distinct set into memory before the caller's cardinality guard
+    /// runs. Pass <c>MaxPivotColumns + 1</c> so the "over the limit" case is still
+    /// distinguishable. Null means no cap (backward-compatible).
+    /// </param>
     /// <returns>Parameterized SQL that returns distinct pivot values.</returns>
     public static ParameterizedSql GenerateDistinctValuesSql(
         ISqlDialect dialect,
         string pivotColumn,
         string tableRef,
-        ParameterizedSql? filter = null)
+        ParameterizedSql? filter = null,
+        int? limit = null)
     {
-        var sql = $"SELECT DISTINCT {dialect.EscapeIdentifier(pivotColumn)} FROM {tableRef}";
+        var escaped = dialect.EscapeIdentifier(pivotColumn);
+        var sql = $"SELECT DISTINCT {escaped} FROM {tableRef}";
 
         if (filter != null && !string.IsNullOrEmpty(filter.Sql))
             sql += filter.Sql;
 
-        sql += $" ORDER BY {dialect.EscapeIdentifier(pivotColumn)}";
+        if (limit is null)
+            // No cap: keep the plain ORDER BY (unchanged behaviour for existing callers).
+            sql += $" ORDER BY {escaped}";
+        else
+            // Bound the scan with each dialect's own row-cap syntax (SQL Server OFFSET/FETCH,
+            // others LIMIT) so a high-cardinality column cannot materialize its whole distinct set.
+            sql += dialect.Pagination(new[] { escaped }, offset: null, limit: limit);
 
         return new ParameterizedSql(sql, filter?.Parameters.ToList() ?? new List<SqlParameterInfo>());
     }

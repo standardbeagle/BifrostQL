@@ -209,9 +209,6 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string CreateTableIfNotExistsSql(string tableReference, IReadOnlyList<SqlColumnDefinition> columns)
         => $"CREATE TABLE IF NOT EXISTS {tableReference} ({RenderTableColumns(columns)})";
 
-    public virtual string? UpsertSql(string tableRef, IReadOnlyList<string> keyColumns, IReadOnlyList<string> allColumns, IReadOnlyList<string> updateColumns)
-        => null;
-
     /// <inheritdoc />
     public virtual ParameterizedSql? BuildNativePivot(
         PivotQueryConfig config,

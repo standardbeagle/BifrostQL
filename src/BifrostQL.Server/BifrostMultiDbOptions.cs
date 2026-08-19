@@ -47,9 +47,13 @@ namespace BifrostQL.Server
         public IReadOnlyCollection<string> Metadata { get; set; } = Array.Empty<string>();
 
         /// <summary>
-        /// Whether authentication is disabled for this endpoint.
+        /// Whether authentication is disabled for this endpoint. Defaults to false
+        /// (auth ON), matching the single-database path (see BifrostSetupOptions.IsUsingAuth):
+        /// serving a database anonymously is an explicit operator decision, never an
+        /// ambient default. Defaulting to true here would fail open — an endpoint added
+        /// without touching this flag would serve its database with no authentication.
         /// </summary>
-        public bool DisableAuth { get; set; } = true;
+        public bool DisableAuth { get; set; } = false;
 
         /// <summary>
         /// Database provider/dialect for this endpoint (e.g., "sqlserver", "postgresql", "mysql", "sqlite").
@@ -309,6 +313,19 @@ namespace BifrostQL.Server
         {
             if (_endpoints.Count == 0)
                 throw new InvalidOperationException("At least one endpoint must be configured. Call AddEndpoint.");
+
+            // Fail-closed startup guard, mirroring BifrostSetupOptions.BindStandardConfig:
+            // an endpoint that requires auth (DisableAuth=false) but has no JWT settings
+            // bound would register no authentication handlers while UseBifrostQL still
+            // calls UseAuthentication — auth silently absent. Refuse to start instead.
+            if (IsUsingAuth && _jwtConfig is null)
+            {
+                var unauthenticated = _endpoints.Where(e => !e.DisableAuth).Select(e => e.Path);
+                throw new InvalidOperationException(
+                    "GraphQL authentication is enabled for endpoint(s) [" + string.Join(", ", unauthenticated) +
+                    "] but no JWT settings were bound. Call BindJwtSettings(...) with a valid JwtSettings " +
+                    "section, or set DisableAuth = true on the endpoint to serve it anonymously (an explicit choice).");
+            }
 
             services.AddSingleton(this);
             services.AddSingleton(BuildPathCache());

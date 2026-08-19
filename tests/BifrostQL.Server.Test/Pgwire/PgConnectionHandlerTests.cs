@@ -90,7 +90,7 @@ namespace BifrostQL.Server.Test.Pgwire
             // Arrange
             var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
             await using var fixture = await PgFixture.StartAsync(store, EmptyServices(),
-                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext });
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true });
 
             // Act
             var client = new PgHandshakeClient(fixture.ClientStream);
@@ -104,13 +104,39 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Cleartext_WithoutTls_IsRefused_BeforePasswordCheck()
+        {
+            // With the dev override OFF (the default), a client that skips SSLRequest and
+            // tries cleartext auth over the raw socket must be refused with a transport-only
+            // protocol_violation — BEFORE any password is read — so a password never crosses
+            // the wire in the clear. Non-vacuous: with AllowCleartextPasswordWithoutTls = true
+            // this same handshake reaches the password check (see Cleartext_WrongPassword_IsRejected,
+            // which returns SqlStateInvalidPassword instead).
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            await using var fixture = await PgFixture.StartAsync(store, EmptyServices(),
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext /* AllowCleartextPasswordWithoutTls defaults to false */ });
+
+            var client = new PgHandshakeClient(fixture.ClientStream);
+            await client.SendStartupAsync("alice");
+            // No password is sent: the server must reject at the transport gate first.
+            var result = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+
+            result.ReadyForQuery.Should().BeFalse();
+            result.WasRejected.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation,
+                "cleartext over a non-TLS connection is refused before the credential is read");
+            result.ErrorMessage.Should().Contain("TLS",
+                "the refusal names the transport requirement, not the account (no enumeration oracle)");
+        }
+
+        [Fact]
         public async Task SubjectLessIdentity_IsRejected_NeverAnonymous()
         {
             // Arrange: the password is correct, but the mapped principal has no subject —
             // authentication succeeds yet the identity must not.
             var store = new FakePgCredentialStore().Add("svc", "key", SubjectLessPrincipal());
             await using var fixture = await PgFixture.StartAsync(store, EmptyServices(),
-                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext });
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true });
 
             // Act
             var client = new PgHandshakeClient(fixture.ClientStream);
@@ -135,7 +161,7 @@ namespace BifrostQL.Server.Test.Pgwire
                 .BuildServiceProvider();
             var store = new FakePgCredentialStore().Add("svc", "key", UnmappedIssuerPrincipal());
             await using var fixture = await PgFixture.StartAsync(store, services,
-                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext });
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true });
 
             // Act
             var client = new PgHandshakeClient(fixture.ClientStream);
@@ -154,7 +180,7 @@ namespace BifrostQL.Server.Test.Pgwire
         {
             // Arrange: an empty store — no user resolves.
             await using var fixture = await PgFixture.StartAsync(new FakePgCredentialStore(), EmptyServices(),
-                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext });
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true });
 
             // Act
             var client = new PgHandshakeClient(fixture.ClientStream);
@@ -172,7 +198,7 @@ namespace BifrostQL.Server.Test.Pgwire
         {
             // Arrange
             await using var fixture = await PgFixture.StartAsync(new FakePgCredentialStore(), EmptyServices(),
-                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext });
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true });
 
             // Act: send an unsupported startup protocol code.
             var client = new PgHandshakeClient(fixture.ClientStream);

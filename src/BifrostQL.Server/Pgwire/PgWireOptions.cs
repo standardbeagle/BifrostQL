@@ -49,6 +49,17 @@ namespace BifrostQL.Server.Pgwire
         public PgAuthMethod AuthMethod { get; set; } = PgAuthMethod.ScramSha256;
 
         /// <summary>
+        /// Development-only override that permits the <see cref="PgAuthMethod.Cleartext"/>
+        /// password exchange over a NON-TLS connection. Default OFF: a cleartext password
+        /// is only ever invited and read once the session is confidential (an SslStream);
+        /// a client that skips SSLRequest is refused BEFORE the password challenge, with a
+        /// transport-only message that does not vary by account existence. Enabling this
+        /// sends passwords in the clear and logs a startup warning. SCRAM is unaffected —
+        /// it never puts the password on the wire. Ignored unless AuthMethod is Cleartext.
+        /// </summary>
+        public bool AllowCleartextPasswordWithoutTls { get; set; }
+
+        /// <summary>
         /// Maximum number of concurrent authenticated + admitted connections. The N+1th
         /// connection is refused cleanly with <c>53300 too_many_connections</c> during
         /// startup and closed — never left to crash or hang. Enforced lock-free by

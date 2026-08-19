@@ -143,7 +143,7 @@ namespace BifrostQL.Mcp
                 ValueColumns = valueColumns,
             };
             if (GetArgument(args, "filter") is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } filterElement)
-                query.Filter = QueryToolCompiler.CompileFilter(table, filterElement);
+                query.Filter = QueryToolCompiler.CompileFilter(table, filterElement, visibleColumnNames);
 
             var result = await executor.ExecuteAsync(new QueryIntent
             {

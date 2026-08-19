@@ -250,6 +250,38 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
+        public async Task Anonymous_Aggregate_FilterOnReadDeniedColumn_IsIndistinguishableFromNonExistent()
+        {
+            // staff is READABLE but its ssn column is read-denied. A FILTER referencing ssn must be
+            // "Unknown column" exactly like a measure or groupBy on it — otherwise the filter is a
+            // column-existence oracle and a way to constrain results by the values of a hidden
+            // column (invariant 4). The suggestion names only readable columns, never ssn.
+            await WithClientAsync(AnonymousProvider(), async client =>
+            {
+                var result = await CallAsync(client, "bifrost_aggregate", new Dictionary<string, object?>
+                {
+                    ["table"] = "staff",
+                    // A valid measure so compilation reaches the filter; the denied column is in the filter.
+                    ["measures"] = new object?[]
+                    {
+                        new Dictionary<string, object?> { ["fn"] = "count" },
+                    },
+                    ["filter"] = new Dictionary<string, object?>
+                    {
+                        ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+                    },
+                });
+
+                result.IsError.Should().BeTrue();
+                var text = result.Content.OfType<TextContentBlock>().Single().Text;
+                text.Should().Contain("Unknown column 'ssn'",
+                    "a read-denied column in a filter is answered exactly like a non-existent one");
+                text.Should().Contain("Available columns: id, name.",
+                    "the suggestion must list only readable columns, never the denied ssn");
+            });
+        }
+
+        [Fact]
         public async Task Anonymous_DescribeTable_OmitsReadDeniedColumn()
         {
             await WithClientAsync(AnonymousProvider(), async client =>

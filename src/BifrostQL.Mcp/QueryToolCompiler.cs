@@ -43,10 +43,19 @@ namespace BifrostQL.Mcp
         /// over relationship filters is rejected downstream by the existing
         /// machinery rather than silently altered here).
         /// </summary>
-        public static TableFilter CompileFilter(IDbTable table, JsonElement filter)
-            => TableFilter.FromObject(CompileFilterObject(table, filter), table.DbName);
+        /// <param name="visibleColumnNames">
+        /// When supplied, filter columns resolve only against this readable-column set: a
+        /// read-denied column is "Unknown column", indistinguishable from a non-existent one, so a
+        /// filter cannot be used as a column-existence oracle or to constrain grouping on a hidden
+        /// column's values (invariant 4). Callers with no per-caller projection (declarative tools,
+        /// the raw-resolved bifrost_query path) pass null and keep the prior behavior, where the
+        /// pipeline is the backstop for a denied column at execution.
+        /// </param>
+        public static TableFilter CompileFilter(IDbTable table, JsonElement filter, ISet<string>? visibleColumnNames = null)
+            => TableFilter.FromObject(CompileFilterObject(table, filter, visibleColumnNames), table.DbName);
 
-        private static Dictionary<string, object?> CompileFilterObject(IDbTable table, JsonElement element)
+        private static Dictionary<string, object?> CompileFilterObject(
+            IDbTable table, JsonElement element, ISet<string>? visibleColumnNames = null)
         {
             if (element.ValueKind != JsonValueKind.Object)
                 throw new ToolPromptException(
@@ -63,12 +72,12 @@ namespace BifrostQL.Mcp
                             $"'{property.Name}' must be an array of filter objects, " +
                             $"e.g. {{\"{property.Name}\":[{{\"status\":{{\"_eq\":\"open\"}}}},{{\"name\":{{\"_contains\":\"acme\"}}}}]}}.");
                     result[property.Name] = property.Value.EnumerateArray()
-                        .Select(item => (object)CompileFilterObject(table, item))
+                        .Select(item => (object)CompileFilterObject(table, item, visibleColumnNames))
                         .ToList();
                     continue;
                 }
 
-                var column = ResolveColumn(table, property.Name);
+                var column = ResolveColumn(table, property.Name, visibleColumnNames);
                 result[column.GraphQlName] = CompileOperatorObject(column, property.Value);
             }
 

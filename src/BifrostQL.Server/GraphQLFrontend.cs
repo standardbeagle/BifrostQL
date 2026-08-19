@@ -116,11 +116,37 @@ namespace BifrostQL.Server
             // Loaders are registered under a lowercase key (app.Map is case-insensitive but
             // PathCache is ordinal), so normalize before lookup.
             var schemaKey = endpointPath?.ToLowerInvariant() ?? string.Empty;
-            var sharedExtensions = _pathCache.HasPath(schemaKey)
-                ? await _pathCache.GetValueAsync(schemaKey)
-                : await _pathCache.GetFirstValueAsync()
+            Inputs sharedExtensions;
+            if (_pathCache.HasPath(schemaKey))
+            {
+                sharedExtensions = await _pathCache.GetValueAsync(schemaKey);
+            }
+            else
+            {
+                // No explicit path match. Falling back to the first registered endpoint is
+                // only safe with a single endpoint (single-DB deployment) — the same rule the
+                // HTTP path enforces (see BifrostHttpMiddleware, UnknownBifrostEndpointException).
+                // With multiple endpoints, "first" is nondeterministic, so a binary client with
+                // the default graphqlPath would execute against an arbitrary database. Refuse
+                // instead (returned as a result error, consistent with the profile-gate path
+                // above): the host must pass an explicit graphqlPath to UseBifrostBinary when
+                // more than one GraphQL endpoint is registered.
+                if (_pathCache.Count > 1)
+                    return new BifrostResult
+                    {
+                        Data = null,
+                        Errors = new[] { new BifrostResultError
+                        {
+                            Message = "The binary transport could not resolve a target database: more than one " +
+                                "GraphQL endpoint is registered. Configure UseBifrostBinary with an explicit " +
+                                "graphqlPath so the binary transport targets a specific database.",
+                        }},
+                    };
+
+                sharedExtensions = await _pathCache.GetFirstValueAsync()
                     ?? throw new InvalidOperationException(
                         "No BifrostQL GraphQL endpoint is registered to resolve the schema for the binary transport.");
+            }
 
             var services = request.RequestServices;
             // The binary WebSocket transport reaches execution through this engine. It must

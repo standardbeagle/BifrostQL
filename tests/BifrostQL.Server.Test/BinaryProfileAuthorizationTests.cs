@@ -72,7 +72,7 @@ namespace BifrostQL.Server.Test
 
         public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
 
-        private ServiceProvider BuildProvider(string loaderPath = EndpointPath)
+        private ServiceProvider BuildProvider(string loaderPath = EndpointPath, string? secondLoaderPath = null)
         {
             var filterTransformers = new FilterTransformersWrap
             {
@@ -81,13 +81,16 @@ namespace BifrostQL.Server.Test
 
             var pathCache = new PathCache<Inputs>();
             var (model, schema) = _profileCache.GetFor(null);
-            pathCache.AddLoader(loaderPath, () => Task.FromResult(new Inputs(new Dictionary<string, object?>
+            Inputs BuildInputs() => new(new Dictionary<string, object?>
             {
                 { "connFactory", _connFactory },
                 { "model", model },
                 { "dbSchema", schema },
                 { "profileModelCache", _profileCache },
-            })));
+            });
+            pathCache.AddLoader(loaderPath, () => Task.FromResult(BuildInputs()));
+            if (secondLoaderPath != null)
+                pathCache.AddLoader(secondLoaderPath, () => Task.FromResult(BuildInputs()));
 
             var services = new ServiceCollection();
             services.AddSingleton<IFilterTransformers>(filterTransformers);
@@ -211,6 +214,35 @@ namespace BifrostQL.Server.Test
             Messages(result).Should().NotContain(m => m.Contains("Query execution failed"),
                 "the binary mount path must resolve the registered GraphQL schema, not throw");
             result.Data.Should().NotBeNull("the query executes against the resolved schema");
+        }
+
+        [Fact]
+        public async Task BinaryMountPath_MultipleEndpoints_RefusesArbitraryFallback()
+        {
+            // The HTTP path refuses to fall back to the "first" endpoint when more than one is
+            // registered (UnknownBifrostEndpointException), because "first" is nondeterministic
+            // and would answer against the wrong database. The binary transport must apply the
+            // same guard: with two registered GraphQL endpoints and the default (unresolved)
+            // graphqlPath, executing must refuse rather than pick an arbitrary database.
+            // Non-vacuous: with a single registered endpoint the same call resolves and executes
+            // (BinaryMountPath_NotAGraphQlEndpoint_ResolvesSchemaFromRegisteredGraphQlEndpoint).
+            await using var provider = BuildProvider(loaderPath: "/graphql/sales", secondLoaderPath: "/graphql/archive");
+            var engine = provider.GetRequiredService<IBifrostEngine>();
+
+            var context = new DefaultHttpContext { RequestServices = provider };
+            provider.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
+
+            var result = await engine.ExecuteAsync(new BifrostRequest
+            {
+                Query = "{ __typename }",
+                UserContext = new Dictionary<string, object?>(),
+                RequestServices = provider,
+                CancellationToken = default,
+            }, "/bifrost-ws"); // unresolved mount path with >1 registered endpoint
+
+            Messages(result).Should().Contain(m => m.Contains("more than one") && m.Contains("GraphQL endpoint"),
+                "the binary transport must refuse an arbitrary cross-database fallback");
+            result.Data.Should().BeNull("nothing executes when the target database is ambiguous");
         }
     }
 }

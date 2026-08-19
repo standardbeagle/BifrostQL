@@ -198,7 +198,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError($"Failed to verify record accessibility: {ex.Message}", ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 
@@ -251,7 +251,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (Exception ex)
             {
-                throw new BifrostExecutionError($"Failed to update database record: {ex.Message}", ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 

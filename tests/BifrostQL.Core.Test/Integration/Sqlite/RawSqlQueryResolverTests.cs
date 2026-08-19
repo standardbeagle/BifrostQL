@@ -123,6 +123,30 @@ public sealed class RawSqlQueryResolverTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecutionError_RedactsRawDriverText_NotForwardedVerbatim()
+    {
+        await SeedAsync();
+        var model = BuildModel();
+        var resolver = new RawSqlQueryResolver(model);
+
+        // A SELECT that passes the SELECT-only validator but fails at execution because the
+        // table does not exist. SQLite's raw message is "no such table: ghost_table_xyz" —
+        // it must NOT reach the client verbatim (it can carry schema/identifier/driver detail);
+        // the resolver routes DbExceptions through the redaction seam.
+        var act = async () => await resolver.ResolveAsync(
+            Context(model, PrincipalWithRole(Role), "SELECT id FROM ghost_table_xyz"));
+
+        var thrown = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
+        thrown.Message.Should().NotContain("ghost_table_xyz",
+            "raw driver text (table/identifier names) must not be forwarded to the client");
+        thrown.Message.Should().NotContain("no such table",
+            "the driver's phrasing is infrastructure detail, redacted by default");
+        thrown.ErrorCode.Should().Be("DATABASE_ERROR");
+        // The original driver exception is retained server-side for logging.
+        thrown.InnerException.Should().BeAssignableTo<System.Data.Common.DbException>();
+    }
+
+    [Fact]
     public async Task ValidatedSql_IsTheSqlExecutedVerbatim()
     {
         await SeedAsync();

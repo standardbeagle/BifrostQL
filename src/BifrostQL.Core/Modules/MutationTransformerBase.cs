@@ -119,8 +119,15 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
                     // Tag the role-gated hard-delete denial with AccessDeniedCode so it surfaces the SAME
                     // transport status as every other authorization denial (policy/tenant) rather than a
                     // generic INTERNAL/500 — mapping by CONDITION, not op class
-                    // (single-funnel-needs-condition-tagging). The message is unchanged and stays generic
-                    // on the wire (invariant 3). No new denial semantics — only the classification code.
+                    // (single-funnel-needs-condition-tagging).
+                    //
+                    // The message (see GetHardDeleteDenial) names the qualified table — which the caller
+                    // supplied in the mutation — and the required role, consistent with the codebase's
+                    // other role-gated denials (e.g. the raw-SQL role gate). It carries NO infrastructure
+                    // detail (no driver/schema internals), so it is not the raw-error leak invariant 3
+                    // forbids. Non-GraphQL adapters map by the code and sanitize; the GraphQL surface
+                    // returns this authored text as it does every validation/policy message — so it is
+                    // NOT a generic wire message and must not be described as one.
                     ErrorCode = BifrostExecutionError.AccessDeniedCode,
                 };
             }

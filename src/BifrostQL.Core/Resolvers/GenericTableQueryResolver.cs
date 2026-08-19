@@ -335,7 +335,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (DbException ex)
             {
-                throw new BifrostExecutionError($"Generic table query error: {ex.Message}", ex);
+                throw BifrostExecutionError.FromDatabaseException(ex);
             }
         }
 

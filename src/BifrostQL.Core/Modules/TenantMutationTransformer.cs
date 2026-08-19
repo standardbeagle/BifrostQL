@@ -137,10 +137,9 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
         return tenantId;
     }
 
-    private static string GetTenantContextKey(IDbModel model)
-    {
-        if (model.Metadata.TryGetValue(TenantContextKeyMetadata, out var key) && key is string keyStr)
-            return keyStr;
-        return DefaultTenantContextKey;
-    }
+    // Resolve through the SAME rule as the read side (TenantFilterTransformer): one
+    // resolution point means the write path can never scope by a different tenant claim
+    // than the read path, and the fail-fast on a misconfigured key is shared.
+    private static string GetTenantContextKey(IDbModel model) =>
+        TenantFilterTransformer.ResolveTenantContextKey(model);
 }

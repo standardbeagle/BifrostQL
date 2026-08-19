@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Claims;
+using System.Threading;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using Microsoft.AspNetCore.Authentication;
@@ -171,13 +172,19 @@ namespace BifrostQL.Server.Auth
 
             private readonly ConcurrentDictionary<string, Entry> _entries = new();
 
-            // Soft cap on tracked keys. Entries are only removed on a SUCCESSFUL login for the
+            // Hard cap on tracked keys. Entries are only removed on a SUCCESSFUL login for the
             // exact key, so a peer rotating login strings or source IPs would otherwise grow this
-            // map without bound on the unauthenticated path. When over the cap, RecordFailure
-            // evicts entries whose lockout window has fully elapsed (they carry no live lockout —
-            // IsLockedOut resets them on read anyway — so dropping them changes no decision).
+            // map without bound on the unauthenticated path. RecordFailure enforces the cap on
+            // INSERT: an already-tracked key always updates in place (a victim already being
+            // brute-forced is never evicted, so its lockout can never be bypassed), but a brand-new
+            // key past the cap is refused after a throttled sweep of elapsed entries fails to free a
+            // slot. Beyond the cap the in-process throttle degrades to best-effort — the edge rate
+            // limiter is the real control (see the type summary) — but memory stays bounded and the
+            // hot path stays O(1) amortized (the O(n) sweep runs at most once per lockout window).
             internal const int DefaultMaxTrackedKeys = 10_000;
             private readonly int _maxTrackedKeys;
+            private readonly object _sweepGate = new();
+            private DateTimeOffset _lastSweepUtc = DateTimeOffset.MinValue;
 
             public LoginThrottle() : this(DefaultMaxTrackedKeys) { }
 
@@ -214,7 +221,34 @@ namespace BifrostQL.Server.Auth
                 if (options.MaxFailedLoginAttempts <= 0)
                     return;
 
+                // Already-tracked key: update in place. An account already being brute-forced stays
+                // tracked and locked out regardless of map pressure — it is never evicted, so the
+                // cap can never be turned into a throttle bypass.
+                if (_entries.TryGetValue(key, out var existing))
+                {
+                    Touch(existing, options);
+                    return;
+                }
+
+                // New key: enforce the hard cap BEFORE inserting. First try to reclaim slots held by
+                // entries whose lockout window has fully elapsed (they carry no live lockout —
+                // IsLockedOut resets them on read anyway — so dropping them changes no decision). If
+                // the map is still full of LIVE entries, refuse to track the new key rather than
+                // evict a live counter (that would drop a victim's lockout) or grow without bound (a
+                // memory-exhaustion DoS on the unauthenticated path).
+                if (_entries.Count >= _maxTrackedKeys)
+                {
+                    TrySweepElapsed(options.LockoutWindow);
+                    if (_entries.Count >= _maxTrackedKeys)
+                        return;
+                }
+
                 var entry = _entries.GetOrAdd(key, _ => new Entry { WindowStart = DateTimeOffset.UtcNow });
+                Touch(entry, options);
+            }
+
+            private static void Touch(Entry entry, LocalAuthOptions options)
+            {
                 lock (entry)
                 {
                     if (DateTimeOffset.UtcNow - entry.WindowStart >= options.LockoutWindow)
@@ -224,28 +258,37 @@ namespace BifrostQL.Server.Auth
                     }
                     entry.Failures++;
                 }
-
-                // Only when over the soft cap — never per call — so this is not O(n) on the hot
-                // path. Under an active key-rotation attack (the only way to exceed the cap) it
-                // reclaims the elapsed-window entries that IsLockedOut would reset but never removes.
-                if (_entries.Count > _maxTrackedKeys)
-                    PruneElapsed(options.LockoutWindow);
             }
 
-            private void PruneElapsed(TimeSpan window)
+            private void TrySweepElapsed(TimeSpan window)
             {
-                var now = DateTimeOffset.UtcNow;
-                foreach (var kvp in _entries)
+                // At most one full-map scan per lockout window, and one thread at a time: a sustained
+                // at-cap flood costs O(1) amortized per RecordFailure, never an O(n) scan per failure.
+                // A thread that finds the sweep already running (or run too recently) skips it and the
+                // caller simply refuses the new key — correctness never depends on the sweep firing.
+                if (!Monitor.TryEnter(_sweepGate))
+                    return;
+                try
                 {
-                    var entry = kvp.Value;
-                    bool elapsed;
-                    lock (entry)
-                        elapsed = now - entry.WindowStart >= window;
-                    if (elapsed)
-                        // Conditional remove: only drops THIS entry instance, so a key another
-                        // thread just re-activated (replacing nothing — GetOrAdd reuses the object)
-                        // loses at most one in-window count, acceptable under a live flood.
-                        _entries.TryRemove(KeyValuePair.Create(kvp.Key, entry));
+                    var now = DateTimeOffset.UtcNow;
+                    if (now - _lastSweepUtc < window)
+                        return;
+                    _lastSweepUtc = now;
+                    foreach (var kvp in _entries)
+                    {
+                        var entry = kvp.Value;
+                        bool elapsed;
+                        lock (entry)
+                            elapsed = now - entry.WindowStart >= window;
+                        if (elapsed)
+                            // Conditional remove: only drops THIS entry instance, so a key another
+                            // thread just re-activated (GetOrAdd reuses the object) is not dropped.
+                            _entries.TryRemove(KeyValuePair.Create(kvp.Key, entry));
+                    }
+                }
+                finally
+                {
+                    Monitor.Exit(_sweepGate);
                 }
             }
 

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 
 namespace BifrostQL.Server.Ldap
 {
@@ -17,11 +18,16 @@ namespace BifrostQL.Server.Ldap
     /// </summary>
     internal sealed class LdapBindRateLimiter
     {
-        // Soft cap on tracked (axis+key) counters. Entries are never removed on their own — a
+        // Hard cap on tracked (axis+key) counters. Entries are never removed on their own — a
         // fresh source or account key is created per distinct value — so an account-spraying or
         // IP-churning peer would grow this map without bound on the unauthenticated bind path.
-        // Over the cap, Increment reclaims counters whose window has already rolled over (Peek
-        // treats them as 0 anyway, so dropping them changes no decision).
+        // Increment enforces the cap on INSERT: an already-tracked counter always updates in place
+        // (a live rate-limit decision is never evicted, so the cap can never be turned into a
+        // bypass), but a brand-new counter past the cap is refused after a throttled sweep of
+        // rolled-over counters fails to free a slot. Beyond the cap the per-process limiter degrades
+        // to best-effort (an untracked key reads as 0 and is admitted) — the deployment layers its
+        // own cross-node lockout for that regime (see the type summary) — but memory stays bounded
+        // and the hot path stays O(1) amortized (the O(n) sweep runs at most once per window).
         internal const int DefaultMaxTrackedKeys = 20_000;
 
         private readonly int _maxPerSource;
@@ -30,6 +36,8 @@ namespace BifrostQL.Server.Ldap
         private readonly Func<DateTimeOffset> _clock;
         private readonly int _maxTrackedKeys;
         private readonly ConcurrentDictionary<string, Window> _windows = new(StringComparer.Ordinal);
+        private readonly object _sweepGate = new();
+        private DateTimeOffset _lastSweep = DateTimeOffset.MinValue;
 
         public LdapBindRateLimiter(
             int maxPerSource, int maxPerAccount, TimeSpan window,
@@ -71,26 +79,58 @@ namespace BifrostQL.Server.Ldap
 
         private void Increment(string key, DateTimeOffset now)
         {
+            // Already-tracked counter: update (or roll over) in place. Existing counters are never
+            // evicted by the cap, so a live rate-limit decision can never be dropped to admit a new key.
+            if (_windows.ContainsKey(key))
+            {
+                _windows.AddOrUpdate(
+                    key,
+                    _ => new Window(now, 1),
+                    (_, w) => now - w.Start < _window ? w with { Count = w.Count + 1 } : new Window(now, 1));
+                return;
+            }
+
+            // New counter: enforce the hard cap BEFORE inserting. Reclaim rolled-over counters first
+            // (Peek treats them as 0 anyway, so dropping them changes no decision); if the map is
+            // still full of LIVE counters, refuse to track this new key rather than evict a live
+            // counter or grow without bound.
+            if (_windows.Count >= _maxTrackedKeys)
+            {
+                TrySweepExpired(now);
+                if (_windows.Count >= _maxTrackedKeys)
+                    return;
+            }
+
             _windows.AddOrUpdate(
                 key,
                 _ => new Window(now, 1),
                 (_, w) => now - w.Start < _window ? w with { Count = w.Count + 1 } : new Window(now, 1));
-
-            // Only when over the soft cap — never per call — so this stays off the hot path.
-            // An account/IP-spraying flood is the only way to exceed it, and that is exactly
-            // when the rolled-over counters it reclaims have accumulated.
-            if (_windows.Count > _maxTrackedKeys)
-                PruneExpired(now);
         }
 
-        private void PruneExpired(DateTimeOffset now)
+        private void TrySweepExpired(DateTimeOffset now)
         {
-            foreach (var kvp in _windows)
+            // At most one full-map scan per window, and one thread at a time: a sustained at-cap flood
+            // costs O(1) amortized per Increment, never an O(n) scan on every attempt. A thread that
+            // finds the sweep already running (or run too recently) skips it and the caller simply
+            // refuses the new key — correctness never depends on the sweep firing.
+            if (!Monitor.TryEnter(_sweepGate))
+                return;
+            try
             {
-                if (now - kvp.Value.Start >= _window)
-                    // Conditional remove: Window is a value type, so this drops the counter only
-                    // if it has not been replaced by a concurrent Increment since we read it.
-                    _windows.TryRemove(kvp);
+                if (now - _lastSweep < _window)
+                    return;
+                _lastSweep = now;
+                foreach (var kvp in _windows)
+                {
+                    if (now - kvp.Value.Start >= _window)
+                        // Conditional remove: Window is a value type, so this drops the counter only
+                        // if it has not been replaced by a concurrent Increment since we read it.
+                        _windows.TryRemove(kvp);
+                }
+            }
+            finally
+            {
+                Monitor.Exit(_sweepGate);
             }
         }
 

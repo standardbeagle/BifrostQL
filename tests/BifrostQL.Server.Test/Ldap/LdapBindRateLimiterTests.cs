@@ -7,9 +7,11 @@ namespace BifrostQL.Server.Test.Ldap;
 
 /// <summary>
 /// The bind rate-limiter's counter map is bounded on both axes (per source, per account)
-/// AND bounded in SIZE: entries were never removed, so an account-spraying or IP-churning
-/// peer would grow it without limit on the unauthenticated bind path. Pruning reclaims
-/// rolled-over counters once the map is over a soft cap, never a live in-window counter.
+/// AND HARD-bounded in SIZE: entries were never removed, so an account-spraying or IP-churning
+/// peer would grow it without limit on the unauthenticated bind path (and re-scan it O(n) on
+/// every attempt). An already-tracked counter now updates in place and is never evicted (a live
+/// rate-limit decision can never be bypassed), a throttled sweep reclaims rolled-over counters,
+/// and a brand-new counter past the cap is refused when no slot can be freed.
 /// </summary>
 public class LdapBindRateLimiterTests
 {
@@ -86,18 +88,25 @@ public class LdapBindRateLimiterTests
     }
 
     [Fact]
-    public void OverCap_LiveCounters_AreNeverPruned()
+    public void OverCap_LiveFlood_MapStaysBounded_AndTrackedCounterStillCaps()
     {
         var clock = new Clock();
-        var limiter = new LdapBindRateLimiter(maxPerSource: 100, maxPerAccount: 100,
-            window: TimeSpan.FromHours(1), clock: clock.Get, maxTrackedKeys: 2);
+        // Per-account cap of 2, a tiny map cap, a long window so nothing rolls over.
+        var limiter = new LdapBindRateLimiter(maxPerSource: 100, maxPerAccount: 2,
+            window: TimeSpan.FromHours(1), clock: clock.Get, maxTrackedKeys: 4);
 
-        // Six live (in-window) counters, well over the cap — none may be pruned, because a
-        // live counter carries a real rate-limit decision.
-        for (var i = 0; i < 3; i++)
-            limiter.TryBind($"src-{i}", $"acct-{i}");
+        // Bring a victim account to its per-account cap BEFORE the flood.
+        limiter.TryBind("src", "victim").Should().BeTrue();
+        limiter.TryBind("src", "victim").Should().BeTrue();
+        limiter.TryBind("src", "victim").Should().BeFalse("the per-account window is at its cap");
 
-        limiter.TrackedKeyCount.Should().Be(6,
-            "pruning must never drop a live in-window counter, even when over the cap");
+        // Flood with many distinct live (source, account) pairs — far past the map cap.
+        for (var i = 0; i < 50; i++)
+            limiter.TryBind($"flood-src-{i}", $"flood-acct-{i}");
+
+        limiter.TrackedKeyCount.Should().BeLessThanOrEqualTo(4,
+            "a live-key flood must not grow the counter map past its hard cap (the unbounded-growth bug)");
+        limiter.TryBind("src", "victim").Should().BeFalse(
+            "a counter already tracked is never evicted to admit a new key, so its cap is never bypassed");
     }
 }

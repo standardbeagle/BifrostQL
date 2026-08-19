@@ -8,9 +8,10 @@ namespace BifrostQL.Server.Test;
 /// <summary>
 /// The login throttle's failure map only ever removed an entry on a SUCCESSFUL login
 /// for that exact key, so a peer rotating login strings or source IPs would grow it
-/// without bound on the unauthenticated path. It now evicts entries whose lockout
-/// window has fully elapsed once the map is over a soft cap — those carry no live
-/// lockout, so dropping them changes no decision while a live lockout is never evicted.
+/// without bound on the unauthenticated path (and re-scan it O(n) on every failure). It
+/// is now HARD-bounded: an already-tracked key updates in place and is never evicted (a
+/// victim's lockout can never be bypassed), a throttled sweep reclaims elapsed entries, and
+/// a brand-new key past the cap is refused when no slot can be freed — memory stays bounded.
 /// </summary>
 public class LoginThrottleTests
 {
@@ -36,18 +37,28 @@ public class LoginThrottleTests
     }
 
     [Fact]
-    public void OverCap_LiveLockouts_AreNeverEvicted()
+    public void OverCap_LiveFlood_MapStaysBounded_AndTrackedKeyStaysLockedOut()
     {
-        // A large window ⇒ no entry is elapsed, so the prune (which still runs once over the
-        // cap) must remove nothing: a live lockout is never dropped to make room.
+        // Regression: the map was only ever pruned of ELAPSED entries, so a flood of distinct
+        // LIVE keys grew it without bound (and re-scanned it O(n) on every failure). The map must
+        // now stay HARD-bounded at the cap under a live-key flood — while a key already tracked
+        // (already being brute-forced) is never evicted to make room, so its lockout survives.
         var throttle = new LocalAuthEndpoint.LoginThrottle(maxTrackedKeys: 2);
-        var options = Options(max: 5, window: TimeSpan.FromHours(1));
+        var options = Options(max: 2, window: TimeSpan.FromHours(1));
 
-        for (var i = 0; i < 5; i++)
-            throttle.RecordFailure($"key-{i}", options);
+        // Lock out a victim BEFORE the flood (two failures reach the lockout threshold of 2).
+        throttle.RecordFailure("victim", options);
+        throttle.RecordFailure("victim", options);
+        throttle.IsLockedOut("victim", options).Should().BeTrue();
 
-        throttle.TrackedKeyCount.Should().Be(5,
-            "pruning must never evict a live (non-elapsed) lockout, even when over the cap");
+        // Flood with many distinct live keys — far past the hard cap.
+        for (var i = 0; i < 50; i++)
+            throttle.RecordFailure($"flood-{i}", options);
+
+        throttle.TrackedKeyCount.Should().BeLessThanOrEqualTo(2,
+            "a live-key flood must not grow the map past its hard cap (the unbounded-growth bug)");
+        throttle.IsLockedOut("victim", options).Should().BeTrue(
+            "a key already tracked is never evicted to admit a new one, so its lockout is never bypassed");
     }
 
     [Fact]

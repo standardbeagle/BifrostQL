@@ -353,9 +353,12 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
             detail: {
                 table: table.graphQlName,
                 filter,
-                // This is the schema-generated filter input naming convention
-                // used by BifrostQL's list query surface.
-                filterType: `${table.graphQlName}Filter`,
+                // The schema-generated filter input is named TableFilter<table>Input
+                // (TableSchemaGenerator); the earlier "<table>Filter" guess made every
+                // FILTERED Visualize fail server-side with an unknown-type error while
+                // the unfiltered path kept working — verify this name against the SDL,
+                // never against another client's guess.
+                filterType: `TableFilter${table.graphQlName}Input`,
             },
         }));
     }, [columnFilters, table]);

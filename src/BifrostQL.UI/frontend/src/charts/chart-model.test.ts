@@ -4,7 +4,7 @@ import { buildChartAggregateQuery, mapAggregateRows, mapChartData, mapSankeyData
 import { openChart, saveChart } from "./chart-store";
 
 const definition = (chartType: ChartDefinition["chartType"] = "bar"): ChartDefinition => ({
-  kind: "bifrost.chart", version: 1, chartType, source: { kind: "table", table: "orders", filterType: "ordersFilter", filter: { status: { _eq: "paid" } } },
+  kind: "bifrost.chart", version: 1, chartType, source: { kind: "table", table: "orders", filterType: "TableFilterordersInput", filter: { status: { _eq: "paid" } } },
   dimensions: ["region"], measures: [{ op: "sum", column: "amount" }], limit: 100,
 });
 const groupedSqlFixture = [{ region: "north", _sum: { amount: 12 } }, { region: "south", _sum: { amount: 7 } }];
@@ -29,8 +29,8 @@ describe("chart aggregate model", () => {
     // This mirrors TableSchemaGenerator: aggregate fields accept filter and
     // groupBy, whereas limit belongs only to normal paged table fields.
     const schema = buildSchema(`
-      type Query { ordersAggregate(filter: ordersFilter, groupBy: [ordersColumn!]): [ordersAggregate!]! }
-      input ordersFilter { status: StringFilter }
+      type Query { ordersAggregate(filter: TableFilterordersInput, groupBy: [ordersColumn!]): [ordersAggregate!]! }
+      input TableFilterordersInput { status: StringFilter }
       input StringFilter { _eq: String }
       enum ordersColumn { region amount }
       type ordersAggregate { region: String, _sum: ordersAggregateFields, _count: Int! }

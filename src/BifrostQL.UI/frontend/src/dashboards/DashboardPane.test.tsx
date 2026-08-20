@@ -149,7 +149,7 @@ describe("DashboardPane", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save dashboard" }));
     await waitFor(() => expect(store.put).toHaveBeenCalled());
-    const storedDefinition = store.put.mock.calls.at(-1)![0].definition as DashboardDefinition;
+    const storedDefinition = store.put.mock.calls[store.put.mock.calls.length - 1][0].definition as DashboardDefinition;
     expect(storedDefinition.tiles.find((tile) => tile.kind === "chart")?.ref).toBe("chart-sankey");
   });
 

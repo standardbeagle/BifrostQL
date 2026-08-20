@@ -406,7 +406,7 @@ export default function App() {
         ) : editorPane === 'reports' && editorFetcher ? (
           <ReportsPane fetcher={editorFetcher} />
         ) : editorPane === 'charts' && editorFetcher ? (
-          <ChartPane fetcher={editorFetcher} initialDefinition={chartToOpen} />
+          <ChartPane fetcher={editorFetcher} initialDefinition={chartToOpen} onInitialDefinitionConsumed={() => setChartToOpen(null)} />
         ) : editorPane === 'pivot' && editorFetcher ? (
           <PivotPane fetcher={editorFetcher} />
         ) : editorPane === 'dashboards' && editorFetcher ? (

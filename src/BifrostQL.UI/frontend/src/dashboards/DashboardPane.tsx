@@ -4,7 +4,7 @@ import { ChartPreview } from "../charts/ChartPane";
 import { buildChartAggregateQuery, mapChartData, parseChartDefinition, type ChartData, type ChartDefinition } from "../charts/chart-model";
 import { toFilter } from "../designer/designer-state";
 import { parseQueryDefinition } from "../designer/saved-query";
-import type { VisualFilter } from "../lib/visual-query";
+import { resolveVisualFilter, tableFilterTypeName, tablePart } from "../lib/visual-filter";
 import { assertDashboardName, blankDashboard, type CountTileConfig, type DashboardDefinition, type DashboardLayout, type DashboardTile, type TableTileConfig } from "./dashboard-model";
 import { openChart } from "../charts/chart-store";
 import { dashboardStore, DASHBOARD_SAVED_OBJECT_TYPE, openDashboard, saveDashboard } from "./dashboard-store";
@@ -13,18 +13,6 @@ import "./dashboard.css";
 type ResolvedTile = { kind: "chart"; config: ChartDefinition } | { kind: "count"; config: CountTileConfig } | { kind: "table"; config: TableTileConfig } | { error: string };
 type SchemaTable = { graphQlName: string; columns: Array<{ graphQlName: string }> };
 
-function tablePart(qualified: string): string { const parts = qualified.split("."); return parts[parts.length - 1] ?? qualified; }
-/** Saved-query filters are parser-validated identifiers. Values still become GraphQL variables. */
-function resolveSavedQueryFilter(filter: VisualFilter | null, tableRef: string): Record<string, unknown> | undefined {
-  if (!filter) return undefined;
-  if (filter.op === "leaf") {
-    const criterion = filter.criterion;
-    if (!criterion || criterion.table !== tableRef) throw new Error("The saved query filter is not scoped to its backing table.");
-    return { [criterion.column]: { [criterion.operator]: criterion.value } };
-  }
-  const children = (filter.children ?? []).map((child) => resolveSavedQueryFilter(child, tableRef)).filter((child): child is Record<string, unknown> => !!child);
-  return children.length ? { [filter.op]: children } : undefined;
-}
 function configFromSaved(tile: DashboardTile, object: SavedObject): ResolvedTile {
   if (tile.kind === "chart") {
     const chart = parseChartDefinition(object.definition);
@@ -35,8 +23,8 @@ function configFromSaved(tile: DashboardTile, object: SavedObject): ResolvedTile
     const tableRef = query.state.tables[0].alias ?? query.state.tables[0].table;
     const table = tablePart(query.state.tables[0].table);
     try {
-      const filter = resolveSavedQueryFilter(query.state.filter ?? toFilter(query.state), tableRef);
-      const source = filter ? { filter, filterType: `TableFilter${table}Input` } : {};
+      const filter = resolveVisualFilter(query.state.filter ?? toFilter(query.state), tableRef);
+      const source = filter ? { filter, filterType: tableFilterTypeName(table) } : {};
       if (tile.kind === "count") return { kind: "count", config: { table, label: object.name, ...source } };
       return { kind: "table", config: { table, columns: query.state.columns.filter((column) => column.show).map((column) => column.column), limit: query.state.rowLimit ?? 10, ...source } };
     } catch (reason) { return { error: reason instanceof Error ? reason.message : String(reason) }; }

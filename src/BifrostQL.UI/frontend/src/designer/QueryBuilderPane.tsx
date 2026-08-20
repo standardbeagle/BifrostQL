@@ -28,12 +28,14 @@ import {
   removeJoin,
   setJoinType,
   toSpec,
+  toFilter,
   tableRef,
   m2mJoinPlans,
   applyM2mJoinPlan,
   type DesignerState,
   type M2mJoinPlan,
 } from "./designer-state";
+import { resolveVisualFilter, tableFilterTypeName, tablePart } from "../lib/visual-filter";
 import {
   serializeQuery,
   parseQueryDefinition,
@@ -425,11 +427,25 @@ export function QueryBuilderPane({
         <button
           type="button"
           onClick={() => {
-            const table = state.tables.length === 1 ? state.tables[0].table : null;
-            if (table) window.dispatchEvent(new CustomEvent("bifrostql:visualize", { detail: { table } }));
+            // The chart source must be the BARE table name (parseChartDefinition
+            // rejects a schema-qualified one — the old dispatch made the chart
+            // silently never render) and must CARRY the designer's filter: a
+            // chart that quietly drops the filter the builder shows is a chart
+            // that lies. Resolution failures surface as the pane's own error.
+            if (state.tables.length !== 1 || state.joins.length !== 0) return;
+            const placed = state.tables[0];
+            const bare = tablePart(placed.table);
+            try {
+              const filter = resolveVisualFilter(state.filter ?? toFilter(state), tableRef(placed));
+              window.dispatchEvent(new CustomEvent("bifrostql:visualize", {
+                detail: { table: bare, filter, filterType: filter ? tableFilterTypeName(bare) : undefined },
+              }));
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : String(reason));
+            }
           }}
-          disabled={!result || state.tables.length !== 1}
-          title={state.tables.length === 1 ? "Visualize this result as a server aggregate chart" : "Charts require one source table"}
+          disabled={!result || state.tables.length !== 1 || state.joins.length !== 0}
+          title={state.tables.length === 1 && state.joins.length === 0 ? "Visualize this result as a server aggregate chart" : "Charts require one source table and no joins"}
           style={styles.btn}
         >
           Visualize

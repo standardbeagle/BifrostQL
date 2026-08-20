@@ -2,28 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { downloadTextFile, exportAllRows, filenameFor, mimeFor, type GraphQLFetcher, type SavedObject, type SavedObjectsClient } from "@standardbeagle/edit-db";
 import { parseQueryDefinition, type SavedQueryDefinition } from "../designer/saved-query";
 import { toFilter } from "../designer/designer-state";
-import type { VisualFilter } from "../lib/visual-query";
+import { resolveVisualFilter, tableFilterTypeName, tablePart } from "../lib/visual-filter";
 import { buildPivotQuery, displayPivotColumn, parsePivotPayload, type PivotAggregate, type PivotDefinition, type PivotPayload, type ResolvedSavedQueryPivotSource } from "./pivot-model";
 import { openPivot, PIVOT_SAVED_OBJECT_TYPE, pivotStore, savePivot } from "./pivot-store";
 
 type Table = { graphQlName: string; columns: Array<{ graphQlName: string }> };
 const empty = (table = ""): PivotDefinition => ({ kind: "bifrost.pivot", version: 1, source: { kind: "table", table }, rowKeys: [], pivotColumn: "", valueColumn: "", aggregate: "count" });
-
-function tablePart(qualified: string): string { const parts = qualified.split("."); return parts[parts.length - 1] ?? qualified; }
-
-/** Converts a one-table saved designer filter into the public table-filter input.
- * All identifiers were validated by the saved-query parser; this only moves the
- * user values into GraphQL variables, never into the document text. */
-function resolveVisualFilter(filter: VisualFilter | null, tableRef: string): Record<string, unknown> | undefined {
-  if (!filter) return undefined;
-  if (filter.op === "leaf") {
-    const criterion = filter.criterion;
-    if (!criterion || criterion.table !== tableRef) throw new Error("The saved query filter is not scoped to its backing table.");
-    return { [criterion.column]: { [criterion.operator]: criterion.value } };
-  }
-  const children = (filter.children ?? []).map((child) => resolveVisualFilter(child, tableRef)).filter((child): child is Record<string, unknown> => !!child);
-  return children.length ? { [filter.op]: children } : undefined;
-}
 
 /** Resolve a saved visual query into the exact table/filter context accepted by
  * the server pivot field. Multi-table saved queries remain unsupported instead
@@ -34,7 +18,7 @@ export function resolveSavedQueryPivotSource(saved: SavedQueryDefinition, tables
   const table = tables.find((candidate) => candidate.graphQlName === tablePart(saved.state.tables[0].table));
   if (!table) throw new Error("The saved query backing table is not present in this schema.");
   const filter = resolveVisualFilter(saved.state.filter ?? toFilter(saved.state), tableRef);
-  return { table: table.graphQlName, filter, filterType: filter ? `TableFilter${table.graphQlName}Input` : undefined };
+  return { table: table.graphQlName, filter, filterType: filter ? tableFilterTypeName(table.graphQlName) : undefined };
 }
 
 /** Export the displayed server matrix through edit-db's shared 3.3 serializer. */

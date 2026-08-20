@@ -5,7 +5,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Column, Table } from './types/schema';
 
 // The grid itself is not under test — stub it so the panel logic renders alone.
-vi.mock('./components/data-table', () => ({ DataTable: () => <div data-testid="grid" /> }));
+// The stub surfaces onVisualize so the shell-event contract stays testable.
+vi.mock('./components/data-table', () => ({
+    DataTable: ({ onVisualize }: { onVisualize?: () => void }) =>
+        <div data-testid="grid">{onVisualize && <button onClick={onVisualize}>Visualize</button>}</div>,
+}));
 vi.mock('./data-edit', () => ({ DataEditDialog: () => null }));
 
 const fetcherQuery = vi.fn();
@@ -17,6 +21,7 @@ vi.mock('./common/fetcher', () => ({ useFetcher: () => ({ query: fetcherQuery })
 // exactly the way a grid cell does — by grid index.
 let capturedExpand: ((rowIndex: number, columnName: string) => void) | undefined;
 let mockRows: Record<string, unknown>[] = [];
+let mockColumnFilters: Array<{ id: string; value: unknown }> = [];
 vi.mock('./hooks/useDataTable', () => ({
     useDataTable: (
         _table: unknown,
@@ -29,7 +34,7 @@ vi.mock('./hooks/useDataTable', () => ({
         return {
             columns: [],
             sorting: [],
-            columnFilters: [],
+            columnFilters: mockColumnFilters,
             primaryKeys: [],
             pageIndex: 0,
             pageSize: 50,
@@ -201,5 +206,33 @@ describe('TableView content panel row identity (PK snapshot)', () => {
 
         // The editor (and the unsaved text) survives the move.
         expect(screen.getByRole('textbox')).toHaveValue('in-progress edit');
+    });
+});
+
+describe('TableView Visualize shell event', () => {
+    it('dispatches the schema-generated TableFilter<table>Input type name with the active filter', () => {
+        // The event is the cross-package contract with the workbench shell: the
+        // filterType string is interpolated into the chart's aggregate document,
+        // so a guessed name ("docsFilter", the shipped bug) makes every FILTERED
+        // Visualize fail server-side with an unknown-type error.
+        // Filter ids are column NAMES; the emitted filter keys are graphQlNames
+        // (this fixture's columns all default to graphQlName 'col').
+        mockColumnFilters = [{ id: 'name', value: { operator: '_eq', value: 'Alpha' } }];
+        try {
+            renderGrid();
+            const events: Array<Record<string, unknown>> = [];
+            const listen = (event: Event) => events.push((event as CustomEvent).detail);
+            window.addEventListener('bifrostql:visualize', listen);
+            fireEvent.click(screen.getByRole('button', { name: 'Visualize' }));
+            window.removeEventListener('bifrostql:visualize', listen);
+
+            expect(events).toEqual([{
+                table: 'docs',
+                filter: { col: { _eq: 'Alpha' } },
+                filterType: 'TableFilterdocsInput',
+            }]);
+        } finally {
+            mockColumnFilters = [];
+        }
     });
 });

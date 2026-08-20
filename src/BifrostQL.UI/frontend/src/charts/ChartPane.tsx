@@ -8,7 +8,7 @@ import type { SavedObject, SavedObjectsClient } from "@standardbeagle/edit-db";
 const palette = ["var(--accent-action)", "var(--accent-success)", "var(--accent-warning)", "var(--text-secondary)"];
 const emptyDefinition = (table: string): ChartDefinition => ({ kind: "bifrost.chart", version: 1, source: { kind: "table", table }, dimensions: [], measures: [{ op: "count" }], chartType: "bar", limit: 100 });
 
-export function ChartPane({ fetcher, initialDefinition, store = chartStore }: { fetcher: GraphQLFetcher; initialDefinition?: ChartDefinition | null; store?: SavedObjectsClient }) {
+export function ChartPane({ fetcher, initialDefinition, onInitialDefinitionConsumed, store = chartStore }: { fetcher: GraphQLFetcher; initialDefinition?: ChartDefinition | null; onInitialDefinitionConsumed?: () => void; store?: SavedObjectsClient }) {
   const [definition, setDefinition] = useState<ChartDefinition>(() => initialDefinition ?? emptyDefinition(""));
   const [tables, setTables] = useState<Array<{ graphQlName: string; columns: Array<{ graphQlName: string }> }>>([]);
   const [savedCharts, setSavedCharts] = useState<SavedObject[]>([]);
@@ -21,7 +21,10 @@ export function ChartPane({ fetcher, initialDefinition, store = chartStore }: { 
   // surface. Labels are a client projection and are deliberately not queried.
   useEffect(() => { void fetcher.query<{ _dbSchema: typeof tables }>("query ChartSchema { _dbSchema { graphQlName columns { graphQlName } } }").then((value) => setTables(value._dbSchema ?? [])); }, [fetcher]);
   useEffect(() => { void store.list(CHART_SAVED_OBJECT_TYPE).then((objects) => setSavedCharts(objects.filter((object) => openChart(object) !== null))); }, [store]);
-  useEffect(() => { if (initialDefinition) setDefinition(initialDefinition); }, [initialDefinition]);
+  // Consuming the seed lets the shell clear it (mirrors the query builder's
+  // onOpenHandled) — otherwise a later visit to the Charts pane re-seeds the
+  // stale definition from the last Visualize.
+  useEffect(() => { if (initialDefinition) { setDefinition(initialDefinition); onInitialDefinitionConsumed?.(); } }, [initialDefinition]);
   useEffect(() => {
     if (!definition.source.table || !definition.dimensions.length) return;
     if (definition.chartType === "sankey" && definition.dimensions.length < 2) return;

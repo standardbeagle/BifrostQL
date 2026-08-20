@@ -8,7 +8,11 @@ import type { ChartDefinition } from "./chart-model";
 vi.mock("recharts", () => {
   const Box = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
   const SankeyBox = ({ children }: { children?: React.ReactNode }) => <div data-testid="sankey">{children}</div>;
-  return { Area: Box, AreaChart: Box, Bar: Box, BarChart: Box, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Box, Pie: Box, PieChart: Box, ResponsiveContainer: Box, Sankey: SankeyBox, Tooltip: Box, XAxis: Box, YAxis: Box };
+  // Bar surfaces its click contract: recharts invokes onClick with the entry
+  // whose payload carries the mapped point ({ category, ...values }).
+  const Bar = ({ onClick }: { onClick?: (entry: unknown) => void }) =>
+    <button data-testid="bar" onClick={() => onClick?.({ payload: { category: "north" } })} />;
+  return { Area: Box, AreaChart: Box, Bar, BarChart: Box, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Box, Pie: Box, PieChart: Box, ResponsiveContainer: Box, Sankey: SankeyBox, Tooltip: Box, XAxis: Box, YAxis: Box };
 });
 
 afterEach(cleanup);
@@ -51,6 +55,18 @@ describe("ChartPane", () => {
     await screen.findByTestId("sankey");
     const aggregate = liveFetcher.query.mock.calls.map((call) => call[0]).find((q: string) => q.includes("Aggregate"));
     expect(aggregate).toContain("groupBy: [searched_category, purchased_category]");
+  });
+
+  it("drills a clicked bar through onDrill as the dimension's grid filter", async () => {
+    // The reverse of Visualize: a chart element click hands the shell the
+    // table plus grid-shaped filters, so exploration and visualization
+    // navigate BOTH ways.
+    const onDrill = vi.fn();
+    render(<ChartPane fetcher={fetcher() as never} initialDefinition={{ ...initial, chartType: "bar" }} onDrill={onDrill} store={{ list: vi.fn().mockResolvedValue([]) } as never} />);
+
+    fireEvent.click(await screen.findByTestId("bar"));
+
+    expect(onDrill).toHaveBeenCalledWith("orders", [{ column: "region", operator: "_eq", value: "north" }]);
   });
 
   it("saves and visibly reloads the exact chart definition through query saved objects", async () => {

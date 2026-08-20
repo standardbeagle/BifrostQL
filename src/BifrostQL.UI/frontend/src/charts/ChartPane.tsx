@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { GraphQLFetcher } from "@standardbeagle/edit-db";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Sankey, Tooltip, XAxis, YAxis } from "recharts";
-import { buildChartAggregateQuery, mapChartData, measureKey, type ChartData, type ChartDefinition, type ChartMeasure, type ChartType } from "./chart-model";
+import { buildChartAggregateQuery, drillFilter, mapChartData, measureKey, type ChartData, type ChartDefinition, type ChartDrillFilter, type ChartMeasure, type ChartType } from "./chart-model";
 import { chartStore, CHART_SAVED_OBJECT_TYPE, openChart, saveChart } from "./chart-store";
 import type { SavedObject, SavedObjectsClient } from "@standardbeagle/edit-db";
 
 const palette = ["var(--accent-action)", "var(--accent-success)", "var(--accent-warning)", "var(--text-secondary)"];
 const emptyDefinition = (table: string): ChartDefinition => ({ kind: "bifrost.chart", version: 1, source: { kind: "table", table }, dimensions: [], measures: [{ op: "count" }], chartType: "bar", limit: 100 });
 
-export function ChartPane({ fetcher, initialDefinition, onInitialDefinitionConsumed, store = chartStore }: { fetcher: GraphQLFetcher; initialDefinition?: ChartDefinition | null; onInitialDefinitionConsumed?: () => void; store?: SavedObjectsClient }) {
+export function ChartPane({ fetcher, initialDefinition, onInitialDefinitionConsumed, onDrill, store = chartStore }: { fetcher: GraphQLFetcher; initialDefinition?: ChartDefinition | null; onInitialDefinitionConsumed?: () => void; onDrill?: (table: string, filters: ChartDrillFilter[]) => void; store?: SavedObjectsClient }) {
   const [definition, setDefinition] = useState<ChartDefinition>(() => initialDefinition ?? emptyDefinition(""));
   const [tables, setTables] = useState<Array<{ graphQlName: string; columns: Array<{ graphQlName: string }> }>>([]);
   const [savedCharts, setSavedCharts] = useState<SavedObject[]>([]);
@@ -63,7 +63,8 @@ export function ChartPane({ fetcher, initialDefinition, onInitialDefinitionConsu
     {error && <p role="alert">{error}</p>}
     {!error && data === null && <p>Choose a table and dimension to preview a server aggregate.</p>}
     {!error && data && isEmptyChartData(data) && <p role="status">No data matches this chart.</p>}
-    {data && !isEmptyChartData(data) && <ChartPreview type={definition.chartType} data={data} measures={definition.measures} />}
+    {data && !isEmptyChartData(data) && <ChartPreview type={definition.chartType} data={data} measures={definition.measures} dimensions={definition.dimensions}
+      onDrill={onDrill && definition.source.table ? (filters) => onDrill(definition.source.table, filters) : undefined} />}
   </section>;
 }
 
@@ -95,13 +96,42 @@ function SankeyNodeShape(props: {
   </g>;
 }
 
-export function ChartPreview({ type, data, measures }: { type: ChartType; data: ChartData; measures: ChartMeasure[] }) {
+// Recharts computes the ribbon geometry and clones this element with it; the
+// shape only draws the default bezier — it exists so a band can take a CLICK
+// (the stock link object cannot), which is what makes a sankey navigable:
+// clicking a flow drills to the grid filtered to that source/target pair.
+function SankeyLinkShape(props: {
+  sourceX?: number; targetX?: number; sourceY?: number; targetY?: number;
+  sourceControlX?: number; targetControlX?: number; linkWidth?: number;
+  payload?: { source?: { name?: string }; target?: { name?: string } };
+  onDrillFlow?: (source: string, target: string) => void;
+}) {
+  const { sourceX = 0, targetX = 0, sourceY = 0, targetY = 0, sourceControlX = 0, targetControlX = 0, linkWidth = 0, payload, onDrillFlow } = props;
+  const source = payload?.source?.name;
+  const target = payload?.target?.name;
+  const drill = onDrillFlow && source !== undefined && target !== undefined
+    ? () => onDrillFlow(source, target)
+    : undefined;
+  return <path
+    d={`M${sourceX},${sourceY}C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
+    fill="none" stroke="var(--accent-action)" strokeOpacity={0.35} strokeWidth={linkWidth}
+    style={drill ? { cursor: "pointer" } : undefined} onClick={drill} />;
+}
+
+export function ChartPreview({ type, data, measures, dimensions, onDrill }: { type: ChartType; data: ChartData; measures: ChartMeasure[]; dimensions?: string[]; onDrill?: (filters: ChartDrillFilter[]) => void }) {
+  const [dimension, flowDimension] = dimensions ?? [];
+  const drillCategory = onDrill && dimension
+    ? (category: unknown) => { if (typeof category === "string") onDrill([drillFilter(dimension, category)]); }
+    : undefined;
+  const drillFlow = onDrill && dimension && flowDimension
+    ? (source: string, target: string) => onDrill([drillFilter(dimension, source), drillFilter(flowDimension, target)])
+    : undefined;
   if (data.kind === "sankey") {
     // Recharts lays a sankey out itself from nodes+indexed links; no axes apply.
     return <div className="bifrost-chart-preview" data-theme-palette="tokens"><ResponsiveContainer width="100%" height={320}>
       <Sankey data={{ nodes: data.nodes, links: data.links }} nodePadding={24}
         node={<SankeyNodeShape />}
-        link={{ stroke: "var(--accent-action)", strokeOpacity: 0.35 }}
+        link={<SankeyLinkShape onDrillFlow={drillFlow} />}
         margin={{ top: 16, right: 130, bottom: 16, left: 130 }}>
         <Tooltip />
       </Sankey>
@@ -110,7 +140,10 @@ export function ChartPreview({ type, data, measures }: { type: ChartType; data: 
   const points = data.points.map((point) => ({ category: point.category, ...point.values }));
   const series = measures.map(measureKey);
   const common = series.map((key, index) => ({ key, stroke: palette[index % palette.length] }));
-  if (type === "pie") return <div className="bifrost-chart-preview" data-theme-palette="tokens"><ResponsiveContainer width="100%" height={320}><PieChart><Tooltip /><Legend /><Pie data={points} dataKey={series[0]} nameKey="category" fill={palette[0]} /></PieChart></ResponsiveContainer></div>;
+  const clickEntry = drillCategory
+    ? (entry: { payload?: { category?: unknown }; category?: unknown } | undefined) => drillCategory(entry?.payload?.category ?? entry?.category)
+    : undefined;
+  if (type === "pie") return <div className="bifrost-chart-preview" data-theme-palette="tokens"><ResponsiveContainer width="100%" height={320}><PieChart><Tooltip /><Legend /><Pie data={points} dataKey={series[0]} nameKey="category" fill={palette[0]} onClick={clickEntry} cursor={clickEntry ? "pointer" : undefined} /></PieChart></ResponsiveContainer></div>;
   const Chart = type === "bar" ? BarChart : type === "line" ? LineChart : AreaChart;
-  return <div className="bifrost-chart-preview" data-theme-palette="tokens"><ResponsiveContainer width="100%" height={320}><Chart data={points}><CartesianGrid stroke="var(--ui-border)" /><XAxis dataKey="category" stroke="var(--text-secondary)" /><YAxis stroke="var(--text-secondary)" /><Tooltip /><Legend />{common.map((s) => type === "bar" ? <Bar key={s.key} dataKey={s.key} fill={s.stroke} /> : type === "line" ? <Line key={s.key} dataKey={s.key} stroke={s.stroke} /> : <Area key={s.key} dataKey={s.key} stroke={s.stroke} fill={s.stroke} />)}</Chart></ResponsiveContainer></div>;
+  return <div className="bifrost-chart-preview" data-theme-palette="tokens"><ResponsiveContainer width="100%" height={320}><Chart data={points}><CartesianGrid stroke="var(--ui-border)" /><XAxis dataKey="category" stroke="var(--text-secondary)" /><YAxis stroke="var(--text-secondary)" /><Tooltip /><Legend />{common.map((s) => type === "bar" ? <Bar key={s.key} dataKey={s.key} fill={s.stroke} onClick={clickEntry} cursor={clickEntry ? "pointer" : undefined} /> : type === "line" ? <Line key={s.key} dataKey={s.key} stroke={s.stroke} /> : <Area key={s.key} dataKey={s.key} stroke={s.stroke} fill={s.stroke} />)}</Chart></ResponsiveContainer></div>;
 }

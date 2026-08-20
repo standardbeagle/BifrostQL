@@ -43,3 +43,4 @@ export type {
   ExportRunner,
   RunExportOptions,
 } from './lib/export';
+export { serializeColumnFilters, deserializeColumnFilters } from './lib/query-builder';

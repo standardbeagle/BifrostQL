@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import Editor, { type SavedObject } from '@standardbeagle/edit-db';
+import Editor, { serializeColumnFilters, type SavedObject } from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
 import {
   WelcomePanel,
@@ -17,7 +17,7 @@ import { FormBuilderPane } from './forms/FormBuilderPane';
 import { ReportsPane } from './reports/ReportsPane';
 import { ErdPane } from './erd/ErdPane';
 import { ChartPane } from './charts/ChartPane';
-import type { ChartDefinition } from './charts/chart-model';
+import type { ChartDefinition, ChartDrillFilter } from './charts/chart-model';
 import { PivotPane } from './pivot/PivotPane';
 import { DashboardPane } from './dashboards/DashboardPane';
 import './erd/erd.css';
@@ -118,9 +118,15 @@ export default function App() {
   const [editorPath, setEditorPath] = useState('/');
   const [editorRouteToken, setEditorRouteToken] = useState(0);
 
-  const handleOpenDiagramTable = useCallback((tableName: string) => {
+  const handleOpenTableView = useCallback((tableName: string, filters?: ChartDrillFilter[]) => {
     setEditorPane('graphql');
-    const path = `/${encodeURIComponent(tableName)}`;
+    // The `cf` query param is the grid's source of truth for column filters
+    // (useDataTable reconciles from it), so a chart drill-through and a
+    // hand-typed URL land on the identical filtered grid.
+    const cf = filters?.length
+      ? `?cf=${encodeURIComponent(serializeColumnFilters(filters.map((f) => ({ id: f.column, value: { operator: f.operator, value: f.value } }))))}`
+      : '';
+    const path = `/${encodeURIComponent(tableName)}${cf}`;
     // Keep the address bar honest for the user; the editor is moved by the prop
     // below, not by this URL.
     window.history.pushState(null, '', path);
@@ -129,6 +135,7 @@ export default function App() {
     // even when the path string is unchanged.
     setEditorRouteToken((token) => token + 1);
   }, []);
+  const handleOpenDiagramTable = useCallback((tableName: string) => handleOpenTableView(tableName), [handleOpenTableView]);
 
   // Grid toolbar sends a shell event so edit-db stays transport-agnostic. Its
   // table identity is schema-derived; filter decoding stays in edit-db and is
@@ -406,7 +413,7 @@ export default function App() {
         ) : editorPane === 'reports' && editorFetcher ? (
           <ReportsPane fetcher={editorFetcher} />
         ) : editorPane === 'charts' && editorFetcher ? (
-          <ChartPane fetcher={editorFetcher} initialDefinition={chartToOpen} onInitialDefinitionConsumed={() => setChartToOpen(null)} />
+          <ChartPane fetcher={editorFetcher} initialDefinition={chartToOpen} onInitialDefinitionConsumed={() => setChartToOpen(null)} onDrill={handleOpenTableView} />
         ) : editorPane === 'pivot' && editorFetcher ? (
           <PivotPane fetcher={editorFetcher} />
         ) : editorPane === 'dashboards' && editorFetcher ? (

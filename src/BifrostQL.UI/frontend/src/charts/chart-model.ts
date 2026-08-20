@@ -157,3 +157,17 @@ export function mapChartData(rows: readonly Record<string, unknown>[], definitio
     ? { kind: "sankey", ...mapSankeyData(rows, definition) }
     : { kind: "cartesian", points: mapAggregateRows(rows, definition) };
 }
+
+/** One clicked chart element, expressed as a grid column filter. */
+export interface ChartDrillFilter { column: string; operator: string; value: unknown; }
+
+/**
+ * The filter a clicked category means on the GRID: an ordinary equality, except
+ * the explicit null node — "(null)" is a LABEL, not a value, so it drills to
+ * the grid's `_null` operator rather than matching rows whose text is the label.
+ */
+export function drillFilter(column: string, category: string): ChartDrillFilter {
+  return category === NULL_CATEGORY_LABEL
+    ? { column, operator: "_null", value: true }
+    : { column, operator: "_eq", value: category };
+}

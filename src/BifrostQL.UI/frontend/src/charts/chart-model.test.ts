@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSchema, parse, validate } from "graphql";
-import { buildChartAggregateQuery, mapAggregateRows, mapChartData, mapSankeyData, MAX_CHART_CATEGORIES, NULL_CATEGORY_LABEL, type ChartDefinition } from "./chart-model";
+import { buildChartAggregateQuery, drillFilter, mapAggregateRows, mapChartData, mapSankeyData, MAX_CHART_CATEGORIES, NULL_CATEGORY_LABEL, type ChartDefinition } from "./chart-model";
 import { openChart, saveChart } from "./chart-store";
 
 const definition = (chartType: ChartDefinition["chartType"] = "bar"): ChartDefinition => ({
@@ -112,6 +112,13 @@ describe("chart aggregate model", () => {
   it("guards high-cardinality flows before rendering", () => {
     const rows = Array.from({ length: MAX_CHART_CATEGORIES + 1 }, (_, i) => ({ searched_category: String(i), purchased_category: "x", _count: 1 }));
     expect(() => mapSankeyData(rows, sankeyDefinition())).toThrow("Too many flows");
+  });
+
+  it("drills a category to _eq and the null node to _null, never to the label text", () => {
+    expect(drillFilter("status", "open")).toEqual({ column: "status", operator: "_eq", value: "open" });
+    // "(null)" is a LABEL for SQL NULL — drilling it as _eq would match rows
+    // whose text literally equals the label.
+    expect(drillFilter("status", NULL_CATEGORY_LABEL)).toEqual({ column: "status", operator: "_null", value: true });
   });
 
   it("routes each chart type to its mapped shape through mapChartData", () => {

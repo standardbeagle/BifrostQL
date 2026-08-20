@@ -280,3 +280,18 @@ export function downloadTextFile(
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 }
+
+/** Download a base64-encoded binary value as a file (image, PDF, any blob). */
+export function downloadBinaryFile(base64: string, filename: string, mimeType: string): void {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const blob = new Blob([bytes], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}

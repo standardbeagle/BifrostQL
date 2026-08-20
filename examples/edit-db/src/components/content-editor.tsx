@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { detectContentKind, isBinaryDbType, isLongTextDbType, type ContentKind } from '@/lib/content-detect';
+import { binaryDataUrl, detectContentKind, isBinaryDbType, isLongTextDbType, sniffBinaryContent, type ContentKind } from '@/lib/content-detect';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -149,6 +149,9 @@ function BinaryViewer({ name, label, value }: { name: string; label: string; val
     const preview = value
         ? value.slice(0, 256) + (value.length > 256 ? '...' : '')
         : '(empty)';
+    // A blob that IS an image (by magic bytes, never by column name) previews
+    // inline instead of as base64 noise.
+    const sniffed = value ? sniffBinaryContent(value) : null;
 
     return (
         <div className="grid gap-2">
@@ -159,11 +162,19 @@ function BinaryViewer({ name, label, value }: { name: string; label: string; val
                     (binary, {sizeLabel})
                 </span>
             </Label>
-            <div className="rounded-md border border-input bg-muted/30 p-3 max-h-[160px] overflow-auto">
-                <pre className="text-xs font-mono text-muted-foreground break-all whitespace-pre-wrap">
-                    {preview}
-                </pre>
-            </div>
+            {sniffed?.kind === 'image' ? (
+                <img
+                    src={binaryDataUrl(value, sniffed.mime)}
+                    alt={label}
+                    className="max-h-[160px] w-fit rounded-md border border-input"
+                />
+            ) : (
+                <div className="rounded-md border border-input bg-muted/30 p-3 max-h-[160px] overflow-auto">
+                    <pre className="text-xs font-mono text-muted-foreground break-all whitespace-pre-wrap">
+                        {preview}
+                    </pre>
+                </div>
+            )}
             <p className="text-xs text-muted-foreground">
                 Binary fields are read-only in this editor.
             </p>

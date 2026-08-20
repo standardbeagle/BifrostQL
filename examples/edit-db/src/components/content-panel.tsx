@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useToast } from '../hooks/useToast';
-import { detectContentKind, type ContentKind } from '@/lib/content-detect';
+import { binaryDataUrl, detectContentKind, formatBinaryPreview, sniffBinaryContent, type ContentKind } from '@/lib/content-detect';
+import { downloadBinaryFile } from '../lib/export';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,6 +28,7 @@ import {
     Minimize2,
     Copy,
     Check,
+    Download,
     Pencil,
     ChevronUp,
     ChevronDown,
@@ -106,6 +108,14 @@ export function ContentPanel({
     const kind = detectContentKind(value, target?.dbType);
     const Icon = kindIcons[kind];
     const formatted = formatContent(value, kind);
+    // Binary values sniff to what they actually ARE (magic bytes, never a
+    // column name): an image renders inline, a PDF or unknown blob gets a
+    // size card — either way the value is downloadable as a real file.
+    const sniffed = kind === 'binary' && value ? sniffBinaryContent(value) : null;
+    const handleDownload = useCallback(() => {
+        if (!target || !sniffed) return;
+        downloadBinaryFile(value, `${target.columnName}${sniffed.extension}`, sniffed.mime);
+    }, [target, sniffed, value]);
 
     // Reset edit state when the target ROW (by PK identity, not grid position)
     // or column changes.
@@ -208,8 +218,12 @@ export function ContentPanel({
         <div className="flex items-center gap-2 min-w-0">
             <Icon className="size-4 text-muted-foreground shrink-0" />
             <span className="truncate font-semibold text-sm">{target?.columnLabel}</span>
-            <span className="text-xs text-muted-foreground shrink-0">{kindLabels[kind]}</span>
-            <span className="text-xs text-muted-foreground shrink-0">{value.length} chars</span>
+            <span className="text-xs text-muted-foreground shrink-0">
+                {sniffed ? (sniffed.kind === 'image' ? sniffed.mime.replace('image/', '').toUpperCase() + ' image' : sniffed.kind === 'pdf' ? 'PDF document' : kindLabels[kind]) : kindLabels[kind]}
+            </span>
+            <span className="text-xs text-muted-foreground shrink-0">
+                {sniffed ? formatBinaryPreview(value) : `${value.length} chars`}
+            </span>
         </div>
     );
 
@@ -225,6 +239,18 @@ export function ContentPanel({
                 {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
                 {copied ? 'Copied' : 'Copy'}
             </Button>
+            {sniffed && (
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs px-2"
+                    onClick={handleDownload}
+                >
+                    <Download className="size-3" />
+                    Download
+                </Button>
+            )}
             {canEdit && !editing && (
                 <Button
                     type="button"
@@ -309,6 +335,19 @@ export function ContentPanel({
                             {saving ? 'Saving…' : 'Save'}
                         </Button>
                     </div>
+                </div>
+            ) : sniffed?.kind === 'image' ? (
+                <img
+                    src={binaryDataUrl(value, sniffed.mime)}
+                    alt={target?.columnLabel ?? 'Image content'}
+                    className="max-w-full rounded-md border border-input"
+                />
+            ) : sniffed ? (
+                <div className="rounded-md border border-input bg-muted/30 p-4 text-sm text-muted-foreground">
+                    <p>
+                        {sniffed.kind === 'pdf' ? 'PDF document' : 'Binary content'} · {formatBinaryPreview(value)}
+                    </p>
+                    <p className="mt-1 text-xs">Use Download to save and open the file.</p>
                 </div>
             ) : (
                 <pre className="text-xs font-mono leading-relaxed whitespace-pre-wrap break-all">

@@ -96,3 +96,37 @@ export function formatBinaryPreview(value: string): string {
     if (byteLength < 1024 * 1024) return `${(byteLength / 1024).toFixed(1)} KB`;
     return `${(byteLength / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** What a binary (base64) value actually IS, sniffed from its magic bytes. */
+export type SniffedBinary =
+    | { kind: 'image'; mime: string; extension: string }
+    | { kind: 'pdf'; mime: 'application/pdf'; extension: '.pdf' }
+    | { kind: 'unknown'; mime: 'application/octet-stream'; extension: '.bin' };
+
+/**
+ * Sniffs an image/document type from the FIRST BYTES of a base64 value — never
+ * from a column name or a user-supplied mime string, so a mislabeled blob can
+ * only ever downgrade to the generic binary rendering, not upgrade to <img>.
+ */
+export function sniffBinaryContent(base64: string): SniffedBinary {
+    const unknown: SniffedBinary = { kind: 'unknown', mime: 'application/octet-stream', extension: '.bin' };
+    let head: string;
+    try {
+        // 24 base64 chars decode the first 18 bytes — enough for every magic below.
+        head = atob(base64.slice(0, 24));
+    } catch {
+        return unknown;
+    }
+    const byte = (i: number) => head.charCodeAt(i);
+    if (head.length >= 4 && byte(0) === 0x89 && head.slice(1, 4) === 'PNG') return { kind: 'image', mime: 'image/png', extension: '.png' };
+    if (head.length >= 3 && byte(0) === 0xff && byte(1) === 0xd8 && byte(2) === 0xff) return { kind: 'image', mime: 'image/jpeg', extension: '.jpg' };
+    if (head.slice(0, 4) === 'GIF8') return { kind: 'image', mime: 'image/gif', extension: '.gif' };
+    if (head.slice(0, 4) === 'RIFF' && head.slice(8, 12) === 'WEBP') return { kind: 'image', mime: 'image/webp', extension: '.webp' };
+    if (head.slice(0, 4) === '%PDF') return { kind: 'pdf', mime: 'application/pdf', extension: '.pdf' };
+    return unknown;
+}
+
+/** A data: URL for an inline binary preview (only call for sniffed images). */
+export function binaryDataUrl(base64: string, mime: string): string {
+    return `data:${mime};base64,${base64}`;
+}

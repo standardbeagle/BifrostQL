@@ -14,7 +14,7 @@ namespace BifrostQL.Mcp.Test
     /// </summary>
     public sealed class ToolJsonAmbiguityTests
     {
-        private static DbTable Table(string schema, string name)
+        private static DbTable Table(string schema, string name, string? policyActions = null)
         {
             var columns = new[]
             {
@@ -29,6 +29,9 @@ namespace BifrostQL.Mcp.Test
                 TableType = "BASE TABLE",
                 ColumnLookup = columns.ToDictionary(c => c.DbName, StringComparer.OrdinalIgnoreCase),
                 GraphQlLookup = columns.ToDictionary(c => c.GraphQlName, StringComparer.OrdinalIgnoreCase),
+                Metadata = policyActions is null
+                    ? new Dictionary<string, object?>()
+                    : new Dictionary<string, object?> { [MetadataKeys.Policy.Actions] = policyActions },
             };
         }
 
@@ -61,6 +64,42 @@ namespace BifrostQL.Mcp.Test
             var act = () => ToolJson.ResolveVisibleTable(model, visible, "items");
 
             act.Should().Throw<ToolPromptException>().WithMessage("*ambiguous*");
+        }
+
+        [Fact]
+        public void DuplicateName_WithExactlyOneReadableCandidate_ResolvesToIt()
+        {
+            // A caller who may read only ONE of the two same-named tables can only mean
+            // that one: the tools stay usable, agree across raw and visible resolution,
+            // and the refusal path never reveals the hidden twin.
+            var readable = Table("dbo", "items");
+            var hidden = Table("sales", "items", policyActions: "create"); // read denied
+            var model = new DbModel { Tables = [readable, hidden], Metadata = new Dictionary<string, object?>() };
+            var userContext = new Dictionary<string, object?>();
+            var visible = SchemaReadVisibility.Project(model, userContext);
+
+            ToolJson.ResolveTable(model, userContext, "items").Should().BeSameAs(readable);
+            ToolJson.ResolveTable(model, visible, "items").Should().BeSameAs(readable);
+            ToolJson.ResolveVisibleTable(model, visible, "items").Table.Should().BeSameAs(readable);
+        }
+
+        [Fact]
+        public void DuplicateName_WithNoReadableCandidate_AnswersUnknownTable_NotAmbiguous()
+        {
+            // Zero readable candidates: "ambiguous" would disclose that TWO hidden tables
+            // share the name. The caller gets the visibility-scoped unknown-table prompt,
+            // indistinguishable from a name that does not exist (invariant 4).
+            var model = new DbModel
+            {
+                Tables = [Table("dbo", "items", policyActions: "create"), Table("sales", "items", policyActions: "create")],
+                Metadata = new Dictionary<string, object?>(),
+            };
+            var userContext = new Dictionary<string, object?>();
+
+            var act = () => ToolJson.ResolveTable(model, userContext, "items");
+
+            act.Should().Throw<ToolPromptException>()
+                .WithMessage("*Unknown table*").And.Message.Should().NotContain("ambiguous");
         }
 
         [Fact]

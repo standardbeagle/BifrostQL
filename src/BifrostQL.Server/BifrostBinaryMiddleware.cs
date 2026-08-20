@@ -634,6 +634,16 @@ namespace BifrostQL.Server
 
                 if (!result.IsSuccess)
                 {
+                    // Deliberate GraphQL-wire parity, not an invariant-3 gap: these are the
+                    // SAME GraphQL ExecutionError messages the HTTP path returns for the
+                    // same query under the same identity (GraphQLFrontend.MapResult; raw
+                    // driver text is already redacted upstream by
+                    // BifrostExecutionError.FromDatabaseException). The binary transport is
+                    // an alternate wire for the GraphQL surface — the editor toggles
+                    // between them — so diverging here would leak nothing less and only
+                    // desynchronize the two transports' error contracts. If this transport
+                    // ever serves a non-GraphQL surface, that surface must map conditions
+                    // through its own funnel instead of this pass-through.
                     foreach (var error in result.Errors)
                         response.Errors.Add(error.Message);
                 }

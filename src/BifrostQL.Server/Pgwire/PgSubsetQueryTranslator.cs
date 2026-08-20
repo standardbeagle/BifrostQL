@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -15,6 +16,17 @@ namespace BifrostQL.Server.Pgwire
     /// literals become bound SQL parameters (never string-concatenated), so an
     /// injection attempt in a literal is data, not SQL. This replaces the slice-2
     /// thin recognizer with no change to the protocol loop or result encoders.
+    ///
+    /// <para>Table and column names resolve against the RAW model on purpose: a
+    /// policy-denied object must still build an intent so the caller receives the
+    /// pipeline's authoritative "permission denied." (invariant 10 — the conformance
+    /// kit pins it; resolving through the visibility projection would substitute an
+    /// adapter-local "does not exist" for it). The one place that rule does NOT cover
+    /// is relationship METADATA the caller never supplied: a rejection message built
+    /// from a link's own FK/PK column names is describing schema, not routing a data
+    /// request, so join-edge resolution is gated by <see cref="SchemaReadVisibility"/>
+    /// (see <see cref="ResolveJoin"/>) before any such message can be composed —
+    /// <see cref="PgQueryError"/> forwards these messages verbatim (invariant 3).</para>
     /// </summary>
     internal sealed class PgSubsetQueryTranslator : IPgQueryTranslator
     {
@@ -42,7 +54,7 @@ namespace BifrostQL.Server.Pgwire
             // Resolve an optional single schema-relationship join into a forward
             // single-column FK link on the FROM table. A join that does not map to a
             // known single-link relationship is rejected — never guessed.
-            var joinLink = stmt.Join is null ? null : ResolveJoin(model, fromTable, stmt);
+            var joinLink = stmt.Join is null ? null : ResolveJoin(model, fromTable, stmt, userContext);
 
             var scope = new QualifierScope(stmt.From, fromTable, stmt.Join, joinLink?.ConnectedTable);
 
@@ -185,20 +197,47 @@ namespace BifrostQL.Server.Pgwire
         /// one-to-many/collection direction, a composite FK, an unrelated table, or an
         /// ON clause that doesn't match the relationship — is rejected honestly rather
         /// than guessed.
+        ///
+        /// <para>A link whose end tables or FK/PK columns are not all readable by the
+        /// caller is treated as ABSENT — the same edge rule every introspection surface
+        /// applies (<see cref="SchemaReadVisibility.IsLinkVisible"/>). The rejection
+        /// messages below go onto the wire verbatim (<see cref="PgQueryError"/>), and
+        /// the ON-mismatch one names the link's own FK/PK columns — identifiers the
+        /// caller never supplied. Gating candidacy first means that message can only
+        /// ever name columns the caller may already read; a hidden edge rejects as
+        /// "no schema relationship connects", disclosing nothing the emulated catalog
+        /// would not (invariant 3).</para>
         /// </summary>
-        private static JoinResolution ResolveJoin(IDbModel model, IDbTable fromTable, PgSelectStatement stmt)
+        private static JoinResolution ResolveJoin(
+            IDbModel model, IDbTable fromTable, PgSelectStatement stmt,
+            IDictionary<string, object?> userContext)
         {
             var joinRef = stmt.Join!.Table;
             var target = ResolveTable(model, joinRef.Name);
 
+            var fromVisible = SchemaReadVisibility.ProjectTable(fromTable, userContext);
+            var targetVisible = SchemaReadVisibility.ProjectTable(target, userContext);
+
+            bool ForwardLinkVisible(TableLinkDto link) =>
+                fromVisible is not null && targetVisible is not null
+                && fromVisible.HasColumns(link.ChildIds)
+                && targetVisible.HasColumns(link.ParentIds);
+
+            bool CollectionLinkVisible(TableLinkDto link) =>
+                fromVisible is not null && targetVisible is not null
+                && targetVisible.HasColumns(link.ChildIds)
+                && fromVisible.HasColumns(link.ParentIds);
+
             var candidates = fromTable.SingleLinks
-                .Where(kv => string.Equals(kv.Value.ParentTable.DbName, target.DbName, StringComparison.OrdinalIgnoreCase))
+                .Where(kv => string.Equals(kv.Value.ParentTable.DbName, target.DbName, StringComparison.OrdinalIgnoreCase)
+                    && ForwardLinkVisible(kv.Value))
                 .ToList();
 
             if (candidates.Count == 0)
             {
                 var isCollection = fromTable.MultiLinks.Values.Any(l =>
-                    string.Equals(l.ChildTable.DbName, target.DbName, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(l.ChildTable.DbName, target.DbName, StringComparison.OrdinalIgnoreCase)
+                    && CollectionLinkVisible(l));
                 throw RejectFeature(isCollection
                     ? $"JOIN to '{target.DbName}' is a one-to-many relationship; only forward (many-to-one) single-column FK joins are supported."
                     : $"no schema relationship connects '{fromTable.DbName}' to '{target.DbName}'.");

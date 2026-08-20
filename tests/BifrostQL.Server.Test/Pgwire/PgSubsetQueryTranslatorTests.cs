@@ -212,6 +212,47 @@ namespace BifrostQL.Server.Test.Pgwire
             ex.Should().BeOfType<PgQueryTranslationException>();
         }
 
+        // ---- join-edge visibility: a hidden link must never be described --------
+        //
+        // Table/column resolution deliberately stays on the RAW model — a policy-denied
+        // object still builds an intent so the pipeline's authoritative "permission
+        // denied." reaches the caller (invariant 10; pinned by the conformance kit).
+        // Relationship METADATA is different: the ON-mismatch rejection names the
+        // link's own FK/PK columns — identifiers the caller never supplied — and
+        // PgQueryError forwards the text verbatim. A link whose key columns the caller
+        // may not read is therefore treated as ABSENT (SchemaReadVisibility edge rule).
+
+        [Theory]
+        [InlineData("SELECT o.id FROM orders o JOIN users u ON o.id = u.id")]      // wrong ON
+        [InlineData("SELECT o.id FROM orders o JOIN users u ON o.user_id = u.id")] // right ON
+        public async Task Join_OverLinkWithReadDeniedKeyColumn_RejectsAsNoRelationship_WithoutNamingIt(string sql)
+        {
+            // orders.user_id is read-denied, so the orders→users link is not a visible
+            // edge. Pre-fix the wrong-ON rejection printed the relationship's true
+            // FK/PK column names ("user_id = id") straight from the raw model.
+            var model = OrdersAndUsersModel(ordersReadDeny: "user_id");
+
+            var ex = await Rejected(sql, model);
+
+            ex.Should().BeOfType<PgQueryTranslationException>();
+            ex!.Message.Should().Contain("no schema relationship connects",
+                "a link with hidden key columns is treated as absent, like SchemaReadVisibility.IsLinkVisible");
+            ex.Message.Should().NotContain("user_id = id",
+                "the hidden link's key columns must not be disclosed by the rejection");
+        }
+
+        [Fact]
+        public async Task JoinOnMismatch_OverVisibleLink_StillNamesTheRelationshipColumns()
+        {
+            // With no policy in play the link is a visible edge, so the helpful
+            // ON-mismatch text (naming the link's key columns) is preserved.
+            var ex = await Rejected(
+                "SELECT o.id FROM orders o JOIN users u ON o.id = u.id", OrdersAndUsersModel());
+
+            ex.Should().BeOfType<PgQueryTranslationException>()
+                .Which.Message.Should().Contain("user_id = id");
+        }
+
         /// <summary>
         /// A nesting depth well past the cap but far below what the CLR stack tolerates:
         /// without a depth guard this parses SUCCESSFULLY, so the test fails on "no
@@ -283,7 +324,8 @@ namespace BifrostQL.Server.Test.Pgwire
             return model;
         }
 
-        private static (IDbModel model, IDbTable orders, IDbTable users) BuildOrdersUsers()
+        private static (IDbModel model, IDbTable orders, IDbTable users) BuildOrdersUsers(
+            string? ordersReadDeny = null)
         {
             var users = Users();
             var orders = Substitute.For<IDbTable>();
@@ -298,6 +340,11 @@ namespace BifrostQL.Server.Test.Pgwire
             };
             orders.Columns.Returns(orderCols);
             orders.MultiLinks.Returns(new Dictionary<string, TableLinkDto>());
+            // A column deny needs an explicit read grant beside it: a policy that names
+            // no allowed action denies table-read outright, which would hide the whole
+            // table instead of exercising the hidden-link path.
+            orders.GetMetadataValue(MetadataKeys.Policy.Actions).Returns(ordersReadDeny is null ? null : "read");
+            orders.GetMetadataValue(MetadataKeys.Policy.ReadDeny).Returns(ordersReadDeny);
 
             var link = new TableLinkDto
             {
@@ -314,7 +361,8 @@ namespace BifrostQL.Server.Test.Pgwire
             return (model, orders, users);
         }
 
-        private static IDbModel OrdersAndUsersModel() => BuildOrdersUsers().model;
+        private static IDbModel OrdersAndUsersModel(string? ordersReadDeny = null)
+            => BuildOrdersUsers(ordersReadDeny).model;
 
         private static IDbModel OrdersUsersWidgetsModel()
         {

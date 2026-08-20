@@ -346,9 +346,12 @@ namespace BifrostQL.Server
                             // FIRST endpoint — the same one the OutboxDispatcher drains, which
                             // warns when more than one endpoint is registered (CDC is
                             // single-endpoint; secret and outbox stay coupled to that one).
-                            activeSecrets: async _ =>
+                            activeSecrets: async cancellationToken =>
                             {
-                                var inputs = await pathCache.GetFirstValueAsync();
+                                // WaitAsync because PathCache has no token-aware overload: a
+                                // delivery cancelled mid model-load (dispatcher shutdown, hung DB)
+                                // must stop waiting even though the underlying load runs on.
+                                var inputs = await pathCache.GetFirstValueAsync().WaitAsync(cancellationToken);
                                 var model = inputs is not null && inputs.TryGetValue("model", out var m)
                                     ? m as BifrostQL.Core.Model.IDbModel
                                     : null;

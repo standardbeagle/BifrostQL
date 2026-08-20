@@ -1,0 +1,6 @@
+# workbench-visualize — beat N pairs with beats[N].
+Exploration and charting are one loop in the workbench. This is the posts grid, five hundred rows straight from the database.
+Filter the grid from the column menu. The page narrows to published posts as you type, server side.
+Now click Visualize. The chart builder opens already pointed at this table, and the aggregate carries the exact filter the grid had. Nothing is retyped.
+Pick a dimension, and the server groups the filtered rows. The totals here match the grid you just left.
+Save it. What started as browsing a table is now a reusable chart.

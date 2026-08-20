@@ -1,0 +1,59 @@
+---
+title: "JSON Documents & File Attachments"
+description: "Working with JSON documents and in-database files in the grid: hover preview, side-panel and full-screen editing with Format, inline image preview, and real-file downloads for PDFs and blobs."
+---
+
+import DemoVideo from '../../../../components/DemoVideo.astro';
+
+Database cells are not always short scalars. The grid's **content pipeline**
+detects what a value actually is — a JSON document, XML, a long text, or a
+binary file — and gives each its own viewing and editing surface, without
+leaving the table you were exploring.
+
+## JSON documents
+
+A cell is treated as JSON when its column is a native `json`/`jsonb` type, maps
+to the `JSON` GraphQL scalar, **or when its text content parses as JSON** — so
+JSON stored in ordinary `TEXT` columns (the common SQLite/PostgreSQL pattern)
+gets the same treatment.
+
+<DemoVideo
+  scene="workbench-json"
+  title="JSON in the grid: hover preview, side panel, format, save"
+  description="JSON cells pretty-print in a hover card, expand into a side panel or full screen, and edit in place — Format re-indents and Save writes back through the ordinary mutation pipeline."
+/>
+
+- **Hover** a JSON cell and the document pretty-prints in a preview card.
+- **Expand** opens the side panel (480px), with a one-click full-screen mode
+  for large documents; Up/Down walks the same column across rows.
+- **Edit** in place: **Format** pretty-prints, and Save writes back through the
+  same mutation path as any other cell edit — no special JSON endpoint.
+
+## Images and documents stored in the database
+
+Blob columns are fetched **on demand** (the grid never selects large values
+into the page query), and an expanded binary value is **sniffed by its magic
+bytes** — never by a column name or a stored mime string, so a mislabeled blob
+can only downgrade to the generic rendering, never masquerade as an image:
+
+- PNG, JPEG, GIF, and WebP render **inline** in the content panel and in the
+  record form's binary field.
+- PDFs and unknown blobs show a typed size card.
+- Every binary value has a **Download** button that saves a real file with the
+  sniffed extension.
+
+<DemoVideo
+  scene="workbench-attachments"
+  title="Images and PDFs stored as blobs, previewed and downloaded"
+  description="The attachments table keeps files in a blob column: expanding a row previews photos inline, row navigation walks to a PDF, and Download saves it as a real file."
+/>
+
+The **IoT Sensors** Quick Start schema ships with both: JSON documents in its
+`specifications`, `metadata`, and `configuration` columns, and real PNG photos
+and PDF documents in its `attachments` table.
+
+## Related
+
+- [Data workbench overview](/BifrostQL/guides/workbench/)
+- [File storage](/BifrostQL/guides/file-storage/) — the server-side upload /
+  download surface over file-tagged columns.

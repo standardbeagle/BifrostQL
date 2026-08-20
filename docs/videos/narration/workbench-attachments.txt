@@ -1,0 +1,5 @@
+# workbench-attachments — beat N pairs with beats[N].
+Files stored in the database itself. The attachments table keeps images and documents in a blob column, which the grid fetches on demand.
+Expand a row and the blob is sniffed by its actual bytes: this one is a PNG, so it renders as an image right in the panel.
+Walk down the rows with the panel's navigation. Photos preview inline; when we reach a PDF, the panel shows what it is and how large.
+Documents download as real files, named with the right extension. Nothing pretends a blob is text.

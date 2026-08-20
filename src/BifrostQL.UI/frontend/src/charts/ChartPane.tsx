@@ -113,6 +113,7 @@ function SankeyLinkShape(props: {
     ? () => onDrillFlow(source, target)
     : undefined;
   return <path
+    className="bifrost-sankey-link"
     d={`M${sourceX},${sourceY}C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
     fill="none" stroke="var(--accent-action)" strokeOpacity={0.35} strokeWidth={linkWidth}
     style={drill ? { cursor: "pointer" } : undefined} onClick={drill} />;

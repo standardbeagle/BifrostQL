@@ -70,7 +70,11 @@ start.
 | `workbench-grid` | `BifrostQL.UI` headless | Schema sidebar, data grid, server-side paging, grouping by column |
 | `workbench-pivot` | `BifrostQL.UI` headless | Pivot wells → server-computed cross tabulation → save |
 | `workbench-charts` | `BifrostQL.UI` headless | Aggregate chart, chart type, save, dashboard tile, reopen |
+| `workbench-visualize` | `BifrostQL.UI` headless | Grid filter → Visualize → chart builder pre-populated with the same filter → save |
 | `workbench-sankey` | `BifrostQL.UI` headless | Sankey flow between two categorical dimensions (e-commerce dataset: searched vs purchased category) |
+| `workbench-sankey-dashboard` | `BifrostQL.UI` headless | Measure switch (count → sum of revenue), dashboard tile bound to the saved chart, band click drills to the filtered grid |
+| `workbench-json` | `BifrostQL.UI` headless | JSON documents in the grid: hover preview, side panel, full screen, Format, save (IoT dataset) |
+| `workbench-attachments` | `BifrostQL.UI` headless | Images and PDFs stored as blobs: inline preview, row navigation, Download (IoT dataset) |
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
 | `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
 

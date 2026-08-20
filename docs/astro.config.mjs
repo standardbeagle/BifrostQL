@@ -155,6 +155,7 @@ export default defineConfig({
 						{ label: 'Pivot UI', slug: 'guides/workbench/pivot-ui' },
 						{ label: 'Dashboards', slug: 'guides/workbench/dashboards' },
 						{ label: 'Grid Grouping', slug: 'guides/workbench/grouping' },
+						{ label: 'JSON & Attachments', slug: 'guides/workbench/content-and-attachments' },
 					],
 				},
 				{

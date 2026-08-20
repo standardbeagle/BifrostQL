@@ -1,0 +1,6 @@
+# workbench-json — beat N pairs with beats[N].
+This is the IoT Sensors sample. The specifications column holds JSON documents, and the grid detects that by content, not just by column type.
+Hover a cell and the document pretty-prints in a preview card, so you can read it without leaving the grid.
+Expand it into the side panel for the full document.
+Or take it full screen for the large ones.
+Edit in place: Format pretty-prints the document, and Save writes it back through the same mutation pipeline as any other cell.

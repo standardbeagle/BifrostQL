@@ -1,0 +1,7 @@
+# workbench-sankey-dashboard — beat N pairs with beats[N].
+The search-to-purchase sankey again, on the e-commerce sample. Two dimensions, one server aggregate.
+Switch the measure from count to the sum of revenue. Same flows, different weight: the bands now show where the money converts, not just the clicks.
+Save the chart.
+On the Dashboards pane, add a chart tile and point it at the saved sankey. The tile renders the same server aggregate, and it takes the chart's name so the dashboard cannot mislabel it.
+Save the dashboard. The sankey is now a live tile alongside counts and tables.
+And it works the other way too. Reopen the saved chart and click a band: the data grid opens filtered to exactly that searched and purchased category pair. Visualization is navigation.

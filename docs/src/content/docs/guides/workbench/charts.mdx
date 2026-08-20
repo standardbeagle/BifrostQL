@@ -51,6 +51,28 @@ Each measure selects `_count` or a `_sum` / `_avg` / `_min` / `_max` group over
 one column. The aggregate surface takes `filter` and `groupBy` only — it has no
 pagination arguments, so a chart query carries no `limit`.
 
+## From the grid to a chart — and back
+
+Exploration and charting are one loop, in both directions:
+
+- **Grid → chart.** The grid toolbar's **Visualize** button opens the chart
+  panel already pointed at the current table, and the chart's aggregate query
+  carries the grid's **active column filters** — the totals match the filtered
+  grid you just left. The query builder has the same button for one-table,
+  join-free designs, carrying the designer's criteria.
+- **Chart → grid (drill-through).** Click a bar, a pie slice, or a sankey band
+  and the data grid opens at `/<table>?cf=…` filtered to what you clicked — the
+  same `cf` URL parameter the grid already treats as its filter source of
+  truth. A sankey band drills to **both** dimensions at once; the `(null)` node
+  drills to the grid's `_null` operator, since it is a label for SQL `NULL`,
+  not a text value.
+
+<DemoVideo
+  scene="workbench-visualize"
+  title="A filtered grid becomes a chart with the same filter"
+  description="Filter the posts grid from the column menu, click Visualize, and the chart builder opens pre-populated — the aggregate carries the grid's filter, nothing is retyped."
+/>
+
 ## Server-side values only
 
 Every value a chart renders comes from a server grouped-aggregate query; the

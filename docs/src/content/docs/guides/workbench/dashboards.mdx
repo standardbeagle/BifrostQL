@@ -3,15 +3,27 @@ title: "Building Database Dashboards"
 description: "Building database dashboards from chart, count-card and table tiles: each tile fetches independently and fails soft, and edit mode is split from view mode."
 ---
 
+import DemoVideo from '../../../../components/DemoVideo.astro';
+
 Building database dashboards takes three tile kinds and a grid. A **dashboard**
 is a tile grid of saved-object references — chart, count-card, and table tiles —
 persisted as a [saved object](/BifrostQL/concepts/saved-objects/) of
 `type: dashboard`.
 
+<DemoVideo
+  scene="workbench-sankey-dashboard"
+  title="A saved sankey becomes a dashboard tile — and a navigation surface"
+  description="Switch the flow's measure from count to revenue, save it, bind a dashboard tile to the saved chart, then click a band to drill into the grid filtered to that exact category pair."
+/>
+
 ## Tiles
 
 - **Chart** — reuses the [chart panel](/BifrostQL/guides/workbench/charts/) in
-  read-only mode.
+  read-only mode. In edit mode every chart tile carries a **saved-chart
+  picker**: binding points the tile at a saved chart by reference (the tile
+  re-renders whenever the chart is re-saved) and renames the tile after the
+  chart, so a dashboard cannot mislabel what it shows. Clearing the binding
+  falls back to the tile's built-in configuration.
 - **Count card** — a single aggregate value plus a label. The value comes from a
   server [aggregate](/BifrostQL/guides/aggregate-queries/) query, never a
   client-side count.

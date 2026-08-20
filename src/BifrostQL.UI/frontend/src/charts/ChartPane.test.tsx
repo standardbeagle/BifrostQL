@@ -7,7 +7,8 @@ import type { ChartDefinition } from "./chart-model";
 
 vi.mock("recharts", () => {
   const Box = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
-  return { Area: Box, AreaChart: Box, Bar: Box, BarChart: Box, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Box, Pie: Box, PieChart: Box, ResponsiveContainer: Box, Tooltip: Box, XAxis: Box, YAxis: Box };
+  const SankeyBox = ({ children }: { children?: React.ReactNode }) => <div data-testid="sankey">{children}</div>;
+  return { Area: Box, AreaChart: Box, Bar: Box, BarChart: Box, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Box, Pie: Box, PieChart: Box, ResponsiveContainer: Box, Sankey: SankeyBox, Tooltip: Box, XAxis: Box, YAxis: Box };
 });
 
 afterEach(cleanup);
@@ -30,6 +31,26 @@ describe("ChartPane", () => {
     expect(liveFetcher.query.mock.calls[0][0]).toBe("query ChartSchema { _dbSchema { graphQlName columns { graphQlName } } }");
     expect(screen.getByRole("option", { name: "region" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "amount" })).toBeTruthy();
+  });
+
+  it("shows the flow-to picker only for sankey, groups by both dimensions, and renders the sankey", async () => {
+    const liveFetcher = {
+      query: vi.fn((query: string) => Promise.resolve(query.includes("ChartSchema")
+        ? { _dbSchema: [{ graphQlName: "search_conversions", columns: [{ graphQlName: "searched_category" }, { graphQlName: "purchased_category" }] }] }
+        : { search_conversionsAggregate: [{ searched_category: "Electronics", purchased_category: "Books", _count: 13 }] })),
+    };
+    render(<ChartPane fetcher={liveFetcher as never} store={{ list: vi.fn().mockResolvedValue([]) } as never} />);
+    await screen.findByRole("option", { name: "search_conversions" });
+
+    expect(screen.queryByLabelText("Sankey target dimension")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Chart type"), { target: { value: "sankey" } });
+    fireEvent.change(screen.getByLabelText("Chart table"), { target: { value: "search_conversions" } });
+    fireEvent.change(screen.getByLabelText("Chart dimension"), { target: { value: "searched_category" } });
+    fireEvent.change(screen.getByLabelText("Sankey target dimension"), { target: { value: "purchased_category" } });
+
+    await screen.findByTestId("sankey");
+    const aggregate = liveFetcher.query.mock.calls.map((call) => call[0]).find((q: string) => q.includes("Aggregate"));
+    expect(aggregate).toContain("groupBy: [searched_category, purchased_category]");
   });
 
   it("saves and visibly reloads the exact chart definition through query saved objects", async () => {

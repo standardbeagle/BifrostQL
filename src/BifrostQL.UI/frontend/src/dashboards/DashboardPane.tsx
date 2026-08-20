@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { GraphQLFetcher, SavedObject, SavedObjectsClient } from "@standardbeagle/edit-db";
 import { ChartPreview } from "../charts/ChartPane";
-import { buildChartAggregateQuery, mapAggregateRows, parseChartDefinition, type ChartDefinition, type ChartPoint } from "../charts/chart-model";
+import { buildChartAggregateQuery, mapChartData, parseChartDefinition, type ChartData, type ChartDefinition } from "../charts/chart-model";
 import { toFilter } from "../designer/designer-state";
 import { parseQueryDefinition } from "../designer/saved-query";
 import type { VisualFilter } from "../lib/visual-query";
@@ -150,10 +150,10 @@ function useTileRequest<T>(run: () => Promise<T>, refreshSeconds?: number): { va
 }
 
 function ChartTile({ fetcher, definition, refreshSeconds }: { fetcher: GraphQLFetcher; definition: ChartDefinition; refreshSeconds?: number }) {
-  const request = useMemo(() => () => { const built = buildChartAggregateQuery(definition); return fetcher.query<Record<string, Record<string, unknown>[]>>(built.query, built.variables).then((data) => mapAggregateRows(data[`${definition.source.table}Aggregate`] ?? [], definition)); }, [fetcher, definition]);
-  const { value, error } = useTileRequest<ChartPoint[]>(request, refreshSeconds);
+  const request = useMemo(() => () => { const built = buildChartAggregateQuery(definition); return fetcher.query<Record<string, Record<string, unknown>[]>>(built.query, built.variables).then((data) => mapChartData(data[`${definition.source.table}Aggregate`] ?? [], definition)); }, [fetcher, definition]);
+  const { value, error } = useTileRequest<ChartData>(request, refreshSeconds);
   if (error) return <p className="bifrost-dashboard-error" role="alert">Chart failed: {error}</p>;
-  return value ? <ChartPreview type={definition.chartType} points={value} measures={definition.measures} /> : <p>Loading chart…</p>;
+  return value ? <ChartPreview type={definition.chartType} data={value} measures={definition.measures} /> : <p>Loading chart…</p>;
 }
 
 function CountTile({ fetcher, config, refreshSeconds }: { fetcher: GraphQLFetcher; config: CountTileConfig; refreshSeconds?: number }) {

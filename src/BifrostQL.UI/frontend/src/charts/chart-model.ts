@@ -1,4 +1,4 @@
-export type ChartType = "bar" | "line" | "pie" | "area";
+export type ChartType = "bar" | "line" | "pie" | "area" | "sankey";
 export type MeasureOp = "count" | "sum" | "avg" | "min" | "max";
 
 export interface ChartMeasure { column?: string; op: MeasureOp; }
@@ -26,6 +26,13 @@ export interface ChartPoint extends Record<string, unknown> {
   values: Record<string, number | null>;
 }
 
+/** Recharts Sankey shape: links index into the node array. */
+export interface SankeyNode { name: string; }
+export interface SankeyLink { source: number; target: number; value: number; }
+export type ChartData =
+  | { kind: "cartesian"; points: ChartPoint[] }
+  | { kind: "sankey"; nodes: SankeyNode[]; links: SankeyLink[] };
+
 export const NULL_CATEGORY_LABEL = "(null)";
 export const MAX_CHART_CATEGORIES = 100;
 
@@ -43,7 +50,7 @@ export function parseChartDefinition(value: unknown): ChartDefinition | null {
     !["table", "saved-query"].includes(candidate.source.kind ?? "") || typeof candidate.source.table !== "string" ||
     !Array.isArray(candidate.dimensions) || !candidate.dimensions.every((v) => typeof v === "string") ||
     !Array.isArray(candidate.measures) || !candidate.measures.every((m) => m && ["count", "sum", "avg", "min", "max"].includes(m.op) && (m.op === "count" || typeof m.column === "string")) ||
-    !["bar", "line", "pie", "area"].includes(candidate.chartType ?? "")) return null;
+    !["bar", "line", "pie", "area", "sankey"].includes(candidate.chartType ?? "")) return null;
   try {
     assertGraphQlName(candidate.source.table, "chart table");
     names(candidate.dimensions);
@@ -62,7 +69,15 @@ function selectionFor(measure: ChartMeasure): string {
 export function buildChartAggregateQuery(definition: ChartDefinition): { query: string; variables: Record<string, unknown> } {
   const parsed = parseChartDefinition(definition);
   if (!parsed) throw new Error("Invalid chart definition.");
-  const dimension = parsed.dimensions[0];
+  // A sankey is a FLOW between two categorical dimensions; every other type
+  // charts one. Extra stored dimensions are ignored rather than smuggled into
+  // groupBy, so switching a saved sankey to a bar chart degrades cleanly.
+  const dimensions = parsed.chartType === "sankey" ? parsed.dimensions.slice(0, 2) : parsed.dimensions.slice(0, 1);
+  if (parsed.chartType === "sankey") {
+    if (dimensions.length !== 2) throw new Error("A sankey chart needs a source and a target dimension.");
+    if (dimensions[0] === dimensions[1]) throw new Error("Choose two different sankey dimensions.");
+  }
+  const dimension = dimensions[0];
   if (!dimension) throw new Error("Choose a chart dimension.");
   const filter = parsed.source.filter;
   const filterType = parsed.source.filterType;
@@ -73,14 +88,21 @@ export function buildChartAggregateQuery(definition: ChartDefinition): { query: 
   // normal table queries it has no pagination arguments, so do not smuggle a
   // `limit` into the document.  The bounded category guard lives at the result
   // boundary below, before any chart renderer receives the rows.
-  const args = [filter ? "filter: $filter" : "", `groupBy: [${dimension}]`].filter(Boolean).join(", ");
+  const args = [filter ? "filter: $filter" : "", `groupBy: [${dimensions.join(", ")}]`].filter(Boolean).join(", ");
   return {
-    query: `query ChartAggregate${vars ? `(${vars})` : ""} { ${parsed.source.table}Aggregate(${args}) { ${dimension} ${parsed.measures.map(selectionFor).join(" ")} } }`,
+    query: `query ChartAggregate${vars ? `(${vars})` : ""} { ${parsed.source.table}Aggregate(${args}) { ${dimensions.join(" ")} ${parsed.measures.map(selectionFor).join(" ")} } }`,
     variables: filter ? { filter } : {},
   };
 }
 
 export function measureKey(measure: ChartMeasure): string { return measure.op === "count" ? "count" : `${measure.op}:${measure.column}`; }
+
+function measureValue(row: Record<string, unknown>, measure: ChartMeasure): number | null {
+  const value = measure.op === "count" ? row._count : (row[`_${measure.op}`] as Record<string, unknown> | undefined)?.[measure.column!];
+  return value == null ? null : Number(value);
+}
+
+const categoryLabel = (value: unknown) => value === null || value === undefined ? NULL_CATEGORY_LABEL : String(value);
 
 /** Maps aggregate rows only; it deliberately has no page-row input or summation. */
 export function mapAggregateRows(rows: readonly Record<string, unknown>[], definition: ChartDefinition): ChartPoint[] {
@@ -89,10 +111,49 @@ export function mapAggregateRows(rows: readonly Record<string, unknown>[], defin
   if (rows.length > MAX_CHART_CATEGORIES) throw new Error(`Too many categories (maximum ${MAX_CHART_CATEGORIES}). Refine the chart filter.`);
   return rows.map((row) => {
     const values: Record<string, number | null> = {};
-    for (const measure of definition.measures) {
-      const value = measure.op === "count" ? row._count : (row[`_${measure.op}`] as Record<string, unknown> | undefined)?.[measure.column!];
-      values[measureKey(measure)] = value == null ? null : Number(value);
-    }
-    return { category: row[dimension] === null || row[dimension] === undefined ? NULL_CATEGORY_LABEL : String(row[dimension]), values };
+    for (const measure of definition.measures) values[measureKey(measure)] = measureValue(row, measure);
+    return { category: categoryLabel(row[dimension]), values };
   });
+}
+
+/**
+ * Maps two-dimension aggregate rows into the recharts Sankey shape. The source
+ * and target sides get SEPARATE nodes even when a category name appears on
+ * both (searching Electronics and buying Electronics are two different nodes —
+ * collapsing them would draw a cycle, which a sankey cannot lay out). Links
+ * take the FIRST measure; a null or non-positive value is dropped rather than
+ * rendered, since a zero-width band is invisible and a negative one is
+ * meaningless flow.
+ */
+export function mapSankeyData(rows: readonly Record<string, unknown>[], definition: ChartDefinition): { nodes: SankeyNode[]; links: SankeyLink[] } {
+  const [sourceDim, targetDim] = definition.dimensions;
+  if (!sourceDim || !targetDim) return { nodes: [], links: [] };
+  if (rows.length > MAX_CHART_CATEGORIES) throw new Error(`Too many flows (maximum ${MAX_CHART_CATEGORIES}). Refine the chart filter.`);
+  const measure = definition.measures[0] ?? { op: "count" as const };
+  const nodes: SankeyNode[] = [];
+  const sourceIndex = new Map<string, number>();
+  const targetIndex = new Map<string, number>();
+  const nodeFor = (index: Map<string, number>, name: string) => {
+    let i = index.get(name);
+    if (i === undefined) { i = nodes.length; nodes.push({ name }); index.set(name, i); }
+    return i;
+  };
+  const links: SankeyLink[] = [];
+  for (const row of rows) {
+    const value = measureValue(row, measure);
+    if (value == null || value <= 0) continue;
+    links.push({
+      source: nodeFor(sourceIndex, categoryLabel(row[sourceDim])),
+      target: nodeFor(targetIndex, categoryLabel(row[targetDim])),
+      value,
+    });
+  }
+  return { nodes, links };
+}
+
+/** One entry point per chart render: the type decides the mapped shape. */
+export function mapChartData(rows: readonly Record<string, unknown>[], definition: ChartDefinition): ChartData {
+  return definition.chartType === "sankey"
+    ? { kind: "sankey", ...mapSankeyData(rows, definition) }
+    : { kind: "cartesian", points: mapAggregateRows(rows, definition) };
 }

@@ -14,7 +14,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
 import { formatColumnValue, formatDateCellValue } from "../lib/format-value";
-import { isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
+import { detectContentKind, isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
     parseTableFilterString,
@@ -293,7 +293,27 @@ function buildScalarColumn(
     return {
         id: c.name,
         accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-        cell: ({ row }) => formatColumnValue(row.original[c.name], c),
+        // Structured content is detected per VALUE, not only per column type:
+        // JSON/XML/PHP-serialized text living in an ordinary string column (the
+        // common SQLite/PostgreSQL TEXT pattern) gets the content viewer — hover
+        // preview and expand — exactly like a natively-typed JSON column. Plain
+        // values keep the ordinary inline rendering.
+        cell: ({ row }) => {
+            const raw = row.original[c.name];
+            if (typeof raw === 'string' && raw.length > 1) {
+                const kind = detectContentKind(raw);
+                if (kind === 'json' || kind === 'xml' || kind === 'php-serialized') {
+                    return (
+                        <ContentViewer
+                            value={raw}
+                            dbType={c.dbType}
+                            onExpand={onExpandContent ? () => onExpandContent(row.index, c.name) : undefined}
+                        />
+                    );
+                }
+            }
+            return formatColumnValue(raw, c);
+        },
         header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
         enableSorting: true,
         meta: columnMeta(c, operators, { dbType: c.dbType }),

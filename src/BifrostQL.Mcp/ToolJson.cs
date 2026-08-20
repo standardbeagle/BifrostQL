@@ -28,8 +28,7 @@ namespace BifrostQL.Mcp
             // AUTHORITATIVE server-side rejection, the same condition every other
             // adapter raises for it (invariant 10 — one condition, one wire status
             // across adapters; the shared conformance kit pins this).
-            var table = model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase));
+            var table = FindUnambiguous(model, tableName);
             if (table is not null)
                 return table;
 
@@ -42,8 +41,34 @@ namespace BifrostQL.Mcp
 
         internal static IDbTable ResolveTable(
             IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName) =>
-            model.Tables.FirstOrDefault(t => string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase))
+            FindUnambiguous(model, tableName)
             ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
+
+        /// <summary>
+        /// Bare-name lookup that never guesses between schemas. MCP tools address tables by
+        /// bare name only, so a name two schemas both define cannot be resolved — picking
+        /// the first match (the prior behavior) silently binds the caller's operation to an
+        /// arbitrary schema's table, with THAT table's policy/tenant scope. Failing fast
+        /// does reveal that the name is multiply defined, but the alternative is executing
+        /// against a table the caller never addressed — the same trade
+        /// <see cref="DbModel.GetTableFromDbName(string)"/> makes.
+        /// </summary>
+        private static IDbTable? FindUnambiguous(IDbModel model, string tableName)
+        {
+            IDbTable? found = null;
+            foreach (var table in model.Tables)
+            {
+                if (!string.Equals(table.DbName, tableName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (found is not null)
+                    throw new ToolPromptException(
+                        $"Table name '{tableName}' is ambiguous: more than one schema defines a table " +
+                        "with this name, and MCP tools address tables by bare name. Ask the operator " +
+                        "to expose an unambiguous name for the table you need.");
+                found = table;
+            }
+            return found;
+        }
 
         /// <summary>
         /// Resolves a caller-named table to the caller's READABLE projection of it, or throws the
@@ -57,9 +82,27 @@ namespace BifrostQL.Mcp
         /// those prompts. Returns the <see cref="VisibleTable"/> so callers use its readable columns.
         /// </summary>
         internal static VisibleTable ResolveVisibleTable(
-            IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName) =>
-            SchemaReadVisibility.Find(visible, tableName)
-            ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
+            IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName)
+        {
+            // Same no-guessing rule as FindUnambiguous, over the caller's readable set:
+            // two visible tables sharing the bare name cannot be told apart by an MCP
+            // caller, so answer with the ambiguity rather than an arbitrary pick. Both
+            // candidates are readable here, so the message discloses nothing hidden.
+            VisibleTable? found = null;
+            foreach (var candidate in visible)
+            {
+                if (!string.Equals(candidate.Table.DbName, tableName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (found is not null)
+                    throw new ToolPromptException(
+                        $"Table name '{tableName}' is ambiguous: more than one schema defines a table " +
+                        "with this name, and MCP tools address tables by bare name. Ask the operator " +
+                        "to expose an unambiguous name for the table you need.");
+                found = candidate;
+            }
+            return found
+                ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
+        }
 
         /// <inheritdoc cref="ResolveVisibleTable(IDbModel,IReadOnlyList{VisibleTable},string)"/>
         internal static VisibleTable ResolveVisibleTable(

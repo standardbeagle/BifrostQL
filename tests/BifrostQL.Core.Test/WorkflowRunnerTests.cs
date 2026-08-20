@@ -214,10 +214,82 @@ public class WorkflowRunnerTests
         result.Outputs["member"].Should().BeNull("the runner preserves the executor's tenant-filtered empty result");
     }
 
+    [Fact]
+    public async Task RunAsync_ParallelBranchesWithCompositeChildren_DoNotRaceOnTheSharedTrace()
+    {
+        // Regression: every parallel branch ran with an isolated context that SHARED the parent's
+        // Trace List by reference. A branch whose step is itself composite (here a branch whose
+        // `then` runs several query steps) appends to that List from a Task.WhenAll continuation, so
+        // concurrent branches did unsynchronized List.Add — a data race that loses entries or throws
+        // IndexOutOfRange during a resize. Each branch now owns its trace buffer, merged after the
+        // barrier, so the nested entries are all present (exactly branches*inner) and none are null.
+        const int branchCount = 32;
+        const int innerPerBranch = 6;
+
+        var innerSteps = string.Join(",", Enumerable.Range(0, innerPerBranch).Select(_ =>
+            """{ "name": "inner", "type": "query", "payload": { "table": "members", "id": 1 } }"""));
+        var branches = string.Join(",", Enumerable.Range(0, branchCount).Select(i =>
+            $$"""{ "name": "b{{i}}", "type": "branch", "payload": { "condition": { "equals": { "left": 1, "right": 1 } }, "then": [ {{innerSteps}} ] } }"""));
+
+        var workflow = new WorkflowDefinition
+        {
+            Name = "parallel-race",
+            Trigger = new WorkflowTrigger { Type = "manual" },
+            Steps = new[]
+            {
+                new WorkflowStep
+                {
+                    Name = "fan-out",
+                    Type = "parallel",
+                    Payload = Json($$"""{ "steps": [ {{branches}} ] }"""),
+                },
+            },
+        };
+
+        var runner = new WorkflowRunner(
+            new Dictionary<string, WorkflowDefinition> { [workflow.Name] = workflow },
+            new YieldingWorkflowDataExecutor());
+
+        // Repeat: a race is probabilistic per run, so several iterations make a lingering shared-list
+        // bug reliably surface (as a wrong count, a null hole, or a thrown resize exception).
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var result = await runner.RunAsync(
+                "parallel-race",
+                new Dictionary<string, object?>(),
+                new Dictionary<string, object?>());
+
+            result.Succeeded.Should().BeTrue();
+            result.Trace.Should().NotContainNulls("a torn List.Add can leave default null slots");
+            result.Trace.Count(t => t.StepName == "inner")
+                .Should().Be(branchCount * innerPerBranch,
+                    "every nested trace entry from every branch must be recorded, none lost to a race");
+        }
+    }
+
     private static JsonElement Json(string json)
     {
         using var doc = JsonDocument.Parse(json);
         return doc.RootElement.Clone();
+    }
+
+    // Forces each query onto a thread-pool continuation (Task.Delay) so parallel branches genuinely
+    // overlap, and is itself lock-free/allocation-only-on-the-stack so the harness never races and
+    // taints the result — only the runner's own trace handling is under test.
+    private sealed class YieldingWorkflowDataExecutor : IWorkflowDataExecutor
+    {
+        public async Task<IDictionary<string, object?>?> QuerySingleAsync(
+            string table, object id, IDictionary<string, object?> userContext)
+        {
+            await Task.Delay(1).ConfigureAwait(false);
+            return null;
+        }
+
+        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext)
+            => Task.CompletedTask;
+
+        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext)
+            => Task.CompletedTask;
     }
 
     private sealed class CapturingWorkflowDataExecutor : IWorkflowDataExecutor

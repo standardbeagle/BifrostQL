@@ -320,15 +320,25 @@ public sealed class WorkflowRunner : IWorkflowRunner
             throw new WorkflowStepException("step_failed", StepError);
 
         var inlineSteps = DeserializeSteps(steps);
-        var tasks = inlineSteps.Select(s =>
+        // Each branch gets its OWN trace buffer, never the shared context.Trace: a branch whose
+        // step is itself composite (branch/foreach/parallel) appends to its context's Trace from a
+        // Task.WhenAll continuation, so sharing one List across concurrent branches is a data race
+        // (List.Add is not thread-safe — torn Count, lost entries, or an IndexOutOfRange during a
+        // resize that can crash the run). Buffers merge into context.Trace AFTER the barrier, in
+        // branch order, so the recorded trace is both race-free and deterministic.
+        var branches = inlineSteps.Select(s =>
         {
-            var isolated = new WorkflowExecutionContext(context.Inputs, context.UserContext, context.Trace);
+            var branchTrace = new List<WorkflowStepTrace>();
+            var isolated = new WorkflowExecutionContext(context.Inputs, context.UserContext, branchTrace);
             foreach (var (key, value) in context.NamedOutputs)
                 isolated.NamedOutputs[key] = value;
-            return RunStepAsync(s, isolated);
+            return (task: RunStepAsync(s, isolated), trace: branchTrace);
         }).ToArray();
 
-        var results = await Task.WhenAll(tasks);
+        var results = await Task.WhenAll(branches.Select(b => b.task));
+        foreach (var branch in branches)
+            context.Trace.AddRange(branch.trace);
+
         if (results.Any(r => !r.Succeeded))
             throw new WorkflowStepException("step_failed", StepError);
 

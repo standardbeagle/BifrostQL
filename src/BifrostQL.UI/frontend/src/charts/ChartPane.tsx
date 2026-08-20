@@ -72,14 +72,34 @@ function MeasureEditor({ measure, columns, onChange }: { measure: ChartMeasure; 
   return <label>Measure <select aria-label="Measure operation" value={measure.op} onChange={(e) => onChange({ ...measure, op: e.target.value as ChartMeasure["op"] })}><option value="count">Count</option><option value="sum">Sum</option><option value="avg">Average</option><option value="min">Min</option><option value="max">Max</option></select>{measure.op !== "count" && <select aria-label="Measure column" value={measure.column ?? ""} onChange={(e) => onChange({ ...measure, column: e.target.value })}><option value="">Choose a column</option>{columns.map((column) => <option key={column.graphQlName} value={column.graphQlName}>{column.graphQlName}</option>)}</select>}</label>;
 }
 
+// Recharts draws sankey node RECTANGLES only; the label is the custom shape's
+// job. Labels sit INWARD (source column labels right of its bar, target column
+// labels left of its bar) — the conventional sankey look, verified against the
+// recorded demo. Column detection: recharts' `payload.sourceLinks` holds the
+// links ARRIVING at a node (despite the name), so an empty list marks the
+// source column. Exact for the two-column flows this chart type builds.
+function SankeyNodeShape(props: {
+  x?: number; y?: number; width?: number; height?: number;
+  payload?: { name?: string; sourceLinks?: unknown[] };
+}) {
+  const { x = 0, y = 0, width = 0, height = 0, payload } = props;
+  const isSourceColumn = (payload?.sourceLinks?.length ?? 0) === 0;
+  return <g>
+    <rect x={x} y={y} width={width} height={height} fill={palette[0]} fillOpacity={0.9} />
+    <text x={isSourceColumn ? x + width + 6 : x - 6} y={y + height / 2}
+      textAnchor={isSourceColumn ? "start" : "end"} dominantBaseline="middle"
+      fill="var(--text-secondary)" fontSize={12}>{payload?.name ?? ""}</text>
+  </g>;
+}
+
 export function ChartPreview({ type, data, measures }: { type: ChartType; data: ChartData; measures: ChartMeasure[] }) {
   if (data.kind === "sankey") {
     // Recharts lays a sankey out itself from nodes+indexed links; no axes apply.
     return <div className="bifrost-chart-preview" data-theme-palette="tokens"><ResponsiveContainer width="100%" height={320}>
       <Sankey data={{ nodes: data.nodes, links: data.links }} nodePadding={24}
-        node={{ fill: palette[0], fillOpacity: 0.9 }}
+        node={<SankeyNodeShape />}
         link={{ stroke: "var(--accent-action)", strokeOpacity: 0.35 }}
-        margin={{ top: 16, right: 120, bottom: 16, left: 16 }}>
+        margin={{ top: 16, right: 130, bottom: 16, left: 130 }}>
         <Tooltip />
       </Sankey>
     </ResponsiveContainer></div>;

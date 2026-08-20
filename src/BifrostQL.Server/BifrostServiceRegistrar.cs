@@ -341,9 +341,14 @@ namespace BifrostQL.Server
                         return new BifrostQL.Core.Modules.Cdc.WebhookEventSink(
                             new System.Net.Http.HttpClient(),
                             endpoint,
-                            activeSecrets: () =>
+                            // Awaited, never blocked: the first delivery after a cache reset
+                            // triggers the endpoint's full model load here. Resolves from the
+                            // FIRST endpoint — the same one the OutboxDispatcher drains, which
+                            // warns when more than one endpoint is registered (CDC is
+                            // single-endpoint; secret and outbox stay coupled to that one).
+                            activeSecrets: async _ =>
                             {
-                                var inputs = pathCache.GetFirstValueAsync().GetAwaiter().GetResult();
+                                var inputs = await pathCache.GetFirstValueAsync();
                                 var model = inputs is not null && inputs.TryGetValue("model", out var m)
                                     ? m as BifrostQL.Core.Model.IDbModel
                                     : null;

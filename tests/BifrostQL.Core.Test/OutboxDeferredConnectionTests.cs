@@ -64,6 +64,30 @@ public sealed class OutboxDeferredConnectionTests
         logger.Entries.Should().Contain(e => e.Level == LogLevel.Error);
     }
 
+    [Fact]
+    public async Task MultiEndpointHost_WarnsThatOnlyTheFirstEndpointIsDrained()
+    {
+        // CDC is single-endpoint (dispatcher and webhook-secret resolution both read the
+        // FIRST registered endpoint). In a multi-database host the other outboxes are
+        // silently never drained — the same silent-first hazard the HTTP and binary
+        // transports refuse — so the dispatcher must at least surface it to the operator.
+        var cts = new CancellationTokenSource();
+        var pathCache = new PathCache<Inputs>();
+        pathCache.AddLoader("/a", () =>
+        {
+            cts.Cancel();
+            throw new ConnectionNotConfiguredException();
+        });
+        pathCache.AddLoader("/b", () => throw new ConnectionNotConfiguredException());
+        var logger = new CaptureLogger();
+        var dispatcher = new OutboxDispatcher(pathCache, sink: null, jitter: () => 0.0, logger: logger);
+
+        await dispatcher.RunAsync(cts.Token);
+
+        logger.Entries.Where(e => e.Level == LogLevel.Warning && e.Message.Contains("single endpoint"))
+            .Should().ContainSingle("a multi-DB host must be told CDC drains only the first endpoint");
+    }
+
     private sealed class CaptureLogger : ILogger
     {
         public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();

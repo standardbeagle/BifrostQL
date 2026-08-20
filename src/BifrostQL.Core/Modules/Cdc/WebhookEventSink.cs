@@ -54,18 +54,20 @@ namespace BifrostQL.Core.Modules.Cdc
 
         private readonly HttpClient _http;
         private readonly Uri _endpoint;
-        private readonly Func<IReadOnlyList<string>> _activeSecrets;
+        private readonly Func<CancellationToken, ValueTask<IReadOnlyList<string>>> _activeSecrets;
         private readonly ILogger? _logger;
 
         /// <param name="http">The HTTP client used to POST. The sink does not own its lifetime.</param>
         /// <param name="endpoint">The absolute URL every delivery is POSTed to.</param>
         /// <param name="activeSecrets">Resolves the CURRENT active signing secrets each delivery, so a
         /// secret rotated in the model's <see cref="MetadataKeys.Cdc.WebhookSecret"/> takes effect on the
-        /// next delivery without a restart.</param>
+        /// next delivery without a restart. Asynchronous because the secrets live on the lazily-loaded
+        /// endpoint model: the first delivery after a cache reset loads it, and blocking a thread on
+        /// that load (sync-over-async) from the dispatcher's loop risks thread-pool starvation.</param>
         public WebhookEventSink(
             HttpClient http,
             Uri endpoint,
-            Func<IReadOnlyList<string>> activeSecrets,
+            Func<CancellationToken, ValueTask<IReadOnlyList<string>>> activeSecrets,
             ILogger? logger = null)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
@@ -86,7 +88,7 @@ namespace BifrostQL.Core.Modules.Cdc
             // (member order, escaping) and break the receiver's byte-for-byte HMAC check.
             var body = Encoding.UTF8.GetBytes(envelope.ToJsonString());
 
-            var signatures = ComputeSignatures(body, _activeSecrets());
+            var signatures = ComputeSignatures(body, await _activeSecrets(cancellationToken));
             if (signatures.Count == 0)
             {
                 // No active secret: refuse to send an UNSIGNED delivery (fail-closed). An

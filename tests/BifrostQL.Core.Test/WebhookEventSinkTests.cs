@@ -37,6 +37,10 @@ public class WebhookEventSinkTests
         ["data"] = new JsonObject { ["id"] = 1007, ["status"] = "shipped" },
     };
 
+    // The sink resolves secrets asynchronously (they live on the lazily-loaded endpoint model).
+    private static Func<CancellationToken, ValueTask<IReadOnlyList<string>>> Secrets(params string[] secrets)
+        => _ => new ValueTask<IReadOnlyList<string>>(secrets);
+
     // Independent reference HMAC — deliberately NOT calling the sink's ComputeSignatures, so the
     // test proves the wire signature against a from-scratch computation.
     private static string ReferenceSignature(byte[] body, string secret)
@@ -49,7 +53,7 @@ public class WebhookEventSinkTests
     public async Task Signs_the_exact_posted_body_with_hmac_the_receiver_can_verify()
     {
         var handler = new CapturingHandler(HttpStatusCode.OK);
-        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, () => new[] { "top-secret" });
+        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, Secrets("top-secret"));
 
         var result = await sink.DeliverAsync(Envelope(), "4821", CancellationToken.None);
 
@@ -66,7 +70,7 @@ public class WebhookEventSinkTests
     public async Task Sends_the_cloudevents_id_as_the_idempotency_key_header()
     {
         var handler = new CapturingHandler(HttpStatusCode.OK);
-        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, () => new[] { "s" });
+        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, Secrets("s"));
 
         await sink.DeliverAsync(Envelope("4821"), "4821", CancellationToken.None);
 
@@ -80,7 +84,7 @@ public class WebhookEventSinkTests
         // Mid-rotation: the model value is "old,new" — a receiver still trusting only the OLD
         // secret must still find a verifiable signature (no downtime, no restart).
         var sink = new WebhookEventSink(
-            new HttpClient(handler), Endpoint, () => WebhookEventSink.ParseSecrets(" old , new "));
+            new HttpClient(handler), Endpoint, _ => new ValueTask<IReadOnlyList<string>>(WebhookEventSink.ParseSecrets(" old , new ")));
 
         await sink.DeliverAsync(Envelope(), "4821", CancellationToken.None);
 
@@ -93,7 +97,7 @@ public class WebhookEventSinkTests
     public async Task Non_success_status_is_a_transient_failure_not_a_throw()
     {
         var handler = new CapturingHandler(HttpStatusCode.InternalServerError);
-        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, () => new[] { "s" });
+        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, Secrets("s"));
 
         var result = await sink.DeliverAsync(Envelope(), "4821", CancellationToken.None);
 
@@ -105,7 +109,7 @@ public class WebhookEventSinkTests
     {
         // Fail-closed: a misconfigured (empty) secret must never produce an UNSIGNED delivery.
         var handler = new CapturingHandler(HttpStatusCode.OK);
-        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, () => Array.Empty<string>());
+        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, Secrets());
 
         var result = await sink.DeliverAsync(Envelope(), "4821", CancellationToken.None);
 
@@ -119,7 +123,7 @@ public class WebhookEventSinkTests
     public async Task Transport_exception_is_mapped_to_transient_failure_and_swallowed()
     {
         var handler = new ThrowingHandler(new HttpRequestException("connection refused to 10.0.0.5"));
-        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, () => new[] { "s" });
+        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, Secrets("s"));
 
         var result = await sink.DeliverAsync(Envelope(), "4821", CancellationToken.None);
 
@@ -132,7 +136,7 @@ public class WebhookEventSinkTests
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         var handler = new ThrowingHandler(new OperationCanceledException());
-        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, () => new[] { "s" });
+        var sink = new WebhookEventSink(new HttpClient(handler), Endpoint, Secrets("s"));
 
         var act = () => sink.DeliverAsync(Envelope(), "4821", cts.Token).AsTask();
 

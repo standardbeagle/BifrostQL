@@ -139,8 +139,25 @@ namespace BifrostQL.Core.Modules.Cdc
             }
         }
 
+        private bool _warnedMultiEndpoint;
+
         private async Task<(IDbModel? Model, IDbConnFactory? ConnFactory)> ResolveAsync()
         {
+            // CDC is single-endpoint: this dispatcher (and the webhook sink's secret
+            // resolution beside it) reads the FIRST registered endpoint only. In a
+            // multi-database host that means the other endpoints' outboxes are never
+            // drained — a silent first-pick is the multi-DB hazard the HTTP and binary
+            // transports refuse outright, so at minimum it must be visible to the operator.
+            if (!_warnedMultiEndpoint && _pathCache.Count > 1)
+            {
+                _warnedMultiEndpoint = true;
+                _logger?.LogWarning(
+                    "CDC outbox dispatcher supports a single endpoint but {Count} are registered; " +
+                    "only the first registered endpoint's outbox is drained and only its " +
+                    "webhook-secret metadata signs deliveries.",
+                    _pathCache.Count);
+            }
+
             Inputs? inputs;
             try
             {

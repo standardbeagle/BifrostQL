@@ -191,6 +191,36 @@ public class ModelConfigValidatorSecurityTests
     }
 
     [Fact]
+    public void Validate_EavParentInAnotherSchemaOnly_Throws_MatchingTheRuntimeResolver()
+    {
+        // The runtime resolver (EavConfigCollector) binds eav-parent SAME-SCHEMA only.
+        // The validator's old cross-schema fallback validated a table the runtime never
+        // uses: the operator saw green validation while the EAV surface silently never
+        // materialized. The validator must reject what the runtime will not bind.
+        var model = DbModelTestFixture.Create()
+            .WithTable("wp_posts", t => t
+                .WithSchema("dbo")   // parent exists — but only in dbo
+                .WithPrimaryKey("ID"))
+            .WithTable("wp_postmeta", t => t
+                .WithSchema("app")   // meta table lives in app
+                .WithPrimaryKey("meta_id")
+                .WithColumn("post_id", "int")
+                .WithColumn("meta_key", "nvarchar")
+                .WithColumn("meta_value", "nvarchar")
+                .WithMetadata(MetadataKeys.Eav.Parent, "wp_posts")
+                .WithMetadata(MetadataKeys.Eav.ForeignKey, "post_id")
+                .WithMetadata(MetadataKeys.Eav.Key, "meta_key")
+                .WithMetadata(MetadataKeys.Eav.Value, "meta_value"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("wp_postmeta")
+            .And.Contain("same-schema only");
+    }
+
+    [Fact]
     public void Validate_EavForeignKeyColumnDoesNotExist_Throws()
     {
         var model = DbModelTestFixture.Create()

@@ -234,14 +234,21 @@ namespace BifrostQL.Core.Model
                     continue;
                 }
 
+                // Same-schema ONLY, matching the runtime resolver (EavConfigCollector): the old
+                // cross-schema fallback validated a table the runtime never binds, so an
+                // eav-parent that exists only in another schema passed validation green while
+                // the EAV surface silently never materialized.
                 var parentTable = model.Tables.FirstOrDefault(t =>
                     string.Equals(t.DbName, parent, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(t.TableSchema, table.TableSchema, StringComparison.OrdinalIgnoreCase))
-                    ?? model.Tables.FirstOrDefault(t => string.Equals(t.DbName, parent, StringComparison.OrdinalIgnoreCase));
+                    && string.Equals(t.TableSchema, table.TableSchema, StringComparison.OrdinalIgnoreCase));
 
                 if (parentTable == null)
                 {
-                    errors.Add(Problem(table, MetadataKeys.Eav.Parent, parent, "eav-parent does not name an existing table"));
+                    var existsElsewhere = model.Tables.Any(t =>
+                        string.Equals(t.DbName, parent, StringComparison.OrdinalIgnoreCase));
+                    errors.Add(Problem(table, MetadataKeys.Eav.Parent, parent, existsElsewhere
+                        ? $"eav-parent does not name a table in schema '{table.TableSchema}' (EAV parents resolve same-schema only; a table with this name exists in another schema but the runtime will not bind it)"
+                        : "eav-parent does not name an existing table"));
                     continue;
                 }
 

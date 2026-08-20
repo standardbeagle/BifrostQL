@@ -79,3 +79,17 @@ CREATE TABLE reviews (
     is_verified INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Search-to-purchase conversion facts. Denormalized ON PURPOSE: the chart and
+-- aggregate surfaces group over a single table, so the flow a Sankey renders
+-- (searched category -> purchased category) carries the category NAMES rather
+-- than FKs. purchased_category is NULL when the search never converted.
+CREATE TABLE search_conversions (
+    conversion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER REFERENCES customers(customer_id) ON DELETE SET NULL,
+    search_term TEXT NOT NULL,
+    searched_category TEXT NOT NULL,
+    purchased_category TEXT,
+    revenue REAL NOT NULL DEFAULT 0,
+    occurred_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

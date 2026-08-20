@@ -242,6 +242,48 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task SchemaQualifiedFrom_BindsTheNamedSchema_NotTheFirstNameMatch()
+        {
+            var model = DuplicateNameModel();
+
+            var sales = await Translate("SELECT id FROM sales.items", model);
+            var dbo = await Translate("SELECT id FROM dbo.items", model);
+
+            sales.Intent.Query.SchemaName.Should().Be("sales",
+                "the parser captures the schema qualifier and the translator must honor it");
+            dbo.Intent.Query.SchemaName.Should().Be("dbo");
+        }
+
+        [Fact]
+        public async Task BareNameSpanningTwoSchemas_IsRejected_NeverFirstPickBound()
+        {
+            var ex = await Rejected("SELECT id FROM items", DuplicateNameModel());
+
+            ex.Should().BeOfType<PgQueryTranslationException>()
+                .Which.Message.Should().Contain("ambiguous",
+                    "a silent first pick would run the statement under the wrong table's policy/tenant scope");
+        }
+
+        [Theory]
+        [InlineData("SELECT o.id FROM orders o JOIN users u ON o.user_id = u.id")] // right ON
+        [InlineData("SELECT o.id FROM orders o JOIN users u ON o.id = u.id")]      // wrong ON
+        public async Task Join_FromWhollyReadDeniedTable_StillResolves_SoThePipelineDenies(string sql)
+        {
+            // Table-level read deny on orders: the join must resolve on the RAW model and
+            // build the intent, so the caller gets the pipeline's authoritative
+            // "permission denied." — the same signal a plain SELECT on orders gets
+            // (invariant 10). Rejecting as "no schema relationship" would give the same
+            // condition a second wire signal, and validating the ON clause would make
+            // right-vs-wrong ON an oracle over the denied table's key columns.
+            var model = OrdersAndUsersModel(ordersPolicyActions: "create");
+
+            var plan = await Translate(sql, model);
+
+            plan.Intent.Query.Links.Should().HaveCount(1,
+                "the denied table's join resolves so the pipeline can issue the denial");
+        }
+
+        [Fact]
         public async Task JoinOnMismatch_OverVisibleLink_StillNamesTheRelationshipColumns()
         {
             // With no policy in play the link is a visible edge, so the helpful
@@ -324,8 +366,33 @@ namespace BifrostQL.Server.Test.Pgwire
             return model;
         }
 
+        /// <summary>Two tables named <c>items</c> in different schemas, no policy.</summary>
+        private static IDbModel DuplicateNameModel()
+        {
+            IDbTable Items(string schema)
+            {
+                var t = Substitute.For<IDbTable>();
+                t.DbName.Returns("items");
+                t.GraphQlName.Returns("items");
+                t.TableSchema.Returns(schema);
+                t.Columns.Returns(new[] { Col("id", "int", 1, pk: true) });
+                t.SingleLinks.Returns(new Dictionary<string, TableLinkDto>());
+                t.MultiLinks.Returns(new Dictionary<string, TableLinkDto>());
+                return t;
+            }
+
+            // Build both substitutes BEFORE configuring model.Tables — NSubstitute
+            // cannot handle nested substitute configuration inside Returns(...).
+            var dbo = Items("dbo");
+            var sales = Items("sales");
+            var tables = new[] { dbo, sales };
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(tables);
+            return model;
+        }
+
         private static (IDbModel model, IDbTable orders, IDbTable users) BuildOrdersUsers(
-            string? ordersReadDeny = null)
+            string? ordersReadDeny = null, string? ordersPolicyActions = null)
         {
             var users = Users();
             var orders = Substitute.For<IDbTable>();
@@ -342,8 +409,10 @@ namespace BifrostQL.Server.Test.Pgwire
             orders.MultiLinks.Returns(new Dictionary<string, TableLinkDto>());
             // A column deny needs an explicit read grant beside it: a policy that names
             // no allowed action denies table-read outright, which would hide the whole
-            // table instead of exercising the hidden-link path.
-            orders.GetMetadataValue(MetadataKeys.Policy.Actions).Returns(ordersReadDeny is null ? null : "read");
+            // table instead of exercising the hidden-link path. An explicit
+            // ordersPolicyActions (e.g. "create") denies table read outright instead.
+            orders.GetMetadataValue(MetadataKeys.Policy.Actions)
+                .Returns(ordersPolicyActions ?? (ordersReadDeny is null ? null : "read"));
             orders.GetMetadataValue(MetadataKeys.Policy.ReadDeny).Returns(ordersReadDeny);
 
             var link = new TableLinkDto
@@ -361,8 +430,8 @@ namespace BifrostQL.Server.Test.Pgwire
             return (model, orders, users);
         }
 
-        private static IDbModel OrdersAndUsersModel(string? ordersReadDeny = null)
-            => BuildOrdersUsers(ordersReadDeny).model;
+        private static IDbModel OrdersAndUsersModel(string? ordersReadDeny = null, string? ordersPolicyActions = null)
+            => BuildOrdersUsers(ordersReadDeny, ordersPolicyActions).model;
 
         private static IDbModel OrdersUsersWidgetsModel()
         {

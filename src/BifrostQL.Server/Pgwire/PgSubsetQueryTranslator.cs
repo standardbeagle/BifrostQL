@@ -49,7 +49,7 @@ namespace BifrostQL.Server.Pgwire
             var stmt = PgSqlSubsetParser.Parse(sql);
             var binding = new ParameterBinding(parameters);
             var model = await executor.GetModelAsync(endpoint);
-            var fromTable = ResolveTable(model, stmt.From.Name);
+            var fromTable = ResolveTable(model, stmt.From);
 
             // Resolve an optional single schema-relationship join into a forward
             // single-column FK link on the FROM table. A join that does not map to a
@@ -213,20 +213,28 @@ namespace BifrostQL.Server.Pgwire
             IDictionary<string, object?> userContext)
         {
             var joinRef = stmt.Join!.Table;
-            var target = ResolveTable(model, joinRef.Name);
+            var target = ResolveTable(model, joinRef);
 
             var fromVisible = SchemaReadVisibility.ProjectTable(fromTable, userContext);
             var targetVisible = SchemaReadVisibility.ProjectTable(target, userContext);
 
+            // Column-level edge gate ONLY. When either whole table is read-denied
+            // (projection is null) the join must still resolve on the RAW model so the
+            // intent reaches the pipeline for its authoritative "permission denied." —
+            // exactly what a plain SELECT on that table gets (invariant 10); an
+            // adapter-local "no schema relationship" would give the same condition a
+            // second wire signal. ValidateOnClause is skipped in that case too: the
+            // statement is denied regardless of the ON shape, and validating it would
+            // turn right-vs-wrong ON into an oracle over the denied table's key columns.
+            var edgeGate = fromVisible is not null && targetVisible is not null;
+
             bool ForwardLinkVisible(TableLinkDto link) =>
-                fromVisible is not null && targetVisible is not null
-                && fromVisible.HasColumns(link.ChildIds)
-                && targetVisible.HasColumns(link.ParentIds);
+                !edgeGate
+                || (fromVisible!.HasColumns(link.ChildIds) && targetVisible!.HasColumns(link.ParentIds));
 
             bool CollectionLinkVisible(TableLinkDto link) =>
-                fromVisible is not null && targetVisible is not null
-                && targetVisible.HasColumns(link.ChildIds)
-                && fromVisible.HasColumns(link.ParentIds);
+                !edgeGate
+                || (targetVisible!.HasColumns(link.ChildIds) && fromVisible!.HasColumns(link.ParentIds));
 
             var candidates = fromTable.SingleLinks
                 .Where(kv => string.Equals(kv.Value.ParentTable.DbName, target.DbName, StringComparison.OrdinalIgnoreCase)
@@ -249,7 +257,8 @@ namespace BifrostQL.Server.Pgwire
             if (link.IsComposite)
                 throw RejectFeature($"JOIN to '{target.DbName}' uses a composite foreign key, which is not supported.");
 
-            ValidateOnClause(stmt, fromTable, target, link);
+            if (edgeGate)
+                ValidateOnClause(stmt, fromTable, target, link);
             return new JoinResolution(target, fieldName);
         }
 
@@ -352,14 +361,35 @@ namespace BifrostQL.Server.Pgwire
             return column;
         }
 
-        private static IDbTable ResolveTable(IDbModel model, string name)
+        /// <summary>
+        /// Resolves a FROM/JOIN table reference. A written schema qualifier is honored
+        /// (the parser captures it; ignoring it bound <c>sales.items</c> to whatever
+        /// table matched the bare name first). A BARE name defined in more than one
+        /// schema is rejected rather than guessed — the silent first-pick would run the
+        /// statement under the wrong table's policy/tenant scope, the same rule as
+        /// <c>DbModel.GetTableFromDbName</c>.
+        /// </summary>
+        private static IDbTable ResolveTable(IDbModel model, PgTableRef reference)
         {
-            var table = model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(t.GraphQlName, name, StringComparison.OrdinalIgnoreCase));
-            if (table is null)
-                throw Reject($"relation \"{name}\" does not exist.");
-            return table;
+            var name = reference.Name;
+            IDbTable? found = null;
+            foreach (var table in model.Tables)
+            {
+                if (!string.Equals(table.DbName, name, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(table.GraphQlName, name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (reference.Schema is not null
+                    && !string.Equals(table.TableSchema, reference.Schema, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (found is not null)
+                    throw Reject($"relation \"{name}\" is ambiguous: qualify it with its schema (e.g. schema.{name}).");
+                found = table;
+            }
+            if (found is null)
+                throw Reject(reference.Schema is null
+                    ? $"relation \"{name}\" does not exist."
+                    : $"relation \"{reference.Schema}.{name}\" does not exist.");
+            return found;
         }
 
         private static PgQueryTranslationException Reject(string detail) =>

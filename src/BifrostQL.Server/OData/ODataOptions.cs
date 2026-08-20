@@ -59,6 +59,17 @@ namespace BifrostQL.Server.OData
         public TimeSpan ContinuationTokenTtl { get; set; } = TimeSpan.FromMinutes(15);
 
         /// <summary>
+        /// The absolute service root advertised in <c>@odata.context</c> pointers and paging
+        /// nextLinks (e.g. <c>https://api.example.com/odata</c>). When null (default) the root is
+        /// derived from the request's own Scheme/Host/PathBase — which reflects the CLIENT-supplied
+        /// Host header into every emitted URL. Behind a reverse proxy, or on any deployment that
+        /// does not enforce host filtering, set this explicitly so a forged Host header cannot
+        /// steer OData clients that follow the emitted links (host-header injection / link
+        /// poisoning). Trailing slash is ignored.
+        /// </summary>
+        public string? PublicServiceRoot { get; set; }
+
+        /// <summary>
         /// The upper bound on the number of related rows a single <c>$expand</c> navigation may
         /// return across the whole page. A request whose expansion would exceed this fails closed as
         /// a clean OData 400 rather than materializing an unbounded fan-out — the row-count ceiling

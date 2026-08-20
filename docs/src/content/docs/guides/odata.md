@@ -64,6 +64,7 @@ enabling OData touches no GraphQL or binary service.
 | `MaxPageSize` | `1000` | Hard ceiling a requested `$top` is clamped to. A caller asking for more rows than this receives at most this many. |
 | `ContinuationTokenSecret` | `null` | HMAC secret the opaque `$skiptoken` continuation token is signed with. When set, `nextLink` tokens survive restarts and resolve across a scaled fleet; when unset, a per-instance random key is used (a startup warning is logged) and tokens live only for the process's lifetime. The token carries position only — it is never the authorization boundary. |
 | `ContinuationTokenTtl` | `15 min` | How long a minted continuation token stays valid. An expired token fails closed as a clean `400`, exactly like a tampered one, so a stale `nextLink` can never silently serve a wrong page. |
+| `PublicServiceRoot` | `null` | Absolute service root used to build `@odata.context` pointers and paging `nextLink`s (e.g. `https://api.example.com/odata`). When unset they are derived from the request's own scheme/Host/PathBase — the Host header is client-supplied, so behind a reverse proxy (or any host without host filtering) set this explicitly to keep a forged `Host` out of the emitted links. |
 | `MaxExpandFanout` | `1000` | Upper bound on the number of related rows a single `$expand` navigation may return across the whole page. Exceeding it fails closed as a clean `400` rather than materializing an unbounded fan-out. |
 
 ## Authentication

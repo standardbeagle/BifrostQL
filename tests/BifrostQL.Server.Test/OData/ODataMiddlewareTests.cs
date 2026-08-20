@@ -125,6 +125,29 @@ namespace BifrostQL.Server.Test.OData
         }
 
         [Fact]
+        public async Task Configured_public_service_root_wins_over_the_client_supplied_host_header()
+        {
+            // The Host header is client-supplied: reflecting it into @odata.context / nextLink
+            // URLs lets a forged Host steer any client that follows the emitted links (host-header
+            // injection behind a proxy that forwards Host verbatim). With PublicServiceRoot
+            // configured, the emitted URLs must be built from it — the forged host never appears.
+            var options = new ODataOptions { PublicServiceRoot = "https://api.example.com/odata/" };
+            var ctx = new DefaultHttpContext { User = ODataTestAuth.Principal() };
+            ctx.Request.Method = "GET";
+            ctx.Request.Scheme = "http";
+            ctx.Request.Host = new HostString("evil.attacker.example");
+            ctx.Request.Path = "/";
+
+            var (status, _, body) = await Run(Build(options: options), ctx);
+
+            status.Should().Be(200);
+            body.Should().Contain("https://api.example.com/odata/$metadata",
+                "the configured public root (trailing slash trimmed) builds the context URL");
+            body.Should().NotContain("evil.attacker.example",
+                "a client-forged Host header must never be reflected into emitted links");
+        }
+
+        [Fact]
         public async Task Unknown_entity_set_path_returns_not_found_404()
         {
             // Entity-set reads are implemented (slice 3); a request to a set the model does not expose

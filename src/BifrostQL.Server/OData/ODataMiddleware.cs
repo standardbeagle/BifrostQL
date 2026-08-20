@@ -345,12 +345,20 @@ namespace BifrostQL.Server.OData
         }
 
         /// <summary>
-        /// The service root the <c>@odata.context</c> pointer is built from: scheme + host + the
-        /// mounted route prefix (carried on <see cref="HttpRequest.PathBase"/>), with no trailing
-        /// slash.
+        /// The service root the <c>@odata.context</c> pointer and paging nextLinks are built
+        /// from. A configured <see cref="ODataOptions.PublicServiceRoot"/> wins unconditionally —
+        /// the request's Host header is CLIENT-supplied, so reflecting it into emitted absolute
+        /// URLs lets a forged Host steer any client that follows the links (host-header
+        /// injection / link poisoning behind a proxy that forwards Host verbatim). Without the
+        /// override, falls back to scheme + host + the mounted route prefix (carried on
+        /// <see cref="HttpRequest.PathBase"/>), with no trailing slash — acceptable only where
+        /// the host enforces host filtering.
         /// </summary>
-        private static string ServiceRoot(HttpContext context)
+        private string ServiceRoot(HttpContext context)
         {
+            if (!string.IsNullOrWhiteSpace(_options.PublicServiceRoot))
+                return _options.PublicServiceRoot.TrimEnd('/');
+
             var request = context.Request;
             var prefix = request.PathBase.HasValue ? request.PathBase.Value : string.Empty;
             return $"{request.Scheme}://{request.Host}{prefix}".TrimEnd('/');

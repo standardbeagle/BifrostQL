@@ -28,7 +28,9 @@ namespace BifrostQL.Server
         /// <paramref name="existing"/> entries a protocol frontend already parsed from the
         /// request. Authenticated: identity-derived keys win; <paramref name="existing"/>
         /// entries are added only where no identity key exists. Unauthenticated: returns
-        /// <paramref name="existing"/> when it has entries, otherwise an empty dictionary.
+        /// the non-identity entries of <paramref name="existing"/> — identity-owned keys
+        /// (roles, tenant, permissions) can only ever come from an authenticated
+        /// principal, never from the request wire.
         /// </summary>
         IDictionary<string, object?> CreateUserContext(HttpContext context, IDictionary<string, object?> existing);
     }
@@ -65,6 +67,7 @@ namespace BifrostQL.Server
         public IDictionary<string, object?> CreateUserContext(HttpContext context, IDictionary<string, object?> existing)
         {
             var user = context.User;
+            var ownedKeys = new BifrostQL.Core.Auth.IdentityContextMapper().OwnedKeyNames;
             if (user?.Identity?.IsAuthenticated == true)
             {
                 var bifrostContext = new BifrostContext(context);
@@ -76,7 +79,6 @@ namespace BifrostQL.Server
                 // tenant. Exclude the mapper's whole owned-key set (BifrostContext builds the
                 // identity with this same default mapper) plus the raw principal, regardless of
                 // presence, so frontend context can only ever add NON-identity keys.
-                var ownedKeys = new BifrostQL.Core.Auth.IdentityContextMapper().OwnedKeyNames;
                 foreach (var kv in existing)
                 {
                     if (bifrostContext.ContainsKey(kv.Key))
@@ -89,7 +91,21 @@ namespace BifrostQL.Server
                 return bifrostContext;
             }
 
-            return existing.Count > 0 ? existing : new Dictionary<string, object?>();
+            // Unauthenticated: there is NO identity, so no frontend-parsed wire entry may
+            // smuggle one in. The same owned-key exclusion as above — an unauthenticated
+            // caller supplying "role"/"tenant_id"/"permissions" in a parsed request body
+            // would otherwise reach the transformers as if the identity had projected it
+            // (latent only while no in-repo frontend parses a user context, but the seam
+            // is public: any custom IProtocolFrontend hits it).
+            var sanitized = new Dictionary<string, object?>();
+            foreach (var kv in existing)
+            {
+                if (ownedKeys.Contains(kv.Key)
+                    || string.Equals(kv.Key, "user", StringComparison.Ordinal))
+                    continue;
+                sanitized[kv.Key] = kv.Value;
+            }
+            return sanitized;
         }
     }
 }

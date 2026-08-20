@@ -110,3 +110,15 @@ SELECT
     total_readings
 FROM ranked_readings
 WHERE reading_rank = 1;
+
+-- Per-sensor file attachments: photos (PNG) and documents (PDF) stored IN the
+-- database as blobs, so the workbench's binary preview/download path has real
+-- content to show. mime_type drives the client-side rendering decision.
+CREATE TABLE attachments (
+    attachment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sensor_id INTEGER NOT NULL REFERENCES sensors(sensor_id) ON DELETE CASCADE,
+    file_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    content BLOB NOT NULL,
+    uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -87,7 +87,10 @@ namespace BifrostQL.Core.QueryModel
                 }, "tableName");
             };
 
-            run.Should().Throw<ArgumentException>().WithMessage("Invalid filter object (Parameter 'value')");
+            // BifrostExecutionError so the client-shape fault reaches the GraphQL error channel
+            // instead of falling through resolver catches as a generic unexpected error.
+            run.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+                .WithMessage("*invalid filter object*");
         }
 
         [Fact]

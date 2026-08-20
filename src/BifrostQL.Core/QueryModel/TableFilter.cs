@@ -114,7 +114,11 @@ namespace BifrostQL.Core.QueryModel
             // the empty-shape guard.
             if (filter.And.Count == 0 && filter.Or.Count == 0 && filter.Next == null
                 && filter.FilterType != FilterType.Search)
-                throw new ArgumentException("Invalid filter object", nameof(value));
+                // BifrostExecutionError like every sibling throw in this parse path: this is a
+                // CLIENT-shape fault (e.g. `and: []`), and only that type's text is forwarded to
+                // the GraphQL error. As a bare ArgumentException it fell through resolvers'
+                // catches into the engine's generic unexpected-error path.
+                throw new BifrostExecutionError($"Error filtering {tableName}, invalid filter object");
             return filter;
         }
 

@@ -55,13 +55,12 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (BifrostExecutionError ex)
             {
-                throw new ExecutionError(ex.Message, ex);
-            }
-            catch (ArgumentException ex)
-            {
-                // PivotQueryConfig.Create surfaces shape errors (e.g. the pivot column
-                // repeated in rowKeys) as ArgumentException — map to the GraphQL error
-                // contract rather than leaking a raw 500.
+                // The ONLY exception type whose text may cross to the GraphQL error:
+                // config-shape faults are tagged as BifrostExecutionError at their
+                // source (SqlExecutionManager.ResolvePivotAsync). A bare
+                // ArgumentException reaching here is an ambient driver/BCL fault —
+                // it must fall through to the engine's generic unhandled-error
+                // handling, never be forwarded verbatim (invariant 3).
                 throw new ExecutionError(ex.Message, ex);
             }
         }

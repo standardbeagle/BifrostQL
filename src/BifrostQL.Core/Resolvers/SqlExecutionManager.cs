@@ -489,9 +489,21 @@ namespace BifrostQL.Core.Resolvers
             var dialect = connFactory.Dialect;
 
             // Validate shape (column existence, pivot-not-in-rowKeys) before any SQL,
-            // so a bad request fails fast with an authored message.
-            var config = PivotQueryConfig.Create(request.PivotColumn, request.ValueColumn, request.Aggregate, request.RowKeys);
-            config.ValidateColumns(table.ColumnLookup);
+            // so a bad request fails fast with an authored message. The shape errors are
+            // tagged as client-facing HERE — every message the two callees author is
+            // built from the caller's own arguments — so no catch upstream needs to
+            // treat a bare ArgumentException as forwardable: anywhere else that type is
+            // an ambient driver/BCL fault whose text must stay server-side (invariant 3).
+            PivotQueryConfig config;
+            try
+            {
+                config = PivotQueryConfig.Create(request.PivotColumn, request.ValueColumn, request.Aggregate, request.RowKeys);
+                config.ValidateColumns(table.ColumnLookup);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new BifrostExecutionError(ex.Message);
+            }
 
             // Fail-closed transformer pass into a per-call overlay (sibling root fields
             // resolve in parallel; the shared UserContext is not thread-safe). The

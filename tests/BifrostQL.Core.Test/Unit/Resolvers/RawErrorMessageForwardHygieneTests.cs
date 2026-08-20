@@ -61,6 +61,72 @@ public class RawErrorMessageForwardHygieneTests
             + string.Join("\n", violations));
     }
 
+    // Matches forwarding a caught exception's .Message into a GraphQL ExecutionError:
+    // `new ExecutionError(ex.Message` (with or without the inner-exception argument).
+    // Deliberately does NOT match `new BifrostExecutionError(` — that shape is covered
+    // by the interpolation scan above and by provenance review at its throw sites.
+    private static readonly Regex ForwardsMessageToExecutionError = new(
+        @"new ExecutionError\(\s*[A-Za-z_][A-Za-z0-9_]*\.Message",
+        RegexOptions.Compiled);
+
+    private static readonly Regex CatchClause = new(@"catch\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// `new ExecutionError(ex.Message, ...)` is the designed GraphQL error channel for
+    /// BifrostExecutionError ONLY — that type's text is curated at its throw sites
+    /// (FromDatabaseException redacts driver text; transformer denials are authored).
+    /// The same forward from any OTHER catch (ArgumentException, InvalidOperationException,
+    /// DbException, ...) puts ambient driver/BCL fault text on the wire — the
+    /// PivotTableResolver leak shape, where a `catch (ArgumentException)` meant to cover
+    /// config shaping also spanned the executor call. This scan pins that every such
+    /// forward sits inside a `catch (BifrostExecutionError ...)`.
+    /// </summary>
+    [Fact]
+    public void CoreSources_ForwardExecutionErrorMessagesOnlyFromBifrostExecutionErrorCatches()
+    {
+        var sourceRoot = LocateBifrostCoreSourceRoot();
+        sourceRoot.Should().NotBeNull();
+
+        var violations = new List<string>();
+        foreach (var path in Directory.EnumerateFiles(sourceRoot!, "*.cs", SearchOption.AllDirectories))
+        {
+            if (path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                || path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+                continue;
+
+            var lines = File.ReadAllLines(path);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (!ForwardsMessageToExecutionError.IsMatch(lines[i]))
+                    continue;
+
+                // Walk back to the nearest enclosing catch clause; the forward is legal
+                // only when that clause catches BifrostExecutionError.
+                var caughtType = (string?)null;
+                for (var j = i; j >= 0 && j >= i - 20; j--)
+                {
+                    var m = CatchClause.Match(lines[j]);
+                    if (m.Success)
+                    {
+                        caughtType = m.Groups[1].Value;
+                        break;
+                    }
+                }
+
+                if (caughtType != "BifrostExecutionError")
+                {
+                    var relative = Path.GetRelativePath(sourceRoot!, path);
+                    violations.Add($"{relative}:{i + 1} (catch: {caughtType ?? "none found"}): {lines[i].Trim()}");
+                }
+            }
+        }
+
+        violations.Should().BeEmpty(
+            "only a caught BifrostExecutionError's message is curated for the wire; forwarding "
+            + "any other exception's .Message into an ExecutionError leaks ambient driver/BCL text:\n"
+            + string.Join("\n", violations));
+    }
+
     private static string? LocateBifrostCoreSourceRoot([CallerFilePath] string callerFilePath = "")
     {
         if (string.IsNullOrEmpty(callerFilePath))

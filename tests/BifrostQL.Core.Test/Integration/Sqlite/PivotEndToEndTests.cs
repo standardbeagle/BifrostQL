@@ -146,6 +146,22 @@ public sealed class PivotEndToEndTests : IAsyncLifetime
             .ToDictionary(r => r.GetProperty(rowKey).GetString()!, r => r);
 
     [Fact]
+    public async Task Pivot_PivotColumnRepeatedInRowKeys_SurfacesTheAuthoredShapeError()
+    {
+        // The config-shape ArgumentException is tagged as BifrostExecutionError at its
+        // source (SqlExecutionManager.ResolvePivotAsync), so the authored, caller-arg
+        // message still reaches the GraphQL error after the resolver dropped its
+        // blanket ArgumentException catch.
+        var execution = await ExecuteAsTenantAsync(
+            """
+            { ordersPivot(rowKeys: [status], pivotColumn: status, valueColumn: amount, aggregate: sum) }
+            """, tenantId: 1);
+
+        execution.Errors.Should().NotBeNullOrEmpty();
+        execution.Errors![0].Message.Should().Contain("must not appear in group-by columns");
+    }
+
+    [Fact]
     public async Task Pivot_CrossTabsWithinTenantScope_ShapeAndValues()
     {
         var pivot = await PivotAsTenantAsync(

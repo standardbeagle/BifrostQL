@@ -450,10 +450,17 @@ namespace BifrostQL.Core.Modules.Chat
             if (value is null)
                 throw new ChatToolInputException(
                     $"The {table.GraphQlName} row with {key.GraphQlName} = '{viewImageId}' has no media content.");
-            if (value is not byte[] bytes)
-                throw new InvalidOperationException(
+            // The shared read seam (ReaderEnum.DbConvert) materializes blob columns
+            // as BASE64 STRINGS — the one wire contract every consumer shares. Raw
+            // byte[] is accepted too for providers that bypass the choke point.
+            var bytes = value switch
+            {
+                byte[] raw => raw,
+                string base64 => DecodeMediaBase64(base64, table, config),
+                _ => throw new InvalidOperationException(
                     $"The media column '{config.MediaColumn}' on {table.TableSchema}.{table.DbName} returned " +
-                    $"'{value.GetType().Name}' instead of bytes; binary-mode media must materialize as byte[].");
+                    $"'{value.GetType().Name}'; binary-mode media must materialize as byte[] or a base64 string."),
+            };
 
             if (bytes.Length > _options.MediaVisionByteCap)
                 throw new ChatToolInputException(
@@ -480,6 +487,23 @@ namespace BifrostQL.Core.Modules.Chat
                     : new[] { reference },
                 VisionImage = new ChatToolVisionImage(bytes, mediaType),
             };
+        }
+
+        /// <summary>Decodes the read seam's base64 blob encoding; text that is not
+        /// base64 is a wiring fault (a non-blob column configured as media), not a
+        /// caller mistake, so it stays an InvalidOperationException.</summary>
+        private static byte[] DecodeMediaBase64(string base64, IDbTable table, ChatConnectorConfig config)
+        {
+            try
+            {
+                return Convert.FromBase64String(base64);
+            }
+            catch (FormatException)
+            {
+                throw new InvalidOperationException(
+                    $"The media column '{config.MediaColumn}' on {table.TableSchema}.{table.DbName} returned text " +
+                    "that is not base64; binary-mode media must materialize as byte[] or a base64 string.");
+            }
         }
 
         private static TableFilter PrimaryKeyFilter(IDbTable table, ColumnDto key, object id) =>

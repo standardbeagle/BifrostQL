@@ -77,4 +77,16 @@ public class ReaderEnumDbConvertTests
 
         ReaderEnum.DbConvert(value).Should().Be(value);
     }
+
+    [Fact]
+    public void DbConvert_ByteArray_BecomesBase64()
+    {
+        // Blob columns map to the String scalar; a raw byte[] made
+        // StringGraphType.Serialize throw, so any row selecting a blob column
+        // failed to resolve. Base64 is the wire encoding the file surface and
+        // the client's magic-byte sniffing consume.
+        var bytes = new byte[] { 0x89, 0x50, 0x4E, 0x47 };
+
+        ReaderEnum.DbConvert(bytes).Should().Be(Convert.ToBase64String(bytes));
+    }
 }

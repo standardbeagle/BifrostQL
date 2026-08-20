@@ -224,6 +224,12 @@ namespace BifrostQL.Core.Resolvers
                 TimeSpan ts => ts.ToString("c", System.Globalization.CultureInfo.InvariantCulture),
                 TimeOnly to => to.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                 DateOnly d => d.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                // Blob columns map to the GraphQL String scalar; a raw byte[] makes
+                // StringGraphType.Serialize throw INVALID_OPERATION, so reading any
+                // row with a selected blob column failed outright. Base64 is the wire
+                // encoding — the same one the file-download surface and the client's
+                // magic-byte sniffing (image preview / document download) consume.
+                byte[] bytes => Convert.ToBase64String(bytes),
                 _ => val,
             };
         }

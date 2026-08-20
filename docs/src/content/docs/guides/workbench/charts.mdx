@@ -1,6 +1,6 @@
 ---
 title: "Charts from SQL Aggregate Queries"
-description: "Charts from SQL aggregate queries: bar, line, pie and area panels bound to a server GROUP BY query, with theme-aware colors and a hard 100-category guard."
+description: "Charts from SQL aggregate queries: bar, line, pie, area and sankey panels bound to a server GROUP BY query, with theme-aware colors and a hard 100-category guard."
 ---
 
 import DemoVideo from '../../../../components/DemoVideo.astro';
@@ -12,7 +12,7 @@ import DemoVideo from '../../../../components/DemoVideo.astro';
 />
 
 The **chart panel** (recharts) builds charts from SQL aggregate queries: bar,
-line, pie, and area charts bound to the server
+line, pie, area, and sankey charts bound to the server
 [aggregate](/BifrostQL/guides/aggregate-queries/) surface. A chart's
 configuration saves as a [saved object](/BifrostQL/concepts/saved-objects/) of
 `type: query`.
@@ -25,13 +25,27 @@ against the table's `<table>Aggregate` root field, through the query-builder
 helpers (schema-derived names only — no user string is interpolated into
 GraphQL). Dimension values map to the category axis and measures to series.
 
-### One dimension per chart
+### One dimension per chart — two for a sankey
 
-`dimensions` is an array in the stored JSON, and the query builder reads
-`dimensions[0]`. A chart therefore groups by exactly **one** column. Save a
-chart with an empty `dimensions` and the builder raises `Choose a chart
-dimension.` The extra array slots are reserved; they do not add a second
-grouping level today.
+`dimensions` is an array in the stored JSON. Bar, line, pie, and area charts
+group by exactly **one** column (the query builder reads `dimensions[0]`; extra
+slots are ignored, so a saved sankey switched to a bar chart degrades cleanly).
+Save a chart with an empty `dimensions` and the builder raises `Choose a chart
+dimension.`
+
+A **sankey** is the two-dimension exception: it draws the flow between a source
+and a target category (the builder's **Flow to** picker), and the aggregate
+query groups by **both** columns. The source and target sides get separate
+nodes even when a category name appears on both — collapsing them would draw a
+cycle a sankey cannot lay out. Flow width comes from the first measure; null or
+non-positive flow values are dropped, and a `NULL` target category renders as
+the explicit null node, so unconverted flows stay visible.
+
+<DemoVideo
+  scene="workbench-sankey"
+  title="A sankey of search-to-purchase category flow"
+  description="Two categorical dimensions, one grouped aggregate query: each band is a flow from the searched category to the purchased one, with unconverted searches flowing to the null node."
+/>
 
 Each measure selects `_count` or a `_sum` / `_avg` / `_min` / `_max` group over
 one column. The aggregate surface takes `filter` and `groupBy` only — it has no

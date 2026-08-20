@@ -1,0 +1,6 @@
+# workbench-sankey — one beat per line; beat N pairs with beats[N] in capture.mjs.
+The chart builder can now draw flows. This is the workbench connected to the e-commerce sample, on the Charts pane.
+The search conversions table records the category a shopper searched, and the category they finally bought from.
+Choose Sankey, point the flow at the purchased category, and the server groups by both columns in a single aggregate query.
+Each band is a flow. Most searches convert inside their own category, the cross-category bands stand out, and searches that never converted flow to the null node.
+Save it, and the sankey is a dashboard tile like any other chart.

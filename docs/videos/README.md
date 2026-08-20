@@ -70,6 +70,7 @@ start.
 | `workbench-grid` | `BifrostQL.UI` headless | Schema sidebar, data grid, server-side paging, grouping by column |
 | `workbench-pivot` | `BifrostQL.UI` headless | Pivot wells → server-computed cross tabulation → save |
 | `workbench-charts` | `BifrostQL.UI` headless | Aggregate chart, chart type, save, dashboard tile, reopen |
+| `workbench-sankey` | `BifrostQL.UI` headless | Sankey flow between two categorical dimensions (e-commerce dataset: searched vs purchased category) |
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
 | `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
 
@@ -79,9 +80,11 @@ tells a reader to run, so the on-screen responses match the article's. The
 workbench scenes use Quick Start's **full** blog dataset (500 posts), so
 grouping and pivoting have something to show.
 
-The workbench scenes run Quick Start once off-camera and replay the resulting
-session into each scene, so every recording opens straight into the editor
-instead of narrating the same 20-second database build five times.
+The workbench scenes run Quick Start once off-camera PER DATASET and replay the
+resulting session into each scene, so every recording opens straight into the
+editor instead of narrating the same 20-second database build five times. Most
+scenes share the blog session (`ui: true`); a scene that names a dataset
+(`ui: 'ecommerce'`, the sankey scene) gets its own off-camera Quick Start.
 
 The headless workbench is started with `--enable-http-bridge`. Without it the
 SQL console never mounts, because that pane runs over the desktop bridge rather

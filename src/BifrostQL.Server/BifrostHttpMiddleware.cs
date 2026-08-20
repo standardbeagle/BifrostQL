@@ -206,7 +206,31 @@ namespace BifrostQL.Server
             // metadata into the model and schema.
             var profileCache = (ProfileModelCache)(sharedExtensions["profileModelCache"]
                 ?? throw new InvalidDataException("profileModelCache not configured"));
-            var (model, schema) = profileCache.GetFor(profileName);
+            IDbModel model;
+            ISchema schema;
+            try
+            {
+                (model, schema) = profileCache.GetFor(profileName);
+            }
+            catch (Exception ex)
+            {
+                // A named profile is validated lazily on its first request, not at
+                // bootstrap: an invalid one throws ModelConfigValidator's aggregate
+                // here, which names tables/columns/metadata values. The middleware's
+                // outer catch already keeps that text off the wire, but it collapses
+                // the condition into "unexpected server error" — a misconfigured
+                // profile is a distinct, diagnosable condition and deserves its own
+                // constant (map by condition, invariant 10). Full detail server-side.
+                var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
+                logger?.LogError(ex, "Profile model load failed for profile '{Profile}'", profileName);
+                return new ExecutionResult
+                {
+                    Errors = new ExecutionErrors
+                    {
+                        new ExecutionError("The requested profile failed to load."),
+                    },
+                };
+            }
             options.Schema = schema;
 
             // Inject correlation ID from ASP.NET Core's TraceIdentifier

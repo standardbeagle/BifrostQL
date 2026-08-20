@@ -236,6 +236,54 @@ public sealed class PerProfileSchemaResolutionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InvalidProfileMetadata_FailsAsSanitizedProfileError_NotGenericOrDetailed()
+    {
+        // A named profile is model-validated lazily on its first request; the
+        // ModelConfigValidator aggregate names tables/columns/metadata values. The
+        // middleware must map the condition to its own constant — never the raw
+        // validator text (invariant 3), and not the generic "unexpected server
+        // error" fallback either (map by condition, invariant 10).
+        _profileRegistry.Add(new BifrostProfile
+        {
+            Name = "bad",
+            Metadata = new[] { "*.companies { tenant-filter: no_such_column }" },
+        });
+
+        var serializer = new GraphQLSerializer();
+        var middleware = new BifrostHttpMiddleware(
+            next: _ => Task.CompletedTask,
+            serializer: serializer,
+            documentExecutor: new DocumentExecuter(),
+            logger: NullLogger<BifrostHttpMiddleware>.Instance);
+
+        await using var provider = BuildRequestServices();
+        var context = new DefaultHttpContext { RequestServices = provider };
+        context.RequestServices.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
+
+        context.Request.Method = HttpMethods.Post;
+        context.Request.PathBase = GraphQlPath;
+        context.Request.Path = PathString.Empty;
+        context.Request.QueryString = new QueryString("?profile=bad");
+        context.Request.ContentType = "application/json";
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { query = "query { __typename }" })));
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(200);
+        context.Response.Body.Seek(0, SeekOrigin.Begin);
+        var json = await new StreamReader(context.Response.Body).ReadToEndAsync();
+
+        json.Should().Contain("The requested profile failed to load.",
+            "an invalid profile is a distinct condition with its own constant message");
+        json.Should().NotContain("no_such_column",
+            "the validator's metadata detail must stay server-side");
+        json.Should().NotContain("An unexpected server error occurred.",
+            "the condition must not collapse into the generic fallback");
+    }
+
+    [Fact]
     public async Task ExplicitUnregisteredDefaultProfile_IsRejectedAsUnknown()
     {
         // The literal "default" is no longer a special-cased alias for the raw schema:

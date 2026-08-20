@@ -89,7 +89,8 @@ namespace BifrostQL.Core.Modules.Crypto
                     // Single-definition derivation shared with the query-time equality
                     // rewrite (BlindIndexComputer.ComputeSearchToken) so write and read
                     // tokens can never drift.
-                    result[blindIndexColumn] = BlindIndexComputer.ComputeSearchToken(keyManager, keyRef, value);
+                    result[blindIndexColumn] = BlindIndexComputer.ComputeSearchToken(
+                        keyManager, keyRef, table.TableSchema, table.DbName, column.ColumnName, value);
                 }
             }
 

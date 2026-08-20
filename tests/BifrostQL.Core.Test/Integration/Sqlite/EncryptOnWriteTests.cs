@@ -89,7 +89,7 @@ public sealed class EncryptOnWriteTests : IAsyncLifetime
         FieldCipher.Decrypt(dek, ssn!, aad).Should().Be(plaintext);
 
         // The blind index is the deterministic keyed hash of the plaintext.
-        var expectedBidx = BlindIndexComputer.Compute(manager.GetBlindIndexKey(KeyRef), plaintext);
+        var expectedBidx = BlindIndexComputer.Compute(manager.GetBlindIndexKey(KeyRef, aad), plaintext);
         bidx.Should().Be(expectedBidx);
     }
 

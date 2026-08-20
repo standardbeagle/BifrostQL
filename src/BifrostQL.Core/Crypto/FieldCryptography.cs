@@ -265,14 +265,20 @@ namespace BifrostQL.Core.Crypto
         /// rewrite cannot drift apart (a divergence would make written values
         /// unfindable). Serializes <paramref name="value"/> with invariant culture — so
         /// a decimal/DateTime hashes identically on every host — resolves the per-column
-        /// blind-index key for <paramref name="keyRef"/>, and returns the keyed hash.
+        /// blind-index key for <paramref name="keyRef"/> bound to the
+        /// (<paramref name="schema"/>, <paramref name="table"/>, <paramref name="column"/>)
+        /// identity, and returns the keyed hash. The column binding makes two columns that
+        /// share a key-ref derive DISTINCT keys, so equal plaintext in different columns
+        /// does NOT collide — closing the cross-column equality oracle. Write and read pass
+        /// the SAME triple (it is the physical column being indexed), so tokens still match.
         /// </summary>
-        public static string ComputeSearchToken(EnvelopeKeyManager keyManager, string keyRef, object? value)
+        public static string ComputeSearchToken(
+            EnvelopeKeyManager keyManager, string keyRef, string schema, string table, string column, object? value)
         {
             ArgumentNullException.ThrowIfNull(keyManager);
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
             var serialized = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-            var indexKey = keyManager.GetBlindIndexKey(keyRef);
+            var indexKey = keyManager.GetBlindIndexKey(keyRef, CryptoAad.Build(schema, table, column));
             return Compute(indexKey, serialized);
         }
     }

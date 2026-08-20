@@ -572,7 +572,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         secret.Should().NotBe("approval-secret");
         FieldCipher.Decrypt(KeyManager.GetDataKey("config:approval"), secret!, CryptoAad.Build("main", "orders", "secret"))
             .Should().Be("approval-secret", "approved replay preserves the queued ciphertext for normal one-decrypt reads");
-        blindIndex.Should().Be(BlindIndexComputer.Compute(KeyManager.GetBlindIndexKey("config:approval"), "approval-secret"));
+        blindIndex.Should().Be(BlindIndexComputer.Compute(
+            KeyManager.GetBlindIndexKey("config:approval", CryptoAad.Build("main", "orders", "secret")), "approval-secret"));
 
         Func<Task> enqueueDelete = async () => await executor.ExecuteAsync(new MutationIntent
         {

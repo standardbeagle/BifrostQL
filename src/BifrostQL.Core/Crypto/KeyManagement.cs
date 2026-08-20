@@ -329,11 +329,22 @@ namespace BifrostQL.Core.Crypto
         /// from the DEK that encrypts the data (compromising one does not reveal the other). Bound
         /// to version 1 deliberately: the blind-index hash must stay STABLE across key rotation so
         /// equality search still matches rows written under different DEK versions.
+        ///
+        /// <para><paramref name="columnBinding"/> — the stable length-prefixed
+        /// (schema, table, column) triple from <see cref="CryptoAad.Build"/> — is folded into the
+        /// HKDF <c>info</c> so two columns sharing a key-ref derive DISTINCT index keys. Without it,
+        /// equal plaintext in different columns hashes identically: a cross-column equality oracle
+        /// (correlate, or test a hidden column against a known value, purely from the visible index).
+        /// The binding is column IDENTITY, never row data or DEK version, so the derived key stays
+        /// constant across rotation — equality search still matches rows written under earlier DEKs.</para>
         /// </summary>
-        public byte[] GetBlindIndexKey(string keyRef)
+        public byte[] GetBlindIndexKey(string keyRef, ReadOnlySpan<byte> columnBinding)
         {
             var dek = GetDataKey(keyRef);
-            return HKDF.DeriveKey(HashAlgorithmName.SHA256, dek, outputLength: 32, info: BlindIndexInfo);
+            var info = new byte[BlindIndexInfo.Length + columnBinding.Length];
+            BlindIndexInfo.CopyTo(info, 0);
+            columnBinding.CopyTo(info.AsSpan(BlindIndexInfo.Length));
+            return HKDF.DeriveKey(HashAlgorithmName.SHA256, dek, outputLength: 32, info: info);
         }
 
         private static readonly byte[] BlindIndexInfo = Encoding.UTF8.GetBytes("bifrost-blind-index-v1");

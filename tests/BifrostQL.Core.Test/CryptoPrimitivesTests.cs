@@ -161,12 +161,30 @@ public class CryptoPrimitivesTests
     public void EnvelopeKeyManager_BlindIndexKey_IsDerived_DistinctFromDek()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+        var binding = CryptoAad.Build("main", "people", "ssn");
         var dek = manager.GetDataKey("config:pii");
-        var idx = manager.GetBlindIndexKey("config:pii");
+        var idx = manager.GetBlindIndexKey("config:pii", binding);
 
         idx.Should().HaveCount(32);
         idx.Should().NotEqual(dek, "the blind-index key is HKDF-derived, not the DEK itself");
-        manager.GetBlindIndexKey("config:pii").Should().Equal(idx, "derivation is deterministic");
+        manager.GetBlindIndexKey("config:pii", binding).Should().Equal(idx, "derivation is deterministic");
+    }
+
+    [Fact]
+    public void EnvelopeKeyManager_BlindIndexKey_DiffersPerColumn_UnderTheSameKeyRef()
+    {
+        // Two columns SHARING a key-ref must derive DISTINCT blind-index keys, or equal plaintext
+        // in different columns hashes identically — a cross-column equality oracle (correlate, or
+        // test a hidden column against a known value, from the visible index alone). The column
+        // binding (schema, table, column) is folded into the derivation to break the collision.
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
+
+        var ssn = manager.GetBlindIndexKey("config:pii", CryptoAad.Build("main", "people", "ssn"));
+        var dob = manager.GetBlindIndexKey("config:pii", CryptoAad.Build("main", "people", "dob"));
+        var ssnOtherTable = manager.GetBlindIndexKey("config:pii", CryptoAad.Build("main", "staff", "ssn"));
+
+        ssn.Should().NotEqual(dob, "a different column under the same key-ref gets a different index key");
+        ssn.Should().NotEqual(ssnOtherTable, "the same column name in another table is a distinct binding");
     }
 
     [Fact]
@@ -281,9 +299,10 @@ public class CryptoPrimitivesTests
         // Blind-index hashes must keep matching across rotation, so the index key must NOT
         // change when the DEK rotates (it is bound to version 1).
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
-        var before = manager.GetBlindIndexKey("config:pii");
+        var binding = CryptoAad.Build("main", "people", "ssn");
+        var before = manager.GetBlindIndexKey("config:pii", binding);
         manager.Rotate("config:pii");
-        manager.GetBlindIndexKey("config:pii").Should().Equal(before, "the blind-index key survives rotation");
+        manager.GetBlindIndexKey("config:pii", binding).Should().Equal(before, "the blind-index key survives rotation");
     }
 
 }

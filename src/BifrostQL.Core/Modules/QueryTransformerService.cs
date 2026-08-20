@@ -318,10 +318,15 @@ public sealed class QueryTransformerService : IQueryTransformerService
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
         // Derive the search token(s) with the IDENTICAL derivation as the write path.
+        // Bind the token to THIS physical column (schema, table, column) — identical to the
+        // write path's binding — so the derived index key is column-specific (no cross-column
+        // oracle) yet write and read still agree.
         object? routedValue = isRoutableEq
-            ? BlindIndexComputer.ComputeSearchToken(_keyManager, keyRef, leaf.Next.Value)
+            ? BlindIndexComputer.ComputeSearchToken(
+                _keyManager, keyRef, table.TableSchema, table.DbName, column.ColumnName, leaf.Next.Value)
             : ((leaf.Next.Value as IEnumerable<object?>) ?? Array.Empty<object?>())
-                .Select(v => (object?)BlindIndexComputer.ComputeSearchToken(_keyManager, keyRef, v))
+                .Select(v => (object?)BlindIndexComputer.ComputeSearchToken(
+                    _keyManager, keyRef, table.TableSchema, table.DbName, column.ColumnName, v))
                 .ToList();
 
         // Replace the predicate: target the blind-index sibling with the token(s).

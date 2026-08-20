@@ -95,7 +95,7 @@ public class BlindIndexQueryRoutingTests
         // The predicate targets the blind-index sibling, never the ciphertext column.
         rendered.Sql.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
         // The bound value is the write path's search token for the plaintext.
-        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "123-45-6789");
+        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "123-45-6789");
         parameters.Parameters.Should().ContainSingle().Which.Value.Should().Be(expected);
     }
 
@@ -132,7 +132,7 @@ public class BlindIndexQueryRoutingTests
         // The nested encrypted predicate now targets the blind-index sibling, never the ciphertext.
         rendered.Sql.Should().Contain("ssn_bidx").And.NotContain("\"ssn\"");
         // Its bound value is the write path's search token for the plaintext.
-        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "123-45-6789");
+        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "123-45-6789");
         parameters.Parameters.Select(p => p.Value).Should().Contain(expected);
     }
 
@@ -150,8 +150,8 @@ public class BlindIndexQueryRoutingTests
 
         rendered.Sql.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
         parameters.Parameters.Select(p => p.Value).Should().Equal(
-            BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "111-11-1111"),
-            BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "222-22-2222"));
+            BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "111-11-1111"),
+            BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "222-22-2222"));
     }
 
     [Theory]

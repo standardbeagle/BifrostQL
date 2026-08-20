@@ -88,4 +88,29 @@ public class FromDatabaseExceptionTests
 
         BifrostExecutionError.FromDatabaseException(authored).Should().BeSameAs(authored);
     }
+
+    [Fact]
+    public void FromDatabaseException_RevealsRawText_WhenExposeEnvVarSet()
+    {
+        // The documented local-debugging escape hatch: BIFROST_EXPOSE_DB_ERRORS=1 puts
+        // the raw driver text on the wire. Re-homed here after the dead
+        // BifrostErrorHandler (and its test file, which held the only coverage of this
+        // path) was deleted — a regression that silently broke the diagnostic reveal
+        // would otherwise stay green.
+        var previous = Environment.GetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar);
+        Environment.SetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar, "1");
+        try
+        {
+            var ex = new FakeDbException("no such table: ghost_42");
+
+            var result = BifrostExecutionError.FromDatabaseException(ex);
+
+            result.Message.Should().Contain("no such table: ghost_42",
+                "the opt-in env var reveals the raw driver text for local debugging");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar, previous);
+        }
+    }
 }

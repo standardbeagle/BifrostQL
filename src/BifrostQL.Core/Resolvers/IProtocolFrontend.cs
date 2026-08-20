@@ -36,6 +36,17 @@ namespace BifrostQL.Core.Resolvers
         public IDictionary<string, object?> UserContext { get; init; } = new Dictionary<string, object?>();
 
         /// <summary>
+        /// Context entries a protocol frontend parsed from the REQUEST WIRE (never from the
+        /// authenticated principal). Kept separate from <see cref="UserContext"/> because the
+        /// engine must merge them AFTER the endpoint model is resolved: which keys are
+        /// identity-owned (and so can never be wire-supplied) depends on model metadata —
+        /// e.g. a configured <c>tenant-context-key</c>. A merge done at the transport, before
+        /// the model is known, can only strip the DEFAULT identity keys and lets a custom
+        /// tenant key be smuggled by an unauthenticated caller.
+        /// </summary>
+        public IDictionary<string, object?>? WireContext { get; init; }
+
+        /// <summary>
         /// DI service provider scoped to the current request.
         /// </summary>
         public IServiceProvider? RequestServices { get; init; }

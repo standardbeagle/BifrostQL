@@ -78,90 +78,9 @@ namespace BifrostQL.Server.Test
                 .WithMessage("*https://idp.example.test*");
         }
 
-        [Fact]
-        public void CreateUserContext_MergeOverload_Authenticated_IdentityKeysWin()
-        {
-            // Arrange
-            var context = new DefaultHttpContext { User = AuthenticatedLocalPrincipal() };
-            var existing = new Dictionary<string, object?>
-            {
-                ["user"] = "spoofed-principal", // must NOT shadow the identity key
-                ["frontend-extra"] = 42,        // must be merged
-            };
-
-            // Act
-            var userContext = Factory.CreateUserContext(context, existing);
-
-            // Assert
-            userContext.Should().BeOfType<BifrostContext>();
-            userContext["user"].Should().BeSameAs(context.User);
-            userContext["frontend-extra"].Should().Be(42);
-        }
-
-        [Fact]
-        public void CreateUserContext_MergeOverload_Authenticated_CannotInjectAnOmittedIdentityKey()
-        {
-            // The principal carries no tenant claim, so BifrostContext OMITS the tenant key. A
-            // frontend-parsed context must NOT be able to fill that absent identity-owned slot —
-            // that would let a tenant-less caller inject its own tenant (identity spoofing). Only
-            // excluding keys that are PRESENT (the prior behaviour) left the omitted tenant key open.
-            var context = new DefaultHttpContext { User = AuthenticatedLocalPrincipal() }; // no tenant claim
-            var existing = new Dictionary<string, object?>
-            {
-                ["tenant_id"] = "attacker-tenant",  // identity-owned AND currently absent → must NOT merge
-                ["frontend-extra"] = 42,            // non-identity → must still merge
-            };
-
-            var userContext = Factory.CreateUserContext(context, existing);
-
-            userContext.Should().NotContainKey("tenant_id",
-                "a frontend cannot supply the identity's tenant key, even when the identity omits it");
-            userContext["frontend-extra"].Should().Be(42,
-                "non-identity frontend context still merges — the contract is unchanged for those keys");
-        }
-
-        [Fact]
-        public void CreateUserContext_MergeOverload_Unauthenticated_KeepsNonIdentityEntriesOnly()
-        {
-            // Arrange
-            var context = new DefaultHttpContext();
-            var existing = new Dictionary<string, object?> { ["frontend-extra"] = 42 };
-
-            // Act
-            var userContext = Factory.CreateUserContext(context, existing);
-
-            // Assert: non-identity frontend context still flows; an empty input
-            // degrades to a fresh empty dictionary.
-            userContext["frontend-extra"].Should().Be(42);
-            Factory.CreateUserContext(context, new Dictionary<string, object?>())
-                .Should().BeEmpty();
-        }
-
-        [Fact]
-        public void CreateUserContext_MergeOverload_Unauthenticated_CannotSupplyIdentityOwnedKeys()
-        {
-            // An unauthenticated request has NO identity, so a frontend-parsed context
-            // (which a custom IProtocolFrontend builds from the request wire) must not be
-            // able to hand the transformers a role/tenant/permissions projection — the
-            // pre-fix pass-through returned it wholesale.
-            var context = new DefaultHttpContext(); // no authenticated principal
-            var existing = new Dictionary<string, object?>
-            {
-                ["tenant_id"] = "attacker-tenant",
-                ["roles"] = new[] { "admin" },
-                ["user"] = "attacker",
-                ["frontend-extra"] = 42,
-            };
-
-            var userContext = Factory.CreateUserContext(context, existing);
-
-            userContext.Should().NotContainKey("tenant_id",
-                "identity-owned keys can only come from an authenticated principal");
-            userContext.Should().NotContainKey("roles");
-            userContext.Should().NotContainKey("user");
-            userContext["frontend-extra"].Should().Be(42,
-                "non-identity frontend context still merges");
-        }
+        // The merge overload was removed: frontend-parsed wire context now rides
+        // BifrostRequest.WireContext and is merged model-aware by WireContextMerger
+        // (see WireContextMergerTests in BifrostQL.Core.Test).
 
         [Fact]
         public void Resolve_PrefersDiRegisteredFactory_FallsBackToSharedDefault()

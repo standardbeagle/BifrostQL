@@ -47,15 +47,19 @@ namespace BifrostQL.Server
                 return;
             }
 
-            // Enrich the parsed request with HTTP context
+            // Enrich the parsed request with HTTP context. Whatever user context the
+            // frontend parsed from the request wire rides SEPARATELY as WireContext:
+            // the engine merges it after model resolution (WireContextMerger), because
+            // which keys are identity-owned — and so can never be wire-supplied —
+            // depends on model metadata (a configured tenant-context-key).
             bifrostRequest = new BifrostRequest
             {
                 Query = bifrostRequest.Query,
                 OperationName = bifrostRequest.OperationName,
                 Variables = bifrostRequest.Variables,
                 Extensions = bifrostRequest.Extensions,
-                UserContext = BifrostAuthContextFactory.Resolve(context)
-                    .CreateUserContext(context, bifrostRequest.UserContext),
+                UserContext = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context),
+                WireContext = bifrostRequest.UserContext,
                 RequestServices = context.RequestServices,
                 CancellationToken = context.RequestAborted,
             };

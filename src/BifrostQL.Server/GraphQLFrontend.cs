@@ -202,6 +202,10 @@ namespace BifrostQL.Server
                 observers = BifrostProfileRegistry.FilterBy(observers, activeProfile);
 
             var userContext = request.UserContext;
+            // Merge frontend-parsed wire entries only NOW, with the model in hand: the
+            // identity-owned key set (which wire entries may never supply) includes the
+            // model-configured tenant-context-key, not just the defaults.
+            BifrostQL.Core.Auth.WireContextMerger.Merge(userContext, request.WireContext, model);
             if (!userContext.ContainsKey("_correlationId"))
                 userContext["_correlationId"] = Guid.NewGuid().ToString("N");
             // Surface the active profile to downstream resolvers, matching the HTTP path.

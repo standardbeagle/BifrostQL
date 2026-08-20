@@ -26,7 +26,7 @@ export const PROVIDERS: ProviderInfo[] = [
 /**
  * QuickStart schema templates
  */
-export type QuickStartSchema = 'blog' | 'ecommerce' | 'crm' | 'classroom' | 'project-tracker';
+export type QuickStartSchema = 'blog' | 'ecommerce' | 'crm' | 'classroom' | 'project-tracker' | 'sqlite-advanced';
 
 /**
  * Data size options for quickstart

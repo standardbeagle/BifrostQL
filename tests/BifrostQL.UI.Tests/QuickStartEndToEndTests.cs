@@ -184,6 +184,7 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("crm")]
     [InlineData("classroom")]
     [InlineData("project-tracker")]
+    [InlineData("sqlite-advanced")]
     public async Task Schema_DDL_ExistsAsEmbeddedResource(string schema)
     {
         var sql = await QuickstartSchemas.LoadSchemaSql(schema);
@@ -202,6 +203,8 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("classroom", "full")]
     [InlineData("project-tracker", "sample")]
     [InlineData("project-tracker", "full")]
+    [InlineData("sqlite-advanced", "sample")]
+    [InlineData("sqlite-advanced", "full")]
     public async Task Schema_SeedData_ExistsAsEmbeddedResource(string schema, string dataSize)
     {
         var sql = await QuickstartSchemas.LoadSeedSql(schema, dataSize);
@@ -239,6 +242,7 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("crm")]
     [InlineData("classroom")]
     [InlineData("project-tracker")]
+    [InlineData("sqlite-advanced")]
     public async Task Schema_SampleData_HasRows(string schema)
     {
         await using var conn = await CreateAndSeedDatabase(schema, "sample");
@@ -258,6 +262,7 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("crm")]
     [InlineData("classroom")]
     [InlineData("project-tracker")]
+    [InlineData("sqlite-advanced")]
     public async Task Schema_FullData_HasMoreRowsThanSample(string schema)
     {
         await using var sampleConn = await CreateAndSeedDatabase(schema, "sample");

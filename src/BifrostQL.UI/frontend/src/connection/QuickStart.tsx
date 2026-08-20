@@ -45,6 +45,13 @@ const SCHEMAS: SchemaInfo[] = [
     description: 'Asana-style tasks, projects & workflows',
     features: 'Hierarchical subtasks, multi-assignee RACI, kanban status',
   },
+  {
+    id: 'sqlite-advanced',
+    icon: '\uD83D\uDCE1',
+    name: 'IoT Sensors',
+    description: 'Sensors, readings, JSON configs & file attachments',
+    features: 'JSON documents, images & PDFs in blob columns, generated columns',
+  },
 ];
 
 export const QuickStart: React.FC<QuickStartProps> = ({

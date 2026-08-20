@@ -6,6 +6,7 @@ import { toFilter } from "../designer/designer-state";
 import { parseQueryDefinition } from "../designer/saved-query";
 import type { VisualFilter } from "../lib/visual-query";
 import { assertDashboardName, blankDashboard, type CountTileConfig, type DashboardDefinition, type DashboardLayout, type DashboardTile, type TableTileConfig } from "./dashboard-model";
+import { openChart } from "../charts/chart-store";
 import { dashboardStore, DASHBOARD_SAVED_OBJECT_TYPE, openDashboard, saveDashboard } from "./dashboard-store";
 import "./dashboard.css";
 
@@ -75,6 +76,7 @@ export function DashboardPane({ fetcher, store = dashboardStore, onOpenTable }: 
   const [schema, setSchema] = useState<SchemaTable[]>([]);
   const dashboards = useMemo(() => objects.filter((object) => openDashboard(object) !== null), [objects]);
   const savedById = useMemo(() => new Map(objects.map((object) => [object.id, object])), [objects]);
+  const savedCharts = useMemo(() => objects.filter((object) => openChart(object) !== null), [objects]);
 
   const reload = async () => {
     try { setObjects(await store.list()); }
@@ -112,6 +114,13 @@ export function DashboardPane({ fetcher, store = dashboardStore, onOpenTable }: 
     const tile: DashboardTile = { id: crypto.randomUUID?.() ?? `tile-${Date.now()}-${ordinal}`, kind, title: `${kind[0].toUpperCase()}${kind.slice(1)} tile`, layout: { x: (ordinal * 3) % current.grid.cols, y: Math.floor(ordinal / 4) * 4, w: kind === "table" ? 6 : 3, h: kind === "chart" ? 6 : 4 }, config: kind === "chart" ? { kind: "bifrost.chart", version: 1, source: { kind: "table", table: table?.graphQlName ?? "" }, dimensions: fields.slice(0, 1), measures: [{ op: "count" }], chartType: "bar" } : { table: table?.graphQlName ?? "", ...(kind === "table" ? { columns: fields.slice(0, 4), limit: 10 } : {}) } };
     return { ...current, tiles: [...current.tiles, tile] };
   });
+  // Binding sets tile.ref (resolveTile prefers it); the tile keeps its built-in
+  // config so clearing the binding falls back instead of erroring. The title
+  // follows the chart name on bind — a tile named after a different chart than
+  // it renders is a dashboard that lies.
+  const bindChart = (id: string, ref: string) => updateTile(id, (tile) => ref
+    ? { ...tile, ref, title: savedById.get(ref)?.name ?? tile.title }
+    : { ...tile, ref: undefined });
   const move = (id: string, target: DashboardLayout) => updateTile(id, (tile) => ({ ...tile, layout: { ...tile.layout, x: target.x, y: target.y } }));
   const resize = (id: string) => updateTile(id, (tile) => ({ ...tile, layout: { ...tile.layout, w: Math.min(definition.grid.cols, tile.layout.w + 1), h: tile.layout.h + 1 } }));
 
@@ -123,17 +132,17 @@ export function DashboardPane({ fetcher, store = dashboardStore, onOpenTable }: 
       <button type="button" aria-pressed={editMode} onClick={() => setEditMode((value) => !value)}>{editMode ? "View dashboard" : "Edit dashboard"}</button>{editMode && <><button type="button" onClick={() => addTile("chart")}>Add chart</button><button type="button" onClick={() => addTile("count")}>Add count</button><button type="button" onClick={() => addTile("table")}>Add table</button></>}</div>
       {error && <p role="alert">{error}</p>}
       <div className="bifrost-dashboard-grid" style={{ "--dashboard-columns": definition.grid.cols } as CSSProperties} aria-label="Dashboard tile grid">
-        {definition.tiles.map((tile) => <DashboardTileView key={tile.id} tile={tile} resolved={resolveTile(tile, savedById)} fetcher={fetcher} editMode={editMode} onMove={move} onResize={resize} onRemove={removeTile} onOpenTable={onOpenTable} />)}
+        {definition.tiles.map((tile) => <DashboardTileView key={tile.id} tile={tile} resolved={resolveTile(tile, savedById)} fetcher={fetcher} editMode={editMode} savedCharts={savedCharts} onBindChart={bindChart} onMove={move} onResize={resize} onRemove={removeTile} onOpenTable={onOpenTable} />)}
       </div>
     </main>
   </section>;
 }
 
-function DashboardTileView({ tile, resolved, fetcher, editMode, onMove, onResize, onRemove, onOpenTable }: { tile: DashboardTile; resolved: ResolvedTile; fetcher: GraphQLFetcher; editMode: boolean; onMove: (id: string, target: DashboardLayout) => void; onResize: (id: string) => void; onRemove: (id: string) => void; onOpenTable?: (table: string) => void }) {
+function DashboardTileView({ tile, resolved, fetcher, editMode, savedCharts, onBindChart, onMove, onResize, onRemove, onOpenTable }: { tile: DashboardTile; resolved: ResolvedTile; fetcher: GraphQLFetcher; editMode: boolean; savedCharts: SavedObject[]; onBindChart: (id: string, ref: string) => void; onMove: (id: string, target: DashboardLayout) => void; onResize: (id: string) => void; onRemove: (id: string) => void; onOpenTable?: (table: string) => void }) {
   const [dragged, setDragged] = useState<string | null>(null);
   const style = { gridColumn: `${tile.layout.x + 1} / span ${tile.layout.w}`, gridRow: `${tile.layout.y + 1} / span ${tile.layout.h}` };
   return <article className="bifrost-dashboard-tile" style={style} draggable={editMode} onDragStart={(event) => { event.dataTransfer.setData("text/plain", tile.id); setDragged(tile.id); }} onDragEnd={() => setDragged(null)} onDragOver={(event) => { if (editMode) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain") || dragged; if (editMode && id && id !== tile.id) onMove(id, tile.layout); }} aria-label={`${tile.title} tile`}>
-    <h3>{tile.title}</h3>{editMode && <div className="bifrost-dashboard-tile__controls"><span className="bifrost-dashboard-drag" aria-label={`Drag ${tile.title}`} title="Drag tile">⠿</span><button type="button" aria-label={`Remove ${tile.title}`} onClick={() => onRemove(tile.id)}>Remove</button><button type="button" className="bifrost-dashboard-resize" aria-label={`Resize ${tile.title}`} onClick={() => onResize(tile.id)}>↘</button></div>}
+    <h3>{tile.title}</h3>{editMode && <div className="bifrost-dashboard-tile__controls">{tile.kind === "chart" && <select aria-label={`Saved chart for ${tile.title}`} value={tile.ref ?? ""} onChange={(event) => onBindChart(tile.id, event.target.value)}><option value="">Built-in config</option>{savedCharts.map((chart) => <option key={chart.id} value={chart.id}>{chart.name}</option>)}</select>}<span className="bifrost-dashboard-drag" aria-label={`Drag ${tile.title}`} title="Drag tile">⠿</span><button type="button" aria-label={`Remove ${tile.title}`} onClick={() => onRemove(tile.id)}>Remove</button><button type="button" className="bifrost-dashboard-resize" aria-label={`Resize ${tile.title}`} onClick={() => onResize(tile.id)}>↘</button></div>}
     {"error" in resolved ? <p className="bifrost-dashboard-error" role="alert">{resolved.error}</p> : resolved.kind === "chart" ? <ChartTile fetcher={fetcher} definition={resolved.config} refreshSeconds={tile.refreshSeconds} /> : resolved.kind === "count" ? <CountTile fetcher={fetcher} config={resolved.config} refreshSeconds={tile.refreshSeconds} /> : <TableTile fetcher={fetcher} config={resolved.config} refreshSeconds={tile.refreshSeconds} onOpenTable={onOpenTable} />}
   </article>;
 }

@@ -10,7 +10,8 @@ const dashboardSources = import.meta.glob("./*.{ts,tsx}", { eager: true, query: 
 vi.mock("recharts", () => {
   const Box = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
   const Chart = ({ children, data }: { children?: React.ReactNode; data?: unknown }) => <div data-testid="dashboard-chart-points">{JSON.stringify(data)}{children}</div>;
-  return { Area: Box, AreaChart: Chart, Bar: Box, BarChart: Chart, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Chart, Pie: Box, PieChart: Chart, ResponsiveContainer: Box, Tooltip: Box, XAxis: Box, YAxis: Box };
+  const Sankey = ({ children, data }: { children?: React.ReactNode; data?: unknown }) => <div data-testid="dashboard-sankey">{JSON.stringify(data)}{children}</div>;
+  return { Area: Box, AreaChart: Chart, Bar: Box, BarChart: Chart, CartesianGrid: Box, Legend: Box, Line: Box, LineChart: Chart, Pie: Box, PieChart: Chart, ResponsiveContainer: Box, Sankey, Tooltip: Box, XAxis: Box, YAxis: Box };
 });
 
 afterEach(cleanup);
@@ -120,6 +121,36 @@ describe("DashboardPane", () => {
     expect(screen.getByLabelText("Orders").textContent).toContain(String(expectedOrders));
     expect(screen.getByLabelText("Customers").textContent).toContain(String(expectedCustomers));
     expect([...screen.getAllByRole("row")].slice(1).map((row) => Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent))).toEqual(expectedTable.map((row) => [String(row.id), String(row.region)]));
+  });
+
+  it("binds a chart tile to a saved chart through the tile's saved-chart picker", async () => {
+    // resolveTile always supported tile.ref, but no UI ever set it: a fresh
+    // chart tile stayed a default-config placeholder forever. The edit-mode
+    // picker closes that last wire — a saved sankey becomes a live tile.
+    const savedChart = {
+      id: "chart-sankey", type: "query", name: "Search to purchase flow", version: 1,
+      definition: { kind: "bifrost.chart", version: 1, source: { kind: "table", table: "search_conversions" }, dimensions: ["searched_category", "purchased_category"], measures: [{ op: "count" }], chartType: "sankey" },
+    };
+    const store = memoryStore([dashboard(), savedChart as any]);
+    const base = fetcher();
+    const live = { query: vi.fn((query: string) => query.includes("search_conversionsAggregate")
+      ? Promise.resolve({ search_conversionsAggregate: [{ searched_category: "Electronics", purchased_category: "Books", _count: 13 }] })
+      : base.query(query)) };
+    render(<DashboardPane fetcher={live as never} store={store as never} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Operations" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit dashboard" }));
+
+    fireEvent.change(await screen.findByLabelText("Saved chart for Regional chart"), { target: { value: "chart-sankey" } });
+
+    // The tile renders the SAVED chart's definition (a sankey), and its title
+    // follows the chart name so the dashboard cannot lie about what it shows.
+    await screen.findByTestId("dashboard-sankey");
+    expect(screen.getByLabelText("Saved chart for Search to purchase flow")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save dashboard" }));
+    await waitFor(() => expect(store.put).toHaveBeenCalled());
+    const storedDefinition = store.put.mock.calls.at(-1)![0].definition as DashboardDefinition;
+    expect(storedDefinition.tiles.find((tile) => tile.kind === "chart")?.ref).toBe("chart-sankey");
   });
 
   it("saves and reopens exact drag and resize layout coordinates", async () => {

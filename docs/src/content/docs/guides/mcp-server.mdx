@@ -3,6 +3,14 @@ title: "Database MCP Server for AI Agents"
 description: "Expose a database to Claude Code and other agents over the Model Context Protocol, with stdio or HTTP bearer hosting, a fixed tool set, and opt-in write tools."
 ---
 
+import DemoVideo from '../../../components/DemoVideo.astro';
+
+<DemoVideo
+  scene="mcp-tools"
+  title="A live MCP session against a BifrostQL database"
+  description="Initialize, tools/list, and real bifrost_query / bifrost_aggregate / bifrost_search calls over the Streamable HTTP transport — every response is the running server's answer."
+/>
+
 BifrostQL can present your database to an LLM agent as a set of
 [Model Context Protocol](https://modelcontextprotocol.io) tools. Point Claude
 Code, or any MCP client, at a BifrostQL MCP server and the agent can map your
@@ -27,7 +35,11 @@ There are two ways to host it:
 - **Streamable HTTP + bearer** — the MCP server is mounted on an HTTP route and
   each session's identity comes from the `Authorization: Bearer` header of the
   request that initiates it. This is the hosted / multi-caller mode. Registered
-  with `AddBifrostMcpHttp` + `MapBifrostMcp`.
+  with `AddBifrostMcpHttp` + `MapBifrostMcp`. The reference host
+  (`BifrostQL.Host`) mounts it with one configuration flag:
+  `BifrostQL:Mcp:Http:Enabled = true` (route override:
+  `BifrostQL:Mcp:Http:Path`), keeping the default fail-closed auth posture and
+  writes off.
 
 Both hosts build the identical tool surface from
 `BifrostMcpServerFactory.CreateServerOptions`; they differ only in transport and

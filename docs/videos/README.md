@@ -77,6 +77,8 @@ start.
 | `workbench-attachments` | `BifrostQL.UI` headless | Images and PDFs stored as blobs: inline preview, row navigation, Download (IoT dataset) |
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
 | `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
+| `mcp-tools` | `BifrostQL.Host` + MCP HTTP | Live MCP session in a rendered console: initialize, tools/list, real query/aggregate/search calls |
+| `chat-connectors` | `BifrostQL.Host` (ChatDemo) + chat SPA | Chat over the database: explore tool chips, media grid from blobs, plan proposal approved (needs ANTHROPIC_API_KEY via devkey) |
 
 The `quickstart` scene seeds `blog.db` from `src/BifrostQL.UI/Schemas/blog.sql`
 plus `blog-seed-sample.sql` — the same two files the getting-started article
@@ -96,9 +98,18 @@ than the HTTP/GraphQL surface.
 
 ## Scenes deliberately omitted
 
-**MCP tools.** The MCP server speaks over stdio, so there is no browser surface
-to record and a terminal capture would need a different harness entirely. It is
-omitted rather than faked with a staged terminal.
+**MCP tools** used to be listed here (stdio had no browser surface, and a staged
+terminal would have been fake). The Streamable HTTP transport now gives a
+driveable surface: the `mcp-tools` scene renders a console page and performs
+the REAL JSON-RPC session against the running host while recording — every
+displayed response is the live server's answer, so the no-staging rule holds.
+
+**The chat scene calls the real Anthropic API.** `chat-connectors` refuses to
+run without `ANTHROPIC_API_KEY` (route it through devkey:
+`devkey run anthropic -- node docs/videos/capture.mjs chat-connectors`). Its
+narration deliberately never quotes model output — it describes the mechanics
+(tool chips, the media route, the proposal card), which are on screen whatever
+the model happens to say.
 
 The ER diagram used to be listed here: the pane could not load because the
 `singleJoins` projection in `src/BifrostQL.Core/Resolvers/MetaSchemaResolver.cs`

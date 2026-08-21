@@ -1,0 +1,7 @@
+# chat-connectors — beat N pairs with beats[N]. Never quotes model output.
+This is chat over your database: a real model, talking to real tables through metadata-declared connectors. Conversations and messages are rows like any others.
+Ask about orders, and the tool chip shows the explore connector running: a read-only, capped query through the same security pipeline as every surface. The answer streams in as the model works from the rows it read.
+Product photos are blobs in the database. The media connector hands them to the chat as references, and the grid fetches each image through the authenticated media route — captions ride along as alt text.
+Writes are different. Asking to schedule a post makes the plan connector propose the change: operation, table, and rows in a card, while the stream parks. Nothing has been written.
+Approve it, and only then does the write run — through the full mutation pipeline. Deny would have discarded it.
+One database, three connectors: explore for reads, media for files, plan for writes you approve.

@@ -1,0 +1,6 @@
+# mcp-tools — beat N pairs with beats[N]. Every response shown is the live server's.
+Every BifrostQL database is also an MCP server. This is a live session over the streamable HTTP transport: initialize returns the server's own guidance for agent callers.
+tools list. Six read tools: schema overview, table detail, structured query, row context, aggregate, and search. No write tools appear, because writes are a separate opt-in and this server has them off.
+bifrost query reads rows with a structured filter. The model never writes SQL, and the request runs through the same tenant and policy pipeline as every other surface.
+bifrost aggregate computes grouped counts and sums on the server, so an agent reasons over totals without pulling rows.
+And bifrost search finds rows by text across tables. Point any MCP client at slash m c p, and your database is a set of agent tools.

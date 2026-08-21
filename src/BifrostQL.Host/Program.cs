@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Mcp;
 using BifrostQL.Core.Modules;
 using BifrostQL.MySql;
 using BifrostQL.Ngsql;
@@ -82,6 +83,14 @@ if (jwtConfig.Exists() && authEnabled)
 }
 
 builder.Services.AddCors();
+
+// MCP over Streamable HTTP (opt-in): BifrostQL:Mcp:Http:Enabled = true.
+// Default auth posture is FailClosed (empty user context; tenant-filtered reads
+// refuse exactly like an unauthenticated GraphQL request); writes stay off.
+var mcpHttpEnabled = builder.Configuration.GetValue("BifrostQL:Mcp:Http:Enabled", false);
+if (mcpHttpEnabled)
+    builder.Services.AddBifrostMcpHttp();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -106,10 +115,52 @@ else
     }
 }
 
+// Dev identity stamp (opt-in): BifrostQL:DevIdentity = "<subject>". The chat
+// endpoints (and anything else identity-gated) refuse anonymous callers, so
+// local demos need SOME principal. This is a demo convenience, not an auth
+// scheme: it refuses to run in Production outright, and it logs a warning at
+// startup because stamping every request with a fixed identity is a posture
+// change worth seeing in the logs. Real deployments use local auth, OIDC, or
+// JWT bearer instead.
+var devIdentity = app.Configuration["BifrostQL:DevIdentity"];
+if (!string.IsNullOrWhiteSpace(devIdentity))
+{
+    if (app.Environment.IsProduction())
+        throw new InvalidOperationException(
+            "BifrostQL:DevIdentity stamps a fixed identity on every request and must not run in Production. " +
+            "Configure real authentication instead.");
+    app.Logger.LogWarning(
+        "BifrostQL:DevIdentity is set: every request runs as '{Subject}'. Demo/development use only.",
+        devIdentity);
+    app.Use(async (context, next) =>
+    {
+        context.User = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity(
+                new[] { new System.Security.Claims.Claim("sub", devIdentity) },
+                authenticationType: "BifrostDevIdentity"));
+        await next();
+    });
+}
+
 // Authentication middleware is added by UseBifrostQL when auth is enabled (IsUsingAuth), so
 // it is not added a second time here — the earlier double UseAuthentication was redundant.
 app.UseBifrostQL();
 
+// LLM chat endpoints (opt-in): BifrostQL:Chat:Enabled = true. UseBifrostChat
+// fails fast at startup when no Anthropic api key is configured.
+var chatSection = app.Configuration.GetSection("BifrostQL:Chat");
+if (chatSection.GetValue("Enabled", false))
+{
+    app.UseBifrostChat(chat =>
+    {
+        var systemPrompt = chatSection["SystemPrompt"];
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+            chat.SystemPrompt = systemPrompt;
+    });
+}
+
+if (mcpHttpEnabled)
+    app.MapBifrostMcp(app.Configuration["BifrostQL:Mcp:Http:Path"] ?? "/mcp");
 
 await app.RunAsync();
 

@@ -28,14 +28,8 @@ Connector guide: [Chat Connectors](../../docs/src/content/docs/guides/chat-conne
 
 ## Backend setup
 
-The demo runs against `src/BifrostQL.Host` with a SQLite database. Two things
-do not work out of the box and need a temporary (uncommitted) host tweak:
-
-1. The stock host does not map the chat endpoints (`UseBifrostChat` is opt-in).
-2. The chat endpoints are fail-closed: an anonymous caller gets `401` before
-   anything else runs, so the demo stamps a dev-only identity. In a real
-   deployment use local auth, OIDC, or JWT bearer instead (see the
-   [authentication guide](../../docs/src/content/docs/guides/authentication.md)).
+The demo runs against `src/BifrostQL.Host` with a SQLite database, using the
+committed `ChatDemo` configuration profile — no host edits needed.
 
 ### 1. Create the database (repo root)
 
@@ -58,74 +52,29 @@ Around the pair, the sample grows three **connector scenarios** (see the
 | `products` | `media` | Product images render inline — `image` is a BLOB, so references resolve through the auth-gated media route; `caption` is the alt text |
 | `blog_posts` + `publish_schedule` | `explore` + `plan` (insert,update) | The model proposes schedule writes; nothing lands until you approve the proposal card |
 
-### 2. Point the host at it
+### 2. Run the host with the ChatDemo profile
 
-Replace the contents of `src/BifrostQL.Host/appsettings.json` with
-[`sample/appsettings.chat.json`](sample/appsettings.chat.json) (keep a copy of
-the original to restore afterwards). The interesting parts are the chat
-metadata keys:
-
-```json
-"Metadata": [
-  ":root { auto-join: true; de-pluralize: false; default-limit: 100; }",
-  "main.conversations { chat-conversations: enabled; chat-title: title }",
-  "main.messages { chat-messages: enabled; chat-role: role; chat-content: content; chat-conversation-fk: conversation_id; chat-created-at: created_at }",
-  "main.orders { chat-connector: explore; chat-tool-description: Customer orders with status and totals }",
-  "main.products { chat-connector: media; chat-media-column: image; chat-media-caption: caption; chat-tool-description: Product catalog with photos }",
-  "main.blog_posts { chat-connector: explore; chat-tool-description: Blog posts the publish schedule refers to by post_id }",
-  "main.publish_schedule { chat-connector: plan; chat-plan-operations: insert,update; chat-tool-description: Publish schedule for blog posts — every write needs user approval }"
-]
-```
-
-To let the model **look at** the product images itself (not just hand them to
-the UI), add the vision flag to the products line — left off by default
-because every viewed image rides the provider request as base64 (cost) and
-image contents become model input (prompt-injection surface, see the guide's
-caveats):
-
-```text
-main.products { chat-connector: media; chat-media-column: image;
-                chat-media-caption: caption; chat-media-vision: enabled }
-```
-
-### 3. Enable the chat endpoints in the host
-
-In `src/BifrostQL.Host/Program.cs`, immediately before `app.UseBifrostQL();`,
-add (temporarily — do not commit):
-
-```csharp
-// DEV DEMO ONLY: the chat endpoints reject anonymous callers with 401, so
-// stamp a fake authenticated identity for local requests. Replace with real
-// authentication for anything beyond this demo.
-app.Use(async (context, next) =>
-{
-    context.User = new System.Security.Claims.ClaimsPrincipal(
-        new System.Security.Claims.ClaimsIdentity(
-            new[] { new System.Security.Claims.Claim("sub", "demo-user") },
-            authenticationType: "DevDemo"));
-    await next();
-});
-
-app.UseBifrostChat(chat =>
-{
-    chat.SystemPrompt = "You are a helpful assistant for a demo chat application.";
-});
-```
-
-### 4. Run the host
-
-`UseBifrostChat` resolves the completion service at startup, so the host
-refuses to start without an API key:
+`src/BifrostQL.Host/appsettings.ChatDemo.json` (committed) carries the chat
+metadata, enables the chat endpoints (`BifrostQL:Chat:Enabled`), and stamps a
+dev-only identity (`BifrostQL:DevIdentity` — the chat endpoints are
+fail-closed and refuse anonymous callers; the stamp logs a startup warning and
+refuses to run in a Production environment). `UseBifrostChat` resolves the
+completion service at startup, so the host refuses to start without an API
+key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # required
-dotnet run --project src/BifrostQL.Host
+ASPNETCORE_ENVIRONMENT=ChatDemo dotnet run --project src/BifrostQL.Host
 ```
 
 The host listens on `http://localhost:5077` (see its `launchSettings.json`).
-Model and token ceiling come from the `BifrostQL:Chat` section in the sample
-appsettings (`Model`, `MaxTokens`); the api key can also be set as
-`BifrostQL:Chat:ApiKey`.
+Model and token ceiling come from the profile's `BifrostQL:Chat` section
+(`Model`, `MaxTokens`); the api key can also be set as
+`BifrostQL:Chat:ApiKey`. To let the model **look at** the product images
+itself (vision), add `chat-media-vision: enabled` to the products metadata
+line — left off by default because every viewed image rides the provider
+request as base64 (cost) and image contents become model input
+(prompt-injection surface, see the connector guide's caveats).
 
 ## Frontend
 

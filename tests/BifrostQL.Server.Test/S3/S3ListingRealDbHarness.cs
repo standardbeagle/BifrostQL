@@ -79,6 +79,8 @@ namespace BifrostQL.Server.Test.S3
             _host = await builder.StartAsync();
         }
 
+        public IServiceProvider Services => _host.Services;
+
         public IQueryIntentExecutor Reads => _host.Services.GetRequiredService<IQueryIntentExecutor>();
 
         public IMutationIntentExecutor Writes => _host.Services.GetRequiredService<IMutationIntentExecutor>();

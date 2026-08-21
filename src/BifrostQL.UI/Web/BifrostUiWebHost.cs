@@ -124,6 +124,9 @@ namespace BifrostQL.UI.Web
             // and the default-closed gate would 401 every call. As with the vault and
             // SSH APIs, that posture is what --expose warns about.
             app.UseBifrostSavedObjects(o => o.RequireAuth = false);
+            // Direct binary links (Range-capable) for blob columns — same trusted-
+            // loopback auth posture as the saved-objects endpoint on this desktop host.
+            app.UseBifrostBlobs(o => o.RequireAuth = false);
 
             app.MapMetadataEndpoints(state);
             app.MapConnectionEndpoints(state);

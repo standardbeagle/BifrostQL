@@ -48,6 +48,39 @@ can only downgrade to the generic rendering, never masquerade as an image:
   description="The attachments table keeps files in a blob column: expanding a row previews photos inline, row navigation walks to a PDF, and Download saves it as a real file."
 />
 
+## Binary links — the second encoding
+
+Blob content is available two ways, and both share **one read path and one
+security model**:
+
+- **Base64 through GraphQL** — what the grid and content panel consume. Every
+  read path materializes blob columns as base64 at a single conversion point.
+- **Direct binary links** — `GET /_blob/{table}/{column}?k.<pkColumn>=…`
+  streams the raw bytes. The identity projects through the same shared gate as
+  every other transport, and the read runs a query intent through the same
+  executor, so tenant isolation, soft-delete, and policy guards apply
+  identically; a pipeline denial answers the **same 404** as a missing row.
+  Composite keys are addressed in full — one `k.<column>` parameter per
+  primary-key column.
+
+The link endpoint advertises `Accept-Ranges: bytes` and serves single-range
+requests as `206 Partial Content`, so large files download in **resumable
+windows** — something base64-in-JSON cannot offer. Inline rendering is limited
+to a magic-byte-verified image allowlist served with `nosniff`; everything
+else, PDFs included, downloads as an attachment so stored markup can never
+execute on the app origin. Responses are capped by `MaxBlobBytes`
+(default 32 MiB) — over the cap is an explicit `413`, never a truncated body.
+
+```bash
+# The photo stored in attachments row 1, as a plain URL:
+curl -O 'http://127.0.0.1:5000/_blob/attachments/content?k.attachment_id=1'
+# Resume a large download from byte 1048576:
+curl -H 'Range: bytes=1048576-' '…/_blob/attachments/content?k.attachment_id=1'
+```
+
+Mount it with `app.UseBifrostBlobs(...)`; the workbench desktop host serves it
+by default.
+
 The **IoT Sensors** Quick Start schema ships with both: JSON documents in its
 `specifications`, `metadata`, and `configuration` columns, and real PNG photos
 and PDF documents in its `attachments` table.

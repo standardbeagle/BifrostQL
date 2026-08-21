@@ -450,7 +450,16 @@ namespace BifrostQL.Server
                     Endpoint = _options.GraphQlEndpoint,
                 }, context.RequestAborted);
 
-                if (result.Rows.Count == 0 || result.Rows[0][mediaColumn.GraphQlName] is not byte[] bytes)
+                // The read seam materializes blob columns as BASE64 (ReaderEnum.DbConvert);
+                // byte[] is accepted for providers that hand bytes through untouched.
+                var value = result.Rows.Count == 1 ? result.Rows[0][mediaColumn.GraphQlName] : null;
+                var bytes = value switch
+                {
+                    byte[] raw => raw,
+                    string base64 => TryDecodeBase64(base64),
+                    _ => null,
+                };
+                if (bytes is null)
                 {
                     await WriteMediaNotFoundAsync(context);
                     return;
@@ -491,6 +500,12 @@ namespace BifrostQL.Server
 
             rowId = rawRowId;
             return true;
+        }
+
+        private static byte[]? TryDecodeBase64(string base64)
+        {
+            try { return Convert.FromBase64String(base64); }
+            catch (FormatException) { return null; }
         }
 
         private static Task WriteMediaNotFoundAsync(HttpContext context) =>

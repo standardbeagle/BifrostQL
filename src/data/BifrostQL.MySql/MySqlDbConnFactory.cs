@@ -39,6 +39,9 @@ public sealed class MySqlDbConnFactory : IDbConnFactory
     }
 
     /// <inheritdoc />
+    public Core.Resolvers.BulkBatch.IBulkBatchExecutor? BulkBatchExecutor => MySqlBulkBatchExecutor.Instance;
+
+    /// <inheritdoc />
     public async Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
     {
         var builder = new MySqlConnectionStringBuilder(_connectionString) { Database = "" };

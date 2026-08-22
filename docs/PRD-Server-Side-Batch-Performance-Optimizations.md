@@ -328,7 +328,15 @@ public class StreamingBatchResolver
 > inline SQL transaction. Gated per table by `bulk-batch-threshold` and built
 > by `BulkBatchPlanBuilder` in Core (full per-row transformer chain; falls
 > back to the per-row loop for hooks/upserts/state machines/heterogeneous
-> filters). PostgreSQL COPY remains open.
+> filters).
+>
+> **Implemented (PostgreSQL + MySQL, 2026-08):** `PostgresBulkBatchExecutor` /
+> `MySqlBulkBatchExecutor` on the shared `StagedBulkBatchExecutorBase` flow —
+> TEMP-table staging (chunked multi-row parameterized INSERTs), set-based DML
+> inside SQL-level BEGIN/COMMIT; PG records affected rows via data-modifying
+> CTE `RETURNING`, MySQL via a locking pre-probe (no RETURNING on
+> UPDATE/DELETE). PostgreSQL binary COPY for the staging load remains a
+> possible further optimization. SQLite stays per-row by design.
 
 #### Description
 Use native bulk copy APIs (SqlBulkCopy, PostgreSQL COPY) for maximum performance.

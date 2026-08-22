@@ -231,6 +231,124 @@ public sealed class SchemaDerivedValidationTests
 
     #endregion
 
+    #region Server-rendered forms share the same checks
+
+    [Fact]
+    public void FormValidator_RefusesUnparseableDatetime_WithExactlyOneError()
+    {
+        // The shared SchemaDerivedValueValidator owns temporal parseability;
+        // ValidateType no longer double-reports the same field.
+        var result = new BifrostQL.Core.Forms.BifrostFormValidator().Validate(
+            new Dictionary<string, string?> { ["StartedAt"] = "not-a-date" },
+            BuildModel().GetTableFromDbName("Orders"), BifrostQL.Core.Forms.FormMode.Insert,
+            metadataConfig: null, typeMapper: null);
+
+        result.Errors.Should().ContainSingle()
+            .Which.Message.Should().Contain("valid date/time");
+    }
+
+    [Fact]
+    public void FormValidator_RefusesDatetimeOutsideEngineWindow()
+    {
+        var result = new BifrostQL.Core.Forms.BifrostFormValidator().Validate(
+            new Dictionary<string, string?> { ["StartedAt"] = "1700-01-01" },
+            BuildModel().GetTableFromDbName("Orders"), BifrostQL.Core.Forms.FormMode.Insert,
+            metadataConfig: null, typeMapper: new RangeAssertingTypeMapper());
+
+        result.Errors.Should().Contain(e => e.Message.Contains("1753"));
+    }
+
+    [Fact]
+    public void FormValidator_RefusesDecimalIntegerPartOverflow()
+    {
+        var result = new BifrostQL.Core.Forms.BifrostFormValidator().Validate(
+            new Dictionary<string, string?> { ["Price"] = "1234.5" },
+            BuildModel().GetTableFromDbName("Orders"), BifrostQL.Core.Forms.FormMode.Insert,
+            metadataConfig: null, typeMapper: null);
+
+        result.Errors.Should().Contain(e => e.Message.Contains("3 digits"));
+    }
+
+    [Fact]
+    public void FormValidator_AcceptsCleanValues()
+    {
+        var result = new BifrostQL.Core.Forms.BifrostFormValidator().Validate(
+            new Dictionary<string, string?>
+            {
+                ["StartedAt"] = "2024-06-01T12:30:00",
+                ["Price"] = "123.45",
+                ["Quantity"] = "42",
+            },
+            BuildModel().GetTableFromDbName("Orders"), BifrostQL.Core.Forms.FormMode.Insert,
+            metadataConfig: null, typeMapper: null);
+
+        result.Errors.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region _dbSchema advertises engine temporal windows
+
+    [Fact]
+    public void DbSchema_FillsTemporalWindowIntoMinMax_WhenNoMetadataDeclared()
+    {
+        var column = ResolveDbSchemaColumn(new RangeAssertingTypeMapper(), configureColumn: null);
+
+        column.GetProperty("min").GetString().Should().Be("1753-01-01");
+        column.GetProperty("max").GetString().Should().Be("9999-12-31");
+    }
+
+    [Fact]
+    public void DbSchema_DeclaredMetadataMinWins_OverEngineWindow()
+    {
+        var column = ResolveDbSchemaColumn(new RangeAssertingTypeMapper(),
+            configureColumn: t => t.WithColumnMetadata("StartedAt", MetadataKeys.Validation.Min, "2000-01-01"));
+
+        column.GetProperty("min").GetString().Should().Be("2000-01-01");
+        // The undeclared side still gets the engine ceiling.
+        column.GetProperty("max").GetString().Should().Be("9999-12-31");
+    }
+
+    [Fact]
+    public void DbSchema_NoWindow_LeavesMinMaxNull()
+    {
+        var column = ResolveDbSchemaColumn(typeMapper: null, configureColumn: null);
+
+        column.GetProperty("min").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+        column.GetProperty("max").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+    }
+
+    private static System.Text.Json.JsonElement ResolveDbSchemaColumn(
+        ITypeMapper? typeMapper,
+        Action<DbModelTestFixture.TableBuilder>? configureColumn)
+    {
+        var fixture = DbModelTestFixture.Create()
+            .WithTable("Orders", t =>
+            {
+                t.WithPrimaryKey("Id").WithColumn("StartedAt", "datetime", isNullable: true);
+                configureColumn?.Invoke(t);
+            });
+        if (typeMapper != null)
+            fixture = fixture.WithTypeMapper(typeMapper);
+        var model = fixture.Build();
+
+        var resolver = new BifrostQL.Core.Resolvers.MetaSchemaResolver(model);
+        var result = resolver.ResolveAsync(new NullArgContext()).AsTask().GetAwaiter().GetResult();
+        var options = new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(result, options);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        return doc.RootElement.EnumerateArray()
+            .First(t => t.GetProperty("graphQlName").GetString() == "Orders")
+            .GetProperty("columns").EnumerateArray()
+            .First(c => c.GetProperty("dbName").GetString() == "StartedAt")
+            .Clone();
+    }
+
+    #endregion
+
     private static async Task<MutationTransformResult> TransformAsync(
         Dictionary<string, object?> data, ITypeMapper? typeMapper = null)
     {
@@ -280,6 +398,23 @@ public sealed class SchemaDerivedValidationTests
             })
             .Build();
         return model.GetTableFromDbName("T").Columns.First(c => c.ColumnName == name);
+    }
+
+    private sealed class NullArgContext : BifrostQL.Core.Resolvers.IBifrostFieldContext
+    {
+        public string FieldName => "_dbSchema";
+        public string? FieldAlias => null;
+        public object? Source => null;
+        public IReadOnlyList<object> Path => Array.Empty<object>();
+        public IDictionary<string, object?> UserContext => new Dictionary<string, object?>();
+        public IServiceProvider? RequestServices => null;
+        public bool HasSubFields => true;
+        public object Document => null!;
+        public object Variables => null!;
+        public IDictionary<string, object?> InputExtensions => new Dictionary<string, object?>();
+        public CancellationToken CancellationToken => CancellationToken.None;
+        public bool HasArgument(string name) => false;
+        public T? GetArgument<T>(string name) => default;
     }
 
     /// <summary>

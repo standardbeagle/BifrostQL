@@ -144,6 +144,13 @@ mutation transformer chain:
 The same `server-validation: off` switch disables these together with the
 declared rules.
 
+One shared implementation (`SchemaDerivedValueValidator`) runs on every server
+surface — the mutation transformer chain and the server-rendered form validator
+(`BifrostFormValidator`) — so a value refused on one surface can never pass
+another. For clients, `_dbSchema` advertises a temporal column's engine window
+as its `min`/`max` when no metadata declares one, so date pickers bound their
+range and browser-side validation refuses the same values the server would.
+
 To turn validation off for a table or column, set `server-validation` to an
 off value (`off`, `false`, `disabled`, `none`, `no`, `0`):
 

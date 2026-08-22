@@ -29,7 +29,21 @@ namespace BifrostQL.Core.Forms
         public ValidationResult Validate(IReadOnlyDictionary<string, string?> formValues, IDbTable table, FormMode mode,
             FormsMetadataConfiguration? metadataConfig)
         {
+            return Validate(formValues, table, mode, metadataConfig, typeMapper: null);
+        }
+
+        /// <summary>
+        /// Validates with the dialect's <see cref="ITypeMapper"/> so the
+        /// schema-derived checks can enforce engine-specific windows (SQL Server
+        /// datetime's 1753 floor, tinyint 0–255). Without a mapper the
+        /// provider-neutral defaults apply (universal integer ranges, no
+        /// temporal window).
+        /// </summary>
+        public ValidationResult Validate(IReadOnlyDictionary<string, string?> formValues, IDbTable table, FormMode mode,
+            FormsMetadataConfiguration? metadataConfig, ITypeMapper? typeMapper)
+        {
             var errors = new List<ValidationError>();
+            var mapper = typeMapper ?? AnsiSqlTypeMapper.Instance;
 
             foreach (var column in table.Columns)
             {
@@ -47,9 +61,27 @@ namespace BifrostQL.Core.Forms
 
                 ValidateType(column, value, errors);
                 ValidateMetadata(column, value, metadata, errors);
+                ValidateSchemaDerived(column, value, mapper, errors);
             }
 
             return new ValidationResult(errors);
+        }
+
+        /// <summary>
+        /// The same schema-derived checks the mutation transformer chain runs
+        /// (temporal parse + engine window, integer range, decimal precision,
+        /// binary length) — one shared implementation, so a value refused on the
+        /// GraphQL/adapter surfaces can never pass a server-rendered form.
+        /// </summary>
+        private static void ValidateSchemaDerived(ColumnDto column, string value,
+            ITypeMapper typeMapper, List<ValidationError> errors)
+        {
+            var rules = Modules.Validation.ValidationRules.ForColumn(column);
+            var messages = new List<string>();
+            Modules.Validation.SchemaDerivedValueValidator.Validate(
+                FormatLabel(column.ColumnName), column, rules, value, typeMapper, messages);
+            foreach (var message in messages)
+                errors.Add(new ValidationError(column.ColumnName, message));
         }
 
         private static bool ShouldSkipValidation(ColumnDto column, FormMode mode)
@@ -105,11 +137,10 @@ namespace BifrostQL.Core.Forms
                 if (!IsBooleanValue(value))
                     errors.Add(new ValidationError(column.ColumnName, $"{column.ColumnName} must be true or false"));
             }
-            else if (TypeMapper.IsDateTimeType(dataType))
-            {
-                if (!DateTime.TryParse(value, out _) && !DateTimeOffset.TryParse(value, out _))
-                    errors.Add(new ValidationError(column.ColumnName, $"{column.ColumnName} must be a valid date/time"));
-            }
+            // Temporal parseability is checked by ValidateSchemaDerived (the
+            // shared SchemaDerivedValueValidator), which also enforces the
+            // engine's storable window — a second parse here would double the
+            // error for one field.
         }
 
         private static void ValidateMetadata(ColumnDto column, string value,

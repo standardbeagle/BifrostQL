@@ -127,7 +127,10 @@ public class BifrostFormValidatorTests
     [Theory]
     [InlineData("123", true)]
     [InlineData("-42", true)]
-    [InlineData("3.14", true)]
+    // Fractional text on an int column is refused by the shared schema-derived
+    // check: the engine would silently truncate (SQL Server) or round (MySQL)
+    // it — accepting it here was silent data corruption, not tolerance.
+    [InlineData("3.14", false)]
     [InlineData("abc", false)]
     [InlineData("12.34.56", false)]
     public void Validate_IntColumn_ValidatesNumeric(string value, bool shouldBeValid)

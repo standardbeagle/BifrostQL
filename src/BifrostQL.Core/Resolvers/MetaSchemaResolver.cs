@@ -60,6 +60,19 @@ namespace BifrostQL.Core.Resolvers
                                 // SQLite declared type) — the same facts server validation
                                 // enforces, so clients mirror exactly what the server refuses.
                                 var (numericPrecision, numericScale) = ((double?)rules.NumericPrecision, (double?)rules.NumericScale);
+                                // A temporal column with no declared min/max advertises the
+                                // ENGINE's storable window (SQL Server datetime >= 1753,
+                                // MySQL timestamp 1970–2038) so date pickers bound their
+                                // range and the client refuses what the server would.
+                                // Declared metadata always wins.
+                                var (effectiveMin, effectiveMax) = (rules.Min, rules.Max);
+                                if ((effectiveMin is null || effectiveMax is null)
+                                    && rules.TemporalKind is not Modules.Validation.TemporalKind.None and not Modules.Validation.TemporalKind.TimeOnly
+                                    && _dbModel.TypeMapper.GetTemporalRange(c.EffectiveDataType) is { } window)
+                                {
+                                    effectiveMin ??= window.Min.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                                    effectiveMax ??= window.Max.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                                }
                                 // Get enum values from metadata if present
                                 var enumValues = c.GetMetadataValue(MetadataKeys.Enum.Values)?.Split(',').Select(v => v.Trim()).ToArray();
                                 var enumLabels = c.GetMetadataValue(MetadataKeys.Enum.Labels)?.Split(',').Select(v => v.Trim()).ToArray();
@@ -95,8 +108,8 @@ namespace BifrostQL.Core.Resolvers
                                     isLargeValue = _dbModel.TypeMapper.IsLargeValue(c.DataType),
                                     maxLength = rules.MaxLength,
                                     minLength = rules.MinLength,
-                                    min = rules.Min,
-                                    max = rules.Max,
+                                    min = effectiveMin,
+                                    max = effectiveMax,
                                     step = rules.Step,
                                     required = rules.Required,
                                     precision = numericPrecision,

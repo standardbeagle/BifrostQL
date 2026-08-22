@@ -54,6 +54,13 @@ namespace BifrostQL.Core.Model
         /// </summary>
         Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(Array.Empty<string>());
+
+        /// <summary>
+        /// The dialect's set-based batch capability, or null when the provider has none —
+        /// null keeps every batch on the per-row pipeline, so the bulk fast path is
+        /// strictly opt-in per provider.
+        /// </summary>
+        Resolvers.BulkBatch.IBulkBatchExecutor? BulkBatchExecutor => null;
     }
 
     /// <summary>

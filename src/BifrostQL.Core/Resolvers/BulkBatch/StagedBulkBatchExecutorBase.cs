@@ -150,12 +150,24 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
         }
 
         /// <summary>
+        /// The staging load strategy. The default is the chunked parameterized INSERT
+        /// (<see cref="LoadStagingChunkedAsync"/>); a provider with a streaming bulk-load
+        /// protocol overrides this to stream first and MUST fall back to the chunked load
+        /// (after clearing any partial rows) when streaming is unavailable or fails on a
+        /// value the engine's parameter coercion would have accepted — streaming is a
+        /// performance strategy, never a semantics change.
+        /// </summary>
+        protected virtual Task LoadStagingAsync(
+            DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
+            => LoadStagingChunkedAsync(connection, dialect, stagingName, plan, ct);
+
+        /// <summary>
         /// Loads the staged rows in chunked multi-row INSERTs. Every value binds as a named
         /// parameter (<c>@r&lt;row&gt;_&lt;col&gt;</c>) so the engine coerces CLR values under
         /// the same rules as the per-row path; chunk size keeps each command's parameter count
         /// under <see cref="MaxParametersPerChunk"/>.
         /// </summary>
-        private static async Task LoadStagingAsync(
+        protected static async Task LoadStagingChunkedAsync(
             DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
         {
             var columns = plan.StagingColumns;

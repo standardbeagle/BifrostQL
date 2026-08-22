@@ -26,6 +26,18 @@ public sealed class MySqlBulkBatchExecutor : StagedBulkBatchExecutorBase
 
     protected override string BuildConflictCheckSql(string stagingName, string outName)
         => MySqlBulkBatchSql.BuildConflictCheckSql(Dialect, stagingName, outName);
+
+    /// <summary>Streams via MySqlBulkCopy (LOAD DATA LOCAL INFILE) when the connection
+    /// string and server both allow it; otherwise the chunked parameterized load runs.</summary>
+    protected override async Task LoadStagingAsync(
+        System.Data.Common.DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
+    {
+        if (connection is not MySqlConnector.MySqlConnection mySqlConnection ||
+            !await MySqlStagingStream.TryLoadAsync(mySqlConnection, dialect, stagingName, plan, ct))
+        {
+            await LoadStagingChunkedAsync(connection, dialect, stagingName, plan, ct);
+        }
+    }
 }
 
 /// <summary>

@@ -26,6 +26,18 @@ public sealed class PostgresBulkBatchExecutor : StagedBulkBatchExecutorBase
 
     protected override string BuildConflictCheckSql(string stagingName, string outName)
         => PostgresBulkBatchSql.BuildConflictCheckSql(Dialect, stagingName, outName);
+
+    /// <summary>Streams via binary COPY first; falls back to the chunked parameterized load
+    /// when a column type is unmappable or a value refuses binary conversion.</summary>
+    protected override async Task LoadStagingAsync(
+        System.Data.Common.DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
+    {
+        if (connection is not Npgsql.NpgsqlConnection npgsqlConnection ||
+            !await PostgresStagingStream.TryLoadAsync(npgsqlConnection, dialect, stagingName, plan, ct))
+        {
+            await LoadStagingChunkedAsync(connection, dialect, stagingName, plan, ct);
+        }
+    }
 }
 
 /// <summary>

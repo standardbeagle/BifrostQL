@@ -74,7 +74,7 @@ The fast path engages when **all** of these hold; anything else falls back to th
 - no upsert actions (the upsert existence probe is per-row by design),
 - the table has no state machine,
 - every row's transformer filter (tenant scope, policy row scope, soft-delete guard) renders identically — true for normal tenant/policy filters; per-row-varying filters (e.g. optimistic-concurrency tokens at *different* versions in one batch) fall back,
-- no update/delete key repeats within the batch (the per-row path applies duplicates in order, last wins; a set-based join would be engine-nondeterministic, so such batches take the per-row path).
+- duplicate update/delete keys never reach either path raw: `batch-duplicate-policy` resolves them deterministically in Core before any SQL — `last-wins` (default) collapses them to their sequential net effect (update+update merges per column, a delete absorbs updates on its key; collapsed intermediates never execute, so hooks/history never see them), `reject` refuses the batch. A collision involving an upsert is always refused (its net effect depends on row existence).
 
 ## Streaming staging loads
 

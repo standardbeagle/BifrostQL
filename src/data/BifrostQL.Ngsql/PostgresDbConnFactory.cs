@@ -39,6 +39,9 @@ public sealed class PostgresDbConnFactory : IDbConnFactory
     }
 
     /// <inheritdoc />
+    public Core.Resolvers.BulkBatch.IBulkBatchExecutor? BulkBatchExecutor => PostgresBulkBatchExecutor.Instance;
+
+    /// <inheritdoc />
     public async Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
     {
         var builder = new NpgsqlConnectionStringBuilder(_connectionString) { Database = "postgres" };

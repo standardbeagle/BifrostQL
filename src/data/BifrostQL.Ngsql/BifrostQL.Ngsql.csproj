@@ -22,4 +22,7 @@
 		<ProjectReference Include="..\..\BifrostQL.Core\BifrostQL.Core.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<InternalsVisibleTo Include="BifrostQL.Core.Test" />
+	</ItemGroup>
 </Project>

@@ -72,6 +72,11 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             // statement of the batch must share ONE rendered filter (or none): the first
             // non-empty rendering is canonical and any later mismatch aborts the fast path.
             (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters)? canonicalFilter = null;
+            // One target row addressed twice (a grid edit touching the same row again, an
+            // update+delete pair) is ORDER-DEPENDENT: the per-row path applies actions in
+            // sequence (last wins), while set-based joins hit the row once, engine-arbitrarily.
+            // Any repeated update/delete key tuple falls back to the per-row path.
+            var seenKeys = new HashSet<string>(StringComparer.Ordinal);
             var seq = 0;
 
             foreach (var action in actions)
@@ -87,6 +92,18 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                     continue; // the per-row path skips these rows too (empty data, missing key/set columns)
 
                 var (op, setColumns, keyColumns, values, filter, conflict, mutationType, observerData) = staged;
+
+                if (keyColumns.Count > 0)
+                {
+                    var keySignature = string.Join("|", keyColumns
+                        .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+                        .Select(c => $"{c}={System.Convert.ToString(values.TryGetValue(c, out var v) ? v : null, System.Globalization.CultureInfo.InvariantCulture)}"));
+                    if (!seenKeys.Add(keySignature))
+                    {
+                        logger?.LogDebug("Bulk batch fast path skipped for {Table}: duplicate update/delete key in one batch", table.DbName);
+                        return null;
+                    }
+                }
 
                 if (filter.WhereSuffix.Length > 0)
                 {

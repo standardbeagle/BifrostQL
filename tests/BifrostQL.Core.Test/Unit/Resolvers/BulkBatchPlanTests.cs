@@ -236,6 +236,53 @@ public sealed class BulkBatchPlanTests
         built.Should().BeNull();
     }
 
+    [Fact]
+    public async Task DuplicateUpdateKeys_FallBack()
+    {
+        // The per-row path applies duplicate-key updates in order (last wins); a set-based
+        // UPDATE..JOIN with two staged rows matching one target row is engine-nondeterministic.
+        var ctx = BuildContext(BuildModel());
+
+        var built = await BuildAsync(ctx,
+            Update(("OrderId", 1), ("LineNo", 1), ("Status", "first")),
+            Update(("OrderId", 1), ("LineNo", 1), ("Status", "second")));
+
+        built.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DuplicateDeleteKeys_FallBack()
+    {
+        // The per-row path reports 1 affected then 0; a set-based DELETE..JOIN would double-count
+        // the row in the out-table. Fall back rather than diverge.
+        var ctx = BuildContext(BuildModel());
+
+        var built = await BuildAsync(ctx,
+            Delete(("OrderId", 1), ("LineNo", 1)),
+            Delete(("OrderId", 1), ("LineNo", 1)));
+
+        built.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DistinctKeys_AcrossOps_DoNotTriggerDuplicateGate()
+    {
+        // The same key deleted AND updated is two ops on one row — also order-dependent, so it
+        // must fall back too; distinct keys within each op build fine.
+        var ctx = BuildContext(BuildModel());
+
+        var overlapping = await BuildAsync(ctx,
+            Update(("OrderId", 1), ("LineNo", 1), ("Status", "x")),
+            Delete(("OrderId", 1), ("LineNo", 1)));
+        overlapping.Should().BeNull();
+
+        var distinct = await BuildAsync(ctx,
+            Update(("OrderId", 1), ("LineNo", 1), ("Status", "x")),
+            Update(("OrderId", 1), ("LineNo", 2), ("Status", "y")),
+            Delete(("OrderId", 2), ("LineNo", 1)));
+        distinct.Should().NotBeNull();
+    }
+
     // ---- transformer interaction ----
 
     [Fact]

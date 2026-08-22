@@ -27,6 +27,8 @@ interface DbColumnItem {
     min?: number;
     max?: number;
     step?: number;
+    precision?: number | null;
+    scale?: number | null;
     pattern?: string;
     patternMessage?: string;
     inputType?: string;

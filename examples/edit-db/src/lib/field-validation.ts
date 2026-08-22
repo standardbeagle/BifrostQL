@@ -1,5 +1,5 @@
 import type { Column } from '../types/schema';
-import { isIntegerScalar, isNumericScalar } from './scalar-types';
+import { baseParamType, isIntegerScalar, isNumericScalar } from './scalar-types';
 
 /**
  * Client-side field validation that mirrors the server's BifrostFormValidator
@@ -24,6 +24,46 @@ function isNumericColumn(column: Column): boolean {
  */
 function isIntegerColumn(column: Column): boolean {
     return isIntegerScalar(column.paramType);
+}
+
+/**
+ * Whole-number bounds per GraphQL scalar — what the server's input type (and,
+ * via the dialect type mapper, the engine) will refuse. BigInt is handled
+ * separately as text because its range exceeds a JS number.
+ */
+const INTEGER_SCALAR_BOUNDS: Record<string, { min: number; max: number }> = {
+    Int: { min: -2147483648, max: 2147483647 },
+    Short: { min: -32768, max: 32767 },
+    Byte: { min: 0, max: 255 },
+};
+
+const BIGINT_MIN = -(2n ** 63n);
+const BIGINT_MAX = 2n ** 63n - 1n;
+
+/**
+ * The temporal family of a column, from its DATABASE type (mirrors the server's
+ * ValidationRules.TemporalKindOf) — paramType can't carry this, because
+ * temporal mutation inputs are String on the wire.
+ */
+export function temporalKindOf(column: Column): 'datetime' | 'date' | 'time' | undefined {
+    const dbType = (column.dbType ?? '').toLowerCase().trim();
+    const base = dbType.includes('(') ? dbType.slice(0, dbType.indexOf('(')).trimEnd() : dbType;
+    if (base === 'datetimeoffset' || base === 'datetime' || base === 'datetime2'
+        || base === 'smalldatetime' || base.startsWith('timestamp')) return 'datetime';
+    if (base === 'date') return 'date';
+    if (base.startsWith('time')) return 'time';
+    return undefined;
+}
+
+/**
+ * Counts the digits before the decimal point of a plain decimal text form.
+ * Exponent forms are left to the server (the form inputs never produce them).
+ */
+function integerDigitCount(text: string): number | undefined {
+    const match = /^[+-]?(\d*)(?:\.\d*)?$/.exec(text.trim());
+    if (!match) return undefined;
+    const digits = match[1].replace(/^0+/, '');
+    return digits.length;
 }
 
 /**
@@ -108,6 +148,44 @@ export function validateFieldValue(
         }
     }
 
+    // Temporal columns travel as String on the wire, so nothing else has proven
+    // the text parses — mirror the server's schema-derived check and refuse
+    // unparseable dates here, where the field can show the message.
+    const temporalKind = temporalKindOf(column);
+    if (temporalKind && typeof value === 'string') {
+        const parseable = temporalKind === 'time'
+            ? /^\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(value.trim())
+            : !Number.isNaN(new Date(value).getTime());
+        if (!parseable) {
+            const noun = temporalKind === 'datetime' ? 'date/time' : temporalKind;
+            return `${label} must be a valid ${noun}`;
+        }
+    }
+
+    // BigInt travels as text to survive above 2^53; bound it as text too.
+    if (baseParamType(column.paramType) === 'BigInt' && typeof value === 'string' && value.trim() !== '') {
+        const text = value.trim();
+        if (!/^[+-]?\d+$/.test(text)) {
+            return `${label} must be a whole number`;
+        }
+        const big = BigInt(text);
+        if (big < BIGINT_MIN || big > BIGINT_MAX) {
+            return `${label} is out of range for a 64-bit integer`;
+        }
+        return undefined;
+    }
+
+    // Declared decimal precision: the integer part every engine refuses to
+    // overflow. Excess fractional digits round on write and are allowed —
+    // matching the server's ValidateDecimalPrecision.
+    if (column.precision != null && (typeof value === 'string' || typeof value === 'number')) {
+        const integerDigits = Math.max(column.precision - (column.scale ?? 0), 0);
+        const digits = integerDigitCount(String(value));
+        if (digits !== undefined && digits > integerDigits) {
+            return `${label} must have at most ${integerDigits} digits before the decimal point`;
+        }
+    }
+
     if (isNumericColumn(column)) {
         const numValue = Number(value);
         // Well-formedness first. Previously an ill-formed number just skipped the
@@ -121,6 +199,13 @@ export function validateFieldValue(
         if (isIntegerColumn(column) && !Number.isInteger(numValue)) {
             return `${label} must be a whole number`;
         }
+        // Scalar range: what the server's Int!/Short!/Byte! input (and the
+        // engine's column type) will refuse — caught here so the field shows
+        // the bound instead of Save dying on a wire error.
+        const bounds = INTEGER_SCALAR_BOUNDS[baseParamType(column.paramType)];
+        if (bounds && (numValue < bounds.min || numValue > bounds.max)) {
+            return `${label} must be between ${bounds.min} and ${bounds.max}`;
+        }
         if (column.min !== undefined && column.min !== null && numValue < column.min) {
             return `${label} must be at least ${column.min}`;
         }
@@ -130,4 +215,27 @@ export function validateFieldValue(
     }
 
     return undefined;
+}
+
+/**
+ * Validates every value PRESENT in a mutation payload against its column's
+ * schema rules — the pre-send gate the mutation hooks run so EVERY write path
+ * (forms, programmatic callers, future surfaces) is checked, not only fields a
+ * form happened to attach validators to. Absent/cleared values are skipped:
+ * required-ness is form policy (a NOT NULL column with a DB default is legal to
+ * omit on insert), and this gate must never refuse what the server accepts.
+ * Returns all failures, or an empty array when the payload is clean.
+ */
+export function validateRowValues(
+    columns: readonly Column[],
+    detail: Record<string, unknown>,
+): string[] {
+    const errors: string[] = [];
+    for (const column of columns) {
+        const value = detail[column.name];
+        if (value === undefined || value === null || value === '') continue;
+        const error = validateFieldValue(column, value, false);
+        if (error) errors.push(error);
+    }
+    return errors;
 }

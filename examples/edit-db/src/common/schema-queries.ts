@@ -25,6 +25,8 @@ query dbSchema {
       min
       max
       step
+      precision
+      scale
       pattern
       patternMessage
       inputType

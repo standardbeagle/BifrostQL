@@ -7,6 +7,7 @@ import { isJsonColumn } from "../lib/content-detect";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 import { assertGraphQlName } from "../lib/query-builder";
+import { validateRowValues } from "../lib/field-validation";
 import { baseParamType, isExactScalar, isIntegerScalar, isNumericScalar } from "../lib/scalar-types";
 
 // BigInt/Decimal exceed what a JS number holds exactly: coercing through +val /
@@ -187,6 +188,13 @@ export function useTableMutation(
                 new Error(`Cannot update ${table.label ?? table.name}: the record has no resolvable primary key.`),
             );
         }
+        // Schema validation before the wire: every write path through this hook
+        // is checked, not only fields a form attached validators to — so an
+        // invalid value is a field-level refusal here, not an engine error.
+        const validationErrors = validateRowValues(editColumns.map(c => c.column), detail);
+        if (validationErrors.length > 0) {
+            return rejectPreflight(new Error(validationErrors.join(' ')));
+        }
         let coerced: Record<string, unknown>;
         try {
             coerced = coerceDetail(detail, editColumns, idColumns, pkFilter, false);
@@ -198,6 +206,10 @@ export function useTableMutation(
 
     const insert = (detail: Record<string, unknown>) => {
         setPreflightError(null);
+        const validationErrors = validateRowValues(editColumns.map(c => c.column), detail);
+        if (validationErrors.length > 0) {
+            return rejectPreflight(new Error(validationErrors.join(' ')));
+        }
         let coerced: Record<string, unknown>;
         try {
             coerced = coerceDetail(detail, editColumns, idColumns, null, true);

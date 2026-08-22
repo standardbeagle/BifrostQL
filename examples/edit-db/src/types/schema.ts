@@ -78,6 +78,10 @@ export interface Column {
   max?: number;
   /** Step increment for numeric inputs */
   step?: number;
+  /** Declared decimal precision from the database schema (null for non-decimal columns) */
+  precision?: number | null;
+  /** Declared decimal scale paired with precision */
+  scale?: number | null;
   /** Regex pattern for validation */
   pattern?: string;
   /** Error message for pattern validation failures */

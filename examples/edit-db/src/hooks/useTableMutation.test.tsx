@@ -112,7 +112,8 @@ describe('useTableMutation', () => {
         });
 
         it('surfaces a value-coercion failure on mutation.error', async () => {
-            // Typing 1.5 into an Int column makes coerceNumericValue throw.
+            // Typing 1.5 into an Int column is refused by the schema-validation
+            // gate (validateRowValues) before coercion ever runs.
             const { query, wrapper } = createHarness();
             const idCol = col('id', 'Int!', true);
             const countCol = col('count', 'Int');
@@ -123,7 +124,7 @@ describe('useTableMutation', () => {
             );
 
             await expect(result.current.update({ count: '1.5' })).rejects.toThrow();
-            await waitFor(() => expect(result.current.error?.message).toMatch(/Invalid Int value for column 'count'/));
+            await waitFor(() => expect(result.current.error?.message).toMatch(/count must be a whole number/));
             expect(query).not.toHaveBeenCalled();
         });
 
@@ -138,7 +139,7 @@ describe('useTableMutation', () => {
             );
 
             await expect(result.current.insert({ count: '1.5' })).rejects.toThrow();
-            await waitFor(() => expect(result.current.error?.message).toMatch(/Invalid Int value/));
+            await waitFor(() => expect(result.current.error?.message).toMatch(/count must be a whole number/));
         });
 
         it('clears a stale pre-flight error once a later attempt succeeds', async () => {
@@ -159,11 +160,77 @@ describe('useTableMutation', () => {
         });
     });
 
+    describe('schema-validation gate (all writes through the hook, not only form fields)', () => {
+        it('refuses an out-of-range Int and never sends the mutation', async () => {
+            const { query, wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const qtyCol = { ...col('qty', 'Int'), dbType: 'int' };
+            const users = tbl('users', ['id'], [idCol, qtyCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(qtyCol), [idCol], '1'),
+                { wrapper },
+            );
+
+            await expect(result.current.update({ qty: 3000000000 })).rejects.toThrow();
+            await waitFor(() => expect(result.current.error?.message).toMatch(/qty must be between/));
+            expect(query).not.toHaveBeenCalled();
+        });
+
+        it('refuses an unparseable datetime string on insert', async () => {
+            const { query, wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const whenCol = { ...col('when', 'String'), dbType: 'datetime' };
+            const users = tbl('users', ['id'], [idCol, whenCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(whenCol), [idCol], ''),
+                { wrapper },
+            );
+
+            await expect(result.current.insert({ when: 'not-a-date' })).rejects.toThrow();
+            await waitFor(() => expect(result.current.error?.message).toMatch(/when must be a valid date\/time/));
+            expect(query).not.toHaveBeenCalled();
+        });
+
+        it('reports every failing field in one refusal', async () => {
+            const { wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const qtyCol = { ...col('qty', 'Int'), dbType: 'int' };
+            const whenCol = { ...col('when', 'String'), dbType: 'datetime' };
+            const users = tbl('users', ['id'], [idCol, qtyCol, whenCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(qtyCol, whenCol), [idCol], '1'),
+                { wrapper },
+            );
+
+            await expect(result.current.update({ qty: 3000000000, when: 'nope' })).rejects.toThrow();
+            await waitFor(() => {
+                expect(result.current.error?.message).toMatch(/qty/);
+                expect(result.current.error?.message).toMatch(/when/);
+            });
+        });
+
+        it('still sends a clean payload', async () => {
+            const { query, wrapper } = createHarness();
+            const idCol = col('id', 'Int!', true);
+            const qtyCol = { ...col('qty', 'Int'), dbType: 'int' };
+            const users = tbl('users', ['id'], [idCol, qtyCol]);
+            const { result } = renderHook(
+                () => useTableMutation(users, editCols(qtyCol), [idCol], '1'),
+                { wrapper },
+            );
+
+            await result.current.update({ qty: 7 });
+            expect(query).toHaveBeenCalledTimes(1);
+        });
+    });
+
     describe('BigInt precision (values pass as strings, never through Number)', () => {
         // Above Number.MAX_SAFE_INTEGER (2^53-1 = 9007199254740991): Number()
         // rounds both to ...992, so a lossy write would target the wrong row.
         const bigPk = '9007199254740993';
-        const bigVal = '12345678901234567890';
+        // Above 2^53 (precision would be lost through Number) but inside int64 —
+        // the schema gate correctly refuses anything a bigint column cannot store.
+        const bigVal = '1234567890123456789';
         const idCol = col('id', 'BigInt!', true);
         const amountCol = col('amount', 'BigInt');
         const ledger = tbl('ledger', ['id'], [idCol, amountCol]);
@@ -269,8 +336,8 @@ describe('useTableMutation', () => {
                 { wrapper },
             );
 
-            await expect(result.current.insert({ qty: '7abc' })).rejects.toThrow(/Invalid Int value for column 'qty'/);
-            await expect(result.current.insert({ qty: '7.5' })).rejects.toThrow(/Invalid Int value for column 'qty'/);
+            await expect(result.current.insert({ qty: '7abc' })).rejects.toThrow(/qty must be a number/);
+            await expect(result.current.insert({ qty: '7.5' })).rejects.toThrow(/qty must be a whole number/);
             expect(query).not.toHaveBeenCalled();
         });
 

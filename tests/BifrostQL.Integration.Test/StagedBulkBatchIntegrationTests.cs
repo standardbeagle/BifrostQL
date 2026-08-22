@@ -173,6 +173,44 @@ public abstract class StagedBulkBatchIntegrationTestBase : IAsyncLifetime
         fastState.Should().NotContain(r => r.StartsWith("3|"));
     }
 
+    // ---- parity: duplicate keys collapse deterministically BEFORE the database ----
+
+    [SkippableFact]
+    public async Task DuplicateKeys_CollapseToSequentialNetEffect_OnBothPaths()
+    {
+        Skip.If(!Available, "test database environment variable not set");
+
+        // Row 1 is updated twice (per-column merge, later wins) and row 2 is updated then
+        // deleted (the delete absorbs the update). The default last-wins policy collapses
+        // these in Core, so BOTH paths see one action per row and report identical totals.
+        const string mutation = """
+            mutation {
+                orders_batch(actions: [
+                    { update: { id: 1, tenant_id: 1, status: "first", total: 111.0 } },
+                    { update: { id: 2, tenant_id: 1, status: "moot", total: 222.0 } },
+                    { update: { id: 1, tenant_id: 1, status: "second", total: 111.0 } },
+                    { delete: { id: 2 } }
+                ])
+            }
+            """;
+
+        async Task<(int Total, List<string> State)> RunAsync(string threshold)
+        {
+            await SeedOrdersAsync();
+            var result = await ExecuteAsync(await LoadModelAsync(threshold), mutation);
+            return (BatchTotal(result, "orders_batch"), await DumpAsync("orders"));
+        }
+
+        var fast = await RunAsync("1");
+        var slow = await RunAsync("0");
+
+        fast.Total.Should().Be(slow.Total);
+        fast.State.Should().Equal(slow.State);
+        fast.Total.Should().Be(2, "the four actions collapse to one update and one delete");
+        fast.State.Should().Contain(r => r.StartsWith("1|") && r.Contains("second"));
+        fast.State.Should().NotContain(r => r.StartsWith("2|"));
+    }
+
     // ---- parity: tenant/row-scope veto is silent and per-row ----
 
     [SkippableFact]

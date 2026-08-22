@@ -325,6 +325,7 @@ public class MetadataSourceTests
         {
             [MetadataKeys.Batch.MaxSize] = "500",
             [MetadataKeys.Batch.BulkThreshold] = "50",
+            [MetadataKeys.Batch.DuplicatePolicy] = "reject",
         };
 
         var warnings = MetadataValidator.ValidateTableMetadata("dbo.orders", metadata);

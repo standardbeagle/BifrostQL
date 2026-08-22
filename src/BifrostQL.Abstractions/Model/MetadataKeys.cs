@@ -650,6 +650,15 @@ namespace BifrostQL.Core.Model
             /// negative value disables the fast path for the table.
             /// </summary>
             public const string BulkThreshold = "bulk-batch-threshold";
+
+            /// <summary>
+            /// How a batch containing multiple update/delete actions for the SAME key resolves.
+            /// Duplicates are always handled deterministically in the pipeline, before any SQL:
+            /// <c>last-wins</c> (default) collapses them to their sequential net effect
+            /// (update+update merges per column with the later action winning; a delete absorbs
+            /// updates on its key); <c>reject</c> refuses the batch with a clean error.
+            /// </summary>
+            public const string DuplicatePolicy = "batch-duplicate-policy";
         }
 
         /// <summary>

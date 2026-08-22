@@ -68,10 +68,14 @@ public sealed class BeforeCommitBatchTreeSyncTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Batch_FiresBeforeCommitHook_ForEveryAction()
+    public async Task Batch_FiresBeforeCommitHook_ForEveryEffectiveAction()
     {
         var hook = new RecordingHook();
 
+        // update id:1 followed by delete id:1 collapses under the default
+        // batch-duplicate-policy (last-wins): duplicates resolve deterministically in Core
+        // BEFORE any SQL, so the moot update never executes and no hook fires for it. A
+        // deployment that must record every intermediate write uses the 'reject' policy.
         var result = await ExecuteMutationAsync(
             "mutation { widgets_batch(actions: [ { insert: { name: \"a\" } }, { insert: { name: \"b\" } }, " +
             "{ update: { id: 1, name: \"renamed\" } }, { delete: { id: 1 } } ]) }",
@@ -79,7 +83,24 @@ public sealed class BeforeCommitBatchTreeSyncTests : IAsyncLifetime
 
         result.Errors.Should().BeNullOrEmpty();
         hook.Seen.Should().Equal(
-            MutationType.Insert, MutationType.Insert, MutationType.Update, MutationType.Delete);
+            MutationType.Insert, MutationType.Insert, MutationType.Delete);
+        hook.SawResult.Should().BeFalse("the write has not happened yet in the before-commit phase");
+    }
+
+    [Fact]
+    public async Task Batch_DistinctKeys_FireBeforeCommitHook_ForEveryAction()
+    {
+        // With no duplicate keys nothing collapses: every action still gets its hook.
+        var hook = new RecordingHook();
+
+        var result = await ExecuteMutationAsync(
+            "mutation { widgets_batch(actions: [ { insert: { name: \"a\" } }, " +
+            "{ update: { id: 1, name: \"renamed\" } }, { delete: { id: 2 } } ]) }",
+            hook);
+
+        result.Errors.Should().BeNullOrEmpty();
+        hook.Seen.Should().Equal(
+            MutationType.Insert, MutationType.Update, MutationType.Delete);
         hook.SawResult.Should().BeFalse("the write has not happened yet in the before-commit phase");
     }
 

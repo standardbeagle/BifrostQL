@@ -63,6 +63,12 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(
                     $"Batch size {actions.Count} exceeds maximum allowed size of {maxBatchSize}.");
 
+            // Duplicate keys resolve HERE — deterministically, before any SQL, identically for
+            // the set-based and per-row paths (batch-duplicate-policy: collapse to the
+            // sequential net effect, or reject). The database never sees two actions for one
+            // row, so engine join semantics never decide a duplicate's outcome.
+            actions = BatchDuplicateNormalizer.Normalize(table, actions);
+
             var ct = ctx.CancellationToken;
             var transformContext = new MutationTransformContext
             {

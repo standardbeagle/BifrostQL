@@ -1,0 +1,6 @@
+# mcp-opencode — beat N pairs with beats[N]. Live agent output; never quotes the model.
+This time the MCP demo is driven by a real coding agent. OpenCode, running DeepSeek v4 flash through OpenRouter, gets one instruction: answer from the database, using only the bifrost MCP tools.
+The agent starts by mapping the schema — each tool call streams by as the server executes it.
+Then it works the data: a server-side aggregate for the counts, and a filtered, sorted query for the titles. The model never writes SQL; every call is structured, and every call runs through the same policy pipeline as any other surface.
+The answer lands, straight from the live database.
+And the receipt: the same question asked of sqlite directly. Counts and titles match the agent's answer. Real agent, real database, nothing staged.

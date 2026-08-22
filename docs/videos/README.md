@@ -78,6 +78,7 @@ start.
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
 | `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
 | `mcp-tools` | `BifrostQL.Host` + MCP HTTP | Live MCP session in a rendered console: initialize, tools/list, real query/aggregate/search calls |
+| `mcp-opencode` | `BifrostQL.Host` + MCP HTTP + OpenCode | A real coding agent (DeepSeek v4 Flash via OpenRouter) answers a data question through the bifrost tools; closes with an on-camera sqlite verification (needs OPENROUTER_KEY) |
 | `chat-connectors` | `BifrostQL.Host` (ChatDemo) + chat SPA | Chat over the database: explore tool chips, media grid from blobs, plan proposal approved (needs an API key, below) |
 
 The `quickstart` scene seeds `blog.db` from `src/BifrostQL.UI/Schemas/blog.sql`

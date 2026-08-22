@@ -6,8 +6,14 @@ description: "Expose a database to Claude Code and other agents over the Model C
 import DemoVideo from '../../../components/DemoVideo.astro';
 
 <DemoVideo
+  scene="mcp-opencode"
+  title="A coding agent working the database through MCP"
+  description="OpenCode (DeepSeek v4 Flash via OpenRouter) answers a data question using only the bifrost tools — schema overview, server-side aggregate, filtered query — and the recording closes by asking sqlite the same question: the answers match."
+/>
+
+<DemoVideo
   scene="mcp-tools"
-  title="A live MCP session against a BifrostQL database"
+  title="The wire itself: a raw MCP session"
   description="Initialize, tools/list, and real bifrost_query / bifrost_aggregate / bifrost_search calls over the Streamable HTTP transport — every response is the running server's answer."
 />
 

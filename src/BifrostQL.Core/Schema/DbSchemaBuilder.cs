@@ -7,6 +7,9 @@ namespace BifrostQL.Core.Schema
         protected override void PreConfigure(GraphQL.Types.Schema schema)
         {
             schema.RegisterType(new JsonScalarGraphType());
+            // DateTime that also serializes database STRING representations —
+            // SQLite DATETIME columns materialize as strings (see DbDateTimeGraphType).
+            schema.RegisterType(new DbDateTimeGraphType());
             // Bind the SDL's `scalar BigInt` / `scalar Decimal` declarations (emitted
             // by every schema generator) to instances that also accept a decimal
             // string — the only form in which a browser can send a value a JSON

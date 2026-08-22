@@ -38,6 +38,14 @@ implementations produce provably different output.
   default fixture.
 - Parameterize the shared builder with a default preserving prior behavior
   rather than mutating the shared fixture (keeps blast radius to one test).
+- **A fixture value must be physically storable in the column type it claims to
+  exercise.** The edit-db BigInt precision test used `12345678901234567890` —
+  above int64, a value NO bigint column can store — and stayed green only
+  because nothing bounded it; the moment a real range check arrived (the
+  schema-derived validation layer), the test failed for the wrong reason and
+  had documented impossible behavior all along. Pick extreme values just
+  inside the real bound (here: above 2^53 for precision, below 2^63 for
+  storability), not past it.
 
 ## Forced rebuild before the RED run
 

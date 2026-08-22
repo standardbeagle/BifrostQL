@@ -305,10 +305,10 @@ function validateNumericField(
   if (isNumeric && value !== '' && value !== undefined && value !== null) {
     const numValue = Number(value);
     if (!isNaN(numValue)) {
-      if (column.min !== undefined && column.min !== null && numValue < column.min) {
+      if (column.min !== undefined && column.min !== null && numValue < Number(column.min)) {
         return `${column.label} must be at least ${column.min}`;
       }
-      if (column.max !== undefined && column.max !== null && numValue > column.max) {
+      if (column.max !== undefined && column.max !== null && numValue > Number(column.max)) {
         return `${column.label} must be at most ${column.max}`;
       }
     }

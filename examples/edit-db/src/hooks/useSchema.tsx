@@ -24,8 +24,8 @@ interface DbColumnItem {
     isLargeValue?: boolean;
     maxLength?: number;
     minLength?: number;
-    min?: number;
-    max?: number;
+    min?: number | string;
+    max?: number | string;
     step?: number;
     precision?: number | null;
     scale?: number | null;

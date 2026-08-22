@@ -541,7 +541,7 @@ function CharacterCounter({ current, max }: { current: number; max: number }) {
     );
 }
 
-function RangeHint({ min, max, step }: { min?: number | null; max?: number | null; step?: number | null }) {
+function RangeHint({ min, max, step }: { min?: number | string | null; max?: number | string | null; step?: number | null }) {
     if (min === undefined && max === undefined) return null;
     
     let hint = '';

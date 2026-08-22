@@ -160,6 +160,22 @@ export function validateFieldValue(
             const noun = temporalKind === 'datetime' ? 'date/time' : temporalKind;
             return `${label} must be a valid ${noun}`;
         }
+        // Temporal bounds: metadata min/max, or the engine's storable window
+        // the server fills in (SQL Server datetime >= 1753, MySQL timestamp
+        // 1970–2038) — refused here so the field shows the bound instead of
+        // Save dying on a server refusal.
+        if (temporalKind !== 'time') {
+            const instant = new Date(value).getTime();
+            const minDate = typeof column.min === 'string' ? new Date(column.min).getTime() : NaN;
+            const maxDate = typeof column.max === 'string' ? new Date(column.max).getTime() : NaN;
+            if (!Number.isNaN(minDate) && instant < minDate) {
+                return `${label} must be on or after ${column.min}`;
+            }
+            if (!Number.isNaN(maxDate) && instant > maxDate) {
+                return `${label} must be on or before ${column.max}`;
+            }
+        }
+        return undefined;
     }
 
     // BigInt travels as text to survive above 2^53; bound it as text too.
@@ -206,10 +222,14 @@ export function validateFieldValue(
         if (bounds && (numValue < bounds.min || numValue > bounds.max)) {
             return `${label} must be between ${bounds.min} and ${bounds.max}`;
         }
-        if (column.min !== undefined && column.min !== null && numValue < column.min) {
+        // min/max arrive as strings on the wire; Number() keeps the comparison
+        // numeric whichever form the schema layer delivered.
+        const minBound = column.min == null ? NaN : Number(column.min);
+        const maxBound = column.max == null ? NaN : Number(column.max);
+        if (!Number.isNaN(minBound) && numValue < minBound) {
             return `${label} must be at least ${column.min}`;
         }
-        if (column.max !== undefined && column.max !== null && numValue > column.max) {
+        if (!Number.isNaN(maxBound) && numValue > maxBound) {
             return `${label} must be at most ${column.max}`;
         }
     }

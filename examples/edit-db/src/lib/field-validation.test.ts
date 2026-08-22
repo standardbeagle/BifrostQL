@@ -170,3 +170,24 @@ describe('validateRowValues', () => {
         expect(validateRowValues(columns, { qty: 7 })).toEqual([]);
     });
 });
+
+describe('validateFieldValue — engine temporal windows (server-filled min/max)', () => {
+    it('refuses a date before the engine floor', () => {
+        // The server fills SQL Server datetime's storable window into min/max
+        // when no metadata is declared; the client refuses what the engine
+        // cannot store instead of Save dying on a server refusal.
+        const c = col({ dbType: 'datetime', paramType: 'String', min: '1753-01-01', max: '9999-12-31' });
+        expect(validateFieldValue(c, '1700-01-01', false)).toContain('on or after 1753-01-01');
+        expect(validateFieldValue(c, '2024-06-01', false)).toBeUndefined();
+    });
+
+    it('refuses a timestamp past the engine ceiling', () => {
+        const c = col({ dbType: 'timestamp', paramType: 'String', min: '1970-01-02', max: '2038-01-18' });
+        expect(validateFieldValue(c, '2040-01-01', false)).toContain('on or before 2038-01-18');
+    });
+
+    it('leaves temporal values unbounded when no window is advertised', () => {
+        const c = col({ dbType: 'datetime2', paramType: 'String' });
+        expect(validateFieldValue(c, '1700-01-01', false)).toBeUndefined();
+    });
+});

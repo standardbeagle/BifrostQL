@@ -72,10 +72,14 @@ export interface Column {
   maxLength?: number;
   /** Minimum string length (for validation) */
   minLength?: number;
-  /** Minimum numeric value (for validation) */
-  min?: number;
-  /** Maximum numeric value (for validation) */
-  max?: number;
+  /**
+   * Minimum bound (for validation). Numeric for number columns; an ISO date
+   * string for temporal columns — the server fills engine storable windows
+   * (SQL Server datetime >= 1753) when no metadata min is declared.
+   */
+  min?: number | string;
+  /** Maximum bound, same forms as min */
+  max?: number | string;
   /** Step increment for numeric inputs */
   step?: number;
   /** Declared decimal precision from the database schema (null for non-decimal columns) */

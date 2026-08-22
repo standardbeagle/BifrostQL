@@ -33,6 +33,15 @@ namespace BifrostQL.Core.Modules.Chat
         /// <summary>Model id used when a request does not override it.</summary>
         public string Model { get; init; } = DefaultModel;
 
+        /// <summary>
+        /// Optional API base URL override for Anthropic-Messages-compatible gateways
+        /// (the SDK appends <c>v1/messages</c>; e.g. OpenRouter's compatible surface is
+        /// <c>https://openrouter.ai/api</c>). Null uses the SDK's Anthropic default.
+        /// Config-owned, never caller-supplied — it decides where completions (and the
+        /// API key) are sent, so it is validated as an absolute https URL.
+        /// </summary>
+        public string? BaseUrl { get; init; }
+
         /// <summary>Max output tokens used when a request does not override it.</summary>
         public int MaxTokens { get; init; } = DefaultMaxTokens;
 
@@ -59,11 +68,18 @@ namespace BifrostQL.Core.Modules.Chat
                 throw new InvalidOperationException(
                     $"'{SectionName}:MaxTokens' must be a positive integer; got '{maxTokensRaw}'.");
 
+            var baseUrl = section["BaseUrl"];
+            if (!string.IsNullOrWhiteSpace(baseUrl)
+                && (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsed) || parsed.Scheme != Uri.UriSchemeHttps))
+                throw new InvalidOperationException(
+                    $"'{SectionName}:BaseUrl' must be an absolute https URL; got '{baseUrl}'.");
+
             return new ChatCompletionOptions
             {
                 ApiKey = apiKey ?? string.Empty,
                 Model = string.IsNullOrWhiteSpace(section["Model"]) ? DefaultModel : section["Model"]!.Trim(),
                 MaxTokens = maxTokens,
+                BaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl.Trim(),
             };
         }
     }

@@ -113,7 +113,12 @@ namespace BifrostQL.Core.Modules.Chat
                     $"The Anthropic chat completion service has no ApiKey. Set '{ChatCompletionOptions.SectionName}:ApiKey' " +
                     $"in configuration or the {ChatCompletionOptions.ApiKeyEnvironmentVariable} environment variable.");
 
-            return new AnthropicClient { ApiKey = options.ApiKey };
+            // BaseUrl override targets Anthropic-Messages-compatible gateways
+            // (e.g. OpenRouter at https://openrouter.ai/api); the SDK appends
+            // v1/messages. Null keeps the SDK's api.anthropic.com default.
+            return string.IsNullOrWhiteSpace(options.BaseUrl)
+                ? new AnthropicClient { ApiKey = options.ApiKey }
+                : new AnthropicClient { ApiKey = options.ApiKey, BaseUrl = options.BaseUrl };
         }
 
         private static ChatCompletionOptions ValidateOptions(ChatCompletionOptions options)

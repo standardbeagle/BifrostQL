@@ -428,6 +428,31 @@ public class ChatCompletionServiceTests
         options.ApiKey.Should().Be("sk-from-config");
         options.Model.Should().Be("claude-sonnet-5");
         options.MaxTokens.Should().Be(9000);
+        options.BaseUrl.Should().BeNull("no override configured — the SDK's Anthropic default applies");
+    }
+
+    [Fact]
+    public void FromConfiguration_binds_a_base_url_override_and_rejects_non_https()
+    {
+        // Anthropic-Messages-compatible gateways (e.g. OpenRouter) are selected by
+        // configuration only; the value decides where completions AND the api key
+        // are sent, so anything but an absolute https URL is refused at startup.
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BifrostQL:Chat:ApiKey"] = "sk-x",
+            ["BifrostQL:Chat:BaseUrl"] = "https://openrouter.ai/api",
+        }).Build();
+
+        ChatCompletionOptions.FromConfiguration(configuration).BaseUrl.Should().Be("https://openrouter.ai/api");
+
+        var insecure = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BifrostQL:Chat:ApiKey"] = "sk-x",
+            ["BifrostQL:Chat:BaseUrl"] = "http://openrouter.ai/api",
+        }).Build();
+
+        var act = () => ChatCompletionOptions.FromConfiguration(insecure);
+        act.Should().Throw<InvalidOperationException>().WithMessage("*absolute https URL*");
     }
 
     [Fact]

@@ -78,7 +78,7 @@ start.
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
 | `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
 | `mcp-tools` | `BifrostQL.Host` + MCP HTTP | Live MCP session in a rendered console: initialize, tools/list, real query/aggregate/search calls |
-| `chat-connectors` | `BifrostQL.Host` (ChatDemo) + chat SPA | Chat over the database: explore tool chips, media grid from blobs, plan proposal approved (needs ANTHROPIC_API_KEY via devkey) |
+| `chat-connectors` | `BifrostQL.Host` (ChatDemo) + chat SPA | Chat over the database: explore tool chips, media grid from blobs, plan proposal approved (needs an API key, below) |
 
 The `quickstart` scene seeds `blog.db` from `src/BifrostQL.UI/Schemas/blog.sql`
 plus `blog-seed-sample.sql` — the same two files the getting-started article
@@ -104,9 +104,12 @@ driveable surface: the `mcp-tools` scene renders a console page and performs
 the REAL JSON-RPC session against the running host while recording — every
 displayed response is the live server's answer, so the no-staging rule holds.
 
-**The chat scene calls the real Anthropic API.** `chat-connectors` refuses to
-run without `ANTHROPIC_API_KEY` (route it through devkey:
-`devkey run anthropic -- node docs/videos/capture.mjs chat-connectors`). Its
+**The chat scene calls a real model.** `chat-connectors` refuses to run without
+a key: `ANTHROPIC_API_KEY` (direct Anthropic), or `OPENROUTER_KEY` (routed
+through OpenRouter's Anthropic-compatible endpoint via the chat module's
+`BaseUrl` override). Keys come from the environment or a git-ignored repo-root
+`.env.local`; they flow into child process environments only and are never
+logged. Its
 narration deliberately never quotes model output — it describes the mechanics
 (tool chips, the media route, the proposal card), which are on screen whatever
 the model happens to say.

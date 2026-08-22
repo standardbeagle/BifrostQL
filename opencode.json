@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openrouter/deepseek/deepseek-v4-flash",
+  "mcp": {
+    "bifrost": {
+      "type": "remote",
+      "url": "http://127.0.0.1:5302/mcp",
+      "enabled": true
+    }
+  }
+}

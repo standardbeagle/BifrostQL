@@ -45,6 +45,31 @@ Both hosts build the identical tool surface from
 `BifrostMcpServerFactory.CreateServerOptions`; they differ only in transport and
 in how a session establishes identity.
 
+## Try it with a coding agent (OpenCode)
+
+The repo ships an `opencode.json` that points [OpenCode](https://opencode.ai)
+at a locally running BifrostQL MCP server (and, as committed, at DeepSeek v4
+Flash through OpenRouter — swap `model` for any provider OpenCode supports):
+
+```bash
+# 1. a database + the host with MCP enabled (any BifrostQL host works)
+sqlite3 blog.db < src/BifrostQL.UI/Schemas/blog.sql
+sqlite3 blog.db < src/BifrostQL.UI/Schemas/blog-seed-sample.sql
+dotnet run --project src/BifrostQL.Host --no-launch-profile -- \
+  --urls http://127.0.0.1:5302 \
+  "--ConnectionStrings:bifrost=Data Source=blog.db" \
+  --BifrostQL:Provider=sqlite --BifrostQL:Mcp:Http:Enabled=true
+
+# 2. an agent session over the database (key for your chosen model provider)
+export OPENROUTER_API_KEY=...
+opencode run "Using the bifrost MCP tools, how many posts exist per status?"
+```
+
+A typical session chains `bifrost_schema_overview` →
+`bifrost_describe_table` → `bifrost_aggregate` / `bifrost_query` — the agent
+never writes SQL, and every call runs through the same tenant/policy pipeline
+as GraphQL.
+
 ## Setup: stdio (Claude Code / local)
 
 Register the adapter alongside your BifrostQL endpoint. A stdio MCP session has

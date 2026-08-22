@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
@@ -8,8 +9,10 @@ using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
 using BifrostQL.Server.Resp;
 using BifrostQL.Sqlite;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -17,12 +20,17 @@ using Microsoft.Extensions.Hosting;
 namespace BifrostQL.Benchmarks;
 
 /// <summary>
-/// The SAME seeded SQLite database served two ways — the RESP (Redis-protocol)
-/// adapter on a real loopback socket, and GraphQL through the real HTTP
-/// middleware on the in-process TestServer — measuring equivalent operations:
-/// single-row read, batched read, single- and two-column updates. Both paths
-/// run the full intent pipeline (transformers unskippable), so the numbers
-/// compare protocol + engine cost over identical SQL work.
+/// The SAME seeded SQLite database served three ways, ALL over real loopback
+/// sockets so the per-request transport cost is comparable: the RESP
+/// (Redis-protocol) adapter on raw TCP, GraphQL over HTTP on Kestrel, and the
+/// binary transport (protobuf envelope carrying GraphQL text) over a persistent
+/// WebSocket on the same Kestrel host. Equivalent operations: single-row read,
+/// batched read, single- and two-column updates. Every path runs the full
+/// pipeline (transformers unskippable), so the numbers compare protocol +
+/// engine cost over identical SQL work.
+///
+/// Both HTTP-side helpers ASSERT a 200 with a data payload — an unmapped
+/// endpoint's 404 once benchmarked beautifully (~70us) while measuring nothing.
 /// </summary>
 [MemoryDiagnoser]
 [ShortRunJob]
@@ -35,6 +43,7 @@ public class RespVsGraphQLBenchmarks
     private SqliteConnection _keepAlive = null!;
     private IHost _host = null!;
     private HttpClient _graphql = null!;
+    private BinaryClient _binary = null!;
     private TcpListener _listener = null!;
     private CancellationTokenSource _cts = null!;
     private RespClient _resp = null!;
@@ -62,18 +71,32 @@ public class RespVsGraphQLBenchmarks
         DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
         _host = new HostBuilder().ConfigureWebHost(web =>
         {
-            web.UseTestServer();
-            web.ConfigureServices(services => services.AddBifrostEndpoints(o => o.AddEndpoint(e =>
+            // Real Kestrel on a loopback socket: GraphQL/binary must pay the same
+            // kernel round-trip RESP pays, or the comparison is transport-skewed.
+            web.UseKestrel(k => k.Listen(IPAddress.Loopback, 0));
+            web.ConfigureServices(services =>
             {
-                e.ConnectionString = ConnString;
-                e.Provider = "sqlite";
-                e.Path = "/graphql";
-                e.Metadata = Array.Empty<string>();
-                e.DisableAuth = true;
-            })));
-            web.Configure(_ => { });
+                services.AddBifrostEndpoints(o => o.AddEndpoint(e =>
+                {
+                    e.ConnectionString = ConnString;
+                    e.Provider = "sqlite";
+                    e.Path = "/graphql";
+                    e.Metadata = Array.Empty<string>();
+                    e.DisableAuth = true;
+                }));
+                services.AddBifrostEngine(); // binary transport's executor
+            });
+            web.Configure(app =>
+            {
+                app.UseWebSockets();
+                app.UseBifrostEndpoints();
+                app.UseBifrostBinary("/bifrost-ws", graphqlPath: "/graphql");
+            });
         }).Start();
-        _graphql = _host.GetTestClient();
+        var address = _host.Services.GetRequiredService<IServer>()
+            .Features.Get<IServerAddressesFeature>()!.Addresses.First();
+        _graphql = new HttpClient { BaseAddress = new Uri(address) };
+        _binary = BinaryClient.Connect(new UriBuilder(address) { Scheme = "ws", Path = "/bifrost-ws" }.Uri);
 
         var options = new RespWireOptions { RequireAuthentication = false, EnableWrites = true };
         var handlerServices = new ServiceCollection()
@@ -111,14 +134,16 @@ public class RespVsGraphQLBenchmarks
         }, ct);
 
         _resp = RespClient.Connect(((IPEndPoint)_listener.LocalEndpoint).Port);
-        // Warm both paths once so lazy model load is out of the measurement.
+        // Warm all three paths once so lazy model/schema load is out of the measurement.
         _ = _resp.Command("GET", "users:1");
         _ = Gql("{ users(filter: { id: { _eq: 1 } }) { data { id name } } }");
+        _ = _binary.Query("{ users(filter: { id: { _eq: 1 } }) { data { id name } } }");
     }
 
     [GlobalCleanup]
     public void Cleanup()
     {
+        _binary.Dispose();
         _resp.Dispose();
         _cts.Cancel();
         _listener.Stop();
@@ -138,7 +163,11 @@ public class RespVsGraphQLBenchmarks
         using var response = _graphql.PostAsync("/graphql",
             new StringContent(body, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
         var text = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-        if (text.Contains("\"errors\"")) throw new InvalidOperationException(text);
+        // A non-200 (e.g. an unmapped path's 404) must never be measured as a result.
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"HTTP {(int)response.StatusCode}: {text}");
+        if (text.Contains("\"errors\"") || !text.Contains("\"data\""))
+            throw new InvalidOperationException(text);
         return text;
     }
 
@@ -160,6 +189,15 @@ public class RespVsGraphQLBenchmarks
         var n = 0;
         for (var i = 0; i < Ops; i++)
             n += Gql($"{{ users(filter: {{ id: {{ _eq: {NextId()} }} }}) {{ data {{ id name email status balance }} }} }}").Length;
+        return n;
+    }
+
+    [Benchmark(OperationsPerInvoke = Ops, Description = "Binary WS single-row by pk")]
+    public int Bin_Get()
+    {
+        var n = 0;
+        for (var i = 0; i < Ops; i++)
+            n += _binary.Query($"{{ users(filter: {{ id: {{ _eq: {NextId()} }} }}) {{ data {{ id name email status balance }} }} }}").Length;
         return n;
     }
 
@@ -191,6 +229,18 @@ public class RespVsGraphQLBenchmarks
         return n;
     }
 
+    [Benchmark(OperationsPerInvoke = Ops, Description = "Binary WS _in 20 ids")]
+    public int Bin_In20()
+    {
+        var n = 0;
+        for (var i = 0; i < Ops; i++)
+        {
+            var ids = string.Join(",", Enumerable.Range(0, 20).Select(_ => NextId()));
+            n += _binary.Query($"{{ users(filter: {{ id: {{ _in: [{ids}] }} }}) {{ data {{ id name email status balance }} }} }}").Length;
+        }
+        return n;
+    }
+
     [Benchmark(OperationsPerInvoke = Ops, Description = "RESP MGET 10 keys (composite pk)")]
     public int Resp_MgetComposite10()
     {
@@ -216,12 +266,31 @@ public class RespVsGraphQLBenchmarks
         return n;
     }
 
+    // NOTE: the generated update input marks every non-nullable column REQUIRED, so the
+    // GraphQL/binary mutations must carry the full column set — that IS the wire contract a
+    // real client pays. RESP SET/HSET updating a single column sparsely is a semantic
+    // difference between the surfaces, not an unfair fixture.
     [Benchmark(OperationsPerInvoke = Ops, Description = "GraphQL update single column")]
     public int Gql_Update()
     {
         var n = 0;
         for (var i = 0; i < Ops; i++)
-            n += Gql($"mutation {{ users(update: {{ id: {NextId()}, status: \"active-{i}\" }}) }}").Length;
+        {
+            var id = NextId();
+            n += Gql($"mutation {{ users(update: {{ id: {id}, status: \"active-{i}\", name: \"User {id}\", email: \"user{id}@example.com\", balance: {id * 3.5} }}) }}").Length;
+        }
+        return n;
+    }
+
+    [Benchmark(OperationsPerInvoke = Ops, Description = "Binary WS update single column")]
+    public int Bin_Update()
+    {
+        var n = 0;
+        for (var i = 0; i < Ops; i++)
+        {
+            var id = NextId();
+            n += _binary.Query($"mutation {{ users(update: {{ id: {id}, status: \"active-{i}\", name: \"User {id}\", email: \"user{id}@example.com\", balance: {id * 3.5} }}) }}", BifrostMessageType.Mutation).Length;
+        }
         return n;
     }
 
@@ -239,8 +308,69 @@ public class RespVsGraphQLBenchmarks
     {
         var n = 0;
         for (var i = 0; i < Ops; i++)
-            n += Gql($"mutation {{ users(update: {{ id: {NextId()}, status: \"s{i}\", name: \"User {i}\" }}) }}").Length;
+        {
+            var id = NextId();
+            n += Gql($"mutation {{ users(update: {{ id: {id}, status: \"s{i}\", name: \"User {i}\", email: \"user{id}@example.com\", balance: {id * 3.5} }}) }}").Length;
+        }
         return n;
+    }
+
+    /// <summary>
+    /// Minimal blocking client for the binary WebSocket transport: one persistent
+    /// socket (the transport is strictly serial per connection), protobuf
+    /// <see cref="BifrostMessage"/> envelopes out, one Result envelope in. Errors
+    /// throw — a rejection must never be measured as a result. Payloads here stay
+    /// far below the 64 KB chunk threshold, so a Chunk frame is a setup bug.
+    /// </summary>
+    private sealed class BinaryClient : IDisposable
+    {
+        private readonly ClientWebSocket _socket = new();
+        private readonly byte[] _buffer = new byte[1024 * 1024];
+        private uint _requestId;
+
+        public static BinaryClient Connect(Uri uri)
+        {
+            var client = new BinaryClient();
+            client._socket.ConnectAsync(uri, CancellationToken.None).GetAwaiter().GetResult();
+            return client;
+        }
+
+        public string Query(string query, BifrostMessageType type = BifrostMessageType.Query)
+        {
+            var request = new BifrostMessage { RequestId = ++_requestId, Type = type, Query = query };
+            _socket.SendAsync(request.ToBytes(), WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None)
+                .GetAwaiter().GetResult();
+
+            var count = 0;
+            WebSocketReceiveResult received;
+            do
+            {
+                received = _socket.ReceiveAsync(
+                    new ArraySegment<byte>(_buffer, count, _buffer.Length - count), CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                count += received.Count;
+            } while (!received.EndOfMessage);
+
+            var response = BifrostMessage.FromBytes(_buffer, 0, count);
+            if (response.Type != BifrostMessageType.Result || response.Errors.Count > 0)
+                throw new InvalidOperationException(
+                    $"binary transport returned {response.Type}: {string.Join(" | ", response.Errors)}");
+            var text = Encoding.UTF8.GetString(response.Payload);
+            if (!text.Contains("\"data\""))
+                throw new InvalidOperationException(text);
+            return text;
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None)
+                    .GetAwaiter().GetResult();
+            }
+            catch { /* already closed */ }
+            _socket.Dispose();
+        }
     }
 
     /// <summary>No-credential store for the RequireAuthentication=false bench posture.</summary>

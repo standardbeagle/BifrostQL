@@ -101,6 +101,11 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
     private readonly IQueryTransformerService _transformerService;
     private readonly IQueryObservers? _observers;
     private readonly IServiceProvider? _services;
+    // Both services are singletons (or absent) and this executor is itself a singleton,
+    // so resolve each once — adapters call ExecuteAsync per wire command, and two
+    // container lookups per read showed up in the RESP benchmark profile.
+    private readonly Lazy<BifrostQL.Core.Observers.EngineMetrics?> _engineMetrics;
+    private readonly Lazy<BifrostQL.Core.Crypto.EnvelopeKeyManager?> _keyManager;
 
     public QueryIntentExecutor(
         PathCache<Inputs> endpoints,
@@ -112,6 +117,12 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         _transformerService = transformerService ?? throw new ArgumentNullException(nameof(transformerService));
         _observers = observers;
         _services = services;
+        _engineMetrics = new Lazy<BifrostQL.Core.Observers.EngineMetrics?>(() =>
+            _services?.GetService(typeof(BifrostQL.Core.Observers.EngineMetrics))
+                as BifrostQL.Core.Observers.EngineMetrics);
+        _keyManager = new Lazy<BifrostQL.Core.Crypto.EnvelopeKeyManager?>(() =>
+            (BifrostQL.Core.Crypto.EnvelopeKeyManager?)_services?.GetService(
+                typeof(BifrostQL.Core.Crypto.EnvelopeKeyManager)));
     }
 
     public async Task<IDbModel> GetModelAsync(string? endpoint = null)
@@ -141,14 +152,11 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         // Engine self-metrics (Prometheus slice-5): resolve the singleton when a scrape surface is
         // registered so intent (adapter) reads record their outcome + transformer duration; null
         // otherwise (no scrape surface configured) and the manager records nothing.
-        var engineMetrics = _services?.GetService(typeof(BifrostQL.Core.Observers.EngineMetrics))
-            as BifrostQL.Core.Observers.EngineMetrics;
-        var manager = new SqlExecutionManager(model, schema, _transformerService, _observers, engineMetrics);
+        var manager = new SqlExecutionManager(model, schema, _transformerService, _observers, _engineMetrics.Value);
         // The key manager (when registered) lets the seam's decrypt/mask projector
         // resolve encrypted columns per the caller's roles — same policy as GraphQL
         // reads. Absent, encrypted values redact; ciphertext never leaves the seam.
-        var keyManager = (BifrostQL.Core.Crypto.EnvelopeKeyManager?)_services?.GetService(typeof(BifrostQL.Core.Crypto.EnvelopeKeyManager));
-        return await manager.ExecuteIntentAsync(query, intent.UserContext, connFactory, cancellationToken, keyManager);
+        return await manager.ExecuteIntentAsync(query, intent.UserContext, connFactory, cancellationToken, _keyManager.Value);
     }
 
 }

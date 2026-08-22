@@ -58,7 +58,11 @@ namespace BifrostQL.Core.Model
         public IDictionary<string, TableLinkDto> SingleLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IDictionary<string, TableLinkDto> MultiLinks { get; init; } = new Dictionary<string, TableLinkDto>(StringComparer.InvariantCultureIgnoreCase);
         public IDictionary<string, ManyToManyLink> ManyToManyLinks { get; init; } = new Dictionary<string, ManyToManyLink>(StringComparer.InvariantCultureIgnoreCase);
-        public IEnumerable<ColumnDto> KeyColumns => Columns.Where(c => c.IsPrimaryKey);
+        private ColumnDto[]? _keyColumns;
+        // Materialized once: the column set is fixed after model build (ColumnLookup is
+        // only read post-construction), and hot per-request paths (RESP key parsing,
+        // pgwire, blob addressing) re-enumerate this on every command.
+        public IEnumerable<ColumnDto> KeyColumns => _keyColumns ??= Columns.Where(c => c.IsPrimaryKey).ToArray();
 
         /// <summary>
         /// Indexes on this table, attached at model build from the schema read.

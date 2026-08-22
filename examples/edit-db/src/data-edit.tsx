@@ -54,6 +54,22 @@ export function selectControlValue(value: unknown, offersNone: boolean): string 
 }
 
 /**
+ * Radix's Select emits onValueChange('') when the item matching the current
+ * value UNMOUNTS — which happens legitimately here whenever an FK select swaps
+ * its fallback "raw key" item for the freshly-fetched window item, or the
+ * option window reloads. That emission is never a user action (a user picks a
+ * real value or the NONE_VALUE sentinel), but handled as one it silently
+ * cleared the stored FK to '' and the dialog showed the placeholder over a row
+ * that HAS a value — then Save failed "required". Drop it.
+ */
+export function guardSelectClear(onChange: (val: string) => void): (val: string) => void {
+    return (val) => {
+        if (val === '') return;
+        onChange(val);
+    };
+}
+
+/**
  * Shared onSubmit/onBlur validators for a form field — client and server enforce
  * identical rules through validateFieldValue, and blur gives per-field feedback
  * before the user hits Save.
@@ -686,7 +702,7 @@ function EnumField({ column, form, isRequired }: EnumFieldProps) {
                     </Label>
                     <Select
                         value={selectControlValue(field.state.value, !isRequired)}
-                        onValueChange={(val) => field.handleChange(val === NONE_VALUE ? null : val)}
+                        onValueChange={guardSelectClear((val) => field.handleChange(val === NONE_VALUE ? null : val))}
                     >
                         <SelectTrigger id={name} className="w-full h-8 text-sm" {...ariaProps}>
                             <SelectValue placeholder={`Select ${column.label}`} />
@@ -732,9 +748,9 @@ function BooleanField({ column, form }: { column: Column; form: AnyReactFormApi 
                             <Label htmlFor={name} className="text-xs text-muted-foreground">{column.label}</Label>
                             <Select
                                 value={current}
-                                onValueChange={(val) => field.handleChange(
+                                onValueChange={guardSelectClear((val) => field.handleChange(
                                     val === NONE_VALUE ? null : val === BOOL_TRUE,
-                                )}
+                                ))}
                             >
                                 <SelectTrigger id={name} className="w-full h-8 text-sm">
                                     <SelectValue />
@@ -879,7 +895,7 @@ function FkSelectShell({
                     </span>
                 )}
             </Label>
-            <Select value={value} onValueChange={onValueChange} onOpenChange={onOpenChange}>
+            <Select value={value} onValueChange={guardSelectClear(onValueChange)} onOpenChange={onOpenChange}>
                 <SelectTrigger id={column.name} className="w-full h-8 text-sm" {...ariaProps}>
                     <SelectValue placeholder={`Select ${column.label}`} />
                 </SelectTrigger>

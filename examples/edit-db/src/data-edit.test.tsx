@@ -655,6 +655,80 @@ describe('DataEditDialog unresolvable-record guards', () => {
   });
 });
 
+describe('DataEditDialog FK select shows the stored value', () => {
+  function fkColumn(name: string, over: Record<string, unknown> = {}) {
+    return {
+      dbName: name, graphQlName: name, name, label: name,
+      paramType: 'Int', dbType: 'int',
+      isPrimaryKey: false, isIdentity: false, isNullable: true, isReadOnly: false,
+      metadata: {}, ...over,
+    };
+  }
+
+  function invoiceTable() {
+    return {
+      name: 'invoices', graphQlName: 'invoices', dbName: 'invoices',
+      label: 'Invoice', labelColumn: 'memo', primaryKeys: ['invoice_id'],
+      singleJoins: [{
+        name: 'companies', fieldName: 'companies',
+        sourceColumnNames: ['company_id'], destinationTable: 'companies',
+        destinationColumnNames: ['company_id'],
+      }],
+      multiJoins: [],
+      columns: [
+        { ...fkColumn('invoice_id'), isPrimaryKey: true, isIdentity: true },
+        fkColumn('company_id'),
+        { ...fkColumn('memo'), paramType: 'String', dbType: 'nvarchar' },
+      ],
+    };
+  }
+
+  function companiesTable() {
+    return {
+      name: 'companies', graphQlName: 'companies', dbName: 'companies',
+      label: 'Company', labelColumn: 'name', primaryKeys: ['company_id'],
+      singleJoins: [], multiJoins: [],
+      columns: [
+        { ...fkColumn('company_id'), isPrimaryKey: true, isIdentity: true },
+        { ...fkColumn('name'), paramType: 'String', dbType: 'nvarchar' },
+      ],
+    };
+  }
+
+  it('renders the stored FK value instead of the placeholder', async () => {
+    const invoices = invoiceTable();
+    const companies = companiesTable();
+    schemaMock.schema.data = [invoices, companies];
+    schemaMock.schema.findTable.mockImplementation((n: string) =>
+      n === 'invoices' ? invoices : n === 'companies' ? companies : undefined);
+    fetcherQuery.mockImplementation(async (q: string) => {
+      if (q.includes('GetSingleEdit')) {
+        return { value: { data: [{ company_id: 1, memo: 'hello' }] } };
+      }
+      // FK option window + label lookups resolve company 1 -> Acme.
+      return { value: { data: [{ company_id: 1, name: 'Acme' }] } };
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <DataEditDialog table="invoices" editId="1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.queryAllByTestId('mock-input').length).toBeGreaterThan(0));
+    // The row's company_id is 1; the closed select must show its label (or at
+    // minimum the raw key), never the empty placeholder.
+    const memoInput = screen.getAllByTestId('mock-input').find(i => (i as HTMLInputElement).id === 'memo') as HTMLInputElement;
+    console.log('MEMO VALUE:', JSON.stringify(memoInput?.value));
+    console.log('TRIGGER TEXT:', JSON.stringify(document.getElementById('company_id')?.textContent));
+    await waitFor(() => {
+      const trigger = document.getElementById('company_id');
+      expect(trigger).not.toBeNull();
+      expect(trigger!.textContent).toMatch(/Acme|^1$/);
+    });
+  });
+});
+
 describe('isFkOrEnumColumn', () => {
   const column = (over: Partial<Column> = {}): Column =>
     ({ name: 'status', paramType: 'String', isNullable: true, ...over }) as Column;

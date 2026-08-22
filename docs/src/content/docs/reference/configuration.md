@@ -142,7 +142,7 @@ consistently.
 | `default-limit` | number | model/table | Default page size |
 | `de-pluralize` | `true`/`false` | model | De-pluralize table names in schema |
 | `batch-max-size` | number | table | Maximum batch mutation size |
-| `bulk-batch-threshold` | number | table | Batch size at which SQL Server, PostgreSQL, and MySQL batches switch to the set-based fast path (temp-table staging + set-based DML in one SQL-level transaction). Default 50; `0` or negative disables the fast path. Batches with hooks (approval, history, CDC), upserts, or state machines always use the per-row path; SQLite keeps the per-row path (a single in-process writer gains nothing from staging) |
+| `bulk-batch-threshold` | number | table | Batch size at which SQL Server, PostgreSQL, and MySQL batches switch to the set-based fast path (temp-table staging + set-based DML in one SQL-level transaction). Default 50; `0` or negative disables the fast path. Batches with hooks (approval, history, CDC), upserts, or state machines always use the per-row path; SQLite keeps the per-row path (a single in-process writer gains nothing from staging). Measured throughput: see [Bulk Batch Performance](/reference/bulk-batch-performance/) |
 
 ### Optional feature metadata
 

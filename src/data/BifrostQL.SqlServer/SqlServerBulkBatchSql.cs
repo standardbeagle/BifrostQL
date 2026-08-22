@@ -45,8 +45,13 @@ internal static class SqlServerBulkBatchSql
         sb.Append(", CAST(NULL AS TINYINT) AS ").Append(dialect.EscapeIdentifier(GroupColumn));
         sb.Append(", CAST(NULL AS BIT) AS ").Append(dialect.EscapeIdentifier(ConflictColumn));
         foreach (var column in columns)
-            sb.Append(", t.").Append(dialect.EscapeIdentifier(column))
-              .Append(" AS ").Append(dialect.EscapeIdentifier(StagedColumn(column)));
+        {
+            // NULLIF(col, col) keeps the cloned column's exact type but drops the target's
+            // NOT NULL constraint: a staging row leaves every column its op doesn't use NULL.
+            var escaped = dialect.EscapeIdentifier(column);
+            sb.Append(", NULLIF(t.").Append(escaped).Append(", t.").Append(escaped)
+              .Append(") AS ").Append(dialect.EscapeIdentifier(StagedColumn(column)));
+        }
         sb.Append(" INTO ").Append(dialect.EscapeIdentifier(stagingName))
           .Append(" FROM ").Append(tableRef).Append(" t;\r\n");
         sb.Append("CREATE CLUSTERED INDEX ").Append(dialect.EscapeIdentifier("IX" + stagingName.TrimStart('#')))

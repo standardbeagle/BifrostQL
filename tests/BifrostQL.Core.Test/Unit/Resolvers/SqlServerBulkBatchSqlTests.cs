@@ -33,9 +33,10 @@ public sealed class SqlServerBulkBatchSqlTests
         sql.Should().Contain($"INTO [{Stage}]");
         sql.Should().Contain("CREATE CLUSTERED INDEX");
         sql.Should().Contain("[__seq]").And.Contain("[__op]").And.Contain("[__grp]").And.Contain("[__conflict]");
-        // Staged data columns carry the prefix so filter references can never bind to them.
-        sql.Should().Contain("t.[Status] AS [__c_Status]");
-        sql.Should().Contain("t.[Total] AS [__c_Total]");
+        // Staged data columns carry the prefix so filter references can never bind to them,
+        // and NULLIF drops the target's NOT NULL constraint while keeping its type.
+        sql.Should().Contain("NULLIF(t.[Status], t.[Status]) AS [__c_Status]");
+        sql.Should().Contain("NULLIF(t.[Total], t.[Total]) AS [__c_Total]");
     }
 
     [Fact]

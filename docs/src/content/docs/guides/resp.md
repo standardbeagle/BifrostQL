@@ -31,7 +31,7 @@ builder.Services.AddBifrostResp(o =>
     o.Port = 6379;                     // default 6379 (the Redis port)
     o.RequireAuthentication = true;    // default; AUTH required before any identity-bearing command
     o.Endpoint = "/graphql";           // which BifrostQL endpoint to read; null = the only one
-    // o.EnableWrites = true;          // opt-in: SET/HSET/DEL through the mutation pipeline (default off)
+    // o.EnableWrites = true;          // opt-in: SET/HSET/MSET/DEL through the mutation pipeline (default off)
 });
 
 // REQUIRED — the identity source AUTH authenticates against. No default registration.
@@ -45,7 +45,7 @@ builder.Services.AddSingleton<IRespCredentialStore, MyCredentialStore>();
 | `Port` | `6379` | TCP port the front door listens on. |
 | `RequireAuthentication` | `true` | When true, a connection must complete `AUTH` (or inline `HELLO … AUTH`) before any identity-bearing command runs; until then those commands are refused with `NOAUTH`. There is no anonymous mode unless a deployment explicitly sets this `false`. |
 | `Endpoint` | `null` | Registered BifrostQL endpoint path to read/write against; `null` selects the single registered endpoint. |
-| `EnableWrites` | `false` | Master gate for the write surface (SET/HSET/DEL). Off by default: every write is refused with a clean `-ERR` and executes nothing until a deployment opts in. |
+| `EnableWrites` | `false` | Master gate for the write surface (SET/HSET/MSET/DEL). Off by default: every write is refused with a clean `-ERR` and executes nothing until a deployment opts in. |
 | `MaxBulkLength` | `1048576` (1 MiB) | DoS guard on the unauthenticated path: a bulk/inline length prefix beyond this is refused, never allocated. |
 | `MaxAggregateElements` | `1048576` | DoS guard: a declared array/map element count beyond this is refused, so a huge multibulk count cannot pre-allocate an unbounded array. |
 | `MaxNestingDepth` | `32` | DoS guard: how deeply aggregates may nest before the decoder refuses to descend (prevents a stack-overflow teardown of the host). |
@@ -182,7 +182,7 @@ primary keys of rows the identity may see are ever emitted — on every page.
 
 ## Optional writes
 
-The write surface (`SET`/`HSET`/`DEL`) is **off by default**. Until a deployment sets
+The write surface (`SET`/`HSET`/`MSET`/`DEL`) is **off by default**. Until a deployment sets
 `RespWireOptions.EnableWrites = true`, every write command is refused with
 `ERR write commands are disabled` and executes nothing — no intent is ever built, and
 the disabled surface cannot be probed for schema shape. This is the highest-risk
@@ -201,6 +201,7 @@ scope affects **zero rows**.
 |---------|----------|
 | `SET <key> <json>` | **Update-only.** Sets the addressed row's columns from a JSON object (the same column-name → value shape GET returns). It does **not** insert a missing row — an addressed-but-absent or out-of-scope key is narrowed out by the pipeline and the write is a no-op. The primary key comes from the key, not the body; a PK column in the body must equal the key value (a conflict is a clean `-ERR`) and is never a SET column. Requires at least one non-PK column. Reply is always `+OK` (a no-op update still replies OK, exactly as Redis SET does not report prior existence). |
 | `HSET <key> <field> <value> [field value …]` | Updates the named columns of the addressed row. Each field is validated against the table's columns (unknown → clean `-ERR`); a primary-key column cannot be set via HSET (the PK comes from the key). Reply is the integer count of fields written (the number of field/value pairs supplied) — distinct from Redis' "new fields" count, since a row's columns pre-exist. |
+| `MSET <key> <json> [key json …]` | SET semantics for many keys: each pair is an **update-only** write (PK from the key, JSON body of non-PK columns). All pairs are validated up front — one malformed pair rejects the whole command with nothing written. Execution is one batch per table: each table's writes commit or roll back as a unit, and a batch reaching the table's `bulk-batch-threshold` rides the set-based fast path. Reply deviates from Redis deliberately: instead of a blind `+OK`, it is the integer count of keys that actually updated a row — a missing or scoped-away key is silently uncounted, indistinguishable from absent. |
 | `DEL <key> [key …]` | Deletes the addressed rows, one delete intent per key. The **pipeline** decides hard vs soft delete (a table with soft-delete metadata is soft-deleted by its transformer — the adapter never special-cases it). Every key is validated up front, so one malformed key rejects the whole command with no partial delete. Reply is the integer count of keys that actually deleted a row (a key whose row is missing or out of scope is a no-op and is not counted). |
 
 ## Unsupported commands and non-goals

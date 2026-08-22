@@ -5,6 +5,8 @@ description: "Measured throughput of the set-based batch fast path on SQL Server
 
 BifrostQL batch mutations (`<table>_batch`, and `IMutationIntentExecutor.ExecuteBatchAsync` used by the protocol adapters) take a set-based fast path on SQL Server, PostgreSQL, and MySQL: every row runs the full mutation transformer chain, the transformed rows are staged into a temp table (streamed where the engine allows — see below), and the whole batch applies as set-based INSERT/UPDATE/DELETE statements inside one SQL-level transaction. This page reports measured throughput of that path so you can decide when to use it and what to expect.
 
+Where this wins over reaching for a raw bulk API yourself: native bulk loaders (`SqlBulkCopy`, `COPY`, `LOAD DATA`) only *insert*, and they bypass every policy. BifrostQL's batch path takes **mixed insert/update/delete in one transaction** — the shape of a grid edit saving fifty touched rows, or an hourly sync reconciling two systems — at bulk-load-class throughput, with tenancy, policy, soft-delete, audit, and optimistic-concurrency semantics applied per row.
+
 ## Measured results
 
 Method: median of 5 iterations after 1 warmup, wall clock, via `dotnet run -c Release -- --bulk-paths` in `benchmarks/BifrostQL.Benchmarks`. Four-column table (`INT` PK, `INT`, `VARCHAR(100)`, `DECIMAL(18,2)`), no hooks/tenancy configured — transformer-heavy tables (tenancy, policy, encryption) add per-row CPU that shifts bulk numbers down somewhat, and hook-bearing tables use the per-row path entirely (see "When the fast path runs"). Environment: one machine (WSL2), database servers in local Docker containers (`mcr.microsoft.com/mssql/server:2022`, `postgres:16-alpine`, `mysql:8` with `--local-infile=1`), .NET 10. **Treat the numbers as relative, not absolute** — loopback networking flatters round-trip costs, and your hardware, network, and schema will shift everything. Re-run the harness against your own environment for capacity planning.
@@ -71,7 +73,8 @@ The fast path engages when **all** of these hold; anything else falls back to th
 - no before-commit / in-transaction mutation hooks are registered (approval workflows, change history, CDC outbox need per-row before-images and identities),
 - no upsert actions (the upsert existence probe is per-row by design),
 - the table has no state machine,
-- every row's transformer filter (tenant scope, policy row scope, soft-delete guard) renders identically — true for normal tenant/policy filters; per-row-varying filters (e.g. optimistic-concurrency tokens at *different* versions in one batch) fall back.
+- every row's transformer filter (tenant scope, policy row scope, soft-delete guard) renders identically — true for normal tenant/policy filters; per-row-varying filters (e.g. optimistic-concurrency tokens at *different* versions in one batch) fall back,
+- no update/delete key repeats within the batch (the per-row path applies duplicates in order, last wins; a set-based join would be engine-nondeterministic, so such batches take the per-row path).
 
 ## Streaming staging loads
 
@@ -88,7 +91,7 @@ The staging load itself streams where the engine allows, and falls back to chunk
 - Raise `batch-max-size` (default 100) on tables that receive genuine bulk traffic — the fast path's advantage grows with batch size, and 100-row batches leave most of it on the table.
 - Lower `bulk-batch-threshold` (default 50) toward 1 if your batches are small but frequent; set `0` to pin a table to the per-row path.
 - For machine-driven ingest, prefer the intent API (or a protocol adapter) over GraphQL text to skip document parsing.
-- The RESP (Redis-protocol) adapter's multi-key `DEL` already routes as one batch per table, so a `DEL` of ≥ threshold keys rides the fast path automatically. A multi-key write command (`MSET`) is not yet implemented.
+- The RESP (Redis-protocol) adapter's multi-key `MSET` and `DEL` route as one batch per table, so a command with ≥ threshold keys rides the fast path automatically (see the RESP guide's write-command table for their semantics).
 - Tables with approval/history/CDC hooks always take the per-row path today; if you need bulk loads on such tables, batch into a staging table of your own and promote via a hook-free table, or disable the feature for the load window deliberately.
 
 ## Reproducing

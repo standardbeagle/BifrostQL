@@ -163,6 +163,43 @@ namespace BifrostQL.Server.Test.Resp
             executor.Intents.Should().HaveCount(2, "one GET intent plus one batched MGET _in intent");
         }
 
+        [Fact]
+        public async Task MGet_CompositePkKeys_CollapseIntoOneOrOfAndIntent()
+        {
+            // Regression: composite-PK MGET previously issued ONE INTENT PER KEY (N round-trips —
+            // the benchmark measured 10 composite keys costing ~2x 20 single-PK keys). Two hits
+            // requested out of store order plus a miss must resolve through a SINGLE OR-of-AND
+            // intent, positionally aligned, each key mapped to ITS row by the composite token.
+            var (executor, ctx) = Arrange(Tenant1);
+            var reply = await new RespMGetCommandHandler().HandleAsync(
+                Ctx(ctx, "MGET", "order_items:10:2", "order_items:10:1", "order_items:99:9"), CancellationToken.None);
+
+            var items = reply.Should().BeOfType<RespArray>().Which.Items!;
+            items.Should().HaveCount(3);
+            BulkText(items[0]).Should().Contain("\"sku\":\"widget\"").And.Contain("\"line_no\":2");
+            BulkText(items[1]).Should().Contain("\"sku\":\"gadget\"").And.Contain("\"line_no\":1");
+            items[2].Should().BeOfType<RespBulkString>().Which.Value.Should().BeNull();
+            executor.Intents.Should().HaveCount(1, "same-table composite-PK keys collapse into one OR-of-AND intent");
+        }
+
+        [Fact]
+        public async Task Get_AmbiguousTableName_IsCleanError_NeverExecutes_NeverGuesses()
+        {
+            // Two tables with the same bare name in different schemas: binding the first
+            // model-order table would silently mis-target columns, policy metadata and — via
+            // SET/DEL, which share ParseKey — the WRITE target. The lookup must fail closed.
+            var duplicateA = FakeTable("users", "sales", Col("id", "int", 1, pk: true));
+            var duplicateB = FakeTable("users", "audit", Col("id", "int", 1, pk: true));
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { duplicateA, duplicateB });
+            var (executor, ctx) = Arrange(Tenant1, model);
+
+            var reply = await new RespGetCommandHandler().HandleAsync(Ctx(ctx, "GET", "users:1"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>().Which.Message.Should().Contain("ambiguous");
+            executor.Intents.Should().BeEmpty("an ambiguous name must never execute against a guessed table");
+        }
+
         // ---- EXISTS ---------------------------------------------------------
 
         [Fact]
@@ -237,9 +274,10 @@ namespace BifrostQL.Server.Test.Resp
         private static readonly IDictionary<string, object?> Tenant1 =
             new Dictionary<string, object?> { ["tenantId"] = 1 };
 
-        private static (FakeIntentExecutor executor, IServiceProvider services) Arrange(IDictionary<string, object?> tenant)
+        private static (FakeIntentExecutor executor, IServiceProvider services) Arrange(
+            IDictionary<string, object?> tenant, IDbModel? model = null)
         {
-            var executor = new FakeIntentExecutor(BuildModel());
+            var executor = new FakeIntentExecutor(model ?? BuildModel());
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(executor)
                 .BuildServiceProvider();
@@ -281,12 +319,15 @@ namespace BifrostQL.Server.Test.Resp
         private static ColumnDto Col(string name, string type, int ordinal, bool pk = false) =>
             new() { ColumnName = name, GraphQlName = name, DataType = type, OrdinalPosition = ordinal, IsPrimaryKey = pk };
 
-        private static IDbTable FakeTable(string name, params ColumnDto[] columns)
+        private static IDbTable FakeTable(string name, params ColumnDto[] columns) =>
+            FakeTable(name, "dbo", columns);
+
+        private static IDbTable FakeTable(string name, string schema, params ColumnDto[] columns)
         {
             var t = Substitute.For<IDbTable>();
             t.DbName.Returns(name);
             t.GraphQlName.Returns(name);
-            t.TableSchema.Returns("dbo");
+            t.TableSchema.Returns(schema);
             t.Columns.Returns(columns);
             t.KeyColumns.Returns(columns.Where(c => c.IsPrimaryKey));
             return t;
@@ -370,12 +411,15 @@ namespace BifrostQL.Server.Test.Resp
                         break;
                     case FilterType.Join when node.ColumnName is not null && node.Next is not null:
                         var op = node.Next.RelationName;
-                        var values = new HashSet<string>(StringComparer.Ordinal);
+                        // UNION per column: the composite-PK batch is an OR of per-key AND
+                        // branches, so a column collects one value per branch — overwriting
+                        // would keep only the last branch's key.
+                        if (!acc.TryGetValue(node.ColumnName, out var values))
+                            acc[node.ColumnName] = values = new HashSet<string>(StringComparer.Ordinal);
                         if (op == FilterOperators.In && node.Next.Value is System.Collections.IEnumerable list and not string)
                             foreach (var v in list) values.Add(Token(v));
                         else
                             values.Add(Token(node.Next.Value));
-                        acc[node.ColumnName] = values;
                         break;
                 }
             }

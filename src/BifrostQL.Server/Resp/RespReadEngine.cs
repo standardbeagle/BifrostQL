@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
@@ -44,6 +46,58 @@ namespace BifrostQL.Server.Resp
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
         /// <summary>
+        /// Per-model table-name index for key parsing. Every RESP data command parses at least
+        /// one key, and a linear scan over <see cref="IDbModel.Tables"/> per key is the single
+        /// hottest lookup on the command path. Keyed by model identity so a reloaded model's
+        /// fresh instance builds a fresh index and the old one falls away with the old model.
+        /// A name that matches MORE THAN ONE table (same bare name in two schemas, or one
+        /// table's DbName colliding with another's GraphQL name) is recorded as ambiguous and
+        /// FAILS the lookup — silently binding the first model-order table would mis-target
+        /// columns, policy metadata and the write target (same fail-fast contract as
+        /// <c>DbModel.GetTableFromDbName</c>).
+        /// </summary>
+        private sealed record RespTableIndex(
+            IReadOnlyDictionary<string, IDbTable> ByName,
+            IReadOnlySet<string> Ambiguous);
+
+        private static readonly ConditionalWeakTable<IDbModel, RespTableIndex> TableIndexCache = new();
+
+        private static RespTableIndex GetTableIndex(IDbModel model) =>
+            TableIndexCache.GetValue(model, static m =>
+            {
+                var byName = new Dictionary<string, IDbTable>(StringComparer.OrdinalIgnoreCase);
+                var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var table in m.Tables)
+                {
+                    Register(table.DbName, table);
+                    Register(table.GraphQlName, table);
+                }
+                return new RespTableIndex(byName, ambiguous);
+
+                void Register(string name, IDbTable table)
+                {
+                    if (byName.TryGetValue(name, out var existing))
+                    {
+                        if (!ReferenceEquals(existing, table))
+                            ambiguous.Add(name);
+                    }
+                    else
+                    {
+                        byName.Add(name, table);
+                    }
+                }
+            });
+
+        /// <summary>
+        /// Columns in schema ordinal order, materialized once per table instance — RowToJson,
+        /// VisibleFields and BuildRowQuery each re-sorted per row/command before this.
+        /// </summary>
+        private static readonly ConditionalWeakTable<IDbTable, ColumnDto[]> OrderedColumnsCache = new();
+
+        private static ColumnDto[] OrderedColumns(IDbTable table) =>
+            OrderedColumnsCache.GetValue(table, static t => t.Columns.OrderBy(c => c.OrdinalPosition).ToArray());
+
+        /// <summary>
         /// Parses <paramref name="rawKey"/> as <c>&lt;table&gt;:&lt;pk…&gt;</c> against the model.
         /// The table is validated against the model (unknown → clean error, never executed against an
         /// unvalidated name); the remaining segments must match the primary-key arity exactly
@@ -55,10 +109,12 @@ namespace BifrostQL.Server.Resp
         {
             var segments = rawKey.Split(RespProtocol.KeySeparator);
             var tableName = segments[0];
-            var table = model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(t.GraphQlName, tableName, StringComparison.OrdinalIgnoreCase));
-            if (table is null)
+            var index = GetTableIndex(model);
+            if (index.Ambiguous.Contains(tableName))
+                return RespKeyParse.Failure(
+                    $"{RespProtocol.ErrPrefix}table name '{tableName}' is ambiguous: more than one table matches; " +
+                    "give the tables distinct names to address them over RESP");
+            if (!index.ByName.TryGetValue(tableName, out var table))
                 return RespKeyParse.Failure($"{RespProtocol.ErrPrefix}unknown table '{tableName}'");
 
             var keyColumns = table.KeyColumns.ToList();
@@ -84,10 +140,10 @@ namespace BifrostQL.Server.Resp
 
         /// <summary>
         /// Resolves each key to at most one row, positionally aligned to <paramref name="keys"/>.
-        /// Keys are grouped by table; a single-column-PK table with more than one requested key is
-        /// batched into ONE <c>_in</c> intent (DbTableBatchResolver-style: as few round-trips as
-        /// possible), and results are mapped back per key. Composite-PK keys (and a lone single-PK
-        /// key) resolve with an exact primary-key-equality intent. Every intent carries the caller's
+        /// Keys are grouped by table; more than one requested key against one table is batched into
+        /// ONE intent (DbTableBatchResolver-style: as few round-trips as possible) — a single-column
+        /// PK via <c>_in</c>, a composite PK via an OR of per-key AND branches — and results are
+        /// mapped back per key. A lone key resolves with an exact primary-key-equality intent. Every intent carries the caller's
         /// <paramref name="userContext"/>, so tenant/soft-delete/policy filtering applies per key —
         /// an out-of-scope row simply yields <c>null</c>.
         /// </summary>
@@ -113,9 +169,12 @@ namespace BifrostQL.Server.Resp
                 var table = keys[indices[0]].Table;
                 var keyColumns = table.KeyColumns.ToList();
 
-                if (keyColumns.Count == 1 && indices.Count > 1)
+                if (indices.Count > 1)
                 {
-                    await ResolveSinglePkBatchAsync(executor, keys, indices, table, keyColumns[0], userContext, endpoint, results, cancellationToken);
+                    if (keyColumns.Count == 1)
+                        await ResolveSinglePkBatchAsync(executor, keys, indices, table, keyColumns[0], userContext, endpoint, results, cancellationToken);
+                    else
+                        await ResolveCompositePkBatchAsync(executor, keys, indices, table, keyColumns, userContext, endpoint, results, cancellationToken);
                     continue;
                 }
 
@@ -136,7 +195,7 @@ namespace BifrostQL.Server.Resp
         public static string RowToJson(IReadOnlyDictionary<string, object?> row, IDbTable table)
         {
             var ordered = new Dictionary<string, object?>();
-            foreach (var column in table.Columns.OrderBy(c => c.OrdinalPosition))
+            foreach (var column in OrderedColumns(table))
                 ordered[column.DbName] = row.GetValueOrDefault(column.DbName);
             return JsonSerializer.Serialize(ordered, JsonOptions);
         }
@@ -154,7 +213,7 @@ namespace BifrostQL.Server.Resp
             IReadOnlyDictionary<string, object?> row, IDbTable table)
         {
             var fields = new List<KeyValuePair<string, object?>>();
-            foreach (var column in table.Columns.OrderBy(c => c.OrdinalPosition))
+            foreach (var column in OrderedColumns(table))
                 if (row.TryGetValue(column.DbName, out var value))
                     fields.Add(new KeyValuePair<string, object?>(column.DbName, value));
             return fields;
@@ -230,6 +289,82 @@ namespace BifrostQL.Server.Resp
             }
         }
 
+        /// <summary>
+        /// Batches N composite-PK keys against one table into ONE intent: an OR whose branches each
+        /// pin EVERY key column with <c>_eq</c> (sibling keys inside a branch AND together — see
+        /// <c>TableFilter.StackFilters</c>), the composite counterpart of the single-PK <c>_in</c>
+        /// batch. Identical requested keys collapse to one branch; rows map back per key through the
+        /// same type-canonical token the single-PK batch uses, extended across all key columns. The
+        /// one intent runs the full transformer pipeline under the caller's identity, so an
+        /// out-of-scope row is simply absent — exactly as the per-key intents behaved.
+        /// </summary>
+        private static async Task ResolveCompositePkBatchAsync(
+            IQueryIntentExecutor executor,
+            IReadOnlyList<RespKey> keys,
+            List<int> indices,
+            IDbTable table,
+            IReadOnlyList<ColumnDto> keyColumns,
+            IDictionary<string, object?> userContext,
+            string? endpoint,
+            IReadOnlyDictionary<string, object?>?[] results,
+            CancellationToken cancellationToken)
+        {
+            var branchByToken = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var i in indices)
+            {
+                var token = CompositeKeyToken(keyColumns, keys[i].KeyValues);
+                if (token is null || branchByToken.ContainsKey(token))
+                    continue;
+                var branch = new Dictionary<string, object?>();
+                for (var c = 0; c < keyColumns.Count; c++)
+                    branch[keyColumns[c].GraphQlName] = new Dictionary<string, object?> { [FilterOperators.Eq] = keys[i].KeyValues[c] };
+                branchByToken[token] = branch;
+            }
+
+            var query = BuildRowQuery(table);
+            query.Filter = TableFilter.FromObject(
+                new Dictionary<string, object?> { ["or"] = branchByToken.Values.ToList() },
+                table.DbName);
+            var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
+
+            var byToken = new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal);
+            var rowKeyValues = new object?[keyColumns.Count];
+            foreach (var row in result.Rows)
+            {
+                for (var c = 0; c < keyColumns.Count; c++)
+                    rowKeyValues[c] = row.GetValueOrDefault(keyColumns[c].DbName);
+                var token = CompositeKeyToken(keyColumns, rowKeyValues);
+                if (token is not null)
+                    byToken.TryAdd(token, row); // a PK is unique; first row wins defensively
+            }
+
+            foreach (var i in indices)
+            {
+                var token = CompositeKeyToken(keyColumns, keys[i].KeyValues);
+                results[i] = token is not null && byToken.TryGetValue(token, out var row) ? row : null;
+            }
+        }
+
+        /// <summary>
+        /// One token for a full composite key: each column's <see cref="KeyToken"/> joined
+        /// length-prefixed, so a separator character appearing INSIDE a string key value can never
+        /// make two distinct composite keys collide. Null when any column's value is null (a PK
+        /// column value is never legitimately null — such a row is unmatchable, same as the
+        /// single-PK batch's null-token handling).
+        /// </summary>
+        private static string? CompositeKeyToken(IReadOnlyList<ColumnDto> keyColumns, IReadOnlyList<object?> values)
+        {
+            var builder = new StringBuilder();
+            for (var c = 0; c < keyColumns.Count; c++)
+            {
+                var token = KeyToken(keyColumns[c], values[c]);
+                if (token is null)
+                    return null;
+                builder.Append(token.Length).Append(':').Append(token);
+            }
+            return builder.ToString();
+        }
+
         private static QueryIntent NewIntent(GqlObjectQuery query, IDictionary<string, object?> userContext, string? endpoint) =>
             new()
             {
@@ -248,7 +383,7 @@ namespace BifrostQL.Server.Resp
                 GraphQlName = table.GraphQlName,
                 Path = table.GraphQlName,
             };
-            foreach (var column in table.Columns.OrderBy(c => c.OrdinalPosition))
+            foreach (var column in OrderedColumns(table))
                 query.ScalarColumns.Add(new GqlObjectColumn(column.DbName));
             return query;
         }

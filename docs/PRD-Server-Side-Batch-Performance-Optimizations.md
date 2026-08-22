@@ -321,6 +321,15 @@ public class StreamingBatchResolver
 
 ### 3.7 Optimization 7: Database-Specific Bulk Copy APIs
 
+> **Implemented (SQL Server, 2026-08):** `SqlServerBulkBatchExecutor`
+> (`src/data/BifrostQL.SqlServer`) stages transformed batch rows into a
+> clustered-indexed `#temp` table via `SqlBulkCopy` with an I/U/D op column,
+> then applies set-based INSERT…SELECT / UPDATE…JOIN / DELETE…JOIN inside one
+> inline SQL transaction. Gated per table by `bulk-batch-threshold` and built
+> by `BulkBatchPlanBuilder` in Core (full per-row transformer chain; falls
+> back to the per-row loop for hooks/upserts/state machines/heterogeneous
+> filters). PostgreSQL COPY remains open.
+
 #### Description
 Use native bulk copy APIs (SqlBulkCopy, PostgreSQL COPY) for maximum performance.
 

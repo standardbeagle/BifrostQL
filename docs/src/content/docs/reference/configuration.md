@@ -142,6 +142,7 @@ consistently.
 | `default-limit` | number | model/table | Default page size |
 | `de-pluralize` | `true`/`false` | model | De-pluralize table names in schema |
 | `batch-max-size` | number | table | Maximum batch mutation size |
+| `bulk-batch-threshold` | number | table | Batch size at which SQL Server batches switch to the set-based fast path (staging-table bulk load + set-based DML in one inline SQL transaction). Default 50; `0` or negative disables the fast path. Batches with hooks (approval, history, CDC), upserts, or state machines always use the per-row path |
 
 ### Optional feature metadata
 

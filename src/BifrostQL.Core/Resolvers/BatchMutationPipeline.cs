@@ -183,11 +183,15 @@ namespace BifrostQL.Core.Resolvers
             }
 
             // Inserts always land exactly one row (a failure aborted the transaction);
-            // updates/deletes report per-row via the executor's affected seq set, so a
-            // scoped-away row notifies observers with Affected 0, matching the per-row path.
+            // updates/deletes report per-row via the executor's affected seq entries — one per
+            // affected target row — so a scoped-away row notifies observers with Affected 0
+            // and a multi-row match reports its true count, matching the per-row path.
+            var affectedBySeq = result.AffectedSeqs
+                .GroupBy(s => s)
+                .ToDictionary(g => g.Key, g => g.Count());
             var outcomes = built.Outcomes
                 .Select(o => new BatchActionOutcome(
-                    o.MutationType == MutationType.Insert || result.AffectedSeqs.Contains(o.Seq) ? 1 : 0,
+                    o.MutationType == MutationType.Insert ? 1 : affectedBySeq.GetValueOrDefault(o.Seq),
                     o.MutationType, o.Data, Transition: null))
                 .ToList();
             await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext);

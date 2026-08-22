@@ -59,10 +59,11 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     /// <summary>
     /// The set-based outcome: <see cref="TotalAffected"/> is the database-reported affected-row
     /// total across every statement (the AffectedRows contract — never inferred), and
-    /// <see cref="AffectedSeqs"/> holds the staging sequence numbers of update/delete rows that
-    /// matched a target row (inserts always affect exactly one row and are not listed).
+    /// <see cref="AffectedSeqs"/> holds one entry per target row an update/delete staged row
+    /// affected — a seq repeats when its predicate matched several rows, and a scoped-away row
+    /// is absent (inserts always affect exactly one row and are not listed).
     /// </summary>
-    public sealed record BulkBatchResult(int TotalAffected, IReadOnlySet<int> AffectedSeqs);
+    public sealed record BulkBatchResult(int TotalAffected, IReadOnlyList<int> AffectedSeqs);
 
     /// <summary>
     /// A dialect's set-based batch capability: stage the plan's rows on the given open

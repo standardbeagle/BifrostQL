@@ -39,6 +39,9 @@ public sealed class SqlServerDbConnFactory : IDbConnFactory
     }
 
     /// <inheritdoc />
+    public Core.Resolvers.BulkBatch.IBulkBatchExecutor? BulkBatchExecutor => SqlServerBulkBatchExecutor.Instance;
+
+    /// <inheritdoc />
     public async Task<string[]> ListDatabasesAsync(CancellationToken cancellationToken = default)
     {
         var builder = new SqlConnectionStringBuilder(_connectionString) { InitialCatalog = "master" };

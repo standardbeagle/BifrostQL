@@ -52,8 +52,12 @@ public sealed class ServerValidationHardeningTests
         var table = model.GetTableFromDbName("T");
 
         // A non-numeric value cannot be range-checked; it must not throw and must
-        // not produce a spurious range error.
-        (await Run(table, model, new() { ["Score"] = "not-a-number" })).Should().BeEmpty();
+        // not produce a spurious RANGE error. The schema-derived integer-type
+        // check refuses it instead — text on an int column can only fail in the
+        // engine — with a type message, not a bounds one.
+        var errors = await Run(table, model, new() { ["Score"] = "not-a-number" });
+        errors.Should().NotContain(e => e.Contains("at most") || e.Contains("at least"));
+        errors.Should().ContainSingle(e => e.Contains("whole number"));
     }
 
     [Fact]

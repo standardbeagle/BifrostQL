@@ -89,6 +89,20 @@ public sealed class SqliteTypeMapper : ITypeMapper
     public bool IsLargeValue(string dataType)
         => StripPrecision(dataType) is "blob";
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQLite type affinity stores every integer as a 64-bit value whatever the
+    /// declared name — a column declared "int" happily holds long.MaxValue — so
+    /// asserting the declared name's range would refuse values the engine accepts.
+    /// Only the storage class itself (64-bit) bounds, matching the default bigint
+    /// range, and nothing narrower is enforced.
+    /// </remarks>
+    public NumericValueRange? GetIntegerRange(string dataType)
+        => StripPrecision(dataType) is "int" or "integer" or "smallint" or "tinyint" or "bigint"
+            or "int2" or "int4" or "int8" or "mediumint"
+            ? new NumericValueRange(long.MinValue, long.MaxValue)
+            : null;
+
     private static string StripPrecision(string dataType)
     {
         var normalized = StringNormalizer.NormalizeType(dataType);

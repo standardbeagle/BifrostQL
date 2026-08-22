@@ -118,9 +118,31 @@ dbo.contacts.email {
 
 Supported built-in rules are `required`, `min`, `max`, `minlength`, `maxlength`,
 `step`, `pattern`, `pattern-message`, and `input-type` (`email`/`url`). Patterns
-are anchored as a full-string match (like the HTML5 `pattern` attribute), schema
-`VARCHAR(n)` lengths are enforced as `maxlength`, and a pathological pattern is
-bounded so it cannot hang a mutation.
+are anchored as a full-string match (like the HTML5 `pattern` attribute), and a
+pathological pattern is bounded so it cannot hang a mutation.
+
+Alongside the declared rules, **schema-derived validation** enforces what the
+database schema itself declares, so a value the engine would reject fails with a
+clear per-field message instead of a wrapped database error — on every access
+method (GraphQL and all protocol adapters), since it runs in the unskippable
+mutation transformer chain:
+
+- **String lengths** — `VARCHAR(n)`/`NVARCHAR(n)` (and every character type's
+  declared length, read from the database schema) enforce as `maxlength`.
+- **Binary lengths** — `VARBINARY(n)`/`BINARY(n)` byte budgets are enforced for
+  raw bytes and base64 payloads.
+- **Date/time parseability and engine ranges** — temporal inputs travel as
+  strings; unparseable text is refused, and the dialect's storable window is
+  enforced (SQL Server `datetime` before 1753, MySQL `TIMESTAMP` outside
+  1970–2038).
+- **Integer ranges** — values outside the column type's storable range
+  (`int`, `smallint`, `bigint`, SQL Server `tinyint`, MySQL unsigned unions)
+  and fractional values on integer columns are refused.
+- **Decimal precision** — an integer part that overflows `DECIMAL(p,s)` is
+  refused; excess fractional digits are left to round, as every engine does.
+
+The same `server-validation: off` switch disables these together with the
+declared rules.
 
 To turn validation off for a table or column, set `server-validation` to an
 off value (`off`, `false`, `disabled`, `none`, `no`, `0`):

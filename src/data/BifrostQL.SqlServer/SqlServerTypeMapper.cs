@@ -91,4 +91,28 @@ public sealed class SqlServerTypeMapper : ITypeMapper
         if (normalized.Contains("(max)")) return true;
         return normalized is "text" or "ntext" or "image" or "xml";
     }
+
+    /// <inheritdoc />
+    /// <remarks>T-SQL tinyint is unsigned (0..255); the interface default covers
+    /// int/smallint/bigint, which SQL Server stores at their .NET-named widths.</remarks>
+    public NumericValueRange? GetIntegerRange(string dataType)
+        => StringNormalizer.NormalizeType(dataType) == "tinyint"
+            ? new NumericValueRange(byte.MinValue, byte.MaxValue)
+            : TypeMapperDefaults.IntegerRange(dataType);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// datetime cannot store dates before 1753-01-01 and smalldatetime is bounded to
+    /// 1900-01-01..2079-06-06 — both are classic insert-time failures worth refusing
+    /// server-side. datetime2/date/datetimeoffset span 0001..9999 and need no bound.
+    /// </remarks>
+    public TemporalValueRange? GetTemporalRange(string dataType)
+        => StringNormalizer.NormalizeType(dataType) switch
+        {
+            "datetime" => new TemporalValueRange(
+                new DateTime(1753, 1, 1), new DateTime(9999, 12, 31, 23, 59, 59, 997)),
+            "smalldatetime" => new TemporalValueRange(
+                new DateTime(1900, 1, 1), new DateTime(2079, 6, 6)),
+            _ => null,
+        };
 }

@@ -56,8 +56,10 @@ namespace BifrostQL.Core.Resolvers
                                 // Effective declarative validation rules — same derivation the
                                 // server-side validator uses, so clients can mirror enforcement.
                                 var rules = Modules.Validation.ValidationRules.ForColumn(c);
-                                // Extract numeric precision/scale from DECIMAL(10,2) style dbType
-                                var (numericPrecision, numericScale) = ExtractNumericPrecision(c.DataType);
+                                // Schema-captured precision/scale (INFORMATION_SCHEMA or the
+                                // SQLite declared type) — the same facts server validation
+                                // enforces, so clients mirror exactly what the server refuses.
+                                var (numericPrecision, numericScale) = ((double?)rules.NumericPrecision, (double?)rules.NumericScale);
                                 // Get enum values from metadata if present
                                 var enumValues = c.GetMetadataValue(MetadataKeys.Enum.Values)?.Split(',').Select(v => v.Trim()).ToArray();
                                 var enumLabels = c.GetMetadataValue(MetadataKeys.Enum.Labels)?.Split(',').Select(v => v.Trim()).ToArray();
@@ -199,42 +201,5 @@ namespace BifrostQL.Core.Resolvers
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown table-link relationship kind."),
         };
 
-        /// <summary>
-        /// Extracts numeric precision and scale from data type strings like DECIMAL(10,2) or NUMERIC(18,4).
-        /// Returns (precision, scale) as doubles for use as min/max, or nulls if not applicable.
-        /// </summary>
-        private static (double? precision, double? scale) ExtractNumericPrecision(string dataType)
-        {
-            if (string.IsNullOrEmpty(dataType))
-                return (null, null);
-
-            var upperType = dataType.ToUpperInvariant();
-
-            // Only apply to decimal/numeric types
-            if (!upperType.StartsWith("DECIMAL") && !upperType.StartsWith("NUMERIC") && !upperType.StartsWith("DEC"))
-                return (null, null);
-
-            var openParen = dataType.IndexOf('(');
-            if (openParen < 0)
-                return (null, null);
-
-            var closeParen = dataType.IndexOf(')', openParen);
-            if (closeParen < 0)
-                return (null, null);
-
-            var parts = dataType.Substring(openParen + 1, closeParen - openParen - 1).Split(',');
-            if (parts.Length >= 2)
-            {
-                if (int.TryParse(parts[0].Trim(), out var precision) &&
-                    int.TryParse(parts[1].Trim(), out var scale))
-                {
-                    // Return precision and scale as informational values
-                    // These can be used by clients to understand the data type constraints
-                    return (precision, scale);
-                }
-            }
-
-            return (null, null);
-        }
     }
 }

@@ -85,4 +85,39 @@ public sealed class MySqlTypeMapper : ITypeMapper
         => StringNormalizer.NormalizeType(dataType)
             is "tinytext" or "text" or "mediumtext" or "longtext"
             or "tinyblob" or "blob" or "mediumblob" or "longblob";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// information_schema reports "int" for both signed INT and INT UNSIGNED — the
+    /// signedness is not captured in the model — so each range is the UNION of the
+    /// signed and unsigned ranges: nothing valid is refused, and everything outside
+    /// the union would fail in the engine whichever signedness applies. tinyint is
+    /// not bounded here because it maps to Boolean (MySqlConnector TINYINT(1)).
+    /// </remarks>
+    public NumericValueRange? GetIntegerRange(string dataType)
+        => StringNormalizer.NormalizeType(dataType) switch
+        {
+            "int" or "integer" => new NumericValueRange(int.MinValue, uint.MaxValue),
+            "smallint" => new NumericValueRange(short.MinValue, ushort.MaxValue),
+            "mediumint" => new NumericValueRange(-8388608m, 16777215m),
+            "bigint" => new NumericValueRange(long.MinValue, ulong.MaxValue),
+            _ => null,
+        };
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// DATETIME/DATE are bounded below at 1000-01-01 and TIMESTAMP is the classic
+    /// 1970..2038 window (upper bound conservative: the engine's exact ceiling is
+    /// 2038-01-19 03:14:07 UTC, session-timezone dependent, so refuse only what is
+    /// out of range in EVERY timezone and let the engine arbitrate the sliver).
+    /// </remarks>
+    public TemporalValueRange? GetTemporalRange(string dataType)
+        => StringNormalizer.NormalizeType(dataType) switch
+        {
+            "datetime" or "date" => new TemporalValueRange(
+                new DateTime(1000, 1, 1), new DateTime(9999, 12, 31, 23, 59, 59)),
+            "timestamp" => new TemporalValueRange(
+                new DateTime(1970, 1, 2), new DateTime(2038, 1, 18)),
+            _ => null,
+        };
 }

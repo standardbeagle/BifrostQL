@@ -246,6 +246,81 @@ namespace BifrostQL.Server.Resp
     }
 
     /// <summary>
+    /// <c>MSET &lt;table&gt;:&lt;pk…&gt; &lt;json&gt; [&lt;table&gt;:&lt;pk…&gt; &lt;json&gt; …]</c> — SET
+    /// semantics for many keys: each pair is an <b>UPDATE</b> (never an insert; PK from the key, JSON
+    /// body of non-PK columns, exactly as SET). Every pair is parsed and validated up front, so one
+    /// malformed pair is a clean <c>-ERR</c> and writes NOTHING. Multi-key execution is one batch
+    /// intent per table (the DEL grouping): every action of a table's batch commits or rolls back as
+    /// a unit — a transformer veto anywhere in a table's batch applies none of that table's writes —
+    /// and a batch large enough for the table's bulk threshold rides the set-based fast path.
+    /// Atomicity is per table, not across tables, exactly as documented for multi-table DEL.
+    ///
+    /// Reply DEVIATES from Redis deliberately: Redis's MSET is a blind key write and answers
+    /// <c>+OK</c>; this MSET is an update through the pipeline where a missing or scoped-away row
+    /// affects zero rows, so the reply is the INTEGER count of keys that actually updated a row
+    /// (mirroring DEL's honest count and SET's nil-on-zero) — a scoped-away key is silently
+    /// uncounted and indistinguishable from a missing one, never a phantom <c>+OK</c>.
+    /// A key addressed twice in one MSET is applied in argument order (last wins), preserved by the
+    /// pipeline's duplicate-key fallback to the per-row path.
+    /// </summary>
+    internal sealed class RespMSetCommandHandler : RespWriteCommandHandler
+    {
+        public override string Name => RespProtocol.MSet;
+
+        protected override RespValue? ValidateArity(int argumentCount) =>
+            // MSET key json [key json …]: the command name + at least one even pair.
+            argumentCount >= 3 && (argumentCount - 1) % 2 == 0 ? null : RespValue.Err(RespProtocol.WrongArgCount(Name));
+
+        protected override async Task<RespValue> ExecuteAsync(
+            RespCommandContext context, IDbModel model, IMutationIntentExecutor executor, CancellationToken cancellationToken)
+        {
+            // Parse-then-execute: validate every key and body before writing anything, so one bad
+            // pair rejects the whole command without a partial write.
+            var pairs = new List<(RespKey Key, Dictionary<string, object?> Data)>((context.Arguments.Count - 1) / 2);
+            for (var i = 1; i < context.Arguments.Count; i += 2)
+            {
+                var parse = RespReadEngine.ParseKey(model, context.Arguments[i]);
+                if (!parse.Ok)
+                    return RespValue.Err(parse.Error!);
+                var key = parse.Key!;
+
+                if (!RespWriteEngine.TryParseJsonColumns(context.Arguments[i + 1], out var json, out var jsonError))
+                    return RespValue.Err(jsonError!);
+                var data = RespWriteEngine.BuildUpdateColumns(key, json, out var columnError);
+                if (columnError is not null)
+                    return RespValue.Err(columnError);
+                if (data.Count == 0)
+                    return RespValue.Err($"{RespProtocol.ErrPrefix}MSET requires at least one non-primary-key column value per key");
+
+                pairs.Add((key, data));
+            }
+
+            // ONE pair is already one transaction: keep it a single-row intent, exactly as DEL does.
+            if (pairs.Count == 1)
+            {
+                var single = await executor.ExecuteAsync(
+                    RespWriteEngine.UpdateIntent(pairs[0].Key, pairs[0].Data, context.Session.UserContext, context.Endpoint),
+                    cancellationToken);
+                return RespValue.Int(RespWriteEngine.WroteRow(single) ? 1 : 0);
+            }
+
+            // MULTI-KEY: one batch per table (see DEL for why looping single intents is wrong —
+            // partial application on a mid-batch veto, plus a round trip per key).
+            var updated = 0;
+            foreach (var group in pairs.GroupBy(p => p.Key.Table.DbName, StringComparer.Ordinal))
+            {
+                var result = await executor.ExecuteBatchAsync(
+                    RespWriteEngine.UpdateBatchIntent(group.Key, group, context.Session.UserContext, context.Endpoint),
+                    cancellationToken);
+                updated += result.TotalAffected;
+            }
+
+            // Each action addresses one PK row, so TotalAffected IS the count of keys that updated.
+            return RespValue.Int(updated);
+        }
+    }
+
+    /// <summary>
     /// Shared write-intent construction behind the RESP write commands. Turns a parsed
     /// <see cref="RespKey"/> plus request columns into a <see cref="MutationIntent"/> whose positional
     /// <see cref="MutationIntent.PrimaryKey"/> carries the key's PK values IN SCHEMA ORDER (composite-PK
@@ -304,6 +379,38 @@ namespace BifrostQL.Server.Resp
                         MutationArgumentBinder.ResolvePrimaryKey(key.Table, key.KeyValues)
                             ?? throw new BifrostExecutionError(
                                 $"RESP DEL key for '{table}' resolved no primary key values.")))
+                    .ToList(),
+                UserContext = new Dictionary<string, object?>(userContext),
+                Endpoint = endpoint,
+            };
+
+        /// <summary>
+        /// Builds the multi-key UPDATE batch for ONE table: every pair becomes an Update action whose
+        /// Data merges the positional primary key (resolved through
+        /// <see cref="MutationArgumentBinder.ResolvePrimaryKey"/>, schema order, composite-safe) with
+        /// the pair's validated SET columns — the same key/set split the batch pipeline re-derives.
+        /// The adapter supplies only key + columns + session identity and builds no predicate of its
+        /// own (invariant 7); the pipeline narrows scope from the identity, so an out-of-scope key
+        /// matches zero rows structurally.
+        /// </summary>
+        public static MutationBatchIntent UpdateBatchIntent(
+            string table,
+            IEnumerable<(RespKey Key, Dictionary<string, object?> Data)> pairs,
+            IDictionary<string, object?> userContext,
+            string? endpoint) =>
+            new()
+            {
+                Table = table,
+                Actions = pairs
+                    .Select(pair =>
+                    {
+                        var data = MutationArgumentBinder.ResolvePrimaryKey(pair.Key.Table, pair.Key.KeyValues)
+                            ?? throw new BifrostExecutionError(
+                                $"RESP MSET key for '{table}' resolved no primary key values.");
+                        foreach (var (column, value) in pair.Data)
+                            data[column] = value;
+                        return new MutationBatchAction(MutationIntentAction.Update, data);
+                    })
                     .ToList(),
                 UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,

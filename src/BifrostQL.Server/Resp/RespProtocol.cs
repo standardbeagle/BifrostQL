@@ -83,6 +83,9 @@ namespace BifrostQL.Server.Resp
         /// <summary><c>DEL &lt;key&gt; […]</c> — delete the addressed rows.</summary>
         public const string Del = "DEL";
 
+        /// <summary><c>MSET &lt;table&gt;:&lt;pk…&gt; &lt;json&gt; […]</c> — update many rows' columns, one batch per table.</summary>
+        public const string MSet = "MSET";
+
         /// <summary>SCAN option keyword: the glob that names the table to enumerate (only <c>&lt;table&gt;:*</c> is supported).</summary>
         public const string ScanMatchOption = "MATCH";
 

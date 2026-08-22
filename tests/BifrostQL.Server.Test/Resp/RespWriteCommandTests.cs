@@ -434,6 +434,138 @@ namespace BifrostQL.Server.Test.Resp
                 "a null AffectedRows must not be treated as a successful write");
         }
 
+        // ---- MSET (multi-key SET, one batch per table) ----------------------
+
+        [Fact]
+        public async Task MSet_WritesDisabled_IsCleanError_AndNeverExecutes()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: false);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"x\"}", "users:2", "{\"name\":\"y\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>().Which.Message.Should().Be(RespProtocol.WritesDisabledError);
+            executor.Intents.Should().BeEmpty();
+            executor.BatchIntents.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task MSet_MultiKey_OneBatchPerTable_ReturnsUpdatedCount()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"alice2\"}", "users:2", "{\"name\":\"bob2\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(2);
+            executor.Intents.Should().BeEmpty("multi-key MSET must not loop single-row intents");
+            var batch = executor.BatchIntents.Should().ContainSingle().Which;
+            batch.Table.Should().Be("users");
+            batch.Actions.Should().HaveCount(2);
+            batch.Actions.Should().OnlyContain(a => a.Action == MutationIntentAction.Update);
+            // Each action carries the PK (schema-resolved, never [0]) plus the SET columns as data.
+            batch.Actions[0].Data.Should().Contain(new KeyValuePair<string, object?>("name", "alice2"));
+            batch.Actions[0].Data.Keys.Should().Contain("id");
+            batch.UserContext.Should().Contain(new KeyValuePair<string, object?>("tenantId", 1));
+            executor.Row("users", 1)!["name"].Should().Be("alice2");
+            executor.Row("users", 2)!["name"].Should().Be("bob2");
+        }
+
+        [Fact]
+        public async Task MSet_SinglePair_UsesSingleRowIntent()
+        {
+            // One pair is already one transaction: a batch would buy nothing (the DEL rule).
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"solo\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(1);
+            executor.BatchIntents.Should().BeEmpty();
+            executor.Intents.Should().ContainSingle().Which.Action.Should().Be(MutationIntentAction.Update);
+            executor.Row("users", 1)!["name"].Should().Be("solo");
+        }
+
+        [Fact]
+        public async Task MSet_ScopedAwayKey_IsNotCounted_AndRowUntouched()
+        {
+            // Tenant 1 writes users:1 (in scope) and users:3 (tenant 2): the pipeline narrows the
+            // second to zero rows, so the count is 1 and carol is untouched — indistinguishable
+            // from a missing key, never a phantom count.
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"mine\"}", "users:3", "{\"name\":\"hacked\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(1);
+            executor.Row("users", 1)!["name"].Should().Be("mine");
+            executor.Row("users", 3)!["name"].Should().Be("carol", "an out-of-scope row must be untouched");
+        }
+
+        [Fact]
+        public async Task MSet_OddArguments_IsCleanError()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"x\"}", "users:2"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>().Which.Message.Should().Be(RespProtocol.WrongArgCount("MSET"));
+            executor.Intents.Should().BeEmpty();
+            executor.BatchIntents.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task MSet_MalformedSecondPair_IsCleanError_NeverExecutes()
+        {
+            // Parse-then-execute: the FIRST pair is valid, but the whole command must reject
+            // without writing it when the second pair fails validation.
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"x\"}", "users:2", "not-json"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>();
+            executor.Intents.Should().BeEmpty();
+            executor.BatchIntents.Should().BeEmpty();
+            executor.Row("users", 1)!["name"].Should().Be("alice", "no pair may write when any pair is invalid");
+        }
+
+        [Fact]
+        public async Task MSet_BodyPrimaryKeyConflict_IsCleanError_NeverExecutes()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"id\":2,\"name\":\"x\"}", "users:2", "{\"name\":\"y\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>().Which.Message.Should().Contain("primary-key");
+            executor.BatchIntents.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task MSet_MixedTables_GroupsPerTable()
+        {
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET",
+                    "users:1", "{\"name\":\"a2\"}",
+                    "users:2", "{\"name\":\"b2\"}",
+                    "order_items:10:2", "{\"sku\":\"gadget\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(3);
+            executor.BatchIntents.Should().HaveCount(2);
+            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(new[] { "users", "order_items" });
+            executor.CompositeRow("order_items", 10, 2)!["sku"].Should().Be("gadget");
+        }
+
+        [Fact]
+        public async Task MSet_MidBatchVeto_RollsBackWholeTableBatch()
+        {
+            // A veto on the second action must leave the FIRST action's row unchanged: one batch,
+            // one transaction — never a partially applied MSET.
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true);
+            executor.FailBatchActionAtIndex = 1;
+            var reply = await new RespMSetCommandHandler().HandleAsync(
+                Ctx(services, session, "MSET", "users:1", "{\"name\":\"x\"}", "users:2", "{\"name\":\"y\"}"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespError>();
+            executor.Row("users", 1)!["name"].Should().Be("alice", "the vetoed batch must roll back whole");
+        }
+
         // ---- identity fail-closed over the wire (slice-1 fixture) -----------
 
         [Fact]

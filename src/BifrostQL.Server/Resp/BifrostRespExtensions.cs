@@ -63,6 +63,7 @@ namespace BifrostQL.Server.Resp
             services.AddSingleton<IRespCommandHandler, RespSetCommandHandler>();
             services.AddSingleton<IRespCommandHandler, RespHSetCommandHandler>();
             services.AddSingleton<IRespCommandHandler, RespDelCommandHandler>();
+            services.AddSingleton<IRespCommandHandler, RespMSetCommandHandler>();
 
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<RespWireAdapter>();

@@ -27,6 +27,9 @@ public sealed class PostgresBulkBatchExecutor : StagedBulkBatchExecutorBase
     protected override string BuildConflictCheckSql(string stagingName, string outName)
         => PostgresBulkBatchSql.BuildConflictCheckSql(Dialect, stagingName, outName);
 
+    protected override string? BuildPostLoadSql(string stagingName)
+        => $"ANALYZE {Dialect.EscapeIdentifier(stagingName)};";
+
     /// <summary>Streams via binary COPY first; falls back to the chunked parameterized load
     /// when a column type is unmappable or a value refuses binary conversion.</summary>
     protected override async Task LoadStagingAsync(

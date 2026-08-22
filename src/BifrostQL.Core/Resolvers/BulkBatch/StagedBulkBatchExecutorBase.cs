@@ -71,6 +71,15 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
         /// no out-table entry (its guarded write matched nothing).</summary>
         protected abstract string BuildConflictCheckSql(string stagingName, string outName);
 
+        /// <summary>
+        /// Optional statement to run after the staging load, before the transaction. PostgreSQL
+        /// returns <c>ANALYZE</c> here: a freshly-filled temp table has no statistics, and
+        /// without them the planner's join choice for the set-based UPDATE/DELETE is a coin
+        /// flip between a hash join and a catastrophic nested loop (observed as bimodal
+        /// 20ms/200ms batches). Engines with automatic stats return null.
+        /// </summary>
+        protected virtual string? BuildPostLoadSql(string stagingName) => null;
+
         public async Task<BulkBatchResult> ExecuteAsync(BulkBatchPlan plan, DbConnection connection, CancellationToken cancellationToken)
         {
             var dialect = Dialect;
@@ -84,6 +93,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 foreach (var ddl in BuildStagingDdl(tableRef, stagingName, outName, plan.StagingColumns))
                     await ExecuteTextAsync(connection, ddl, cancellationToken);
                 await LoadStagingAsync(connection, dialect, stagingName, plan, cancellationToken);
+                if (BuildPostLoadSql(stagingName) is { } postLoad)
+                    await ExecuteTextAsync(connection, postLoad, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -62,6 +62,9 @@
 		<InternalsVisibleTo Include="BifrostQL.Server" />
 		<InternalsVisibleTo Include="BifrostQL.Sqlite" />
 		<InternalsVisibleTo Include="BifrostQL.SqlServer" />
+		<!-- The bulk-path benchmark runner drives BatchMutationPipeline directly so the
+		     numbers isolate pipeline cost from GraphQL parsing. -->
+		<InternalsVisibleTo Include="BifrostQL.Benchmarks" />
 	</ItemGroup>
 	<ItemGroup>
 		<!-- Core only needs the GraphQL execution engine + parser, not the

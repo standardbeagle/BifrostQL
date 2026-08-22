@@ -7,6 +7,12 @@ if (args.Length > 0 && args[0] == "--sizes")
     return;
 }
 
+if (args.Length > 0 && args[0] == "--bulk-paths")
+{
+    await BulkPathBenchRunner.RunAsync();
+    return;
+}
+
 BenchmarkSwitcher.FromAssembly(typeof(BifrostMessageBenchmarks).Assembly).Run(args);
 
 static void PrintPayloadSizes()

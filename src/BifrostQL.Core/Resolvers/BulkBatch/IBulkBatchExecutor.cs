@@ -1,4 +1,5 @@
 using System.Data.Common;
+using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Resolvers.BulkBatch
 {
@@ -35,11 +36,11 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     /// </summary>
     public sealed record BulkOpGroup(
         BulkOpCode Op,
-        int Group,
+        int Id,
         IReadOnlyList<string> SetColumns,
         IReadOnlyList<string> KeyColumns,
         string FilterSql,
-        IReadOnlyDictionary<string, object?> FilterParameters);
+        IReadOnlyList<SqlParameterInfo> FilterParameters);
 
     /// <summary>
     /// A fully transformed batch, ready for a dialect's set-based execution: load
@@ -75,5 +76,16 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     public interface IBulkBatchExecutor
     {
         Task<BulkBatchResult> ExecuteAsync(BulkBatchPlan plan, DbConnection connection, CancellationToken cancellationToken);
+    }
+
+    /// <summary>
+    /// Raised by an executor for a failure during the STAGING phase — staging-table DDL or the
+    /// bulk load — before the inline transaction touches the target table. Nothing was written
+    /// (the staging table dies with the connection), so the pipeline may safely retry the batch
+    /// on the per-row path. A failure after the target DML begins must never use this type.
+    /// </summary>
+    public sealed class BulkBatchStagingException : Exception
+    {
+        public BulkBatchStagingException(string message, Exception inner) : base(message, inner) { }
     }
 }

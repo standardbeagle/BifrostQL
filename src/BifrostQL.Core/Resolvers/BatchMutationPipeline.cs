@@ -71,6 +71,21 @@ namespace BifrostQL.Core.Resolvers
                 Services = ctx.Services,
             };
 
+            // Set-based fast path: on a provider with a bulk executor, an eligible batch is
+            // transformed per row up front, staged, and applied by set-based DML inside one
+            // inline SQL transaction. A null plan (or a staging-phase failure, which cannot
+            // have written anything) falls through to the per-row loop below.
+            if (ctx.ConnFactory.BulkBatchExecutor is { } bulkExecutor)
+            {
+                var built = await BulkBatch.BulkBatchPlanBuilder.TryBuildAsync(table, actions, ctx, transformContext);
+                if (built is not null)
+                {
+                    var bulkTotal = await TryExecuteBulkAsync(table, ctx, bulkExecutor, built);
+                    if (bulkTotal is not null)
+                        return bulkTotal.Value;
+                }
+            }
+
             await using var conn = ctx.ConnFactory.GetConnection();
             var outcomes = new List<BatchActionOutcome>();
             DbTransaction? transaction = null;
@@ -127,6 +142,56 @@ namespace BifrostQL.Core.Resolvers
             var totalAffected = 0;
             foreach (var outcome in outcomes) totalAffected += outcome.Affected;
             return totalAffected;
+        }
+
+        /// <summary>
+        /// Runs the built plan through the provider's set-based executor and fans the result
+        /// out to the same post-commit observers the per-row path notifies. Returns null ONLY
+        /// for a staging-phase failure (<see cref="BulkBatch.BulkBatchStagingException"/> —
+        /// nothing written, the per-row path may safely run the batch instead); any failure
+        /// inside the inline transaction propagates as the batch's error.
+        /// </summary>
+        private static async Task<int?> TryExecuteBulkAsync(
+            IDbTable table, MutationPipelineContext ctx,
+            BulkBatch.IBulkBatchExecutor executor, BulkBatch.BulkBatchPlanBuilder.BuiltBulkBatch built)
+        {
+            var ct = ctx.CancellationToken;
+            BulkBatch.BulkBatchResult result;
+            await using (var conn = ctx.ConnFactory.GetConnection())
+            {
+                try
+                {
+                    await conn.OpenAsync(ct);
+                    result = await executor.ExecuteAsync(built.Plan, conn, ct);
+                }
+                catch (BulkBatch.BulkBatchStagingException)
+                {
+                    return null;
+                }
+                catch (BifrostExecutionError)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw BifrostExecutionError.FromDatabaseException(ex);
+                }
+            }
+
+            // Inserts always land exactly one row (a failure aborted the transaction);
+            // updates/deletes report per-row via the executor's affected seq set, so a
+            // scoped-away row notifies observers with Affected 0, matching the per-row path.
+            var outcomes = built.Outcomes
+                .Select(o => new BatchActionOutcome(
+                    o.MutationType == MutationType.Insert || result.AffectedSeqs.Contains(o.Seq) ? 1 : 0,
+                    o.MutationType, o.Data, Transition: null))
+                .ToList();
+            await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext);
+            return result.TotalAffected;
         }
 
         private static async ValueTask NotifyObserversAsync(

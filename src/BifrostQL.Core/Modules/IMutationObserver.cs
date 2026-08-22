@@ -111,6 +111,9 @@ public sealed class BeforeCommitMutationHooks
         _hooks = hooks;
     }
 
+    /// <summary>True when no hook is registered — the bulk batch fast path is only legal then.</summary>
+    public bool IsEmpty => _hooks.Count == 0;
+
     // Runs every hook in order and aggregates returned errors. Exceptions are
     // NOT caught — a throwing hook aborts the mutation just as returned errors
     // do. Returns an empty list when all hooks pass (the write may proceed).
@@ -151,6 +154,9 @@ public sealed class InTransactionMutationHooks
     {
         _hooks = hooks;
     }
+
+    /// <summary>True when no hook is registered — the bulk batch fast path is only legal then.</summary>
+    public bool IsEmpty => _hooks.Count == 0;
 
     public async ValueTask RunAsync(MutationObserverContext context)
     {

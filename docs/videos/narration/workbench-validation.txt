@@ -1,0 +1,9 @@
+# workbench-validation — schema-derived validation in the editor
+# One beat per non-comment line; beat N pairs with beats[N] in capture.mjs.
+This CRM database runs on SQLite, which stores almost anything you hand it. But the schema declares real types: a twelve character invoice number, a decimal with seven digits, a small int quantity.
+BifrostQL reads those declarations and turns them into validation — on the server for every access method, and in the editor before a request is ever sent.
+Open a row to edit it.
+The invoice number field caps typing at the schema's twelve characters — the counter tracks the declared length, no configuration required.
+The amount column is declared decimal seven comma two. An integer part past five digits can't be stored, so the field refuses it with the exact bound.
+Quantity is a small int. A value past its range is refused too — the same refusal the server would give, but caught at the field.
+With the values corrected, Save goes through. One schema, enforced identically in the browser, at the API, and for every protocol front door.

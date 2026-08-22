@@ -220,3 +220,10 @@ INSERT INTO notes (entity_type, entity_id, content, created_by, created_at) VALU
 ('company', 11, 'Cascade Media is in a competitive industry. They value speed of implementation and modern UI. Lost one deal, won another.', 'sales-rep-2', '2024-09-01 10:00:00'),
 ('deal', 12, 'Pinnacle LMS deal is progressing slowly due to committee-based decisions. Need patience and regular check-ins.', 'sales-rep-1', '2024-08-10 10:30:00'),
 ('contact', 21, 'Margaret is the key decision maker for all tech purchases at Pinnacle. She values references from other educational institutions.', 'sales-rep-1', '2023-07-15 09:00:00');
+
+INSERT INTO invoices (company_id, invoice_number, amount, quantity, issued_at, due_at, memo) VALUES
+(1, 'INV-2026-001', 12500.00, 25, '2026-05-02T09:00:00', '2026-06-01T00:00:00', 'Annual platform subscription'),
+(2, 'INV-2026-002', 3480.50, 12, '2026-05-11T09:00:00', '2026-06-10T00:00:00', 'Onboarding and training'),
+(3, 'INV-2026-003', 940.00, 4, '2026-05-18T09:00:00', NULL, 'Support hours retainer'),
+(4, 'INV-2026-004', 22150.75, 60, '2026-06-01T09:00:00', '2026-07-01T00:00:00', 'Enterprise license expansion'),
+(5, 'INV-2026-005', 1875.25, 8, '2026-06-09T09:00:00', '2026-07-09T00:00:00', 'Custom report development');

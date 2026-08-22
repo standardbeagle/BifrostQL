@@ -75,6 +75,7 @@ start.
 | `workbench-sankey-dashboard` | `BifrostQL.UI` headless | Measure switch (count → sum of revenue), dashboard tile bound to the saved chart, band click drills to the filtered grid |
 | `workbench-json` | `BifrostQL.UI` headless | JSON documents in the grid: hover preview, side panel, full screen, Format, save (IoT dataset) |
 | `workbench-attachments` | `BifrostQL.UI` headless | Images and PDFs stored as blobs: inline preview, row navigation, Download (IoT dataset) |
+| `workbench-validation` | `BifrostQL.UI` headless | Schema-derived validation in the edit dialog (CRM dataset: NVARCHAR(12) length cap, DECIMAL(7,2) precision refusal, SMALLINT range refusal, clean save) |
 | `workbench-sql` | `BifrostQL.UI` headless | Raw SQL console over the desktop bridge |
 | `workbench-erd` | `BifrostQL.UI` headless | ER diagram: foreign keys, collapsed junction, column expand, N-hop filter, click-to-open |
 | `mcp-tools` | `BifrostQL.Host` + MCP HTTP | Live MCP session in a rendered console: initialize, tools/list, real query/aggregate/search calls |

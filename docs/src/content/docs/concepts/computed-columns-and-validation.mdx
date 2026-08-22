@@ -104,6 +104,14 @@ Or use table/database `storage` metadata as the default bucket config and keep t
 
 ## Server validation
 
+import DemoVideo from '../../../components/DemoVideo.astro';
+
+<DemoVideo
+  scene="workbench-validation"
+  title="Schema-derived validation in the editor"
+  description="A SQLite-backed CRM whose invoices table declares NVARCHAR(12), DECIMAL(7,2) and SMALLINT — SQLite enforces none of it; BifrostQL reads the declarations and refuses invalid values at the field, at the API, and on every protocol front door."
+/>
+
 Server-side validation runs **by default** on every insert and update mutation:
 any validation metadata you declare is enforced, with no enable flag required.
 

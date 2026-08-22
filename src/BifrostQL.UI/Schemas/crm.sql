@@ -73,3 +73,18 @@ CREATE TABLE notes (
     created_by TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Invoices carry DECLARED SQL types (NVARCHAR(n), DECIMAL(p,s), DATETIME,
+-- SMALLINT). SQLite stores by affinity and enforces none of them — which is
+-- exactly what BifrostQL's schema-derived validation demos against: the
+-- declared facts drive server refusals and client field validation.
+CREATE TABLE invoices (
+    invoice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL REFERENCES companies(company_id) ON DELETE CASCADE,
+    invoice_number NVARCHAR(12) NOT NULL,
+    amount DECIMAL(7,2) NOT NULL,
+    quantity SMALLINT NOT NULL DEFAULT 1,
+    issued_at DATETIME NOT NULL,
+    due_at DATETIME,
+    memo TEXT
+);

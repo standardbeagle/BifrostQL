@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Model
 {
@@ -49,6 +50,25 @@ namespace BifrostQL.Core.Model
         /// Use this instead of DataType for schema generation and type mapping.
         /// </summary>
         public string EffectiveDataType => GetMetadataValue(MetadataKeys.DataType.Type) ?? DataType;
+
+        /// <summary>
+        /// Declared maximum length in characters (character types) or bytes (binary
+        /// types), from INFORMATION_SCHEMA CHARACTER_MAXIMUM_LENGTH or the SQLite
+        /// declared type. Null for unbounded (MAX/text/blob) and non-length types.
+        /// </summary>
+        public int? CharacterMaxLength { get; init; }
+
+        /// <summary>
+        /// Declared precision for exact numeric types (decimal/numeric), from
+        /// INFORMATION_SCHEMA NUMERIC_PRECISION or the SQLite declared type. Null
+        /// for non-numeric columns. Deliberately not captured for approximate or
+        /// integer types, whose "precision" is a storage fact, not a write bound.
+        /// </summary>
+        public int? NumericPrecision { get; init; }
+
+        /// <summary>Declared scale paired with <see cref="NumericPrecision"/>.</summary>
+        public int? NumericScale { get; init; }
+
         public bool IsNullable { get; init; }
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;
@@ -89,12 +109,49 @@ namespace BifrostQL.Core.Model
                 NormalizedName = NormalizeColumn(column),
                 ColumnRef = columnRef,
                 DataType = (string)reader["DATA_TYPE"],
+                // INFORMATION_SCHEMA facts the readers already select. SQL Server
+                // reports -1 for MAX types and MySQL reports lengths beyond
+                // int.MaxValue for LONGTEXT/LONGBLOB; both mean "unbounded" → null.
+                CharacterMaxLength = ReadBoundedInt(reader, "CHARACTER_MAXIMUM_LENGTH", minimum: 1),
+                NumericPrecision = IsExactNumeric((string)reader["DATA_TYPE"])
+                    ? ReadBoundedInt(reader, "NUMERIC_PRECISION", minimum: 1) : null,
+                // Scale 0 is a real declaration (DECIMAL(10,0) stores whole numbers).
+                NumericScale = IsExactNumeric((string)reader["DATA_TYPE"])
+                    ? ReadBoundedInt(reader, "NUMERIC_SCALE", minimum: 0) : null,
                 IsNullable = ((string)reader["IS_NULLABLE"]) == "YES",
                 OrdinalPosition = Convert.ToInt32(reader["ORDINAL_POSITION"]),
                 IsIdentity = Convert.ToInt32(reader["IS_IDENTITY"]) == 1,
                 IsPrimaryKey = isPrimary,
                 IsUnique = constraints.TryGetValue(columnRef, out var uniqueCons) && uniqueCons.Any(c => c.ConstraintType == "UNIQUE"),
             };
+        }
+
+        /// <summary>
+        /// Exact numeric types whose declared precision/scale bound what a write may
+        /// hold. Approximate (float/real/double) and integer types also report a
+        /// NUMERIC_PRECISION in INFORMATION_SCHEMA, but there it describes storage,
+        /// not a declarable bound, so it is deliberately not captured.
+        /// </summary>
+        public static bool IsExactNumeric(string dataType)
+        {
+            var normalized = StringNormalizer.NormalizeType(dataType);
+            var paren = normalized.IndexOf('(');
+            if (paren >= 0)
+                normalized = normalized[..paren].TrimEnd();
+            return normalized is "decimal" or "numeric" or "dec" or "money" or "smallmoney";
+        }
+
+        private static int? ReadBoundedInt(IDataReader reader, string columnName, int minimum)
+        {
+            var ordinal = reader.GetOrdinal(columnName);
+            if (reader.IsDBNull(ordinal))
+                return null;
+            var raw = Convert.ToInt64(reader.GetValue(ordinal));
+            // SQL Server reports -1 for MAX types; MySQL reports LONGTEXT/LONGBLOB
+            // lengths beyond int.MaxValue. Both mean "no declared bound".
+            if (raw < minimum || raw > int.MaxValue)
+                return null;
+            return (int)raw;
         }
 
         /// <summary>
@@ -111,11 +168,16 @@ namespace BifrostQL.Core.Model
                 ColumnName = ColumnName,
                 GraphQlName = newGraphQlName,
                 NormalizedName = NormalizedName,
+                DetectedPrefix = DetectedPrefix,
                 ColumnRef = ColumnRef,
                 DataType = DataType,
+                CharacterMaxLength = CharacterMaxLength,
+                NumericPrecision = NumericPrecision,
+                NumericScale = NumericScale,
                 IsNullable = IsNullable,
                 OrdinalPosition = OrdinalPosition,
                 IsIdentity = IsIdentity,
+                IsComputed = IsComputed,
                 IsPrimaryKey = IsPrimaryKey,
                 IsUnique = IsUnique,
                 Metadata = Metadata,

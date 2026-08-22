@@ -218,7 +218,8 @@ public sealed class DbModelTestFixture
             return this;
         }
 
-        public TableBuilder WithColumn(string name, string dataType = "nvarchar", bool isPrimaryKey = false, bool isNullable = false, string? graphQlName = null)
+        public TableBuilder WithColumn(string name, string dataType = "nvarchar", bool isPrimaryKey = false, bool isNullable = false, string? graphQlName = null,
+            int? characterMaxLength = null, int? numericPrecision = null, int? numericScale = null)
         {
             _columns[name] = new ColumnDto
             {
@@ -226,6 +227,9 @@ public sealed class DbModelTestFixture
                 GraphQlName = graphQlName ?? name,
                 NormalizedName = ColumnDto.NormalizeColumn(name),
                 DataType = dataType,
+                CharacterMaxLength = characterMaxLength,
+                NumericPrecision = numericPrecision,
+                NumericScale = numericScale,
                 IsPrimaryKey = isPrimaryKey,
                 IsNullable = isNullable,
             };

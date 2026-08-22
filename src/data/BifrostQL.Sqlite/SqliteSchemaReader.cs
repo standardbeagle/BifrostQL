@@ -74,6 +74,10 @@ public sealed class SqliteSchemaReader : ISchemaReader
                 var isPrimary = columnConstraints.TryGetValue(columnRef, out var con) && con.Any(c => c.ConstraintType == "PRIMARY KEY");
                 var isUnique = columnConstraints.TryGetValue(columnRef, out var uniqueCons) && uniqueCons.Any(c => c.ConstraintType == "UNIQUE");
 
+                // SQLite has no INFORMATION_SCHEMA; the declared type text
+                // ("NVARCHAR(50)", "DECIMAL(10,2)") is the only source of
+                // length/precision facts.
+                var (precision, scale) = DeclaredTypeFacts.PrecisionScale(dataType);
                 var column = new ColumnDto
                 {
                     TableCatalog = "main",
@@ -84,6 +88,9 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     NormalizedName = ColumnDto.NormalizeColumn(columnName),
                     ColumnRef = columnRef,
                     DataType = dataType,
+                    CharacterMaxLength = DeclaredTypeFacts.CharacterMaxLength(dataType),
+                    NumericPrecision = precision,
+                    NumericScale = scale,
                     IsNullable = isPk ? false : !notNull,
                     OrdinalPosition = ordinal++,
                     IsIdentity = isIdentity,

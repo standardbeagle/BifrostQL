@@ -642,6 +642,14 @@ namespace BifrostQL.Core.Model
         {
             /// <summary>Per-table override for the maximum batch size.</summary>
             public const string MaxSize = "batch-max-size";
+
+            /// <summary>
+            /// Minimum action count at which a batch takes the dialect's set-based bulk
+            /// fast path (staging-table load + set-based DML) instead of the per-row
+            /// loop, on dialects that provide a bulk executor. Default 50; zero or a
+            /// negative value disables the fast path for the table.
+            /// </summary>
+            public const string BulkThreshold = "bulk-batch-threshold";
         }
 
         /// <summary>

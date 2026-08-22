@@ -319,6 +319,19 @@ public class MetadataSourceTests
     }
 
     [Fact]
+    public void ValidateTableMetadata_BulkBatchThreshold_NoWarnings()
+    {
+        var metadata = new Dictionary<string, object?>
+        {
+            [MetadataKeys.Batch.MaxSize] = "500",
+            [MetadataKeys.Batch.BulkThreshold] = "50",
+        };
+
+        var warnings = MetadataValidator.ValidateTableMetadata("dbo.orders", metadata);
+        warnings.Should().BeEmpty();
+    }
+
+    [Fact]
     public void ValidateTableMetadata_PolicyEavStorageEnumKeys_NoWarnings()
     {
         // Representative keys from each family added to the allow-list: a stale

@@ -104,6 +104,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.FileStorage.Folder,
             MetadataKeys.Relationships.Join,
             MetadataKeys.Batch.MaxSize,
+            MetadataKeys.Batch.BulkThreshold,
             MetadataKeys.DataType.Type,
             MetadataKeys.StateMachine.StateColumn,
             MetadataKeys.StateMachine.InitialState,

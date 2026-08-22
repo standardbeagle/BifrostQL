@@ -125,6 +125,13 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Articles',
+					items: [
+						{ label: 'Redis-Class Reads on SQL', slug: 'articles/redis-speed' },
+						{ label: 'Bring Intelligence to Your Data', slug: 'articles/ai-ready-data' },
+					],
+				},
+				{
 					label: 'Case Studies',
 					items: [
 						{ label: 'Overview', slug: 'case-studies' },

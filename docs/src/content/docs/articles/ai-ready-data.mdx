@@ -1,0 +1,97 @@
+---
+title: "The Fastest Way to Bring Intelligence to Your Data"
+description: "Give Claude Code, OpenCode, or any MCP agent live, permission-scoped access to your SQL database in minutes: no export, no embedding pipeline, no second copy of the truth."
+template: splash
+hero:
+  title: ""
+  tagline: ""
+---
+
+import DemoVideo from '../../../components/DemoVideo.astro';
+
+<div class="hero-container">
+
+<h1 class="hero-headline">The fastest way to give an AI agent your data<br/>is to stop moving your data.</h1>
+
+<p class="hero-sub">
+Most "AI on your data" plans start with a pipeline: export the tables, sync the copies, embed the text, keep it all fresh forever. BifrostQL skips the pipeline. It presents your live SQL database to any Model Context Protocol client — Claude Code, OpenCode, your own agent — as a small set of tools for mapping the schema, querying rows, aggregating, and searching. The agent works the real tables, under the caller's real permissions, and its first useful answer is minutes away.
+</p>
+
+<div class="bridge-visual">
+	<span class="bridge-node">Agent</span>
+	<span class="bridge-span"></span>
+	<span class="bridge-node">MCP tools</span>
+	<span class="bridge-span"></span>
+	<span class="bridge-node">Live SQL</span>
+</div>
+
+<hr class="prismatic-line" />
+
+<DemoVideo
+  scene="mcp-opencode"
+  title="A coding agent working the database through MCP"
+  description="OpenCode (DeepSeek v4 Flash via OpenRouter) answers a data question using only the bifrost tools — schema overview, server-side aggregate, filtered query — and the recording closes by asking sqlite the same question: the answers match."
+/>
+
+## Minutes, not a migration
+
+The server side is one registration on an existing BifrostQL host:
+
+```csharp
+builder.Services.AddBifrostQL(o => o
+    .BindStandardConfig(builder.Configuration)
+    .AddProtocolAdapter<BifrostMcpAdapter>());   // stdio hosting for local agents
+```
+
+The client side is one config file. The repo's own `opencode.json` is the whole thing:
+
+```json
+{
+  "model": "openrouter/deepseek/deepseek-v4-flash",
+  "mcp": { "bifrost": { "type": "remote", "url": "http://127.0.0.1:5302/mcp", "enabled": true } }
+}
+```
+
+```bash
+opencode run "Using the bifrost MCP tools, how many posts exist per status?"
+```
+
+A typical session chains `bifrost_schema_overview` → `bifrost_describe_table` → `bifrost_aggregate` or `bifrost_query`. The agent never writes SQL and never sees a connection string. For remote or multi-user hosting, the same adapter runs over Streamable HTTP with bearer authentication (`AddBifrostMcpHttp` + `MapBifrostMcp`).
+
+<a href="/BifrostQL/guides/mcp-server/" class="cta-button">Read the MCP Server Guide</a>
+
+<div class="not-content value-grid">
+
+<div class="value-card">
+<h3>Zero pipeline to start</h3>
+<p>No export job, no vector store, no nightly sync. The tools answer from the live tables, so the agent's numbers are this morning's numbers — and there is no shadow copy to secure separately.</p>
+</div>
+
+<div class="value-card">
+<h3>The agent sees what the caller may see</h3>
+<p>Identity is resolved fail-closed per request, and every read runs the same pipeline as GraphQL: tenant isolation, authorization policy, soft-delete. An agent acting for user A structurally cannot read tenant B.</p>
+</div>
+
+<div class="value-card">
+<h3>Aggregation happens in the database</h3>
+<p><code>bifrost_aggregate</code> runs GROUP BY server-side. The model asks for "count by status" and gets five numbers back — it never pages ten thousand rows through its context window to count them.</p>
+</div>
+
+<div class="value-card">
+<h3>Writes are a decision, not a default</h3>
+<p>The write tools ship disabled: they are not even listed to the agent and build zero intent until a deployment opts in — and opting in logs a startup warning. Enabled writes run the full mutation pipeline: audit, soft-delete, change history.</p>
+</div>
+
+<div class="value-card">
+<h3>Errors an agent can act on</h3>
+<p>Tool failures return stable machine-readable codes that distinguish "fix your input and retry" from "denied, stop" — and never leak table names, schema internals, or driver text to the model.</p>
+</div>
+
+<div class="value-card">
+<h3>Chat when you want an end-user surface</h3>
+<p>The same engine powers a server-side <a href="/BifrostQL/guides/llm-chat/">LLM chat endpoint</a> over your tables — confirmation-gated writes, metadata-driven table access, streaming responses — when the audience is people rather than coding agents.</p>
+</div>
+
+</div>
+
+</div>

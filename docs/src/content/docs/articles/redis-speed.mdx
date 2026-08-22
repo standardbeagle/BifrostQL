@@ -1,0 +1,91 @@
+---
+title: "Redis-Class Reads on Your SQL Database"
+description: "BifrostQL answers the Redis protocol directly from your SQL tables: point reads and sparse writes at 3-5x lower per-operation cost than the GraphQL door, with no cache tier to sync."
+template: splash
+hero:
+  title: ""
+  tagline: ""
+---
+
+<div class="hero-container">
+
+<h1 class="hero-headline">Your hottest reads don't need GraphQL.<br/>They don't need a cache tier either.</h1>
+
+<p class="hero-sub">
+BifrostQL serves the same SQL tables through more than one door. GraphQL is the door for shaped application queries: joins, pagination, aggregates. For key-addressed point reads and sparse writes, there is a second door that speaks the Redis protocol — and on those operations it is 3–5x cheaper per call, because it skips GraphQL parsing entirely and goes straight from key to SQL.
+</p>
+
+<div class="bridge-visual">
+	<span class="bridge-node">redis-cli</span>
+	<span class="bridge-span"></span>
+	<span class="bridge-node">BifrostQL</span>
+	<span class="bridge-span"></span>
+	<span class="bridge-node">SQL rows</span>
+</div>
+
+<hr class="prismatic-line" />
+
+```
+127.0.0.1:6379> GET users:42
+"{\"id\":42,\"name\":\"User 42\",\"email\":\"user42@example.com\",\"status\":\"active\",\"balance\":147.0}"
+
+127.0.0.1:6379> MGET users:7 users:8 users:9      # one SQL round trip
+127.0.0.1:6379> GET order_items:1042:3            # composite primary key
+127.0.0.1:6379> HGET users:42 email               # one visible field
+```
+
+The key is the address: `table:pk`, or `table:pk1:pk2` for composite keys. Any Redis client works — `redis-cli`, StackExchange.Redis, ioredis — because the wire is real RESP2/RESP3.
+
+## The numbers
+
+Same seeded SQLite database, same machine, every lane over a real loopback socket. Full harness in the repo at `benchmarks/BifrostQL.Benchmarks`.
+
+| Operation | RESP door | GraphQL door |
+|---|---|---|
+| Single row by primary key | **333 μs** | 1,343 μs |
+| 20 rows, one round trip | **653 μs** (~33 μs/row) | 2,012 μs |
+| 10 composite-key rows, one round trip | **654 μs** | — |
+| Update one column | **286 μs** | 1,263 μs¹ |
+| Update two fields | **272 μs** | 1,255 μs¹ |
+
+¹ The generated GraphQL update input requires every non-nullable column, so the GraphQL write carries the full row. RESP `SET`/`HSET` update only the columns you name — that is a semantic difference between the doors, not a benchmark trick.
+
+Two honest caveats. Absolute microseconds are hardware- and database-specific; the ratios are the durable result. And this is not a claim to beat a dedicated Redis server on raw latency — a real Redis answering from RAM is faster than any door onto SQL. The claim is different: these are your live rows. There is no second copy to load, invalidate, or watch drift out of date.
+
+<a href="/BifrostQL/guides/resp/" class="cta-button">Read the RESP Guide</a>
+
+<div class="not-content value-grid">
+
+<div class="value-card">
+<h3>No cache to keep honest</h3>
+<p>The classic read path is database → cache → invalidation bugs. Here the Redis protocol answers from the source table, so a read is current by construction and there is nothing to warm, expire, or reconcile.</p>
+</div>
+
+<div class="value-card">
+<h3>Security on the wire</h3>
+<p>Every read runs the same transformer pipeline as GraphQL: tenant isolation, policy row scope, soft-delete. A row your identity cannot see answers exactly like a missing key, so existence never leaks.</p>
+</div>
+
+<div class="value-card">
+<h3>Batches stay batches</h3>
+<p><code>MGET</code> with N keys compiles to one SQL query — for single-column and composite primary keys alike. Twenty rows cost one round trip, not twenty.</p>
+</div>
+
+<div class="value-card">
+<h3>Writes are a decision</h3>
+<p><code>SET</code>/<code>HSET</code>/<code>DEL</code> ship off by default. Opting in routes every write through the full mutation pipeline — tenant scoping, soft-delete, audit columns, change history, field encryption — and logs a startup warning.</p>
+</div>
+
+<div class="value-card">
+<h3>Closed by default</h3>
+<p>The listener binds loopback unless a deployment says otherwise, requires <code>AUTH</code> before any identity-bearing command, and carries connection, size, and depth caps as shipped defaults.</p>
+</div>
+
+<div class="value-card">
+<h3>Both doors, one truth</h3>
+<p>Keep GraphQL for the application and add RESP where per-call cost matters: session lookups, feature flags, entity hydration in hot request paths. Same tables, same permissions, one source of truth.</p>
+</div>
+
+</div>
+
+</div>

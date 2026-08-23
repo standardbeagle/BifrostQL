@@ -14,6 +14,8 @@ namespace BifrostQL.Core.Resolvers
         Upsert,
         /// <summary>Filtered set-update (<c>updateWhere:</c>); single-row field only, opt-in per table.</summary>
         UpdateWhere,
+        /// <summary>Collection-diff save (<c>delta:</c>); flattens onto the batch pipeline.</summary>
+        Delta,
     }
 
     /// <summary>
@@ -38,6 +40,7 @@ namespace BifrostQL.Core.Resolvers
             if (context.HasArgument("delete")) return MutationAction.Delete;
             if (context.HasArgument("upsert")) return MutationAction.Upsert;
             if (context.HasArgument("updateWhere")) return MutationAction.UpdateWhere;
+            if (context.HasArgument("delta")) return MutationAction.Delta;
             return MutationAction.None;
         }
 

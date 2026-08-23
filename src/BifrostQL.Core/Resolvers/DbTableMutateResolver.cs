@@ -50,6 +50,8 @@ namespace BifrostQL.Core.Resolvers
                 // updateWhere returns an affected-row COUNT — the same second meaning the
                 // declared scalar already carries for delete, coerced by the same rule below.
                 MutationAction.UpdateWhere => await UpdateWhereObject(context, table, mutationTransformers, model, conFactory),
+                // delta returns the batch's total affected COUNT, coerced like delete's.
+                MutationAction.Delta => await DeltaObject(context, table, mutationTransformers, model, conFactory),
                 _ => null,
             };
 
@@ -202,6 +204,22 @@ namespace BifrostQL.Core.Resolvers
 
             var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
             return await FilteredUpdatePipeline.UpdateByFilterAsync(table, setData, whereArg, ctx);
+        }
+
+        // Collection-diff save: { inserted, updated, deleted } flattens onto the batch
+        // pipeline in that order — one transaction, batch-max-size, duplicate policy,
+        // and the set-based bulk fast path all apply unchanged.
+        private static async Task<object?> DeltaObject(IBifrostFieldContext context, IDbTable table,
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory)
+        {
+            var delta = context.GetArgument<Dictionary<string, object?>>("delta") ?? new();
+            var actions = DeltaArgumentBinder.Bind(delta);
+            if (actions.Count == 0)
+                return 0;
+
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers,
+                ModuleApiRegistry.CaptureMutationArguments(context, table));
+            return await BatchMutationPipeline.ExecuteBatchAsync(table, actions, ctx);
         }
 
         // Nested ("tree") sync: accepts a parent object with nested child

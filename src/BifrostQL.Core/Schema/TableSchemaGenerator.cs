@@ -446,6 +446,26 @@ namespace BifrostQL.Core.Schema
             return result.ToString();
         }
 
+        /// <summary>The collection-diff save input's type name.</summary>
+        public string DeltaTypeName => $"{_table.GraphQlName}_delta";
+
+        /// <summary>
+        /// Emits <c>&lt;t&gt;_delta</c>: the collection-diff save shape — a grid or sync
+        /// diff's natural output — whose three optional lists reuse the existing per-verb
+        /// input types and flatten onto the batch pipeline (one transaction, batch caps,
+        /// duplicate policy, bulk fast path).
+        /// </summary>
+        public string GetDeltaParameterType()
+        {
+            var result = new StringBuilder();
+            result.AppendLine($"input {DeltaTypeName} {{");
+            result.AppendLine($"\tinserted: [{_table.GetActionTypeName(MutateActions.Insert)}!]");
+            result.AppendLine($"\tupdated: [{_table.GetActionTypeName(MutateActions.Update)}!]");
+            result.AppendLine($"\tdeleted: [{_table.GetActionTypeName(MutateActions.Delete)}!]");
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
         public string GetBatchMutationParameterType()
         {
             var result = new StringBuilder();
@@ -541,7 +561,7 @@ namespace BifrostQL.Core.Schema
                 : "";
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, delta: {DeltaTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();

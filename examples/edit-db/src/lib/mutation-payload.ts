@@ -1,5 +1,6 @@
-import { Column } from "../types/schema";
-import type { PkFilter } from "./row-id";
+import { Column, Table } from "../types/schema";
+import { pkFilterFor, type PkFilter } from "./row-id";
+import { validateRowValues } from "./field-validation";
 import { isJsonColumn } from "./content-detect";
 import { baseParamType, isExactScalar, isIntegerScalar, isNumericScalar } from "./scalar-types";
 
@@ -111,4 +112,33 @@ export function coerceDetail(
         }
     }
     return coerced;
+}
+
+/**
+ * Builds the `updated:` payload list for a bulk edit: for each FRESH row
+ * snapshot, echo every write-set column from the snapshot (the server's
+ * `Update_<t>` input requires all non-nullable columns), overlay the shared
+ * change set, validate, and coerce — with the primary key taken from the
+ * snapshot itself, composite-safe, so a payload can never retarget another row.
+ * Throws (never silently skips) when a row's key cannot be resolved or a merged
+ * payload fails validation: a bulk edit either stages every selected row or none.
+ */
+export function buildBulkUpdatePayloads(
+    table: Pick<Table, 'primaryKeys'>,
+    writeColumns: Column[],
+    idColumns: Column[],
+    freshRows: readonly Record<string, unknown>[],
+    changes: Record<string, unknown>,
+): Record<string, unknown>[] {
+    const editColumns: ColumnJoin[] = writeColumns.map((column) => ({ column }));
+    return freshRows.map((row) => {
+        const pkFilter = pkFilterFor(row, table);
+        if (!pkFilter) throw new Error('Cannot bulk edit: a selected row has no resolvable primary key.');
+        const detail: Record<string, unknown> = {};
+        for (const column of writeColumns) detail[column.name] = row[column.name] ?? null;
+        Object.assign(detail, changes);
+        const validationErrors = validateRowValues(writeColumns, detail);
+        if (validationErrors.length > 0) throw new Error(validationErrors.join(' '));
+        return coerceDetail(detail, editColumns, idColumns, pkFilter, false);
+    });
 }

@@ -44,6 +44,7 @@ import {
     FilterX,
     PanelRight,
     Rows3,
+    Pencil,
     Trash2,
 } from 'lucide-react';
 import { RowActions } from './row-actions';
@@ -125,6 +126,8 @@ interface DataTableProps<TData> {
     onDeleteRow?: (pk: PkFilter) => void;
     /** Callback when deleting multiple selected rows */
     onDeleteSelected?: (pks: PkFilter[]) => void;
+    /** Bulk edit of the selected rows — one shared change set, one delta transaction. */
+    onBulkEditSelected?: (pks: PkFilter[]) => void;
     /**
      * Whether parent/child drill-down ("stacking") mode is active. When the
      * companion `onToggleStacking` is supplied, a graphical toggle renders next
@@ -202,6 +205,7 @@ export function DataTable<TData>({
     onEditRow,
     onDeleteRow,
     onDeleteSelected,
+    onBulkEditSelected,
     stackingEnabled,
     onToggleStacking,
     exportRows,
@@ -366,15 +370,26 @@ export function DataTable<TData>({
     // old cell set and drift out of alignment with the header under fixed layout).
     const visibleColumnKey = table.getVisibleLeafColumns().map((c) => c.id).join('|');
 
-    const handleDeleteSelected = useCallback(() => {
-        if (!onDeleteSelected) return;
+    const selectedPkFilters = useCallback((): PkFilter[] => {
         const filters: PkFilter[] = [];
         for (const r of table.getSelectedRowModel().rows) {
             const f = pkFilterFor(r.original as Record<string, unknown>, { primaryKeys });
             if (f) filters.push(f);
         }
+        return filters;
+    }, [table, primaryKeys]);
+
+    const handleDeleteSelected = useCallback(() => {
+        if (!onDeleteSelected) return;
+        const filters = selectedPkFilters();
         if (filters.length > 0) onDeleteSelected(filters);
-    }, [table, onDeleteSelected, primaryKeys]);
+    }, [selectedPkFilters, onDeleteSelected]);
+
+    const handleBulkEditSelected = useCallback(() => {
+        if (!onBulkEditSelected) return;
+        const filters = selectedPkFilters();
+        if (filters.length > 0) onBulkEditSelected(filters);
+    }, [selectedPkFilters, onBulkEditSelected]);
 
     const buildRowPkFilter = useCallback((rowId: string): PkFilter | null => {
         const row = table.getRow(rowId);
@@ -419,20 +434,33 @@ export function DataTable<TData>({
                             Clear filters
                         </Button>
                     )}
-                    {selectedCount > 0 && onDeleteSelected && (
+                    {selectedCount > 0 && (onDeleteSelected || onBulkEditSelected) && (
                         <>
                             <span className="text-xs text-muted-foreground">
                                 {selectedCount} selected
                             </span>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={handleDeleteSelected}
-                                className="text-destructive hover:text-destructive"
-                            >
-                                <Trash2 className="size-3.5" />
-                                Delete
-                            </Button>
+                            {onBulkEditSelected && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleBulkEditSelected}
+                                    title="Apply one set of field changes to every selected row in one transaction"
+                                >
+                                    <Pencil className="size-3.5" />
+                                    Edit
+                                </Button>
+                            )}
+                            {onDeleteSelected && (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleDeleteSelected}
+                                    className="text-destructive hover:text-destructive"
+                                >
+                                    <Trash2 className="size-3.5" />
+                                    Delete
+                                </Button>
+                            )}
                         </>
                     )}
                 </div>

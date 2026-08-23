@@ -6,6 +6,7 @@ import { useToast } from './hooks/useToast';
 import { DataEditDialog } from './data-edit';
 import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
+import { BulkEditDialog } from './components/bulk-edit-dialog';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useQuery } from '@tanstack/react-query';
@@ -104,6 +105,13 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
     const handleDeleteSelected = useCallback((pks: PkFilter[]) => {
         if (pks.length === 0) return;
         setDeleteTarget({ type: 'batch', pks });
+    }, []);
+
+    // Bulk edit of selected rows — the shared change set saves as one delta document.
+    const [bulkEditPks, setBulkEditPks] = useState<PkFilter[] | null>(null);
+    const handleBulkEditSelected = useCallback((pks: PkFilter[]) => {
+        if (pks.length === 0) return;
+        setBulkEditPks(pks);
     }, []);
 
     const handleExpandContent = useCallback((rowIndex: number, columnName: string) => {
@@ -393,6 +401,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 onEditRow={isEditable && !grouping ? handleEditRow : undefined}
                 onDeleteRow={isEditable && !grouping ? handleDeleteRow : undefined}
                 onDeleteSelected={isEditable && !grouping ? handleDeleteSelected : undefined}
+                onBulkEditSelected={isEditable && !grouping ? handleBulkEditSelected : undefined}
                 stackingEnabled={stackingEnabled}
                 onToggleStacking={onToggleStacking}
                 exportRows={exportRows}
@@ -428,6 +437,13 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 canNavigatePrev={panelRowIndex > 0}
                 canNavigateNext={panelRowIndex >= 0 && panelRowIndex < rows.length - 1}
             />
+            {bulkEditPks !== null && (
+                <BulkEditDialog
+                    table={table}
+                    pks={bulkEditPks}
+                    onClose={() => setBulkEditPks(null)}
+                />
+            )}
             {editTarget !== null && (
                 <DataEditDialog
                     table={table.graphQlName}

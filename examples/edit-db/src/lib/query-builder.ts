@@ -5,8 +5,8 @@
 
 import type { Table, Column, Join, SchemaContextValue, TableIndex } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult } from './row-id';
-import { coerceForGql } from './fk';
+import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult, type PkFilter } from './row-id';
+import { coerceForGql, gqlTypeOf } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 import { isComposite } from './fk';
 import { isBinaryDbType, isLargeValueColumn } from './content-detect';
@@ -482,6 +482,46 @@ export function buildSingleRowQuery(
     // when the filter carries no params.
     const paramDecls = pkEq.params.length > 0 ? `(${pkEq.params.join(', ')})` : '';
     return `query GetSingleRow_${table.name}${paramDecls} { value: ${table.name}(filter: ${pkEq.filterText}) { data { ${fields.join(' ')} } } }`;
+}
+
+/**
+ * Builds ONE query fetching fresh snapshots of several rows by primary key —
+ * `{or: [pkEq, pkEq, ...]}` — so a bulk edit can echo current server state for
+ * every selected row in a single round trip (the multi-row analogue of
+ * {@link buildSingleRowQuery}'s fresh re-read). Rows come back under the `value`
+ * alias. Every key column of every row participates (composite-safe), values
+ * coerce through the same GraphQL-type rules as single-row PK filters (BigInt
+ * keys stay strings), and identifiers are asserted before any text is built.
+ */
+export function buildRowsByPkQuery(
+    table: Pick<Table, 'name' | 'primaryKeys' | 'columns'>,
+    pks: readonly PkFilter[],
+    fields: readonly string[],
+): { query: string; variables: Record<string, unknown> } | null {
+    assertGraphQlName(table.name, 'rows-by-pk table name');
+    for (const field of fields) assertGraphQlName(field, 'rows-by-pk selection field');
+    const keys = table.primaryKeys ?? [];
+    if (keys.length === 0 || pks.length === 0 || fields.length === 0) return null;
+    for (const key of keys) assertGraphQlName(key, 'rows-by-pk key column');
+
+    const columnByName = new Map((table.columns ?? []).map((c) => [c.name, c] as const));
+    const params: string[] = [];
+    const variables: Record<string, unknown> = {};
+    const rowClauses: string[] = [];
+    pks.forEach((pk, i) => {
+        const clauses: string[] = [];
+        for (const key of keys) {
+            const gqlType = gqlTypeOf(columnByName.get(key));
+            const varName = `pk${i}_${key}`;
+            variables[varName] = coerceForGql(pk[key], gqlType);
+            params.push(`$${varName}: ${gqlType}`);
+            clauses.push(`{${key}: {_eq: $${varName}}}`);
+        }
+        rowClauses.push(clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(', ')}]}`);
+    });
+    const filterText = rowClauses.length === 1 ? rowClauses[0] : `{or: [${rowClauses.join(', ')}]}`;
+    const query = `query GetRowsByPk_${table.name}(${params.join(', ')}) { value: ${table.name}(filter: ${filterText} limit: ${pks.length}) { data { ${fields.join(' ')} } } }`;
+    return { query, variables };
 }
 
 /**

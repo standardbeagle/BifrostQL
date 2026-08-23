@@ -662,6 +662,26 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for the OPT-IN filtered set-update surface
+        /// (<c>updateWhere: { set, where }</c> — an UPDATE whose scope is a caller-supplied
+        /// filter instead of a primary key). A table WITHOUT <see cref="Enabled"/> set to
+        /// <c>enabled</c> generates no updateWhere argument or input types at all, so the
+        /// surface is unprobeable where it was never turned on.
+        /// </summary>
+        public static class FilteredUpdate
+        {
+            /// <summary>Table-level opt-in; the only valid value is <c>enabled</c>.</summary>
+            public const string Enabled = "filtered-update";
+
+            /// <summary>
+            /// Cap on rows one filtered update may affect (default 100, aligned with
+            /// batch-max-size). Enforced by a COUNT precheck inside the update's own
+            /// transaction; exceeding it throws and rolls back.
+            /// </summary>
+            public const string MaxAffected = "filtered-update-max-affected";
+        }
+
+        /// <summary>
         /// Metadata keys for the opt-in gRPC front door's WRITE surface. A table opts into
         /// the Insert/Update/Delete RPCs by setting <see cref="WriteEnabled"/> to
         /// <see cref="Enabled"/>. This per-table allow-list is the SECOND, narrower gate behind

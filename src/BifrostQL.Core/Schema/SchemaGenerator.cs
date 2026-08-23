@@ -198,6 +198,11 @@ namespace BifrostQL.Core.Schema
                     builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
                     builder.AppendLine(generator.GetBatchMutationParameterType());
                     builder.AppendLine(generator.GetNestedSyncInputType());
+                    if (Modules.FilteredUpdateConfig.IsEnabled(generator.Table))
+                    {
+                        builder.AppendLine(generator.GetSetParameterType());
+                        builder.AppendLine(generator.GetUpdateWhereParameterType());
+                    }
                 }
 
                 builder.AppendLine(generator.GetTableFilterDefinition());

@@ -106,6 +106,8 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Batch.MaxSize,
             MetadataKeys.Batch.BulkThreshold,
             MetadataKeys.Batch.DuplicatePolicy,
+            MetadataKeys.FilteredUpdate.Enabled,
+            MetadataKeys.FilteredUpdate.MaxAffected,
             MetadataKeys.DataType.Type,
             MetadataKeys.StateMachine.StateColumn,
             MetadataKeys.StateMachine.InitialState,

@@ -407,6 +407,45 @@ namespace BifrostQL.Core.Schema
             return result.ToString();
         }
 
+        /// <summary>The input type naming pair for the opt-in filtered set-update surface.</summary>
+        public string SetTypeName => $"{_table.GraphQlName}_set";
+        public string UpdateWhereTypeName => $"{_table.GraphQlName}_update_where";
+
+        /// <summary>
+        /// Emits the <c>&lt;t&gt;_set</c> fieldset input: every visible, writable, non-key
+        /// column, ALL optional — a set-update writes only the fields supplied, and the
+        /// row's identity can never be moved through it (no PK, no identity, no computed).
+        /// </summary>
+        public string GetSetParameterType()
+        {
+            var result = new StringBuilder();
+            result.AppendLine($"input {SetTypeName} {{");
+            foreach (var column in _table.Columns)
+            {
+                if (!IsColumnVisible(column) || column.IsComputed || column.IsIdentity || column.IsPrimaryKey)
+                    continue;
+                var fieldType = ResolveFieldType(column, true, FieldTypeKind.Insert);
+                result.AppendLine($"\t{column.GraphQlName} : {fieldType}");
+            }
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
+        /// <summary>
+        /// Emits <c>&lt;t&gt;_update_where</c>: a required fieldset plus a required WHERE —
+        /// reusing the table's read-side filter input, so the write grammar and the read
+        /// grammar are one type. Emitted only for tables opted into filtered updates.
+        /// </summary>
+        public string GetUpdateWhereParameterType()
+        {
+            var result = new StringBuilder();
+            result.AppendLine($"input {UpdateWhereTypeName} {{");
+            result.AppendLine($"\tset: {SetTypeName}!");
+            result.AppendLine($"\twhere: {_table.TableFilterTypeName}!");
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
         public string GetBatchMutationParameterType()
         {
             var result = new StringBuilder();
@@ -495,8 +534,14 @@ namespace BifrostQL.Core.Schema
         {
             var result = new StringBuilder();
 
+            // The filtered set-update argument exists ONLY for opted-in tables: absent
+            // metadata means the surface is not merely disabled but unprobeable.
+            var updateWhereArg = Modules.FilteredUpdateConfig.IsEnabled(_table)
+                ? $", updateWhere: {UpdateWhereTypeName}"
+                : "";
+
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();

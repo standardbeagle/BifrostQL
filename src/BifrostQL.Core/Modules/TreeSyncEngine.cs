@@ -180,7 +180,7 @@ public sealed class TreeSyncEngine
         DiffChildren(table, submitted, existing, depth, thisKnownId, thisInstanceId, operations);
     }
 
-    private static string AddInsertOperation(
+    internal static string AddInsertOperation(
         IDbTable table,
         Dictionary<string, object?> scalarData,
         TableLinkDto? parentLink,
@@ -237,7 +237,7 @@ public sealed class TreeSyncEngine
 
     // Returns the single-column primary-key value if present and non-null,
     // otherwise null (composite keys and missing values yield null).
-    private static object? GetSingleKeyValue(IDbTable table, Dictionary<string, object?> data)
+    internal static object? GetSingleKeyValue(IDbTable table, Dictionary<string, object?> data)
     {
         var keys = table.KeyColumns.ToList();
         if (keys.Count != 1)
@@ -332,7 +332,9 @@ public sealed class TreeSyncEngine
         }
     }
 
-    private static Dictionary<string, object?> ExtractScalarData(
+    // Internal (not private): SaveTreeBuilder walks explicit-op trees with the SAME
+    // extraction/FK/ordering machinery, so the two graph writers cannot drift.
+    internal static Dictionary<string, object?> ExtractScalarData(
         IDbTable table,
         Dictionary<string, object?> data)
     {
@@ -353,7 +355,7 @@ public sealed class TreeSyncEngine
         return result;
     }
 
-    private static bool HasPrimaryKeyValues(IDbTable table, Dictionary<string, object?> data)
+    internal static bool HasPrimaryKeyValues(IDbTable table, Dictionary<string, object?> data)
     {
         var keyColumns = table.KeyColumns.ToList();
         if (keyColumns.Count == 0)
@@ -431,7 +433,7 @@ public sealed class TreeSyncEngine
         return null;
     }
 
-    private static List<Dictionary<string, object?>>? ExtractChildList(
+    internal static List<Dictionary<string, object?>>? ExtractChildList(
         Dictionary<string, object?> data,
         string linkName)
     {
@@ -486,7 +488,7 @@ public sealed class TreeSyncEngine
         return index;
     }
 
-    private static IReadOnlyList<TreeSyncOperation> OrderOperations(
+    internal static IReadOnlyList<TreeSyncOperation> OrderOperations(
         List<TreeSyncOperation> operations)
     {
         var inserts = operations

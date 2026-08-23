@@ -16,6 +16,8 @@ namespace BifrostQL.Core.Resolvers
         UpdateWhere,
         /// <summary>Collection-diff save (<c>delta:</c>); flattens onto the batch pipeline.</summary>
         Delta,
+        /// <summary>Explicit-ops graph save (<c>save:</c>); TreeSync executor, nothing inferred.</summary>
+        Save,
     }
 
     /// <summary>
@@ -35,6 +37,7 @@ namespace BifrostQL.Core.Resolvers
         public static MutationAction FromContext(IBifrostFieldContext context)
         {
             if (context.HasArgument("sync")) return MutationAction.Sync;
+            if (context.HasArgument("save")) return MutationAction.Save;
             if (context.HasArgument("insert")) return MutationAction.Insert;
             if (context.HasArgument("update")) return MutationAction.Update;
             if (context.HasArgument("delete")) return MutationAction.Delete;

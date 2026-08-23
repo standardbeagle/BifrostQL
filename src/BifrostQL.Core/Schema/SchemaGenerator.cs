@@ -150,6 +150,8 @@ namespace BifrostQL.Core.Schema
             // Only generate databaseInput type if there are mutations
             if (tableGenerators.Count > 0 || mutatingSpGenerators.Count > 0)
             {
+                // One shared enum for the explicit-ops graph save's per-node verb.
+                builder.AppendLine("enum bifrost_save_op { insert update delete }");
                 builder.AppendLine("type databaseInput {");
                 foreach (var generator in tableGenerators)
                 {
@@ -199,6 +201,7 @@ namespace BifrostQL.Core.Schema
                     builder.AppendLine(generator.GetBatchMutationParameterType());
                     builder.AppendLine(generator.GetDeltaParameterType());
                     builder.AppendLine(generator.GetNestedSyncInputType());
+                    builder.AppendLine(generator.GetNestedSaveInputType());
                     if (Modules.FilteredUpdateConfig.IsEnabled(generator.Table))
                     {
                         builder.AppendLine(generator.GetSetParameterType());

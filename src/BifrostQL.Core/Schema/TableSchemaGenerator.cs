@@ -446,6 +446,41 @@ namespace BifrostQL.Core.Schema
             return result.ToString();
         }
 
+        /// <summary>The explicit-ops graph save input's type name.</summary>
+        public string NestedSaveTypeName => $"{_table.GraphQlName}_save";
+
+        /// <summary>
+        /// Emits the explicit-ops graph save input: the same optional column set as the
+        /// sync input, plus <c>_op: bifrost_save_op</c> (insert|update|delete — absent
+        /// means key-present-updates / key-absent-inserts) and one child collection per
+        /// multi-link referencing the child's own save type. Unlike sync, nothing is
+        /// inferred from database state and unlisted children are untouched.
+        /// </summary>
+        public string GetNestedSaveInputType()
+        {
+            var result = new StringBuilder();
+            result.AppendLine($"input {NestedSaveTypeName} {{");
+            result.AppendLine($"\t_op : bifrost_save_op");
+            foreach (var column in _table.Columns)
+            {
+                if (!IsColumnVisible(column))
+                    continue;
+                if (column.IsComputed)
+                    continue;
+                var saveType = ResolveFieldType(column, true, FieldTypeKind.Sync);
+                result.AppendLine($"\t{column.GraphQlName} : {saveType}");
+            }
+            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var link in _table.MultiLinks)
+            {
+                var fieldName = link.Value.ChildFieldName;
+                if (!emitted.Add(fieldName)) continue;
+                result.AppendLine($"\t{fieldName} : [{link.Value.ChildTable.GraphQlName}_save!]");
+            }
+            result.AppendLine("}");
+            return result.ToString();
+        }
+
         /// <summary>The collection-diff save input's type name.</summary>
         public string DeltaTypeName => $"{_table.GraphQlName}_delta";
 
@@ -561,7 +596,7 @@ namespace BifrostQL.Core.Schema
                 : "";
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, delta: {DeltaTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
+                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, save: {NestedSaveTypeName}, delta: {DeltaTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
 
             result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();

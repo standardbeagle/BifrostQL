@@ -43,6 +43,7 @@ namespace BifrostQL.Core.Resolvers
             var result = MutationActionSelector.FromContext(context) switch
             {
                 MutationAction.Sync => await SyncObject(context, table, mutationTransformers, model, conFactory, dialect),
+                MutationAction.Save => await SaveObject(context, table, mutationTransformers, model, conFactory, dialect),
                 MutationAction.Insert => await InsertObject(context, table, mutationTransformers, model, conFactory),
                 MutationAction.Update => await UpdateObject(context, table, mutationTransformers, model, conFactory),
                 MutationAction.Delete => await DeleteObject(context, mutationTransformers, table, model, conFactory),
@@ -220,6 +221,39 @@ namespace BifrostQL.Core.Resolvers
             var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers,
                 ModuleApiRegistry.CaptureMutationArguments(context, table));
             return await BatchMutationPipeline.ExecuteBatchAsync(table, actions, ctx);
+        }
+
+        // Explicit-ops graph save: every node states its own operation (or defaults —
+        // key-present updates, key-absent inserts), nothing is inferred from database
+        // state, and unlisted children are untouched. No current-state load is needed,
+        // so a save is cheaper than a sync; execution reuses the TreeSync executor
+        // (per-node transformer chain, instance-scoped FK flow, one transaction).
+        private static async Task<object?> SaveObject(IBifrostFieldContext context, IDbTable table,
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
+        {
+            var tree = context.GetArgument<Dictionary<string, object?>>("save") ?? new();
+            if (tree.Count == 0)
+                return null;
+
+            var builder = new SaveTreeBuilder();
+            var operations = builder.BuildOperations(table, tree);
+            var rootOperation = SaveTreeBuilder.RootOperation(table, tree);
+
+            var executor = new TreeSyncExecutor(dialect);
+            var rootId = await executor.ExecuteAsync(
+                operations, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices);
+            rootId ??= RootKeyValue(table, tree);
+
+            // Notify with the root's ACTUAL op type (sync hard-codes Insert; an explicit
+            // save knows what the root did).
+            var rootMutationType = rootOperation switch
+            {
+                TreeSyncOperationType.Update => MutationType.Update,
+                TreeSyncOperationType.Delete => MutationType.Delete,
+                _ => MutationType.Insert,
+            };
+            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, rootMutationType, tree, rootId, context.UserContext);
+            return rootId;
         }
 
         // Nested ("tree") sync: accepts a parent object with nested child

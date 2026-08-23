@@ -93,20 +93,19 @@ describe('useDeleteMutation', () => {
             expect(query.mock.calls[0][1]).toEqual({ detail: { id: 99 } });
         });
 
-        it('batch-deletes with each action wrapping the coerced filter', async () => {
+        it('batch-deletes as one delta document of coerced key filters', async () => {
             const { query, wrapper } = createHarness();
             const { result } = renderHook(() => useDeleteMutation(users), { wrapper });
 
             await result.current.deleteRows(['1', { id: 2 }, 3]);
 
             expect(query).toHaveBeenCalledTimes(1);
+            // Multi-key deletes ride `delta: { deleted }` — the same one-transaction
+            // batch pipeline, but eligible for the server's set-based fast path.
+            expect(query.mock.calls[0][0]).toContain('mutation deleteMany($delta: users_delta)');
             const variables = query.mock.calls[0][1];
             expect(variables).toEqual({
-                actions: [
-                    { delete: { id: 1 } },
-                    { delete: { id: 2 } },
-                    { delete: { id: 3 } },
-                ],
+                delta: { deleted: [{ id: 1 }, { id: 2 }, { id: 3 }] },
             });
         });
     });
@@ -165,10 +164,12 @@ describe('useDeleteMutation', () => {
             ]);
 
             expect(query.mock.calls[0][1]).toEqual({
-                actions: [
-                    { delete: { student_id: 1, course_id: 'cs-101' } },
-                    { delete: { student_id: 2, course_id: 'cs-202' } },
-                ],
+                delta: {
+                    deleted: [
+                        { student_id: 1, course_id: 'cs-101' },
+                        { student_id: 2, course_id: 'cs-202' },
+                    ],
+                },
             });
         });
     });

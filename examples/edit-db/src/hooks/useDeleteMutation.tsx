@@ -101,9 +101,13 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
         [table]
     );
 
+    // Multi-key deletes ride the collection-diff document (`delta: { deleted }`):
+    // the SAME one-transaction batch pipeline as `_batch`, but at or above the
+    // table's bulk-batch-threshold the server applies it as ONE set-based
+    // DELETE..JOIN instead of a statement per row.
     const batchQueryStr = useMemo(() =>
-        `mutation batchDelete($actions: [batch_${table.name}!]!){
-            ${table.name}_batch(actions: $actions)
+        `mutation deleteMany($delta: ${table.name}_delta){
+            ${table.name}(delta: $delta)
         }`,
         [table]
     );
@@ -117,10 +121,10 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     });
 
     const batchMutation = useMutation({
-        mutationFn: (actions: Record<string, unknown>[]) => fetcher.query(batchQueryStr, { actions }),
-        onSuccess: (_data, actions) => {
+        mutationFn: (deleted: PkFilter[]) => fetcher.query(batchQueryStr, { delta: { deleted } }),
+        onSuccess: (_data, deleted) => {
             invalidateAfterTableWrite(queryClient, table.name);
-            const n = actions.length;
+            const n = deleted.length;
             toast(`${n} ${n === 1 ? 'row' : 'rows'} deleted`);
         },
     });
@@ -136,13 +140,13 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
     };
 
     const deleteRows = (details: DeleteInput[]) => {
-        let actions: { delete: PkFilter }[];
+        let deleted: PkFilter[];
         try {
-            actions = details.map((d) => ({ delete: buildPayload(d) }));
+            deleted = details.map((d) => buildPayload(d));
         } catch (e) {
             return Promise.reject(e);
         }
-        return batchMutation.mutateAsync(actions);
+        return batchMutation.mutateAsync(deleted);
     };
 
     const error = deleteMutation.error ?? batchMutation.error;

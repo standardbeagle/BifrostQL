@@ -1,9 +1,18 @@
 ---
 title: "GraphQL Insert, Update, Upsert, Delete"
-description: "Write rows through generated GraphQL mutations: single and batch operations, upsert semantics, and nested TreeSync writes that span several related tables."
+description: "Write rows through generated GraphQL mutations: single, batch, collection-diff delta, explicit-ops graph save, filtered set-update, and nested TreeSync reconcile."
 ---
 
-BifrostQL exposes one mutation field per table that has a primary key. The table field accepts one of four operation arguments: `insert`, `update`, `upsert`, or `delete`. It also exposes a `<table>_batch` field for applying several operations in one request.
+BifrostQL exposes one mutation field per table that has a primary key, and is deliberately generous about save shapes: the common recipes each have a first-class, performant form.
+
+| Recipe | Shape | When to use |
+|--------|-------|-------------|
+| Single row | `<t>(insert:/update:/upsert:/delete:)` | One row, one verb |
+| Entity list + ops | `<t>_batch(actions: [...])` | Mixed per-row operations, one transaction, [set-based fast path](/reference/bulk-batch-performance/) at scale |
+| Collection diff | `<t>(delta: { inserted, updated, deleted })` | A grid save or sync loop's computed diff, sent as one document — flattens onto the batch pipeline (same transaction, caps, duplicate policy, fast path) |
+| Explicit-ops graph | `<t>(save: { ..., _op, children })` | A nested document where every node states its own operation; unlisted children are untouched |
+| Inferred reconcile | `<t>(sync: { ... })` | Make the database match the submitted tree: ops inferred from key presence, orphans deleted |
+| Filtered set-update | `<t>(updateWhere: { set, where })` | `UPDATE ... SET ... WHERE` semantics — opt-in per table, capped |
 
 ## Insert
 
@@ -65,6 +74,60 @@ mutation {
   orderItems(delete: {}, _primaryKey: ["42", "7"])
 }
 ```
+
+## Collection-diff saves (`delta`)
+
+A grid editor or sync loop that computes a diff sends it as one document:
+
+```graphql
+mutation {
+  products(delta: {
+    inserted: [ { name: "New", price: 5.0 } ],
+    updated:  [ { productId: 42, price: 12.99 } ],
+    deleted:  [ { productId: 17 } ]
+  })
+}
+```
+
+Sections apply in `inserted` → `updated` → `deleted` order inside ONE transaction — a failure anywhere applies nothing. The reply is the total affected count. Because the delta flattens onto the batch pipeline, `batch-max-size`, `batch-duplicate-policy`, and the set-based bulk fast path all apply unchanged.
+
+## Explicit-ops graph saves (`save`)
+
+Where `sync` *infers* operations by diffing against database state (and deletes orphans), `save` executes exactly what the document says — nothing more:
+
+```graphql
+mutation {
+  blogs(save: {
+    id: 1, name: "renamed",
+    posts: [
+      { title: "brand new" },              # no key → insert (FK auto-wired to the parent)
+      { id: 11, title: "edited" },         # key present → update
+      { id: 12, _op: delete }              # explicit delete needs only the key
+    ]
+  })
+}
+```
+
+Rules: a node's `_op` (`insert`/`update`/`delete`) wins; absent, a node carrying its full primary key updates and one without inserts. Unlisted children are untouched — `save` never infers deletes. Root delete is legal and returns the submitted key. The whole graph is one transaction; each node runs the full transformer chain (a soft-delete table's `_op: delete` becomes the soft-delete UPDATE), and a fresh parent's generated key flows to its children's foreign keys. A `save` skips `sync`'s current-state load entirely, so it is also the faster graph write.
+
+## Filtered set-updates (`updateWhere`)
+
+SQL's `UPDATE ... SET ... WHERE` as a mutation — **opt-in per table**:
+
+```
+"dbo.products { filtered-update: enabled; filtered-update-max-affected: 500 }"
+```
+
+```graphql
+mutation {
+  products(updateWhere: {
+    set: { discontinued: true },
+    where: { category: { _eq: "legacy" }, price: { _lt: 1.0 } }
+  })
+}
+```
+
+The `where` grammar is the table's read-side filter type; the reply is the affected-row count. Guard rails, all fail-closed: the argument only exists on opted-in tables; your filter ANDs into (never replaces) tenant/policy/soft-delete scope; filter columns clear the same column-permission guards as reads (a denied column errors, it is never stripped); an empty `where` is refused; a `COUNT` precheck inside the update's own transaction enforces `filtered-update-max-affected` (default 100) with rollback; and tables with approval/history/CDC hooks, state machines, or concurrency tokens refuse the set-based form outright — use `_batch` there.
 
 ## Batch mutations
 

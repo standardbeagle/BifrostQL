@@ -4,6 +4,15 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-08-22
+
+### Added — multi-model mutation surface (generous save recipes)
+
+- **`delta:`** collection-diff save on every table's mutation field: `{ inserted, updated, deleted }` flattens onto the batch pipeline in that order — one transaction, `batch-max-size`, `batch-duplicate-policy`, and the set-based bulk fast path unchanged. Returns the total affected count.
+- **`save:`** explicit-ops graph save: every node of a nested `<t>_save` document states its own `_op` (`bifrost_save_op` enum), defaults are key-present-updates / key-absent-inserts, unlisted children are untouched (no orphan inference — that stays `sync:`'s reconcile semantic), root delete is legal, and no current-state load is needed. Executes on the TreeSync executor: per-node transformer chain, instance-scoped FK flow, one transaction.
+- **`updateWhere:`** filtered set-update (`UPDATE ... SET ... WHERE`), **opt-in** via `filtered-update: enabled` table metadata with a `filtered-update-max-affected` cap (default 100, COUNT-prechecked in-transaction with rollback). The caller's `where` reuses the read-side filter grammar, ANDs into transformer row scope, and its columns clear the same column-permission guards as reads. Tables with hooks, state machines, or concurrency tokens refuse the set-based form.
+- `TableFilter.CombineAnd` public combinator (converges three private copies).
+
 ## 0.4.11 — 2026-06-23
 
 ### Fixed — polymorphic child with no scalar columns crashed SQL generation

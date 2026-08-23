@@ -144,6 +144,8 @@ consistently.
 | `batch-max-size` | number | table | Maximum batch mutation size |
 | `bulk-batch-threshold` | number | table | Batch size at which SQL Server, PostgreSQL, and MySQL batches switch to the set-based fast path (temp-table staging + set-based DML in one SQL-level transaction). Default 50; `0` or negative disables the fast path. Batches with hooks (approval, history, CDC), upserts, or state machines always use the per-row path; SQLite keeps the per-row path (a single in-process writer gains nothing from staging). Measured throughput: see [Bulk Batch Performance](/reference/bulk-batch-performance/) |
 | `batch-duplicate-policy` | `last-wins`/`reject` | table | How a batch with multiple update/delete actions for one key resolves — always deterministically, in the pipeline, before any SQL. `last-wins` (default) collapses to the sequential net effect (collapsed intermediates never execute, so hooks/history never record them); `reject` refuses the batch with a clean error |
+| `filtered-update` | `enabled` | table | Opt-in for the `updateWhere` filtered set-update; without it the argument does not exist in the schema |
+| `filtered-update-max-affected` | number | table | Cap on rows one filtered update may affect (default 100); a COUNT precheck in the update's own transaction throws and rolls back on breach |
 
 ### Optional feature metadata
 

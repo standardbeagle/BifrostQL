@@ -228,14 +228,8 @@ public sealed class QueryTransformerService : IQueryTransformerService
         ScopeFilterTraversals(filter.Next, link.ParentTable, model, userContext, query);
     }
 
-    private static TableFilter CombineFilters(TableFilter existing, TableFilter additional)
-    {
-        return new TableFilter
-        {
-            And = new List<TableFilter> { existing, additional },
-            FilterType = FilterType.And,
-        };
-    }
+    private static TableFilter CombineFilters(TableFilter existing, TableFilter additional) =>
+        TableFilter.CombineAnd(existing, additional);
 
     /// <summary>
     /// Rewrites routable equality predicates on encrypted columns onto their blind-index

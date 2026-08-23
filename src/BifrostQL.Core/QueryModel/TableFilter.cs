@@ -74,6 +74,20 @@ namespace BifrostQL.Core.QueryModel
         /// </summary>
         internal bool IsLeafColumnPredicate => Next is { FilterType: FilterType.Relation };
 
+        /// <summary>
+        /// ANDs two filters into one node — the single combinator behind every "narrow,
+        /// never replace" composition: the mutation transformer chain folding successive
+        /// <c>AdditionalFilter</c>s, the query transformer service, the query field's
+        /// filter+<c>_primaryKey</c> merge, and the filtered-update pipeline ANDing the
+        /// caller's WHERE onto the transformers' row scope.
+        /// </summary>
+        public static TableFilter CombineAnd(TableFilter first, TableFilter second) =>
+            new()
+            {
+                And = new List<TableFilter> { first, second },
+                FilterType = FilterType.And,
+            };
+
         public static TableFilter FromPrimaryKey(IEnumerable<object?> values, IEnumerable<ColumnDto> keyColumns, string tableName)
         {
             var keyColumnList = keyColumns.ToList();

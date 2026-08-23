@@ -232,14 +232,8 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         };
     }
 
-    private static TableFilter CombineFilters(TableFilter existing, TableFilter additional)
-    {
-        return new TableFilter
-        {
-            And = new List<TableFilter> { existing, additional },
-            FilterType = QueryModel.FilterType.And,
-        };
-    }
+    private static TableFilter CombineFilters(TableFilter existing, TableFilter additional) =>
+        TableFilter.CombineAnd(existing, additional);
 
     public IEnumerator<IMutationTransformer> GetEnumerator() => Transformers.GetEnumerator();
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();

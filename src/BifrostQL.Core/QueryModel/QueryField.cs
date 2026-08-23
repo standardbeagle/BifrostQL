@@ -356,13 +356,7 @@ namespace BifrostQL.Core.QueryModel
             }
 
             if (filterResult != null && pkResult != null)
-            {
-                return new TableFilter
-                {
-                    And = new List<TableFilter> { filterResult, pkResult },
-                    FilterType = FilterType.And,
-                };
-            }
+                return TableFilter.CombineAnd(filterResult, pkResult);
 
             return filterResult ?? pkResult;
         }

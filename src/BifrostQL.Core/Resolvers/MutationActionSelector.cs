@@ -12,6 +12,8 @@ namespace BifrostQL.Core.Resolvers
         Update,
         Delete,
         Upsert,
+        /// <summary>Filtered set-update (<c>updateWhere:</c>); single-row field only, opt-in per table.</summary>
+        UpdateWhere,
     }
 
     /// <summary>
@@ -35,6 +37,7 @@ namespace BifrostQL.Core.Resolvers
             if (context.HasArgument("update")) return MutationAction.Update;
             if (context.HasArgument("delete")) return MutationAction.Delete;
             if (context.HasArgument("upsert")) return MutationAction.Upsert;
+            if (context.HasArgument("updateWhere")) return MutationAction.UpdateWhere;
             return MutationAction.None;
         }
 

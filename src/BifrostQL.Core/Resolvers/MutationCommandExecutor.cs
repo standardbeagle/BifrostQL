@@ -103,6 +103,19 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// Builds the filtered set-update statement: <c>UPDATE tableRef SET … WHERE whereSql;</c>.
+        /// Unlike <see cref="BuildUpdateSql"/> there is NO key predicate — the caller-supplied
+        /// filter ANDed with the transformers' row scope IS the entire WHERE, already rendered
+        /// (and parameterized) by the filtered-update pipeline, which is the only legal caller.
+        /// </summary>
+        public static string BuildFilteredUpdateSql(ISqlDialect dialect, IDbTable table, string tableRef,
+            IEnumerable<string> setColumns, string whereSql)
+        {
+            var setClause = string.Join(",", setColumns.Select(c => SetAssignment(dialect, table, c)));
+            return $"UPDATE {tableRef} SET {setClause} WHERE {whereSql};";
+        }
+
+        /// <summary>
         /// Builds the full <c>DELETE FROM tableRef WHERE …suffix;</c> statement shared by
         /// the single-row and batch hard-delete paths. <paramref name="whereSuffix"/>
         /// carries a transformer's ANDed AdditionalFilter (empty when none).

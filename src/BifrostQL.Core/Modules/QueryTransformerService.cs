@@ -467,7 +467,10 @@ public sealed class QueryTransformerService : IQueryTransformerService
     /// through a relationship filter carrying two or more sibling predicates —
     /// the guard set and the emitted SQL must be derived from one predicate.
     /// </summary>
-    private static void CollectFilterColumns(TableFilter? filter, IDbTable table, Action<IDbTable, string?> add)
+    // Internal (not private): the filtered-update pipeline collects a caller-supplied
+    // WHERE's columns with the SAME walker, so the write path's guard set cannot
+    // diverge from the read path's.
+    internal static void CollectFilterColumns(TableFilter? filter, IDbTable table, Action<IDbTable, string?> add)
     {
         if (filter == null)
             return;

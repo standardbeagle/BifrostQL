@@ -47,6 +47,9 @@ namespace BifrostQL.Core.Resolvers
                 MutationAction.Update => await UpdateObject(context, table, mutationTransformers, model, conFactory),
                 MutationAction.Delete => await DeleteObject(context, mutationTransformers, table, model, conFactory),
                 MutationAction.Upsert => await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect),
+                // updateWhere returns an affected-row COUNT — the same second meaning the
+                // declared scalar already carries for delete, coerced by the same rule below.
+                MutationAction.UpdateWhere => await UpdateWhereObject(context, table, mutationTransformers, model, conFactory),
                 _ => null,
             };
 
@@ -182,6 +185,23 @@ namespace BifrostQL.Core.Resolvers
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
             var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
             return await TableMutationPipeline.UpdateAsync(table, propertyInfo, ctx);
+        }
+
+        // Filtered set-update: { set: fieldset, where: filter } — argument extraction
+        // only; every gate (opt-in, hooks, state machine, token, column guards, empty
+        // where, max-affected) lives in FilteredUpdatePipeline so no caller can reach
+        // the SQL without them.
+        private static async Task<object?> UpdateWhereObject(IBifrostFieldContext context, IDbTable table,
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory)
+        {
+            var argument = context.GetArgument<Dictionary<string, object?>>("updateWhere") ?? new();
+            var setData = argument.TryGetValue("set", out var setObj) && setObj is Dictionary<string, object?> set
+                ? set
+                : new Dictionary<string, object?>();
+            argument.TryGetValue("where", out var whereArg);
+
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
+            return await FilteredUpdatePipeline.UpdateByFilterAsync(table, setData, whereArg, ctx);
         }
 
         // Nested ("tree") sync: accepts a parent object with nested child

@@ -17,7 +17,7 @@
 		<!-- Microsoft.Extensions.DependencyInjection now flows from the Microsoft.AspNetCore.App
 		     framework reference below; a standalone package reference is redundant (NU1510). -->
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
-		<PackageReference Include="Testcontainers.PostgreSql" Version="4.12.0" />
+		<PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
 		<!-- gRPC assembled-door loopback: drives the dynamically-dispatched Get/List/Stream + the
 		     identity-filtered reflection service over the in-process HTTP/2 handler. TestHost must
 		     track the ASP.NET Core shared framework of each TFM. Grpc.Reflection messages + Google.Protobuf

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBulkUpdatePayloads } from './mutation-payload';
+import { buildBulkUpdatePayloads, buildStagedUpdatePayloads } from './mutation-payload';
 import type { Column } from '../types/schema';
 
 function col(name: string, paramType: string, opts: Partial<Column> = {}): Column {
@@ -62,5 +62,42 @@ describe('buildBulkUpdatePayloads', () => {
             { qty: '42' },
         );
         expect(payloads[0].qty).toBe(42);
+    });
+});
+
+describe('buildStagedUpdatePayloads', () => {
+    const orderId = col('order_id', 'BigInt!', { isPrimaryKey: true });
+    const lineNo = col('line_no', 'Int!', { isPrimaryKey: true });
+    const status = col('status', 'String!');
+    const note = col('note', 'String', { isNullable: true });
+    const table = { primaryKeys: ['order_id', 'line_no'] };
+
+    it('applies each row its OWN change map with a per-row write set', () => {
+        const changesByKey: Record<string, Record<string, unknown>> = {
+            '1|1': { status: 'a2' },
+            '1|2': { note: 'touched' },
+        };
+        const payloads = buildStagedUpdatePayloads(
+            table, [status, note], [orderId, lineNo],
+            [
+                { order_id: '1', line_no: 1, status: 'a', note: null },
+                { order_id: '1', line_no: 2, status: 'b', note: null },
+            ],
+            (row) => changesByKey[`${row.order_id}|${row.line_no}`],
+        );
+
+        // Row 1 changed status: nullable note is NOT echoed (outside the write set).
+        expect(payloads[0]).toEqual({ order_id: '1', line_no: 1, status: 'a2' });
+        // Row 2 changed the nullable note: it joins the write set alongside the
+        // required non-nullable echo of status.
+        expect(payloads[1]).toEqual({ order_id: '1', line_no: 2, status: 'b', note: 'touched' });
+    });
+
+    it('throws when a fetched row has no staged changes — never a silent no-op payload', () => {
+        expect(() => buildStagedUpdatePayloads(
+            table, [status], [orderId, lineNo],
+            [{ order_id: '1', line_no: 1, status: 'a' }],
+            () => undefined,
+        )).toThrow(/no staged changes/);
     });
 });

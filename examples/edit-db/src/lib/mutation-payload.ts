@@ -142,3 +142,36 @@ export function buildBulkUpdatePayloads(
         return coerceDetail(detail, editColumns, idColumns, pkFilter, false);
     });
 }
+
+/**
+ * Builds the `updated:` payload list for STAGED inline cell edits: unlike the
+ * shared-change bulk edit, each row carries its OWN change map. Per fresh row:
+ * the write set is every non-nullable editable column plus that row's changed
+ * columns (the server's `Update_<t>` input requires the non-nullable echo), the
+ * snapshot fills the echo, the row's changes overlay it, and the primary key
+ * comes from the snapshot itself. Throws — never skips — when a fetched row has
+ * no staged changes or a merged payload fails validation: Save all either
+ * stages every edited row or none.
+ */
+export function buildStagedUpdatePayloads(
+    table: Pick<Table, 'primaryKeys'>,
+    editableColumns: Column[],
+    idColumns: Column[],
+    freshRows: readonly Record<string, unknown>[],
+    changesForRow: (row: Record<string, unknown>) => Record<string, unknown> | undefined,
+): Record<string, unknown>[] {
+    return freshRows.map((row) => {
+        const changes = changesForRow(row);
+        if (!changes || Object.keys(changes).length === 0)
+            throw new Error('Cannot save: a fetched row carries no staged changes.');
+        const pkFilter = pkFilterFor(row, table);
+        if (!pkFilter) throw new Error('Cannot save: an edited row has no resolvable primary key.');
+        const writeColumns = editableColumns.filter((c) => !c.isNullable || c.name in changes);
+        const detail: Record<string, unknown> = {};
+        for (const column of writeColumns) detail[column.name] = row[column.name] ?? null;
+        Object.assign(detail, changes);
+        const validationErrors = validateRowValues(writeColumns, detail);
+        if (validationErrors.length > 0) throw new Error(validationErrors.join(' '));
+        return coerceDetail(detail, writeColumns.map((column) => ({ column })), idColumns, pkFilter, false);
+    });
+}

@@ -404,3 +404,93 @@ describe('DataTable in-flight page indicator', () => {
         expect(screen.queryByTestId('fetch-indicator')).toBeNull();
     });
 });
+
+describe('DataTable inline cell editing', () => {
+    function renderEditable(overrides: {
+        pendingEdits?: ReadonlyMap<string, Record<string, unknown>>;
+        onCellCommit?: (rowId: string, columnId: string, value: unknown) => void;
+        onSaveAllEdits?: () => void;
+        onDiscardAllEdits?: () => void;
+        savingEdits?: boolean;
+    } = {}) {
+        return render(
+            <DataTable<EnrollmentRow>
+                columns={makeColumns()}
+                data={enrollmentRows}
+                pageCount={1}
+                pageIndex={0}
+                pageSize={50}
+                sorting={[]}
+                columnFilters={[]}
+                primaryKeys={['student_id', 'course_id']}
+                onSortingChange={() => { /* noop */ }}
+                onColumnFiltersChange={() => { /* noop */ }}
+                onPageIndexChange={() => { /* noop */ }}
+                onPageSizeChange={() => { /* noop */ }}
+                inlineEditableColumns={new Set(['grade'])}
+                onCellCommit={overrides.onCellCommit ?? (() => { /* noop */ })}
+                pendingEdits={overrides.pendingEdits}
+                onSaveAllEdits={overrides.onSaveAllEdits}
+                onDiscardAllEdits={overrides.onDiscardAllEdits}
+                savingEdits={overrides.savingEdits}
+            />,
+        );
+    }
+
+    it('double-click opens an editor, Enter commits the value into the staged set', () => {
+        const onCellCommit = vi.fn();
+        renderEditable({ onCellCommit });
+
+        const cell = screen.getByTestId('grade-1-cs-101').closest('td')!;
+        fireEvent.doubleClick(cell);
+        const editor = screen.getByLabelText('Edit cell value') as HTMLInputElement;
+        expect(editor.value).toBe('A');
+
+        fireEvent.change(editor, { target: { value: 'C-' } });
+        fireEvent.keyDown(editor, { key: 'Enter' });
+
+        // Composite row id: BOTH key parts, so the edit targets the exact row.
+        expect(onCellCommit).toHaveBeenCalledWith('1::cs-101', 'grade', 'C-');
+    });
+
+    it('Escape cancels without committing', () => {
+        const onCellCommit = vi.fn();
+        renderEditable({ onCellCommit });
+
+        fireEvent.doubleClick(screen.getByTestId('grade-1-cs-202').closest('td')!);
+        const editor = screen.getByLabelText('Edit cell value');
+        fireEvent.change(editor, { target: { value: 'F' } });
+        fireEvent.keyDown(editor, { key: 'Escape' });
+
+        expect(onCellCommit).not.toHaveBeenCalled();
+        expect(screen.queryByLabelText('Edit cell value')).toBeNull();
+    });
+
+    it('a non-editable cell never opens an editor', () => {
+        renderEditable();
+        // course_id is not in inlineEditableColumns.
+        const cell = screen.getAllByText('cs-101')[0].closest('td')!;
+        fireEvent.doubleClick(cell);
+        expect(screen.queryByLabelText('Edit cell value')).toBeNull();
+    });
+
+    it('a pending cell renders the staged value dirty, and the toolbar offers Save all / Discard', () => {
+        const onSaveAllEdits = vi.fn();
+        const onDiscardAllEdits = vi.fn();
+        renderEditable({
+            pendingEdits: new Map([['1::cs-101', { grade: 'D' }]]),
+            onSaveAllEdits,
+            onDiscardAllEdits,
+        });
+
+        // The staged value shows in place of the stored one, marked dirty.
+        expect(screen.getByText('D')).toBeInTheDocument();
+        expect(screen.getByText('D').closest('td')!).toHaveAttribute('data-dirty', 'true');
+        expect(screen.getByText('1 unsaved row')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save all' }));
+        expect(onSaveAllEdits).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+        expect(onDiscardAllEdits).toHaveBeenCalledTimes(1);
+    });
+});

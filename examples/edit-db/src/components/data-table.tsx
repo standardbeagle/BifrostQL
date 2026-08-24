@@ -128,6 +128,19 @@ interface DataTableProps<TData> {
     onDeleteSelected?: (pks: PkFilter[]) => void;
     /** Bulk edit of the selected rows — one shared change set, one delta transaction. */
     onBulkEditSelected?: (pks: PkFilter[]) => void;
+    /** Column ids editable INLINE: double-click a cell to edit; Enter/blur commits into the staged set, Escape cancels. */
+    inlineEditableColumns?: ReadonlySet<string>;
+    /** Column ids whose inline editor is a boolean toggle instead of a text input. */
+    inlineBooleanColumns?: ReadonlySet<string>;
+    /** Staged (unsaved) cell edits keyed by row id; rendered dirty and shown in place of the stored value. */
+    pendingEdits?: ReadonlyMap<string, Record<string, unknown>>;
+    /** Commits one edited cell into the staged set (owned by the caller so edits survive refetches). */
+    onCellCommit?: (rowId: string, columnId: string, value: unknown) => void;
+    /** Save/discard the whole staged set — rendered in the toolbar with the unsaved count. */
+    onSaveAllEdits?: () => void;
+    onDiscardAllEdits?: () => void;
+    /** True while the staged set is being saved; locks the toolbar buttons. */
+    savingEdits?: boolean;
     /**
      * Whether parent/child drill-down ("stacking") mode is active. When the
      * companion `onToggleStacking` is supplied, a graphical toggle renders next
@@ -206,6 +219,13 @@ export function DataTable<TData>({
     onDeleteRow,
     onDeleteSelected,
     onBulkEditSelected,
+    inlineEditableColumns,
+    inlineBooleanColumns,
+    pendingEdits,
+    onCellCommit,
+    onSaveAllEdits,
+    onDiscardAllEdits,
+    savingEdits = false,
     stackingEnabled,
     onToggleStacking,
     exportRows,
@@ -228,6 +248,9 @@ export function DataTable<TData>({
     } = useRowHoverActions();
     const { defaultColumns, trailingColumns } = useEditorConfig();
     const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+    // Which single cell is in edit mode. Keyed by PK-derived row id, so an in-flight
+    // edit survives a background refetch reordering the page.
+    const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
     const { columnSizing, setColumnSizing } = useColumnSizingPersistence(tableName);
     const scrollRef = useRef<HTMLDivElement>(null);
     const { fitMode, setFitMode, computeFitSize } = useFitMode(scrollRef, onPageSizeChange);
@@ -391,6 +414,15 @@ export function DataTable<TData>({
         if (filters.length > 0) onBulkEditSelected(filters);
     }, [selectedPkFilters, onBulkEditSelected]);
 
+    const startEditCell = useCallback((rowId: string, columnId: string) => {
+        setEditingCell({ rowId, columnId });
+    }, []);
+    const commitCell = useCallback((rowId: string, columnId: string, value: unknown) => {
+        setEditingCell(null);
+        onCellCommit?.(rowId, columnId, value);
+    }, [onCellCommit]);
+    const cancelEditCell = useCallback(() => setEditingCell(null), []);
+
     const buildRowPkFilter = useCallback((rowId: string): PkFilter | null => {
         const row = table.getRow(rowId);
         return row ? pkFilterFor(row.original as Record<string, unknown>, { primaryKeys }) : null;
@@ -459,6 +491,21 @@ export function DataTable<TData>({
                                 >
                                     <Trash2 className="size-3.5" />
                                     Delete
+                                </Button>
+                            )}
+                        </>
+                    )}
+                    {(pendingEdits?.size ?? 0) > 0 && onSaveAllEdits && (
+                        <>
+                            <span className="text-xs text-amber-600 dark:text-amber-400">
+                                {pendingEdits!.size} unsaved {pendingEdits!.size === 1 ? 'row' : 'rows'}
+                            </span>
+                            <Button size="sm" onClick={onSaveAllEdits} disabled={savingEdits}>
+                                {savingEdits ? 'Saving…' : 'Save all'}
+                            </Button>
+                            {onDiscardAllEdits && (
+                                <Button variant="outline" size="sm" onClick={onDiscardAllEdits} disabled={savingEdits}>
+                                    Discard
                                 </Button>
                             )}
                         </>
@@ -656,6 +703,13 @@ export function DataTable<TData>({
                                     isSelected={selectedRowId != null && row.id === selectedRowId}
                                     checked={row.getIsSelected()}
                                     visibleKey={visibleColumnKey}
+                                    pending={pendingEdits?.get(row.id)}
+                                    editingColumnId={editingCell?.rowId === row.id ? editingCell.columnId : null}
+                                    inlineEditableColumns={onCellCommit ? inlineEditableColumns : undefined}
+                                    inlineBooleanColumns={inlineBooleanColumns}
+                                    onStartEditCell={onCellCommit ? startEditCell : undefined}
+                                    onCommitCell={commitCell}
+                                    onCancelEditCell={cancelEditCell}
                                     onRowSelect={onRowSelect}
                                     onEditRow={onEditRow ? editRowById : undefined}
                                     onDeleteRow={onDeleteRow ? deleteRowById : undefined}
@@ -766,6 +820,16 @@ interface DataTableRowProps<TData> {
     /** Checkbox selection state, passed explicitly so the memoized row re-renders
      *  when it toggles (row.getIsSelected() alone wouldn't invalidate the memo). */
     checked: boolean;
+    /** This row's staged cell edits (undefined when clean). A new object per commit,
+     *  so the memoized row re-renders exactly when ITS pending set changes. */
+    pending?: Record<string, unknown>;
+    /** Column id being edited inline in THIS row, or null. */
+    editingColumnId?: string | null;
+    inlineEditableColumns?: ReadonlySet<string>;
+    inlineBooleanColumns?: ReadonlySet<string>;
+    onStartEditCell?: (rowId: string, columnId: string) => void;
+    onCommitCell?: (rowId: string, columnId: string, value: unknown) => void;
+    onCancelEditCell?: () => void;
     /** Visible-column signature; a change invalidates the memo so the row's cell
      *  set stays in sync with the header when column visibility toggles. */
     visibleKey: string;
@@ -790,6 +854,13 @@ function DataTableRowInner<TData>({
     row,
     isSelected,
     checked,
+    pending,
+    editingColumnId,
+    inlineEditableColumns,
+    inlineBooleanColumns,
+    onStartEditCell,
+    onCommitCell,
+    onCancelEditCell,
     onRowSelect,
     onEditRow,
     onDeleteRow,
@@ -839,13 +910,83 @@ function DataTableRowInner<TData>({
             onPointerUp={cancelPress}
             onPointerCancel={cancelPress}
         >
-            {row.getVisibleCells().map((cell) => (
-                <TableCell key={cell.id} data-col-id={cell.column.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </TableCell>
-            ))}
+            {row.getVisibleCells().map((cell) => {
+                const columnId = cell.column.id;
+                const editable = !!onStartEditCell && !!inlineEditableColumns?.has(columnId);
+                const isEditing = editingColumnId === columnId;
+                const hasPending = !!pending && columnId in pending;
+                return (
+                    <TableCell
+                        key={cell.id}
+                        data-col-id={columnId}
+                        data-dirty={hasPending ? 'true' : undefined}
+                        className={hasPending ? 'bg-amber-500/10 border-l-2 border-l-amber-500' : undefined}
+                        title={editable && !isEditing ? 'Double-click to edit' : undefined}
+                        onDoubleClick={editable && !isEditing ? () => onStartEditCell!(row.id, columnId) : undefined}
+                    >
+                        {isEditing && onCommitCell && onCancelEditCell ? (
+                            <InlineCellEditor
+                                initialValue={hasPending ? pending![columnId] : (row.original as Record<string, unknown>)[columnId]}
+                                boolean={!!inlineBooleanColumns?.has(columnId)}
+                                onCommit={(value) => onCommitCell(row.id, columnId, value)}
+                                onCancel={onCancelEditCell}
+                            />
+                        ) : hasPending ? (
+                            <span title="Unsaved change">{pending![columnId] == null ? '' : String(pending![columnId])}</span>
+                        ) : (
+                            flexRender(cell.column.columnDef.cell, cell.getContext())
+                        )}
+                    </TableCell>
+                );
+            })}
         </TableRow>
     );
 }
 
 const DataTableRow = memo(DataTableRowInner) as typeof DataTableRowInner;
+
+interface InlineCellEditorProps {
+    initialValue: unknown;
+    boolean: boolean;
+    onCommit: (value: unknown) => void;
+    onCancel: () => void;
+}
+
+/**
+ * The in-cell editor: a bare autofocused input sized to the cell. Enter or blur
+ * commits (into the STAGED set — nothing hits the server until Save all),
+ * Escape cancels. Booleans toggle-and-commit in one click.
+ */
+function InlineCellEditor({ initialValue, boolean, onCommit, onCancel }: InlineCellEditorProps) {
+    const [value, setValue] = useState(initialValue == null ? '' : String(initialValue));
+    if (boolean) {
+        return (
+            <input
+                type="checkbox"
+                autoFocus
+                defaultChecked={initialValue === true || initialValue === 'true'}
+                onChange={(e) => onCommit(e.target.checked)}
+                onKeyDown={(e) => { if (e.key === 'Escape') onCancel(); }}
+                onBlur={onCancel}
+                aria-label="Edit cell value"
+            />
+        );
+    }
+    return (
+        <input
+            autoFocus
+            className="w-full bg-background border border-primary rounded px-1 py-0.5 text-sm outline-none"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); onCommit(value); }
+                else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+                e.stopPropagation();
+            }}
+            onBlur={() => onCommit(value)}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            aria-label="Edit cell value"
+        />
+    );
+}

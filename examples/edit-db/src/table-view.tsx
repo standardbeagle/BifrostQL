@@ -1,20 +1,22 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDataTable } from './hooks/useDataTable';
 import { useDeleteMutation } from './hooks/useDeleteMutation';
+import { useDeltaMutation } from './hooks/useDeltaMutation';
 import { useTableMutation } from './hooks/useTableMutation';
 import { useToast } from './hooks/useToast';
 import { DataEditDialog } from './data-edit';
 import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { BulkEditDialog } from './components/bulk-edit-dialog';
+import { buildStagedUpdatePayloads } from './lib/mutation-payload';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useQuery } from '@tanstack/react-query';
-import { isJsonColumn, isLargeValueColumn } from './lib/content-detect';
+import { isBinaryDbType, isJsonColumn, isLargeValueColumn } from './lib/content-detect';
 import { Table, Column } from './types/schema';
 import type { DrillFrame } from './lib/drill-stack';
-import { encodePkRoute, pkFilterFor, buildPkEqFilter, type PkFilter } from './lib/row-id';
-import { buildSingleRowQuery } from './lib/query-builder';
+import { encodePkRoute, parsePkRoute, pkFilterFor, rowIdOf, buildPkEqFilter, type PkFilter } from './lib/row-id';
+import { buildSingleRowQuery, buildRowsByPkQuery } from './lib/query-builder';
 import { buildColumnFilters, getFilterOperators, type ColumnFilterValue } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
 import type { ColumnFiltersState } from '@tanstack/react-table';
@@ -113,6 +115,17 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         if (pks.length === 0) return;
         setBulkEditPks(pks);
     }, []);
+
+    // Inline cell edits, STAGED: nothing hits the server until Save all sends the
+    // whole set as one delta transaction. Keyed by PK-derived row id (the grid's
+    // own row key space), so edits survive background refetches and page turns —
+    // rows edited on another page still save. Held here, not in the grid: the
+    // grid resets its own state on data changes.
+    const [stagedEdits, setStagedEdits] = useState<Map<string, { pk: PkFilter; changes: Record<string, unknown> }>>(new Map());
+    const stagedEditsRef = useRef(stagedEdits);
+    stagedEditsRef.current = stagedEdits;
+    const [savingEdits, setSavingEdits] = useState(false);
+    const deltaMutation = useDeltaMutation(table);
 
     const handleExpandContent = useCallback((rowIndex: number, columnName: string) => {
         const row = rowsRef.current[rowIndex];
@@ -355,6 +368,96 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         handleExpandContent(next, panel.columnName);
     }, [panel, panelRowIndex, rows.length, handleExpandContent]);
 
+    const inlineEditableColumns = useMemo(
+        () => new Set(table.columns
+            .filter((c: Column) => !c.isReadOnly && !c.isIdentity && !c.isPrimaryKey
+                && !isBinaryDbType(c.dbType) && !isLargeValueColumn(c))
+            .map((c: Column) => c.name)),
+        [table],
+    );
+    const inlineBooleanColumns = useMemo(
+        () => new Set(table.columns.filter((c: Column) => c.paramType.startsWith('Boolean')).map((c: Column) => c.name)),
+        [table],
+    );
+
+    const handleCellCommit = useCallback((rowId: string, columnId: string, value: unknown) => {
+        const pk = parsePkRoute(rowId, table);
+        if (!pk) return;
+        // Committing a value equal to the row's CURRENT stored value un-stages the
+        // cell (an edit-then-undo leaves the row clean, not dirty-with-no-diff).
+        const original = rowsRef.current.find((r) => rowIdOf(r, table, -1) === rowId);
+        setStagedEdits((prev) => {
+            const next = new Map(prev);
+            const entry = next.get(rowId);
+            const changes: Record<string, unknown> = { ...(entry?.changes ?? {}) };
+            const originalValue = original?.[columnId];
+            const unchanged = original !== undefined
+                && (originalValue == null) === (value == null)
+                && String(originalValue ?? '') === String(value ?? '');
+            if (unchanged) delete changes[columnId];
+            else changes[columnId] = value;
+            if (Object.keys(changes).length === 0) next.delete(rowId);
+            else next.set(rowId, { pk, changes });
+            return next;
+        });
+    }, [table]);
+
+    const handleDiscardAllEdits = useCallback(() => setStagedEdits(new Map()), []);
+
+    const handleSaveAllEdits = useCallback(async () => {
+        const entries = [...stagedEditsRef.current.entries()];
+        if (entries.length === 0) return;
+        setSavingEdits(true);
+        try {
+            const editableColumns = table.columns.filter((c: Column) => inlineEditableColumns.has(c.name));
+            const idColumns = (table.primaryKeys ?? [])
+                .map((pk) => table.columns.find((c: Column) => c.name === pk))
+                .filter((c): c is Column => !!c);
+            const changedColumnNames = new Set(entries.flatMap(([, e]) => Object.keys(e.changes)));
+            const writeCandidates = editableColumns.filter((c: Column) => !c.isNullable || changedColumnNames.has(c.name));
+            const fetchFields = [...new Set([...(table.primaryKeys ?? []), ...writeCandidates.map((c: Column) => c.name)])];
+
+            // Fresh re-read of every edited row in ONE query: the grid's projection
+            // excludes large values and may be stale, and Update_<t> requires the
+            // non-nullable echo (same rationale as the content panel's re-read).
+            const rowsQuery = buildRowsByPkQuery(table, entries.map(([, e]) => e.pk), fetchFields);
+            if (!rowsQuery) throw new Error('The edited rows have no resolvable primary keys.');
+            const res = await fetcher.query<{ value: { data: Record<string, unknown>[] } }>(
+                rowsQuery.query, rowsQuery.variables);
+            const freshRows = res?.value?.data ?? [];
+            if (freshRows.length !== entries.length)
+                throw new Error(`Only ${freshRows.length} of ${entries.length} edited rows still exist. Refresh and retry.`);
+
+            const updated = buildStagedUpdatePayloads(
+                table, editableColumns, idColumns, freshRows,
+                (row) => stagedEditsRef.current.get(rowIdOf(row, table, -1))?.changes);
+            await deltaMutation.saveDelta({ updated });
+            setStagedEdits(new Map());
+        } catch (e: unknown) {
+            // Staged edits survive a failed save (the delta is one transaction —
+            // nothing was written) so the user can fix and retry.
+            toast(`Save failed: ${(e as Error).message}`, 'error');
+        } finally {
+            setSavingEdits(false);
+        }
+    }, [table, inlineEditableColumns, deltaMutation, fetcher, toast]);
+
+    // Switching tables discards the staged set — VISIBLY, never silently.
+    const prevTableNameRef = useRef(table.name);
+    useEffect(() => {
+        if (prevTableNameRef.current === table.name) return;
+        prevTableNameRef.current = table.name;
+        if (stagedEditsRef.current.size > 0) {
+            setStagedEdits(new Map());
+            toast('Unsaved cell edits were discarded on table switch', 'error');
+        }
+    }, [table.name, toast]);
+
+    const pendingEdits = useMemo(
+        () => new Map([...stagedEdits].map(([rowId, entry]) => [rowId, entry.changes] as const)),
+        [stagedEdits],
+    );
+
     const handleVisualize = useCallback(() => {
         const filter = chartFilter(columnFilters, table);
         window.dispatchEvent(new CustomEvent('bifrostql:visualize', {
@@ -402,6 +505,13 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 onDeleteRow={isEditable && !grouping ? handleDeleteRow : undefined}
                 onDeleteSelected={isEditable && !grouping ? handleDeleteSelected : undefined}
                 onBulkEditSelected={isEditable && !grouping ? handleBulkEditSelected : undefined}
+                inlineEditableColumns={inlineEditableColumns}
+                inlineBooleanColumns={inlineBooleanColumns}
+                pendingEdits={pendingEdits}
+                onCellCommit={isEditable && !grouping ? handleCellCommit : undefined}
+                onSaveAllEdits={handleSaveAllEdits}
+                onDiscardAllEdits={handleDiscardAllEdits}
+                savingEdits={savingEdits}
                 stackingEnabled={stackingEnabled}
                 onToggleStacking={onToggleStacking}
                 exportRows={exportRows}

@@ -1,0 +1,52 @@
+name: Publish edit-db to npm
+
+# Publishes @standardbeagle/edit-db. The NuGet side stamps 0.4.<run_number> from
+# dotnet.yml's pack-publish; this workflow takes that number as input so the npm
+# package version always matches the NuGet set it shipped with.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version to publish (match the NuGet set, e.g. 0.4.583)"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm -r --if-present --sort build
+
+      - name: Test edit-db
+        run: pnpm --dir examples/edit-db test
+
+      - name: Stamp version
+        run: pnpm --dir examples/edit-db exec npm version ${{ inputs.version }} --no-git-tag-version
+
+      - name: Publish
+        run: pnpm --dir examples/edit-db publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

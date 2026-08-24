@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ExportButton } from './export-button';
 import * as exportLib from '../lib/export';
 import { ToastProvider } from '../hooks/useToast';
+import { EditorConfigProvider } from '../hooks/useEditorConfig';
 import type { ExportResult, RunExportOptions } from '../lib/export';
 
 // Render the Radix dropdown inline (no portal/pointer-capture) so the CSV/JSON
@@ -130,5 +131,31 @@ describe('ExportButton unmount', () => {
 
         unmount();
         expect(captured!.aborted).toBe(true);
+    });
+});
+
+describe('host saveFile routing', () => {
+    it('routes the finished export through the host saver instead of the DOM anchor', async () => {
+        const saveFile = vi.fn(async (_file: { filename: string; content: string; mime: string }) => undefined);
+        const exportRows = vi.fn(async () => ({ content: 'a,b\n1,2\n', rowCount: 1, total: 1, truncated: false }));
+        const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click');
+
+        render(
+            <EditorConfigProvider config={{ showStats: false, saveFile }}>
+                <ToastProvider>
+                    <ExportButton exportRows={exportRows} total={1} tableName="users" />
+                </ToastProvider>
+            </EditorConfigProvider>,
+        );
+        fireEvent.click(screen.getByRole('button', { name: /Export/ }));
+        fireEvent.click(screen.getByText('CSV'));
+
+        await waitFor(() => expect(saveFile).toHaveBeenCalledTimes(1));
+        expect(saveFile.mock.calls[0][0]).toMatchObject({
+            filename: 'users-export.csv',
+            mime: expect.stringContaining('text/csv'),
+        });
+        expect(anchorClick).not.toHaveBeenCalled();
+        anchorClick.mockRestore();
     });
 });

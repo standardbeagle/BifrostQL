@@ -8,8 +8,8 @@ import {
 } from './ui/dropdown-menu';
 import { ChevronDown, Download, X } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
+import { useSaveFile } from '../hooks/useSaveFile';
 import {
-    downloadTextFile,
     filenameFor,
     mimeFor,
     DEFAULT_ROW_CAP,
@@ -41,6 +41,7 @@ export function ExportButton({
     rowCap = DEFAULT_ROW_CAP,
 }: ExportButtonProps) {
     const { toast } = useToast();
+    const saveFile = useSaveFile();
     const [running, setRunning] = useState(false);
     const [fetched, setFetched] = useState(0);
     const abortRef = useRef<AbortController | null>(null);
@@ -78,9 +79,9 @@ export function ExportButton({
                     onProgress: (count) => setFetched(count),
                 });
                 if (!result) return;
-                downloadTextFile(
-                    result.content,
+                await saveFile(
                     filenameFor(tableName, format),
+                    result.content,
                     mimeFor(format),
                 );
                 if (result.truncated) {
@@ -101,7 +102,7 @@ export function ExportButton({
                 abortRef.current = null;
             }
         },
-        [running, total, rowCap, exportRows, tableName, toast],
+        [running, total, rowCap, exportRows, tableName, toast, saveFile],
     );
 
     const cancel = useCallback(() => abortRef.current?.abort(), []);

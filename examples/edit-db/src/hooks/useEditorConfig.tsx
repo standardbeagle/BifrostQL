@@ -39,6 +39,13 @@ export interface EditorConfig {
      * what an action does; edit-db just invokes it with the schema table.
      */
     tableActions?: TableAction[];
+    /**
+     * Host-provided file saver. When present, every editor download (grid and
+     * navigation exports) routes through it instead of the DOM anchor-download —
+     * a desktop shell can show a native save dialog; the browser default stays
+     * the anchor. Rejecting keeps the editor's own error reporting intact.
+     */
+    saveFile?: (file: { filename: string; content: string; mime: string }) => Promise<void>;
 }
 
 const defaultConfig: EditorConfig = { showStats: false };

@@ -5,13 +5,13 @@ import type { Table } from '../types/schema';
 import { buildQuery, exportableColumns } from '../lib/query-builder';
 import {
     DEFAULT_ROW_CAP,
-    downloadTextFile,
     exportAllRows,
     filenameFor,
     mimeFor,
     type ExportFormat,
     type ExportResult,
 } from '../lib/export';
+import { useSaveFile } from './useSaveFile';
 
 /**
  * Downloads a whole table WITHOUT opening it: the navigation-level counterpart
@@ -26,6 +26,7 @@ import {
 export function useTableExport(): (table: Table, format: ExportFormat) => Promise<ExportResult> {
     const schema = useSchema();
     const fetcher = useFetcher();
+    const saveFile = useSaveFile();
 
     return useCallback(async (table: Table, format: ExportFormat) => {
         const query = buildQuery(table, schema, '', [], undefined, undefined, undefined, { fields: 'export' });
@@ -48,7 +49,7 @@ export function useTableExport(): (table: Table, format: ExportFormat) => Promis
                 };
             },
         });
-        downloadTextFile(result.content, filenameFor(table.name, format), mimeFor(format));
+        await saveFile(filenameFor(table.name, format), result.content, mimeFor(format));
         return result;
-    }, [schema, fetcher]);
+    }, [schema, fetcher, saveFile]);
 }

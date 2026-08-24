@@ -47,6 +47,12 @@ interface EditorProps {
      * table; what it does — open a query designer, copy DDL, … — is the host's.
      */
     tableActions?: TableAction[];
+    /**
+     * Host-provided file saver for every editor download (grid + navigation
+     * exports). A desktop shell can route this to a native save dialog; omit it
+     * and downloads use the browser anchor mechanism.
+     */
+    saveFile?: (file: { filename: string; content: string; mime: string }) => Promise<void>;
 }
 
 /**
@@ -83,6 +89,7 @@ export function Editor({
     defaultColumns,
     trailingColumns,
     tableActions,
+    saveFile,
 }: EditorProps) {
     const resolvedFetcher = useMemo(() => {
         if (fetcher) return fetcher;
@@ -93,8 +100,8 @@ export function Editor({
     // Memoized: the config context feeds the schema filter and every grid, so a
     // fresh object each render would re-run those consumers for nothing.
     const config = useMemo(
-        () => ({ showStats, tables, defaultColumns, trailingColumns, tableActions }),
-        [showStats, tables, defaultColumns, trailingColumns, tableActions],
+        () => ({ showStats, tables, defaultColumns, trailingColumns, tableActions, saveFile }),
+        [showStats, tables, defaultColumns, trailingColumns, tableActions, saveFile],
     );
 
     const queryClient = useMemo(() => new QueryClient({

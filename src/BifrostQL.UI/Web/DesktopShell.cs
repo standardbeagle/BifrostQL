@@ -64,6 +64,8 @@ namespace BifrostQL.UI.Web
                     new VaultBridgeHandlers(window, bridgeLogger, state.VaultPath).Register(nativeBridge);
                     new RawSqlBridgeHandler(state).Register(nativeBridge);
                     new VisualQueryBridgeHandlers(state, app.Services).Register(nativeBridge);
+                    new SchemaDdlBridgeHandler(state, app.Services).Register(nativeBridge);
+                    new FileBridgeHandlers(window, bridgeLogger).Register(nativeBridge);
 
                     window.WaitForClose();
                     closed.SetResult();

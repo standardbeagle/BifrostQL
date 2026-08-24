@@ -23,11 +23,12 @@ namespace BifrostQL.UI.Web
             var logger = app.Services.GetService<ILoggerFactory>()?.CreateLogger("BifrostQL.UI.HttpBridge");
             var bridge = new HttpBridgeHost(logger);
 
-            // The vault handlers are deliberately absent: they drive native credential
-            // prompt windows, which do not exist headless, and unlike the query surface
-            // they mutate stored secrets.
+            // The vault and save-file handlers are deliberately absent: they drive
+            // native windows (credential prompts, the OS save dialog), which do not
+            // exist headless — and the vault ones additionally mutate stored secrets.
             new RawSqlBridgeHandler(state).Register(bridge);
             new VisualQueryBridgeHandlers(state, app.Services).Register(bridge);
+            new SchemaDdlBridgeHandler(state, app.Services).Register(bridge);
 
             app.MapGet(HttpBridgeHost.RoutePrefix, () => Results.Ok(new { enabled = true }));
 

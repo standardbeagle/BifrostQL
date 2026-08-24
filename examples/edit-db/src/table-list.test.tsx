@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { TableList } from './table-list';
+import { EditorConfigProvider } from './hooks/useEditorConfig';
 
 const pathMock = vi.hoisted(() => ({ current: '/' }));
 
@@ -12,6 +13,19 @@ vi.mock('./hooks/useSchema', () => ({
 
 vi.mock('./hooks/useTableStats', () => ({
   useTableStats: vi.fn(),
+}));
+
+// The download built-ins pull the fetcher/toast contexts, which these tests do
+// not mount — mock the hooks at the seam and capture the export calls.
+const exportMock = vi.hoisted(() => ({
+  run: vi.fn(async () => ({ content: '', rowCount: 1, total: 1, truncated: false })),
+  toast: vi.fn(),
+}));
+vi.mock('./hooks/useTableExport', () => ({
+  useTableExport: () => exportMock.run,
+}));
+vi.mock('./hooks/useToast', () => ({
+  useToast: () => ({ toast: exportMock.toast }),
 }));
 
 vi.mock('./hooks/usePath', () => ({
@@ -29,6 +43,18 @@ vi.mock('@/components/ui/table', () => ({
   TableRow: ({ children }: { children: React.ReactNode }) => <tr>{children}</tr>,
   TableCell: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <td className={className}>{children}</td>
+  ),
+}));
+
+// Render the Radix dropdown inline (no portal/pointer-capture) so the kebab's
+// action items are directly clickable under jsdom — same approach as
+// export-button.test.tsx.
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div role="menu">{children}</div>,
+  DropdownMenuItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) => (
+    <button type="button" role="menuitem" onClick={onSelect}>{children}</button>
   ),
 }));
 
@@ -312,5 +338,63 @@ describe('TableList — search, grouping, paging', () => {
 
     expect(() => render(<TableList />)).not.toThrow();
     expect(screen.getByText('Customers')).toBeInTheDocument();
+  });
+});
+
+describe('TableList table actions (kebab menu)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pathMock.current = '/';
+    mockUseTableStats.mockReturnValue({ stats: {}, isLoading: false });
+    mockUseSchema.mockReturnValue({
+      loading: false,
+      error: null,
+      data: [
+        {
+          dbName: 'dbo.users',
+          graphQlName: 'users',
+          name: 'users',
+          label: 'Users',
+          labelColumn: 'id',
+          primaryKeys: ['id'],
+          isEditable: true,
+          metadata: {},
+          columns: [],
+          multiJoins: [],
+          singleJoins: [],
+        },
+      ],
+      findTable: () => undefined,
+    } as never);
+  });
+
+  it('renders built-in Download actions and invokes the export runner', () => {
+    render(<TableList />);
+
+    fireEvent.click(screen.getByLabelText('Actions for Users'));
+    fireEvent.click(screen.getByText('Download CSV'));
+
+    expect(exportMock.run).toHaveBeenCalledTimes(1);
+    expect(exportMock.run.mock.calls[0][0]).toMatchObject({ name: 'users' });
+    expect(exportMock.run.mock.calls[0][1]).toBe('csv');
+  });
+
+  it('renders host-contributed actions after the built-ins and passes the schema table', () => {
+    const onSelect = vi.fn();
+    render(
+      <EditorConfigProvider config={{ showStats: false, tableActions: [
+        { id: 'edit-as-query', label: 'Edit as query', onSelect },
+        { id: 'never', label: 'Hidden', enabled: () => false, onSelect: vi.fn() },
+      ] }}>
+        <TableList />
+      </EditorConfigProvider>,
+    );
+
+    fireEvent.click(screen.getByLabelText('Actions for Users'));
+    const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
+    expect(items).toEqual(['Download CSV', 'Download JSON', 'Edit as query']);
+
+    fireEvent.click(screen.getByText('Edit as query'));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ name: 'users' }));
   });
 });

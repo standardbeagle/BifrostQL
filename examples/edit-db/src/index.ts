@@ -44,3 +44,5 @@ export type {
   RunExportOptions,
 } from './lib/export';
 export { serializeColumnFilters, deserializeColumnFilters } from './lib/query-builder';
+export type { TableAction } from './lib/table-action';
+export type { Table, Column } from './types/schema';

@@ -5,6 +5,7 @@ import { PathProvider } from './hooks/usePath';
 import { SchemaProvider } from './hooks/useSchema';
 import { GraphQLFetcher, HttpGraphQLFetcher, FetcherProvider } from './common/fetcher';
 import { EditorConfigProvider } from './hooks/useEditorConfig';
+import type { TableAction } from './lib/table-action';
 import { ToastProvider } from './hooks/useToast';
 import './globals.css';
 
@@ -40,6 +41,12 @@ interface EditorProps {
     defaultColumns?: Record<string, string[]>;
     /** Columns to move to the right end of every grid, in this order (e.g. audit stamps). */
     trailingColumns?: string[];
+    /**
+     * Actions the host adds to every table's kebab menu in the navigation list
+     * (after the built-in Download actions). Each is invoked with the schema
+     * table; what it does — open a query designer, copy DDL, … — is the host's.
+     */
+    tableActions?: TableAction[];
 }
 
 /**
@@ -75,6 +82,7 @@ export function Editor({
     tables,
     defaultColumns,
     trailingColumns,
+    tableActions,
 }: EditorProps) {
     const resolvedFetcher = useMemo(() => {
         if (fetcher) return fetcher;
@@ -85,8 +93,8 @@ export function Editor({
     // Memoized: the config context feeds the schema filter and every grid, so a
     // fresh object each render would re-run those consumers for nothing.
     const config = useMemo(
-        () => ({ showStats, tables, defaultColumns, trailingColumns }),
-        [showStats, tables, defaultColumns, trailingColumns],
+        () => ({ showStats, tables, defaultColumns, trailingColumns, tableActions }),
+        [showStats, tables, defaultColumns, trailingColumns, tableActions],
     );
 
     const queryClient = useMemo(() => new QueryClient({

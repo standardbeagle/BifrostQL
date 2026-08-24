@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
+import type { TableAction } from '../lib/table-action';
 
 /**
  * Optional, opt-in editor features. Kept tiny and separate from the data/schema
@@ -32,6 +33,12 @@ export interface EditorConfig {
      * annotate but sit in the middle of the natural column order.
      */
     trailingColumns?: string[];
+    /**
+     * Host-contributed actions on each table in the navigation list, rendered in
+     * the table's kebab menu AFTER the built-in Download actions. The host owns
+     * what an action does; edit-db just invokes it with the schema table.
+     */
+    tableActions?: TableAction[];
 }
 
 const defaultConfig: EditorConfig = { showStats: false };

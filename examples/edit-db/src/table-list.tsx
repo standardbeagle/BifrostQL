@@ -1,13 +1,22 @@
 import { Link, usePath } from './hooks/usePath';
 import { useSchema } from './hooks/useSchema';
 import { Table as SchemaTable } from './types/schema';
-import { Loader2, Search, X, ChevronRight, ChevronDown, ChevronLeft } from 'lucide-react';
+import { Loader2, Search, X, ChevronRight, ChevronDown, ChevronLeft, MoreVertical, Download } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useTableStats, TableStats } from './hooks/useTableStats';
 import { abbreviateNumber } from './lib/format-value';
 import { useEditorConfig } from './hooks/useEditorConfig';
-import { useMemo, useState, useEffect } from 'react';
+import { useTableExport } from './hooks/useTableExport';
+import { useToast } from './hooks/useToast';
+import type { TableAction } from './lib/table-action';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 
 /** Tables shown per page. Caps the DOM size so the list stays fast with hundreds of tables. */
 const TABLE_LIST_PAGE_SIZE = 50;
@@ -127,6 +136,8 @@ interface TableNameCellProps {
   showStats: boolean;
   /** Whether this table is the one currently open. */
   active: boolean;
+  /** Built-in + host-contributed actions rendered in the row's kebab menu. */
+  actions?: TableAction[];
 }
 
 /**
@@ -138,22 +149,55 @@ interface TableNameCellProps {
  *
  * @component
  */
-function TableNameCell({ table, stats, maxRowCount, showStats, active }: TableNameCellProps) {
+function TableNameCell({ table, stats, maxRowCount, showStats, active, actions }: TableNameCellProps) {
+  const applicable = (actions ?? []).filter((a) => a.enabled?.(table) ?? true);
   return (
-    <Link
-      to={`/${table.name}`}
-      aria-current={active ? 'page' : undefined}
-      className={`plain-link block no-underline py-1.5 px-2 text-sm font-medium border-l-2 ${
+    <div
+      className={`group/tablerow flex items-stretch border-l-2 ${
         active
           ? 'bg-accent text-accent-foreground border-primary'
-          : 'text-foreground border-transparent hover:bg-muted/50 hover:text-primary'
+          : 'text-foreground border-transparent hover:bg-muted/50'
       }`}
     >
-      <div className="flex flex-col gap-0.5 min-w-0">
-        <span className="truncate" title={table.label}>{table.label}</span>
-        {showStats && <TableStatsSparkline stats={stats} maxRowCount={maxRowCount} />}
-      </div>
-    </Link>
+      <Link
+        to={`/${table.name}`}
+        aria-current={active ? 'page' : undefined}
+        className={`plain-link flex-1 min-w-0 no-underline py-1.5 px-2 text-sm font-medium ${
+          active ? '' : 'hover:text-primary'
+        }`}
+      >
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="truncate" title={table.label}>{table.label}</span>
+          {showStats && <TableStatsSparkline stats={stats} maxRowCount={maxRowCount} />}
+        </div>
+      </Link>
+      {applicable.length > 0 && (
+        // Outside the Link — an anchor may not contain a button. Hidden until
+        // hover/focus so the list stays visually calm.
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Actions for ${table.label}`}
+              className="shrink-0 px-1 opacity-0 group-hover/tablerow:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 text-muted-foreground hover:text-foreground"
+            >
+              <MoreVertical className="size-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {applicable.map((action) => {
+              const Icon = action.icon;
+              return (
+                <DropdownMenuItem key={action.id} onSelect={() => void action.onSelect(table)}>
+                  {Icon && <Icon className="size-3.5" />}
+                  {action.label}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
   );
 }
 
@@ -216,8 +260,29 @@ function SchemaGroupHeader({ schema, count, collapsed, context, onToggle }: Sche
  * @component
  */
 export function TableList() {
-  const { showStats } = useEditorConfig();
+  const { showStats, tableActions } = useEditorConfig();
   const { loading: schemaLoading, error: schemaError, data } = useSchema();
+  const exportTable = useTableExport();
+  const { toast } = useToast();
+
+  // Built-in Download actions use the SAME extension shape hosts contribute
+  // through, so the kebab renders one uniform menu.
+  const runDownload = useCallback(async (table: SchemaTable, format: 'csv' | 'json') => {
+    try {
+      const result = await exportTable(table, format);
+      toast(result.truncated
+        ? `${table.label} exported (truncated to ${result.rowCount.toLocaleString()} of ${result.total.toLocaleString()} rows)`
+        : `${table.label} exported (${result.rowCount.toLocaleString()} rows)`);
+    } catch (e: unknown) {
+      toast(`Export failed: ${(e as Error).message}`, 'error');
+    }
+  }, [exportTable, toast]);
+
+  const rowActions = useMemo<TableAction[]>(() => [
+    { id: 'download-csv', label: 'Download CSV', icon: Download, onSelect: (t) => runDownload(t, 'csv') },
+    { id: 'download-json', label: 'Download JSON', icon: Download, onSelect: (t) => runDownload(t, 'json') },
+    ...(tableActions ?? []),
+  ], [runDownload, tableActions]);
   // Only fetch per-table row counts when stats are enabled.
   const { stats, isLoading: statsLoading } = useTableStats(showStats);
 
@@ -396,6 +461,7 @@ export function TableList() {
                   maxRowCount={maxRowCount}
                   showStats={showStats}
                   active={row.table.name === activeName}
+                  actions={rowActions}
                 />
               )
             )}

@@ -23,6 +23,7 @@ import { DashboardPane } from './dashboards/DashboardPane';
 import './erd/erd.css';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
+import { getTableDdl, isNativeSaveAvailable, saveTextFileNative } from './lib/file-bridge';
 import {
   fetchProfiles,
   resolveActiveProfile,
@@ -58,6 +59,18 @@ export default function App() {
   // One-shot, cleared by the pane once consumed (same replay rationale as
   // savedQueryToOpen below).
   const [builderSeedTable, setBuilderSeedTable] = useState<string | null>(null);
+  // "Open in ERD": one-shot focus request for the diagram pane.
+  const [erdFocusTable, setErdFocusTable] = useState<string | null>(null);
+  // Transient shell notice (bottom-right, auto-dismissing): feedback for shell
+  // actions that have no pane of their own — Copy DDL, native saves.
+  const [shellNotice, setShellNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notify = useCallback((message: string) => {
+    setShellNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setShellNotice(null), 4000);
+  }, []);
+  useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
   // The native bridge answers synchronously, but the opt-in HTTP transport has to
   // be probed, so this starts at the synchronous answer and upgrades if the probe
   // finds one. Without the probe the desktop-only panes would stay hidden in a
@@ -145,19 +158,54 @@ export default function App() {
   // opens the visual query builder seeded with the table. The builder rides the
   // Photino bridge (shared probe with the SQL console), so browser-only hosts
   // never see the action at all — absent, not disabled.
-  const editorTableActions = useMemo<TableAction[] | undefined>(() => {
-    if (!sqlBridgeAvailable) return undefined;
-    return [{
-      id: 'edit-as-query',
-      label: 'Edit as query',
+  const editorTableActions = useMemo<TableAction[]>(() => {
+    const actions: TableAction[] = [{
+      // ERD nodes key on the GraphQL table name; the diagram works in any host.
+      id: 'open-in-erd',
+      label: 'Open in ERD',
       onSelect: (table: EditDbTable) => {
-        // The builder's name space is the qualified db name; edit-db's dbName
-        // carries "schema.table" where the database qualifies tables.
-        setBuilderSeedTable(table.dbName || table.name);
-        setEditorPane('builder');
+        setErdFocusTable(table.name);
+        setEditorPane('erd');
       },
     }];
-  }, [sqlBridgeAvailable]);
+    if (sqlBridgeAvailable) {
+      actions.push({
+        id: 'edit-as-query',
+        label: 'Edit as query',
+        onSelect: (table: EditDbTable) => {
+          // The builder's name space is the qualified db name; edit-db's dbName
+          // carries "schema.table" where the database qualifies tables.
+          setBuilderSeedTable(table.dbName || table.name);
+          setEditorPane('builder');
+        },
+      });
+      actions.push({
+        id: 'copy-ddl',
+        label: 'Copy DDL',
+        onSelect: async (table: EditDbTable) => {
+          try {
+            const result = await getTableDdl(table.dbName || table.name);
+            await navigator.clipboard.writeText(result.ddl);
+            notify(`CREATE TABLE for ${result.table} copied to the clipboard`);
+          } catch (e: unknown) {
+            notify(`Copy DDL failed: ${(e as Error).message}`);
+          }
+        },
+      });
+    }
+    return actions;
+  }, [sqlBridgeAvailable, notify]);
+
+  // Native saves: when the in-process Photino bridge is up, every editor
+  // download routes through the OS save dialog instead of the anchor fallback.
+  // A cancelled dialog is a quiet non-event; a chosen path gets a notice.
+  const editorSaveFile = useMemo(() => {
+    if (!isNativeSaveAvailable()) return undefined;
+    return async (file: { filename: string; content: string; mime: string }) => {
+      const result = await saveTextFileNative(file.filename, file.content);
+      if (result.saved && result.path) notify(`Saved ${result.path}`);
+    };
+  }, [notify]);
 
   // Grid toolbar sends a shell event so edit-db stays transport-agnostic. Its
   // table identity is schema-derived; filter decoding stays in edit-db and is
@@ -443,7 +491,7 @@ export default function App() {
         ) : editorPane === 'dashboards' && editorFetcher ? (
           <DashboardPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} />
         ) : editorPane === 'erd' && editorFetcher ? (
-          <ErdPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} />
+          <ErdPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} initialFilter={erdFocusTable} onInitialFilterConsumed={() => setErdFocusTable(null)} />
         ) : editorFetcher && transport && transport.mode === transportMode ? (
           // Only mount the editor once the effect has published a transport
           // whose mode matches the current selection. During a mode toggle the
@@ -456,6 +504,7 @@ export default function App() {
             fetcher={editorFetcher}
             showStats
             tableActions={editorTableActions}
+            saveFile={editorSaveFile}
             onLocate={(location) => {
               window.history.pushState(null, '', location);
             }}
@@ -463,6 +512,14 @@ export default function App() {
         ) : (
           <div className="bifrost-editor-loading" style={{ padding: 24, opacity: 0.7 }}>
             Connecting…
+          </div>
+        )}
+        {shellNotice && (
+          <div
+            role="status"
+            style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 50, background: 'var(--panel, #1f2430)', color: 'var(--text, #e6e6e6)', border: '1px solid var(--border, #3a4150)', borderRadius: 8, padding: '8px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.35)' }}
+          >
+            {shellNotice}
           </div>
         )}
       </div>

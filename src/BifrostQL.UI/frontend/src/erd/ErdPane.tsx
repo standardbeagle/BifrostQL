@@ -72,14 +72,31 @@ function RelationshipEdge({ data, source, target, sourceX, sourceY, sourcePositi
 
 const edgeTypes = { relationship: RelationshipEdge };
 
-export interface ErdPaneProps { fetcher: GraphQLFetcher; onOpenTable: (name: string) => void; }
-export function ErdPane({ fetcher, onOpenTable }: ErdPaneProps) {
+export interface ErdPaneProps {
+  fetcher: GraphQLFetcher;
+  onOpenTable: (name: string) => void;
+  /** One-shot focus request from the shell ("Open in ERD"): pre-selects this
+   *  table's neighborhood once the graph has loaded. Consumed via the callback
+   *  so a pane remount cannot replay it (same contract as ChartPane's
+   *  initialDefinition). */
+  initialFilter?: string | null;
+  onInitialFilterConsumed?: () => void;
+}
+export function ErdPane({ fetcher, onOpenTable, initialFilter, onInitialFilterConsumed }: ErdPaneProps) {
   const [graph, setGraph] = useState<ErdGraph>({ nodes: [], edges: [] });
   const [filter, setFilter] = useState('');
   const [hops, setHops] = useState(1);
   const [cluster, setCluster] = useState('');
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { let active = true; fetcher.query<{ _dbSchema: ErdSchemaTable[] }>(GET_ERD_SCHEMA).then((result) => layoutErd(mapSchemaToErd(normalizeErdSchema(result._dbSchema)))).then((next) => { if (active) setGraph(next); }).catch((reason: Error) => { if (active) setError(reason.message); }); return () => { active = false; }; }, [fetcher]);
+  // Apply the shell's focus request once the graph is in; an unknown table
+  // (junction tables are folded away, names can drift) consumes without focusing
+  // rather than leaving a stale request armed.
+  useEffect(() => {
+    if (!initialFilter || graph.nodes.length === 0) return;
+    if (graph.nodes.some((node) => node.id === initialFilter)) setFilter(initialFilter);
+    onInitialFilterConsumed?.();
+  }, [initialFilter, graph, onInitialFilterConsumed]);
   const schemaNames = useMemo(() => [...new Set(graph.nodes.map((node) => schemaName(node.data)))], [graph]);
   const clustered = useMemo(() => cluster ? { nodes: graph.nodes.filter((node) => schemaName(node.data) === cluster), edges: graph.edges.filter((edge) => graph.nodes.find((node) => node.id === edge.source && schemaName(node.data) === cluster) && graph.nodes.find((node) => node.id === edge.target && schemaName(node.data) === cluster)) } : graph, [cluster, graph]);
   const display = useMemo(() => filter ? neighborhood(clustered, filter, hops) : clustered, [clustered, filter, hops]);

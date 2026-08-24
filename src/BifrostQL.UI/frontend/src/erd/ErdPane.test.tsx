@@ -99,3 +99,31 @@ describe('ErdPane', () => {
 // That stub cannot fail: the shell pushes the URL, but the real editor routes
 // from a prop-seeded reducer and ignored it entirely. The honest version, with
 // the real Editor and the real React Flow renderer, is in ErdPane.live.test.tsx.
+
+describe('ErdPane initialFilter (Open in ERD)', () => {
+  afterEach(cleanup);
+
+  it('pre-selects the requested neighborhood once the graph loads and consumes the request', async () => {
+    const fetcher = { query: vi.fn().mockResolvedValue({ _dbSchema: liveSchemaFixture }) };
+    const onConsumed = vi.fn();
+
+    render(<ErdPane fetcher={fetcher as never} onOpenTable={vi.fn()} initialFilter="orders" onInitialFilterConsumed={onConsumed} />);
+    await screen.findByTitle('Open orders in editor');
+
+    const select = screen.getByLabelText(/Table/) as HTMLSelectElement;
+    expect(select.value).toBe('orders');
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it('consumes an unknown table without focusing — never a stale armed request', async () => {
+    const fetcher = { query: vi.fn().mockResolvedValue({ _dbSchema: liveSchemaFixture }) };
+    const onConsumed = vi.fn();
+
+    render(<ErdPane fetcher={fetcher as never} onOpenTable={vi.fn()} initialFilter="no_such" onInitialFilterConsumed={onConsumed} />);
+    await screen.findByTitle('Open orders in editor');
+
+    const select = screen.getByLabelText(/Table/) as HTMLSelectElement;
+    expect(select.value).toBe('');
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+  });
+});

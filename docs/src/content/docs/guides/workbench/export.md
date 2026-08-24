@@ -29,8 +29,12 @@ in the repo.
 
 ## Delivery
 
-In the browser, export downloads a Blob; on the desktop shell it can route
-through the native save-file bridge.
+In the browser, export downloads a Blob via a transient anchor. On the desktop
+shell, the editor's exports (grid toolbar and the table list's Download
+actions) route through the native `save-file` bridge: the OS save dialog picks
+the destination, a cancelled dialog writes nothing, and the shell reports the
+saved path. Hosts embedding the editor elsewhere can supply their own saver via
+`<Editor saveFile={...}>`.
 
 ## Related
 

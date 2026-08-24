@@ -305,6 +305,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release
       - name: Pack
         run: |
+          dotnet pack "src/BifrostQL.Abstractions/BifrostQL.Abstractions.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
           dotnet pack "src/BifrostQL.Core/BifrostQL.Core.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
           dotnet pack "src/BifrostQL.Server/BifrostQL.Server.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
           dotnet pack "src/data/BifrostQL.Ngsql/BifrostQL.Ngsql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
@@ -319,6 +320,15 @@ jobs:
             dotnet nuget add source --username standardbeagle --password "$REPO_NUGET" --store-password-in-clear-text --name github "https://nuget.pkg.github.com/standardbeagle/index.json"
           else
             echo "REPO_NUGET not set, skipping GitHub Packages source setup"
+          fi
+      - name: publish Abstractions to repo
+        env:
+          REPO_NUGET: ${{ secrets.REPO_NUGET }}
+        run: |
+          if [ -n "$REPO_NUGET" ]; then
+            dotnet nuget push "src/BifrostQL.Abstractions/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
+          else
+            echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
       - name: publish Core to repo
         env:
@@ -373,6 +383,15 @@ jobs:
             dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "github" -k "$REPO_NUGET" --skip-duplicate --no-symbols
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
+          fi
+      - name: publish Abstractions to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -n "$NUGET_API_KEY" ]; then
+            dotnet nuget push "src/BifrostQL.Abstractions/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
+          else
+            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
           fi
       - name: publish Core to nuget.org
         env:

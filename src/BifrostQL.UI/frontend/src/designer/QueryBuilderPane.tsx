@@ -18,6 +18,7 @@ import { JoinEditor } from "./JoinEditor";
 import { CriteriaGrid } from "./CriteriaGrid";
 import {
   emptyDesignerState,
+  addTable,
   addTableWithAutoJoin,
   removeTable,
   toggleColumnShow,
@@ -68,6 +69,14 @@ interface QueryBuilderPaneProps {
   onActiveChange?: (id: string | null) => void;
   /** Fired after a save/rename/delete so the nav refetches its list. */
   onStoreChanged?: () => void;
+  /**
+   * "Edit as query": a table the shell asked us to seed a FRESH design from.
+   * Either the qualified "schema.name" or a bare table name (matched against
+   * the builder schema case-insensitively). One-shot like `openRequest`.
+   */
+  seedTable?: string | null;
+  /** Fired once the seed has been consumed or declined, so a pane remount cannot replay it. */
+  onSeedHandled?: () => void;
 }
 
 /**
@@ -86,6 +95,8 @@ export function QueryBuilderPane({
   onOpenHandled,
   onActiveChange,
   onStoreChanged,
+  seedTable,
+  onSeedHandled,
 }: QueryBuilderPaneProps = {}) {
   const [schema, setSchema] = useState<BuilderSchema | null>(null);
   const [schemaError, setSchemaError] = useState<string | null>(null);
@@ -169,6 +180,43 @@ export function QueryBuilderPane({
     // run, so this cannot re-fire for the same request when dirty later changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest, schema, onActiveChange, onOpenHandled]);
+
+  // "Edit as query" seed: start a FRESH design on the named table (auto-join has
+  // nothing to join against on an empty canvas, so plain addTable suffices).
+  // Consumed one-shot exactly like openRequest; unsaved edits are confirmed
+  // before being discarded, and an unknown table is an explicit error — the
+  // grid's GraphQL-flavored name and the builder's qualified name are different
+  // name spaces, so a silent miss here would read as a dead click.
+  useEffect(() => {
+    if (!seedTable || !schema) return;
+    const wanted = seedTable.toLowerCase();
+    const match = schema.tables.find(
+      (t) => t.qualified.toLowerCase() === wanted || t.name.toLowerCase() === wanted,
+    );
+    if (!match) {
+      setError(`Table '${seedTable}' was not found in the query builder schema.`);
+      onSeedHandled?.();
+      return;
+    }
+    if (dirty && !window.confirm(`Discard unsaved changes and start a query on "${match.qualified}"?`)) {
+      onSeedHandled?.();
+      return;
+    }
+    setState(addTable(emptyDesignerState, match.qualified));
+    setSavedDefinition(null);
+    setSavedSnapshot(null);
+    setActive(null);
+    setAmbiguous([]);
+    setM2mPlans([]);
+    setSqlPreview(null);
+    setResult(null);
+    setError(null);
+    setStatus(null);
+    onActiveChange?.(null);
+    onSeedHandled?.();
+    // `dirty` guards the discard only; the seed is consumed on first run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedTable, schema, onActiveChange, onSeedHandled]);
 
   /** Persists the given definition under `id`/`name`; returns false when it failed. */
   const persist = useCallback(

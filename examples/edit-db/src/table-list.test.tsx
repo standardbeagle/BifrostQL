@@ -18,7 +18,7 @@ vi.mock('./hooks/useTableStats', () => ({
 // The download built-ins pull the fetcher/toast contexts, which these tests do
 // not mount — mock the hooks at the seam and capture the export calls.
 const exportMock = vi.hoisted(() => ({
-  run: vi.fn(async () => ({ content: '', rowCount: 1, total: 1, truncated: false })),
+  run: vi.fn(async (_table: unknown, _format: unknown) => ({ content: '', rowCount: 1, total: 1, truncated: false })),
   toast: vi.fn(),
 }));
 vi.mock('./hooks/useTableExport', () => ({
@@ -345,7 +345,7 @@ describe('TableList table actions (kebab menu)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     pathMock.current = '/';
-    mockUseTableStats.mockReturnValue({ stats: {}, isLoading: false });
+    mockUseTableStats.mockReturnValue({ stats: {}, isLoading: false, error: null });
     mockUseSchema.mockReturnValue({
       loading: false,
       error: null,

@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import Editor, { serializeColumnFilters, type SavedObject } from '@standardbeagle/edit-db';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import Editor, { serializeColumnFilters, type SavedObject, type TableAction, type Table as EditDbTable } from '@standardbeagle/edit-db';
 import '@standardbeagle/edit-db/style.css';
 import {
   WelcomePanel,
@@ -54,6 +54,10 @@ export default function App() {
   // console rides the Photino bridge, so it's only offered inside the desktop app.
   const [editorPane, setEditorPane] = useState<EditorPane>('graphql');
   const [chartToOpen, setChartToOpen] = useState<ChartDefinition | null>(null);
+  // "Edit as query": the table the builder pane should seed a fresh design from.
+  // One-shot, cleared by the pane once consumed (same replay rationale as
+  // savedQueryToOpen below).
+  const [builderSeedTable, setBuilderSeedTable] = useState<string | null>(null);
   // The native bridge answers synchronously, but the opt-in HTTP transport has to
   // be probed, so this starts at the synchronous answer and upgrades if the probe
   // finds one. Without the probe the desktop-only panes would stay hidden in a
@@ -136,6 +140,24 @@ export default function App() {
     setEditorRouteToken((token) => token + 1);
   }, []);
   const handleOpenDiagramTable = useCallback((tableName: string) => handleOpenTableView(tableName), [handleOpenTableView]);
+
+  // The shell's contribution to edit-db's navigation kebab: "Edit as query"
+  // opens the visual query builder seeded with the table. The builder rides the
+  // Photino bridge (shared probe with the SQL console), so browser-only hosts
+  // never see the action at all — absent, not disabled.
+  const editorTableActions = useMemo<TableAction[] | undefined>(() => {
+    if (!sqlBridgeAvailable) return undefined;
+    return [{
+      id: 'edit-as-query',
+      label: 'Edit as query',
+      onSelect: (table: EditDbTable) => {
+        // The builder's name space is the qualified db name; edit-db's dbName
+        // carries "schema.table" where the database qualifies tables.
+        setBuilderSeedTable(table.dbName || table.name);
+        setEditorPane('builder');
+      },
+    }];
+  }, [sqlBridgeAvailable]);
 
   // Grid toolbar sends a shell event so edit-db stays transport-agnostic. Its
   // table identity is schema-derived; filter decoding stays in edit-db and is
@@ -406,6 +428,8 @@ export default function App() {
               onOpenHandled={handleSavedQueryOpenHandled}
               onActiveChange={setActiveSavedQueryId}
               onStoreChanged={handleSavedQueryStoreChanged}
+              seedTable={builderSeedTable}
+              onSeedHandled={() => setBuilderSeedTable(null)}
             />
           </div>
         ) : editorPane === 'forms' ? (
@@ -431,6 +455,7 @@ export default function App() {
             uiPath={editorPath}
             fetcher={editorFetcher}
             showStats
+            tableActions={editorTableActions}
             onLocate={(location) => {
               window.history.pushState(null, '', location);
             }}

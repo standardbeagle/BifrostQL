@@ -237,3 +237,39 @@ describe("open request", () => {
     expect(screen.getByText("Untitled query")).toBeTruthy();
   });
 });
+
+describe("edit-as-query seed", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bridge.isBuilderBridgeAvailable.mockReturnValue(true);
+  });
+  afterEach(cleanup);
+
+  it("seeds a fresh design on the named table and consumes the seed once", async () => {
+    bridge.getBuilderSchema.mockResolvedValue(schema());
+    const onSeedHandled = vi.fn();
+    render(<QueryBuilderPane seedTable="dbo.orders" onSeedHandled={onSeedHandled} />);
+
+    // The table lands on the canvas (palette + canvas both show it; assert at least one).
+    await waitFor(() => expect(screen.getAllByText(/orders/).length).toBeGreaterThan(0));
+    await waitFor(() => expect(onSeedHandled).toHaveBeenCalledTimes(1));
+  });
+
+  it("matches a bare table name case-insensitively against the builder schema", async () => {
+    bridge.getBuilderSchema.mockResolvedValue(schema());
+    const onSeedHandled = vi.fn();
+    render(<QueryBuilderPane seedTable="Orders" onSeedHandled={onSeedHandled} />);
+    await waitFor(() => expect(onSeedHandled).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/was not found in the query builder schema/)).toBeNull();
+  });
+
+  it("reports an unknown table as an explicit error, never a silent no-op", async () => {
+    bridge.getBuilderSchema.mockResolvedValue(schema());
+    const onSeedHandled = vi.fn();
+    render(<QueryBuilderPane seedTable="no_such_table" onSeedHandled={onSeedHandled} />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/'no_such_table' was not found in the query builder schema/)).toBeTruthy());
+    expect(onSeedHandled).toHaveBeenCalledTimes(1);
+  });
+});

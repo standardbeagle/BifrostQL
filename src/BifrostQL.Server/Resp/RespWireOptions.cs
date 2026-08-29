@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 
 namespace BifrostQL.Server.Resp
 {
@@ -114,5 +115,29 @@ namespace BifrostQL.Server.Resp
         /// notable posture change.
         /// </summary>
         public bool EnableWrites { get; set; }
+
+        /// <summary>
+        /// The TLS certificate the listener presents. When set, Kestrel performs the TLS
+        /// handshake on this listener BEFORE the connection handler sees any byte, and every
+        /// connection is confidential: <c>AUTH</c> / <c>HELLO … AUTH</c> may read and compare
+        /// the password. Null (the default) keeps the listener plain TCP.
+        ///
+        /// <para>This is the one in-code way to make the AUTH path confidential — RESP has no
+        /// STARTTLS. Without it, every credential-bearing command is refused at the transport
+        /// gate (a uniform, transport-only refusal that never varies by account) unless
+        /// <see cref="AllowCleartextAuth"/> is explicitly set.</para>
+        /// </summary>
+        public X509Certificate2? ServerCertificate { get; set; }
+
+        /// <summary>
+        /// Development-only override: accept <c>AUTH</c> credentials over a cleartext transport.
+        /// <b>Off by default</b> — the credential-bearing handshake must never read, resolve or
+        /// compare a password over plain TCP, so the transport gate refuses it (uniformly, never
+        /// varying by account) unless TLS is configured via <see cref="ServerCertificate"/> or
+        /// this override is explicitly set. Enabling it is logged as a warning at startup and is
+        /// meant for loopback development behind a TLS-terminating proxy; it must be off for any
+        /// real deployment. Never inferred from a missing certificate.
+        /// </summary>
+        public bool AllowCleartextAuth { get; set; }
     }
 }

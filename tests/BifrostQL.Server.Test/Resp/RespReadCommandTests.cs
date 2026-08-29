@@ -260,7 +260,7 @@ namespace BifrostQL.Server.Test.Resp
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(new FakeIntentExecutor(BuildModel()))
                 .BuildServiceProvider();
-            var options = new RespWireOptions { RequireAuthentication = true };
+            var options = new RespWireOptions { RequireAuthentication = true, AllowCleartextAuth = true };
 
             await using var fixture = await RespFixture.StartAsync(store, services, options, new RespGetCommandHandler());
             await fixture.Client.SendCommandAsync("GET", "users:1");

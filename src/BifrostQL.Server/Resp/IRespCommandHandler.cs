@@ -15,6 +15,16 @@ namespace BifrostQL.Server.Resp
         /// <summary>Monotonic per-front-door connection id, surfaced in HELLO/INFO.</summary>
         public long Id { get; }
 
+        /// <summary>
+        /// True when the connection arrived over a confidential transport — Kestrel terminated
+        /// TLS on the listener (<see cref="RespWireOptions.ServerCertificate"/>) — so a
+        /// credential-bearing AUTH may read and compare the password. Consulted by the
+        /// connection loop's transport gate before any credential is resolved; never varied by
+        /// account. Reset only with the connection itself (a session never degrades from
+        /// confidential to cleartext mid-life).
+        /// </summary>
+        public bool TransportConfidential { get; set; }
+
         /// <summary>Negotiated RESP protocol version (2 until a client sends <c>HELLO 3</c>).</summary>
         public int Protocol { get; set; } = RespProtocol.Resp2;
 

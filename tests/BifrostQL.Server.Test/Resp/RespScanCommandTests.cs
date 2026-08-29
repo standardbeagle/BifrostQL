@@ -246,7 +246,7 @@ namespace BifrostQL.Server.Test.Resp
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(new FakeScanExecutor(BuildModel()))
                 .BuildServiceProvider();
-            var options = new RespWireOptions { RequireAuthentication = true };
+            var options = new RespWireOptions { RequireAuthentication = true, AllowCleartextAuth = true };
 
             await using var fixture = await RespFixture.StartAsync(store, services, options, new RespScanCommandHandler());
             await fixture.Client.SendCommandAsync("SCAN", "0", "MATCH", "widgets:*");

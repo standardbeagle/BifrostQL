@@ -67,4 +67,16 @@ namespace BifrostQL.Server
     {
         public RespConnectionLimiter(int maxConnections) : base(maxConnections) { }
     }
+
+    /// <summary>
+    /// Admission counter for the gRPC listener (<c>GrpcWireOptions.MaxConcurrentConnections</c>).
+    /// Enforced by per-listener Kestrel connection middleware (the slot is reserved at ACCEPT,
+    /// before any HTTP/2 frame, TLS handshake included) — NOT via
+    /// <c>KestrelServerOptions.Limits.MaxConcurrentConnections</c>, which is process-global
+    /// state that would silently throttle the host's own HTTP listeners too.
+    /// </summary>
+    internal sealed class GrpcConnectionLimiter : ProtocolConnectionLimiter
+    {
+        public GrpcConnectionLimiter(int maxConnections) : base(maxConnections) { }
+    }
 }

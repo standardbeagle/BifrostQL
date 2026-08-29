@@ -578,7 +578,7 @@ namespace BifrostQL.Server.Test.Resp
                 .AddSingleton<IMutationIntentExecutor>(mutation)
                 .AddSingleton(new RespWireOptions { EnableWrites = true })
                 .BuildServiceProvider();
-            var options = new RespWireOptions { RequireAuthentication = true, EnableWrites = true };
+            var options = new RespWireOptions { RequireAuthentication = true, EnableWrites = true, AllowCleartextAuth = true };
 
             await using var fixture = await RespFixture.StartAsync(store, services, options, new RespSetCommandHandler());
             await fixture.Client.SendCommandAsync("SET", "users:1", "{\"name\":\"x\"}");

@@ -119,6 +119,60 @@ namespace BifrostQL.Server.Test.Resp
             Error(reply).Should().StartWith("NOAUTH");
         }
 
+        // ---- confidential-transport gate -------------------------------------
+
+        [Fact]
+        public async Task Auth_OverCleartext_WithoutOverride_IsRefusedWithTransportOnlyMessage()
+        {
+            // Arrange: no TLS on the listener, AllowCleartextAuth NOT set — the shipped default.
+            await using var fixture = await StartAsync(WithUser(),
+                options: new RespWireOptions());
+
+            // Act
+            await fixture.Client.SendCommandAsync("AUTH", User, Secret);
+            var reply = await ReadAsync(fixture);
+
+            // Assert: the refusal names the TRANSPORT only — never whether the account exists —
+            // so a cleartext peer cannot use it as an enumeration oracle.
+            var message = reply.Should().BeOfType<RespError>().Which.Message;
+            message.Should().Contain("confidential transport",
+                "the refusal must state the transport requirement, not an auth failure");
+            message.Should().NotContain(User, "the refusal must never name the account");
+            message.Should().NotContain(RespProtocol.WrongPassError,
+                "the credential must not be resolved or compared at all");
+        }
+
+        [Fact]
+        public async Task Hello_WithInlineAuth_OverCleartext_WithoutOverride_IsRefusedBeforeAuthenticating()
+        {
+            // Arrange
+            await using var fixture = await StartAsync(WithUser(),
+                options: new RespWireOptions());
+
+            // Act
+            await fixture.Client.SendCommandAsync("HELLO", "3", "AUTH", User, Secret);
+            var reply = await ReadAsync(fixture);
+
+            // Assert: refused at the transport gate; the protocol is NOT switched and the
+            // session stays unauthenticated (a following PING still answers NOAUTH).
+            Error(reply).Should().Contain("confidential transport");
+            await fixture.Client.SendCommandAsync("PING");
+            Error(await ReadAsync(fixture)).Should().StartWith("NOAUTH");
+        }
+
+        [Fact]
+        public async Task Auth_OverCleartext_WithExplicitOverride_Authenticates()
+        {
+            // The development-only opt-in: credentials accepted over cleartext, explicitly.
+            await using var fixture = await StartAsync(WithUser(),
+                options: new RespWireOptions { AllowCleartextAuth = true });
+
+            await fixture.Client.SendCommandAsync("AUTH", User, Secret);
+            var reply = await ReadAsync(fixture);
+
+            reply.Should().BeOfType<RespSimpleString>().Which.Value.Should().Be("OK");
+        }
+
         [Fact]
         public async Task Hello3_WithInlineAuth_NegotiatesResp3_AndReturnsInfoMap()
         {
@@ -352,7 +406,11 @@ namespace BifrostQL.Server.Test.Resp
 
         private static Task<RespFixture> StartAsync(
             IRespCredentialStore store, IServiceProvider? services = null, RespWireOptions? options = null)
-            => RespFixture.StartAsync(store, services ?? RespFixture.EmptyServices(), options ?? new RespWireOptions());
+            => RespFixture.StartAsync(store, services ?? RespFixture.EmptyServices(), options ?? new RespWireOptions
+            {
+                // Tests authenticate over a loopback socket, not TLS: explicit dev-override opt-in.
+                AllowCleartextAuth = true,
+            });
 
         private static async Task Authenticate(RespFixture fixture)
         {

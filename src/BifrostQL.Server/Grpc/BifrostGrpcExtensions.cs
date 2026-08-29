@@ -37,6 +37,15 @@ namespace BifrostQL.Server.Grpc
             services.TryAddSingleton<GrpcContractProvider>();
             services.TryAddSingleton<IBifrostAuthContextFactory>(BifrostAuthContextFactory.Instance);
 
+            // Per-listener admission cap. The slot is reserved at ACCEPT by connection
+            // middleware on THIS listener — before any HTTP/2 frame and before the TLS
+            // handshake — mirroring the pgwire/RESP ProtocolConnectionLimiter pattern. It
+            // deliberately does NOT use KestrelServerOptions.Limits.MaxConcurrentConnections:
+            // that limit is process-global, so "configuring" the gRPC cap there would silently
+            // throttle the host's own HTTP listeners and be clobbered by any other PostConfigure.
+            var connectionLimiter = new GrpcConnectionLimiter(options.MaxConcurrentConnections);
+            services.TryAddSingleton(connectionLimiter);
+
             // The List page-token HMAC key is resolved ONCE (a per-call random key would make every
             // issued token fail its own validation). Configured secret → portable; absent → per-instance
             // random key with a logged trade-off, mirroring the OData continuation-token key.
@@ -62,12 +71,28 @@ namespace BifrostQL.Server.Grpc
             // now explicit in the host's own startup code.
             services.PostConfigure<KestrelServerOptions>(kestrel =>
             {
-                // Kestrel's default is UNLIMITED concurrent connections, so the gRPC front door had
-                // no bound on what an unauthenticated peer could consume, unlike pgwire and RESP.
-                kestrel.Limits.MaxConcurrentConnections = options.MaxConcurrentConnections;
                 kestrel.Listen(options.BindAddress, options.Port, listen =>
                 {
                     listen.Protocols = HttpProtocols.Http2;
+                    // Admission middleware FIRST: Kestrel composes connection middleware so the
+                    // first-registered runs outermost — the slot is reserved before the TLS
+                    // handshake (configured below) and before any byte is read.
+                    listen.Use(next => async connection =>
+                    {
+                        if (!connectionLimiter.TryAcquire())
+                        {
+                            connection.Abort();
+                            return;
+                        }
+                        try
+                        {
+                            await next(connection);
+                        }
+                        finally
+                        {
+                            connectionLimiter.Release();
+                        }
+                    });
                     if (options.RequireTls)
                         ConfigureTls(listen, options);
                 });

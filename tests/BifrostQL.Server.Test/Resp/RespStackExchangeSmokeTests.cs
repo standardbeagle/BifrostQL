@@ -43,7 +43,7 @@ namespace BifrostQL.Server.Test.Resp
         {
             var store = new FakeRespCredentialStore()
                 .Add(LoginUser, LoginSecret, RespTcpServerHarness.TenantPrincipal("user-a", "tenant-a"));
-            var options = new RespWireOptions { RequireAuthentication = true, EnableWrites = false, Endpoint = "/graphql" };
+            var options = new RespWireOptions { RequireAuthentication = true, EnableWrites = false, Endpoint = "/graphql", AllowCleartextAuth = true };
             _server = await RespTcpServerHarness.StartAsync(nameof(RespStackExchangeSmokeTests), MetadataRules, SeedSql, store, options);
 
             var config = new ConfigurationOptions

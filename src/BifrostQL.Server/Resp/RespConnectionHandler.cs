@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
+using System.Net.Security;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -64,8 +66,12 @@ namespace BifrostQL.Server.Resp
 
         public override async Task OnConnectedAsync(ConnectionContext connection)
         {
+            // TLS detection: when the listener was configured with RespWireOptions.ServerCertificate,
+            // Kestrel performs the handshake before the handler runs and the TLS handshake feature
+            // is present. Direct-SslStream callers (tests) are detected in HandleConnectionAsync.
+            var confidential = connection.Features.Get<ITlsHandshakeFeature>() is not null;
             await using var stream = new DuplexPipeStream(connection.Transport);
-            await HandleConnectionAsync(stream, connection.ConnectionClosed);
+            await HandleConnectionAsync(stream, connection.ConnectionClosed, confidential);
         }
 
         /// <summary>
@@ -73,8 +79,11 @@ namespace BifrostQL.Server.Resp
         /// Written against a plain <see cref="Stream"/> so it runs identically over a real
         /// socket (tests, production). A wire-framing violation answers a clean protocol-error
         /// reply and closes (Redis semantics); connection-lifecycle faults are swallowed.
+        /// <paramref name="confidentialTransport"/> marks a connection Kestrel already made
+        /// confidential (TLS on the listener) — the transport gate consults it before any
+        /// credential is read.
         /// </summary>
-        internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct)
+        internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct, bool confidentialTransport = false)
         {
             // ---- Admission, BEFORE the codec reads a byte ----
             // The listener had NO connection cap at all: any peer could exhaust sockets, threads
@@ -88,7 +97,7 @@ namespace BifrostQL.Server.Resp
 
             try
             {
-                await RunConnectionAsync(stream, ct);
+                await RunConnectionAsync(stream, ct, confidentialTransport);
             }
             finally
             {
@@ -113,9 +122,14 @@ namespace BifrostQL.Server.Resp
             return preAuthDeadlineAt.Value - now;
         }
 
-        private async Task RunConnectionAsync(Stream stream, CancellationToken ct)
+        private async Task RunConnectionAsync(Stream stream, CancellationToken ct, bool confidentialTransport)
         {
-            var session = new RespSession(Interlocked.Increment(ref _connectionCounter));
+            var session = new RespSession(Interlocked.Increment(ref _connectionCounter))
+            {
+                // A direct SslStream (tests, non-Kestrel hosts) is confidential too; both
+                // detections feed the same gate.
+                TransportConfidential = confidentialTransport || stream is SslStream,
+            };
             var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth);
             // The pre-auth phase gets ONE cumulative deadline from connection start — not a fresh
             // AuthenticationTimeout per read. Otherwise a peer that sends any cheap frame (a failed
@@ -370,6 +384,10 @@ namespace BifrostQL.Server.Resp
 
             if (authUser is not null)
             {
+                // Same transport gate as AUTH: inline HELLO credentials obey the identical
+                // confidentiality requirement, checked before the credential is resolved.
+                if (!await RequireConfidentialTransportAsync(stream, session, ct))
+                    return;
                 if (!await TryAuthenticateAsync(session, authUser, authPass ?? string.Empty, ct))
                 {
                     await Reply(stream, RespValue.Err(RespProtocol.WrongPassError), ct);
@@ -392,6 +410,12 @@ namespace BifrostQL.Server.Resp
         private async Task HandleAuthAsync(
             Stream stream, RespSession session, IReadOnlyList<string> arguments, CancellationToken ct)
         {
+            // Transport gate BEFORE the credential is resolved or compared — the same invariant
+            // the LDAP simple-bind gate enforces. The refusal is uniform and names the transport
+            // only, so a cleartext peer cannot distinguish an existing account from a missing one.
+            if (!await RequireConfidentialTransportAsync(stream, session, ct))
+                return;
+
             string user, pass;
             switch (arguments.Count)
             {
@@ -418,6 +442,30 @@ namespace BifrostQL.Server.Resp
         }
 
         // ---- authentication (fail-closed) ------------------------------------
+
+        /// <summary>
+        /// The transport gate every credential-bearing command (AUTH, HELLO … AUTH) passes
+        /// BEFORE the credential is resolved or compared. A cleartext connection is refused
+        /// unless the deployment configured TLS (<see cref="RespWireOptions.ServerCertificate"/>)
+        /// or explicitly opted into cleartext credentials
+        /// (<see cref="RespWireOptions.AllowCleartextAuth"/> — development only, default off).
+        /// The refusal is uniform and names the transport only: it never varies by account, so a
+        /// cleartext peer cannot distinguish an existing user from a missing one. RESP has no
+        /// STARTTLS, so there is no in-band upgrade path — the listener terminates TLS or the
+        /// connection is not confidential.
+        /// </summary>
+        private async Task<bool> RequireConfidentialTransportAsync(
+            Stream stream, RespSession session, CancellationToken ct)
+        {
+            if (session.TransportConfidential || _options.AllowCleartextAuth)
+                return true;
+            _logger.LogWarning(
+                "resp: refused a credential-bearing AUTH over a cleartext transport on port {Port} " +
+                "(TLS not configured and AllowCleartextAuth is off).",
+                _options.Port);
+            await Reply(stream, RespValue.Err(RespProtocol.CleartextAuthRefusedError), ct);
+            return false;
+        }
 
         /// <summary>
         /// Verifies the supplied password against the resolved login in constant time and,

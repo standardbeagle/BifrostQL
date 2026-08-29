@@ -156,6 +156,15 @@ namespace BifrostQL.Server.Resp
         /// <summary>Refusal for a SELECT index this single-namespace front door does not expose.</summary>
         public const string DbIndexOutOfRangeError = "ERR DB index is out of range";
 
+        /// <summary>
+        /// Refusal for a credential-bearing command (AUTH / HELLO … AUTH) over a non-confidential
+        /// transport, raised BEFORE the credential is resolved or compared. The text names the
+        /// transport only — never whether an account exists — so a cleartext peer cannot use it
+        /// as an enumeration oracle (mirrors the LDAP confidentiality gate).
+        /// </summary>
+        public const string CleartextAuthRefusedError =
+            "ERR a credentialed AUTH requires a confidential transport (configure ServerCertificate on the listener, or set AllowCleartextAuth for development)";
+
         /// <summary>Generic, client-safe wording for a wire-framing / protocol violation before the connection closes.</summary>
         public const string ProtocolErrorPrefix = "ERR Protocol error: ";
 

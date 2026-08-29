@@ -48,8 +48,12 @@ namespace BifrostQL.Server.Grpc
         /// Maximum number of concurrent connections the HTTP/2 listener accepts. Kestrel's default
         /// is UNLIMITED, so the gRPC front door had no bound on sockets, threads or memory an
         /// unauthenticated peer could consume — the pgwire/RESP listeners cap this and gRPC did
-        /// not. Kestrel refuses the surplus connections itself, so the cap is enforced before any
-        /// HTTP/2 or Bifrost work runs. Default 100, matching the other adapters.
+        /// not. Enforced by per-listener admission middleware: the slot is reserved at ACCEPT —
+        /// before any HTTP/2 frame and before the TLS handshake — and refused connections are
+        /// aborted with no Bifrost work done. Deliberately NOT
+        /// <c>KestrelServerOptions.Limits.MaxConcurrentConnections</c>: that limit is process-global
+        /// and would silently throttle the host's own HTTP listeners too. Default 100, matching the
+        /// other adapters.
         /// </summary>
         public int MaxConcurrentConnections { get; set; } = 100;
 

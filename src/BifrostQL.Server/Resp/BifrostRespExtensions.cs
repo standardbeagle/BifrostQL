@@ -8,8 +8,9 @@ namespace BifrostQL.Server.Resp
 {
     /// <summary>
     /// Registration for the Redis RESP-protocol front door. Wires the per-connection
-    /// <see cref="RespConnectionHandler"/> onto a plain-TCP Kestrel listener and registers the
-    /// <see cref="RespWireAdapter"/> lifecycle via the standard adapter/hosted-service pattern
+    /// <see cref="RespConnectionHandler"/> onto a Kestrel listener (plain TCP by default;
+    /// TLS-terminated when <see cref="RespWireOptions.ServerCertificate"/> is set) and registers
+    /// the <see cref="RespWireAdapter"/> lifecycle via the standard adapter/hosted-service pattern
     /// (mirrors <c>AddBifrostPgwire</c>).
     /// </summary>
     public static class BifrostRespExtensions
@@ -70,15 +71,25 @@ namespace BifrostQL.Server.Resp
             services.AddSingleton<IHostedService>(sp =>
                 new ProtocolAdapterHostedService(sp.GetRequiredService<RespWireAdapter>()));
 
-            // Bind a plain-TCP listener; the handler speaks RESP directly on the raw socket.
+            // Bind the listener; the handler speaks RESP on the (optionally TLS-terminated) socket.
             //
             // Bound to RespWireOptions.BindAddress, which DEFAULTS TO LOOPBACK. This was
             // ListenAnyIP (0.0.0.0) with no override, so registering the adapter published a Redis
             // front door on every network the host sits on — a posture decision nobody made.
             // Widening it is now explicit in the host's own startup code.
+            //
+            // When RespWireOptions.ServerCertificate is set, Kestrel performs the TLS handshake
+            // BEFORE the connection handler sees any byte, so AUTH credentials never cross the
+            // wire in the clear. Registered before UseConnectionHandler: the HTTPS connection
+            // middleware must wrap the handler (Kestrel runs connection middleware in
+            // registration order).
             services.PostConfigure<KestrelServerOptions>(kestrel =>
                 kestrel.Listen(options.BindAddress, options.Port, listen =>
-                    listen.UseConnectionHandler<RespConnectionHandler>()));
+                {
+                    if (options.ServerCertificate is not null)
+                        listen.UseHttps(options.ServerCertificate);
+                    listen.UseConnectionHandler<RespConnectionHandler>();
+                }));
 
             return services;
         }

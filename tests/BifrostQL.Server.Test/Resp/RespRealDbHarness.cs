@@ -95,6 +95,8 @@ namespace BifrostQL.Server.Test.Resp
                 RequireAuthentication = true,
                 EnableWrites = _enableWrites,
                 Endpoint = EndpointPath,
+                // Tests authenticate over a loopback socket, not TLS: explicit dev-override opt-in.
+                AllowCleartextAuth = true,
             };
             var handlerServices = new ServiceCollection()
                 .AddSingleton(_host.Services.GetRequiredService<IQueryIntentExecutor>())

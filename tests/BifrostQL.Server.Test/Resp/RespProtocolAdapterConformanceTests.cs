@@ -117,6 +117,8 @@ namespace BifrostQL.Server.Test.Resp
                 RequireAuthentication = true,
                 EnableWrites = true,
                 Endpoint = endpoint,
+                // Tests authenticate over a loopback socket, not TLS: explicit dev-override opt-in.
+                AllowCleartextAuth = true,
             };
             // The write handlers resolve IQueryIntentExecutor/IMutationIntentExecutor/RespWireOptions
             // from the command context's services — bind the base fixture's real executors here.

@@ -267,9 +267,11 @@ namespace BifrostQL.Core.QueryModel
                     // GLOBAL default cap (previously FETCH NEXT 100): a global LIMIT
                     // silently dropped matched rows once the combined child count
                     // crossed it. With no limit requested every parent keeps all its
-                    // matched rows (no FETCH NEXT). An explicitly requested limit is
-                    // still honored (see ToConnectedSqlParameterized_JoinQueryType_*).
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                    // matched rows — bounded now by the max-query-rows ceiling
+                    // (FETCH NEXT 10000, the no-limit sentinel clamped), not literally
+                    // unbounded. An explicitly requested limit is still honored
+                    // (see ToConnectedSqlParameterized_JoinQueryType_*).
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 10000 ROWS ONLY" },
                 });
 
         }
@@ -302,9 +304,11 @@ namespace BifrostQL.Core.QueryModel
                     // GLOBAL default cap (previously FETCH NEXT 100): a global LIMIT
                     // silently dropped matched rows once the combined child count
                     // crossed it. With no limit requested every parent keeps all its
-                    // matched rows (no FETCH NEXT). An explicitly requested limit is
-                    // still honored (see ToConnectedSqlParameterized_JoinQueryType_*).
-                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS" },
+                    // matched rows — bounded now by the max-query-rows ceiling
+                    // (FETCH NEXT 10000, the no-limit sentinel clamped), not literally
+                    // unbounded. An explicitly requested limit is still honored
+                    // (see ToConnectedSqlParameterized_JoinQueryType_*).
+                    { "work__shops->sess", "SELECT [a].[JoinId] [src_id], [b].[sid] AS [id],[b].[status] AS [status] FROM (SELECT DISTINCT [id] AS [JoinId] FROM [dbo].[work shops]) [a] INNER JOIN [dbo].[sessions] [b] ON [a].[JoinId] != [b].[workshopid] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 10000 ROWS ONLY" },
                 });
 
         }

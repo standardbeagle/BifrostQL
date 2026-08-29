@@ -291,6 +291,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Model.DePluralize,
             MetadataKeys.Relationships.ForeignJoins,
             MetadataKeys.Model.DefaultLimit,
+            MetadataKeys.Model.MaxQueryRows,
             MetadataKeys.Relationships.DynamicJoins,
             MetadataKeys.RawSql.Enabled,
             MetadataKeys.RawSql.Role,

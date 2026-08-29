@@ -140,6 +140,7 @@ consistently.
 | `foreign-joins` | `true`/`false` | model | Enable FK-based join inference |
 | `dynamic-joins` | `true`/`false` | model | Emit `_join` / `_single` containers |
 | `default-limit` | number | model/table | Default page size |
+| `max-query-rows` | number | model | Server-side row ceiling for the GraphQL surface. Clamps the no-limit sentinel (`limit: -1`) and any explicit limit above it, on the root query and on nested collections (per parent for paged collections). Default 10000; a non-positive value fails model load |
 | `de-pluralize` | `true`/`false` | model | De-pluralize table names in schema |
 | `batch-max-size` | number | table | Maximum batch mutation size |
 | `bulk-batch-threshold` | number | table | Batch size at which SQL Server, PostgreSQL, and MySQL batches switch to the set-based fast path (temp-table staging + set-based DML in one SQL-level transaction). Default 50; `0` or negative disables the fast path. Batches with hooks (approval, history, CDC), upserts, or state machines always use the per-row path; SQLite keeps the per-row path (a single in-process writer gains nothing from staging). Measured throughput: see [Bulk Batch Performance](/reference/bulk-batch-performance/) |

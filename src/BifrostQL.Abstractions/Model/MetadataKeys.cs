@@ -625,6 +625,16 @@ namespace BifrostQL.Core.Model
             /// <summary>Default per-table limit.</summary>
             public const string DefaultLimit = "default-limit";
 
+            /// <summary>
+            /// Model-level ceiling on rows a single query may return, in the host's metadata:
+            /// <c>BifrostQL:Metadata { max-query-rows: 10000 }</c>. Clamps the no-limit
+            /// sentinel (<c>limit: -1</c>) and any explicit limit above the ceiling, on the
+            /// root query and on every nested collection (per parent for paged collections),
+            /// so no client can materialize an unbounded table read. 0 or negative values are
+            /// rejected; the default ceiling is applied when the key is absent.
+            /// </summary>
+            public const string MaxQueryRows = "max-query-rows";
+
             /// <summary>Model-level toggle for generic table query fields.</summary>
             public const string EnableGenericTable = "enable-generic-table";
 

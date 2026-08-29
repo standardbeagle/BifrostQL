@@ -134,6 +134,35 @@ namespace BifrostQL.Core.QueryModel
         }
 
         /// <summary>
+        /// The server-side row ceiling for one query surface. Resolved from the model's
+        /// <c>MetadataKeys.Model.MaxQueryRows</c> metadata (<c>BifrostQL:Metadata
+        /// { max-query-rows: N }</c>) so the HOST sets it, never the client: the no-limit
+        /// sentinel (<c>limit: -1</c>) and any explicit limit above the ceiling are clamped to
+        /// it. Without this, any client could materialize an entire table (root query or
+        /// nested collection) in one request — the wire-reachable unbounded read.
+        ///
+        /// <para>Preserved semantics: a null limit still takes the dialect's 100-row default
+        /// (already bounded), and an explicit <c>limit: 0</c> still yields an empty result —
+        /// only unbounded or over-ceiling requests are clamped. Paged collections clamp PER
+        /// PARENT (the window is per-parent); flat collections clamp globally, matching the
+        /// shape of the limit each surface documents.</para>
+        /// </summary>
+        internal const int DefaultMaxQueryRows = 10_000;
+
+        internal static int? ClampRowLimit(IDbModel dbModel, int? limit)
+        {
+            if (limit is null or 0)
+                return limit;
+            var ceiling = Utils.MetadataNumber.PositiveInt(
+                dbModel.GetMetadataValue(MetadataKeys.Model.MaxQueryRows),
+                DefaultMaxQueryRows,
+                MetadataKeys.Model.MaxQueryRows);
+            if (limit < 0 || limit > ceiling)
+                return ceiling;
+            return limit;
+        }
+
+        /// <summary>
         /// ORDER BY expressions for a query that is about to be PAGED: the caller's
         /// sort, then the table's primary key ascending as a tie-break.
         ///
@@ -245,7 +274,7 @@ namespace BifrostQL.Core.QueryModel
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
                 var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
-                var pagination = dialect.Pagination(sortCols, Offset, Limit);
+                var pagination = dialect.Pagination(sortCols, Offset, ClampRowLimit(dbModel, Limit));
 
                 var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
                     .Append(filter)
@@ -406,7 +435,7 @@ namespace BifrostQL.Core.QueryModel
                 PagedKeys.RowNumber,
                 PagedKeys.Total,
                 tableJoin.ConnectedTable.Offset,
-                tableJoin.ConnectedTable.Limit);
+                ClampRowLimit(ctx.Model, tableJoin.ConnectedTable.Limit));
 
             return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
         }
@@ -419,15 +448,16 @@ namespace BifrostQL.Core.QueryModel
         /// Per-parent windowing is reserved for the IncludeResult paged path (it
         /// needs __rn/__total columns the flat reader cannot consume). So apply only
         /// an EXPLICITLY requested limit/offset — documented as global — and
-        /// otherwise emit NO limit (the -1 sentinel) so every parent keeps all its
-        /// matched rows instead of being silently truncated at 100.
+        /// otherwise emit NO limit (the -1 sentinel, capped by max-query-rows) so
+        /// every parent keeps all its matched rows instead of being silently
+        /// truncated at 100.
         /// </summary>
         private static ParameterizedSql BuildFlatCollectionSql(SqlBuildContext ctx, TableJoin tableJoin, string wrap, ParameterizedSql filter, ParameterizedSql main, IReadOnlyList<SqlParameterInfo> relationParams)
         {
             var dialect = ctx.Dialect;
             var effectiveLimit = tableJoin.ConnectedTable.Limit ?? -1;
             var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort);
-            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, effectiveLimit);
+            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, ClampRowLimit(ctx.Model, effectiveLimit));
 
             return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
                 .Append(filter)
@@ -442,11 +472,12 @@ namespace BifrostQL.Core.QueryModel
                 var projection = query.Join.EmitJoinIdProjection(dialect);
                 var tableRef = dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName);
 
-                // Skip pagination when the parent is unbounded — `Limit == -1` is the
-                // explicit "no limit" sentinel and `Offset` of 0 (or null) means "from
-                // the start", so the linked sub-query already matches the parent universe.
+                // Skip pagination when the parent is unbounded — after the max-query-rows
+                // clamp, `Limit` of null (or 0) with `Offset` of 0 (or null) means the
+                // linked sub-query already matches the parent universe.
+                var clampedLimit = ClampRowLimit(dbModel, query.FromTable.Limit);
                 var hasOffset = query.FromTable.Offset.HasValue && query.FromTable.Offset.Value > 0;
-                var hasLimit = query.FromTable.Limit.HasValue && query.FromTable.Limit.Value > 0;
+                var hasLimit = clampedLimit.HasValue && clampedLimit.Value > 0;
                 if (!(hasOffset || hasLimit))
                 {
                     var sqlText = $"SELECT DISTINCT {projection} FROM {tableRef}";
@@ -466,7 +497,9 @@ namespace BifrostQL.Core.QueryModel
                 // RenderPagedSortColumns) — this window and the parent's window have
                 // to land on the same rows.
                 var sortCols = RenderPagedSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
-                var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, query.FromTable.Limit);
+                // Clamped identically to the parent SELECT so this window and the parent's
+                // window land on the same rows.
+                var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, clampedLimit);
 
                 var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
                     .Append(filter)

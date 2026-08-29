@@ -133,7 +133,7 @@ public sealed class SqlServerBulkBatchIntegrationTests : IAsyncLifetime
         });
         await using var provider = services.BuildServiceProvider();
 
-        var executor = new SqlExecutionManager(model, schema);
+        var executor = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var extensions = new Dictionary<string, object?>
         {
             { "connFactory", _connFactory },

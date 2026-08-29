@@ -183,7 +183,7 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
             {
                 ["connFactory"] = factory,
                 ["model"] = _model,
-                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }

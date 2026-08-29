@@ -60,7 +60,7 @@ public sealed class SqlExecutionManagerCancellationTests
     {
         // Arrange — capture the token OpenAsync receives, then stop the pipeline.
         var model = BuildModel();
-        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>());
+        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>(), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var (factory, conn) = MakeConnFactory();
 
         using var cts = new CancellationTokenSource();
@@ -85,7 +85,7 @@ public sealed class SqlExecutionManagerCancellationTests
         // Arrange — a pre-cancelled token makes OpenAsync return a canceled task,
         // as real providers do when the token is already signalled.
         var model = BuildModel();
-        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>());
+        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>(), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var (factory, conn) = MakeConnFactory();
 
         using var cts = new CancellationTokenSource();

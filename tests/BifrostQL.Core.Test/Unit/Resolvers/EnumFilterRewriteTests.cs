@@ -63,7 +63,7 @@ public class EnumFilterRewriteTests
         }, "Orders");
 
     private static SqlExecutionManager NewManager(IDbModel model) =>
-        new(model, Substitute.For<ISchema>());
+        new(model, Substitute.For<ISchema>(), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
 
     private static void InvokeRewrite(SqlExecutionManager manager, GqlObjectQuery query)
     {

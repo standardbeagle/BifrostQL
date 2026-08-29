@@ -76,11 +76,6 @@ namespace BifrostQL.Core.Resolvers
         private readonly IQueryObservers? _observers;
         private readonly EngineMetrics? _engineMetrics;
 
-        public SqlExecutionManager(IDbModel dbModel, ISchema schema)
-            : this(dbModel, schema, NullQueryTransformerService.Instance)
-        {
-        }
-
         public SqlExecutionManager(
             IDbModel dbModel,
             ISchema schema,

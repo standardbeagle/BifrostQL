@@ -120,7 +120,7 @@ public sealed class ProviderComputedColumnBatchingTests
     {
         // Arrange — 32 rows against a provider that holds each call ~25ms.
         var model = BuildModel();
-        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>());
+        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>(), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var query = BuildQuery(model);
         var results = BuildResults(query.KeyName, rowCount: 32);
         var provider = new RecordingProvider();
@@ -150,7 +150,7 @@ public sealed class ProviderComputedColumnBatchingTests
     {
         // Arrange
         var model = BuildModel();
-        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>());
+        var manager = new SqlExecutionManager(model, Substitute.For<ISchema>(), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var query = BuildQuery(model);
         var results = BuildResults(query.KeyName, rowCount: 0);
         var provider = new RecordingProvider();

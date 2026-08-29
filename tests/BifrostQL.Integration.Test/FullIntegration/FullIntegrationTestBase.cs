@@ -62,7 +62,7 @@ public abstract class FullIntegrationTestBase
 
     protected async Task<ExecutionResult> ExecuteQueryAsync(string query, Dictionary<string, object?>? variables = null)
     {
-        var executor = new SqlExecutionManager(Model, GraphQLSchema);
+        var executor = new SqlExecutionManager(Model, GraphQLSchema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var extensions = new Dictionary<string, object?>
         {
             { "connFactory", _connFactory },

@@ -279,7 +279,7 @@ public static class BulkPathBenchRunner
             services, new FilterTransformersWrap());
         await using var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
 
-        var executor = new SqlExecutionManager(model, schema);
+        var executor = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var result = await new GraphQL.DocumentExecuter().ExecuteAsync(options =>
         {
             options.Schema = schema;

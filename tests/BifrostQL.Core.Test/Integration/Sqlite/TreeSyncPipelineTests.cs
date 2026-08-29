@@ -222,7 +222,7 @@ public sealed class TreeSyncPipelineTests : IAsyncLifetime
             {
                 ["connFactory"] = factory,
                 ["model"] = model,
-                ["tableReaderFactory"] = new SqlExecutionManager(model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }

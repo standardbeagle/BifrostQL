@@ -1120,7 +1120,7 @@ public class QuickStartEndToEndTests : IDisposable
 
         public async Task<ExecutionResult> ExecuteAsync(string query)
         {
-            var executor = new SqlExecutionManager(Model, Schema);
+            var executor = new SqlExecutionManager(Model, Schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
             var extensions = new Dictionary<string, object?>
             {
                 { "connFactory", _factory },

@@ -100,7 +100,7 @@ public sealed class MutationDeleteAuditSecurityTests : IAsyncLifetime
         });
         await using var provider = services.BuildServiceProvider();
 
-        var executor = new SqlExecutionManager(_model, _schema);
+        var executor = new SqlExecutionManager(_model, _schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var extensions = new Dictionary<string, object?>
         {
             { "connFactory", _connFactory },

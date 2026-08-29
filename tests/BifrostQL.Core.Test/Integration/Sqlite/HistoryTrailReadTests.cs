@@ -128,7 +128,7 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
             {
                 ["connFactory"] = new SqliteDbConnFactory(ConnString),
                 ["model"] = model,
-                ["tableReaderFactory"] = new SqlExecutionManager(model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }
@@ -152,7 +152,7 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
             {
                 ["connFactory"] = new SqliteDbConnFactory(ConnString),
                 ["model"] = model,
-                ["tableReaderFactory"] = new SqlExecutionManager(model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }
@@ -228,7 +228,7 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
         var model = await LoadModelAsync(
             "main.orders { history: enabled }",
             ":root { history-table: main.audit_trail }");
-        var manager = new SqlExecutionManager(model, DbSchema.FromModel(model));
+        var manager = new SqlExecutionManager(model, DbSchema.FromModel(model), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var target = model.GetTableFromDbName("audit_trail");
 
         var intent = new GqlObjectQuery

@@ -175,7 +175,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = new SqliteDbConnFactory(ConnString), ["model"] = _model,
-                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
 
@@ -497,7 +497,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = new SqliteDbConnFactory(ConnString), ["model"] = model,
-                ["tableReaderFactory"] = new SqlExecutionManager(model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }
@@ -544,7 +544,7 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = new SqliteDbConnFactory(ConnString), ["model"] = model,
-                ["tableReaderFactory"] = new SqlExecutionManager(model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }

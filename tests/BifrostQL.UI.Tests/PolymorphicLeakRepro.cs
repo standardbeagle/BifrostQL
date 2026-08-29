@@ -65,7 +65,7 @@ public sealed class PolymorphicLeakRepro
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = System.Array.Empty<IMutationTransformer>() });
         using var sp = services.BuildServiceProvider();
 
-        var executor = new SqlExecutionManager(model, schema2);
+        var executor = new SqlExecutionManager(model, schema2, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
         var extensions = new Dictionary<string, object?>
         {
             { "connFactory", factory },

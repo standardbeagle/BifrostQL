@@ -441,6 +441,17 @@ namespace BifrostQL.Core.Resolvers
             var table = ctx.Table;
             var dialect = ctx.Dialect;
 
+            // Snapshot the columns the caller actually supplied (in DB-name space), captured
+            // BEFORE the pipeline runs — the same contract as the single-row delete
+            // (TableMutationPipeline.ExecuteDelete). These are the intended WHERE-predicate
+            // columns. Columns a transformer stamps afterwards (audit updated_at/deleted_at,
+            // soft-delete deleted_at/deleted_by) are NOT in this set and must never
+            // contaminate the delete predicate: a stamped "now" timestamp can never match the
+            // stored row, so the WHERE would silently affect zero rows while the batch commits.
+            var clientColumns = new HashSet<string>(
+                data.Keys.Select(k => DbParameterBinder.ToDbColumnName(table, k)),
+                StringComparer.OrdinalIgnoreCase);
+
             // Thread the captured module arguments (e.g. _hardDelete) so the
             // soft-delete transformer can read HardDeleteKey and skip the
             // DELETE→UPDATE rewrite, mirroring the single-row resolver.
@@ -462,20 +473,28 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            // Rekey to DB column names so the PK split (via ColumnLookup) and the
+            // Rekey to DB column names so the predicate split (via ColumnLookup) and the
             // emitted WHERE/SET share one name space even for sanitized columns.
             var dbData = ToDbColumnKeys(table, transformResult.Data);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
+            // Shared predicate-column contract with the single-row path
+            // (TableMutationPipeline.SelectPredicateColumns): WHERE carries the
+            // client-supplied predicate columns (plus primary key) with their transformed
+            // values, so enum-name → DB-value mapping on a predicate column still reaches
+            // the WHERE; transformer-stamped columns land only in SET, never the predicate.
+            var predicateData = TableMutationPipeline.SelectPredicateColumns(dbData, clientColumns, table);
+
             if (transformResult.MutationType == MutationType.Update)
             {
-                // Soft-delete rewrite: primary-key columns scope the WHERE, everything
+                // Soft-delete rewrite: predicate columns scope the WHERE, everything
                 // else (the transformer-stamped deleted_at/deleted_by) is written in SET.
-                var keyData = dbData.Where(d => IsPrimaryKeyColumn(table, d.Key))
+                if (predicateData.Count == 0)
+                    throw new BifrostExecutionError(
+                        "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
+                var setData = dbData.Where(d => !predicateData.ContainsKey(d.Key))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var setData = dbData.Where(d => !keyData.ContainsKey(d.Key))
-                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
+                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, predicateData.Keys, additionalFilter.WhereSuffix);
                 var (softAffected, softPending) = await RunHookedWriteAsync(ctx, MutationType.Update, dbData, async () =>
                 {
                     await using var cmd = ctx.Conn.CreateCommand();
@@ -486,27 +505,29 @@ namespace BifrostQL.Core.Resolvers
                     return await cmd.ExecuteNonQueryAsync(ctx.Ct);
                 }, MutationType.Delete);
                 if (softPending is not null)
-                    return new BatchActionOutcome(0, MutationType.Update, transformResult.Data, null, softPending);
-                return new BatchActionOutcome(softAffected, MutationType.Update, transformResult.Data, transformResult.StateTransition);
+                    return new BatchActionOutcome(0, MutationType.Update, dbData, null, softPending);
+                return new BatchActionOutcome(softAffected, MutationType.Update, dbData, transformResult.StateTransition);
             }
 
-            // Adopt the (possibly rewritten) data so transformer output (e.g.
-            // enum-name → DB-value mapping on a predicate column) reaches the
-            // WHERE clause and parameters, mirroring the soft-delete branch above.
-            var deleteData = dbData;
-            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
-            var (deleteAffected, deletePending) = await RunHookedWriteAsync(ctx, MutationType.Delete, deleteData, async () =>
+            // Standard hard DELETE: the WHERE is built from the predicate columns only, and
+            // only their parameters are bound. A zero-row-affecting WHERE is a caller bug,
+            // not a silent no-op to report as success.
+            if (predicateData.Count == 0)
+                throw new BifrostExecutionError(
+                    "A delete requires a primary key or at least one predicate column to scope the affected rows.");
+            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, predicateData.Keys, additionalFilter.WhereSuffix);
+            var (deleteAffected, deletePending) = await RunHookedWriteAsync(ctx, MutationType.Delete, predicateData, async () =>
             {
                 await using var deleteCmd = ctx.Conn.CreateCommand();
                 deleteCmd.CommandText = deleteSql;
                 deleteCmd.Transaction = ctx.Transaction;
-                AddParameters(deleteCmd, deleteData);
+                AddParameters(deleteCmd, predicateData);
                 AddExtraParameters(deleteCmd, additionalFilter.Parameters);
                 return await deleteCmd.ExecuteNonQueryAsync(ctx.Ct);
             });
             if (deletePending is not null)
-                return new BatchActionOutcome(0, MutationType.Delete, deleteData, null, deletePending);
-            return new BatchActionOutcome(deleteAffected, MutationType.Delete, deleteData, transformResult.StateTransition);
+                return new BatchActionOutcome(0, MutationType.Delete, predicateData, null, deletePending);
+            return new BatchActionOutcome(deleteAffected, MutationType.Delete, predicateData, transformResult.StateTransition);
         }
 
         private static async Task<BatchActionOutcome?> ExecuteUpsert(BatchExecutionContext ctx, Dictionary<string, object?> data)

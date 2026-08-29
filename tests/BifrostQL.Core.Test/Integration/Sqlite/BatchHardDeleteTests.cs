@@ -36,7 +36,8 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
             CREATE TABLE users (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
-                deleted_at TEXT
+                deleted_at TEXT,
+                updated_at TEXT
             )
             """);
         await Exec(
@@ -50,6 +51,7 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
         var loader = new DbModelLoader(factory, new MetadataLoader(new[]
         {
             "*.users { soft-delete: deleted_at }",
+            "*.users.updated_at { populate: updated-on }",
         }));
         _model = await loader.LoadAsync();
     }
@@ -101,6 +103,48 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
             "soft delete stamps the deleted_at column");
     }
 
+    [Fact]
+    public async Task BatchHardDelete_WithAuditStamping_StillDeletesTheRow()
+    {
+        // The audit transformer (priority 50) stamps updated_at = now into the delete's data.
+        // The batch WHERE must scope by the client predicate (id) only: a stamped "now"
+        // timestamp can never match the stored row, so a WHERE built from ALL transformed
+        // columns silently affected zero rows while the batch committed.
+        var result = await ExecuteMutationAsync(
+            "mutation { users_batch(actions: [{ delete: { id: 1 } }], _hardDelete: true) }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("id = 1")).Should().Be(0,
+            "the audit-stamped updated_at must not contaminate the hard delete's WHERE clause");
+    }
+
+    [Fact]
+    public async Task BatchSoftDelete_ClientPredicateColumn_IsScopedNotWritten()
+    {
+        // name is a client-supplied PREDICATE column, not a value to write: the batch
+        // soft delete must scope the WHERE by it and leave the stored value untouched —
+        // never write it into the row unconditionally (the single-row path's contract).
+        var result = await ExecuteMutationAsync(
+            "mutation { users_batch(actions: [{ delete: { id: 2, name: \"soft\" } }]) }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("id = 2 AND deleted_at IS NOT NULL")).Should().Be(1,
+            "the row matches the predicate and is soft-deleted");
+        (await CountAsync("id = 2 AND name = 'soft'")).Should().Be(1,
+            "the predicate column's stored value is never overwritten by the delete");
+    }
+
+    [Fact]
+    public async Task BatchSoftDelete_ClientPredicateNotMatching_AffectsZeroRows_AndWritesNothing()
+    {
+        var result = await ExecuteMutationAsync(
+            "mutation { users_batch(actions: [{ delete: { id: 1, name: \"no-match\" } }]) }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("id = 1 AND deleted_at IS NULL AND name = 'hard'")).Should().Be(1,
+            "a non-matching client predicate affects nothing and writes nothing");
+    }
+
     private async Task<ExecutionResult> ExecuteMutationAsync(string mutation)
     {
         var schema = DbSchema.FromModel(_model);
@@ -109,7 +153,14 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
         var services = new ServiceCollection();
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
-            Transformers = new IMutationTransformer[] { new SoftDeleteMutationTransformer() },
+            // The audit transformer (priority 50) stamps updated_at into every delete's data
+            // BEFORE the soft-delete rewrite (priority 100) — exactly the input shape that
+            // must never contaminate the delete's WHERE clause.
+            Transformers = new IMutationTransformer[]
+            {
+                new AuditMutationTransformer(),
+                new SoftDeleteMutationTransformer(),
+            },
         });
         await using var provider = services.BuildServiceProvider();
 
@@ -123,7 +174,7 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
             {
                 ["connFactory"] = factory,
                 ["model"] = _model,
-                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema),
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }

@@ -361,8 +361,10 @@ namespace BifrostQL.Core.Resolvers
         /// column would AND a never-matching term into the WHERE and silently affect
         /// zero rows. Values come from the (possibly rewritten) transformed data so an
         /// enum-name → DB-value mapping on a predicate column still reaches the WHERE.
+        /// Shared with the batch pipeline (<see cref="BatchMutationPipeline"/>) so both
+        /// delete paths enforce the same WHERE/SET contract.
         /// </summary>
-        private static Dictionary<string, object?> SelectPredicateColumns(
+        internal static Dictionary<string, object?> SelectPredicateColumns(
             Dictionary<string, object?> dbData, HashSet<string> clientColumns, IDbTable table)
             => dbData
                 .Where(kv => clientColumns.Contains(kv.Key) || IsPrimaryKeyColumn(table, kv.Key))

@@ -133,7 +133,10 @@ namespace BifrostQL.Core.Model
 
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
         public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; init; } = Array.Empty<DbStoredProcedure>();
-        public IDictionary<string, object?> Metadata { get; init; } = null!;
+        // Defaults to EMPTY, not null: a model built by object initializer (tests, tools) with
+        // no metadata behaves as a no-metadata model — GetMetadataValue/CompareMetadata must
+        // answer "absent", not NullReferenceException.
+        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
         public ITypeMapper TypeMapper { get; set; } = AnsiSqlTypeMapper.Instance;
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public BifrostQL.Core.Schema.EnumColumnMap? EnumColumns { get; set; }

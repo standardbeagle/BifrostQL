@@ -37,11 +37,19 @@ public static class WireContextMerger
         var ownedKeys = new IdentityContextMapper(
             TenantFilterTransformer.ResolveTenantContextKey(model)).OwnedKeyNames;
 
+        // Security-resolved context keys: the row-scope placeholders and auto-filter claim
+        // keys the model's security filters read at request time. A wire entry for one would
+        // let a client whose identity omits the claim supply the scope value itself — the
+        // row-scope/auto-filter predicate would run against attacker-chosen input instead of
+        // failing closed. These keys are identity, not request.
+        var securityKeys = SecurityContextKeyCollector.Collect(model);
+
         foreach (var (key, value) in wireContext)
         {
             if (userContext.ContainsKey(key))
                 continue;
-            if (ownedKeys.Contains(key) || string.Equals(key, "user", StringComparison.Ordinal))
+            if (ownedKeys.Contains(key) || securityKeys.Contains(key) ||
+                string.Equals(key, "user", StringComparison.Ordinal))
                 continue;
             userContext[key] = value;
         }

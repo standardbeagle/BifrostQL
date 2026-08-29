@@ -54,35 +54,57 @@ public static class RowScopeCompiler
     }
 
     /// <summary>
+    /// Extracts the <c>{context-key}</c> placeholder of a row-scope expression without
+    /// throwing. Used by config-time consumers that must know which user-context keys a
+    /// security filter will resolve at request time (e.g. the wire-context merger, which
+    /// must never let a wire-supplied value fill one of them). Malformed expressions yield
+    /// <c>false</c> here — the request-time <see cref="Compile"/> path still fails closed on
+    /// them, so a malformed expression cannot be exploited, only rejected later.
+    /// </summary>
+    internal static bool TryGetContextKey(string? expression, out string contextKey)
+    {
+        contextKey = string.Empty;
+        var parsed = TryParse(expression);
+        if (parsed is null)
+            return false;
+        contextKey = parsed.Value.ContextKey;
+        return true;
+    }
+
+    /// <summary>
     /// Splits a <c>column = {context-key}</c> expression into its column name
     /// and context key. Throws <see cref="BifrostExecutionError"/> on any
     /// deviation from the grammar.
     /// </summary>
     private static (string Column, string ContextKey) Parse(string? expression)
+        => TryParse(expression)
+           ?? throw new BifrostExecutionError(MalformedMessage);
+
+    private static (string Column, string ContextKey)? TryParse(string? expression)
     {
         if (string.IsNullOrWhiteSpace(expression))
-            throw new BifrostExecutionError(MalformedMessage);
+            return null;
 
         var equalsIndex = expression.IndexOf('=');
         if (equalsIndex <= 0 || equalsIndex >= expression.Length - 1)
-            throw new BifrostExecutionError(MalformedMessage);
+            return null;
 
         var column = expression[..equalsIndex].Trim();
         var rhs = expression[(equalsIndex + 1)..].Trim();
 
         // Reject a second operator character (e.g. "==").
         if (rhs.StartsWith('='))
-            throw new BifrostExecutionError(MalformedMessage);
+            return null;
 
         if (column.Length == 0)
-            throw new BifrostExecutionError(MalformedMessage);
+            return null;
 
         if (rhs.Length < 3 || !rhs.StartsWith('{') || !rhs.EndsWith('}'))
-            throw new BifrostExecutionError(MalformedMessage);
+            return null;
 
         var contextKey = rhs[1..^1].Trim();
         if (contextKey.Length == 0)
-            throw new BifrostExecutionError(MalformedMessage);
+            return null;
 
         return (column, contextKey);
     }

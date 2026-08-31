@@ -116,6 +116,15 @@ namespace BifrostQL.Core.Schema
             => column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) is { } value
                && MetadataKeys.AutoPopulate.KnownPopulators.Contains(value);
 
+        /// <summary>
+        /// True when <paramref name="column"/> is the table's tenant-filter column.
+        /// TenantMutationTransformer pins its value server-side on every INSERT/UPDATE,
+        /// so input types must not require the client to supply it.
+        /// </summary>
+        private bool IsTenantPinned(ColumnDto column)
+            => _table.GetMetadataValue(MetadataKeys.Security.TenantFilter) is { } tenantColumn
+               && string.Equals(tenantColumn.Trim(), column.DbName, StringComparison.OrdinalIgnoreCase);
+
         public string GetTableFieldDefinition()
         {
             var moduleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(_table);
@@ -345,7 +354,7 @@ namespace BifrostQL.Core.Schema
                     continue;
 
                 var isNullable = column.IsNullable;
-                if (IsAutoPopulated(column))
+                if (IsAutoPopulated(column) || IsTenantPinned(column))
                     isNullable = true;
                 if (column.IsIdentity)
                     isNullable = identityType switch

@@ -152,9 +152,7 @@ describe('AppLayout', () => {
     await waitFor(() =>
       expect(screen.getByText('routed page')).toBeInTheDocument(),
     );
-    expect(
-      screen.queryByTestId('app-layout-identity'),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId('app-layout-identity')).not.toBeInTheDocument();
   });
 
   it('renders a custom nav override instead of the default AppNav', async () => {

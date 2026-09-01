@@ -191,7 +191,8 @@ export function useTableA11y<T = Record<string, unknown>>({
       // alone gave every row's cell in that column a tabIndex of 0, turning a
       // 1000-row grid into 1000 tab stops.
       const isFocused =
-        focusedCell?.rowIndex === rowIndex && focusedCell?.colIndex === colIndex;
+        focusedCell?.rowIndex === rowIndex &&
+        focusedCell?.colIndex === colIndex;
       return {
         role: 'gridcell' as const,
         'aria-colindex': colIndex + 1,

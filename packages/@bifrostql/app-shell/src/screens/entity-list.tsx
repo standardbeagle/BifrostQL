@@ -3,7 +3,10 @@ import type { ReactNode } from 'react';
 import { BifrostTable } from '@bifrostql/react';
 import type { ColumnConfig, RowAction } from '@bifrostql/react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
-import type { EntityMetadata, FieldMetadata } from '../metadata/app-metadata-types';
+import type {
+  EntityMetadata,
+  FieldMetadata,
+} from '../metadata/app-metadata-types';
 
 /** Props for {@link EntityList}. */
 export interface EntityListProps {
@@ -54,8 +57,7 @@ export function buildColumns(entity: EntityMetadata): ColumnConfig[] {
   const fields: Record<string, FieldMetadata> = entity.fields ?? {};
   const preset = entity.grid?.defaultColumns;
 
-  const fieldNames =
-    preset && preset.length > 0 ? preset : Object.keys(fields);
+  const fieldNames = preset && preset.length > 0 ? preset : Object.keys(fields);
 
   return fieldNames
     .filter((fieldName) => fields[fieldName]?.visible !== false)
@@ -93,15 +95,9 @@ export function EntityList({
   const { entities, isLoading } = useAppMetadata();
   const entity = entities[entityKey];
 
-  const columns = useMemo(
-    () => (entity ? buildColumns(entity) : []),
-    [entity],
-  );
+  const columns = useMemo(() => (entity ? buildColumns(entity) : []), [entity]);
 
-  const queryName = useMemo(
-    () => entityKeyToQueryName(entityKey),
-    [entityKey],
-  );
+  const queryName = useMemo(() => entityKeyToQueryName(entityKey), [entityKey]);
 
   if (isLoading) {
     return <>{loadingFallback}</>;
@@ -112,8 +108,13 @@ export function EntityList({
   }
 
   return (
-    <section className="bifrost-entity-list" data-testid={`entity-list-${entityKey}`}>
-      <h2 className="bifrost-entity-list__title">{entity.label ?? entityKey}</h2>
+    <section
+      className="bifrost-entity-list"
+      data-testid={`entity-list-${entityKey}`}
+    >
+      <h2 className="bifrost-entity-list__title">
+        {entity.label ?? entityKey}
+      </h2>
       <BifrostTable
         table={queryName}
         columns={columns}

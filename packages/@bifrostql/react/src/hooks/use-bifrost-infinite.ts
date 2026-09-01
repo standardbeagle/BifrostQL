@@ -118,7 +118,13 @@ export function useBifrostInfinite<TData = unknown, TPageParam = unknown>(
   const invalidate = useCallback(
     () =>
       queryClient.invalidateQueries({
-        queryKey: ['bifrost', 'infinite', config.endpoint, query, initialPageParam],
+        queryKey: [
+          'bifrost',
+          'infinite',
+          config.endpoint,
+          query,
+          initialPageParam,
+        ],
       }),
     [queryClient, config.endpoint, query, initialPageParam],
   );

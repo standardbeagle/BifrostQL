@@ -1,7 +1,10 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
-import type { EntityMetadata, FieldMetadata } from '../metadata/app-metadata-types';
+import type {
+  EntityMetadata,
+  FieldMetadata,
+} from '../metadata/app-metadata-types';
 
 /** Props for {@link EntityDetail}. */
 export interface EntityDetailProps {
@@ -27,17 +30,14 @@ export function buildDetailFields(
   const fields: Record<string, FieldMetadata> = entity.fields ?? {};
   const order = entity.displayFields;
 
-  const fieldNames =
-    order && order.length > 0 ? order : Object.keys(fields);
+  const fieldNames = order && order.length > 0 ? order : Object.keys(fields);
 
   return fieldNames
     .filter((fieldName) => fields[fieldName]?.visible !== false)
-    .map(
-      (fieldName): [string, FieldMetadata] => [
-        fieldName,
-        fields[fieldName] ?? {},
-      ],
-    );
+    .map((fieldName): [string, FieldMetadata] => [
+      fieldName,
+      fields[fieldName] ?? {},
+    ]);
 }
 
 /** Render a single field value as display text. */

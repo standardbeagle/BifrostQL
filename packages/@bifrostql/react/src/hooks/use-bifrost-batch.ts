@@ -116,10 +116,7 @@ function hasReplaceIntent(indexed: IndexedOperation[]): boolean {
     if (a.type !== 'delete') continue;
     for (let j = i + 1; j < indexed.length; j++) {
       const b = indexed[j]!.operation;
-      if (
-        (b.type === 'insert' || b.type === 'upsert') &&
-        b.table === a.table
-      ) {
+      if ((b.type === 'insert' || b.type === 'upsert') && b.table === a.table) {
         return true;
       }
     }

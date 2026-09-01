@@ -101,7 +101,10 @@ export function useBifrost<T = unknown>(
     // turn off.
     ...(retry !== undefined ? { retry } : {}),
     ...(retryDelay !== undefined
-      ? { retryDelay: (attempt: number) => defaultRetryDelay(attempt, retryDelay) }
+      ? {
+          retryDelay: (attempt: number) =>
+            defaultRetryDelay(attempt, retryDelay),
+        }
       : {}),
     staleTime,
     gcTime,

@@ -181,7 +181,9 @@ function sanitizeAdvancedFilterList(
   if (!Array.isArray(value)) return [];
   return value
     .map(sanitizeAdvancedFilter)
-    .filter((filter): filter is TableFilter | CompoundFilter => filter !== null);
+    .filter(
+      (filter): filter is TableFilter | CompoundFilter => filter !== null,
+    );
 }
 
 function sanitizeAdvancedFilter(

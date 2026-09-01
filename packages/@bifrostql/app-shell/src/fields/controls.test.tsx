@@ -13,9 +13,7 @@ describe('ScalarControl', () => {
   it('emits the next string value on change', () => {
     // Arrange
     const onChange = vi.fn();
-    render(
-      <ScalarControl name="n" label="N" value="a" onChange={onChange} />,
-    );
+    render(<ScalarControl name="n" label="N" value="a" onChange={onChange} />);
 
     // Act
     fireEvent.change(screen.getByLabelText('N'), { target: { value: 'ab' } });
@@ -39,9 +37,7 @@ describe('DateControl', () => {
   it('emits the next date string on change', () => {
     // Arrange
     const onChange = vi.fn();
-    render(
-      <DateControl name="d" label="D" value="" onChange={onChange} />,
-    );
+    render(<DateControl name="d" label="D" value="" onChange={onChange} />);
 
     // Act
     fireEvent.change(screen.getByLabelText('D'), {
@@ -113,9 +109,7 @@ describe('JsonTextControl', () => {
   it('emits raw text on change', () => {
     // Arrange
     const onChange = vi.fn();
-    render(
-      <JsonTextControl name="j" label="J" value="" onChange={onChange} />,
-    );
+    render(<JsonTextControl name="j" label="J" value="" onChange={onChange} />);
 
     // Act
     fireEvent.change(screen.getByLabelText('J'), {

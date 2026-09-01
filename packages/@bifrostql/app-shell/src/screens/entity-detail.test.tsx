@@ -4,7 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
 import { EntityDetail, buildDetailFields } from './entity-detail';
-import type { AppMetadata, EntityMetadata } from '../metadata/app-metadata-types';
+import type {
+  AppMetadata,
+  EntityMetadata,
+} from '../metadata/app-metadata-types';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -108,9 +111,7 @@ describe('EntityDetail', () => {
 
     // Assert: ordered display fields render; hidden field is excluded.
     await waitFor(() =>
-      expect(
-        screen.getByTestId('entity-detail-dbo.users'),
-      ).toBeInTheDocument(),
+      expect(screen.getByTestId('entity-detail-dbo.users')).toBeInTheDocument(),
     );
     expect(screen.getByText('Alice')).toBeInTheDocument();
     expect(screen.getByText('alice@example.com')).toBeInTheDocument();

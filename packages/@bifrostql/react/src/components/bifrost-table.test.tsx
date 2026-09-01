@@ -1761,9 +1761,7 @@ describe('composable sub-components', () => {
       );
       await waitFor(() => expect(fetchMock).toHaveBeenCalled());
       const bodyOf = (call: number) =>
-        String(
-          (fetchMock.mock.calls[call][1] as { body: string }).body,
-        );
+        String((fetchMock.mock.calls[call][1] as { body: string }).body);
       expect(bodyOf(0)).toContain('active');
 
       // Act

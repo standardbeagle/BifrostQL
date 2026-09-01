@@ -5,10 +5,10 @@ future consumers). Types only — no runtime behavior.
 
 ## Exports
 
-| Subpath                     | Contents                                                        |
-| --------------------------- | --------------------------------------------------------------- |
-| `@bifrostql/types`          | Hand-authored contract types (metadata, query) + the generated namespace |
-| `@bifrostql/types/generated`| Only the `@bifrostql/codegen`-emitted proto-derived domain types |
+| Subpath                      | Contents                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `@bifrostql/types`           | Hand-authored contract types (metadata, query) + the generated namespace |
+| `@bifrostql/types/generated` | Only the `@bifrostql/codegen`-emitted proto-derived domain types         |
 
 ## Generated domain types
 

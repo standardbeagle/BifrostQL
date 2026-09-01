@@ -290,7 +290,8 @@ export function useTableColumnManagement({
       ]);
       const widths: Record<string, number> = {};
       for (const field of defaultColumnFields) {
-        widths[field] = preset.columnWidths[field] ?? defaultColumnWidths[field];
+        widths[field] =
+          preset.columnWidths[field] ?? defaultColumnWidths[field];
       }
       setColumnWidths(widths);
       const pinned: Record<string, PinPosition> = {};

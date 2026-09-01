@@ -3,12 +3,11 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
-import {
-  EntityList,
-  buildColumns,
-  entityKeyToQueryName,
-} from './entity-list';
-import type { AppMetadata, EntityMetadata } from '../metadata/app-metadata-types';
+import { EntityList, buildColumns, entityKeyToQueryName } from './entity-list';
+import type {
+  AppMetadata,
+  EntityMetadata,
+} from '../metadata/app-metadata-types';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -45,8 +44,7 @@ function createFetchMock(metadata: AppMetadata = sampleMetadata) {
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: () =>
-        Promise.resolve({ data: { users: { data: [], total: 0 } } }),
+      json: () => Promise.resolve({ data: { users: { data: [], total: 0 } } }),
     } as Response);
   });
 }

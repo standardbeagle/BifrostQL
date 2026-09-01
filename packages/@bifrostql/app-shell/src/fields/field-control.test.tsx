@@ -34,9 +34,7 @@ describe('resolveFieldKind', () => {
 describe('FieldControl dispatch', () => {
   it('renders a text input for scalar fields', () => {
     // Arrange / Act
-    render(
-      <FieldControl name="title" value="hello" onChange={vi.fn()} />,
-    );
+    render(<FieldControl name="title" value="hello" onChange={vi.fn()} />);
 
     // Assert: a text input is rendered with the current value.
     const input = screen.getByLabelText('title');

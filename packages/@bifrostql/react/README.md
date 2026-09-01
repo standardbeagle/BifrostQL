@@ -127,6 +127,12 @@ const { data, isLoading, error, invalidate } = useBifrostQuery<User[]>(
 );
 ```
 
+BifrostQL wraps every table query in a paged envelope — the emitted query is
+`{ users(...) { total data { id name email created_at } } }`, never a flat
+field selection (the server rejects flat selections). The hook unwraps the
+envelope: `data` is the row array, and the result also carries `total`, the
+unpaged match count, for building pagers.
+
 **Filter operators:** `_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`, `_contains`, `_ncontains`, `_starts_with`, `_ends_with`, `_null`, `_nnull`
 
 ### `useBifrostMutation`

@@ -60,6 +60,15 @@ surfaced the expected 6× RED. Both implementer and reviewer hit it.
   — do not trust an incremental `dotnet test`. A GREEN mutant run is only
   evidence of a vacuous test if you have first confirmed the binary under test
   contains the mutation.
+- **Workspace `dist` dependencies stale the same way.** A JS package consumed
+  through the workspace by its BUILT output (e.g. the HostedSpa sample
+  resolving `@bifrostql/react` via its `dist`) runs the last-built bundle, not
+  the edited source: on the paged-envelope slice the spa suite showed 180/180
+  GREEN against a pre-change dist and went 64-RED only after
+  `pnpm --dir packages/@bifrostql/react build`. Rebuild every built workspace
+  dep of the suite under test before trusting a mutant/revert run — vitest
+  source aliases (as in the react package's own vitest config) are the
+  exception, not the rule.
 - **Backstop-guarded fail-closed branches:** when the branch being proven sits
   in front of an independent backstop that ALSO rejects (e.g. a security guard
   downstream of the rewrite), disabling the branch changes nothing — both paths

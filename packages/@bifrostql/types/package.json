@@ -1,7 +1,7 @@
 {
   "name": "@bifrostql/types",
   "private": false,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared TypeScript contract types for BifrostQL clients (SPA, React Native)",
   "license": "MIT",
   "author": "BifrostQL",

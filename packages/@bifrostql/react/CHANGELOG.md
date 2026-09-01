@@ -6,6 +6,35 @@ While the major version is 0, breaking changes may land in any release, but
 never silently: each one is listed under a `### Breaking changes` heading with
 the call-site update it requires.
 
+## 0.3.0 — 2026-09-01
+
+### Breaking changes
+
+- **Built queries now emit BifrostQL's paged `data{}` envelope.**
+  `buildGraphqlQuery` produces `{ users(...) { total data { id name } } }`
+  instead of a flat field selection — the server's table fields are typed as
+  the paged envelope, so the 0.2.0 flat form was rejected by every real
+  BifrostQL server (it only ever worked against flat test mocks).
+  `useBifrostQuery`/`useBifrostTable` unwrap the envelope, so their `data`
+  is still the row array; code consuming `fetchBifrostQuery`'s hydrated
+  cache or `createCrudHelpers` result types now sees `PagedResult<TRow>`
+  (`{ data, total, offset, limit }`) instead of a bare row array.
+- `useBifrostQuery` results carry `total` and `UseBifrostTableResult` carries
+  `totalRows` — the envelope's unpaged match count (additive, listed here
+  because they change the result object shape).
+
+### Fixed
+
+- The library build externalizes `react/jsx-runtime`/`react/jsx-dev-runtime`.
+  0.2.0's dist inlined a JSX runtime compiled against React 18 internals and
+  crashed React 19 hosts at import time (`ReactCurrentDispatcher`).
+- `invalidateQueries: ['users']` (table-name form) on `useBifrostMutation`,
+  `useBifrostDiff`, and `useBifrostBatch` now actually invalidates. Queries
+  are keyed by full query string, so the table-name form used to build a key
+  prefix that matched nothing — a silent no-op. Table names now match any
+  cached bifrost query whose text references the table; full-query-string
+  entries keep exact-prefix matching.
+
 ## 0.2.0 — 2026-08-31 (first npm release)
 
 ### Breaking changes

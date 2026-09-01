@@ -1,8 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { FormApi } from '@tanstack/react-form';
 import { Column } from './types/schema';
 
 // DataEditDialog reads schema.loading / schema.error / schema.findTable before
@@ -17,11 +16,6 @@ const fetcherQuery = vi.hoisted(() => vi.fn());
 vi.mock('./common/fetcher', () => ({ useFetcher: () => ({ query: fetcherQuery }) }));
 
 import { selectControlValue, NONE_VALUE, DataEditDialog, isFkOrEnumColumn } from './data-edit';
-
-// Mock the form hook
-const mockForm = {
-  Field: vi.fn(),
-};
 
 // Mock the UI components
 vi.mock('@/components/ui/input', () => ({

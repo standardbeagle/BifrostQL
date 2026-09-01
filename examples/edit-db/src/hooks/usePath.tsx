@@ -74,7 +74,8 @@ const MAX_HISTORY = 100;
 function reducer(state: NavContext, action: Action<string> | Action<number>): NavContext {
     switch (action.type) {
         case 'NAVIGATE': {
-            let { history, location } = state;
+            let { history } = state;
+            const { location } = state;
             if (location > 0) {
                 history = history.slice(location);
             }
@@ -145,7 +146,7 @@ export function useSearchParams(): SearchParamsResult {
 }
 
 export function PathProvider({ path, children }: { path: string, children: ReactNode }) {
-    const initialState = !!path ? { path: path, history: [], location: 0 } : defaultState;
+    const initialState = path ? { path: path, history: [], location: 0 } : defaultState;
     const [state, dispatch] = useReducer(reducer as React.Reducer<NavContext, unknown>, initialState);
 
     return (
@@ -214,7 +215,7 @@ export function selectRoute(routePaths: string[], path: string): { route: string
     return best;
 }
 
-export function Route({ path, element }: { path: string, element: ReactElement }): ReactElement {
+export function Route(_props: { path: string, element: ReactElement }): ReactElement {
     return <></>;
 }
 
@@ -224,7 +225,7 @@ function flatRoutes(children: ReactNode, base: string): FlatRoute[] {
         if (!isValidElement(element)) return;
 
         if (element.type === React.Fragment) {
-            result.push.apply(result, flatRoutes(element.props.children, base));
+            result.push(...flatRoutes(element.props.children, base));
             return;
         }
 
@@ -286,7 +287,7 @@ export const matchPath = (route: string, path: string): PathMatch => {
         return { isMatch: false, remainer: "", data: {}, query: "", hash: "", path: "" };
     if (routeSegments.length < pathSegments.length && routeSegments.at(-1) !== "*")
         return { isMatch: false, remainer: "", data: {}, query: "", hash: "", path: "" };
-    let data: RouteParams = {};
+    const data: RouteParams = {};
     let query: string = "";
     let hash: string = "";
     for (let i = 0; i < routeSegments.length; ++i) {

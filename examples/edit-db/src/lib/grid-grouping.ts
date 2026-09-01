@@ -54,7 +54,7 @@ export interface GridGroupMemberRequest {
 export function groupingSumColumnFromUrl(value: string | null, table: Table | null): Column | null {
     if (!value || !table) return null;
     const column = groupingColumnFromUrl(value, table);
-    return column && /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[!\[\]]/g, ''))
+    return column && /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[![\]]/g, ''))
         ? column
         : null;
 }

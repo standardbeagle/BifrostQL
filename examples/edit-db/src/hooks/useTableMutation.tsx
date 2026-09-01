@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
-import { parsePkRoute, type PkFilter } from "../lib/row-id";
+import { parsePkRoute } from "../lib/row-id";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 import { assertGraphQlName } from "../lib/query-builder";

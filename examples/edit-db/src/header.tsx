@@ -31,7 +31,7 @@ interface ColumnOption {
 export function Header() {
     const tableData = useParams<HeaderRouteParams>();
     const { loading, error, data: schema } = useSchema();
-    const { mainTable, columns, focusedIndex, focusColumn, closeColumn } = useColumnNav();
+    const { columns, focusedIndex, focusColumn, closeColumn } = useColumnNav();
     const [searchVal, setSearchVal] = useState("");
     const navigate = useNavigate();
     const { search } = useSearchParams();

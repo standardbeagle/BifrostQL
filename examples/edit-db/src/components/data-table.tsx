@@ -565,7 +565,7 @@ export function DataTable<TData>({
                         <SelectTrigger size="sm" className="w-40" aria-label="Group sum column"><SelectValue placeholder="Sum column" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="__none">Count only</SelectItem>
-                            {groupableColumns.filter((column) => /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[!\[\]]/g, ''))).map((column) => (
+                            {groupableColumns.filter((column) => /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[![\]]/g, ''))).map((column) => (
                                 <SelectItem key={column.name} value={column.name}>Sum {column.label}</SelectItem>
                             ))}
                         </SelectContent>

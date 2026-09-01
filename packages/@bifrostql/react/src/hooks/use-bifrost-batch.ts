@@ -4,6 +4,7 @@ import { BifrostContext } from '../components/bifrost-provider';
 import { executeGraphQL } from '../utils/graphql-client';
 import { buildMutation } from '../utils/mutation-builder';
 import type { MutationType } from '../utils/mutation-builder';
+import { invalidateBifrostQueries } from '../utils/invalidation';
 
 /** A single operation in a batch mutation sequence. */
 export interface BatchOperation {
@@ -47,7 +48,10 @@ export interface UseBifrostBatchOptions {
    * and throws a {@link BatchError}.
    */
   allowPartialSuccess?: boolean;
-  /** Query keys to invalidate on success. */
+  /**
+   * Queries to invalidate on success — table names or full query strings;
+   * see {@link invalidateBifrostQueries} for the matching rules.
+   */
   invalidateQueries?: string[];
   /** Callback invoked after each operation completes or fails. */
   onProgress?: (progress: BatchProgress) => void;
@@ -267,9 +271,7 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
         result !== undefined ||
         (error instanceof BatchError && error.results.length > 0);
       if (!committed) return;
-      for (const key of options.invalidateQueries) {
-        queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
-      }
+      invalidateBifrostQueries(queryClient, options.invalidateQueries);
     },
   });
 

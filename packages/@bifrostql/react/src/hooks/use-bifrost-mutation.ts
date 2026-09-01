@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useContext } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
 import { executeGraphQL } from '../utils/graphql-client';
+import { invalidateBifrostQueries } from '../utils/invalidation';
 
 /** Options for the {@link useBifrostMutation} hook. */
 export interface UseBifrostMutationOptions {
@@ -72,25 +73,7 @@ export function useBifrostMutation<
       ),
     onSuccess: (data) => {
       if (options.invalidateQueries) {
-        for (const key of options.invalidateQueries) {
-          if (key.includes('{')) {
-            // Full query string: exact key-prefix match, as before.
-            queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
-          } else {
-            // Table name: the cache keys hold full query strings, so a
-            // bare name used as a key prefix matches nothing. Match any
-            // bifrost query whose text references the table as a word.
-            const word = new RegExp(
-              `\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
-            );
-            queryClient.invalidateQueries({
-              predicate: (q) =>
-                q.queryKey[0] === 'bifrost' &&
-                typeof q.queryKey[1] === 'string' &&
-                word.test(q.queryKey[1]),
-            });
-          }
-        }
+        invalidateBifrostQueries(queryClient, options.invalidateQueries);
       }
       options.onSuccess?.(data);
     },

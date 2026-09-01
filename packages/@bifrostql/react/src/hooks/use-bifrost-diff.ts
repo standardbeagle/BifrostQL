@@ -5,6 +5,7 @@ import { executeGraphQL } from '../utils/graphql-client';
 import { buildUpdateMutation } from '../utils/mutation-builder';
 import { diff, detectConflicts } from '../utils/diff-engine';
 import type { DiffStrategy, DiffResult } from '../utils/diff-engine';
+import { invalidateBifrostQueries } from '../utils/invalidation';
 
 /** Options for the {@link useBifrostDiff} hook. */
 export interface UseBifrostDiffOptions {
@@ -14,7 +15,10 @@ export interface UseBifrostDiffOptions {
   idField: string;
   /** Comparison strategy: `'shallow'` or `'deep'` (default). */
   strategy?: DiffStrategy;
-  /** Query keys to invalidate on success. */
+  /**
+   * Queries to invalidate on success — table names or full query strings;
+   * see {@link invalidateBifrostQueries} for the matching rules.
+   */
   invalidateQueries?: string[];
   /** Callback invoked when the mutation succeeds. */
   onSuccess?: (data: unknown) => void;
@@ -141,9 +145,7 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
     },
     onSuccess: (data) => {
       if (options.invalidateQueries) {
-        for (const key of options.invalidateQueries) {
-          queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
-        }
+        invalidateBifrostQueries(queryClient, options.invalidateQueries);
       }
       options.onSuccess?.(data);
     },

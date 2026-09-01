@@ -120,6 +120,12 @@ const membershipRows = [
   { id: 22, member_id: 8, plan_id: 4, status: 'lapsed' },
 ];
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -212,7 +218,7 @@ function createFetchMock(
           status: 200,
           statusText: 'OK',
           json: () =>
-            Promise.resolve({ data: { main_dues_invoices: invoices } }),
+            Promise.resolve({ data: { main_dues_invoices: paged(invoices) } }),
         } as Response);
       }
       if (/main_dues_payments\b/.test(body.query)) {
@@ -221,7 +227,7 @@ function createFetchMock(
           status: 200,
           statusText: 'OK',
           json: () =>
-            Promise.resolve({ data: { main_dues_payments: payments } }),
+            Promise.resolve({ data: { main_dues_payments: paged(payments) } }),
         } as Response);
       }
       if (/main_members\b/.test(body.query)) {
@@ -229,7 +235,7 @@ function createFetchMock(
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: () => Promise.resolve({ data: { main_members: members } }),
+          json: () => Promise.resolve({ data: { main_members: paged(members) } }),
         } as Response);
       }
       if (/main_member_memberships\b/.test(body.query)) {
@@ -238,7 +244,7 @@ function createFetchMock(
           status: 200,
           statusText: 'OK',
           json: () =>
-            Promise.resolve({ data: { main_member_memberships: memberships } }),
+            Promise.resolve({ data: { main_member_memberships: paged(memberships) } }),
         } as Response);
       }
     }

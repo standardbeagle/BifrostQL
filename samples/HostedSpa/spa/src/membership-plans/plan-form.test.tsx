@@ -66,6 +66,12 @@ const sampleMetadata: AppMetadata = {
 /** Records the GraphQL request bodies the form issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -137,8 +143,7 @@ function createFetchMock(
       json: () =>
         Promise.resolve({
           data: {
-            main_membership_plans: planRow ? [planRow] : [],
-          },
+            main_membership_plans: paged(planRow ? [planRow] : [])},
         }),
     } as Response);
   });

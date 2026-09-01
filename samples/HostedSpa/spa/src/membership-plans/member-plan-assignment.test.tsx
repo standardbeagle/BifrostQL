@@ -96,6 +96,12 @@ const planRows = [
   { id: 4, name: 'Monthly', is_active: true },
 ];
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -168,7 +174,7 @@ function createFetchMock(
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: () => Promise.resolve({ data: { main_members: members } }),
+          json: () => Promise.resolve({ data: { main_members: paged(members) } }),
         } as Response);
       }
       if (/main_membership_plans\b/.test(body.query)) {
@@ -177,7 +183,7 @@ function createFetchMock(
           status: 200,
           statusText: 'OK',
           json: () =>
-            Promise.resolve({ data: { main_membership_plans: plans } }),
+            Promise.resolve({ data: { main_membership_plans: paged(plans) } }),
         } as Response);
       }
     }
@@ -187,7 +193,7 @@ function createFetchMock(
       status: 200,
       statusText: 'OK',
       json: () =>
-        Promise.resolve({ data: { main_member_memberships: memberships } }),
+        Promise.resolve({ data: { main_member_memberships: paged(memberships) } }),
     } as Response);
   });
 }

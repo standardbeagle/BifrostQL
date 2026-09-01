@@ -69,6 +69,12 @@ const sampleMetadata: AppMetadata = {
 /** Records the GraphQL request bodies the table issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -131,7 +137,7 @@ function createFetchMock(
           data: {
             // BifrostQL names the non-`dbo` `main` schema's table `main_members`
             // (see `entityKeyToQueryName`).
-            main_members: [
+            main_members: paged([
               {
                 id: 7,
                 first_name: 'Ada',
@@ -139,7 +145,7 @@ function createFetchMock(
                 email: 'ada@example.com',
                 status: 'active',
               },
-            ],
+            ]),
           },
         }),
     } as Response);

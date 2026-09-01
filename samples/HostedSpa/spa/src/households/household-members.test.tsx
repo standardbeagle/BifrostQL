@@ -79,6 +79,12 @@ const memberRows = [
   { id: 9, first_name: 'Alan', last_name: 'Turing' },
 ];
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -148,7 +154,7 @@ function createFetchMock(
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: () => Promise.resolve({ data: { main_members: members } }),
+          json: () => Promise.resolve({ data: { main_members: paged(members) } }),
         } as Response);
       }
     }
@@ -158,7 +164,7 @@ function createFetchMock(
       status: 200,
       statusText: 'OK',
       json: () =>
-        Promise.resolve({ data: { main_household_members: links } }),
+        Promise.resolve({ data: { main_household_members: paged(links) } }),
     } as Response);
   });
 }

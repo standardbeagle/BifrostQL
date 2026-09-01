@@ -49,6 +49,12 @@ const allColumns: ColumnConfig[] = [
 /** Records the GraphQL request bodies the export issues. */
 let graphqlRequests: Array<{ query: string }>;
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(identity: TestIdentity) {
   graphqlRequests = [];
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -84,10 +90,9 @@ function createFetchMock(identity: TestIdentity) {
       json: () =>
         Promise.resolve({
           data: {
-            main_dues_invoices: [
+            main_dues_invoices: paged([
               { member_id: 2, status: 'open', amount_cents: 5000 },
-            ],
-          },
+            ])},
         }),
     } as Response);
   });

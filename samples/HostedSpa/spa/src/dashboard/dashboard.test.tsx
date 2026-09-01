@@ -41,6 +41,12 @@ let graphqlRequests: Array<{ query: string; variables: unknown }>;
  * it selects. Each dashboard card issues its own `useBifrostQuery`, so the mock
  * inspects the query string to decide which fixture rows to return.
  */
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   options: { failingTable?: string } = {},
@@ -98,26 +104,26 @@ function createFetchMock(
     // upcoming renewal, four attendance rows — one canned answer per table.
     let data: Record<string, unknown> = {};
     if (body.query.includes('main_members')) {
-      data = { main_members: [{ id: 1 }, { id: 2 }] };
+      data = { main_members: paged([{ id: 1 }, { id: 2 }]) };
     } else if (body.query.includes('main_dues_invoices')) {
       const includesAmount = body.query.includes('amount_cents');
       data = {
-        main_dues_invoices: [
+        main_dues_invoices: paged([
           { id: 1, ...(includesAmount ? { amount_cents: 5000 } : {}) },
           { id: 2, ...(includesAmount ? { amount_cents: 5000 } : {}) },
           { id: 3, ...(includesAmount ? { amount_cents: 5000 } : {}) },
-        ],
+        ]),
       };
     } else if (body.query.includes('main_member_memberships')) {
-      data = { main_member_memberships: [{ id: 9 }] };
+      data = { main_member_memberships: paged([{ id: 9 }]) };
     } else if (body.query.includes('main_event_attendance')) {
       data = {
-        main_event_attendance: [
+        main_event_attendance: paged([
           { id: 1 },
           { id: 2 },
           { id: 3 },
           { id: 4 },
-        ],
+        ]),
       };
     }
 

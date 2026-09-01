@@ -65,6 +65,12 @@ const sampleMetadata: AppMetadata = {
 /** Records the GraphQL request bodies the table issues. */
 let graphqlRequests: Array<{ query: string; variables: unknown }>;
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -115,7 +121,7 @@ function createFetchMock(
       json: () =>
         Promise.resolve({
           data: {
-            main_events: [
+            main_events: paged([
               {
                 id: 3,
                 title: 'Spring Picnic',
@@ -123,8 +129,7 @@ function createFetchMock(
                 starts_at: '2026-06-01',
                 capacity: 50,
               },
-            ],
-          },
+            ])},
         }),
     } as Response);
   });

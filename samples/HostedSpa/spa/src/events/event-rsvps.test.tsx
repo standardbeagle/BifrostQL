@@ -92,6 +92,12 @@ const memberRows = [
   { id: 9, first_name: 'Alan', last_name: 'Turing' },
 ];
 
+
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   metadata: AppMetadata = sampleMetadata,
@@ -158,7 +164,7 @@ function createFetchMock(
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: () => Promise.resolve({ data: { main_members: memberRows } }),
+          json: () => Promise.resolve({ data: { main_members: paged(memberRows) } }),
         } as Response);
       }
       if (/main_events/.test(body.query)) {
@@ -166,7 +172,7 @@ function createFetchMock(
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: () => Promise.resolve({ data: { main_events: [eventRow] } }),
+          json: () => Promise.resolve({ data: { main_events: paged([eventRow]) } }),
         } as Response);
       }
     }
@@ -175,7 +181,7 @@ function createFetchMock(
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: () => Promise.resolve({ data: { main_event_rsvps: rsvpRows } }),
+      json: () => Promise.resolve({ data: { main_event_rsvps: paged(rsvpRows) } }),
     } as Response);
   });
 }

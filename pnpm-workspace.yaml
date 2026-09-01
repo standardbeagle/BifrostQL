@@ -14,6 +14,13 @@ allowBuilds:
 # package.json's "pnpm" block — keep them here or they silently do nothing.
 overrides:
   ajv: ^8.20.0
+  # ESLint 8's config loader hard-requires the ajv 6 constructor API; the
+  # blanket ajv 8 pin above crashed every `pnpm lint` in the workspace
+  # ("Cannot set properties of undefined (setting 'defaultMeta')"). 6.12.6
+  # carries the fix for the ajv 6 advisory (prototype pollution, <6.12.3);
+  # `pnpm audit` stays clean with these scoped exceptions.
+  'eslint>ajv': ^6.12.6
+  '@eslint/eslintrc>ajv': ^6.12.6
   brace-expansion@1: ^1.1.18
   brace-expansion@2: ^2.1.4
   brace-expansion@5: ^5.0.9

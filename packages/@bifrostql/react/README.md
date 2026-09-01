@@ -1,6 +1,8 @@
 # @bifrostql/react
 
-> **Status: Experimental.** This package is not consumed by the shipped BifrostQL product. The Desktop UI (`src/BifrostQL.UI/frontend`) ships with `@standardbeagle/edit-db`, which has its own fetcher, query-builder, and mutation hooks. `@bifrostql/react` is a parallel, in-progress API surface — expect breaking changes without notice. See `AGENTS.md` for the architecture note on this split.
+> **Status: Experimental, published with a change policy.** This package is not consumed by the shipped BifrostQL product. The Desktop UI (`src/BifrostQL.UI/frontend`) ships with `@standardbeagle/edit-db`, which has its own fetcher, query-builder, and mutation hooks. `@bifrostql/react` is a parallel, in-progress API surface. See `AGENTS.md` for the architecture note on this split.
+>
+> **Change policy (0.x):** breaking changes are allowed while the major version is 0, but they are never silent — every breaking change lands as a version bump with a `### Breaking changes` entry in [CHANGELOG.md](./CHANGELOG.md) describing the rename or removal and how to update call sites. `@bifrostql/types` and `@bifrostql/react` publish to npm as a matched version pair (see the `bifrostql-npm-publish` workflow), so pinning a version pins the whole contract.
 
 React hooks and components for [BifrostQL](https://github.com/standardbeagle/bifrostql) GraphQL APIs. Built on [TanStack Query](https://tanstack.com/query) for caching, background refetching, and optimistic updates.
 
@@ -97,6 +99,12 @@ invalidate();
 ### `useBifrostQuery`
 
 Table-oriented query hook with built-in filter, sort, and pagination support.
+
+When you supply a concrete row type (hand-written or emitted by
+`@bifrostql/codegen` into `@bifrostql/types/generated`), `fields` and
+`sort[].field` are constrained to `keyof` that row type — a typo like
+`fields: ['id', 'nmae']` is a compile error. Untyped usage keeps accepting
+plain strings.
 
 ```tsx
 import { useBifrostQuery } from '@bifrostql/react';

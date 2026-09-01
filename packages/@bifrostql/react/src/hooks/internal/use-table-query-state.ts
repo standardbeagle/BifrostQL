@@ -30,7 +30,7 @@ interface ResolvedUrlSyncConfig {
 export interface UseTableQueryStateOptions {
   columns: ColumnConfig[];
   multiSort: boolean;
-  defaultSort: SortOption[];
+  defaultSort: readonly SortOption[];
   defaultFilter: TableFilter;
   /**
    * Controlled filter. When supplied it seeds the filter state and re-seeds it
@@ -110,7 +110,7 @@ export function useTableQueryState({
   // Core query state: sort, filters (raw + debounced), page
   // -------------------------------------------------------------------------
   const [sort, setSort] = useState<SortOption[]>(
-    initialUrlState?.sort ?? initialLocalStorageSort ?? defaultSort,
+    () => initialUrlState?.sort ?? initialLocalStorageSort ?? [...defaultSort],
   );
   // A controlled filter is authoritative: it outranks URL and localStorage
   // restoration, because the caller is describing which data set this table is
@@ -257,7 +257,7 @@ export function useTableQueryState({
 
     const handlePopState = () => {
       const urlState = readFromUrl(syncConfig.prefix);
-      setSort(urlState.sort ?? defaultSort);
+      setSort(urlState.sort ?? [...defaultSort]);
       setFilters(urlState.filter ?? defaultFilter);
       setDebouncedFilters(urlState.filter ?? defaultFilter);
       setPage(urlState.page ?? 0);

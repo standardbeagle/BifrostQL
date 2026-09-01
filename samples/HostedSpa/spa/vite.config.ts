@@ -22,5 +22,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
+    // Parallel jsdom workers on a busy machine can stretch a userEvent-heavy
+    // test body past vitest's 5 s default; that kill reports "timed out", not
+    // a real assertion failure. Must stay above the asyncUtilTimeout set in
+    // src/test-setup.ts so waitFor errors surface with their DOM dump.
+    testTimeout: 20000,
   },
 });

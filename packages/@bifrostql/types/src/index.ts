@@ -15,18 +15,17 @@ export type {
   AppMetadata,
 } from './metadata';
 
-export type {
-  SavedObjectType,
-  SavedObject,
-} from './saved-object';
+export type { SavedObjectType, SavedObject } from './saved-object';
 
 export type {
   TableFilter,
   FieldFilter,
   CompoundFilter,
   AdvancedFilter,
+  FieldNameOf,
   PaginationOptions,
   SortOption,
+  SortOptionFor,
   QueryOptions,
 } from './query';
 

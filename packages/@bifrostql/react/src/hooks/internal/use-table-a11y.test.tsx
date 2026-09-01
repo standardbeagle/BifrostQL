@@ -47,7 +47,11 @@ function renderA11y(
 
 /** Count how many of the rendered grid cells claim tabIndex 0. */
 function countCellTabStops(
-  getCellProps: (rowIndex: number, colIndex: number, field?: string) => {
+  getCellProps: (
+    rowIndex: number,
+    colIndex: number,
+    field?: string,
+  ) => {
     tabIndex?: number;
   },
 ): number {
@@ -164,7 +168,9 @@ describe('useTableA11y roving tabindex and DOM focus', () => {
     expect(result.current.getRowProps(1, '2')['aria-selected']).toBe(true);
     expect(result.current.getRowProps(2, '3')['aria-selected']).toBe(false);
     // A key that is not in the current page has no selection state to report.
-    expect(result.current.getRowProps(0, '999')['aria-selected']).toBeUndefined();
+    expect(
+      result.current.getRowProps(0, '999')['aria-selected'],
+    ).toBeUndefined();
     expect(result.current.getRowProps(0)['aria-selected']).toBeUndefined();
   });
 

@@ -2,9 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+While the major version is 0, breaking changes may land in any release, but
+never silently: each one is listed under a `### Breaking changes` heading with
+the call-site update it requires.
+
+## 0.2.0 — 2026-08-31 (first npm release)
 
 ### Breaking changes
+
+- `QueryOptions.fields` and `QueryOptions.sort` (in `@bifrostql/types`, re-exported
+  here) are now `readonly` arrays. Passing a mutable array still compiles;
+  only code that mutated an options object's arrays in place needs a copy.
+- `SortOption` lost no members, but sort entries on the typed option surfaces
+  (`UseBifrostQueryOptions`, `UseBifrostTableOptions`, `BifrostTableProps`)
+  are now `SortOptionFor<TRow>`, whose `field` is `keyof TRow` when a concrete
+  row type argument is supplied. Untyped call sites are unaffected.
 
 Naming cleanup across the table API. This package is experimental and has no
 external consumers, so the old names were renamed rather than aliased — the
@@ -33,6 +45,14 @@ is silently ignored rather than reported as an error. Update call sites:
 
 ### Added
 
+- Typed field selection: `useBifrostQuery<User[]>` and `useBifrostTable<User>`
+  now constrain `fields` and `sort[].field` to `keyof User`; a misspelled
+  field name is a compile error. Supplying no row type keeps the previous
+  plain-string behavior. `FieldNameOf<TRow>` and `SortOptionFor<TRow>` are
+  exported from `@bifrostql/types` and re-exported here.
+- An npm publish workflow (`bifrostql-npm-publish`) publishes
+  `@bifrostql/types` and `@bifrostql/react` as a matched version pair, with
+  the `workspace:*` dependency rewritten to the concrete version at pack time.
 - `UseBifrostQueryOptions` is now exported, as every sibling hook's options type
   already was.
 - `VirtualScrollConfig`, `VirtualScrollState`, `VisibleRange`, and `SearchState`

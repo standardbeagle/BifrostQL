@@ -129,7 +129,8 @@ interface ColumnJoin {
 
 function useTable(schema: SchemaContextValue, tableName: string) {
     return useMemo(() => {
-        const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName === tableName)!;
+        const table = schema?.data?.find((x: { graphQlName: string | undefined; }) => x.graphQlName === tableName);
+        if (!table) throw new Error(`useTable: table '${tableName}' not found in schema`);
         const editColumns = table.columns.filter((c: Column) => !c.isReadOnly && !c.isIdentity);
         const editColumnsJoin: ColumnJoin[] = editColumns.map((c: Column) => {
             const anchorJoin = table.singleJoins.find((j: Join) => j.sourceColumnNames[0] === c.graphQlName);
@@ -1030,8 +1031,8 @@ interface CompositeParentFieldProps {
  * form to the matching destination column value. Member columns render no input.
  */
 function CompositeParentField({ column, join, form, schema, isRequired }: CompositeParentFieldProps) {
-    const sourceCols = join.sourceColumnNames ?? [];
-    const destCols = join.destinationColumnNames ?? [];
+    const sourceCols = useMemo(() => join.sourceColumnNames ?? [], [join.sourceColumnNames]);
+    const destCols = useMemo(() => join.destinationColumnNames ?? [], [join.destinationColumnNames]);
 
     const { search, setSearch, debounced, open, onOpenChange } = useFkSearch();
 

@@ -1,5 +1,11 @@
 import type { UseBifrostOptions } from './use-bifrost';
-import type { SortOption, TableFilter, CompoundFilter } from '../types';
+import type {
+  FieldNameOf,
+  SortOption,
+  SortOptionFor,
+  TableFilter,
+  CompoundFilter,
+} from '../types';
 
 /** Built-in aggregate functions for column summaries. */
 export type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
@@ -520,12 +526,19 @@ export interface ClientSideFilterConfig {
   threshold?: number;
 }
 
-export interface UseBifrostTableOptions extends UseBifrostOptions {
+export interface UseBifrostTableOptions<
+  T = Record<string, unknown>,
+> extends UseBifrostOptions {
   table: string;
   columns: ColumnConfig[];
-  fields?: string[];
+  /**
+   * Fields to fetch. Constrained to `keyof T` when a concrete row type is
+   * supplied; untyped usage (`Record<string, unknown>` default) accepts any
+   * string. Defaults to the non-computed columns' `field` values.
+   */
+  fields?: readonly FieldNameOf<T>[];
   pagination?: PaginationConfig;
-  defaultSort?: SortOption[];
+  defaultSort?: readonly SortOptionFor<T>[];
   /**
    * Uncontrolled seed for the filter state, read once on mount. Later changes
    * are ignored — the user is free to edit the filter away. Use {@link filter}

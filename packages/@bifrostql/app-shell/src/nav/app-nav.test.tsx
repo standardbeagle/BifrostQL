@@ -146,7 +146,9 @@ describe('AppNav', () => {
     );
 
     // Assert
-    await waitFor(() => expect(screen.getByText('count:0')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('count:0')).toBeInTheDocument(),
+    );
   });
 
   it('supports a custom permission resolver', async () => {

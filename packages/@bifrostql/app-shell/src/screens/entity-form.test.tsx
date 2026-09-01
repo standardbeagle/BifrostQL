@@ -4,7 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
 import { EntityForm, buildFormFields } from './entity-form';
-import type { AppMetadata, EntityMetadata } from '../metadata/app-metadata-types';
+import type {
+  AppMetadata,
+  EntityMetadata,
+} from '../metadata/app-metadata-types';
 
 const ENDPOINT = 'http://localhost:5000/graphql';
 
@@ -88,11 +91,7 @@ describe('EntityForm', () => {
     // Act
     render(
       <Wrapper>
-        <EntityForm
-          entityKey="dbo.users"
-          mode="create"
-          onSubmit={vi.fn()}
-        />
+        <EntityForm entityKey="dbo.users" mode="create" onSubmit={vi.fn()} />
       </Wrapper>,
     );
 
@@ -101,10 +100,7 @@ describe('EntityForm', () => {
       expect(screen.getByTestId('entity-form-dbo.users')).toBeInTheDocument(),
     );
     expect(screen.getByLabelText('name')).toHaveAttribute('type', 'text');
-    expect(screen.getByLabelText('active')).toHaveAttribute(
-      'type',
-      'checkbox',
-    );
+    expect(screen.getByLabelText('active')).toHaveAttribute('type', 'checkbox');
     expect(screen.getByLabelText('bio').tagName).toBe('TEXTAREA');
     expect(screen.queryByLabelText('internal')).not.toBeInTheDocument();
   });

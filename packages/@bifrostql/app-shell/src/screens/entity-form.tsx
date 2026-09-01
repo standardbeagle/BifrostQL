@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
 import { FieldControl } from '../fields/field-control';
-import type { EntityMetadata, FieldMetadata } from '../metadata/app-metadata-types';
+import type {
+  EntityMetadata,
+  FieldMetadata,
+} from '../metadata/app-metadata-types';
 
 /** The editing mode of an {@link EntityForm}. */
 export type EntityFormMode = 'create' | 'edit';
@@ -55,9 +58,7 @@ export function buildFormFields(
   entity: EntityMetadata,
 ): Array<[string, FieldMetadata]> {
   const fields: Record<string, FieldMetadata> = entity.fields ?? {};
-  return Object.entries(fields).filter(
-    ([, field]) => field.visible !== false,
-  );
+  return Object.entries(fields).filter(([, field]) => field.visible !== false);
 }
 
 /**
@@ -94,9 +95,9 @@ export function EntityForm({
   const { entities, isLoading } = useAppMetadata();
   const entity = entities[entityKey];
 
-  const [values, setValues] = useState<Record<string, unknown>>(
-    () => ({ ...(initialValues ?? {}) }),
-  );
+  const [values, setValues] = useState<Record<string, unknown>>(() => ({
+    ...(initialValues ?? {}),
+  }));
 
   const formFields = useMemo(
     () => (entity ? buildFormFields(entity) : []),

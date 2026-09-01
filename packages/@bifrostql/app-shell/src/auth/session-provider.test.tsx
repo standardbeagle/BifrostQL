@@ -71,10 +71,7 @@ describe('SessionProvider / useSession', () => {
 
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.identity).toEqual(sampleIdentity);
-    expect(result.current.permissions).toEqual([
-      'users.read',
-      'users.write',
-    ]);
+    expect(result.current.permissions).toEqual(['users.read', 'users.write']);
     expect(result.current.error).toBeNull();
   });
 
@@ -136,9 +133,7 @@ describe('SessionProvider / useSession', () => {
   });
 
   it('degrades to unauthenticated when the endpoint is unreachable', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockRejectedValue(new Error('network down'));
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
 
     const { result } = renderHook(() => useSession(), {
       wrapper: createWrapper(),
@@ -184,18 +179,14 @@ describe('SessionProvider / useSession', () => {
 
     result.current.refresh();
 
-    await waitFor(() =>
-      expect(result.current.isAuthenticated).toBe(true),
-    );
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('useSession throws when used outside a SessionProvider', () => {
     const queryClient = new QueryClient();
     const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
 
     expect(() => renderHook(() => useSession(), { wrapper })).toThrow(

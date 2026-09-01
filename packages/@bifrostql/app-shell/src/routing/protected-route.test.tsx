@@ -121,9 +121,7 @@ describe('ProtectedRoute', () => {
 
   it('renders children when authenticated and permitted', async () => {
     // Arrange: authenticated with the required permission.
-    globalThis.fetch = createSessionFetchMock(
-      identityWith(['dbo.users.read']),
-    );
+    globalThis.fetch = createSessionFetchMock(identityWith(['dbo.users.read']));
     const Wrapper = createWrapper();
 
     // Act
@@ -143,9 +141,7 @@ describe('ProtectedRoute', () => {
 
   it('requires every permission when given an array', async () => {
     // Arrange: holds one of two required permissions.
-    globalThis.fetch = createSessionFetchMock(
-      identityWith(['dbo.users.read']),
-    );
+    globalThis.fetch = createSessionFetchMock(identityWith(['dbo.users.read']));
     const Wrapper = createWrapper();
 
     // Act

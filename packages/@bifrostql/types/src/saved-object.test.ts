@@ -7,7 +7,9 @@ import type { SavedObject, SavedObjectType } from './index';
  */
 describe('@bifrostql/types saved-object contract', () => {
   it('exposes the SavedObjectType union', () => {
-    expectTypeOf<SavedObjectType>().toEqualTypeOf<'query' | 'form' | 'report' | 'dashboard'>();
+    expectTypeOf<SavedObjectType>().toEqualTypeOf<
+      'query' | 'form' | 'report' | 'dashboard'
+    >();
   });
 
   it('exposes the SavedObject shape with an optional folder and opaque definition', () => {

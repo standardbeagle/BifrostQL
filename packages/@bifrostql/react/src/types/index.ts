@@ -65,7 +65,9 @@ export type {
   FieldFilter,
   CompoundFilter,
   AdvancedFilter,
+  FieldNameOf,
   PaginationOptions,
   SortOption,
+  SortOptionFor,
   QueryOptions,
 } from '@bifrostql/types';

@@ -12,7 +12,12 @@ import type {
   UseBifrostTableOptions,
 } from '../hooks/use-bifrost-table';
 import type { UseBifrostOptions } from '../hooks/use-bifrost';
-import type { SortOption, TableFilter } from '../types';
+import type {
+  FieldNameOf,
+  SortOption,
+  SortOptionFor,
+  TableFilter,
+} from '../types';
 import { rowsToCsv, triggerDownload } from '../utils/table-export';
 import { getTheme } from './table-theme';
 import type { AnyThemeName, TableTheme } from './table-theme';
@@ -822,7 +827,7 @@ export interface BifrostTableProps<
 > extends UseBifrostOptions {
   table: string;
   columns: ColumnConfig[];
-  fields?: string[];
+  fields?: readonly FieldNameOf<T>[];
   theme?: AnyThemeName;
   customTheme?: TableTheme;
   themeOverrides?: Partial<TableTheme>;
@@ -851,7 +856,7 @@ export interface BifrostTableProps<
   rowActions?: RowAction<T>[];
   rowKey?: string;
   pagination?: PaginationConfig;
-  defaultSort?: SortOption[];
+  defaultSort?: readonly SortOptionFor<T>[];
   /** Uncontrolled filter seed, read once on mount. */
   defaultFilter?: TableFilter;
   /**
@@ -975,7 +980,6 @@ export function BifrostTable<T = Record<string, unknown>>(
   const handleExport = useCallback(() => {
     downloadRowsAsCsv(table.data, columns, tableName);
   }, [table.data, columns, tableName]);
-
 
   const handleExpandAll = useCallback(() => {
     const allKeys = table.data.map((row) =>

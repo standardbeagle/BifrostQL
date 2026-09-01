@@ -444,7 +444,9 @@ describe('useBifrost retry configuration', () => {
     function Wrapper({ children }: { children: ReactNode }) {
       return (
         <QueryClientProvider client={queryClient}>
-          <BifrostProvider config={{ endpoint: 'http://localhost:5000/graphql' }}>
+          <BifrostProvider
+            config={{ endpoint: 'http://localhost:5000/graphql' }}
+          >
             {children}
           </BifrostProvider>
         </QueryClientProvider>
@@ -455,7 +457,9 @@ describe('useBifrost retry configuration', () => {
       wrapper: Wrapper,
     });
 
-    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 2000 });
+    await waitFor(() => expect(result.current.isError).toBe(true), {
+      timeout: 2000,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -470,7 +474,9 @@ describe('useBifrost retry configuration', () => {
     function Wrapper({ children }: { children: ReactNode }) {
       return (
         <QueryClientProvider client={queryClient}>
-          <BifrostProvider config={{ endpoint: 'http://localhost:5000/graphql' }}>
+          <BifrostProvider
+            config={{ endpoint: 'http://localhost:5000/graphql' }}
+          >
             {children}
           </BifrostProvider>
         </QueryClientProvider>
@@ -478,11 +484,14 @@ describe('useBifrost retry configuration', () => {
     }
 
     const { result } = renderHook(
-      () => useBifrost('{ users { id } }', undefined, { retry: 1, retryDelay: 1 }),
+      () =>
+        useBifrost('{ users { id } }', undefined, { retry: 1, retryDelay: 1 }),
       { wrapper: Wrapper },
     );
 
-    await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3000 });
+    await waitFor(() => expect(result.current.isError).toBe(true), {
+      timeout: 3000,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

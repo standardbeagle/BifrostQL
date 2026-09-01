@@ -80,7 +80,7 @@ describe('useTableMutation', () => {
             const { query, wrapper } = createHarness();
             const idCol = col('id', 'Int!', true);
             const nameCol = col('name', 'String');
-            const users = tbl('users', ['id'], [idCol, nameCol]);
+            tbl('users', ['id'], [idCol, nameCol]);
             const { result } = renderHook(
                 // editId '' would be treated as insert; use a composite-arity mismatch
                 // route against a single-PK table so parsePkRoute yields a value, but

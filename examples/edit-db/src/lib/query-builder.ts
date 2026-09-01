@@ -5,7 +5,7 @@
 
 import type { Table, Column, Join, SchemaContextValue, TableIndex } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, encodeRouteParts, type PkEqFilterResult, type PkFilter } from './row-id';
+import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, type PkEqFilterResult, type PkFilter } from './row-id';
 import { coerceForGql, gqlTypeOf } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 import { isComposite } from './fk';

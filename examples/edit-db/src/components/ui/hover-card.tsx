@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 const HoverCard = React.forwardRef<
   React.ElementRef<typeof HoverCardPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Root>
->(({ ...props }, ref) => {
+>(({ ...props }, _ref) => {
   return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
 })
 HoverCard.displayName = "HoverCard"
@@ -14,7 +14,7 @@ HoverCard.displayName = "HoverCard"
 const HoverCardTrigger = React.forwardRef<
   React.ElementRef<typeof HoverCardPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof HoverCardPrimitive.Trigger>
->(({ ...props }, ref) => {
+>(({ ...props }, _ref) => {
   return <HoverCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
 })
 HoverCardTrigger.displayName = "HoverCardTrigger"

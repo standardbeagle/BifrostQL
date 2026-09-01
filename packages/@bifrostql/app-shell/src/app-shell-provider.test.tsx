@@ -60,9 +60,7 @@ describe('AppShellProvider', () => {
     );
 
     // SessionProvider is wired: the session bootstraps beneath it.
-    await waitFor(() =>
-      expect(result.current.session.isLoading).toBe(false),
-    );
+    await waitFor(() => expect(result.current.session.isLoading).toBe(false));
     expect(result.current.session.isAuthenticated).toBe(true);
     expect(result.current.session.permissions).toEqual(['reports.view']);
   });
@@ -79,9 +77,7 @@ describe('AppShellProvider', () => {
       wrapper,
     });
 
-    expect(result.current?.endpoint).toBe(
-      `${window.location.origin}/graphql`,
-    );
+    expect(result.current?.endpoint).toBe(`${window.location.origin}/graphql`);
 
     await waitFor(() => {
       const sessionUrl = fetchMock.mock.calls[0]?.[0];

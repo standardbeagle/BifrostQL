@@ -1,4 +1,5 @@
-import type { Meta } from '@storybook/react';
+import type { Meta, StoryFn } from '@storybook/react';
+import type { ComponentProps } from 'react';
 import { Editor }  from './editor';
 
 const meta :Meta<typeof Editor> = {
@@ -13,7 +14,7 @@ const meta :Meta<typeof Editor> = {
 
 export default meta;
 
-const Template: any = ({url, ...args} : { url: string }) => {
+const Template: StoryFn<ComponentProps<typeof Editor> & { url?: string }> = ({url, ...args}) => {
     return <Editor uri={url || undefined} {...args} />;
 };
 

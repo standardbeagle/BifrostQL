@@ -12,13 +12,7 @@ import {
  * The resolved kind of control to render for a field. Derived from a field's
  * {@link FieldMetadata} by {@link resolveFieldKind}.
  */
-export type FieldKind =
-  | 'scalar'
-  | 'date'
-  | 'boolean'
-  | 'enum'
-  | 'json'
-  | 'fk';
+export type FieldKind = 'scalar' | 'date' | 'boolean' | 'enum' | 'json' | 'fk';
 
 /**
  * Map a field's `widget` hint to a {@link FieldKind}. The `widget` strings are

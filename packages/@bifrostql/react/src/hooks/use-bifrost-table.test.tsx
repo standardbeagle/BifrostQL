@@ -9031,9 +9031,7 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         // At least one request was made
-        expect(result.current.search.requestCount).toBeGreaterThanOrEqual(
-          1,
-        );
+        expect(result.current.search.requestCount).toBeGreaterThanOrEqual(1);
       });
 
       it('tracks last request time', async () => {

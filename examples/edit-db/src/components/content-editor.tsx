@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { binaryDataUrl, detectContentKind, isBinaryDbType, isLongTextDbType, sniffBinaryContent, type ContentKind } from '@/lib/content-detect';
+import { binaryDataUrl, detectContentKind, isBinaryDbType, isLongTextDbType, sniffBinaryContent } from '@/lib/content-detect';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';

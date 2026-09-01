@@ -60,7 +60,7 @@ function buildFilterArgs(filter: AdvancedFilter): string {
   return `filter: { ${content} }`;
 }
 
-function buildSortArgs(sort: SortOption[]): string {
+function buildSortArgs(sort: readonly SortOption[]): string {
   if (sort.length === 0) return '';
   const parts = sort.map((s) => {
     assertGraphqlName(s.field, 'sort field');

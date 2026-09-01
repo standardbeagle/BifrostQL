@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { SortOption, TableFilter } from '../types';
+import type { SortOption, SortOptionFor, TableFilter } from '../types';
 import { useBifrostQuery } from './use-bifrost-query';
 import {
   resolveClientSideFilterConfig,
@@ -28,8 +28,10 @@ export type * from './use-bifrost-table.types';
 // Shared frozen defaults. A `= []` / `= {}` default parameter allocates a new
 // value on every render, and these feed effect dependency arrays (notably the
 // popstate listener in useTableQueryState) — a fresh identity each render tore
-// the listener down and re-added it on every single render.
-const NO_DEFAULT_SORT: SortOption[] = [];
+// the listener down and re-added it on every single render. The sort default
+// is `readonly never[]` so the one shared instance satisfies every
+// `SortOptionFor<T>` instantiation without a cast.
+const NO_DEFAULT_SORT: readonly never[] = [];
 const NO_DEFAULT_FILTER: TableFilter = {};
 // Frozen at runtime so an accidental in-place mutation of a shared default
 // fails loudly instead of leaking into every table on the page.
@@ -70,7 +72,9 @@ Object.freeze(NO_DEFAULT_FILTER);
  * ```
  */
 export function useBifrostTable<T = Record<string, unknown>>(
-  options: UseBifrostTableOptions,
+  // NoInfer: the row type is opt-in via the explicit type argument; without it
+  // TS would reverse-infer T from `fields` literals at untyped call sites.
+  options: UseBifrostTableOptions<NoInfer<T>>,
 ): UseBifrostTableResult<T> {
   const {
     table,
@@ -145,7 +149,10 @@ export function useBifrostTable<T = Record<string, unknown>>(
     return mergeFiltersForQuery(debouncedFilters, compoundFilter);
   }, [debouncedFilters, compoundFilter, clientFilterConfig.enabled]);
 
-  const queryResult = useBifrostQuery<T[]>(table, {
+  // The internal fetch runs in the untyped field-name space: sort/filter state
+  // also carries computed-column keys that are not on the row type. The row
+  // shape is asserted back to T at the single hand-off below.
+  const queryResult = useBifrostQuery<Record<string, unknown>[]>(table, {
     fields,
     filter: serverFilter,
     sort: serverSort,
@@ -155,7 +162,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
 
   const { dataWithComputed, computedAggregates, formattedAggregates, groups } =
     useTableData<T>({
-      rawData: queryResult.data,
+      rawData: queryResult.data as T[] | undefined,
       columns,
       sort,
       debouncedFilters,

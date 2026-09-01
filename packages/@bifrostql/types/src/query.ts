@@ -92,10 +92,36 @@ export interface PaginationOptions {
   offset?: number;
 }
 
+/**
+ * The set of selectable field names for a row type.
+ *
+ * Resolves to the string keys of `TRow` when a concrete row type is supplied,
+ * and falls back to plain `string` for untyped usage (`TRow = unknown` or any
+ * row type without statically known keys), so existing untyped call sites keep
+ * compiling unchanged.
+ */
+export type FieldNameOf<TRow> = string &
+  ([keyof TRow & string] extends [never] ? string : keyof TRow & string);
+
 /** A single sort directive specifying a field and direction. */
 export interface SortOption {
   /** The field name to sort by. */
   field: string;
+  /** Sort direction: ascending or descending. */
+  direction: 'asc' | 'desc';
+}
+
+/**
+ * A {@link SortOption} whose `field` is constrained to the keys of a concrete
+ * row type. Structurally assignable to `SortOption`, so typed option surfaces
+ * interoperate with the untyped query contract. Kept as a separate name (not a
+ * generic parameter on `SortOption` itself) so `SortOption<A>`-to-`SortOption`
+ * assignments never cross two instantiations of one generic reference — the
+ * conditional type in {@link FieldNameOf} makes such pairs invariant.
+ */
+export interface SortOptionFor<TRow> {
+  /** The field name to sort by; a key of `TRow` when `TRow` has known keys. */
+  field: FieldNameOf<TRow>;
   /** Sort direction: ascending or descending. */
   direction: 'asc' | 'desc';
 }
@@ -118,9 +144,9 @@ export interface QueryOptions {
   /** Row filter criteria. */
   filter?: AdvancedFilter;
   /** Sort directives applied in order. */
-  sort?: SortOption[];
+  sort?: readonly SortOption[];
   /** Pagination parameters (limit/offset). */
   pagination?: PaginationOptions;
   /** Specific fields to select. When omitted, `__typename` is returned. */
-  fields?: string[];
+  fields?: readonly string[];
 }

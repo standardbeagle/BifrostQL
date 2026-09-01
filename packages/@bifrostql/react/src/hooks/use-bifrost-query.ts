@@ -1,9 +1,23 @@
 import { buildGraphqlQuery } from '../utils/query-builder';
 import { useBifrost } from './use-bifrost';
 import type { UseBifrostOptions } from './use-bifrost';
-import type { QueryOptions } from '../types';
+import type { FieldNameOf, QueryOptions, SortOptionFor } from '../types';
 
-export interface UseBifrostQueryOptions extends QueryOptions, UseBifrostOptions {}
+export interface UseBifrostQueryOptions<TRow = unknown>
+  extends Omit<QueryOptions, 'sort' | 'fields'>, UseBifrostOptions {
+  /** Sort directives; `field` is constrained to `keyof TRow` when typed. */
+  sort?: readonly SortOptionFor<TRow>[];
+  /** Fields to select; constrained to `keyof TRow` when typed. */
+  fields?: readonly FieldNameOf<TRow>[];
+}
+
+/**
+ * The row type of a query result: unwraps one array level, so
+ * `useBifrostQuery<User[]>` constrains `fields`/`sort` to `keyof User`.
+ * Non-array result types (including the `unknown` default) pass through and
+ * fall back to unconstrained `string` field names via {@link FieldNameOf}.
+ */
+export type RowOf<T> = T extends readonly (infer TRow)[] ? TRow : T;
 
 /**
  * Table-oriented query hook with declarative filter, sort, pagination, and
@@ -32,7 +46,9 @@ export interface UseBifrostQueryOptions extends QueryOptions, UseBifrostOptions 
  */
 export function useBifrostQuery<T = unknown>(
   table: string,
-  options: UseBifrostQueryOptions = {},
+  // NoInfer: the row type is opt-in via the explicit type argument; without it
+  // TS would reverse-infer T from `fields` literals at untyped call sites.
+  options: UseBifrostQueryOptions<RowOf<NoInfer<T>>> = {},
 ) {
   const {
     enabled,

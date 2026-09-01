@@ -8,7 +8,10 @@ import { Page, Locator, expect } from '@playwright/test';
  *  - The sidebar table list and the data grid are BOTH shadcn <table>s. The
  *    data grid is distinguished by data-grid cells carrying `data-col-id`.
  *  - Sidebar table links are `a.plain-link[href="/<table>"]`.
- *  - The selected-table heading is an <h2> with the raw table name.
+ *  - The selected-table heading is an <h2> with the table's humanized label
+ *    (edit-db useSchema sets `label: humanizeName(dbName)`, and the header
+ *    renders `tableSchema?.label` — e.g. `deal_stages` shows as "Deal Stages"
+ *    since commit 5927ef80). `humanizeTableName` below mirrors that transform.
  *  - Per-row Edit/Delete are floating buttons revealed on row hover, rendered
  *    OUTSIDE the <tr> — so they are located page-wide after hovering the row.
  *  - The create/edit form is a Radix dialog ([role=dialog][data-slot=dialog-content]).
@@ -52,9 +55,25 @@ export function cell(row: Locator, colId: string): Locator {
   return row.locator(`td[data-col-id="${colId}"]`);
 }
 
+/**
+ * The heading label the editor derives from a raw table name — the E2E mirror
+ * of edit-db's `humanizeName` (examples/edit-db/src/lib/humanize.ts): split on
+ * underscores/hyphens/camelCase, Title Case each word, join with spaces.
+ */
+export function humanizeTableName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[_\-\s]+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
 export async function openTable(page: Page, table: string): Promise<void> {
   await page.locator(`a.plain-link[href="/${table}"]`).first().click();
-  await expect(page.getByRole('heading', { name: table, level: 2 })).toBeVisible({ timeout: 10_000 });
+  await expect(
+    page.getByRole('heading', { name: humanizeTableName(table), level: 2 }),
+  ).toBeVisible({ timeout: 10_000 });
   await expect(dataGrid(page)).toBeVisible({ timeout: 10_000 });
 }
 

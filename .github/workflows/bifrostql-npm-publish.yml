@@ -40,9 +40,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Stamp version
+        # --allow-same-version: the repo may already carry the release version
+        # (it is committed at release time); stamping must be idempotent.
         run: |
-          pnpm --dir packages/@bifrostql/types exec npm version ${{ inputs.version }} --no-git-tag-version
-          pnpm --dir packages/@bifrostql/react exec npm version ${{ inputs.version }} --no-git-tag-version
+          pnpm --dir packages/@bifrostql/types exec npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
+          pnpm --dir packages/@bifrostql/react exec npm version ${{ inputs.version }} --no-git-tag-version --allow-same-version
 
       - name: Build types
         run: pnpm --dir packages/@bifrostql/types build

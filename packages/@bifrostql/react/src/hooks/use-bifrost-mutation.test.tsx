@@ -294,6 +294,60 @@ describe('useBifrostMutation', () => {
     });
   });
 
+  it('invalidates cached queries by table name, not just exact key prefix', async () => {
+    globalThis.fetch = createFetchMock({ data: { users: 1 } });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+
+    // Bifrost queries are keyed ['bifrost', <full query string>, vars] — a
+    // bare table name used as a key prefix matches nothing, so the table-name
+    // form must find this entry through the query text.
+    const usersKey = [
+      'bifrost',
+      '{\n  users {\n    total\n    data {\n      id\n    }\n  }\n}',
+      {},
+    ];
+    const ordersKey = [
+      'bifrost',
+      '{\n  orders {\n    total\n    data {\n      id\n    }\n  }\n}',
+      {},
+    ];
+    queryClient.setQueryData(usersKey, { users: { total: 0, data: [] } });
+    queryClient.setQueryData(ordersKey, { orders: { total: 0, data: [] } });
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider
+            config={{ endpoint: 'http://localhost:5000/graphql' }}
+          >
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const mutation =
+      'mutation Insert($detail: Insert_users) { users(insert: $detail) }';
+
+    const { result } = renderHook(
+      () => useBifrostMutation(mutation, { invalidateQueries: ['users'] }),
+      { wrapper: Wrapper },
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync({ detail: { name: 'Alice' } });
+    });
+
+    expect(queryClient.getQueryState(usersKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(ordersKey)?.isInvalidated).toBe(false);
+  });
+
   it('provides standard mutation state properties', async () => {
     globalThis.fetch = createFetchMock({ data: { users: 1 } });
 

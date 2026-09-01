@@ -6,8 +6,14 @@ import { executeGraphQL } from '../utils/graphql-client';
 /** Options for the {@link useBifrostMutation} hook. */
 export interface UseBifrostMutationOptions {
   /**
-   * Query keys to invalidate on success. Each string matches against the
-   * second element of the `['bifrost', query]` key pattern.
+   * Queries to invalidate on success. Bifrost queries are keyed
+   * `['bifrost', <full query string>, vars]`, so each entry is matched one
+   * of two ways: an entry containing `{` is treated as a full query string
+   * and matched as an exact key prefix; anything else is treated as a TABLE
+   * NAME and invalidates every bifrost query whose query text references it
+   * as a word (`['users']` invalidates each cached query that reads `users`).
+   * Table-name matching may over-invalidate (a table name appearing in an
+   * unrelated query's text) — over-invalidation only costs a refetch.
    */
   invalidateQueries?: string[];
   /** Callback invoked when the mutation succeeds. */
@@ -67,7 +73,23 @@ export function useBifrostMutation<
     onSuccess: (data) => {
       if (options.invalidateQueries) {
         for (const key of options.invalidateQueries) {
-          queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
+          if (key.includes('{')) {
+            // Full query string: exact key-prefix match, as before.
+            queryClient.invalidateQueries({ queryKey: ['bifrost', key] });
+          } else {
+            // Table name: the cache keys hold full query strings, so a
+            // bare name used as a key prefix matches nothing. Match any
+            // bifrost query whose text references the table as a word.
+            const word = new RegExp(
+              `\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+            );
+            queryClient.invalidateQueries({
+              predicate: (q) =>
+                q.queryKey[0] === 'bifrost' &&
+                typeof q.queryKey[1] === 'string' &&
+                word.test(q.queryKey[1]),
+            });
+          }
         }
       }
       options.onSuccess?.(data);

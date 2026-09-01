@@ -126,7 +126,7 @@ export function RecordPayment() {
     fields: [
       'id',
       'invoice_id',
-      ...(canReadFinance ? ['amount_cents'] : []),
+      ...(canReadFinance ? (['amount_cents'] as const) : []),
       'paid_on',
       'method',
     ],
@@ -140,7 +140,7 @@ export function RecordPayment() {
       'id',
       'member_id',
       'member_membership_id',
-      ...(canReadFinance ? ['amount_cents'] : []),
+      ...(canReadFinance ? (['amount_cents'] as const) : []),
       'status',
     ],
     filter: { status: { _eq: 'open' } },

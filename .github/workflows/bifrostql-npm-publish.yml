@@ -1,0 +1,70 @@
+name: Publish @bifrostql packages to npm
+
+# Publishes @bifrostql/types and @bifrostql/react as a matched pair. The react
+# package depends on types as workspace:*; `pnpm publish` rewrites that to the
+# concrete version stamped here, so consumers install both from the registry
+# with no workspace or submodule coupling. Types publishes first so the react
+# tarball's rewritten dependency is installable the moment it lands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish for both packages (e.g. 0.2.0)"
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stamp version
+        run: |
+          pnpm --dir packages/@bifrostql/types exec npm version ${{ inputs.version }} --no-git-tag-version
+          pnpm --dir packages/@bifrostql/react exec npm version ${{ inputs.version }} --no-git-tag-version
+
+      - name: Build types
+        run: pnpm --dir packages/@bifrostql/types build
+
+      - name: Test types
+        run: pnpm --dir packages/@bifrostql/types test
+
+      - name: Typecheck react
+        run: pnpm --dir packages/@bifrostql/react typecheck
+
+      - name: Test react
+        run: pnpm --dir packages/@bifrostql/react test
+
+      - name: Build react
+        run: pnpm --dir packages/@bifrostql/react build
+
+      - name: Publish types
+        run: pnpm --dir packages/@bifrostql/types publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish react
+        run: pnpm --dir packages/@bifrostql/react publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

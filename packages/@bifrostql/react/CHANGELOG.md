@@ -6,7 +6,7 @@ While the major version is 0, breaking changes may land in any release, but
 never silently: each one is listed under a `### Breaking changes` heading with
 the call-site update it requires.
 
-## Unreleased
+## 0.2.0 — 2026-08-31 (first npm release)
 
 ### Breaking changes
 

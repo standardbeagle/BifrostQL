@@ -49,6 +49,7 @@ export interface WriteFeedback {
  * This is a sample app — its patterns get copied into real deployments — so a
  * silent write is not a cosmetic flaw here; it propagates.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- the hook and its region component are one seam; callers always import them together
 export function useWriteFeedback(): WriteFeedback {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);

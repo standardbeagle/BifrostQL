@@ -1,7 +1,12 @@
 import { buildGraphqlQuery } from '../utils/query-builder';
 import { useBifrost } from './use-bifrost';
 import type { UseBifrostOptions } from './use-bifrost';
-import type { FieldNameOf, QueryOptions, SortOptionFor } from '../types';
+import type {
+  FieldNameOf,
+  PagedResult,
+  QueryOptions,
+  SortOptionFor,
+} from '../types';
 
 export interface UseBifrostQueryOptions<TRow = unknown>
   extends Omit<QueryOptions, 'sort' | 'fields'>, UseBifrostOptions {
@@ -24,15 +29,18 @@ export type RowOf<T> = T extends readonly (infer TRow)[] ? TRow : T;
  * field-selection support.
  *
  * Builds a GraphQL query from the provided options using {@link buildGraphqlQuery}
- * and executes it via {@link useBifrost}. The returned `data` is automatically
- * unwrapped from the table-keyed response.
+ * and executes it via {@link useBifrost}. BifrostQL wraps table results in a
+ * paged envelope (`{ users { total data { ... } } }`); the returned `data` is
+ * automatically unwrapped through the envelope to the row array, and the
+ * envelope's `total` (the unpaged match count) is surfaced alongside it.
  *
  * Must be used within a {@link BifrostProvider}.
  *
  * @typeParam T - The expected row data type.
  * @param table - The database table name to query.
  * @param options - Combined query and TanStack Query options.
- * @returns TanStack Query result with `data` typed as `T | undefined`.
+ * @returns TanStack Query result with `data` typed as `T | undefined` and
+ * `total` carrying the envelope's unpaged match count.
  *
  * @example
  * ```tsx
@@ -63,20 +71,27 @@ export function useBifrostQuery<T = unknown>(
 
   const query = buildGraphqlQuery(table, queryOptions);
 
-  const result = useBifrost<{ [key: string]: T }>(query, undefined, {
-    enabled,
-    retry,
-    retryDelay,
-    staleTime,
-    gcTime,
-    refetchInterval,
-    refetchOnWindowFocus,
-  });
+  const result = useBifrost<{ [key: string]: PagedResult<RowOf<T>> }>(
+    query,
+    undefined,
+    {
+      enabled,
+      retry,
+      retryDelay,
+      staleTime,
+      gcTime,
+      refetchInterval,
+      refetchOnWindowFocus,
+    },
+  );
 
-  const data = result.data?.[table] as T | undefined;
+  const envelope = result.data?.[table];
+  const data = envelope?.data as T | undefined;
 
   return {
     ...result,
     data,
+    /** Unpaged match count from the paged envelope. */
+    total: envelope?.total,
   };
 }

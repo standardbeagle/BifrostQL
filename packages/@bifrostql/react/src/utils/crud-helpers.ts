@@ -1,4 +1,4 @@
-import type { AdvancedFilter, SortOption } from '@bifrostql/types';
+import type { AdvancedFilter, PagedResult, SortOption } from '@bifrostql/types';
 import { buildGraphqlQuery } from './query-builder';
 import {
   buildInsertMutation,
@@ -104,12 +104,12 @@ export interface CrudHelpers<
   TUpdate = Partial<TRow>,
 > {
   /** Build a list query. Result type: an array of (selected) rows. */
-  list(options?: ListOptions<TRow>): TypedOperation<TRow[]>;
+  list(options?: ListOptions<TRow>): TypedOperation<PagedResult<TRow>>;
   /** Build a detail-by-key query. Result type: a single row or `null`. */
   detail(
     key: RowKey,
     options?: DetailOptions<TRow>,
-  ): TypedOperation<TRow | null>;
+  ): TypedOperation<PagedResult<TRow>>;
   /** Build a create mutation. The `input` is typed; result type: the created row. */
   create(input: TInsert): TypedCreateOperation<TRow, TInsert>;
   /** Build an update mutation. The `changes` are typed; result type: the updated row. */
@@ -119,7 +119,7 @@ export interface CrudHelpers<
   /** Build a narrow FK-selector lookup query. Result type: `{ value, label }` options. */
   lookup(
     options: LookupOptions<TRow>,
-  ): TypedOperation<Array<{ value: unknown; label: unknown }>>;
+  ): TypedOperation<PagedResult<{ value: unknown; label: unknown }>>;
 }
 
 /** A create operation: carries the typed mutation variables alongside the string. */
@@ -239,7 +239,7 @@ export function createCrudHelpers<
   }
 
   return {
-    list(options: ListOptions<TRow> = {}): TypedOperation<TRow[]> {
+    list(options: ListOptions<TRow> = {}): TypedOperation<PagedResult<TRow>> {
       const { filter, sort, limit, offset, fields } = options;
       const query = buildGraphqlQuery(table, {
         filter,
@@ -256,7 +256,7 @@ export function createCrudHelpers<
     detail(
       key: RowKey,
       options: DetailOptions<TRow> = {},
-    ): TypedOperation<TRow | null> {
+    ): TypedOperation<PagedResult<TRow>> {
       const query = buildGraphqlQuery(table, {
         filter: keyFilter(resolveRowKey(table, primaryKeys, key)),
         pagination: { limit: 1 },
@@ -290,7 +290,7 @@ export function createCrudHelpers<
 
     lookup(
       options: LookupOptions<TRow>,
-    ): TypedOperation<Array<{ value: unknown; label: unknown }>> {
+    ): TypedOperation<PagedResult<{ value: unknown; label: unknown }>> {
       const { valueField, labelField, filter, limit } = options;
       const query = buildGraphqlQuery(table, {
         filter,

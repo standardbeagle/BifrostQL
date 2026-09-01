@@ -14,6 +14,11 @@ function createFetchMock(response: unknown, ok = true, status = 200) {
   });
 }
 
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createWrapper(
   endpoint = 'http://localhost:5000/graphql',
   headers?: Record<string, string>,
@@ -52,7 +57,7 @@ describe('useBifrostQuery', () => {
       { id: 1, name: 'Alice' },
       { id: 2, name: 'Bob' },
     ];
-    globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+    globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
     const { result } = renderHook(
       () =>
@@ -67,8 +72,29 @@ describe('useBifrostQuery', () => {
     expect(result.current.data).toEqual(mockUsers);
   });
 
+  it('surfaces the envelope total alongside the unwrapped rows', async () => {
+    const mockUsers = [{ id: 1, name: 'Alice' }];
+    globalThis.fetch = createFetchMock({
+      data: { users: paged(mockUsers, 42) },
+    });
+
+    const { result } = renderHook(
+      () =>
+        useBifrostQuery<Array<{ id: number; name: string }>>('users', {
+          fields: ['id', 'name'],
+          pagination: { limit: 1 },
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(mockUsers);
+    expect(result.current.total).toBe(42);
+  });
+
   it('builds query with filter and sends it', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     const { result } = renderHook(
       () =>
@@ -90,7 +116,7 @@ describe('useBifrostQuery', () => {
   });
 
   it('builds query with sort options', async () => {
-    globalThis.fetch = createFetchMock({ data: { orders: [] } });
+    globalThis.fetch = createFetchMock({ data: { orders: paged([]) } });
 
     const { result } = renderHook(
       () =>
@@ -111,7 +137,7 @@ describe('useBifrostQuery', () => {
   });
 
   it('builds query with pagination', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     const { result } = renderHook(
       () =>
@@ -131,8 +157,8 @@ describe('useBifrostQuery', () => {
     expect(body.query).toContain('offset: 20');
   });
 
-  it('uses __typename when no fields specified', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+  it('selects only the envelope total when no fields specified', async () => {
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     const { result } = renderHook(() => useBifrostQuery('users'), {
       wrapper: createWrapper(),
@@ -143,11 +169,11 @@ describe('useBifrostQuery', () => {
     const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
       .calls[0];
     const body = JSON.parse(fetchOptions.body);
-    expect(body.query).toContain('__typename');
+    expect(body.query).toContain('total');
   });
 
   it('returns undefined data when table key is missing from response', async () => {
-    globalThis.fetch = createFetchMock({ data: { other_table: [] } });
+    globalThis.fetch = createFetchMock({ data: { other_table: paged([]) } });
 
     const { result } = renderHook(
       () => useBifrostQuery('users', { fields: ['id'] }),
@@ -160,7 +186,7 @@ describe('useBifrostQuery', () => {
   });
 
   it('respects enabled option', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     const { result } = renderHook(
       () => useBifrostQuery('users', { enabled: false, fields: ['id'] }),
@@ -201,7 +227,7 @@ describe('useBifrostQuery', () => {
   });
 
   it('combines filter, sort, and pagination in a single query', async () => {
-    globalThis.fetch = createFetchMock({ data: { products: [] } });
+    globalThis.fetch = createFetchMock({ data: { products: paged([]) } });
 
     const { result } = renderHook(
       () =>
@@ -228,7 +254,7 @@ describe('useBifrostQuery', () => {
   });
 
   it('provides invalidate function from underlying hook', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     const { result } = renderHook(
       () => useBifrostQuery('users', { fields: ['id'] }),

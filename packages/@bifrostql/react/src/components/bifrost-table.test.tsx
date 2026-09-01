@@ -42,6 +42,11 @@ function createFetchMock(response: unknown, ok = true, status = 200) {
   });
 }
 
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -100,7 +105,7 @@ describe('BifrostTable', () => {
 
   describe('rendering', () => {
     it('renders the table container', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -108,7 +113,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders column headers', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -120,7 +125,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders data rows', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -132,7 +137,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders cell values from row data', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -142,7 +147,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders empty message when no data', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: [] } });
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
       renderTable();
 
@@ -152,7 +157,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders custom empty message', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: [] } });
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
       renderTable({ emptyMessage: 'Nothing here' });
 
@@ -162,7 +167,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders loading overlay during fetch', () => {
-      globalThis.fetch = createFetchMock({ data: { users: [] } });
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
       renderTable();
 
@@ -171,7 +176,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders custom loading via renderLoading', () => {
-      globalThis.fetch = createFetchMock({ data: { users: [] } });
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
       renderTable({ renderLoading: () => <span>Please wait...</span> });
 
@@ -204,7 +209,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders custom empty via renderEmpty', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: [] } });
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
       renderTable({
         renderEmpty: () => (
@@ -223,7 +228,9 @@ describe('BifrostTable', () => {
 
     for (const themeName of themeNames) {
       it(`renders with ${themeName} theme`, async () => {
-        globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+        globalThis.fetch = createFetchMock({
+          data: { users: paged(mockUsers) },
+        });
 
         renderTable({ theme: themeName });
 
@@ -240,7 +247,7 @@ describe('BifrostTable', () => {
     }
 
     it('applies theme overrides', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({
         theme: 'modern',
@@ -258,7 +265,7 @@ describe('BifrostTable', () => {
     });
 
     it('defaults to modern theme', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -276,7 +283,7 @@ describe('BifrostTable', () => {
 
   describe('row actions', () => {
     it('renders action buttons for each row', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const handleEdit = vi.fn();
       const handleDelete = vi.fn();
@@ -300,7 +307,7 @@ describe('BifrostTable', () => {
     });
 
     it('calls action onClick with the correct row', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const handleEdit = vi.fn();
 
@@ -319,7 +326,7 @@ describe('BifrostTable', () => {
     });
 
     it('renders Actions column header', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({
         rowActions: [{ label: 'Edit', onClick: vi.fn() }],
@@ -331,7 +338,7 @@ describe('BifrostTable', () => {
     });
 
     it('action click does not trigger onRowClick', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const handleRowClick = vi.fn();
       const handleEdit = vi.fn();
@@ -355,7 +362,7 @@ describe('BifrostTable', () => {
 
   describe('column rendering', () => {
     it('renders custom cell content via renderCell', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({
         renderCell: (value, _row, col) => {
@@ -376,7 +383,9 @@ describe('BifrostTable', () => {
 
     it('formats null values as empty string', async () => {
       const usersWithNull = [{ id: 1, name: null, email: 'test@test.com' }];
-      globalThis.fetch = createFetchMock({ data: { users: usersWithNull } });
+      globalThis.fetch = createFetchMock({
+        data: { users: paged(usersWithNull) },
+      });
 
       renderTable();
 
@@ -391,7 +400,9 @@ describe('BifrostTable', () => {
 
     it('formats boolean values', async () => {
       const usersWithBool = [{ id: 1, name: 'Alice', email: true }];
-      globalThis.fetch = createFetchMock({ data: { users: usersWithBool } });
+      globalThis.fetch = createFetchMock({
+        data: { users: paged(usersWithBool) },
+      });
 
       renderTable();
 
@@ -401,7 +412,7 @@ describe('BifrostTable', () => {
     });
 
     it('applies column width', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -416,7 +427,7 @@ describe('BifrostTable', () => {
 
   describe('pagination controls', () => {
     it('shows pagination when data is present', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -426,7 +437,7 @@ describe('BifrostTable', () => {
     });
 
     it('displays current page number', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -438,7 +449,7 @@ describe('BifrostTable', () => {
     });
 
     it('disables Previous button on first page', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -448,7 +459,7 @@ describe('BifrostTable', () => {
     });
 
     it('disables Next when data length < pageSize', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ pagination: { pageSize: 25 } });
 
@@ -463,7 +474,7 @@ describe('BifrostTable', () => {
         name: `User ${i + 1}`,
         email: `user${i + 1}@test.com`,
       }));
-      globalThis.fetch = createFetchMock({ data: { users: fullPage } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(fullPage) } });
 
       renderTable({ pagination: { pageSize: 25 } });
 
@@ -475,7 +486,7 @@ describe('BifrostTable', () => {
 
   describe('sorting interaction', () => {
     it('shows sort indicator on sortable columns', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -487,7 +498,7 @@ describe('BifrostTable', () => {
     });
 
     it('toggles sort on header click', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -502,7 +513,7 @@ describe('BifrostTable', () => {
     });
 
     it('sets aria-sort on sortable columns', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -523,7 +534,7 @@ describe('BifrostTable', () => {
 
   describe('row click', () => {
     it('calls onRowClick with the row data', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const handleRowClick = vi.fn();
 
@@ -540,7 +551,7 @@ describe('BifrostTable', () => {
     });
 
     it('sets cursor pointer when onRowClick is provided', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ onRowClick: vi.fn() });
 
@@ -555,7 +566,7 @@ describe('BifrostTable', () => {
 
   describe('striped and hoverable', () => {
     it('applies striped style to odd rows', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ striped: true });
 
@@ -575,7 +586,7 @@ describe('BifrostTable', () => {
 
   describe('editable', () => {
     it('shows edit input on double-click when editable', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ editable: true, onRowUpdate: vi.fn() });
 
@@ -591,7 +602,7 @@ describe('BifrostTable', () => {
 
     it('commits the edit to onRowUpdate on Enter', async () => {
       // Arrange
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
       const onRowUpdate = vi.fn().mockResolvedValue(undefined);
       renderTable({ editable: true, onRowUpdate });
       await waitFor(() => {
@@ -616,7 +627,7 @@ describe('BifrostTable', () => {
     it('commits the edit when the user clicks away', async () => {
       // Arrange: the reported failure mode — edit a cell, click elsewhere,
       // and the change was silently dropped while looking saved.
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
       const onRowUpdate = vi.fn().mockResolvedValue(undefined);
       renderTable({ editable: true, onRowUpdate });
       await waitFor(() => {
@@ -640,7 +651,7 @@ describe('BifrostTable', () => {
 
     it('discards the edit on Escape without writing', async () => {
       // Arrange
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
       const onRowUpdate = vi.fn().mockResolvedValue(undefined);
       renderTable({ editable: true, onRowUpdate });
       await waitFor(() => {
@@ -661,7 +672,7 @@ describe('BifrostTable', () => {
 
     it('surfaces a rejected write through onSaveError', async () => {
       // Arrange
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
       const failure = new Error('write rejected');
       const onSaveError = vi.fn();
       renderTable({
@@ -687,7 +698,7 @@ describe('BifrostTable', () => {
 
     it('refuses an editable table with no write handler', async () => {
       // Arrange
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
       const consoleError = vi
         .spyOn(console, 'error')
         .mockImplementation(() => {});
@@ -700,7 +711,7 @@ describe('BifrostTable', () => {
     });
 
     it('does not show edit input when not editable', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ editable: false });
 
@@ -715,7 +726,7 @@ describe('BifrostTable', () => {
 
   describe('exportable', () => {
     it('shows export button when exportable and data present', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ exportable: true });
 
@@ -725,7 +736,7 @@ describe('BifrostTable', () => {
     });
 
     it('does not show export button when not exportable', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ exportable: false });
 
@@ -737,7 +748,7 @@ describe('BifrostTable', () => {
     });
 
     it('does not show export button when no data', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: [] } });
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
       renderTable({ exportable: true });
 
@@ -751,7 +762,7 @@ describe('BifrostTable', () => {
 
   describe('responsive behavior', () => {
     it('table container has overflow-x auto', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -764,7 +775,7 @@ describe('BifrostTable', () => {
     });
 
     it('table has 100% width', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable();
 
@@ -787,7 +798,9 @@ describe('BifrostTable', () => {
 
     for (const themeName of darkThemeNames) {
       it(`renders with ${themeName} theme`, async () => {
-        globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+        globalThis.fetch = createFetchMock({
+          data: { users: paged(mockUsers) },
+        });
 
         renderTable({ theme: themeName });
 
@@ -801,7 +814,7 @@ describe('BifrostTable', () => {
     }
 
     it('modern-dark has dark background on container', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ theme: 'modern-dark' });
 
@@ -814,7 +827,7 @@ describe('BifrostTable', () => {
     });
 
     it('classic-dark has dark header row', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({ theme: 'classic-dark' });
 
@@ -839,7 +852,7 @@ describe('BifrostTable', () => {
 
   describe('customTheme prop', () => {
     it('accepts a fully custom theme object', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const custom = createBifrostTheme({
         fontSize: '18px',
@@ -859,7 +872,7 @@ describe('BifrostTable', () => {
     });
 
     it('customTheme takes priority over theme name', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const custom = createBifrostTheme({ fontSize: '22px' });
 
@@ -874,7 +887,7 @@ describe('BifrostTable', () => {
     });
 
     it('themeOverrides still apply on top of customTheme', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       const custom = createBifrostTheme({ fontSize: '16px' });
 
@@ -894,7 +907,7 @@ describe('BifrostTable', () => {
 
   describe('renderToolbar prop', () => {
     it('renders custom toolbar when renderToolbar is provided', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({
         exportable: true,
@@ -918,7 +931,7 @@ describe('BifrostTable', () => {
     });
 
     it('renderToolbar replaces the default toolbar', async () => {
-      globalThis.fetch = createFetchMock({ data: { users: mockUsers } });
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
 
       renderTable({
         exportable: true,
@@ -1745,7 +1758,7 @@ describe('composable sub-components', () => {
   describe('controlled filter prop', () => {
     it('re-issues the query when the filter prop changes, without a remount', async () => {
       // Arrange
-      const fetchMock = createFetchMock({ data: { users: mockUsers } });
+      const fetchMock = createFetchMock({ data: { users: paged(mockUsers) } });
       globalThis.fetch = fetchMock;
       const Wrapper = createWrapper();
 

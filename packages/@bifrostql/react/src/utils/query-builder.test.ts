@@ -2,10 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { buildGraphqlQuery } from './query-builder';
 
 describe('buildGraphqlQuery', () => {
-  it('builds a basic query with no options', () => {
+  it('builds a total-only paged query with no options', () => {
     const result = buildGraphqlQuery('users');
     expect(result).toContain('users');
-    expect(result).toContain('__typename');
+    expect(result).toContain('total');
+    expect(result).not.toContain('data');
+  });
+
+  it('emits the paged data{} envelope around the field selection', () => {
+    // BifrostQL types every top-level table field as the paged envelope
+    // (data/total/offset/limit); a flat selection is rejected by the server.
+    const result = buildGraphqlQuery('users', { fields: ['id', 'name'] });
+    expect(result.replace(/\s+/g, ' ')).toBe(
+      '{ users { total data { id name } } }',
+    );
   });
 
   it('builds a query with specified fields', () => {
@@ -16,6 +26,7 @@ describe('buildGraphqlQuery', () => {
     expect(result).toContain('name');
     expect(result).toContain('email');
     expect(result).not.toContain('__typename');
+    expect(result).toContain('data {');
   });
 
   it('builds a query with equality filter', () => {

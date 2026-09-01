@@ -1,5 +1,6 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import type { UserRow } from '@bifrostql/types/generated';
+import type { PagedResult } from '@bifrostql/types';
 import {
   createCrudHelpers,
   type TypedOperation,
@@ -58,11 +59,11 @@ describe('createCrudHelpers — list', () => {
     expect(op.query).not.toContain('limit:');
   });
 
-  it('infers TRow[] as the result type', () => {
+  it('infers the paged envelope of TRow as the result type', () => {
     const users = createCrudHelpers<UserRow>('users');
     const op = users.list({ fields: ['id'] });
-    expectTypeOf(op).toEqualTypeOf<TypedOperation<UserRow[]>>();
-    expectTypeOf(op.__result).toEqualTypeOf<UserRow[] | undefined>();
+    expectTypeOf(op).toEqualTypeOf<TypedOperation<PagedResult<UserRow>>>();
+    expectTypeOf(op.__result).toEqualTypeOf<PagedResult<UserRow> | undefined>();
   });
 
   it('constrains fields to row keys at the type level', () => {
@@ -84,10 +85,10 @@ describe('createCrudHelpers — detail', () => {
     expect(op.query).toContain('limit: 1');
   });
 
-  it('infers TRow | null as the result type', () => {
+  it('infers the paged envelope as the detail result type', () => {
     const users = createCrudHelpers<UserRow>('users');
     const op = users.detail(1);
-    expectTypeOf(op).toEqualTypeOf<TypedOperation<UserRow | null>>();
+    expectTypeOf(op).toEqualTypeOf<TypedOperation<PagedResult<UserRow>>>();
   });
 });
 
@@ -181,7 +182,7 @@ describe('createCrudHelpers — lookup', () => {
     const users = createCrudHelpers<UserRow>('users');
     const op = users.lookup({ valueField: 'id', labelField: 'name' });
     expectTypeOf(op).toEqualTypeOf<
-      TypedOperation<Array<{ value: unknown; label: unknown }>>
+      TypedOperation<PagedResult<{ value: unknown; label: unknown }>>
     >();
   });
 });

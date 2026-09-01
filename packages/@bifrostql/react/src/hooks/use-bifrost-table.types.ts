@@ -596,6 +596,11 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   responsive: ResponsiveState<T>;
   virtualScroll: VirtualScrollState;
   search: SearchState;
+  /**
+   * Unpaged match count from the server's paged envelope — the row count
+   * across all pages under the current filter, not the current page's length.
+   */
+  totalRows: number | undefined;
   loading: boolean;
   error: Error | null;
   refetch: () => void;

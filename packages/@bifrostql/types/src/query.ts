@@ -127,6 +127,23 @@ export interface SortOptionFor<TRow> {
 }
 
 /**
+ * The paged envelope BifrostQL wraps every top-level table query in. Row
+ * selections live under `data`; `total` is the unpaged match count. A bare
+ * field selection (`{ users { id } }`) is rejected by the server — the
+ * table field's GraphQL type is this envelope, not the row type.
+ */
+export interface PagedResult<TRow = Record<string, unknown>> {
+  /** The rows for the requested page. */
+  data: TRow[];
+  /** Total matching rows before limit/offset. */
+  total?: number;
+  /** The offset that produced this page. */
+  offset?: number;
+  /** The limit that produced this page. */
+  limit?: number;
+}
+
+/**
  * Options for building a table query, combining filters, sorting, pagination,
  * and field selection.
  *

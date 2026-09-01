@@ -7,6 +7,7 @@ import type {
   ChildRowData,
   ExpansionState,
 } from '../use-bifrost-table.types';
+import type { PagedResult } from '../../types';
 
 export interface UseTableExpansionOptions {
   expandable: boolean;
@@ -97,7 +98,7 @@ export function useTableExpansion({
         filter: { [childFilterField]: { _eq: parentValue as string | number } },
       });
 
-      executeGraphQL<Record<string, unknown[]>>(
+      executeGraphQL<Record<string, PagedResult>>(
         bifrostConfig.endpoint,
         bifrostConfig.headers ?? {},
         query,
@@ -110,7 +111,7 @@ export function useTableExpansion({
         },
       )
         .then((data) => {
-          const childData = data[childQuery.table] ?? [];
+          const childData = data[childQuery.table]?.data ?? [];
           childCacheRef.current.set(rowId, childData);
           setChildLoadingRows((prev) => {
             const next = new Set(prev);

@@ -12,6 +12,11 @@ function createFetchMock(response: unknown, ok = true, status = 200) {
   });
 }
 
+/** Wrap rows in the server's paged envelope (`{ total, data }`). */
+function paged(rows: unknown[], total = rows.length) {
+  return { total, data: rows };
+}
+
 describe('fetchBifrostQuery', () => {
   let originalFetch: typeof globalThis.fetch;
   let queryClient: QueryClient;
@@ -30,7 +35,7 @@ describe('fetchBifrostQuery', () => {
   });
 
   it('prefetches data into the query client', async () => {
-    const mockData = { users: [{ id: 1, name: 'Alice' }] };
+    const mockData = { users: paged([{ id: 1, name: 'Alice' }]) };
     globalThis.fetch = createFetchMock({ data: mockData });
 
     const result = await fetchBifrostQuery(queryClient, {
@@ -43,7 +48,7 @@ describe('fetchBifrostQuery', () => {
   });
 
   it('sends request to the specified endpoint', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     await fetchBifrostQuery(queryClient, {
       endpoint: 'http://localhost:5000/graphql',
@@ -55,7 +60,7 @@ describe('fetchBifrostQuery', () => {
   });
 
   it('passes custom headers', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     await fetchBifrostQuery(queryClient, {
       endpoint: 'http://localhost/graphql',
@@ -69,7 +74,7 @@ describe('fetchBifrostQuery', () => {
   });
 
   it('builds query with filter options', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     await fetchBifrostQuery(queryClient, {
       endpoint: 'http://localhost/graphql',
@@ -86,7 +91,7 @@ describe('fetchBifrostQuery', () => {
   });
 
   it('builds query with sort and pagination', async () => {
-    globalThis.fetch = createFetchMock({ data: { orders: [] } });
+    globalThis.fetch = createFetchMock({ data: { orders: paged([]) } });
 
     await fetchBifrostQuery(queryClient, {
       endpoint: 'http://localhost/graphql',
@@ -105,7 +110,7 @@ describe('fetchBifrostQuery', () => {
 
   it('stores data under the correct query key for hydration', async () => {
     globalThis.fetch = createFetchMock({
-      data: { users: [{ id: 1 }] },
+      data: { users: paged([{ id: 1 }]) },
     });
 
     await fetchBifrostQuery(queryClient, {
@@ -131,7 +136,7 @@ describe('fetchBifrostQuery', () => {
   });
 
   it('uses default empty headers when none provided', async () => {
-    globalThis.fetch = createFetchMock({ data: { users: [] } });
+    globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
 
     await fetchBifrostQuery(queryClient, {
       endpoint: 'http://localhost/graphql',

@@ -274,6 +274,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     responsive,
     virtualScroll,
     search,
+    totalRows: queryResult.total,
     loading: queryResult.isLoading,
     error: queryResult.error,
     refetch: queryResult.refetch,

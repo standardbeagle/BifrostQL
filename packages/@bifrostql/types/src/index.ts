@@ -23,6 +23,7 @@ export type {
   CompoundFilter,
   AdvancedFilter,
   FieldNameOf,
+  PagedResult,
   PaginationOptions,
   SortOption,
   SortOptionFor,

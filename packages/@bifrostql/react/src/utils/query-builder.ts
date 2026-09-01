@@ -98,9 +98,14 @@ function buildPaginationArgs(limit?: number, offset?: number): string {
  * syntactically valid GraphQL query string. The result can be passed directly
  * to {@link executeGraphQL} or {@link useBifrost}.
  *
+ * BifrostQL wraps every top-level table query in a paged envelope — the
+ * table field's type carries `data`/`total`/`offset`/`limit`, not the row
+ * columns — so the row selection is emitted under `data {}` alongside
+ * `total`. A flat selection would be rejected by the server's schema.
+ *
  * @param table - The database table name to query.
  * @param options - Filter, sort, pagination, and field-selection options.
- * @returns A GraphQL query string.
+ * @returns A GraphQL query string selecting `total` and `data { <fields> }`.
  *
  * @example
  * ```ts
@@ -110,6 +115,7 @@ function buildPaginationArgs(limit?: number, offset?: number): string {
  *   pagination: { limit: 25 },
  *   fields: ['id', 'name', 'email'],
  * });
+ * // => { users(...) { total data { id name email } } }
  * ```
  */
 export function buildGraphqlQuery(
@@ -128,19 +134,27 @@ export function buildGraphqlQuery(
   }
 
   const argStr = args.length > 0 ? `(${args.join(', ')})` : '';
-  const fieldStr =
-    fields && fields.length > 0
-      ? fields
-          .map((field) => {
-            assertGraphqlName(field, 'selection field');
-            return field;
-          })
-          .join('\n    ')
-      : '__typename';
+  if (!fields || fields.length === 0) {
+    return `{
+  ${table}${argStr} {
+    total
+  }
+}`;
+  }
+
+  const fieldStr = fields
+    .map((field) => {
+      assertGraphqlName(field, 'selection field');
+      return field;
+    })
+    .join('\n      ');
 
   return `{
   ${table}${argStr} {
-    ${fieldStr}
+    total
+    data {
+      ${fieldStr}
+    }
   }
 }`;
 }

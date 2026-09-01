@@ -40,6 +40,7 @@ export function useTableResponsive<T = Record<string, unknown>>({
   // every single render.
   const resolvedBreakpoints = useMemo(
     () => ({ ...DEFAULT_BREAKPOINTS, ...breakpointsProp }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the numeric thresholds, deliberately not the prop object's identity
     [
       breakpointsProp?.xs,
       breakpointsProp?.sm,

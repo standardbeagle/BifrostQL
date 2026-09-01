@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { SortOption, SortOptionFor, TableFilter } from '../types';
+import type { TableFilter } from '../types';
 import { useBifrostQuery } from './use-bifrost-query';
 import {
   resolveClientSideFilterConfig,

@@ -60,6 +60,11 @@ surfaced the expected 6× RED. Both implementer and reviewer hit it.
   — do not trust an incremental `dotnet test`. A GREEN mutant run is only
   evidence of a vacuous test if you have first confirmed the binary under test
   contains the mutation.
+- **Restoring sources with `mv`/`cp` of a backup preserves the backup's OLD
+  mtime**, so even an explicit `dotnet build` afterwards can no-op against the
+  still-mutated outputs — the suite then "fails" with the mutant's signature
+  after you believe you restored. `touch` the restored file (or restore via
+  `git checkout`) before the rebuild.
 - **Workspace `dist` dependencies stale the same way.** A JS package consumed
   through the workspace by its BUILT output (e.g. the HostedSpa sample
   resolving `@bifrostql/react` via its `dist`) runs the last-built bundle, not

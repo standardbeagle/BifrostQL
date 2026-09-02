@@ -51,11 +51,7 @@ namespace BifrostQL.Core.Modules.Crypto
             // original token — being re-applied verbatim.
             if (!ApprovalInterceptMutationHook.IsApprovedReplay(context.UserContext))
             {
-                var blindIndexTargets = table.Columns
-                    .Select(c => c.GetMetadataValue(MetadataKeys.Crypto.BlindIndex))
-                    .Where(v => !string.IsNullOrWhiteSpace(v))
-                    .Select(v => v!.Trim())
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var blindIndexTargets = BlindIndexColumns.TargetsOf(table);
                 if (blindIndexTargets.Count > 0)
                 {
                     foreach (var key in data.Keys)

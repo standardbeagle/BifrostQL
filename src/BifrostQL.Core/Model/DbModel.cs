@@ -330,6 +330,21 @@ namespace BifrostQL.Core.Model
                 ApplyAdditionalMetadata(tables, additionalMetadata);
             }
 
+            // Blind-index shadow columns are server-derived search tokens: hide them
+            // from every read schema surface (GraphQL types/sort/filter, LDAP, chat
+            // connectors, aggregates — everything honoring Ui.Visibility). They stay
+            // in the model so the encrypt transformer and the equality rewrite can
+            // still target them in SQL.
+            foreach (var table in tables)
+            {
+                var blindIndexTargets = BlindIndexColumns.TargetsOf(table.Columns);
+                if (blindIndexTargets.Count == 0)
+                    continue;
+                foreach (var column in table.Columns)
+                    if (blindIndexTargets.Contains(column.ColumnName))
+                        column.Metadata[MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden;
+            }
+
             var dbMetadata = new Dictionary<string, object?>();
             metadataLoader.ApplyDatabaseMetadata(dbMetadata);
 

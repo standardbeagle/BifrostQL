@@ -26,6 +26,15 @@ namespace BifrostQL.Core.QueryModel
         public object? Value { get; set; }
         public FilterType FilterType { get; init; }
         public TableFilter? Next { get; set; }
+
+        /// <summary>
+        /// True on filter nodes the SERVER injected (the blind-index equality
+        /// rewrite). Guard collection skips these leaves: the caller never named
+        /// the column, and the guards instead bind to the ORIGINAL column the
+        /// rewrite recorded — a client-authored reference to the same column is
+        /// a distinct, unmarked node and is still guarded.
+        /// </summary>
+        internal bool ServerDerived { get; init; }
         public List<TableFilter> And { get; init; } = new();
         public List<TableFilter> Or { get; init; } = new();
 

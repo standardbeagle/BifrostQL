@@ -179,10 +179,21 @@ not exist, and rejects a NOT NULL blind-index column whose encrypted source is n
 write that leaves the source NULL computes no token, so the insert could never satisfy the
 constraint). The convention across the examples and tests is `<column>_bidx`.
 
-The blind-index column is server-derived and not client-writable: it is omitted from every
-mutation input type, and the write path rejects a direct value for it — a client-supplied
-token would desync the index from the ciphertext or plant a forged one. Keep the column
-nullable and let the transformer maintain it.
+The blind-index column is server-derived and not client-visible in either direction:
+
+- **Writes**: it is omitted from every mutation input type, and the write path rejects a
+  direct value for it — a client-supplied token would desync the index from the ciphertext
+  or plant a forged one. Keep the column nullable and let the transformer maintain it.
+- **Reads**: it is hidden from the GraphQL types, sort enums, and filter inputs, omitted
+  from every schema/catalog listing (pgwire, MCP, and the other adapters share one
+  projection), and the query path rejects selecting, filtering, sorting, or aggregating it
+  directly. The token is a deterministic HMAC — readable tokens would let a caller
+  correlate equal hidden values across the rows they can see. The server's own equality
+  rewrite is the only sanctioned reference and continues to work.
+
+A policy `read-deny` on the encrypted **source** column also denies `_eq`/`_in` on it:
+the equality rewrite records the original column for the read guards, so routing the
+predicate through the blind index cannot bypass a column-level read denial.
 
 On write, the encrypt transformer stores the ciphertext in `ssn` and an HMAC-SHA-256 token
 in `ssn_bidx`. On read, the query transformer rewrites the predicate before the column

@@ -189,9 +189,17 @@ public static class SchemaReadVisibility
     private static IReadOnlyList<ColumnDto> VisibleColumns(
         IDbTable table, TablePolicy policy, AppIdentity identity)
     {
+        // Blind-index shadow columns are server-derived and unreadable
+        // (BlindIndexColumnGuard); listing them in a catalog would advertise a
+        // column every SELECT of which is denied — and name the token column an
+        // equality-correlation probe would target.
+        var blindIndexTargets = BlindIndexColumns.TargetsOf(table);
+
         var result = new List<ColumnDto>();
         foreach (var column in table.Columns)
         {
+            if (blindIndexTargets.Contains(column.DbName))
+                continue;
             bool allowed;
             try
             {

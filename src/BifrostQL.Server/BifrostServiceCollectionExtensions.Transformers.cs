@@ -87,6 +87,12 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is BifrostQL.Core.Modules.Crypto.EncryptedColumnReadGuard))
                 combined.Add(new BifrostQL.Core.Modules.Crypto.EncryptedColumnReadGuard());
 
+            // Blind-index shadow columns are server-derived; direct reads/predicates
+            // on them are rejected (the server's own equality rewrite is exempt via
+            // ServerDerived filter nodes). No-op for tables without a blind index.
+            if (!configured.Any(t => t is BifrostQL.Core.Modules.Crypto.BlindIndexColumnGuard))
+                combined.Add(new BifrostQL.Core.Modules.Crypto.BlindIndexColumnGuard());
+
             combined.AddRange(configured);
             return combined;
         }

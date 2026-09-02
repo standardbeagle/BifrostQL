@@ -109,7 +109,16 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // derivation as encrypt-on-write. Every other operator on an encrypted column,
         // and an encrypted column without a sibling, is left in place so the guard below
         // still rejects it — the oracle guard is not weakened.
-        query.Filter = RewriteBlindIndexEquality(query.Filter, query.DbTable);
+        //
+        // The rewrite REPLACES the encrypted column's name in the filter, which
+        // would otherwise remove it from the guard sets — a policy read-deny on
+        // the encrypted column must still bind to the equality probe (the result
+        // set is an oracle for the denied value). Each rewritten leaf is marked
+        // ServerDerived (guard collection skips it) and its ORIGINAL column is
+        // recorded here and fed to the read guards instead.
+        var rewrittenOriginals = new List<(IDbTable Table, string Column)>();
+        query.Filter = RewriteBlindIndexEquality(query.Filter, query.DbTable,
+            (t, c) => rewrittenOriginals.Add((t, c)));
 
         // Column-level read enforcement. IFilterTransformer only sees the table,
         // so transformers that enforce column-read-deny (the policy engine)
@@ -120,7 +129,7 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // and use the boolean result-set/ordering as an oracle to exfiltrate the
         // value. Same reject mechanism as GetAdditionalFilter — a denied column
         // aborts the query rather than being silently stripped.
-        EnforceColumnReadGuards(query, context);
+        EnforceColumnReadGuards(query, context, rewrittenOriginals);
 
         // Get additional filters from transformers
         var additionalFilter = _filterTransformers.GetCombinedFilter(query.DbTable, context);
@@ -240,7 +249,8 @@ public sealed class QueryTransformerService : IQueryTransformerService
     /// splice it back in — a leaf whose target column changes is a brand-new node because
     /// <see cref="TableFilter.ColumnName"/> is init-only.
     /// </summary>
-    private TableFilter? RewriteBlindIndexEquality(TableFilter? filter, IDbTable table)
+    private TableFilter? RewriteBlindIndexEquality(
+        TableFilter? filter, IDbTable table, Action<IDbTable, string> recordOriginal)
     {
         if (filter is null)
             return null;
@@ -249,9 +259,9 @@ public sealed class QueryTransformerService : IQueryTransformerService
         if (filter.Next is null)
         {
             for (var i = 0; i < filter.And.Count; i++)
-                filter.And[i] = RewriteBlindIndexEquality(filter.And[i], table)!;
+                filter.And[i] = RewriteBlindIndexEquality(filter.And[i], table, recordOriginal)!;
             for (var i = 0; i < filter.Or.Count; i++)
-                filter.Or[i] = RewriteBlindIndexEquality(filter.Or[i], table)!;
+                filter.Or[i] = RewriteBlindIndexEquality(filter.Or[i], table, recordOriginal)!;
             return filter;
         }
 
@@ -263,17 +273,18 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // its blind-index sibling — the query then fell to the filter guard. This is the same
         // divergence the collector already fixed (see TableFilter.IsLeafColumnPredicate).
         if (filter.IsLeafColumnPredicate)
-            return RewriteLeafPredicate(filter, table);
+            return RewriteLeafPredicate(filter, table, recordOriginal);
 
         // Relationship chain: ColumnName names a SingleLinks relationship into another
         // table; the remaining chain is attributed to that table.
         if (table.SingleLinks.TryGetValue(filter.ColumnName, out var link))
-            filter.Next = RewriteBlindIndexEquality(filter.Next, link.ParentTable);
+            filter.Next = RewriteBlindIndexEquality(filter.Next, link.ParentTable, recordOriginal);
 
         return filter;
     }
 
-    private TableFilter RewriteLeafPredicate(TableFilter leaf, IDbTable table)
+    private TableFilter RewriteLeafPredicate(
+        TableFilter leaf, IDbTable table, Action<IDbTable, string> recordOriginal)
     {
         // Resolve the leaf column tolerant of both name spaces; unknown columns are
         // left untouched (the render path will surface a clear error).
@@ -324,11 +335,17 @@ public sealed class QueryTransformerService : IQueryTransformerService
                 .ToList();
 
         // Replace the predicate: target the blind-index sibling with the token(s).
+        // Record the ORIGINAL column so the read guards (policy) still bind to it,
+        // and mark the injected node ServerDerived so guard collection skips it —
+        // a client-authored predicate on the sibling column is a distinct,
+        // unmarked node and is rejected by BlindIndexColumnGuard.
+        recordOriginal(table, column.DbName);
         return new TableFilter
         {
             TableName = leaf.TableName,
             ColumnName = blindIndexColumn,
             FilterType = FilterType.Join,
+            ServerDerived = true,
             Next = new TableFilter
             {
                 RelationName = op,
@@ -338,7 +355,10 @@ public sealed class QueryTransformerService : IQueryTransformerService
         };
     }
 
-    private void EnforceColumnReadGuards(GqlObjectQuery query, QueryTransformContext context)
+    private void EnforceColumnReadGuards(
+        GqlObjectQuery query,
+        QueryTransformContext context,
+        IReadOnlyList<(IDbTable Table, string Column)>? extraReadColumns = null)
     {
         var guards = _filterTransformers.OfType<IColumnReadGuard>().ToArray();
         var filterGuards = _filterTransformers.OfType<IColumnFilterGuard>().ToArray();
@@ -431,6 +451,14 @@ public sealed class QueryTransformerService : IQueryTransformerService
                 AddFiltered(query.DbTable, v.Column.DbName);
         }
 
+        // Columns the blind-index rewrite REMOVED from the filter: the guards
+        // must still bind to the original encrypted column (read direction only —
+        // equality-via-token is the sanctioned filter path, so the filter guards
+        // must not see it).
+        if (extraReadColumns is not null)
+            foreach (var (table, column) in extraReadColumns)
+                AddRead(table, column);
+
         foreach (var (table, columns) in columnsByTable)
         {
             if (columns.Count == 0)
@@ -486,7 +514,10 @@ public sealed class QueryTransformerService : IQueryTransformerService
 
         if (filter.IsLeafColumnPredicate)
         {
-            add(table, ResolveColumnDbName(table, filter.ColumnName));
+            // Server-injected leaves (the blind-index rewrite) are not caller
+            // references; the guards bind to the recorded ORIGINAL column instead.
+            if (!filter.ServerDerived)
+                add(table, ResolveColumnDbName(table, filter.ColumnName));
             return;
         }
 

@@ -43,7 +43,8 @@ namespace BifrostQL.Core.Schema
         private static bool IsColumnVisible(ColumnDto col) =>
             !col.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden);
 
-        private IEnumerable<ColumnDto> VisibleColumns => _table.Columns.Where(IsColumnVisible);
+        private IEnumerable<ColumnDto> VisibleColumns =>
+            _table.Columns.Where(c => IsColumnVisible(c) && !IsBlindIndexTarget(c));
 
         /// <summary>
         /// Computed columns emitted for this table. The model is required so EAV
@@ -134,11 +135,8 @@ namespace BifrostQL.Core.Schema
         /// value would desync or forge the search token — so they are excluded from
         /// every mutation input type, and the write path rejects them as a backstop.
         /// </summary>
-        private HashSet<string> BlindIndexTargets => _blindIndexTargets ??= _table.Columns
-            .Select(c => c.GetMetadataValue(MetadataKeys.Crypto.BlindIndex))
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Select(v => v!.Trim())
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        private HashSet<string> BlindIndexTargets => _blindIndexTargets ??=
+            BlindIndexColumns.TargetsOf(_table);
 
         private bool IsBlindIndexTarget(ColumnDto column) =>
             BlindIndexTargets.Count > 0 && BlindIndexTargets.Contains(column.DbName);

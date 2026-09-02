@@ -125,6 +125,24 @@ namespace BifrostQL.Core.Schema
             => _table.GetMetadataValue(MetadataKeys.Security.TenantFilter) is { } tenantColumn
                && string.Equals(tenantColumn.Trim(), column.DbName, StringComparison.OrdinalIgnoreCase);
 
+        private HashSet<string>? _blindIndexTargets;
+
+        /// <summary>
+        /// The DB names of columns some encrypted column on this table names as its
+        /// <c>blind-index</c> sibling. Those columns are derived server-side from the
+        /// encrypted plaintext (EncryptOnWriteMutationTransformer) — a client-supplied
+        /// value would desync or forge the search token — so they are excluded from
+        /// every mutation input type, and the write path rejects them as a backstop.
+        /// </summary>
+        private HashSet<string> BlindIndexTargets => _blindIndexTargets ??= _table.Columns
+            .Select(c => c.GetMetadataValue(MetadataKeys.Crypto.BlindIndex))
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => v!.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        private bool IsBlindIndexTarget(ColumnDto column) =>
+            BlindIndexTargets.Count > 0 && BlindIndexTargets.Contains(column.DbName);
+
         public string GetTableFieldDefinition()
         {
             var moduleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(_table);
@@ -352,6 +370,8 @@ namespace BifrostQL.Core.Schema
                     continue;
                 if (column.IsComputed)
                     continue;
+                if (IsBlindIndexTarget(column))
+                    continue;
 
                 var isNullable = column.IsNullable;
                 if (IsAutoPopulated(column) || IsTenantPinned(column))
@@ -398,6 +418,8 @@ namespace BifrostQL.Core.Schema
                     continue;
                 if (column.IsComputed)
                     continue;
+                if (IsBlindIndexTarget(column))
+                    continue;
                 // Primary keys are included (optional): a row with a key is
                 // reconciled against the existing row (update / orphan-detect);
                 // a row without one is inserted.
@@ -432,6 +454,8 @@ namespace BifrostQL.Core.Schema
             foreach (var column in _table.Columns)
             {
                 if (!IsColumnVisible(column) || column.IsComputed || column.IsIdentity || column.IsPrimaryKey)
+                    continue;
+                if (IsBlindIndexTarget(column))
                     continue;
                 var fieldType = ResolveFieldType(column, true, FieldTypeKind.Insert);
                 result.AppendLine($"\t{column.GraphQlName} : {fieldType}");
@@ -475,6 +499,8 @@ namespace BifrostQL.Core.Schema
                 if (!IsColumnVisible(column))
                     continue;
                 if (column.IsComputed)
+                    continue;
+                if (IsBlindIndexTarget(column))
                     continue;
                 var saveType = ResolveFieldType(column, true, FieldTypeKind.Sync);
                 result.AppendLine($"\t{column.GraphQlName} : {saveType}");

@@ -42,6 +42,33 @@ namespace BifrostQL.Core.Modules.Crypto
             var result = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var errors = new List<string>();
 
+            // Blind-index columns are derived server-side from their encrypted source;
+            // a client-supplied value would desync the search token from the ciphertext
+            // (equality search misses the row) or plant a forged token. The schema
+            // already omits them from mutation input types; this is the fail-closed
+            // backstop for programmatic writers (adapters, intents). An approved replay
+            // is exempt: its payload IS the post-transformer data — ciphertext plus the
+            // original token — being re-applied verbatim.
+            if (!ApprovalInterceptMutationHook.IsApprovedReplay(context.UserContext))
+            {
+                var blindIndexTargets = table.Columns
+                    .Select(c => c.GetMetadataValue(MetadataKeys.Crypto.BlindIndex))
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .Select(v => v!.Trim())
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (blindIndexTargets.Count > 0)
+                {
+                    foreach (var key in data.Keys)
+                    {
+                        var target = ResolveColumn(table, key);
+                        if (target is not null && blindIndexTargets.Contains(target.ColumnName))
+                            errors.Add(
+                                $"Column '{table.TableSchema}.{table.DbName}.{target.ColumnName}' is a blind-index " +
+                                "column derived from its encrypted source column; it cannot be written directly.");
+                    }
+                }
+            }
+
             foreach (var (key, value) in data)
             {
                 var column = ResolveColumn(table, key);

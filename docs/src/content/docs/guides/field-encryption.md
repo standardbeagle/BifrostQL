@@ -175,7 +175,14 @@ dbo.customers.ssn {
 ```
 
 `blind-index` names a real column on the same table; model loading rejects a name that does
-not exist. The convention across the examples and tests is `<column>_bidx`.
+not exist, and rejects a NOT NULL blind-index column whose encrypted source is nullable (a
+write that leaves the source NULL computes no token, so the insert could never satisfy the
+constraint). The convention across the examples and tests is `<column>_bidx`.
+
+The blind-index column is server-derived and not client-writable: it is omitted from every
+mutation input type, and the write path rejects a direct value for it — a client-supplied
+token would desync the index from the ciphertext or plant a forged one. Keep the column
+nullable and let the transformer maintain it.
 
 On write, the encrypt transformer stores the ciphertext in `ssn` and an HMAC-SHA-256 token
 in `ssn_bidx`. On read, the query transformer rewrites the predicate before the column

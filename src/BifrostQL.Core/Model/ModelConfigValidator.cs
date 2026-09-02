@@ -1507,6 +1507,16 @@ namespace BifrostQL.Core.Model
             if (!string.IsNullOrWhiteSpace(blindIndex) && !DbColumnExists(table, blindIndex))
                 errors.Add(Problem(table, MetadataKeys.Crypto.BlindIndex, blindIndex,
                     "blind-index names a column that does not exist on the table"));
+            else if (!string.IsNullOrWhiteSpace(blindIndex)
+                     && column.IsNullable
+                     && table.ColumnLookup.TryGetValue(blindIndex!, out var blindIndexColumn)
+                     && !blindIndexColumn.IsNullable)
+                errors.Add(Problem(table, MetadataKeys.Crypto.BlindIndex, blindIndex,
+                    $"blind-index column '{blindIndex}' is NOT NULL but its encrypted source " +
+                    $"'{column.ColumnName}' is nullable; a write that leaves the source NULL computes no " +
+                    "token, and the blind-index column is server-derived (excluded from mutation inputs), " +
+                    "so the INSERT would fail at the database. Make the blind-index column nullable or the " +
+                    "source column NOT NULL."));
         }
 
         /// <summary>

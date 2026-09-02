@@ -38,6 +38,46 @@ public class TenantColumnInputTypeTests
     }
 
     [Fact]
+    public void UpdateInput_TenantFilterColumn_IsOptionalDespiteNotNull()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("tenant_id", "bigint", isNullable: false)
+                .WithColumn("name")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "tenant_id"))
+            .Build();
+        var orders = model.Tables.Single(t => t.GraphQlName == "orders");
+
+        var sdl = new TableSchemaGenerator(orders).GetMutationParameterType(MutateActions.Update, IdentityType.Required);
+
+        InputLine(sdl, "tenant_id").Should().NotEndWith("!",
+            "the tenant transformer pins the column in the SET on update; clients must not be forced to send one");
+    }
+
+    [Fact]
+    public void InsertInput_TenantFilterMetadata_MatchesColumnCaseInsensitively()
+    {
+        // ModelConfigValidator and MetadataMutationTransformerBase both resolve the
+        // tenant-filter value against ColumnLookup with OrdinalIgnoreCase; the input
+        // shape must use the same rule, or a case-differing metadata value would pin
+        // at runtime while the schema still demanded a client value.
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("tenant_id", "bigint", isNullable: false)
+                .WithColumn("name")
+                .WithMetadata(MetadataKeys.Security.TenantFilter, "Tenant_ID"))
+            .Build();
+        var orders = model.Tables.Single(t => t.GraphQlName == "orders");
+
+        var sdl = new TableSchemaGenerator(orders).GetMutationParameterType(MutateActions.Insert, IdentityType.None);
+
+        InputLine(sdl, "tenant_id").Should().NotEndWith("!",
+            "the transformer and validator match the tenant column case-insensitively, so the schema must too");
+    }
+
+    [Fact]
     public void InsertInput_NotNullColumn_StaysRequiredWithoutTenantFilter()
     {
         var model = DbModelTestFixture.Create()

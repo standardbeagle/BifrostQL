@@ -522,15 +522,7 @@ namespace BifrostQL.Mcp
         /// </summary>
         private static List<object?> ParseIdValues(IDbTable table, IReadOnlyList<ColumnDto> keyColumns, JsonElement idElement)
         {
-            List<object?> raw = idElement.ValueKind switch
-            {
-                JsonValueKind.Array => idElement.EnumerateArray().Select(QueryToolCompiler.ToClrValue).ToList(),
-                JsonValueKind.String when keyColumns.Count > 1 =>
-                    idElement.GetString()!.Split('|').Select(s => (object?)s).ToList(),
-                JsonValueKind.String or JsonValueKind.Number => new List<object?> { QueryToolCompiler.ToClrValue(idElement) },
-                _ => throw new ToolPromptException(
-                    "id must be a primary-key value: a scalar, an array in key-column order, or a 'v1|v2' delimited string."),
-            };
+            var raw = ParseKeyValues(idElement, keyColumns.Count);
 
             if (raw.Count != keyColumns.Count)
                 throw new ToolPromptException(

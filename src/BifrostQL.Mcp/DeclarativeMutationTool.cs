@@ -63,6 +63,7 @@ namespace BifrostQL.Mcp
 
         public static async Task<JsonObject> ExecuteAsync(
             IMutationIntentExecutor mutationExecutor,
+            IQueryIntentExecutor executor,
             DeclarativeToolDefinition definition,
             string? endpoint,
             IReadOnlyDictionary<string, JsonElement> arguments,
@@ -77,7 +78,18 @@ namespace BifrostQL.Mcp
                     $"Tool '{definition.Name}' is destructive ({mutation.Action}). Re-invoke with \"{ConfirmArgument}\": true to proceed; " +
                     "no change was made.");
 
-            var intent = BuildIntent(mutation, endpoint, definition, arguments, userContext);
+            // The declared table's key ARITY decides whether a '|' in the id parameter separates
+            // key values or is just a character of a single-column key (see ToolJson.ParseKeyValues).
+            // A declared table is validated against the model at load; an unresolvable name keeps
+            // the non-splitting reading and is rejected downstream by the pipeline — the split is
+            // never invented for a table this could not resolve.
+            var model = await executor.GetModelAsync(endpoint);
+            var declaredTable = UnqualifyTable(mutation.Table);
+            var keyColumnCount = model.Tables
+                .FirstOrDefault(t => string.Equals(t.DbName, declaredTable, StringComparison.OrdinalIgnoreCase))
+                ?.KeyColumns.Count() ?? 1;
+
+            var intent = BuildIntent(mutation, endpoint, definition, arguments, userContext, keyColumnCount);
             var result = await mutationExecutor.ExecuteAsync(intent, cancellationToken);
 
             // Insert reports the generated identity; update/delete report the real
@@ -102,7 +114,8 @@ namespace BifrostQL.Mcp
             string? endpoint,
             DeclarativeToolDefinition definition,
             IReadOnlyDictionary<string, JsonElement> arguments,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            int keyColumnCount)
         {
             var action = mutation.Action switch
             {
@@ -117,7 +130,7 @@ namespace BifrostQL.Mcp
                 data[column] = ResolveValue(definition.Name, column, value, arguments);
 
             IReadOnlyList<object?>? primaryKey = mutation.ById is { } byId
-                ? ParsePrimaryKey(definition.Name, byId, arguments)
+                ? ParsePrimaryKey(definition.Name, byId, arguments, keyColumnCount)
                 : null;
 
             // Only column values + positional PK + caller context. No predicate: the
@@ -154,19 +167,11 @@ namespace BifrostQL.Mcp
         }
 
         private static IReadOnlyList<object?> ParsePrimaryKey(
-            string toolName, string byId, IReadOnlyDictionary<string, JsonElement> arguments)
+            string toolName, string byId, IReadOnlyDictionary<string, JsonElement> arguments, int keyColumnCount)
         {
             if (!arguments.TryGetValue(byId, out var element))
                 throw new ToolPromptException($"Tool '{toolName}' requires the primary-key parameter '{byId}'.");
-            return element.ValueKind switch
-            {
-                JsonValueKind.Array => element.EnumerateArray().Select(QueryToolCompiler.ToClrValue).ToList(),
-                JsonValueKind.String when element.GetString()!.Contains('|') =>
-                    element.GetString()!.Split('|').Select(s => (object?)s).ToList(),
-                JsonValueKind.String or JsonValueKind.Number => new List<object?> { QueryToolCompiler.ToClrValue(element) },
-                _ => throw new ToolPromptException(
-                    $"Parameter '{byId}' must be a primary-key value: a scalar, an array in key-column order, or a 'v1|v2' delimited string."),
-            };
+            return ToolJson.ParseKeyValues(element, keyColumnCount, byId);
         }
 
         /// <summary>Strips a leading <c>schema.</c> qualifier to the bare table DbName the pipeline resolves by.</summary>

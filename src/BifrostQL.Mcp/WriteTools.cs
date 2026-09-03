@@ -127,6 +127,7 @@ namespace BifrostQL.Mcp
         }
 
         internal static async Task<JsonObject> ExecuteAsync(
+            IQueryIntentExecutor executor,
             IMutationIntentExecutor mutationExecutor,
             string? endpoint,
             Func<IDictionary<string, object?>> userContextProvider,
@@ -134,15 +135,29 @@ namespace BifrostQL.Mcp
             CancellationToken cancellationToken)
         {
             var args = parameters.Arguments;
-            var tableName = GetStringArgument(args, "table")
+            var requestedTable = GetStringArgument(args, "table")
                 ?? throw new ToolPromptException(
                     "Missing required argument 'table'. Call bifrost_schema_overview to list the available tables.");
 
+            // Resolve the name against the model BEFORE building any intent. Handing the raw
+            // string to the pipeline meant an unknown table surfaced as the model's
+            // ArgumentOutOfRangeException — outside the funnel's mapped condition set, so it
+            // reached the wire in a shape no read tool produces for the same condition
+            // (invariants 9/10). ResolveTable answers it with the read tools' own prompt, listing
+            // only tables this caller may read, and — unlike ResolveVisibleTable — still resolves
+            // a read-denied table so the write reaches the pipeline for the AUTHORITATIVE
+            // decision: read visibility is not a write gate.
+            var model = await executor.GetModelAsync(endpoint);
+            var userContext = userContextProvider();
+            var table = ResolveTable(model, userContext, requestedTable);
+            var tableName = table.DbName;
+            var keyColumnCount = table.KeyColumns.Count();
+
             var intent = parameters.Name switch
             {
-                InsertToolName => BuildInsert(tableName, args, endpoint, userContextProvider),
-                UpdateToolName => BuildUpdate(tableName, args, endpoint, userContextProvider),
-                DeleteToolName => BuildDelete(tableName, args, endpoint, userContextProvider),
+                InsertToolName => BuildInsert(tableName, args, endpoint, userContext),
+                UpdateToolName => BuildUpdate(tableName, args, endpoint, userContext, keyColumnCount),
+                DeleteToolName => BuildDelete(tableName, args, endpoint, userContext, keyColumnCount),
                 _ => throw new ToolPromptException($"Unknown write tool '{parameters.Name}'."),
             };
 
@@ -169,7 +184,7 @@ namespace BifrostQL.Mcp
 
         private static MutationIntent BuildInsert(
             string table, IDictionary<string, JsonElement>? args, string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider)
+            IDictionary<string, object?> userContext)
         {
             var values = ReadColumnObject(args, "values");
             if (values.Count == 0)
@@ -179,14 +194,14 @@ namespace BifrostQL.Mcp
                 Table = table,
                 Action = MutationIntentAction.Insert,
                 Data = values,
-                UserContext = new Dictionary<string, object?>(userContextProvider()),
+                UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
             };
         }
 
         private static MutationIntent BuildUpdate(
             string table, IDictionary<string, JsonElement>? args, string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider)
+            IDictionary<string, object?> userContext, int keyColumnCount)
         {
             var set = ReadColumnObject(args, "set");
             if (set.Count == 0)
@@ -196,22 +211,22 @@ namespace BifrostQL.Mcp
                 Table = table,
                 Action = MutationIntentAction.Update,
                 Data = set,
-                PrimaryKey = ReadPrimaryKey(args),
-                UserContext = new Dictionary<string, object?>(userContextProvider()),
+                PrimaryKey = ReadPrimaryKey(args, keyColumnCount),
+                UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
             };
         }
 
         private static MutationIntent BuildDelete(
             string table, IDictionary<string, JsonElement>? args, string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider)
+            IDictionary<string, object?> userContext, int keyColumnCount)
             => new()
             {
                 Table = table,
                 Action = MutationIntentAction.Delete,
                 Data = new Dictionary<string, object?>(),
-                PrimaryKey = ReadPrimaryKey(args),
-                UserContext = new Dictionary<string, object?>(userContextProvider()),
+                PrimaryKey = ReadPrimaryKey(args, keyColumnCount),
+                UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
             };
 
@@ -235,24 +250,18 @@ namespace BifrostQL.Mcp
         }
 
         /// <summary>
-        /// Parses the positional primary key from the <c>id</c> argument — an array in
-        /// key-column order, a 'v1|v2' delimited string, or a scalar — into the ordered
-        /// value list <see cref="MutationIntent.PrimaryKey"/> expects. Arity and column
-        /// coercion are enforced downstream by the mutation pipeline (composite-key safe).
+        /// Parses the positional primary key from the <c>id</c> argument through the shared
+        /// arity-aware helper — the resolved table's key column count decides whether
+        /// <c>'|'</c> separates values — into the ordered list
+        /// <see cref="MutationIntent.PrimaryKey"/> expects. Column coercion is enforced
+        /// downstream by the mutation pipeline (composite-key safe).
         /// </summary>
-        private static IReadOnlyList<object?> ReadPrimaryKey(IDictionary<string, JsonElement>? args)
+        private static IReadOnlyList<object?> ReadPrimaryKey(
+            IDictionary<string, JsonElement>? args, int keyColumnCount)
         {
             var element = GetArgument(args, "id")
                 ?? throw new ToolPromptException("Missing required argument 'id' (the row's primary-key value).");
-            return element.ValueKind switch
-            {
-                JsonValueKind.Array => element.EnumerateArray().Select(QueryToolCompiler.ToClrValue).ToList(),
-                JsonValueKind.String when element.GetString()!.Contains('|') =>
-                    element.GetString()!.Split('|').Select(s => (object?)s).ToList(),
-                JsonValueKind.String or JsonValueKind.Number => new List<object?> { QueryToolCompiler.ToClrValue(element) },
-                _ => throw new ToolPromptException(
-                    "id must be a primary-key value: a scalar, an array in key-column order, or a 'v1|v2' delimited string."),
-            };
+            return ParseKeyValues(element, keyColumnCount);
         }
     }
 }

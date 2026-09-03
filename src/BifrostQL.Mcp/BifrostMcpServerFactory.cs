@@ -575,7 +575,7 @@ namespace BifrostQL.Mcp
                     DataTools.RowContextToolName => await DataTools.ExecuteRowContextAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
                     AggregateTools.ToolName => await AggregateTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
                     SearchTools.ToolName => await SearchTools.ExecuteAsync(executor, endpoint, userContextProvider, parameters, cancellationToken),
-                    _ => await WriteTools.ExecuteAsync(mutationExecutor!, endpoint, userContextProvider, parameters, cancellationToken),
+                    _ => await WriteTools.ExecuteAsync(executor, mutationExecutor!, endpoint, userContextProvider, parameters, cancellationToken),
                 };
                 return StructuredResult(payload);
             }
@@ -597,7 +597,7 @@ namespace BifrostQL.Mcp
                     ? new Dictionary<string, JsonElement>()
                     : new Dictionary<string, JsonElement>(parameters.Arguments);
                 return StructuredResult(await DeclarativeMutationTool.ExecuteAsync(
-                    mutationExecutor!, declarative, endpoint, mutationArgs, userContextProvider(), cancellationToken));
+                    mutationExecutor!, executor, declarative, endpoint, mutationArgs, userContextProvider(), cancellationToken));
             }
             if (declarative is not null)
             {

@@ -115,6 +115,31 @@ namespace BifrostQL.Mcp
             IDbModel model, IDictionary<string, object?> userContext, string tableName) =>
             ResolveVisibleTable(model, SchemaReadVisibility.Project(model, userContext), tableName);
 
+        /// <summary>
+        /// Parses an <c>id</c> argument into the ordered primary-key value list every tool
+        /// addresses a row by: an array in key-column order, a <c>'v1|v2'</c> delimited string, or
+        /// a single scalar.
+        ///
+        /// <para>The key's ARITY decides whether <c>'|'</c> separates values. On a composite key it
+        /// is the documented delimiter; on a single-column key it is an ordinary character of the
+        /// value, so splitting there made a row the read tools can address unwritable. This is the
+        /// one place that rule lives — the read and write sides had drifted into two.</para>
+        /// </summary>
+        /// <param name="parameterName">The argument name to quote in the failure prompt.</param>
+        internal static List<object?> ParseKeyValues(
+            JsonElement idElement, int keyColumnCount, string parameterName = "id") =>
+            idElement.ValueKind switch
+            {
+                JsonValueKind.Array => idElement.EnumerateArray().Select(QueryToolCompiler.ToClrValue).ToList(),
+                JsonValueKind.String when keyColumnCount > 1 =>
+                    idElement.GetString()!.Split('|').Select(s => (object?)s).ToList(),
+                JsonValueKind.String or JsonValueKind.Number =>
+                    new List<object?> { QueryToolCompiler.ToClrValue(idElement) },
+                _ => throw new ToolPromptException(
+                    $"'{parameterName}' must be a primary-key value: a scalar, an array in key-column order, " +
+                    "or a 'v1|v2' delimited string."),
+            };
+
         internal static JsonArray ToJsonRows(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows) =>
             new(rows.Select(r => (JsonNode?)ToJsonRow(r)).ToArray());
 

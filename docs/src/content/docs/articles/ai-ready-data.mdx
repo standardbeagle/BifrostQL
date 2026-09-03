@@ -38,6 +38,7 @@ Most "AI on your data" plans start with a pipeline: export the tables, sync the 
 The server side is one registration on an existing BifrostQL host:
 
 ```csharp
+builder.Services.AddSingleton(new McpAuthOptions { Mode = McpAuthMode.AnonymousDev }); // or Bearer
 builder.Services.AddBifrostQL(o => o
     .BindStandardConfig(builder.Configuration)
     .AddProtocolAdapter<BifrostMcpAdapter>());   // stdio hosting for local agents

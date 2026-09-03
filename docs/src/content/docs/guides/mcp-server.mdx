@@ -83,11 +83,15 @@ as GraphQL.
 
 ## Setup: stdio (Claude Code / local)
 
-Register the adapter alongside your BifrostQL endpoint. A stdio MCP session has
-no per-request principal — the caller is whoever launched the process — so the
-default identity is an **empty user context** (fail closed):
+Register the adapter alongside your BifrostQL endpoint, and register a
+`McpAuthOptions` naming the identity posture. A stdio MCP session has no
+per-request principal — the caller is whoever launched the process — and the
+default `FailClosed` mode refuses every request, so a stdio server declares
+either `Bearer` (credential read from the environment) or the explicit
+`AnonymousDev` opt-in (empty user context; logs a startup warning):
 
 ```csharp
+builder.Services.AddSingleton(new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
 builder.Services.AddBifrostQL(o => o
     .AddProtocolAdapter<BifrostMcpAdapter>());
 ```

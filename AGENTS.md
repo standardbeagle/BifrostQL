@@ -191,7 +191,7 @@ Mutation hook state has TWO scopes on `MutationObserverContext` (`Modules/IMutat
 ## GraphQL Query Builders
 
 - 勿將 user-provided table, field, operator, type names 直插 GraphQL text。
-- 用既有 query-builder validation helpers 與 schema-derived names。
+- 用既有 query-builder validation helpers 與 schema-derived names。generated schema type names 尤然：filter input 乃 `TableFilter<GraphQlName>Input`（唯 `query-builder.ts` 之 `tableFilterTypeName(table)` 產之），sort enum 乃 `<GraphQlName>SortEnum`；勿於 query text 內字串插值重拼——H12 即 `${name}Filter` 之誤拼，令凡 grouped grid 展開即 validation 失敗。
 - edit-db app 支援 composite primary keys。用 `examples/edit-db/src/lib/row-id.ts` 與 `examples/edit-db/src/lib/query-builder.ts` helpers；勿取巧直用 `primaryKeys[0]`。
 - relationship joins 若取 first source/destination columns，即 single-column FK assumptions，非 composite-PK helpers。若擴之，須 document 且 test。
 

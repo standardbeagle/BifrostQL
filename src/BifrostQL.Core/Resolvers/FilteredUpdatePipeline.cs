@@ -53,7 +53,7 @@ namespace BifrostQL.Core.Resolvers
             if (ctx.Services?.GetService<BeforeCommitMutationHooks>()?.AnyApplies(table) == true ||
                 ctx.Services?.GetService<InTransactionMutationHooks>()?.AnyApplies(table) == true)
                 throw new BifrostExecutionError(
-                    $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available while mutation hooks (approval, history, CDC) are registered — they need per-row semantics. Use the batch mutation instead.");
+                    $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available while a mutation hook (approval, history, CDC) applies to this table — they need per-row semantics. Use the batch mutation instead.");
             if (StateMachineConfigCollector.FromTable(table) is not null)
                 throw new BifrostExecutionError(
                     $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available on a state-machine table — transitions validate per row. Use the batch mutation instead.");

@@ -55,6 +55,7 @@ public sealed class TreeSyncPipelineTests : IAsyncLifetime
                 blog_id INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 deleted_at TEXT,
+                updated_at TEXT,
                 FOREIGN KEY (blog_id) REFERENCES blogs(id)
             )
             """);
@@ -147,6 +148,31 @@ public sealed class TreeSyncPipelineTests : IAsyncLifetime
         // Orphan post 2 is physically gone.
         (await CountAsync("SELECT COUNT(*) FROM posts WHERE id = 2")).Should().Be(0,
             "without soft-delete metadata the orphan is hard-deleted");
+        (await CountAsync("SELECT COUNT(*) FROM posts WHERE id = 1")).Should().Be(1,
+            "the kept child remains");
+    }
+
+    [Fact]
+    public async Task Sync_OrphanOnAuditPopulatedTableWithoutSoftDelete_HardDeletes()
+    {
+        // populate: updated-on WITHOUT soft-delete. The audit transformer stamps
+        // updated_at on a Delete too, so a delete predicate built from the
+        // POST-transformer data would AND `updated_at = <now>` onto the WHERE and
+        // match zero rows — the sync would report success while the orphan survived.
+        var model = await LoadModelAsync(
+            ":root { user-audit-key: id }",
+            "*.posts.updated_at { populate: updated-on }");
+
+        var result = await ExecuteMutationAsync(
+            model,
+            "mutation { blogs(sync: { id: 1, name: \"A\", posts: [{ id: 1, title: \"keep\" }] }) }",
+            new[] { new AuditMutationTransformer() },
+            userContext: new Dictionary<string, object?> { ["id"] = "user-42" });
+
+        result.Errors.Should().BeNullOrEmpty();
+
+        (await CountAsync("SELECT COUNT(*) FROM posts WHERE id = 2")).Should().Be(0,
+            "the orphan is hard-deleted; a transformer-stamped audit column must never scope the DELETE predicate");
         (await CountAsync("SELECT COUNT(*) FROM posts WHERE id = 1")).Should().Be(1,
             "the kept child remains");
     }

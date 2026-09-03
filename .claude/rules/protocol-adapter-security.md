@@ -373,3 +373,39 @@ code, not just re-checks of pgwire.
     compile time (unbounded labels are both a cardinality-DoS and an
     info-disclosure channel; convention is not enough). Full write-up:
     `docs/solutions/bifrostql/prometheus-epic-identity-less-scrape-exposure-2026-07-18.md`.
+
+12. **A security mode's NAME is a load-bearing claim, and an EMPTY user context
+    is not a refusal.** The MCP adapter's `McpAuthMode.FailClosed` projected an
+    empty user context for a caller who presented no identity, and served the
+    request. An empty context only gates tables that DECLARE tenant metadata, so
+    every other table stayed readable by an unidentified caller — fail-closed in
+    the name, the enum's XML doc, and the guide; fail-open in fact.
+    `FailClosed`, `Bearer` and `AnonymousDev` all behaved identically for an
+    unidentified caller. Two checks:
+    (a) any enum member, option, or mode whose NAME asserts a security property
+    needs a test that goes RED when the property is absent — and the fixture
+    must use a table WITHOUT tenant metadata, or an empty-context bug cannot
+    manifest (a tenant-scoped fixture makes the test vacuous per
+    `regression-test-non-vacuous.md`);
+    (b) the refusal belongs on EVERY transport seam the mode covers — the stdio
+    per-call provider and the HTTP per-request guard both, or one name means two
+    things. Reuse the adapter's already-funnelled exception type (invariants 1
+    and 3) so the refusal reaches the wire sanitized with no new mapping.
+
+    **Flipping a shipped default is a docs sweep, not a docs sentence.** Every
+    code SNIPPET that shows the old default is load-bearing, not just prose
+    asserting the control: after this flip a bare
+    `AddProtocolAdapter<BifrostMcpAdapter>()` in the guide and in an article
+    refused every tool call, and a reader following it would have shipped a
+    server that serves nothing. Review caught the same shape twice on this drain
+    (the HTTP-mount-order flip, then this one). Grep every `docs/` snippet that
+    constructs the affected surface and make it declare the mode explicitly.
+
+    Host corollary: a fact about a SHIPPED security default must pin
+    `UseEnvironment("Production")` — `WebApplicationFactory` defaults to
+    Development, where `DisableAuth` legitimately lives, so the test proves
+    nothing. Auth-on in a Host test also constructs the interactive OIDC
+    handler, which needs `JwtSettings:Authority` + `ClientId`. And
+    `Program.cs` top-level statements read `builder.Configuration` BEFORE the
+    host builds, so `ConfigureAppConfiguration` is invisible to those reads —
+    set feature switches with `UseSetting`.

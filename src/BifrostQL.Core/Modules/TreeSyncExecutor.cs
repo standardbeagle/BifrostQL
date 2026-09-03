@@ -116,6 +116,15 @@ public sealed class TreeSyncExecutor
                 var mutationType = MapMutationType(op.OperationType);
                 var logicalMutationType = mutationType;
                 var data = op.Data;
+                // The columns this operation actually carried, snapshotted (in DB-name
+                // space) BEFORE the transformer chain runs. These — plus the primary key
+                // — are the only legitimate WHERE-predicate columns for a delete. Columns
+                // a transformer stamps afterwards (audit updated_at/updated_by) would
+                // otherwise AND a never-matching term into the WHERE and silently affect
+                // zero rows. Same contract as the single-row and batch pipelines.
+                var clientColumns = new HashSet<string>(
+                    op.Data.Keys.Select(k => ToDbColumnName(op.Table, k)),
+                    StringComparer.OrdinalIgnoreCase);
                 (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter
                     = ("", Array.Empty<SqlParameterInfo>());
 
@@ -197,7 +206,19 @@ public sealed class TreeSyncExecutor
                         opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
                         break;
                     case MutationType.Delete:
-                        opResult = await ExecuteDeleteAsync(conn, op.Table, data, additionalFilter);
+                        var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
+                        if (deleteData.Count == 0)
+                            throw new BifrostExecutionError(
+                                "A delete requires a primary key or at least one predicate column to scope the affected rows.");
+                        var deleted = await ExecuteDeleteAsync(conn, op.Table, deleteData, additionalFilter);
+                        // The affected-row count is checked, never assumed: a delete this tree
+                        // inferred targets a row the sync just read, so zero rows means the
+                        // statement silently did nothing and the row survives. Reporting that
+                        // as success is the orphan-persists failure; abort the transaction.
+                        if (deleted == 0)
+                            throw new BifrostExecutionError(
+                                "A tree-sync delete affected no rows; the operation did not apply.");
+                        opResult = deleted;
                         break;
                     default:
                         opResult = null;

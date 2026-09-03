@@ -307,7 +307,9 @@ namespace BifrostQL.Mcp
         /// that snapshot. Snapshotting is essential: the MCP session outlives the initiating request
         /// whose scope this projection reads (the OIDC claim-mapper registry), so deferring the
         /// projection to tool-call time would touch a disposed scope on later requests. A null
-        /// principal snapshots an empty (fail-closed) context; an unmapped issuer throws here and the
+        /// principal snapshots an EMPTY context, which is NOT fail-closed — it gates only tables
+        /// declaring tenant metadata — so no shipped caller reaches this with a null principal; the
+        /// refusal happens at the seam that decides identity. An unmapped issuer throws here and the
         /// throw is deferred to each tool call so the handler sanitizes it onto the wire — never an
         /// empty/anonymous context.
         /// </summary>

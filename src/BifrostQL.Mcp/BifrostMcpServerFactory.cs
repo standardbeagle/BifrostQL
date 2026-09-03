@@ -159,10 +159,14 @@ namespace BifrostQL.Mcp
         /// is the registered GraphQL endpoint path; null selects the single registered
         /// endpoint and an unknown path fails fast on first use (no fallback).
         /// <paramref name="userContextProvider"/> supplies the caller identity
-        /// (tenant id, roles, …) applied to every row-reading intent; the default
-        /// is an EMPTY context, so tenant-filtered tables fail closed exactly like
-        /// an unauthenticated GraphQL request (stdio dev mode has no per-request
-        /// principal).
+        /// (tenant id, roles, …) applied to every row-reading intent. Omitting it
+        /// falls back to an EMPTY context, which is NOT a refusal: an empty context
+        /// only gates tables that declare tenant metadata, leaving every other table
+        /// readable by a caller who presented nothing. Both shipped front doors pass
+        /// a provider that refuses when no principal is established
+        /// (<see cref="BifrostMcpAdapter"/>, <c>AddBifrostMcpHttp</c>); an embedding
+        /// host calling this directly must supply one too, or declare
+        /// <c>McpAuthMode.AnonymousDev</c> deliberately.
         /// <paramref name="beforeRequestAsync"/> is the per-request identity seam: when
         /// supplied it runs at the start of EVERY handler (inside the error funnel) so a
         /// transport that can re-derive identity per request — the HTTP one — does so

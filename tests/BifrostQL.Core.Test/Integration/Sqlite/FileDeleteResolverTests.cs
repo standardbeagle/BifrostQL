@@ -62,7 +62,9 @@ public sealed class FileDeleteResolverTests : IDisposable
     }
 
     private FileResolverTestContext Context(IDbModel model) => new(_factory, model,
-        new Dictionary<string, string?> { ["table"] = "widget", ["column"] = "photo", ["recordId"] = "1" });
+        new Dictionary<string, object?> { ["table"] = "widget", ["column"] = "photo", ["recordId"] = "1" },
+        FileResolverTestWiring.Services(),
+        FileResolverTestWiring.Executor(model));
 
     [Fact]
     public async Task CorruptMetadata_ThrowsAndPreservesDatabasePointer()

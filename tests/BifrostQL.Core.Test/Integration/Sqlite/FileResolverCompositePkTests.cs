@@ -73,7 +73,9 @@ public sealed class FileResolverCompositePkTests : IDisposable
     }.ToJson();
 
     private FileResolverTestContext Context(IDbModel model, string table, string recordId) => new(_factory, model,
-        new Dictionary<string, string?> { ["table"] = table, ["column"] = "attachment", ["recordId"] = recordId });
+        new Dictionary<string, object?> { ["table"] = table, ["column"] = "attachment", ["recordId"] = recordId },
+        FileResolverTestWiring.Services(),
+        FileResolverTestWiring.Executor(model));
 
     private async Task SeedCompositeAsync()
     {

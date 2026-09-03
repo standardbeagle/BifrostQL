@@ -1,6 +1,9 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Schema;
 using BifrostQL.Core.Storage;
+using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
 namespace BifrostQL.Core.Test.Sqlite;
@@ -14,21 +17,27 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// </summary>
 internal sealed class FileResolverTestContext : IBifrostFieldContext
 {
-    private readonly Dictionary<string, string?> _args;
+    private readonly Dictionary<string, object?> _args;
 
-    public FileResolverTestContext(IDbConnFactory connFactory, IDbModel model, Dictionary<string, string?> args)
+    public FileResolverTestContext(
+        IDbConnFactory connFactory,
+        IDbModel model,
+        Dictionary<string, object?> args,
+        IServiceProvider? services = null,
+        ISqlExecutionManager? executor = null)
     {
         _args = args;
+        RequestServices = services;
         InputExtensions = new Dictionary<string, object?>
         {
             ["connFactory"] = connFactory,
             ["model"] = model,
-            ["tableReaderFactory"] = Substitute.For<ISqlExecutionManager>(),
+            ["tableReaderFactory"] = executor ?? Substitute.For<ISqlExecutionManager>(),
         };
     }
 
     public IDictionary<string, object?> UserContext { get; } = new Dictionary<string, object?>();
-    public IServiceProvider? RequestServices => null;
+    public IServiceProvider? RequestServices { get; }
     public IDictionary<string, object?> InputExtensions { get; }
     public CancellationToken CancellationToken => CancellationToken.None;
 
@@ -48,6 +57,32 @@ internal sealed class FileResolverTestContext : IBifrostFieldContext
             return typed;
         return default;
     }
+}
+
+/// <summary>
+/// The minimum request-scoped wiring the file mutation resolvers need now that
+/// their pointer write runs through <c>TableMutationPipeline</c>: a mutation
+/// transformer chain (empty is a valid chain — the pipeline still applies its own
+/// guards, hooks and transaction) and a real read executor for the pointer read.
+/// </summary>
+internal static class FileResolverTestWiring
+{
+    public static IServiceProvider Services(params IMutationTransformer[] mutationTransformers)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IFilterTransformers>(new FilterTransformersWrap
+        {
+            Transformers = Array.Empty<IFilterTransformer>(),
+        });
+        services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
+        {
+            Transformers = mutationTransformers,
+        });
+        return services.BuildServiceProvider();
+    }
+
+    public static ISqlExecutionManager Executor(IDbModel model) =>
+        new SqlExecutionManager(model, DbSchema.FromModel(model), NullQueryTransformerService.Instance);
 }
 
 /// <summary>Records delete calls and always succeeds.</summary>

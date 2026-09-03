@@ -60,6 +60,15 @@ implementations produce provably different output.
   that sanitizes to a different GraphQL name (a space or dash: `sale-price` ->
   `sale_price`), and assert the output does NOT contain the old key — a
   positive-only assertion misses a double-bind where both names reach SQL.
+- **A test container is not the production container.** A fixture that builds a bare
+  `ServiceCollection` and registers only what the test needs cannot see a defect whose
+  cause is what the PRODUCTION registrar adds. The `updateWhere` / bulk-fast-path gates
+  asked "is any mutation hook registered?"; `AddBifrostQL` registers four hooks in every
+  host, so both features were refused in every shipping deployment while every
+  bare-container test stayed green. Any test covering a gate, guard, or fast path whose
+  condition reads the DI container must build it through the production registrar
+  (`AddBifrostQL` / `BifrostServiceRegistrar`), not by hand.
+  <!-- written_at: 2026-09-03T22:00:00Z  source_event: task:01M1KP14CKVVE0FEKMXFVWMSGF, git:292976a2, git:66e2dac0 -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

@@ -70,7 +70,7 @@ The fast path engages when **all** of these hold; anything else falls back to th
 
 - the provider has a bulk executor (SQL Server, PostgreSQL, MySQL — SQLite deliberately stays per-row: a single in-process writer has no round trips to save),
 - the batch has at least `bulk-batch-threshold` actions (default 50; `0` disables per table) and at most `batch-max-size`,
-- no before-commit / in-transaction mutation hooks are registered (approval workflows, change history, CDC outbox need per-row before-images and identities),
+- no before-commit / in-transaction mutation hook **applies to the table** (approval workflows, change history, CDC outbox need per-row before-images and identities). Applicability, not registration: every host registers the built-in hooks unconditionally and each one no-ops for tables that did not opt in, so the gate asks whether a registered hook can act on *this* table. A hook that does not declare applicability counts as applying, so an unrecognised third-party hook still forces the per-row path,
 - no upsert actions (the upsert existence probe is per-row by design),
 - the table has no state machine,
 - every row's transformer filter (tenant scope, policy row scope, soft-delete guard) renders identically — true for normal tenant/policy filters; per-row-varying filters (e.g. optimistic-concurrency tokens at *different* versions in one batch) fall back,

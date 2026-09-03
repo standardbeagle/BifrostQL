@@ -27,10 +27,11 @@ a future regression to the old code stays green.
 ## Why fixtures go vacuous
 
 Shared fixtures are tuned for the common case — a single placeholder, a
-single-column PK, `id=1`, a single data source, no pre-existing state at the
-target. A bug that only manifests with multiple elements (>=2 placeholders,
-composite PK, PK value `0`, multi-source table, pre-existing target content)
-cannot be exercised by such a fixture. A test targeting a multi-element failure
+single-column PK, `id=1`, a single data source, a single relationship hop, no
+pre-existing state at the target. A bug that only manifests with multiple
+elements (>=2 placeholders, composite PK, PK value `0`, multi-source table,
+>=2 traversal hops, pre-existing target content) cannot be exercised by such a
+fixture. A test targeting a multi-element failure
 mode needs a **dedicated fixture variant** that makes the fixed and pre-fix
 implementations produce provably different output.
 
@@ -38,6 +39,12 @@ implementations produce provably different output.
   default fixture.
 - Parameterize the shared builder with a default preserving prior behavior
   rather than mutating the shared fixture (keeps blast radius to one test).
+- **A one-element fixture cannot observe WHICH element a walker read.** Where
+  state is attached to one node of a chain and read back by another walker
+  (relationship-filter scope on the node naming the link — finding C1), a
+  single-hop fixture has one candidate node, so an off-by-one read is
+  indistinguishable from a correct one and the test passes either way. Span
+  >=2 hops and scope only the LAST one, so the wrong node is provably null.
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

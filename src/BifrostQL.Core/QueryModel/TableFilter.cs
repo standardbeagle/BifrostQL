@@ -57,6 +57,16 @@ namespace BifrostQL.Core.QueryModel
         /// user context and transformer set) at the same time it computes the node
         /// query's own filter, and consumed by <see cref="BuildSqlParameterized"/>. Null
         /// when no transformer applies to the traversed table.
+        ///
+        /// OWNERSHIP CONVENTION — the scope for a hop lives on the node whose
+        /// <see cref="ColumnName"/> NAMES that hop's link, never on the nested node the
+        /// hop leads to. In <c>{ posts: { authors: { name: … } } }</c> the <c>posts</c>
+        /// node holds the posts table's scope and the <c>authors</c> node holds the
+        /// authors table's; the leaf <c>name</c> predicate holds none. Producer and
+        /// consumer must read the same node: <c>ScopeFilterTraversals</c> assigns while
+        /// walking <c>filter -&gt; filter.Next</c>, so a renderer that reads a hop's scope
+        /// off the NESTED node is off by one hop and silently drops that table's
+        /// tenant/soft-delete/policy filter rather than failing (finding C1).
         /// </summary>
         internal TableFilter? TraversedTableFilter { get; set; }
 
@@ -675,10 +685,14 @@ namespace BifrostQL.Core.QueryModel
                     case FilterType.Join
                         when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
                         {
-                            // Each hop carries its OWN traversed table's scope; the next
-                            // hop's comes from the nested node, not from this one.
+                            // Each hop carries its OWN traversed table's scope, and that
+                            // scope lives on the node NAMING the link — `filter` names
+                            // `nextLink`, so `nextLink`'s scope is `filter`'s. Reading
+                            // `filter.Next`'s instead took the hop-after-next's scope
+                            // (null on a leaf predicate), so every hop past the first ran
+                            // unscoped: finding C1.
                             var (nextSql, nextParams) = BuildSqlParameterized(
-                                filter.Next!, nextLink, ctx, aliases, filter.Next!.TraversedTableFilter);
+                                filter.Next!, nextLink, ctx, aliases, filter.TraversedTableFilter);
                             var innerJoin = $"INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
                             var sql = RelationshipSubquery(
                                 link, dialect, $"{innerJoin}{scope.Joins}", new[] { scope.Where },

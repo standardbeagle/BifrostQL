@@ -324,6 +324,51 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         pending.Should().OnlyContain(p => p.Op == "insert" && p.State == PendingChangeStore.StatePending);
     }
 
+    /// <summary>
+    /// H3: the per-action hook state must NOT leak between the actions of one batch. A batch
+    /// whose FIRST action is a delete on a soft-delete table sets the logical mutation type
+    /// (Delete, retained because the transformer rewrites the physical verb to Update); with a
+    /// batch-wide state bag that value survived into the NEXT action, so a following UPDATE was
+    /// enqueued as <c>op='delete'</c> and approving it soft-deleted the row the caller asked to
+    /// rename. The fixture needs BOTH verbs in ONE batch on a gated soft-delete table — a
+    /// single-verb batch cannot manifest the leak.
+    /// </summary>
+    [Fact]
+    public async Task Batch_DeleteThenUpdate_OnGatedSoftDeleteTable_RecordsEachActionsOwnOp()
+    {
+        await Exec("INSERT INTO orders(id, tenant_id, name) VALUES (11, 1, 'rename-target')");
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteBatchAsync(new MutationBatchIntent
+        {
+            Table = "orders",
+            Actions = new[]
+            {
+                new MutationBatchAction(MutationIntentAction.Delete,
+                    new Dictionary<string, object?> { ["id"] = 10 }),
+                new MutationBatchAction(MutationIntentAction.Update,
+                    new Dictionary<string, object?> { ["id"] = 11, ["name"] = "renamed" }),
+            },
+            UserContext = RequesterContext(),
+            Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*pending approval*");
+
+        var pending = await PendingRowsAsync();
+        pending.Should().HaveCount(2, "each batch action enqueues its own pending change");
+        pending[0].Op.Should().Be("delete");
+        pending[1].Op.Should().Be("update",
+            "the preceding delete's logical mutation type must not leak into the next action's pending row");
+
+        // And the leak is destructive, not cosmetic: approving the update must UPDATE row 11,
+        // never soft-delete it.
+        var approved = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"2\") }", ApproverContext("bob", "manager"));
+        approved.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("orders", "id = 11 AND name = 'renamed' AND deleted_at IS NULL")).Should().Be(1,
+            "the approved update renames row 11 instead of destroying it");
+    }
+
     [Fact]
     public async Task TreeSync_OnGatedTable_EnqueuesEveryNode_AndAppliesNone()
     {

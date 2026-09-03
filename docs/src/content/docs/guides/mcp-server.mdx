@@ -238,7 +238,7 @@ enabled. Every argument name below matches the tool's input schema verbatim.
 |------|-----------|---------|
 | `bifrost_query` | `table`, `filter`, `fields`, `sort`, `page` (`{ limit, cursor }`), `detail` (`"summary"` \| `"full"`) | Rows from one table with a structured filter, sort, field selection, and opaque-cursor pagination (default 25 rows/page; follow `nextCursor`). `table` is required unless `page.cursor` is set. |
 | `bifrost_row_context` | `table`, `id` | One row by primary key, plus each FK parent resolved to its key and display name, and each child collection summarized as a total count and its first rows. |
-| `bifrost_aggregate` | `table`, `groupBy`, `measures` (`[{ fn, column }]`, `fn` ∈ count/sum/avg/min/max), `filter` | GROUP BY aggregation over one table. `measures` is required; `column` is required for sum/avg/min/max and omitted for count. The filter is applied before grouping. |
+| `bifrost_aggregate` | `table`, `groupBy`, `measures` (`[{ fn, column }]`, `fn` ∈ count/sum/avg/min/max), `filter` | GROUP BY aggregation over one table. `measures` is required; `column` is required for sum/avg/min/max and omitted for count. The filter is applied before grouping. Returns at most 100 groups — the cap is the query's limit, so the database never groups more than that — with `truncated: true` and a steering `message` when more groups match. |
 | `bifrost_search` | `term` (min 2 chars), `tables` | Case-insensitive substring search across the string columns of every table (or the supplied `tables`). Returns up to 5 ranked rows per table — id (usable as a `bifrost_row_context` id), display name, matched columns — plus per-table match totals. |
 
 The `filter` argument (shared by `bifrost_query` and `bifrost_aggregate`) is a
@@ -299,9 +299,11 @@ needs them. `bifrost_query`'s `summary` detail returns the primary key, a displa
 column, and short text columns rather than every column. `bifrost_row_context`
 bundles a row plus its entire parent/child neighborhood into one response.
 `bifrost_aggregate` and `bifrost_search` cap and rank their output (top groups,
-top matches per table) with a steering `message` when results were truncated —
-so a high-cardinality result steers the agent to narrow, instead of flooding its
-context.
+top matches per table) with a steering `message` and `truncated: true` when
+results were cut short — so a high-cardinality result steers the agent to
+narrow, instead of flooding its context. The aggregate cap is the query's own
+limit rather than a post-read truncation, so the cap bounds the database work
+too, and the groups an agent sees are the same on every identical call.
 
 ### 3. Errors-as-prompts — every failure is actionable, none is a protocol fault
 

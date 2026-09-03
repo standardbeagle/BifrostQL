@@ -20,6 +20,8 @@ and execute through
 ```graphql
 type Query {
   ordersAggregate(
+    limit: Int
+    offset: Int
     filter: TableFilterordersInput
     groupBy: [ordersEnum!]
   ): [orders_aggregate!]!
@@ -68,6 +70,35 @@ Count orders and total their amount, broken down by status and region:
   }
 }
 ```
+
+## Paging the groups
+
+`limit` and `offset` page the group window, ordered by the `groupBy` columns
+ascending so the pages are stable and never overlap:
+
+```graphql
+{
+  ordersAggregate(groupBy: [status, region], limit: 50, offset: 50) {
+    status
+    region
+    _count
+  }
+}
+```
+
+The window is bounded whether or not the caller asks for it. A `groupBy` on a
+high-cardinality column — `groupBy: [id]` is one group per row — would
+otherwise read the whole table through the aggregate surface:
+
+- With no `limit`, the aggregate returns at most 100 groups, the same default
+  a row query takes.
+- `limit` is clamped by the model's
+  [`max-query-rows`](/BifrostQL/reference/configuration/) ceiling (default
+  10000). A caller may **narrow** the window; a `limit` above the ceiling, and
+  the no-limit sentinel `limit: -1`, clamp back to it. A ceiling lower than 100
+  also lowers the default.
+- An aggregate with no `groupBy` returns one whole-table row and takes no
+  window.
 
 ## Security: filters apply before grouping
 

@@ -153,7 +153,13 @@ code, not just re-checks of pgwire.
    from an attacker-controlled length prefix before any element is read (a
    ~13-byte `*1000000\r\n` prefix forcing a multi-MB array) — grow a `List`
    incrementally instead, so a truncated/lying stream only ever materializes
-   the elements that actually arrived. Any `IProtocolAdapter` with a
+   the elements that actually arrived. The declared total stays a BOUND, never
+   an allocation — and because it is only a bound, a stream that stops SHORT of
+   it must be refused as a protocol error, never assembled and executed as a
+   shorter message (the binary WebSocket `ChunkReceiver` throws on
+   `ReceivedBytes != DeclaredBytes`). Accepting a short delivery turns a
+   truncated or abandoned transfer into a well-formed request the client never
+   sent. Any `IProtocolAdapter` with a
    recursive frame/aggregate decoder on the unauthenticated path must add a
    depth cap before merging, not just width/size caps.
 

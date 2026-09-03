@@ -111,3 +111,83 @@ describe('grid grouping request', () => {
             .toEqual([{ value: null, count: 3 }, { value: 'paid', count: 42 }]);
     });
 });
+
+// ── schema-derived variable declarations ─────────────────────────────────
+// The server generates one filter input per table named TableFilter<name>Input
+// (DbTable.TableFilterTypeName, src/BifrostQL.Core/Model/DbTable.cs:45) and one
+// sort enum named <name>SortEnum (TableColumnSortEnumName, :46). A guessed
+// "<name>Filter" parses fine but fails server-side validation with
+// "Unknown type 'ordersFilter'.", so a text assertion on the built document is
+// not enough — every declared variable type is checked against an SDL fixture
+// shaped by those same generator rules.
+
+/** Types the generator emits for the `orders` fixture, plus the built-in scalars. */
+const ORDERS_SDL = `
+    input TableFilterordersInput { status: FilterTypestringInput amount: FilterTypedecimalInput and: [TableFilterordersInput] or: [TableFilterordersInput] }
+    input FilterTypestringInput { _eq: String _neq: String _contains: String _null: Boolean }
+    input FilterTypedecimalInput { _eq: Decimal _gte: Decimal _lte: Decimal _null: Boolean }
+    enum ordersSortEnum { status_asc status_desc amount_asc amount_desc }
+    enum ordersColumn { status amount }
+    scalar Decimal
+`;
+
+/** Every named type the SDL fixture defines, plus the GraphQL built-in scalars. */
+function sdlTypeNames(sdl: string): Set<string> {
+    const declared = [...sdl.matchAll(/^\s*(?:input|enum|type|scalar|union|interface)\s+([_A-Za-z][_0-9A-Za-z]*)/gm)].map((match) => match[1]);
+    return new Set([...declared, 'Int', 'Float', 'String', 'Boolean', 'ID']);
+}
+
+/** Variable declarations of a built document, as `$name: Type` pairs with list/non-null wrappers stripped. */
+function declaredVariableTypes(query: string): { variable: string; type: string }[] {
+    const header = /query\s+[_A-Za-z][_0-9A-Za-z]*\s*\(([^)]*)\)/.exec(query);
+    if (!header) return [];
+    return [...header[1].matchAll(/\$([_A-Za-z][_0-9A-Za-z]*)\s*:\s*([[\]!_0-9A-Za-z]+)/g)]
+        .map((match) => ({ variable: match[1], type: match[2].replace(/[[\]!]/g, '') }));
+}
+
+/** The validation error the server raises for a declared type the schema does not define. */
+function unknownTypeErrors(query: string, sdl: string): string[] {
+    const known = sdlTypeNames(sdl);
+    return declaredVariableTypes(query)
+        .filter((declaration) => !known.has(declaration.type))
+        .map((declaration) => `Unknown type '${declaration.type}'.`);
+}
+
+describe('grid grouping documents validate against the generated schema', () => {
+    it('declares the generated TableFilter<name>Input for the filtered aggregate', () => {
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [
+            { id: 'status', value: { operator: '_eq', value: 'paid' } },
+        ], '');
+
+        expect(unknownTypeErrors(request.query, ORDERS_SDL)).toEqual([]);
+        expect(request.query).toContain('($filter: TableFilterordersInput)');
+        expect(request.query).not.toContain('ordersFilter');
+    });
+
+    it('declares no variables at all when the aggregate carries no filter', () => {
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '');
+
+        expect(declaredVariableTypes(request.query)).toEqual([]);
+        expect(unknownTypeErrors(request.query, ORDERS_SDL)).toEqual([]);
+    });
+
+    it('declares generated type names for every group-member variable', () => {
+        const request = buildGridGroupMemberRequest(orders, orders.columns[0], 'paid', [], '', ['amount_desc']);
+
+        expect(declaredVariableTypes(request.query)).toEqual([
+            { variable: 'filter', type: 'TableFilterordersInput' },
+            { variable: 'sort', type: 'ordersSortEnum' },
+            { variable: 'limit', type: 'Int' },
+            { variable: 'offset', type: 'Int' },
+        ]);
+        expect(unknownTypeErrors(request.query, ORDERS_SDL)).toEqual([]);
+    });
+
+    it('reports the server-side unknown-type error when a document names an undefined input', () => {
+        // Guards the checker itself: the pre-fix "<name>Filter" spelling must be
+        // reported, otherwise the two assertions above would be vacuous.
+        const preFix = 'query GridGroupMembers($filter: ordersFilter, $limit: Int) { orders { total } }';
+
+        expect(unknownTypeErrors(preFix, ORDERS_SDL)).toEqual(["Unknown type 'ordersFilter'."]);
+    });
+});

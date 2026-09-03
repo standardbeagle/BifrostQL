@@ -282,6 +282,99 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
+        public async Task Anonymous_Query_ReadDeniedTable_IsIndistinguishableFromNonExistent()
+        {
+            // bifrost_query was the ONE read tool left resolving against the raw model: a
+            // read-denied table resolved, so its column/sort/filter prompts were built off it and
+            // the denial surfaced as a different condition than a non-existent name. Its siblings
+            // (aggregate/search/row_context) already answer "Unknown table" — invariant 9 wants the
+            // SAME condition to carry the SAME shape across every op class of one seam.
+            await WithClientAsync(AnonymousProvider(), async client =>
+            {
+                var denied = await CallAsync(client, "bifrost_query",
+                    new Dictionary<string, object?> { ["table"] = "ledger_entries" });
+                var missing = await CallAsync(client, "bifrost_query",
+                    new Dictionary<string, object?> { ["table"] = "no_such_table" });
+
+                denied.IsError.Should().BeTrue();
+                var deniedText = denied.Content.OfType<TextContentBlock>().Single().Text;
+                deniedText.Should().Contain("Unknown table 'ledger_entries'");
+                deniedText.Should().Contain("Available tables: customers, staff.");
+                deniedText.Should().NotContain("customer_id").And.NotContain("amount")
+                    .And.NotContain("ledger_entries.",
+                        "the denied table's column and key detail must not reach the prompt");
+                missing.Content.OfType<TextContentBlock>().Single().Text
+                    .Should().Contain("Available tables: customers, staff.");
+            });
+        }
+
+        [Theory]
+        [InlineData("fields")]
+        [InlineData("sort")]
+        [InlineData("filter")]
+        public async Task Anonymous_Query_OnReadDeniedColumn_IsIndistinguishableFromNonExistent(string surface)
+        {
+            // staff is READABLE but its ssn column is read-denied. Every caller-supplied column
+            // name on bifrost_query — projection, sort key, filter column — must answer "Unknown
+            // column" and suggest only readable columns, exactly as the aggregate facts above
+            // already pin. Listing ssn confirms the denied column exists (invariant 4).
+            var args = new Dictionary<string, object?> { ["table"] = "staff" };
+            switch (surface)
+            {
+                case "fields": args["fields"] = new object?[] { "ssn" }; break;
+                case "sort": args["sort"] = new object?[] { "ssn_asc" }; break;
+                default:
+                    args["filter"] = new Dictionary<string, object?>
+                    {
+                        ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+                    };
+                    break;
+            }
+
+            await WithClientAsync(AnonymousProvider(), async client =>
+            {
+                var result = await CallAsync(client, "bifrost_query", args);
+
+                result.IsError.Should().BeTrue($"a read-denied column in '{surface}' must be refused");
+                var text = result.Content.OfType<TextContentBlock>().Single().Text;
+                text.Should().Contain("Unknown column 'ssn'",
+                    "a read-denied column is answered exactly like a non-existent one");
+                text.Should().Contain("Available columns: id, name.",
+                    "the suggestion must list only readable columns, never the denied ssn");
+            });
+        }
+
+        [Theory]
+        [InlineData("bifrost_insert")]
+        [InlineData("bifrost_update")]
+        [InlineData("bifrost_delete")]
+        public async Task Anonymous_WriteTools_UnknownTable_AnswerExactlyLikeTheReadTools(string tool)
+        {
+            // The write tools passed the caller's raw table string straight into MutationIntent, so
+            // an unknown name reached DbModel.GetTableFromDbName and threw ArgumentOutOfRangeException
+            // — outside the funnel's mapped condition set, hence a different wire shape than the read
+            // tools give for the same condition (invariants 9/10). Resolving through ToolJson.ResolveTable
+            // makes both op classes emit the IDENTICAL visibility-scoped prompt.
+            await WithClientAsync(AnonymousProvider(), enableWrites: true, async client =>
+            {
+                var read = await CallAsync(client, "bifrost_query",
+                    new Dictionary<string, object?> { ["table"] = "no_such_table" });
+                var write = await CallAsync(client, tool, new Dictionary<string, object?>
+                {
+                    ["table"] = "no_such_table",
+                    ["id"] = 1,
+                    ["values"] = new Dictionary<string, object?> { ["name"] = "x" },
+                    ["set"] = new Dictionary<string, object?> { ["name"] = "x" },
+                });
+
+                write.IsError.Should().BeTrue($"{tool} on an unknown table must be a tool error, not a fault");
+                write.Content.OfType<TextContentBlock>().Single().Text
+                    .Should().Be(read.Content.OfType<TextContentBlock>().Single().Text,
+                        "one condition, one wire shape across op classes");
+            });
+        }
+
+        [Fact]
         public async Task Anonymous_DescribeTable_OmitsReadDeniedColumn()
         {
             await WithClientAsync(AnonymousProvider(), async client =>
@@ -350,10 +443,17 @@ namespace BifrostQL.Mcp.Test
             return BifrostMcpAdapter.CreateProjectionProvider(_factory, _host.Services, principal);
         }
 
-        private async Task WithClientAsync(
+        private Task WithClientAsync(
             Func<IDictionary<string, object?>> provider, Func<McpClient, Task> body)
+            => WithClientAsync(provider, enableWrites: false, body);
+
+        private async Task WithClientAsync(
+            Func<IDictionary<string, object?>> provider, bool enableWrites, Func<McpClient, Task> body)
         {
-            var options = BifrostMcpServerFactory.CreateServerOptions(_executor, EndpointPath, provider);
+            var options = BifrostMcpServerFactory.CreateServerOptions(
+                _executor, EndpointPath, provider,
+                mutationExecutor: _host.Services.GetRequiredService<IMutationIntentExecutor>(),
+                enableWrites: enableWrites);
             var clientToServer = new Pipe();
             var serverToClient = new Pipe();
             var transport = new StreamServerTransport(

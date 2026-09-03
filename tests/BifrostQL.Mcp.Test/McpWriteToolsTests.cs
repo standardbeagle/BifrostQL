@@ -51,6 +51,16 @@ namespace BifrostQL.Mcp.Test
                 )
                 """,
                 "INSERT INTO orders(id, tenant_id, name, deleted_at) VALUES (1, 'A', 'a-first', NULL), (2, 'B', 'b-only', NULL)",
+                // A single-column TEXT primary key whose VALUE contains the composite-key
+                // delimiter. The '|' means "next key column" only on a composite key; on a
+                // single-column key it is just a character in the value.
+                """
+                CREATE TABLE assets (
+                    code TEXT PRIMARY KEY,
+                    name TEXT NOT NULL
+                )
+                """,
+                "INSERT INTO assets(code, name) VALUES ('a|b', 'pipe-key')",
             })
             {
                 await using var cmd = new SqliteCommand(sql, _keepAlive);
@@ -242,6 +252,45 @@ namespace BifrostQL.Mcp.Test
                 delete.IsError.Should().NotBeTrue(delete.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
                 (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE id = 10")).Should().Be(1L, "soft delete keeps the row");
                 (await DbScalarAsync("SELECT deleted_at FROM orders WHERE id = 10")).Should().NotBeNull();
+            });
+        }
+
+        [Fact]
+        public async Task PipeInASingleColumnKeyValue_RoundTripsFromRowContextIntoUpdateAndDelete()
+        {
+            // The read side already splits on '|' only for a COMPOSITE key, so bifrost_row_context
+            // reads 'a|b' as one key value. The write side split unconditionally on any '|', so the
+            // same id it just read back came apart into two values and addressed nothing — a row
+            // with a delimiter in its single-column key was unwritable. One helper, one rule: the
+            // key's ARITY decides whether '|' separates values.
+            await WithClientAsync(enableWrites: true, async client =>
+            {
+                var context = await client.CallToolAsync("bifrost_row_context", new Dictionary<string, object?>
+                {
+                    ["table"] = "assets", ["id"] = "a|b",
+                });
+                context.IsError.Should().NotBeTrue(context.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+                context.StructuredContent!.Value.GetProperty("row").GetProperty("name").GetString()
+                    .Should().Be("pipe-key");
+
+                var update = await client.CallToolAsync("bifrost_update", new Dictionary<string, object?>
+                {
+                    ["table"] = "assets",
+                    ["id"] = "a|b",
+                    ["set"] = new Dictionary<string, object?> { ["name"] = "renamed" },
+                });
+                update.IsError.Should().NotBeTrue(update.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+                update.StructuredContent!.Value.GetProperty("result").GetInt32().Should().Be(1,
+                    "the id read back from row_context must address the same row on the write side");
+                (await DbScalarAsync("SELECT name FROM assets WHERE code = 'a|b'")).Should().Be("renamed");
+
+                var delete = await client.CallToolAsync("bifrost_delete", new Dictionary<string, object?>
+                {
+                    ["table"] = "assets", ["id"] = "a|b",
+                });
+                delete.IsError.Should().NotBeTrue(delete.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+                (await DbScalarAsync("SELECT COUNT(*) FROM assets WHERE code = 'a|b'")).Should().Be(0L,
+                    "assets declares no soft-delete, so the pipeline removes the row");
             });
         }
 

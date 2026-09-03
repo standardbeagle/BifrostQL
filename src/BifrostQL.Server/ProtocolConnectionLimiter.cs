@@ -36,6 +36,9 @@ namespace BifrostQL.Server
         /// <summary>Current number of admitted connections (for diagnostics/tests).</summary>
         public int Count => Volatile.Read(ref _current);
 
+        /// <summary>The configured cap (for the refusal message this listener answers with).</summary>
+        public int Max => _max;
+
         /// <summary>
         /// Optimistically reserves one connection slot. Returns false when the limit is
         /// already reached, without mutating the counter. Lock-free CAS loop.
@@ -78,5 +81,19 @@ namespace BifrostQL.Server
     internal sealed class GrpcConnectionLimiter : ProtocolConnectionLimiter
     {
         public GrpcConnectionLimiter(int maxConnections) : base(maxConnections) { }
+    }
+
+    /// <summary>
+    /// Admission counter for one binary WebSocket mount
+    /// (<c>UseBifrostBinary(maxConnections:)</c>). Unlike the Kestrel-hosted listeners this
+    /// front door is HTTP middleware, so its "accept" is the WebSocket upgrade: the slot is
+    /// reserved before <c>AcceptWebSocketAsync</c> and before the mount's identity gate, and
+    /// released when the connection handler returns. The instance is owned by the middleware
+    /// instance, which ASP.NET Core creates once per mount, so two binary mounts on one host
+    /// never share a budget.
+    /// </summary>
+    internal sealed class BinaryTransportConnectionLimiter : ProtocolConnectionLimiter
+    {
+        public BinaryTransportConnectionLimiter(int maxConnections) : base(maxConnections) { }
     }
 }

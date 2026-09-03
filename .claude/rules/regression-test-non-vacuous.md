@@ -79,6 +79,21 @@ implementations produce provably different output.
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.
+- **A guard that compares a client-supplied value to a typed column must be
+  fixtured on a NON-string column.** The wire type is part of the guard's
+  correctness: the file-mutation `concurrencyToken: String` argument reached
+  `ConcurrencyMutationTransformer` uncoerced, and a TEXT literal compared to a
+  SQLite INTEGER column matches no row — every CORRECT token would have read as
+  `CONFLICT`, a guard that always fires. A fixture whose token column is TEXT
+  cannot manifest that; the positive case must run on the column type the
+  coercion exists for (numeric AND temporal where both are supported).
+  <!-- written_at: 2026-09-03T23:10:00Z  source_event: task:01M1KPA1T5WSGTZB5B07RFTEFS, git:b353dad4 -->
+- **A CORRECTED assertion needs its own revert-proof.** The same slice's history
+  cases went RED on the first run for the wrong reason — the assertion matched
+  `entity_id = '1'` while `HistoryMutationHook` writes
+  `JsonSerializer.Serialize(keyData)`, so a 0-row equality read as the bug. After
+  fixing the assertion the pre-fix source must be restored and rebuilt again; the
+  earlier proof does not carry over.
 
 ## Forced rebuild before the RED run
 

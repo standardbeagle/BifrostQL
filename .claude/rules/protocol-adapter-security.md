@@ -268,6 +268,24 @@ code, not just re-checks of pgwire.
    bug — not tests weakened to fit the fix. A test bent to fit would have
    passed against the reverted code.
 
+   **(c) The irreversible external effect goes AFTER the pipeline commits,
+   and a DEFERRED write is not a failed one.** The file resolvers deleted the
+   blob before running the pipeline, so a pipeline veto destroyed the very
+   content the veto existed to protect — unrecoverably, because storage has no
+   rollback. Order every external side effect after the gate that may refuse
+   it: clear the pointer through the pipeline first, remove the object once the
+   transaction commits. A failing removal then leaves reclaimable residue, which
+   must be surfaced (an exception naming only the storage key the client already
+   holds — invariant 3), never swallowed as a denial. The compensating half has
+   its own trap: a before-commit hook that DEFERS (the approval gate enqueues a
+   pending change whose payload points at the just-uploaded object) is not a
+   rejection, so compensation must filter on the deferral's own error code and
+   keep the object. Compensating a deferral makes the approved replay point at
+   content that no longer exists. Residue from a later-rejected pending change is
+   a known, documented sweep — record it in the feature's guide rather than
+   inventing a second gate.
+   <!-- written_at: 2026-09-03T23:10:00Z  source_event: task:01M1KPA1T5WSGTZB5B07RFTEFS, git:a9870e61 -->
+
    Full write-up: `docs/solutions/bifrostql/s3-slice1-address-vs-storage-key-2026-07-16.md`.
 
 9. **A wire-facing exception catch clause must be complete AND symmetric

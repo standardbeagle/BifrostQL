@@ -215,7 +215,8 @@ namespace BifrostQL.Mcp.Test
             });
 
             payload.GetProperty("table").GetString().Should().Be("orders");
-            payload.GetProperty("groupCount").GetInt32().Should().Be(2);
+            payload.GetProperty("returnedCount").GetInt32().Should().Be(2);
+            payload.GetProperty("truncated").GetBoolean().Should().BeFalse();
             var groups = payload.GetProperty("groups").EnumerateArray()
                 .ToDictionary(
                     g => g.GetProperty("group").GetProperty("status").GetString()!,
@@ -281,11 +282,16 @@ namespace BifrostQL.Mcp.Test
                 ["measures"] = new object[] { new Dictionary<string, object?> { ["fn"] = "count" } },
             });
 
-            payload.GetProperty("groupCount").GetInt32().Should().Be(120);
             payload.GetProperty("returnedCount").GetInt32().Should().Be(100);
             payload.GetProperty("groups").GetArrayLength().Should().Be(100);
+            payload.GetProperty("truncated").GetBoolean().Should().BeTrue(
+                "a truncated aggregate must say so — a silent partial reads as the whole answer");
             payload.GetProperty("message").GetString().Should()
-                .Contain("120 groups").And.Contain("100").And.Contain("filter");
+                .Contain("100").And.Contain("filter");
+            // The cap is enforced by the QUERY, so the server never materializes
+            // (nor reports) the full group count of a high-cardinality groupBy.
+            payload.TryGetProperty("groupCount", out _).Should().BeFalse(
+                "the total group count cannot be known without the unbounded read this cap prevents");
         }
 
         [Fact]

@@ -27,10 +27,11 @@ a future regression to the old code stays green.
 ## Why fixtures go vacuous
 
 Shared fixtures are tuned for the common case — a single placeholder, a
-single-column PK, `id=1`, a single data source, a single relationship hop, no
-pre-existing state at the target. A bug that only manifests with multiple
-elements (>=2 placeholders, composite PK, PK value `0`, multi-source table,
->=2 traversal hops, pre-existing target content) cannot be exercised by such a
+single-column PK, `id=1`, a single data source, a single relationship hop, a
+single-verb batch, no pre-existing state at the target. A bug that only
+manifests with multiple elements (>=2 placeholders, composite PK, PK value `0`,
+multi-source table, >=2 traversal hops, >=2 heterogeneous actions in one
+batch/tree, pre-existing target content) cannot be exercised by such a
 fixture. A test targeting a multi-element failure
 mode needs a **dedicated fixture variant** that makes the fixed and pre-fix
 implementations produce provably different output.
@@ -45,6 +46,13 @@ implementations produce provably different output.
   single-hop fixture has one candidate node, so an off-by-one read is
   indistinguishable from a correct one and the test passes either way. Span
   >=2 hops and scope only the LAST one, so the wrong node is provably null.
+- **A single-verb batch cannot observe state leaking between actions.** Where
+  per-action state lives in a bag a multi-action path reuses (H3: the approval
+  hook's logical verb surviving from a soft-delete action into the next update
+  of the same batch), a same-verb fixture makes the leaked value equal the
+  correct one. Use >=2 actions with DIFFERENT verbs in one batch/tree and
+  assert the downstream destructive consequence (approving the pending row
+  renames it, does not delete it), not just the recorded op.
 - **A name-space boundary needs a fixture where the two names DIFFER, plus a
   negative assertion on the old name.** Shared fixtures name a column the same
   on both sides (`GraphQlName == ColumnName`), so a test over them passes

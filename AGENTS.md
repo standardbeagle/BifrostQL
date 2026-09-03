@@ -173,6 +173,8 @@ Priority ranges: 0-99 (security), 100-199 (data filtering), 200+ (app)
 
 Cross-cutting normalisation of mutation input (name space, casing, type coercion) belongs in `MutationTransformersWrap.TransformAsync` (`Modules/IMutationTransformer.cs`) — the one pre-chain seam every write path funnels through (single-row, batch, bulk-batch, filtered-update, file upload/delete, tree-sync). `MutationArgumentBinder` is NOT that seam: it only runs on the update/upsert key split, so insert and delete bypass it. Normalising per executor is ten sites that each have to remember, and the drift fails OPEN — a transformer whose config is written in DB column names (policy write-deny, state column, audit populate) silently never matches a payload keyed by GraphQL field name.
 
+Mutation hook state has TWO scopes on `MutationObserverContext` (`Modules/IMutationObserver.cs`), and a hook must pick deliberately: `MutationState` is per ACTION (history before-image, approval divert signal, logical verb) — multi-action paths (batch, TreeSync) build a fresh one per row; `TransactionState` is per TRANSACTION (the deferred module's held change set) and is the bag shared across the batch/tree. Per-action state left in the transaction bag carries one row's decision into the next row's write.
+
 ## SQL Dialects
 
 | Dialect | Base Class | Identifiers | Concat |

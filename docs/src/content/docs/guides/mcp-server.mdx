@@ -44,8 +44,13 @@ There are two ways to host it:
   with `AddBifrostMcpHttp` + `MapBifrostMcp`. The reference host
   (`BifrostQL.Host`) mounts it with one configuration flag:
   `BifrostQL:Mcp:Http:Enabled = true` (route override:
-  `BifrostQL:Mcp:Http:Path`), keeping the default fail-closed auth posture and
-  writes off.
+  `BifrostQL:Mcp:Http:Path`), with writes off. The reference host carries its own
+  auth posture onto the route: with auth on (the shipped default) the route
+  requires an authenticated bearer caller and answers `401` otherwise, and the
+  validated principal of the request is what the MCP session runs as. With
+  `BifrostQL:DisableAuth = true` — which the host now sets only in
+  `appsettings.Development.json` — the route is anonymous, declared as
+  `AnonymousDev` so it logs a startup warning.
 
 Both hosts build the identical tool surface from
 `BifrostMcpServerFactory.CreateServerOptions`; they differ only in transport and
@@ -105,8 +110,10 @@ that starts your host — for example in `.mcp.json`:
 ```
 
 The auth posture and the write opt-in are carried by `McpAuthOptions`, an
-optional dependency the adapter resolves from DI (absent, it defaults to
-fail-closed with writes off). Register one to change the posture:
+optional dependency the adapter resolves from DI. Absent, it defaults to
+fail-closed with writes off — and fail-closed refuses every request, so a stdio
+server must declare either a credential (`Bearer`) or anonymous access
+(`AnonymousDev`). Register one to choose:
 
 ```csharp
 builder.Services.AddSingleton(new McpAuthOptions
@@ -142,14 +149,28 @@ app.MapBifrostMcp("/mcp");   // default route is /mcp
 On the initialize request the bearer is extracted from the `Authorization`
 header, the (async) credential exchange / validation is awaited on the ASP.NET
 request path, and the resolved principal is projected once through the shared
-factory and snapshotted for the session. An absent or invalid token mints **no**
-identity, so tenant-filtered reads fail closed exactly like the stdio path.
+factory and snapshotted for the session. Identity is then re-derived on every
+subsequent request, so a revoked or expired token loses access at the next call.
+An absent or invalid token mints **no** identity, and a request with no identity
+is refused — on the stdio path too.
+
+:::caution[Behaviour change: no identity now means no service]
+`FailClosed` used to run a caller with an *empty* user context. That only
+stopped reads of tables carrying tenant metadata; every other table stayed
+readable by a caller who presented nothing. It now refuses the request, on both
+transports. A deployment that relied on anonymous MCP access must set
+`Mode = McpAuthMode.AnonymousDev` deliberately (it logs a startup warning), and
+`BifrostQL.Host` no longer disables auth outside `appsettings.Development.json`:
+a production host must configure `JwtSettings` — or opt out explicitly with
+`BifrostQL:DisableAuth = true` — and it refuses to start rather than serving
+anonymously by accident.
+:::
 
 ### Config flags (`McpAuthOptions`)
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `Mode` | `FailClosed` | `FailClosed`: no identity source; empty context; tenant reads fail closed; silent. `AnonymousDev`: same runtime behavior but logs a deliberate-opt-in startup warning. `Bearer`: validate the presented token **before** minting identity; a valid token's principal is handed to the factory. |
+| `Mode` | `FailClosed` | `FailClosed`: no identity source, so no request can establish an identity and every request is **refused** (sanitized "Authentication failed"); silent. `AnonymousDev`: the only mode that serves a caller presenting no identity — empty context, tenant reads still fail closed in the pipeline, logs a deliberate-opt-in startup warning. `Bearer`: validate the presented token **before** minting identity; a valid token's principal is handed to the factory, and an absent or invalid one is refused like `FailClosed`. |
 | `EnableWrites` | `false` | Master gate for the write tools (`bifrost_insert`, `bifrost_update`, `bifrost_delete`). Off by default: the write tools are never listed and build zero intent. Enabling it logs a startup warning. |
 | `BearerToken` | `null` | A single static token for the session (used only in `Bearer` mode when `CredentialSource` is unset). Null/empty presents no credential → fail closed. |
 | `CredentialSource` | `null` | Per-transport delegate that reads *where* the raw credential lives — build one with `McpCredentialSources.FromEnvironment(...)` (stdio) or `.FromAuthorizationHeader(...)` (HTTP). Returns null → fail closed. |

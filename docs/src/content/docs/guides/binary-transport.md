@@ -23,7 +23,7 @@ If your workload is small interactive queries from a browser tab, stay on JSON. 
 
 ## Server setup
 
-Register the WebSocket binary endpoint with `UseBifrostBinary()` after `UseWebSockets()` and after the BifrostQL engine has been added to DI. The default path is `/bifrost-ws`.
+Register the WebSocket binary endpoint with `UseBifrostBinary()` after `UseWebSockets()`, after the BifrostQL engine has been added to DI, and after the middleware that authenticates requests (`UseBifrostQL()` / `UseBifrostEndpoints()` add `UseAuthentication` when auth is on). The mount's identity gate reads the principal the authentication middleware populates; mounted ahead of it, the gate sees every caller as anonymous and closes every connection on an auth-required endpoint. The default path is `/bifrost-ws`.
 
 ```csharp
 using BifrostQL.Server;
@@ -36,8 +36,8 @@ builder.Services.AddBifrostQL(o => o
 var app = builder.Build();
 
 app.UseWebSockets();
-app.UseBifrostBinary();   // mounts WebSocket endpoint at /bifrost-ws
-app.UseBifrostQL();        // standard JSON endpoint stays available
+app.UseBifrostQL();        // standard JSON endpoint; adds UseAuthentication when auth is on
+app.UseBifrostBinary();   // mounts WebSocket endpoint at /bifrost-ws, after authentication
 
 app.Run();
 ```

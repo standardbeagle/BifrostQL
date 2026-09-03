@@ -19,6 +19,10 @@ updates:
       interval: "weekly"
 
   # Node tooling for the React editor / SPA packages (pnpm workspace).
+  # Only minor/patch bumps are grouped: the grouped PR of 2026-09-01 (#18)
+  # mixed TypeScript 7, React 19 and Vite 8 with 44 routine bumps, and the
+  # majors broke tsconfig (TS5108/TS5102) so nothing could merge. Majors now
+  # arrive as one PR each and are migrated deliberately.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -28,3 +32,6 @@ updates:
       npm-dependencies:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"

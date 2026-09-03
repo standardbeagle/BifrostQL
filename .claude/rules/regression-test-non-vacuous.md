@@ -45,6 +45,13 @@ implementations produce provably different output.
   single-hop fixture has one candidate node, so an off-by-one read is
   indistinguishable from a correct one and the test passes either way. Span
   >=2 hops and scope only the LAST one, so the wrong node is provably null.
+- **A name-space boundary needs a fixture where the two names DIFFER, plus a
+  negative assertion on the old name.** Shared fixtures name a column the same
+  on both sides (`GraphQlName == ColumnName`), so a test over them passes
+  whether or not the rekey happened. Give every column under test a DB name
+  that sanitizes to a different GraphQL name (a space or dash: `sale-price` ->
+  `sale_price`), and assert the output does NOT contain the old key — a
+  positive-only assertion misses a double-bind where both names reach SQL.
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

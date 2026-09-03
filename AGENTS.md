@@ -171,6 +171,8 @@ table.GetMetadataValue(MetadataKeys.Eav.ForeignKey);
 
 Priority ranges: 0-99 (security), 100-199 (data filtering), 200+ (app)
 
+Cross-cutting normalisation of mutation input (name space, casing, type coercion) belongs in `MutationTransformersWrap.TransformAsync` (`Modules/IMutationTransformer.cs`) — the one pre-chain seam every write path funnels through (single-row, batch, bulk-batch, filtered-update, file upload/delete, tree-sync). `MutationArgumentBinder` is NOT that seam: it only runs on the update/upsert key split, so insert and delete bypass it. Normalising per executor is ten sites that each have to remember, and the drift fails OPEN — a transformer whose config is written in DB column names (policy write-deny, state column, audit populate) silently never matches a payload keyed by GraphQL field name.
+
 ## SQL Dialects
 
 | Dialect | Base Class | Identifiers | Concat |

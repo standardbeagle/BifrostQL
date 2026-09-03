@@ -97,6 +97,17 @@ public sealed class GroupedAggregateGroupCapTests
 
     [Theory]
     [MemberData(nameof(Dialects))]
+    public void GroupedAggregate_WithoutClientLimit_StillObeysALowerCeiling(ISqlDialect dialect, SqlFlavor flavor)
+    {
+        var sql = BuildSql(BuildModel(maxQueryRows: 50), dialect);
+
+        SqlSyntax.AssertValid(sql, flavor, "ceiling-bounded grouped aggregate SQL");
+        sql.Should().Contain(Bound(flavor, 50),
+            "an operator who caps reads at 50 rows must not receive the 100-row default window");
+    }
+
+    [Theory]
+    [MemberData(nameof(Dialects))]
     public void GroupedAggregate_NoLimitSentinel_ClampsToConfiguredCeiling(ISqlDialect dialect, SqlFlavor flavor)
     {
         var sql = BuildSql(BuildModel(maxQueryRows: 50), dialect, limit: -1);

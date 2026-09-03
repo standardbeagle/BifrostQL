@@ -59,6 +59,11 @@ namespace BifrostQL.Core.Resolvers
                 Alias = context.FieldAst.Alias?.Name?.StringValue,
                 Filter = filter,
                 GroupedAggregate = grouped,
+                // Paging arguments for the GROUP window. They are clamped to the
+                // model's max-query-rows ceiling when the SQL is built, so a client
+                // can only narrow the window the server already bounds.
+                Limit = context.GetArgument<int?>("limit"),
+                Offset = context.GetArgument<int?>("offset"),
             };
         }
 

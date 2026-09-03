@@ -150,13 +150,15 @@ namespace BifrostQL.Core.Schema
 
         /// <summary>
         /// Root query field for this table's GROUP BY aggregate:
-        /// <c>&lt;table&gt;Aggregate(filter, groupBy): [&lt;table&gt;_aggregate!]!</c>.
+        /// <c>&lt;table&gt;Aggregate(limit, offset, filter, groupBy): [&lt;table&gt;_aggregate!]!</c>.
         /// groupBy reuses the schema-derived column enum, so callers can never pass an
         /// arbitrary column string. Returned separately from
         /// <see cref="GetTableFieldDefinition"/> so the row query shape is unchanged.
+        /// <c>limit</c>/<c>offset</c> page the GROUP window (ordered by the group keys);
+        /// they can only narrow the server's <c>max-query-rows</c> ceiling, never raise it.
         /// </summary>
         public string GetAggregateFieldDefinition() =>
-            $"{AggregateSurface.AggregateFieldName(_table)}(filter: {_table.TableFilterTypeName}, groupBy: [{_table.ColumnEnumTypeName}!]): [{AggregateSurface.AggregateRowTypeName(_table)}!]!";
+            $"{AggregateSurface.AggregateFieldName(_table)}(limit: Int, offset: Int, filter: {_table.TableFilterTypeName}, groupBy: [{_table.ColumnEnumTypeName}!]): [{AggregateSurface.AggregateRowTypeName(_table)}!]!";
 
         /// <summary>
         /// Root query field for this table's PIVOT:

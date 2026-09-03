@@ -43,6 +43,17 @@ namespace BifrostQL.Core.QueryModel
         public const string CountAlias = "_count";
 
         /// <summary>
+        /// The deterministic ORDER BY for a paged group window: the group keys, in
+        /// request order, ascending. A LIMIT over an unordered grouped result is
+        /// undefined — the engine may return any qualifying groups — so without this
+        /// two pages of the same aggregate can overlap or skip groups entirely.
+        /// Every expression here is a group key, so it is legal in a grouped ORDER BY
+        /// on all four dialects, and none of it is client text.
+        /// </summary>
+        public IReadOnlyList<string> OrderColumns(ISqlDialect dialect) =>
+            GroupColumns.Select(g => $"{dialect.EscapeIdentifier(g.Column.DbName)} asc").ToList();
+
+        /// <summary>
         /// Emits the parameterized GROUP BY statement. All identifiers are
         /// dialect-escaped; no user-provided text is concatenated — group and value
         /// columns are resolved model columns, never client strings. Only the

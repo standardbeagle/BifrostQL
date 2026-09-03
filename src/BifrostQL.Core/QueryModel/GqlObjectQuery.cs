@@ -149,7 +149,14 @@ namespace BifrostQL.Core.QueryModel
         /// </summary>
         internal const int DefaultMaxQueryRows = 10_000;
 
-        internal static int? ClampRowLimit(IDbModel dbModel, int? limit)
+        /// <summary>
+        /// The group window a grouped aggregate takes when the caller names no
+        /// <c>limit</c> — the same 100 rows <see cref="ISqlDialect.Pagination"/> defaults
+        /// a row read to, stated explicitly so it is clamped by the ceiling as well.
+        /// </summary>
+        public const int DefaultGroupWindow = 100;
+
+        public static int? ClampRowLimit(IDbModel dbModel, int? limit)
         {
             if (limit is null or 0)
                 return limit;
@@ -256,7 +263,23 @@ namespace BifrostQL.Core.QueryModel
             {
                 var aggFilter = GetFilterSqlParameterized(dbModel, dialect, parameters);
                 var aggTableRef = dialect.TableReference(SchemaName, TableName);
-                sqls[KeyName] = grouped.ToSqlParameterized(dialect, aggTableRef, aggFilter);
+                var aggSql = grouped.ToSqlParameterized(dialect, aggTableRef, aggFilter);
+
+                // The group window obeys the SAME server ceiling as a row read:
+                // `groupBy: [id]` is one group per row, so an unpaged grouped
+                // aggregate is an unbounded table read wearing an aggregate's
+                // clothes. A whole-table aggregate (no group keys) is one row by
+                // construction and needs no window.
+                if (grouped.GroupColumns.Count > 0)
+                {
+                    // An unspecified limit takes the dialect's default window, stated
+                    // explicitly here so it too passes through the ceiling clamp: an
+                    // operator who caps reads at 5 rows must not receive 100 groups.
+                    var groupLimit = ClampRowLimit(dbModel, Limit ?? DefaultGroupWindow);
+                    aggSql = aggSql.Append(dialect.Pagination(grouped.OrderColumns(dialect), Offset, groupLimit));
+                }
+
+                sqls[KeyName] = aggSql;
                 return;
             }
 

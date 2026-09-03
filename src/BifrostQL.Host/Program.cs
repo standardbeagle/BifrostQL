@@ -8,6 +8,7 @@ using BifrostQL.Sqlite;
 using BifrostQL.SqlServer;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 
 // Register all dialect factories so DbConnFactoryResolver can route by
 // provider. BifrostQL.Host is the reference server implementation, so it
@@ -84,14 +85,44 @@ if (jwtConfig.Exists() && authEnabled)
 
 builder.Services.AddCors();
 
-// MCP over Streamable HTTP (opt-in): BifrostQL:Mcp:Http:Enabled = true.
-// Default auth posture is FailClosed (empty user context; tenant-filtered reads
-// refuse exactly like an unauthenticated GraphQL request); writes stay off.
+// MCP over Streamable HTTP (opt-in): BifrostQL:Mcp:Http:Enabled = true. The front
+// door carries the host's own auth posture: with auth on it runs in bearer mode and
+// the endpoint below requires an authenticated caller, so an anonymous request never
+// reaches the MCP session at all. Writes stay off.
 var mcpHttpEnabled = builder.Configuration.GetValue("BifrostQL:Mcp:Http:Enabled", false);
+IServiceProvider? hostServices = null;
 if (mcpHttpEnabled)
-    builder.Services.AddBifrostMcpHttp();
+{
+    var mcpAuth = new McpAuthOptions();
+    if (authEnabled)
+    {
+        mcpAuth.Mode = McpAuthMode.Bearer;
+        // The endpoint is authorized against the JWT scheme, so ASP.NET's own handler has
+        // already validated the token this delegate is handed; the authenticated principal
+        // of the current request IS the validated identity. Standing up a second token
+        // handler here would give the host two validation configurations that can disagree
+        // — the MCP surface must not be reachable under laxer rules than /graphql. An
+        // unauthenticated request yields null, which the adapter refuses.
+        mcpAuth.ValidateBearerToken = _ =>
+        {
+            var user = hostServices?.GetService<IHttpContextAccessor>()?.HttpContext?.User;
+            return user?.Identity?.IsAuthenticated == true ? user : null;
+        };
+        builder.Services.AddAuthorization();
+    }
+    else
+    {
+        // Auth is off by explicit configuration (BifrostQL:DisableAuth), so the MCP surface
+        // is anonymous too — declared as such, which logs a startup warning, rather than
+        // arriving there silently.
+        mcpAuth.Mode = McpAuthMode.AnonymousDev;
+    }
+
+    builder.Services.AddBifrostMcpHttp(mcpAuth);
+}
 
 var app = builder.Build();
+hostServices = app.Services;
 
 if (app.Environment.IsDevelopment())
     app.UseDeveloperExceptionPage();
@@ -160,7 +191,21 @@ if (chatSection.GetValue("Enabled", false))
 }
 
 if (mcpHttpEnabled)
-    app.MapBifrostMcp(app.Configuration["BifrostQL:Mcp:Http:Path"] ?? "/mcp");
+{
+    var mcpEndpoint = app.MapBifrostMcp(app.Configuration["BifrostQL:Mcp:Http:Path"] ?? "/mcp");
+    if (authEnabled)
+    {
+        // MCP clients are API callers, so challenge the JWT scheme directly: the smart
+        // scheme would forward a header-less request to cookie and answer an OIDC 302,
+        // which no MCP client can follow. Unauthenticated callers get a 401 here and no
+        // JSON-RPC session is created.
+        app.UseAuthorization();
+        mcpEndpoint.RequireAuthorization(new AuthorizeAttribute
+        {
+            AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme,
+        });
+    }
+}
 
 await app.RunAsync();
 

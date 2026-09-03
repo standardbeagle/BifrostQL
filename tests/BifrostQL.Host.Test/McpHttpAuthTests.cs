@@ -130,11 +130,20 @@ public sealed class McpHttpAuthTests : IClassFixture<McpHttpAuthTests.Authentica
             // UseSetting (not ConfigureAppConfiguration): Program.cs reads
             // builder.Configuration BEFORE the host is built, so a source added at build
             // time would be invisible to the auth/MCP switches under test.
+            // The shipped posture, not the developer one: appsettings.Development.json is
+            // where DisableAuth now lives, so a Development host would serve /mcp anonymously
+            // by design and this fixture would prove nothing.
+            builder.UseEnvironment("Production");
             builder.UseSetting("BifrostQL:Provider", "sqlite");
             builder.UseSetting("BifrostQL:Path", "/graphql");
             builder.UseSetting("BifrostQL:Mcp:Http:Enabled", "true");
             builder.UseSetting("ConnectionStrings:bifrost", $"Data Source={_dbPath}");
             builder.UseSetting("JwtSettings:Audience", Audience);
+            // The interactive OIDC handler registered alongside the JWT one needs an authority
+            // and a client id to construct; it is never challenged here (MCP callers hit the
+            // bearer scheme), so the values only have to exist.
+            builder.UseSetting("JwtSettings:Authority", Issuer);
+            builder.UseSetting("JwtSettings:ClientId", "bifrost-host-tests");
             // Replaces the first shipped metadata rule: the fixture needs a tenant-filtered
             // table so a read can only succeed under an identity that carries a tenant.
             builder.UseSetting("BifrostQL:Metadata:0", "*.orders { tenant-filter: tenant_id }");

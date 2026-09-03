@@ -40,6 +40,13 @@ implementations produce provably different output.
   default fixture.
 - Parameterize the shared builder with a default preserving prior behavior
   rather than mutating the shared fixture (keeps blast radius to one test).
+- **Where the affected population is a CLOSED ENUMERATION, span every kind, not
+  a representative.** ">=2 elements" is about count; this is about coverage of a
+  known-finite set. The H6 mixed-root-field test enumerated all six non-table
+  root-field kinds (`__typename`, `<t>Aggregate`, `<t>Pivot`, `<t>History`,
+  `_rawQuery`, `_dbSchema`) as separate facts, which is what proved the
+  `__typename` case real rather than a no-op the visitor never collects. One
+  representative kind leaves the rest free to regress independently.
 - **A one-element fixture cannot observe WHICH element a walker read.** Where
   state is attached to one node of a chain and read back by another walker
   (relationship-filter scope on the node naming the link — finding C1), a

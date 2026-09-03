@@ -45,7 +45,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 
 1. GraphQL request → `BifrostHttpMiddleware`
 2. `BifrostDocumentExecutor` 載 cached `DbModel` + `ISchema`
-3. `SqlVisitor` 解析成 `GqlObjectQuery` tree
+3. `SqlVisitor` 解析成 `GqlObjectQuery` tree —— 唯 **table root fields** 入此 tree（`SqlContext.GetFinalQueries` 以 positive table match 濾之）；其餘 root fields（introspection、`<t>Aggregate`／`Pivot`／`History`、`_rawQuery`、`_dbSchema`）由各自 resolver 擁，不經此。諸 sibling root resolvers 共一 parse task，故此 builder 內任一 throw 乃全 document 之 fault，非單 field 之 fault。
 4. 套 Filter/Mutation transformers
 5. SQL 由 `GqlObjectQuery.AddSqlParameterized()` 生
 6. `SqlExecutionManager` 執 SQL

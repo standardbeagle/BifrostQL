@@ -58,6 +58,45 @@ namespace BifrostQL.Server
         /// </summary>
         private const int MaxFrameSize = 4 * 1024 * 1024;
 
+        /// <summary>Default concurrent-connection cap for one binary mount.</summary>
+        public const int DefaultMaxConnections = 100;
+
+        /// <summary>
+        /// Default deadline for the first frame of an admitted connection. The admission slot
+        /// is taken at the upgrade, before any frame is read, so a peer that connects and then
+        /// says nothing would otherwise hold a slot (and its buffers) for free.
+        /// </summary>
+        public static readonly TimeSpan DefaultFirstFrameTimeout = TimeSpan.FromSeconds(30);
+
+        /// <summary>
+        /// Default idle deadline between frames of an established connection. Generous, because
+        /// an authenticated binary session is a pooled client that legitimately sits idle.
+        /// </summary>
+        public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(10);
+
+        /// <summary>
+        /// Whether this mount serves an endpoint that requires authentication. When true, an
+        /// upgrade whose caller does not project to a real Bifrost identity is closed before a
+        /// single frame is read — the binary transport carries the same GraphQL surface as the
+        /// HTTP endpoint it serves, so it must carry that endpoint's auth requirement too.
+        /// <see cref="BifrostServiceCollectionExtensions.UseBifrostBinary"/> — the supported
+        /// mount — resolves this from the served endpoint's own configuration and fails closed
+        /// when it cannot; there is no default here for a caller to inherit by accident.
+        /// </summary>
+        private readonly bool _requireAuthenticatedIdentity;
+
+        /// <summary>
+        /// Admission counter for THIS mount. A distinct instance per mount, so two binary
+        /// endpoints never share one budget.
+        /// </summary>
+        private readonly BinaryTransportConnectionLimiter _limiter;
+
+        private readonly TimeSpan _firstFrameTimeout;
+        private readonly TimeSpan _idleTimeout;
+
+        /// <summary>Admitted connections on this mount (diagnostics/tests).</summary>
+        internal int ActiveConnections => _limiter.Count;
+
         public BifrostBinaryMiddleware(
             RequestDelegate next,
             IBifrostEngine engine,
@@ -76,7 +115,10 @@ namespace BifrostQL.Server
             ILogger<BifrostBinaryMiddleware> logger,
             int chunkThreshold,
             int ackWindow)
-            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.DefaultAckTimeout)
+            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.DefaultAckTimeout,
+                   // Fail closed: a host constructing the middleware without stating a posture
+                   // gets the safe one, never anonymous access.
+                   requireAuthenticatedIdentity: true)
         {
         }
 
@@ -88,7 +130,11 @@ namespace BifrostQL.Server
             int chunkThreshold,
             int ackWindow,
             TimeSpan ackTimeout,
-            IReadOnlyList<string>? allowedOrigins = null)
+            bool requireAuthenticatedIdentity,
+            IReadOnlyList<string>? allowedOrigins = null,
+            int maxConnections = DefaultMaxConnections,
+            TimeSpan firstFrameTimeout = default,
+            TimeSpan idleTimeout = default)
         {
             _next = next;
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -97,7 +143,17 @@ namespace BifrostQL.Server
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
             _ackTimeout = ackTimeout;
+            _requireAuthenticatedIdentity = requireAuthenticatedIdentity;
             _allowedOrigins = allowedOrigins ?? Array.Empty<string>();
+            _limiter = new BinaryTransportConnectionLimiter(maxConnections);
+            // default (zero) means "this mount did not state one": take the class default.
+            // A negative deadline is a configuration error, not a disable switch.
+            if (firstFrameTimeout < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(firstFrameTimeout));
+            if (idleTimeout < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(idleTimeout));
+            _firstFrameTimeout = firstFrameTimeout == default ? DefaultFirstFrameTimeout : firstFrameTimeout;
+            _idleTimeout = idleTimeout == default ? DefaultIdleTimeout : idleTimeout;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -121,8 +177,46 @@ namespace BifrostQL.Server
                 return;
             }
 
-            var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-            await HandleConnectionAsync(webSocket, context);
+            // Admission slot at ACCEPT, before the upgrade and before the identity gate below.
+            // A cap applied after authentication would bound admitted SESSIONS but not the work
+            // an unauthenticated peer can force (each connection costs a 4 MB receive buffer and
+            // a reassembly budget), which is not a cap on the resource.
+            if (!_limiter.TryAcquire())
+            {
+                _logger.LogWarning(
+                    "Refused binary WebSocket upgrade: the mount's {Max}-connection limit is reached",
+                    _limiter.Max);
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                return;
+            }
+
+            try
+            {
+                var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+
+                // Fail-closed identity gate, per mount and order-independent. The GraphQL
+                // endpoints put theirs inside their own Map branch, which never covered this
+                // mount: an anonymous peer reached the engine with the EMPTY user context an
+                // unauthenticated CreateUserContext returns, and the query ran under it. The
+                // refusal speaks only of the transport's auth requirement — it is identical for
+                // an unknown caller, a subject-less principal and an unmappable token, so it is
+                // no account-existence oracle.
+                if (_requireAuthenticatedIdentity
+                    && BifrostIdentityGate.Project(context, out _) != BifrostIdentityOutcome.Projected)
+                {
+                    _logger.LogWarning(
+                        "Closed binary WebSocket: the endpoint this mount serves requires authentication");
+                    await TryCloseAsync(
+                        webSocket, WebSocketCloseStatus.PolicyViolation, "Authentication required");
+                    return;
+                }
+
+                await HandleConnectionAsync(webSocket, context);
+            }
+            finally
+            {
+                _limiter.Release();
+            }
         }
 
         /// <summary>
@@ -220,13 +314,30 @@ namespace BifrostQL.Server
 
             try
             {
+                var isFirstFrame = true;
                 while (webSocket.State == WebSocketState.Open)
                 {
                     byte[] messageBytes;
                     WebSocketMessageType messageType;
+
+                    // Every read carries a deadline. The first one is short: the admission slot
+                    // is already held at that point, so a peer that connects and never speaks
+                    // would otherwise pin a slot and a 4 MB buffer for nothing. Later reads get
+                    // the idle deadline — an established session is a pooled client that may
+                    // legitimately sit quiet between queries.
+                    using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+                    readTimeout.CancelAfter(isFirstFrame ? _firstFrameTimeout : _idleTimeout);
+                    isFirstFrame = false;
+
                     try
                     {
-                        (messageBytes, messageType) = await ReadFullMessageAsync(webSocket, buffer, httpContext.RequestAborted);
+                        (messageBytes, messageType) = await ReadFullMessageAsync(webSocket, buffer, readTimeout.Token);
+                    }
+                    catch (OperationCanceledException) when (!httpContext.RequestAborted.IsCancellationRequested)
+                    {
+                        _logger.LogDebug("Binary connection exceeded its read deadline; closing");
+                        await TryCloseAsync(webSocket, WebSocketCloseStatus.PolicyViolation, "Read deadline exceeded");
+                        break;
                     }
                     catch (InvalidOperationException ex)
                     {

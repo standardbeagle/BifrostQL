@@ -81,6 +81,21 @@ namespace BifrostQL.Server
         /// null, the single registered GraphQL endpoint is used. Set this when more than one
         /// GraphQL endpoint is registered so the binary transport resolves the intended schema.
         /// </param>
+        /// <param name="requireAuthentication">
+        /// Overrides the auth requirement this mount inherits from the GraphQL endpoint it
+        /// serves. Leave null (the default) so the two can never drift; set it only to state a
+        /// posture the endpoint configuration cannot express.
+        /// </param>
+        /// <param name="maxConnections">
+        /// Concurrent-connection cap for this mount. The slot is taken at the upgrade, before
+        /// the identity gate, since an unauthenticated peer's connection already costs a receive
+        /// buffer and a reassembly budget.
+        /// </param>
+        /// <param name="firstFrameTimeout">
+        /// Deadline for an admitted connection's first frame (default 30 s) — the pre-auth
+        /// deadline that stops a silent peer from holding an admission slot for free.
+        /// </param>
+        /// <param name="idleTimeout">Deadline between frames of an established connection (default 10 min).</param>
         /// <returns>The application builder for chaining.</returns>
         public static IApplicationBuilder UseBifrostBinary(
             this IApplicationBuilder app,
@@ -88,7 +103,11 @@ namespace BifrostQL.Server
             int chunkThreshold = ChunkSender.DefaultChunkThreshold,
             int ackWindow = ChunkSender.DefaultAckWindow,
             string[]? allowedOrigins = null,
-            string? graphqlPath = null)
+            string? graphqlPath = null,
+            bool? requireAuthentication = null,
+            int maxConnections = BifrostBinaryMiddleware.DefaultMaxConnections,
+            TimeSpan? firstFrameTimeout = null,
+            TimeSpan? idleTimeout = null)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
             // The schema-resolution key is the GraphQL endpoint path, not the WebSocket mount
@@ -99,6 +118,7 @@ namespace BifrostQL.Server
             // Pass a concrete (never-null) list so UseMiddleware can match the argument by
             // type; an empty list is equivalent to "same-origin only" in the middleware.
             IReadOnlyList<string> origins = allowedOrigins ?? Array.Empty<string>();
+            var requiresAuth = requireAuthentication ?? ResolveBinaryAuthRequirement(app, schemaPath);
             app.Map(path, branch =>
                 branch.UseMiddleware<BifrostBinaryMiddleware>(
                     engine,
@@ -106,8 +126,48 @@ namespace BifrostQL.Server
                     chunkThreshold,
                     ackWindow,
                     ChunkSender.DefaultAckTimeout,
-                    origins));
+                    requiresAuth,
+                    origins,
+                    maxConnections,
+                    // UseMiddleware matches constructor arguments by their runtime type, so a
+                    // null Nullable<TimeSpan> would match nothing: unwrap to the middleware's
+                    // "unset" sentinel here.
+                    firstFrameTimeout ?? default,
+                    idleTimeout ?? default));
             return app;
+        }
+
+        /// <summary>
+        /// Whether the binary mount must require an authenticated identity, taken from the
+        /// GraphQL endpoint whose schema it serves — the transport carries that endpoint's
+        /// surface, so it must carry its auth requirement. The GraphQL endpoints enforce theirs
+        /// INSIDE their own <c>Map</c> branch, which is why a binary mount at its own path is
+        /// not covered by it and has to resolve the requirement here.
+        ///
+        /// <para>Fail closed: a deployment that has not been configured through either options
+        /// object — or one whose binary mount serves an endpoint that cannot be identified —
+        /// requires authentication. Serving anonymously is only ever an EXPLICIT choice
+        /// (<c>DisableAuth</c> on the endpoint, or <c>requireAuthentication: false</c> here).</para>
+        /// </summary>
+        private static bool ResolveBinaryAuthRequirement(IApplicationBuilder app, string schemaPath)
+        {
+            var multiDb = app.ApplicationServices.GetService<BifrostMultiDbOptions>();
+            if (multiDb != null)
+            {
+                var served = multiDb.Endpoints.FirstOrDefault(
+                    e => string.Equals(e.Path, schemaPath, StringComparison.OrdinalIgnoreCase));
+                // A mount whose graphqlPath names no registered endpoint resolves its schema by
+                // the single-endpoint fallback, so follow the same rule here; with several
+                // endpoints the target is ambiguous and the safe reading is "requires auth".
+                served ??= multiDb.Endpoints.Count == 1 ? multiDb.Endpoints[0] : null;
+                return served is null || !served.DisableAuth;
+            }
+
+            var singleDb = app.ApplicationServices.GetService<BifrostSetupOptions>();
+            if (singleDb != null)
+                return singleDb.IsUsingAuth;
+
+            return true;
         }
 
         /// <summary>

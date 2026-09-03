@@ -45,7 +45,10 @@ namespace BifrostQL.Server.Test
                 NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: 100,
                 ackWindow: ackWindow,
-                ackTimeout: ackTimeout ?? ChunkSender.DefaultAckTimeout);
+                ackTimeout: ackTimeout ?? ChunkSender.DefaultAckTimeout,
+                // Transport mechanics under an anonymous caller: this mount states the open
+                // posture explicitly, the way a DisableAuth endpoint's mount does.
+                requireAuthenticatedIdentity: false);
         }
 
         private static Task RunConnectionAsync(BifrostBinaryMiddleware middleware, FakeWebSocket socket)

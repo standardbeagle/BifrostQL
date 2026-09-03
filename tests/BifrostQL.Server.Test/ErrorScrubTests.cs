@@ -142,7 +142,11 @@ public sealed class BinaryMiddlewareErrorScrubTests
             next: _ => Task.CompletedTask,
             engine: engine,
             endpointPath: "/ws",
-            logger: NullLogger<BifrostBinaryMiddleware>.Instance);
+            logger: NullLogger<BifrostBinaryMiddleware>.Instance,
+            chunkThreshold: ChunkSender.DefaultChunkThreshold,
+            ackWindow: ChunkSender.DefaultAckWindow,
+            ackTimeout: ChunkSender.DefaultAckTimeout,
+            requireAuthenticatedIdentity: false);
 
         var context = new DefaultHttpContext();
         // Install a fake IHttpWebSocketFeature so IsWebSocketRequest returns true

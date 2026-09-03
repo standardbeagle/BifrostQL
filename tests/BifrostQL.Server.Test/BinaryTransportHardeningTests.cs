@@ -42,7 +42,9 @@ namespace BifrostQL.Server.Test
         }
 
         private static BifrostBinaryMiddleware Middleware(
-            IBifrostEngine engine, string[]? allowedOrigins = null)
+            IBifrostEngine engine,
+            string[]? allowedOrigins = null,
+            int maxConnections = BifrostBinaryMiddleware.DefaultMaxConnections)
             => new(
                 next: _ => Task.CompletedTask,
                 engine: engine,
@@ -51,7 +53,9 @@ namespace BifrostQL.Server.Test
                 chunkThreshold: ChunkSender.DefaultChunkThreshold,
                 ackWindow: ChunkSender.DefaultAckWindow,
                 ackTimeout: ChunkSender.DefaultAckTimeout,
-                allowedOrigins: allowedOrigins);
+                requireAuthenticatedIdentity: false,
+                allowedOrigins: allowedOrigins,
+                maxConnections: maxConnections);
 
         // ---- Finding 1: CSWSH origin check ----
 
@@ -227,6 +231,113 @@ namespace BifrostQL.Server.Test
             socket.State.Should().Be(WebSocketState.Closed, "a malformed frame must close the connection cleanly");
             socket.SentMessages().Should().Contain(m => m.Type == BifrostMessageType.Error,
                 "the client should receive an error frame before the close");
+        }
+
+        // ---- H8: admission cap, pre-auth deadline, and the mount's identity gate ----
+
+        [Fact]
+        public async Task ConnectionCap_IsTakenAtUpgrade_AndRefusesTheNextUpgrade()
+        {
+            // The slot must be reserved at the upgrade, BEFORE the identity gate and before a
+            // single frame is read: an unauthenticated peer's connection already costs a 4 MB
+            // receive buffer and a reassembly budget. Revert-proof: constructing the middleware
+            // with maxConnections: 2 (or removing the TryAcquire) admits the second upgrade and
+            // fails the 503 assertion below.
+            var middleware = Middleware(new DictEngine(null), maxConnections: 1);
+
+            // First connection: hangs on receive, so it holds its slot. Everything up to that
+            // receive runs synchronously, so the slot is held by the time InvokeAsync returns.
+            var held = new FakeWebSocket { HangWhenDrained = true };
+            using var abort = new CancellationTokenSource();
+            var heldContext = new DefaultHttpContext { RequestAborted = abort.Token };
+            heldContext.Features.Set<IHttpWebSocketFeature>(new PassthroughFeature(held));
+            var heldConnection = middleware.InvokeAsync(heldContext);
+
+            middleware.ActiveConnections.Should().Be(1, "the first upgrade took the only slot");
+
+            var refusedFeature = new RecordingWebSocketFeature(new FakeWebSocket());
+            var refusedContext = new DefaultHttpContext();
+            refusedContext.Features.Set<IHttpWebSocketFeature>(refusedFeature);
+
+            await middleware.InvokeAsync(refusedContext);
+
+            refusedFeature.AcceptCalled.Should().BeFalse(
+                "an upgrade over the cap must be refused before it is accepted");
+            refusedContext.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+
+            abort.Cancel();
+            await heldConnection;
+            middleware.ActiveConnections.Should().Be(0, "the slot is released with the connection");
+        }
+
+        [Fact]
+        public async Task AdmittedConnection_ThatNeverSendsAFrame_IsClosedOnTheDeadline()
+        {
+            // Pre-auth deadline: the slot is held from the upgrade, so a silent peer must not
+            // keep it for free.
+            var socket = new FakeWebSocket { HangWhenDrained = true };
+            var middleware = new BifrostBinaryMiddleware(
+                next: _ => Task.CompletedTask,
+                engine: new DictEngine(null),
+                endpointPath: "/ws",
+                logger: NullLogger<BifrostBinaryMiddleware>.Instance,
+                chunkThreshold: ChunkSender.DefaultChunkThreshold,
+                ackWindow: ChunkSender.DefaultAckWindow,
+                ackTimeout: ChunkSender.DefaultAckTimeout,
+                requireAuthenticatedIdentity: false,
+                firstFrameTimeout: TimeSpan.FromMilliseconds(100));
+
+            var context = new DefaultHttpContext();
+            context.Features.Set<IHttpWebSocketFeature>(new PassthroughFeature(socket));
+
+            await middleware.InvokeAsync(context);
+
+            socket.ClosedWith.Should().Be(WebSocketCloseStatus.PolicyViolation,
+                "a peer that says nothing must not hold its admission slot indefinitely");
+            middleware.ActiveConnections.Should().Be(0);
+        }
+
+        [Fact]
+        public async Task AuthRequiredMount_AnonymousUpgrade_IsClosedBeforeAnyFrameIsRead()
+        {
+            // The middleware-level counterpart of the end-to-end gate fact in
+            // BinaryProfileAuthorizationTests: nothing is read and nothing is executed.
+            var socket = new FakeWebSocket();
+            socket.EnqueueMessage(new BifrostMessage
+            {
+                RequestId = 1,
+                Type = BifrostMessageType.Query,
+                Query = "{ __typename }",
+            });
+            var engine = new CountingEngine();
+            var middleware = new BifrostBinaryMiddleware(
+                next: _ => Task.CompletedTask,
+                engine: engine,
+                endpointPath: "/ws",
+                logger: NullLogger<BifrostBinaryMiddleware>.Instance,
+                chunkThreshold: ChunkSender.DefaultChunkThreshold,
+                ackWindow: ChunkSender.DefaultAckWindow,
+                ackTimeout: ChunkSender.DefaultAckTimeout,
+                requireAuthenticatedIdentity: true);
+
+            var context = new DefaultHttpContext();
+            context.Features.Set<IHttpWebSocketFeature>(new PassthroughFeature(socket));
+
+            await middleware.InvokeAsync(context);
+
+            socket.ClosedWith.Should().Be(WebSocketCloseStatus.PolicyViolation);
+            socket.ReceiveCount.Should().Be(0, "the queued query frame must never be read");
+            engine.Executions.Should().Be(0, "no query reaches the engine on an anonymous socket");
+        }
+
+        private sealed class CountingEngine : IBifrostEngine
+        {
+            public int Executions { get; private set; }
+            public Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
+            {
+                Executions++;
+                return Task.FromResult(new BifrostResult { Data = null });
+            }
         }
 
         private sealed class PassthroughFeature : IHttpWebSocketFeature

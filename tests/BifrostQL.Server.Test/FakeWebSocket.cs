@@ -146,9 +146,17 @@ namespace BifrostQL.Server.Test
         public override void Abort() => _state = WebSocketState.Aborted;
         public override void Dispose() { }
 
+        /// <summary>The status the server closed with, or null while the socket is open.</summary>
+        public WebSocketCloseStatus? ClosedWith { get; private set; }
+
+        /// <summary>The reason text the server closed with.</summary>
+        public string? ClosedReason { get; private set; }
+
         public override Task CloseAsync(
             WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
         {
+            ClosedWith = closeStatus;
+            ClosedReason = statusDescription;
             _state = WebSocketState.Closed;
             return Task.CompletedTask;
         }

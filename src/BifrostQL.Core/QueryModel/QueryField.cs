@@ -64,7 +64,7 @@ namespace BifrostQL.Core.QueryModel
                 switch
             { true => GetUniqueName(), false => basePath + "->" + GetUniqueName() };
             var tableName = ResolveTableName(model, parent, Name);
-            var dbTable = model.GetTableByFullGraphQlName(tableName);
+            var dbTable = ResolveTable(model, tableName);
             var rawSort = (IEnumerable<object?>?)Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
 
@@ -124,6 +124,37 @@ namespace BifrostQL.Core.QueryModel
             if (parent == null)
                 result.ConnectLinks(model);
             return result;
+        }
+
+        /// <summary>
+        /// True when this ROOT field names a table row query — the only shape
+        /// <see cref="ToSqlData"/> can build. Fail-closed: a field counts as a table query
+        /// only when the model resolves its normalized name to a table, so an unrecognized
+        /// root field is skipped by the SQL context rather than executed as one.
+        /// </summary>
+        public static bool IsTableRootField(IDbModel model, IQueryField field)
+        {
+            var name = NormalizeColumnName(field.Name);
+            return model.Tables.Any(t => t.MatchName(name));
+        }
+
+        /// <summary>
+        /// Resolves the table backing a query node. The model's lookup signals "no such
+        /// table" with <see cref="ArgumentOutOfRangeException"/>, whose message carries the
+        /// caller-supplied name; on the GraphQL wire that surfaces as an
+        /// ARGUMENT_OUT_OF_RANGE error echoing the identifier back. A client-shape fault
+        /// maps to the adapter-owned execution error with no identifier in its text.
+        /// </summary>
+        private static IDbTable ResolveTable(IDbModel model, string tableName)
+        {
+            try
+            {
+                return model.GetTableByFullGraphQlName(tableName);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new BifrostExecutionError("A requested field does not name a queryable table.");
+            }
         }
 
         private static bool IsMultiLink(IDbModel model, IQueryField parent, string fieldName)

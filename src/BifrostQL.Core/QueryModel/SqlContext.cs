@@ -38,9 +38,20 @@ namespace BifrostQL.Core.QueryModel
         {
             Setters.FirstOrDefault()?.Invoke(value);
         }
+        /// <summary>
+        /// Builds one <see cref="GqlObjectQuery"/> per root field that names a table row
+        /// query. Other root fields — introspection, the aggregate/pivot/history surfaces,
+        /// `_rawQuery`, `_dbSchema` — are owned by their own resolvers and carry no table
+        /// to resolve, so they are skipped here. Building them threw, and because every
+        /// sibling root resolver awaits this one shared parse, that failed the whole
+        /// document: a table root field alongside any of them came back null.
+        /// </summary>
         public List<GqlObjectQuery> GetFinalQueries(IDbModel model)
         {
-            return Fields.Select(f => f.ToSqlData(model)).ToList();
+            return Fields
+                .Where(f => QueryField.IsTableRootField(model, f))
+                .Select(f => f.ToSqlData(model))
+                .ToList();
         }
         public void PushField(string name, string? alias)
         {

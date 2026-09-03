@@ -47,9 +47,9 @@ namespace BifrostQL.Mcp
         /// When supplied, filter columns resolve only against this readable-column set: a
         /// read-denied column is "Unknown column", indistinguishable from a non-existent one, so a
         /// filter cannot be used as a column-existence oracle or to constrain grouping on a hidden
-        /// column's values (invariant 4). Callers with no per-caller projection (declarative tools,
-        /// the raw-resolved bifrost_query path) pass null and keep the prior behavior, where the
-        /// pipeline is the backstop for a denied column at execution.
+        /// column's values (invariant 4). Every generic tool supplies it; only the declarative
+        /// tools — whose column list is authored, not caller-supplied — pass null, leaving the
+        /// pipeline as the backstop for a denied column at execution.
         /// </param>
         public static TableFilter CompileFilter(IDbTable table, JsonElement filter, ISet<string>? visibleColumnNames = null)
             => TableFilter.FromObject(CompileFilterObject(table, filter, visibleColumnNames), table.DbName);
@@ -132,9 +132,9 @@ namespace BifrostQL.Mcp
                 table.ColumnLookup.TryGetValue(name, out var byDb) ? byDb : null;
             // When a readable-column set is supplied, a column outside it is treated as UNKNOWN: a
             // read-denied column is indistinguishable from a non-existent one, and the suggestion
-            // lists only readable columns (invariant 4). Callers with no per-caller projection
-            // (declarative tools, the raw-resolved query path) pass null and keep the prior behavior,
-            // where the pipeline is the backstop for a denied column at execution.
+            // lists only readable columns (invariant 4). Only the declarative tools — whose column
+            // list is authored, not caller-supplied — pass null, leaving the pipeline as the
+            // backstop for a denied column at execution.
             if (resolved is not null && (visibleColumnNames is null || visibleColumnNames.Contains(resolved.ColumnName)))
                 return resolved;
             throw new ToolPromptException(SchemaDescriber.UnknownColumnMessage(table, name, visibleColumnNames));
@@ -144,7 +144,13 @@ namespace BifrostQL.Mcp
         /// Validates sort tokens and normalizes their column part to the GraphQL
         /// name the SQL sort renderer keys on.
         /// </summary>
-        public static List<string> CompileSort(IDbTable table, IReadOnlyList<string> tokens)
+        /// <param name="visibleColumnNames">
+        /// When supplied, a sort key resolves only against this readable-column set — a sort token
+        /// is a column reference like any other, so leaving it unfiltered kept the oracle the
+        /// filter and field paths close (invariant 4).
+        /// </param>
+        public static List<string> CompileSort(
+            IDbTable table, IReadOnlyList<string> tokens, ISet<string>? visibleColumnNames = null)
         {
             var compiled = new List<string>(tokens.Count);
             foreach (var token in tokens)
@@ -156,7 +162,7 @@ namespace BifrostQL.Mcp
                     _ => throw new ToolPromptException(
                         $"Invalid sort token '{token}'. Use '<column>_asc' or '<column>_desc', e.g. 'name_asc'."),
                 };
-                var column = ResolveColumn(table, columnPart);
+                var column = ResolveColumn(table, columnPart, visibleColumnNames);
                 compiled.Add(column.GraphQlName + suffix);
             }
             return compiled;

@@ -350,10 +350,20 @@ namespace BifrostQL.Mcp
             if (sortTokens is not null && sort.Count != sortTokens.Count)
                 throw new ToolPromptException("sort must contain only '<column>_asc' / '<column>_desc' tokens.");
 
-            var table = ResolveTable(model, userContext, tableName);
+            // Resolve through the caller's readable projection, exactly as bifrost_aggregate /
+            // bifrost_search / bifrost_row_context do: this method builds the table, column and
+            // sort error PROMPTS before execution, so resolving against the raw model made a
+            // read-denied table enumerate its columns and confirmed a denied column's existence
+            // (invariant 4), and answered the denial as a different condition than a name that
+            // does not exist — a divergence across op classes of one seam (invariant 9).
+            var visibleTable = ResolveVisibleTable(model, userContext, tableName);
+            var table = visibleTable.Table;
+            var visibleColumnNames = new HashSet<string>(
+                visibleTable.Columns.Select(c => c.ColumnName), StringComparer.OrdinalIgnoreCase);
             var fieldNames = fields?.Cast<string>().ToList();
             var columns = fieldNames is not null
-                ? fieldNames.Select(f => QueryToolCompiler.ResolveColumn(table, f)).DistinctBy(c => c.ColumnName).ToList()
+                ? fieldNames.Select(f => QueryToolCompiler.ResolveColumn(table, f, visibleColumnNames))
+                    .DistinctBy(c => c.ColumnName).ToList()
                 : detail == "full"
                     ? table.Columns.OrderBy(c => c.OrdinalPosition).ToList()
                     : QueryToolCompiler.SummaryColumns(table);
@@ -363,10 +373,10 @@ namespace BifrostQL.Mcp
             query.Offset = offset;
             query.IncludeResult = true;
             query.Sort = sort.Count > 0
-                ? QueryToolCompiler.CompileSort(table, sort)
+                ? QueryToolCompiler.CompileSort(table, sort, visibleColumnNames)
                 : QueryToolCompiler.DefaultSort(table);
             if (filterElement is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } fe)
-                query.Filter = QueryToolCompiler.CompileFilter(table, fe);
+                query.Filter = QueryToolCompiler.CompileFilter(table, fe, visibleColumnNames);
 
             return new ValidatedQuery(table, query, offset, limit, detail, fieldNames, sort, filterElement);
         }

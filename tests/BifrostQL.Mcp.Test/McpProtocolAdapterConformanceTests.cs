@@ -47,8 +47,20 @@ namespace BifrostQL.Mcp.Test
         /// the funnel maps by CONDITION, never by op class, so an authorization refusal carries
         /// the identical code on every path (invariant 10's parity requirement). A separate
         /// override per fact would be the first sign that parity had been lost.</para>
+        ///
+        /// <para>The one split is by CONDITION, not by op class, so parity holds. The fixture's
+        /// <c>documents</c> table carries policy metadata without <c>policy-actions: read</c>, so
+        /// the evaluator denies the TABLE to this principal and
+        /// <c>SchemaReadVisibility</c> omits it — every MCP surface (schema overview, describe,
+        /// aggregate, search, row_context, and now query) already answers a table the caller may
+        /// not read exactly as it answers one that does not exist, because a distinguishable
+        /// refusal is itself the introspection oracle invariant 4 forbids. The ASSERT is still a
+        /// rejection with no rows delivered; only the non-disclosing text differs.</para>
         /// </summary>
-        protected override string ExpectedRejectionFragment(string canonicalServerFragment) => "access_denied";
+        protected override string ExpectedRejectionFragment(string canonicalServerFragment) =>
+            canonicalServerFragment.Contains("authorization policy", StringComparison.Ordinal)
+                ? "Unknown table"
+                : "access_denied";
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

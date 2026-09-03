@@ -137,14 +137,31 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public async Task Http_MissingBearer_FailsClosedOnTenantTable()
+        public async Task Http_MissingBearer_RefusesRequest()
         {
             var error = await HttpQueryOrdersErrorAsync(authorization: null);
-            // Fail-closed is the fact; the raw TenantFilterTransformer text is NOT part of it.
-            // That message names 'tenant_id' and the qualified table, so it is sanitized to the
-            // adapter's stable code before it reaches the wire (invariant 3).
-            error.Should().Contain("access_denied");
+            // H9: no identity is a REFUSAL, not a read that happens to hit a tenant-filtered
+            // table. The message is the adapter's constant (invariant 3): no key, no table.
+            error.Should().Contain("Authentication failed");
             error.Should().NotContain("tenant_id").And.NotContain("main.orders");
+        }
+
+        /// <summary>
+        /// H9: the HTTP front door under the DEFAULT (FailClosed) posture. It used to project an
+        /// empty user context for every caller, so any table without tenant metadata was readable
+        /// by anyone who could reach the port.
+        /// </summary>
+        [Fact]
+        public async Task Http_FailClosedMode_NoCredential_Refuses_NeverEmptyContext()
+        {
+            var httpContext = new DefaultHttpContext { RequestServices = _host.Services };
+            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var identity = new BifrostMcpHttpExtensions.McpHttpSessionIdentity(
+                new McpAuthOptions(), accessor, sessionCredential: null);
+
+            var act = () => identity.RevalidateAsync(CancellationToken.None).AsTask();
+
+            await act.Should().ThrowAsync<McpIdentityException>();
         }
 
         [Fact]
@@ -243,16 +260,16 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public async Task Stdio_MissingBearer_FailsClosed()
+        public async Task Stdio_MissingBearer_Refuses()
         {
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, StdioBearer("no-such-token"));
 
             var result = await StdioQueryOrdersAsync(provider);
             result.IsError.Should().BeTrue();
-            // Same contract as the HTTP transport: fail closed, sanitized code, no identifiers.
+            // Same contract as the HTTP transport: refuse, sanitized message, no identifiers.
             var text = result.Content.OfType<TextContentBlock>().Single().Text;
-            text.Should().Contain("access_denied");
+            text.Should().Contain("Authentication failed");
             text.Should().NotContain("tenant_id").And.NotContain("main.orders");
         }
 

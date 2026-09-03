@@ -635,6 +635,18 @@ namespace BifrostQL.Mcp.Test
         /// facts are actually about is that the read FAILS CLOSED, so they now assert the
         /// adapter's own stable code and the ABSENCE of the identifiers.
         /// </summary>
+        /// <summary>
+        /// An identity refusal reaches the wire as the adapter's constant message: no issuer,
+        /// token, session, user, or schema identifier (invariant 3).
+        /// </summary>
+        private static void AssertIdentityRefusalIsSanitized(CallToolResult result)
+        {
+            var text = result.Content.OfType<TextContentBlock>().Single().Text;
+            text.Should().Contain("Authentication failed", "a refusal names the auth condition only");
+            text.Should().NotContain("tenant_id", "the wire must not name the tenant context key");
+            text.Should().NotContain("main.orders", "the wire must not name a schema-qualified table");
+        }
+
         private static void AssertTenantDenialIsSanitized(CallToolResult result)
         {
             var text = result.Content.OfType<TextContentBlock>().Single().Text;
@@ -889,17 +901,38 @@ namespace BifrostQL.Mcp.Test
         // ---- configurable auth modes (slice B) --------------------------------
 
         [Fact]
-        public async Task DefaultOptions_AnonymousNotGranted_TenantReadFailsClosed()
+        public async Task DefaultFailClosedMode_NoCredential_RefusesRequest_NeverEmptyContext()
         {
-            // Criterion 1: the dangerous opt-ins default OFF, so default options mint no
-            // anonymous identity and a tenant-filtered read fails closed.
+            // H9: "fail closed" must mean REFUSE, not "run with an empty user context".
+            // An empty context only stops reads of tables that carry tenant metadata; every
+            // table without it was fully readable by a caller with no identity at all.
             var options = new McpAuthOptions();
             options.Mode.Should().Be(McpAuthMode.FailClosed, "the dangerous anonymous/bearer surfaces default OFF");
 
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            provider().Should().BeEmpty("no identity source is configured, so no anonymous identity is minted");
+            var act = () => provider();
+            act.Should().Throw<McpIdentityException>(
+                "no identity could be established, so the request is refused — not served anonymously");
+
+            var result = await QueryOrdersWith(provider);
+            result.IsError.Should().BeTrue();
+            AssertIdentityRefusalIsSanitized(result);
+        }
+
+        [Fact]
+        public async Task AnonymousMode_ExplicitOptIn_YieldsEmptyContext_TenantReadStillFailsClosed()
+        {
+            // Anonymous access is now only reachable through the explicit opt-in (which logs a
+            // startup warning); there it keeps the historical empty-context behavior, and a
+            // tenant-filtered read still fails closed in the pipeline.
+            var options = new McpAuthOptions { Mode = McpAuthMode.AnonymousDev };
+
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+
+            provider().Should().BeEmpty("the explicit anonymous opt-in mints no identity");
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
@@ -979,11 +1012,11 @@ namespace BifrostQL.Mcp.Test
         [Theory]
         [InlineData("wrong-token")] // presented but invalid
         [InlineData(null)]          // absent
-        public async Task BearerMode_InvalidOrAbsentToken_MintsNoIdentity_FailsClosed(string? presentedToken)
+        public async Task BearerMode_InvalidOrAbsentToken_MintsNoIdentity_RefusesRequest(string? presentedToken)
         {
             // Criterion 4: on a bearer (non-dev) server an absent or invalid token mints NO
-            // identity, so the empty context drives the existing fail-closed rejection — never
-            // a degraded/empty-but-permitted read.
+            // identity, and no identity now REFUSES the request outright — never a degraded
+            // empty-but-permitted read of whatever carries no tenant metadata.
             var principal = new ClaimsPrincipal(new ClaimsIdentity(
                 new[]
                 {
@@ -1002,12 +1035,13 @@ namespace BifrostQL.Mcp.Test
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            provider().Should().BeEmpty(
+            var act = () => provider();
+            act.Should().Throw<McpIdentityException>(
                 "an absent or invalid bearer token mints no identity — never a degraded pass-through");
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            AssertTenantDenialIsSanitized(result);
+            AssertIdentityRefusalIsSanitized(result);
         }
 
         // ---- OIDC / token-exchange credential store (slice D) -----------------
@@ -1061,11 +1095,13 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            provider().Should().BeEmpty("no store is configured, so the upstream token is never exchanged");
+            var act = () => provider();
+            act.Should().Throw<McpIdentityException>(
+                "no store is configured, so the upstream token is never exchanged and nothing is served");
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            AssertTenantDenialIsSanitized(result);
+            AssertIdentityRefusalIsSanitized(result);
         }
 
         [Fact]
@@ -1085,7 +1121,9 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            provider().Should().BeEmpty("a null exchange result mints no identity — never anonymous");
+            var act = () => provider();
+            act.Should().Throw<McpIdentityException>(
+                "a null exchange result mints no identity — the request is refused, never served anonymously");
 
             store.Invocations.Should().BeGreaterThan(0, "the store was consulted, then refused — not skipped");
             store.LastUpstreamToken.Should().Be(UpstreamIdpToken,
@@ -1093,7 +1131,7 @@ namespace BifrostQL.Mcp.Test
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            AssertTenantDenialIsSanitized(result);
+            AssertIdentityRefusalIsSanitized(result);
         }
 
         [Fact]
@@ -1208,12 +1246,14 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            provider().Should().BeEmpty("no upstream credential is presented, so no exchange is attempted");
+            var act = () => provider();
+            act.Should().Throw<McpIdentityException>(
+                "no upstream credential is presented, so no exchange is attempted and nothing is served");
             store.Invocations.Should().Be(0, "an absent credential is never handed to the store");
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
-            AssertTenantDenialIsSanitized(result);
+            AssertIdentityRefusalIsSanitized(result);
         }
 
         [Fact]

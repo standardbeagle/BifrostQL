@@ -1,6 +1,6 @@
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Column, Table } from '../types/schema';
-import { getFilterOperators, type ColumnFilterValue } from './query-builder';
+import { getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './query-builder';
 
 /** URL parameter that owns the selected grouping field. */
 export const GRID_GROUP_BY_PARAM = 'gb';
@@ -125,7 +125,7 @@ export function buildGridGroupingRequest(
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
     }
     const filter = asFilter(columnFilters, table, headerFilter);
-    const declarations = filter ? `($filter: ${table.graphQlName}Filter)` : '';
+    const declarations = filter ? `($filter: ${tableFilterTypeName(table)})` : '';
     const args = [filter ? 'filter: $filter' : '', `groupBy: [${groupBy.graphQlName}]`].filter(Boolean).join(', ');
     return {
         query: `query GridGrouping${declarations} { ${table.name}Aggregate(${args}) { ${groupBy.graphQlName} _count${sumBy ? ` _sum { ${sumBy.graphQlName} }` : ''} } }`,
@@ -192,7 +192,7 @@ export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value
     const filter = active ? { and: [active, member] } : member;
     const fields = table.columns.map((column) => column.graphQlName).join(' ');
     return {
-        query: `query GridGroupMembers($filter: ${table.graphQlName}Filter, $sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int) { ${table.name}(filter: $filter sort: $sort limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
+        query: `query GridGroupMembers($filter: ${tableFilterTypeName(table)}, $sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int) { ${table.name}(filter: $filter sort: $sort limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
         // Member ordering deliberately remains the active flat-grid order.
         // It is bound as a GraphQL variable, never interpolated from UI state.
         variables: { filter, sort: [...sort], limit: 50, offset: 0 },

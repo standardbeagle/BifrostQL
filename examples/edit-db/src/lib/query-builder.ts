@@ -99,6 +99,21 @@ export function assertGraphQlName(value: unknown, kind: string): asserts value i
     }
 }
 
+/**
+ * The single producer of a table's generated filter input type name.
+ *
+ * The server names it `TableFilter<graphQlName>Input`
+ * (DbTable.TableFilterTypeName, src/BifrostQL.Core/Model/DbTable.cs). Spelling
+ * it inline invites the `<graphQlName>Filter` guess, which parses fine and then
+ * fails server-side with "Unknown type '<graphQlName>Filter'." on every
+ * FILTERED request while the unfiltered path keeps working. Every builder that
+ * declares a `$filter` variable calls this, so the two sides cannot drift.
+ */
+export function tableFilterTypeName(table: Table): string {
+    assertGraphQlName(table.graphQlName, "table name");
+    return `TableFilter${table.graphQlName}Input`;
+}
+
 function isGraphQlType(value: unknown): value is string {
     return typeof value === "string" && graphQlTypePattern.test(value);
 }

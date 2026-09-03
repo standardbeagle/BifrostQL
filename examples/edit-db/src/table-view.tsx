@@ -17,7 +17,7 @@ import { Table, Column } from './types/schema';
 import type { DrillFrame } from './lib/drill-stack';
 import { encodePkRoute, parsePkRoute, pkFilterFor, rowIdOf, buildPkEqFilter, type PkFilter } from './lib/row-id';
 import { buildSingleRowQuery, buildRowsByPkQuery } from './lib/query-builder';
-import { buildColumnFilters, getFilterOperators, type ColumnFilterValue } from './lib/query-builder';
+import { buildColumnFilters, getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 
@@ -464,12 +464,11 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
             detail: {
                 table: table.graphQlName,
                 filter,
-                // The schema-generated filter input is named TableFilter<table>Input
-                // (TableSchemaGenerator); the earlier "<table>Filter" guess made every
-                // FILTERED Visualize fail server-side with an unknown-type error while
-                // the unfiltered path kept working — verify this name against the SDL,
-                // never against another client's guess.
-                filterType: `TableFilter${table.graphQlName}Input`,
+                // Named by the one producer in query-builder; the earlier
+                // "<table>Filter" guess made every FILTERED Visualize fail
+                // server-side with an unknown-type error while the unfiltered
+                // path kept working.
+                filterType: tableFilterTypeName(table),
             },
         }));
     }, [columnFilters, table]);

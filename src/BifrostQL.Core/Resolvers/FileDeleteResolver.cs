@@ -27,6 +27,9 @@ namespace BifrostQL.Core.Resolvers
             var tableName = context.GetArgument<string>("table");
             var columnName = context.GetArgument<string>("column");
             var recordId = context.GetArgument<string>("recordId");
+            // The optimistic-concurrency token the row was read at, for a table that
+            // declares one. Passed straight to the pipeline, which owns the guard.
+            var concurrencyToken = context.GetArgument<string>("concurrencyToken");
 
             if (string.IsNullOrWhiteSpace(tableName))
                 throw new BifrostExecutionError("Table name is required");
@@ -79,7 +82,7 @@ namespace BifrostQL.Core.Resolvers
             // that is already gone. This is the ordering FileObjectSeam.DeleteAsync
             // established; the resolver's old blob-first order was the divergence.
             var affectedRows = await FilePointerAccess.WritePointerAsync(
-                context, bifrost, table, column, keyData, pointerJson: null);
+                context, bifrost, table, column, keyData, pointerJson: null, concurrencyToken);
 
             // Zero rows means the write was scoped away or the row vanished between
             // the read and the write. Reported as success it would strand the object

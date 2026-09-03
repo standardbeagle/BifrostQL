@@ -77,7 +77,8 @@ internal static class FilePointerAccess
         IDbTable table,
         ColumnDto column,
         Dictionary<string, object?> keyData,
-        string? pointerJson)
+        string? pointerJson,
+        string? concurrencyToken = null)
     {
         // Clearing or repointing a file column is an ordinary UPDATE of that column
         // — never a row Delete, which would destroy the row and every other column
@@ -90,6 +91,8 @@ internal static class FilePointerAccess
         {
             [column.ColumnName] = pointerJson,
         };
+
+        ApplyConcurrencyToken(bifrost.Model, table, concurrencyToken, data, standardData);
 
         var ctx = new MutationPipelineContext
         {
@@ -104,6 +107,78 @@ internal static class FilePointerAccess
         var (_, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
             table, (data, keyData, standardData), ctx);
         return affectedRows;
+    }
+
+    /// <summary>
+    /// Places the caller's optimistic-concurrency token into the write data under the
+    /// table's token column, so <c>ConcurrencyMutationTransformer</c> guards the file
+    /// write exactly as it guards a table update. A table mutation carries the token as
+    /// the token column inside its fieldset; the file mutations have no fieldset, so
+    /// they carry it as a named argument and this is where the two meet.
+    ///
+    /// <para>Two rejections, both deliberate. A token supplied for a table that declares
+    /// none is refused rather than ignored: a client that believes it is guarding a write
+    /// and is not is the exact lost update the token exists to prevent. A MISSING token on
+    /// a token table is NOT rejected here — it falls through to the transformer, so every
+    /// write path in the product produces one message for that condition.</para>
+    /// </summary>
+    private static void ApplyConcurrencyToken(
+        IDbModel model,
+        IDbTable table,
+        string? concurrencyToken,
+        Dictionary<string, object?> data,
+        Dictionary<string, object?> standardData)
+    {
+        var tokenColumnName = table.GetMetadataValue(MetadataKeys.Concurrency.Token);
+        if (string.IsNullOrWhiteSpace(tokenColumnName))
+        {
+            if (!string.IsNullOrWhiteSpace(concurrencyToken))
+                throw new BifrostExecutionError(
+                    $"Table '{table.TableSchema}.{table.DbName}' does not use a concurrency token, " +
+                    "so 'concurrencyToken' must not be supplied.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(concurrencyToken))
+            return;
+
+        if (!table.ColumnLookup.TryGetValue(tokenColumnName, out var tokenColumn))
+            throw new BifrostExecutionError(
+                $"Table '{table.TableSchema}.{table.DbName}' declares a concurrency token column that does not exist.");
+
+        var value = CoerceToken(model, tokenColumn, concurrencyToken);
+        data[tokenColumn.ColumnName] = value;
+        standardData[tokenColumn.ColumnName] = value;
+    }
+
+    /// <summary>
+    /// Converts the token argument (a string on the wire, because one field serves
+    /// numeric and datetime tokens alike) to the token column's own type. Without this
+    /// the guard predicate would compare a text literal to a numeric column and match no
+    /// row — a silent CONFLICT on every correct token. An unparseable value is refused
+    /// with an adapter-owned message; the parse exception itself never reaches the wire.
+    /// </summary>
+    private static object CoerceToken(IDbModel model, ColumnDto tokenColumn, string token)
+    {
+        var graphQlType = model.TypeMapper.GetGraphQlType(tokenColumn.EffectiveDataType);
+        try
+        {
+            return graphQlType switch
+            {
+                "Int" or "Short" or "Byte" or "BigInt" => long.Parse(token),
+                "Decimal" => decimal.Parse(token),
+                "DateTime" or "DateTimeOffset" => DateTimeOffset.Parse(token),
+                // An unsupported token type is the transformer's error to report, with the
+                // one message every write path shares; pass the value through untouched.
+                _ => token,
+            };
+        }
+        catch (Exception ex) when (ex is FormatException or OverflowException or ArgumentException)
+        {
+            throw new BifrostExecutionError(
+                $"The concurrency token supplied for '{tokenColumn.GraphQlName}' is not a valid " +
+                $"{graphQlType} value.");
+        }
     }
 
     /// <summary>

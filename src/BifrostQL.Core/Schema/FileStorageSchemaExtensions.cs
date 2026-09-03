@@ -65,6 +65,7 @@ input FileUploadInput {
     file: Upload!
     filename: String
     contentType: String
+    concurrencyToken: String
 }
 
 # Input for file download query
@@ -94,11 +95,15 @@ input FileDownloadInput {
         public static string GetFileStorageMutationFields()
         {
             return @"
-    # Upload a file and update the database record
-    _fileUpload(table: String!, column: String!, recordId: String!, file: Upload!, filename: String, contentType: String): FileUploadResult
-    
+    # Upload a file and update the database record.
+    # concurrencyToken carries the optimistic-concurrency token the row was read at,
+    # required on (and only accepted by) a table declaring `concurrency-token`. A table
+    # mutation carries it as the token column inside its fieldset; these fields have no
+    # fieldset, so it is a named argument instead.
+    _fileUpload(table: String!, column: String!, recordId: String!, file: Upload!, filename: String, contentType: String, concurrencyToken: String): FileUploadResult
+
     # Delete a file from storage and clear the database record
-    _fileDelete(table: String!, column: String!, recordId: String!): Boolean
+    _fileDelete(table: String!, column: String!, recordId: String!, concurrencyToken: String): Boolean
 ";
         }
 

@@ -372,17 +372,45 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
 
     // ---- M6: the concurrency-token table ----
 
-    /// <summary>
-    /// A concurrency-token table's UPDATE must carry the token the row was read at.
-    /// The file mutations have no argument to carry one (their SDL — outside this
-    /// task's file scope, see <c>Schema/FileStorageSchemaExtensions.cs</c> — declares
-    /// only table/column/recordId/file), so every file write on such a table is
-    /// rejected by the token transformer. This test pins the REJECTION, not a
-    /// success: it is the honest current contract, and it turns RED the moment the
-    /// token argument lands, which is exactly when this expectation must flip.
-    /// </summary>
     [Fact]
-    public async Task Delete_OnConcurrencyTokenTable_IsRejected_UntilTheTokenArgumentExists()
+    public async Task Delete_OnConcurrencyTokenTable_WithTheCurrentToken_Succeeds_AndAdvancesTheToken()
+    {
+        await Exec($"INSERT INTO ver_docs(id, row_version, file_data) VALUES (1, 3, '{Pointer("ver.bin")}')");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileDeleteResolver(_storageService);
+
+        var result = await resolver.ResolveAsync(Context(model, services, "ver_docs", "1",
+            new Dictionary<string, object?> { ["concurrencyToken"] = "3" }));
+
+        result.Should().Be(true);
+        (await Scalar("SELECT file_data FROM ver_docs WHERE id = 1")).Should().BeNull();
+        Convert.ToInt64(await Scalar("SELECT row_version FROM ver_docs WHERE id = 1"))
+            .Should().Be(4, "a guarded write advances the token in the same statement");
+        _storage.DeletedKeys.Should().ContainSingle().Which.Should().Be("ver.bin");
+    }
+
+    [Fact]
+    public async Task Delete_OnConcurrencyTokenTable_WithAStaleToken_ConflictsAndKeepsTheObject()
+    {
+        await Exec($"INSERT INTO ver_docs(id, row_version, file_data) VALUES (1, 5, '{Pointer("ver.bin")}')");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileDeleteResolver(_storageService);
+
+        var act = async () => await resolver.ResolveAsync(Context(model, services, "ver_docs", "1",
+            new Dictionary<string, object?> { ["concurrencyToken"] = "3" }));
+
+        var error = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
+        error.ErrorCode.Should().Be("CONFLICT", "a lost update is branchable, not a generic failure");
+        // The message tells the loser THAT it lost, never the winning value (invariant 3).
+        error.Message.Should().Contain("no longer matches").And.NotContain("5");
+        (await Scalar("SELECT file_data FROM ver_docs WHERE id = 1")).Should().Be(Pointer("ver.bin"));
+        _storage.DeletedKeys.Should().BeEmpty("a rejected write must not have destroyed the object first");
+    }
+
+    [Fact]
+    public async Task Delete_OnConcurrencyTokenTable_WithoutAToken_IsRejected()
     {
         await Exec($"INSERT INTO ver_docs(id, row_version, file_data) VALUES (1, 3, '{Pointer("ver.bin")}')");
         var model = await LoadModelAsync();
@@ -394,7 +422,64 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
         (await act.Should().ThrowAsync<BifrostExecutionError>())
             .Which.Message.Should().Contain("concurrency token");
         (await Scalar("SELECT file_data FROM ver_docs WHERE id = 1")).Should().Be(Pointer("ver.bin"));
-        _storage.DeletedKeys.Should().BeEmpty("a rejected write must not have destroyed the object first");
+        _storage.DeletedKeys.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Upload_OnConcurrencyTokenTable_WithTheCurrentToken_Succeeds()
+    {
+        await Exec("INSERT INTO ver_docs(id, row_version, file_data) VALUES (2, 7, NULL)");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileUploadResolver(_storageService);
+
+        var arguments = UploadArguments();
+        arguments["concurrencyToken"] = "7";
+        var result = await resolver.ResolveAsync(Context(model, services, "ver_docs", "2", arguments));
+
+        var upload = result.Should().BeOfType<FileUploadResult>().Subject;
+        (await Scalar("SELECT file_data FROM ver_docs WHERE id = 2")).As<string>()
+            .Should().Contain(upload.FileKey);
+        Convert.ToInt64(await Scalar("SELECT row_version FROM ver_docs WHERE id = 2")).Should().Be(8);
+    }
+
+    [Fact]
+    public async Task Upload_OnConcurrencyTokenTable_WithAStaleToken_ConflictsAndRemovesTheJustUploadedObject()
+    {
+        await Exec("INSERT INTO ver_docs(id, row_version, file_data) VALUES (2, 9, NULL)");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileUploadResolver(_storageService);
+
+        var arguments = UploadArguments();
+        arguments["concurrencyToken"] = "7";
+        var act = async () => await resolver.ResolveAsync(Context(model, services, "ver_docs", "2", arguments));
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>()).Which.ErrorCode.Should().Be("CONFLICT");
+        (await Scalar("SELECT file_data FROM ver_docs WHERE id = 2")).Should().BeNull();
+        _storage.DeletedKeys.Should().ContainSingle(
+            "the object this call uploaded is unreferenced once the guarded write is rejected");
+    }
+
+    /// <summary>
+    /// A table with no <c>concurrency-token</c> must reject the argument rather than
+    /// ignore it: a client that believes it is guarding a write, and is not, is the
+    /// exact lost update the token exists to prevent.
+    /// </summary>
+    [Fact]
+    public async Task Delete_TokenSuppliedForATableWithoutOne_IsRejected()
+    {
+        await Exec($"INSERT INTO hist_docs(id, file_data) VALUES (5, '{Pointer("untokened.bin")}')");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileDeleteResolver(_storageService);
+
+        var act = async () => await resolver.ResolveAsync(Context(model, services, "hist_docs", "5",
+            new Dictionary<string, object?> { ["concurrencyToken"] = "3" }));
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.Message.Should().Contain("does not use a concurrency token");
+        (await Scalar("SELECT file_data FROM hist_docs WHERE id = 5")).Should().Be(Pointer("untokened.bin"));
     }
 
     // ---- compensation touches only what this call created (invariant 8a) ----

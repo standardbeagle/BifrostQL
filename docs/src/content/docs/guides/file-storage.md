@@ -97,28 +97,60 @@ mutation {
 `recordId` addresses one row. A composite primary key is passed as its key values joined
 by `-`, in declared key order, and the count must match exactly.
 
+### Token-guarded tables
+
+On a table declaring `concurrency-token`, both mutations must carry the token value the
+row was read at, in the `concurrencyToken` argument:
+
+```graphql
+mutation {
+  _fileDelete(table: "orders", column: "invoice", recordId: "42", concurrencyToken: "7")
+}
+```
+
+A table mutation carries its token as the token column inside the `update` fieldset; the
+file mutations have no fieldset, so it is a named argument instead. The guard itself is
+the same one every write path runs: a stale token matches zero rows and fails with
+`ErrorCode: CONFLICT`, leaving the stored object untouched (an upload's just-written blob
+is removed). Omitting the token on a token table is rejected, and supplying one for a
+table that declares none is rejected too — silently ignoring it would leave a client
+believing it had guarded a write that it had not. See
+[Mutations](/BifrostQL/guides/mutations/#optimistic-concurrency).
+
 ## How an upload stays safe
 
-The upload path runs the mutation pipeline twice, and the order matters:
+The upload path orders its steps so that no failure can destroy content, and the write
+gate is the mutation pipeline — the same one every other write in the product runs:
 
-1. **Pre-check.** The pipeline runs against the primary key alone. This evaluates tenant
-   scope, soft delete, row scope, and table-level policy before a byte is written, while
-   leaving required-value validation untripped — the file value does not exist yet.
-2. **Reachability.** A `SELECT` confirms the row is visible under the filter the pre-check
-   produced. A caller who cannot write the row is refused here, having uploaded nothing.
-3. **Size and type checks**, against the smaller of the bucket and column caps and against
+1. **Reachability.** The row is read through the query-intent seam, so tenant scope, soft
+   delete, row scope and column read guards decide whether the caller can see it at all.
+   A caller who cannot is refused here, having uploaded nothing.
+2. **Size and type checks**, against the smaller of the bucket and column caps and against
    the configured MIME allow-list. A configured allow-list with no supplied content type
    is refused.
-4. **Upload to a fresh random key.** The upload API exposes no key parameter, so no caller
+3. **Upload to a fresh random key.** The upload API exposes no key parameter, so no caller
    can direct a write at a chosen address.
-5. **Write the pointer** through the full pipeline. On failure, or when the update affects
-   zero rows, the just-written blob is deleted and the call fails.
+4. **Write the pointer** through `TableMutationPipeline`: policy, validation, tenant pin,
+   the concurrency token, audit stamps, the approval gate, change history, and the CDC
+   outbox — all inside one transaction. On failure, or when the update affects zero rows,
+   the just-written blob is deleted and the call fails.
 
-Step 4 is what makes step 5's cleanup safe. Because the storage key is random rather than
+Step 3 is what makes step 4's cleanup safe. Because the storage key is random rather than
 derived from the caller's arguments, the compensating delete can only remove the blob this
 call created. A deterministic key would make the same cleanup delete another row's
 content — the failure mode recorded as invariant 8 in
 `.claude/rules/protocol-adapter-security.md`.
+
+One outcome is deliberately not compensated: on an **approval-gated** table the pipeline
+does not reject the write, it enqueues it as a pending change whose payload points at the
+uploaded object. The object therefore stays, so the approver's replay has something to
+point at.
+
+`_fileDelete` runs the mirror order: the pointer is cleared through the pipeline **first**,
+and the object is removed only once that write has committed. The pipeline is the
+authorization gate and may veto or defer, so removing the object before it ran would
+destroy content the veto existed to protect. If the object delete then fails, the call
+reports the storage key of the now-unreferenced object rather than swallowing it.
 
 Storage keys are also checked for traversal. A `..` segment, an absolute path, or a key
 resolving outside the bucket and prefix is refused by both providers.
@@ -174,6 +206,6 @@ and `recursive` walks subfolders. Both the local and S3 providers can list a fol
 - [S3-Compatible Object Storage over SQL](/BifrostQL/guides/s3/) — serving these same file
   columns to AWS CLI and rclone clients.
 - [Row and Column Authorization Policies](/BifrostQL/guides/authorization/) — the checks the
-  upload pre-check evaluates.
+  file mutations run, on the read that resolves the row and on the pipeline write.
 - [BifrostQL Configuration Reference](/BifrostQL/reference/configuration/) — the full
   metadata key list.

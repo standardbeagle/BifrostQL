@@ -31,6 +31,9 @@ namespace BifrostQL.Core.Resolvers
             var fileContent = context.GetArgument<byte[]>("file");
             var fileName = context.GetArgument<string>("filename");
             var contentType = context.GetArgument<string>("contentType");
+            // The optimistic-concurrency token the row was read at, for a table that
+            // declares one. Passed straight to the pipeline, which owns the guard.
+            var concurrencyToken = context.GetArgument<string>("concurrencyToken");
 
             if (string.IsNullOrWhiteSpace(tableName))
                 throw new BifrostExecutionError("Table name is required");
@@ -78,7 +81,7 @@ namespace BifrostQL.Core.Resolvers
             try
             {
                 affectedRows = await FilePointerAccess.WritePointerAsync(
-                    context, bifrost, table, column, keyData, fileMetadata.ToJson());
+                    context, bifrost, table, column, keyData, fileMetadata.ToJson(), concurrencyToken);
             }
             catch (BifrostExecutionError pending) when (pending.ErrorCode == ApprovalInterceptMutationHook.PendingApprovalCode)
             {

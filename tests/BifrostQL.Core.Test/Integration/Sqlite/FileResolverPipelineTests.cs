@@ -270,7 +270,7 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
 
         result.Should().Be(true);
         (await Scalar("SELECT file_data FROM hist_docs WHERE id = 1")).Should().BeNull();
-        (await CountAsync("__history", "entity = 'main.hist_docs' AND entity_id = '1'"))
+        (await CountAsync("__history", "entity = 'main.hist_docs' AND op = 'update' AND entity_id LIKE '%1%'"))
             .Should().Be(1, "clearing a file pointer is a tracked change like any other update");
         _storage.DeletedKeys.Should().ContainSingle().Which.Should().Be("hist.bin");
     }
@@ -290,7 +290,7 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
         upload.Success.Should().BeTrue();
         (await Scalar("SELECT file_data FROM hist_docs WHERE id = 2")).As<string>()
             .Should().Contain(upload.FileKey, "the row must point at the newly uploaded object");
-        (await CountAsync("__history", "entity = 'main.hist_docs' AND entity_id = '2'")).Should().Be(1);
+        (await CountAsync("__history", "entity = 'main.hist_docs' AND op = 'update' AND entity_id LIKE '%2%'")).Should().Be(1);
     }
 
     // ---- CDC outbox: the event the hand-rolled UPDATE never emitted ----

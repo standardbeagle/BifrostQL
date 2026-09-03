@@ -1,16 +1,14 @@
-using System.Data.Common;
 using BifrostQL.Core.Model;
-using BifrostQL.Core.Modules;
-using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Modules.Approval;
 using BifrostQL.Core.Storage;
 using GraphQL;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Resolvers
 {
     /// <summary>
     /// GraphQL resolver for file upload operations.
-    /// Handles uploading files to storage and updating database records.
+    /// Uploads the content to storage and repoints the row's file column through
+    /// the mutation pipeline.
     /// </summary>
     public sealed class FileUploadResolver : BifrostResolverBase
     {
@@ -25,8 +23,6 @@ namespace BifrostQL.Core.Resolvers
         {
             var bifrost = new BifrostContextAdapter(context);
             var model = bifrost.Model;
-            var conFactory = bifrost.ConnFactory;
-            var dialect = conFactory.Dialect;
 
             // Get required arguments
             var tableName = context.GetArgument<string>("table");
@@ -60,86 +56,63 @@ namespace BifrostQL.Core.Resolvers
             // never the same scalar broadcast across every key column).
             var keyData = FileRecordKey.BuildKeyData(table, recordId);
 
-            // Filter by the request's active profile so the file-column write applies the
-            // same per-profile module set a normal update does (fail-closed floor retained).
-            var rawMutationTransformers = context.RequestServices?.GetService<IMutationTransformers>();
-            var mutationTransformers = rawMutationTransformers == null
-                ? null
-                : BifrostProfileRegistry.FilterBy(rawMutationTransformers, context.UserContext);
-            var transformContext = new MutationTransformContext
-            {
-                Model = model,
-                UserContext = context.UserContext,
-                Services = context.RequestServices,
-            };
-
-            // Pre-check (fix: verify row-writability BEFORE uploading, so we
-            // never orphan a blob for a nonexistent or other-tenant row). Uses
-            // primary-key-only data so the pipeline is evaluated purely for its
-            // AdditionalFilter (tenant/soft-delete/row-scope policy) and any
-            // table/action-level denial, without tripping column-level
-            // required-value validation for the file column (whose real value
-            // isn't known yet).
-            TableFilter? preCheckFilter = null;
-            if (mutationTransformers != null)
-            {
-                var preCheck = await mutationTransformers.TransformAsync(
-                    table, MutationType.Update, new Dictionary<string, object?>(keyData, StringComparer.OrdinalIgnoreCase), transformContext);
-                preCheck.ThrowIfDenied();
-                preCheckFilter = preCheck.AdditionalFilter;
-            }
-
-            var writable = await RowIsWritable(conFactory, dialect, table, keyData, preCheckFilter);
-            if (!writable)
+            // Confirm the row is visible to this caller BEFORE spending the upload,
+            // through the same read chain a normal read applies. This is a cheap
+            // pre-check, not the write gate: the pipeline below is the gate.
+            var (rowVisible, _) = await FilePointerAccess.ReadPointerAsync(
+                bifrost, table, column, keyData, context.CancellationToken);
+            if (!rowVisible)
                 throw new BifrostExecutionError($"Record not found or not accessible in table '{tableName}'.");
 
-            // Upload file to storage only after confirming the row is writable.
+            // The content goes to a FRESH random storage key, never to an address
+            // derived from the caller's input: UploadFileAsync takes no storage-key
+            // parameter, so the compensating delete below can only ever remove the
+            // object this call just created, and an upload the pipeline goes on to
+            // veto cannot have overwritten the row's existing content in place
+            // (protocol-adapter-security invariant 8a).
             var fileMetadata = await _storageService.UploadFileAsync(
                 table, column, model, recordId, fileContent, fileName, contentType,
                 cancellationToken: context.CancellationToken);
 
-            // Re-run the transformer pipeline with the real column value so
-            // policy column-write-deny and any data rewriting (e.g. audit
-            // stamps) apply to the actual write, then update — checking rows
-            // affected so a race between the pre-check and this write (row
-            // deleted/reassigned/soft-deleted in between) is not reported as
-            // success and does not leave a dangling blob.
-            var updateData = new Dictionary<string, object?>(keyData, StringComparer.OrdinalIgnoreCase)
+            int affectedRows;
+            try
             {
-                [column.ColumnName] = fileMetadata.ToJson(),
-            };
-
-            MutationTransformResult finalResult;
-            if (mutationTransformers != null)
-            {
-                finalResult = await mutationTransformers.TransformAsync(table, MutationType.Update, updateData, transformContext);
-                if (finalResult.Errors.Length > 0)
-                {
-                    // Remove the just-written blob before aborting so a denied write leaves no orphan,
-                    // then throw through the shared helper so the denial keeps its ErrorCode.
-                    await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
-                    finalResult.ThrowIfDenied();
-                }
+                affectedRows = await FilePointerAccess.WritePointerAsync(
+                    context, bifrost, table, column, keyData, fileMetadata.ToJson());
             }
-            else
+            catch (BifrostExecutionError pending) when (pending.ErrorCode == ApprovalInterceptMutationHook.PendingApprovalCode)
             {
-                finalResult = new MutationTransformResult { MutationType = MutationType.Update, Data = updateData };
+                // The approval gate did not reject the write, it DEFERRED it: a pending
+                // change now holds this pointer as its intended payload. Reclaiming the
+                // object here would leave the approver to apply a pointer to content that
+                // no longer exists, so the object stays and the caller is told the change
+                // is pending. An object left by a change that is later rejected is
+                // unreferenced residue for out-of-band collection.
+                throw;
+            }
+            catch
+            {
+                // Nothing committed, so the object this call uploaded is unreferenced.
+                await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
+                throw;
             }
 
-            var rowsAffected = await UpdateDatabaseRecord(conFactory, dialect, table, keyData, finalResult);
-            if (rowsAffected == 0)
+            // Zero rows means the pipeline scoped the write away (row deleted,
+            // reassigned or soft-deleted between the pre-check and the write). This is
+            // the pipeline's REAL affected-row count, never its scalar return, which on
+            // a single-key table is the KEY — inert for every nonzero key and wrong for
+            // key value 0 (invariant 8b).
+            if (affectedRows == 0)
             {
                 await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
                 throw new BifrostExecutionError($"Record not found or not accessible in table '{tableName}'.");
             }
 
-            // Re-upload orphans the previous blob referenced by the row's prior
-            // metadata; that cleanup is intentionally best-effort and
-            // out-of-band (a stale row is impossible here because the UPDATE
-            // above already committed the new reference), so failures are
-            // swallowed rather than turning a successful upload into an error.
-            // See docs: orphaned blobs from superseded uploads are expected to
-            // be reclaimed by out-of-band storage GC, not by this request path.
+            // Re-upload orphans the previous object referenced by the row's prior
+            // metadata; that cleanup is intentionally best-effort and out-of-band (a
+            // stale row is impossible here because the pointer write above already
+            // committed the new reference). See docs: orphaned objects from superseded
+            // uploads are reclaimed by storage GC, not by this request path.
 
             // Return file metadata
             return new FileUploadResult
@@ -155,113 +128,11 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// Checks whether a row exists under the combined tenant/soft-delete/
-        /// row-scope-policy filter, without writing anything. Used to confirm
-        /// writability before spending the (potentially large) storage upload.
-        /// </summary>
-        private static async Task<bool> RowIsWritable(
-            IDbConnFactory conFactory,
-            ISqlDialect dialect,
-            IDbTable table,
-            Dictionary<string, object?> keyData,
-            TableFilter? additionalFilter)
-        {
-            await using var conn = conFactory.GetConnection();
-            try
-            {
-                await conn.OpenAsync();
-                await using var cmd = conn.CreateCommand();
-
-                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var whereClause = string.Join(" AND ", keyData.Keys.Select(k => $"{dialect.EscapeIdentifier(k)} = @{k}"));
-
-                var parameters = new SqlParameterCollection();
-                var filterSuffix = "";
-                IReadOnlyList<SqlParameterInfo> filterParams = Array.Empty<SqlParameterInfo>();
-                if (additionalFilter != null)
-                {
-                    var rendered = additionalFilter.RenderForMutation(dialect, parameters);
-                    filterSuffix = $" AND ({rendered.Sql})";
-                    filterParams = parameters.Parameters;
-                }
-
-                cmd.CommandText = $"SELECT 1 FROM {tableRef} WHERE {whereClause}{filterSuffix}";
-                DbParameterBinder.AddParameters(cmd, keyData);
-                DbParameterBinder.AddExtraParameters(cmd, filterParams);
-
-                var result = await cmd.ExecuteScalarAsync();
-                return result != null;
-            }
-            catch (BifrostExecutionError)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                throw BifrostExecutionError.FromDatabaseException(ex);
-            }
-        }
-
-        private static async Task<int> UpdateDatabaseRecord(
-            IDbConnFactory conFactory,
-            ISqlDialect dialect,
-            IDbTable table,
-            Dictionary<string, object?> keyData,
-            MutationTransformResult transformResult)
-        {
-            await using var conn = conFactory.GetConnection();
-            try
-            {
-                await conn.OpenAsync();
-                await using var cmd = conn.CreateCommand();
-
-                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                // Database-named on the way out of the chain (see IMutationTransformers).
-                var dbData = transformResult.Data;
-                var setData = dbData
-                    .Where(d => !keyData.ContainsKey(d.Key))
-                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-                if (setData.Count == 0)
-                    return 0;
-
-                var setClause = string.Join(",", setData.Select(kv => DbParameterBinder.SetAssignment(dialect, table, kv.Key)));
-                var whereClause = string.Join(" AND ", keyData.Keys.Select(k => $"{dialect.EscapeIdentifier(k)} = @{k}"));
-
-                var parameters = new SqlParameterCollection();
-                var filterSuffix = "";
-                IReadOnlyList<SqlParameterInfo> filterParams = Array.Empty<SqlParameterInfo>();
-                if (transformResult.AdditionalFilter != null)
-                {
-                    var rendered = transformResult.AdditionalFilter.RenderForMutation(dialect, parameters);
-                    filterSuffix = $" AND ({rendered.Sql})";
-                    filterParams = parameters.Parameters;
-                }
-
-                cmd.CommandText = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{filterSuffix}";
-
-                DbParameterBinder.AddParameters(cmd, keyData);
-                DbParameterBinder.AddParameters(cmd, setData);
-                DbParameterBinder.AddExtraParameters(cmd, filterParams);
-
-                return await cmd.ExecuteNonQueryAsync();
-            }
-            catch (BifrostExecutionError)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                throw BifrostExecutionError.FromDatabaseException(ex);
-            }
-        }
-
-        /// <summary>
-        /// Best-effort cleanup of a blob that was just uploaded but whose
+        /// Best-effort cleanup of an object that was just uploaded but whose
         /// corresponding row write failed or affected zero rows, so a rejected
-        /// upload does not leave an orphaned object in storage. Failures here
-        /// are swallowed: the caller is already about to raise the original
-        /// error, and a cleanup failure must not mask it or crash the request.
+        /// upload does not leave an orphan in storage. Failures here are swallowed:
+        /// the caller is already about to raise the original error, and a cleanup
+        /// failure must not mask it or crash the request.
         /// </summary>
         private async Task TryDeleteOrphanBlobAsync(
             IDbTable table, ColumnDto column, IDbModel model, FileMetadata fileMetadata, CancellationToken cancellationToken)

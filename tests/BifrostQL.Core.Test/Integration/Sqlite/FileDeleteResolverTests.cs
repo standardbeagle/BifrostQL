@@ -13,8 +13,9 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// Integration tests for <see cref="FileDeleteResolver"/> against a real SQLite
 /// database. Covers the two safety invariants added to the delete path:
 /// (a) unparseable metadata fails fast rather than clearing the DB pointer, and
-/// (b) a storage-delete failure leaves the DB pointer intact (delete happens
-/// before the DB is cleared).
+/// (b) a storage-delete failure — which can only happen AFTER the pipeline has
+/// committed the pointer clear — is surfaced as reclaimable residue, never
+/// swallowed.
 /// </summary>
 public sealed class FileDeleteResolverTests : IDisposable
 {
@@ -82,7 +83,7 @@ public sealed class FileDeleteResolverTests : IDisposable
     }
 
     [Fact]
-    public async Task StorageDeleteFails_DatabasePointerNotCleared()
+    public async Task StorageDeleteFails_PointerIsAlreadyClearedAndTheResidueIsSurfaced()
     {
         var metadata = new FileMetadata
         {
@@ -99,13 +100,19 @@ public sealed class FileDeleteResolverTests : IDisposable
 
         var act = async () => await resolver.ResolveAsync(Context(BuildModel("failing")));
 
-        await act.Should().ThrowAsync<Exception>();
-        // Storage delete threw before the UPDATE ran, so the pointer is intact.
-        (await ReadPhotoAsync()).Should().Be(metadata);
+        // The pointer is cleared FIRST, through the mutation pipeline — the write gate,
+        // which may veto. Removing the object before it ran would destroy content a veto
+        // was meant to protect, unrecoverably. So a failing object delete now leaves an
+        // object no row references any more: real residue, surfaced as the dedicated
+        // residue type carrying its storage key so an operator can reclaim it, never
+        // swallowed and never mistaken for a denial.
+        (await act.Should().ThrowAsync<FileObjectResidueException>())
+            .Which.StorageKey.Should().Be("widget/photo/1_file.bin");
+        (await ReadPhotoAsync()).Should().BeNull();
     }
 
     [Fact]
-    public async Task StorageDeleteSucceeds_DeletesFileThenClearsPointer()
+    public async Task StorageDeleteSucceeds_ClearsPointerThenDeletesFile()
     {
         var metadata = new FileMetadata
         {

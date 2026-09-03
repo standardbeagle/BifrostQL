@@ -688,11 +688,14 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public async Task AdapterProvider_StdioSessionNoPrincipal_YieldsEmptyContext_AndTenantReadFailsClosed()
         {
-            // The adapter derives its provider from the shared auth factory. A stdio
-            // session has no authenticated principal, so the factory projects an empty
-            // (fail-closed) context — the adapter parses no claims of its own.
+            // The adapter derives its provider from the shared auth factory. A stdio session
+            // has no authenticated principal, so under the explicit anonymous opt-in the
+            // factory projects an empty context — the adapter parses no claims of its own.
+            // (Without that opt-in the session is refused outright; see
+            // DefaultFailClosedMode_NoCredential_RefusesRequest_NeverEmptyContext.)
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
-            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services);
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(
+                factory, _host.Services, new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
 
             provider().Should().BeEmpty(
                 "a stdio session carries no principal, so the shared factory projects an empty default context");
@@ -711,7 +714,8 @@ namespace BifrostQL.Mcp.Test
             // When the shared factory projects a tenant identity, the adapter passes it
             // through unchanged to every intent — no bespoke re-derivation of scope.
             var factory = new StubTenantAuthFactory("A");
-            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services);
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(
+                factory, _host.Services, new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
 
             var ctx = provider();
             ctx.Should().ContainKey("tenant_id");
@@ -856,8 +860,7 @@ namespace BifrostQL.Mcp.Test
         public async Task CredentialSource_AbsentOnEitherTransport_MintsNoIdentity_FailsClosed()
         {
             // Criterion 5: an absent credential on EITHER transport (unset env var / missing
-            // header) mints no identity, so the empty context drives the fail-closed rejection —
-            // never anonymous.
+            // header) mints no identity, so the request is refused — never served anonymously.
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
 
             var absentEnv = BearerOptionsWith(
@@ -868,11 +871,13 @@ namespace BifrostQL.Mcp.Test
             foreach (var options in new[] { absentEnv, absentHeader })
             {
                 var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-                provider().Should().BeEmpty("an absent credential mints no identity — never anonymous");
+                var act = () => provider();
+                act.Should().Throw<McpIdentityException>(
+                    "an absent credential mints no identity — the request is refused, never anonymous");
 
                 var result = await QueryOrdersWith(provider);
                 result.IsError.Should().BeTrue();
-                AssertTenantDenialIsSanitized(result);
+                AssertIdentityRefusalIsSanitized(result);
             }
         }
 

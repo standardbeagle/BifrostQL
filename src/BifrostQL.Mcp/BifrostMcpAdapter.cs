@@ -20,17 +20,22 @@ namespace BifrostQL.Mcp
     public enum McpAuthMode
     {
         /// <summary>
-        /// Default. No identity source is configured, so every session runs with an EMPTY user
-        /// context: schema/metadata tools (which need no tenant) work, and any tenant-filtered
-        /// row read fails closed ("Tenant context required") exactly like an unauthenticated
-        /// GraphQL request. Nothing is logged — this is the safe resting state.
+        /// Default. No identity source is configured, so no request can establish one — and a
+        /// request that establishes no identity is REFUSED (<c>McpIdentityException</c>,
+        /// sanitized onto the wire). It does NOT run with an empty user context: an empty
+        /// context only stops reads of tables that carry tenant metadata, leaving every other
+        /// table readable by a caller with no identity at all. Nothing is logged — refusing
+        /// everything is the safe resting state, and a deployment that wants anonymous access
+        /// opts into <see cref="AnonymousDev"/>.
         /// </summary>
         FailClosed = 0,
 
         /// <summary>
-        /// Deliberate anonymous/dev opt-in. Behaves like <see cref="FailClosed"/> at runtime
-        /// (empty context, tenant reads still fail closed), but enabling it is a posture change
-        /// the adapter logs as a startup warning — mirroring the RESP <c>EnableWrites</c> opt-in.
+        /// Deliberate anonymous opt-in (dev/stdio demos). Sessions run with an EMPTY user
+        /// context — schema/metadata tools work and tenant-filtered reads still fail closed in
+        /// the pipeline — and enabling it is a posture change the adapter logs as a startup
+        /// warning, mirroring the RESP <c>EnableWrites</c> opt-in. This is the ONLY mode that
+        /// serves a caller who presents no identity.
         /// </summary>
         AnonymousDev,
 
@@ -38,9 +43,10 @@ namespace BifrostQL.Mcp
         /// Bearer/JWT mode. The adapter validates the presented token BEFORE any identity is
         /// minted; a valid token yields a <see cref="ClaimsPrincipal"/> handed to
         /// <see cref="IBifrostAuthContextFactory"/> for projection (which throws on an unmapped
-        /// issuer — fail closed). An absent or invalid token mints NO identity, so the empty
-        /// context drives the same "Tenant context required" rejection — never an anonymous
-        /// pass-through. The adapter parses no claims of its own.
+        /// issuer — fail closed). An absent or invalid token mints NO identity, so the request
+        /// is refused exactly as under <see cref="FailClosed"/> — never an anonymous
+        /// pass-through, and never a partial read of whatever carries no tenant metadata. The
+        /// adapter parses no claims of its own.
         /// </summary>
         Bearer,
     }
@@ -215,11 +221,11 @@ namespace BifrostQL.Mcp
         /// Builds the per-call user-context provider selected by <paramref name="authOptions"/>.
         /// Identity flows ONLY through <paramref name="authContextFactory"/>: in bearer mode the
         /// presented token is validated FIRST and, only if valid, its
-        /// <see cref="ClaimsPrincipal"/> is attached to the carrier for the factory to project;
-        /// anonymous/dev and fail-closed modes attach no principal, so the factory projects an
-        /// empty context and tenant-filtered reads fail closed. The adapter reads no claims and
-        /// builds no predicate — an unmapped issuer or absent/invalid token yields no identity,
-        /// never an anonymous pass-through.
+        /// <see cref="ClaimsPrincipal"/> is attached to the carrier for the factory to project.
+        /// When no principal is established the call is REFUSED — the empty context is served
+        /// only under the explicit <see cref="McpAuthMode.AnonymousDev"/> opt-in. The adapter
+        /// reads no claims and builds no predicate; an unmapped issuer or an absent/invalid
+        /// token yields no identity, never an anonymous pass-through.
         /// </summary>
         internal static Func<IDictionary<string, object?>> CreateUserContextProvider(
             IBifrostAuthContextFactory authContextFactory, IServiceProvider services, McpAuthOptions authOptions)
@@ -228,14 +234,18 @@ namespace BifrostQL.Mcp
                 var carrier = new DefaultHttpContext { RequestServices = services };
 
                 // Bearer mode: validate the presented token BEFORE any identity is minted. Only a
-                // valid token attaches a principal; an absent/invalid token leaves the carrier
-                // unauthenticated so the factory projects an empty (fail-closed) context.
-                if (authOptions.Mode == McpAuthMode.Bearer)
-                {
-                    var principal = ValidateBearer(authOptions);
-                    if (principal is not null)
-                        carrier.User = principal;
-                }
+                // valid token attaches a principal.
+                var principal = authOptions.Mode == McpAuthMode.Bearer
+                    ? ValidateBearer(authOptions)
+                    : null;
+
+                // No identity means no service: fail closed for real. Anonymous access exists
+                // only as the deliberate opt-in, which logs a startup warning.
+                if (principal is null && authOptions.Mode != McpAuthMode.AnonymousDev)
+                    throw new McpIdentityException();
+
+                if (principal is not null)
+                    carrier.User = principal;
 
                 return authContextFactory.CreateUserContext(carrier);
             };

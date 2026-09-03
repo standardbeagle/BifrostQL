@@ -207,9 +207,13 @@ namespace BifrostQL.Mcp
                     .ResolveBearerPrincipalAsync(_authOptions, header, cancellationToken)
                     .ConfigureAwait(false);
 
-                // A session established WITH a credential must keep resolving one. This is
-                // the expiry/revocation gate: nothing else re-checks the token's validity.
-                if (_sessionCredential is not null && principal is null)
+                // No principal, no service. This covers both the expiry/revocation gate (a
+                // session opened WITH a credential whose token stopped resolving) and the
+                // posture itself: under FailClosed/Bearer a caller who establishes no identity
+                // is refused, never served with an empty user context — an empty context only
+                // guards tables that carry tenant metadata. Anonymous access is reachable only
+                // through the explicit AnonymousDev opt-in.
+                if (principal is null && _authOptions.Mode != McpAuthMode.AnonymousDev)
                     throw new McpIdentityException();
 
                 var factory = BifrostAuthContextFactory.Resolve(httpContext);

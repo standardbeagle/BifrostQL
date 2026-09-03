@@ -655,10 +655,15 @@ namespace BifrostQL.Mcp.Test
             text.Should().NotContain("main.orders", "the wire must not name a schema-qualified table");
         }
 
-        private async Task<CallToolResult> QueryOrdersWith(Func<IDictionary<string, object?>> provider)
+        private Task<CallToolResult> QueryOrdersWith(Func<IDictionary<string, object?>> provider)
+            => QueryOrdersWith(provider, toolPolicy: null);
+
+        private async Task<CallToolResult> QueryOrdersWith(
+            Func<IDictionary<string, object?>> provider, McpToolPolicyOptions? toolPolicy)
         {
             var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
-            var options = BifrostMcpServerFactory.CreateServerOptions(executor, userContextProvider: provider);
+            var options = BifrostMcpServerFactory.CreateServerOptions(
+                executor, userContextProvider: provider, toolPolicy: toolPolicy);
 
             var clientToServer = new Pipe();
             var serverToClient = new Pipe();
@@ -1199,6 +1204,55 @@ namespace BifrostQL.Mcp.Test
                 .Select(row => row.GetProperty("name").GetString())
                 .Should().BeEquivalentTo("order-a1", "order-a3");
         }
+
+        [Fact]
+        public async Task OneToolCall_RunsTheCredentialExchangeOnce_EvenWhenTheRoleGateAlsoNeedsIdentity()
+        {
+            // A single tool call asked for identity twice when role gating is configured — once for
+            // the gate's roles, once for the tool — and on stdio every ask re-ran the IdP exchange
+            // (network I/O bridged onto the synchronous provider seam). One call is one caller, so
+            // the call resolves identity once. The memo is per CALL: the next call re-resolves, so
+            // a revoked credential still stops working at the next request.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var store = new FakeExchangeStore(ReaderRolePrincipal());
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => UpstreamIdpToken,
+                CredentialStore = store,
+            };
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+            // bifrost_query is role-gated to a role this caller holds, so the gate resolves roles
+            // before the tool builds its intent — the second ask this test is about.
+            var policy = new McpToolPolicyOptions
+            {
+                RoleToolAllowList = new Dictionary<string, IReadOnlyList<string>>
+                {
+                    ["reader"] = new[] { "bifrost_query" },
+                },
+            };
+
+            var first = await QueryOrdersWith(provider, policy);
+            first.IsError.Should().NotBeTrue(first.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+            store.Invocations.Should().Be(1,
+                "one tool call is one caller: the gate and the tool share a single resolved identity");
+
+            var second = await QueryOrdersWith(provider, policy);
+            second.IsError.Should().NotBeTrue();
+            store.Invocations.Should().Be(2,
+                "the memo never outlives the call — the next call re-derives identity, so a revoked "
+                + "credential stops working at the next request");
+        }
+
+        /// <summary>A tenant-A identity that also carries the role the gating fact allow-lists.</summary>
+        private static ClaimsPrincipal ReaderRolePrincipal() => new(new ClaimsIdentity(
+            new[]
+            {
+                new Claim(ClaimTypes.NameIdentifier, "user-a"),
+                new Claim("bifrost:tenant", "A"),
+                new Claim(ClaimTypes.Role, "reader"),
+            },
+            authenticationType: "TokenExchange"));
 
         [Fact]
         public void McpCredentialStore_SourceSynthesizesNoAmbientPrincipalAndHasNoDefaultRegistration()

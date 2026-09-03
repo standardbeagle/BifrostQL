@@ -358,6 +358,26 @@ namespace BifrostQL.Mcp
         /// <see cref="PolicyIdentity.ExtractRoles"/> (no bespoke claim reading here). A token from an
         /// unmapped OIDC issuer fails closed to no roles, so every role-gated tool stays hidden.
         /// </summary>
+        /// <summary>
+        /// Narrows a user-context provider to ONE resolution per tool call. A single call can ask
+        /// for identity several times — the role gate, then the tool itself, then the visibility
+        /// projection — and on the stdio transport each ask re-ran the configured
+        /// <see cref="IMcpCredentialStore"/> exchange (real IdP network I/O, bridged onto the
+        /// synchronous provider seam). One call is one caller, so resolving once is the right
+        /// answer as well as the cheap one.
+        ///
+        /// <para>The memo is scoped to the CALL and never outlives it, deliberately: a session-wide
+        /// cache would keep serving a revoked or expired credential until disconnect — the
+        /// fail-open the HTTP transport's per-request revalidation exists to prevent. A failed
+        /// resolution is not memoized either, so a refusal is re-derived rather than pinned.</para>
+        /// </summary>
+        private static Func<IDictionary<string, object?>> OncePerCall(
+            Func<IDictionary<string, object?>> userContextProvider)
+        {
+            IDictionary<string, object?>? resolved = null;
+            return () => resolved ??= userContextProvider();
+        }
+
         private static IReadOnlyCollection<string> ResolveRoles(Func<IDictionary<string, object?>> userContextProvider)
         {
             try
@@ -423,7 +443,7 @@ namespace BifrostQL.Mcp
             try
             {
                 return await DispatchToolAsync(
-                    executor, mutationExecutor, writesActive, gate, endpoint, userContextProvider,
+                    executor, mutationExecutor, writesActive, gate, endpoint, OncePerCall(userContextProvider),
                     declarativeTools, beforeRequestAsync, parameters, cancellationToken);
             }
             catch (Exception e) when (IsMappedCondition(e))

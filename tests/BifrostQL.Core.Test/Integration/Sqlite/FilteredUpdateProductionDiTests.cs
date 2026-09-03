@@ -37,6 +37,20 @@ public sealed class FilteredUpdateProductionDiTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
         await Exec("DROP TABLE IF EXISTS orders");
+        await Exec("DROP TABLE IF EXISTS __history");
+        await Exec("""
+            CREATE TABLE __history (
+                id              INTEGER PRIMARY KEY,
+                entity          TEXT NOT NULL,
+                entity_id       TEXT NOT NULL,
+                op              TEXT NOT NULL,
+                actor           TEXT NULL,
+                changed_at      TEXT NOT NULL,
+                before          TEXT NULL,
+                after           TEXT NULL,
+                changed_columns TEXT NULL
+            )
+            """);
         await Exec("""
             CREATE TABLE orders (
                 id INTEGER PRIMARY KEY,
@@ -92,13 +106,18 @@ public sealed class FilteredUpdateProductionDiTests : IAsyncLifetime
         return services.BuildServiceProvider();
     }
 
-    private static async Task<IDbModel> LoadModelAsync(Action<IDbTable>? configure = null)
+    /// <summary>
+    /// Loads the model with <paramref name="metadataRules"/> applied AT LOAD TIME. Module
+    /// configs (history among them) are parsed and cached per table instance while the model
+    /// loads, so metadata poked into a table afterwards is invisible to them — the rules are
+    /// the only honest way to give a table its module opt-in here.
+    /// </summary>
+    private static async Task<IDbModel> LoadModelAsync(params string[] metadataRules)
     {
         var model = await new DbModelLoader(
-            new SqliteDbConnFactory(ConnString), new MetadataLoader(Array.Empty<string>())).LoadAsync();
-        var table = model.GetTableFromDbName("orders");
-        table.Metadata[MetadataKeys.FilteredUpdate.Enabled] = FilteredUpdateConfig.EnabledValue;
-        configure?.Invoke(table);
+            new SqliteDbConnFactory(ConnString), new MetadataLoader(metadataRules)).LoadAsync();
+        model.GetTableFromDbName("orders").Metadata[MetadataKeys.FilteredUpdate.Enabled] =
+            FilteredUpdateConfig.EnabledValue;
         return model;
     }
 
@@ -141,11 +160,9 @@ public sealed class FilteredUpdateProductionDiTests : IAsyncLifetime
     [Fact]
     public async Task UpdateWhere_UnderProductionDi_StillRefusesAHistoryTable()
     {
-        var model = await LoadModelAsync(t =>
-        {
-            t.Metadata[MetadataKeys.History.Enabled] = MetadataKeys.History.AllOperations;
-            t.Metadata[MetadataKeys.History.Table] = "orders_history";
-        });
+        var model = await LoadModelAsync(
+            "main.orders { history: enabled }",
+            ":root { history-table: main.__history }");
 
         var result = await ExecuteAsync(model,
             "mutation { orders(updateWhere: { set: { status: \"paid\" }, where: { status: { _eq: \"new\" } } }) }");
@@ -160,11 +177,7 @@ public sealed class FilteredUpdateProductionDiTests : IAsyncLifetime
     [Fact]
     public async Task UpdateWhere_UnderProductionDi_StillRefusesAnApprovalTable()
     {
-        var model = await LoadModelAsync(t =>
-        {
-            t.Metadata[MetadataKeys.Approval.Marker] = MetadataKeys.Approval.Enabled;
-            t.Metadata[MetadataKeys.Approval.ApproverRole] = "approver";
-        });
+        var model = await LoadModelAsync("main.orders { approval: enabled; approver-role: approver }");
 
         var result = await ExecuteAsync(model,
             "mutation { orders(updateWhere: { set: { status: \"paid\" }, where: { status: { _eq: \"new\" } } }) }");

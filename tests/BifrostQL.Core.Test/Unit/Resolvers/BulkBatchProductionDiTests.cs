@@ -131,7 +131,7 @@ public sealed class BulkBatchProductionDiTests
                     break;
                 case "deferred":
                     t.WithMetadata(MetadataKeys.Deferred.Deferrable, MetadataKeys.Deferred.Enabled)
-                        .WithMetadata(MetadataKeys.Deferred.UndoWindow, "00:05:00");
+                        .WithMetadata(MetadataKeys.Deferred.UndoWindow, "12h");
                     break;
                 case "cdc":
                     t.WithMetadata(MetadataKeys.Cdc.EmitEvents, "insert,update,delete");

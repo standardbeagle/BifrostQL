@@ -2,12 +2,12 @@
   "Task": "customer-1-open-orders-and-total",
   "Generic": {
     "Calls": 2,
-    "ResponseBytes": 234
+    "ResponseBytes": 237
   },
   "Declared": {
     "Calls": 1,
     "ResponseBytes": 105
   },
   "CallsSaved": 1,
-  "BytesSaved": 129
+  "BytesSaved": 132
 }

@@ -292,6 +292,15 @@ namespace BifrostQL.Mcp.Test
             // (nor reports) the full group count of a high-cardinality groupBy.
             payload.TryGetProperty("groupCount", out _).Should().BeFalse(
                 "the total group count cannot be known without the unbounded read this cap prevents");
+
+            // Which 100 groups come back proves WHERE the cap ran. Ordered by the
+            // group key, 'SKU-*' sorts before 'acme-part-*', so a query-level cap
+            // returns SKU-009..SKU-108 and no acme SKU; truncating the materialized
+            // rows instead would keep insertion order and start with acme-part-001.
+            var skus = payload.GetProperty("groups").EnumerateArray()
+                .Select(g => g.GetProperty("group").GetProperty("sku").GetString()!).ToList();
+            skus.Should().BeInAscendingOrder();
+            skus.Should().Contain("SKU-108").And.NotContain("acme-part-001");
         }
 
         [Fact]

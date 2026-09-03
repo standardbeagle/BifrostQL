@@ -23,9 +23,11 @@ namespace BifrostQL.Mcp
         internal const string ToolName = "bifrost_aggregate";
 
         /// <summary>
-        /// Steering cap on returned groups: grouped SQL is unpaged, so a
-        /// high-cardinality groupBy is truncated here with guidance instead of
-        /// flooding the agent's context.
+        /// Steering cap on returned groups. Enforced on the QUERY (as its limit),
+        /// not on the materialized rows: truncating after the read bounds the
+        /// agent's context but not the database work, and picks its groups from
+        /// an unordered result. One extra group is requested so an exhausted
+        /// window is distinguishable from an exactly-full one.
         /// </summary>
         private const int MaxGroups = 100;
 
@@ -86,11 +88,11 @@ namespace BifrostQL.Mcp
                     "required": ["group", "measures"]
                   }
                 },
-                "groupCount": { "type": "integer", "description": "Total groups within your access scope." },
                 "returnedCount": { "type": "integer" },
+                "truncated": { "type": "boolean", "description": "True when more groups match than were returned; page with a narrower filter or fewer group columns." },
                 "message": { "type": "string", "description": "Steering guidance when groups were truncated." }
               },
-              "required": ["table", "groups", "groupCount", "returnedCount"]
+              "required": ["table", "groups", "returnedCount", "truncated"]
             }
             """);
 
@@ -142,6 +144,13 @@ namespace BifrostQL.Mcp
                 IncludeCount = includeCount,
                 ValueColumns = valueColumns,
             };
+            // The cap rides on the query, so the database never groups more than the
+            // agent can be shown. The server ceiling may narrow it further, and the
+            // same clamp the SQL applies decides that here — one rule, not two — so a
+            // full window is recognised as truncation rather than reported as the
+            // complete answer.
+            var windowLimit = GqlObjectQuery.ClampRowLimit(model, MaxGroups + 1) ?? MaxGroups + 1;
+            query.Limit = windowLimit;
             if (GetArgument(args, "filter") is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } filterElement)
                 query.Filter = QueryToolCompiler.CompileFilter(table, filterElement, visibleColumnNames);
 
@@ -152,8 +161,12 @@ namespace BifrostQL.Mcp
                 Endpoint = endpoint,
             }, cancellationToken);
 
+            // A full window means the group set is at least as large as the window,
+            // so the answer is partial — say so. A partial result that looks complete
+            // is worse than an explicit partial one.
+            var truncated = result.Rows.Count >= windowLimit;
             var groups = new JsonArray();
-            foreach (var row in result.Rows.Take(MaxGroups))
+            foreach (var row in result.Rows.Take(Math.Min(MaxGroups, windowLimit)))
             {
                 var group = new JsonObject();
                 foreach (var groupColumn in groupColumns)
@@ -168,13 +181,13 @@ namespace BifrostQL.Mcp
             {
                 ["table"] = table.DbName,
                 ["groups"] = groups,
-                ["groupCount"] = result.Rows.Count,
                 ["returnedCount"] = groups.Count,
+                ["truncated"] = truncated,
             };
-            if (result.Rows.Count > MaxGroups)
+            if (truncated)
             {
                 payload["message"] =
-                    $"{result.Rows.Count} groups match; showing the first {MaxGroups} — " +
+                    $"More groups match than the server returns; showing the first {groups.Count} — " +
                     "add a filter or group by fewer / lower-cardinality columns.";
             }
             return payload;

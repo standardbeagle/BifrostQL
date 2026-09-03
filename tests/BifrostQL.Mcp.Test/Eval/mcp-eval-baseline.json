@@ -12,16 +12,16 @@
       "Name": "customer-open-orders-and-total",
       "Calls": 2,
       "Errors": 0,
-      "ResponseChars": 244,
-      "ResponseBytes": 244,
+      "ResponseChars": 247,
+      "ResponseBytes": 247,
       "Passed": true
     }
   ],
   "Totals": {
     "Calls": 4,
     "Errors": 0,
-    "ResponseChars": 1200,
-    "ResponseBytes": 1200,
+    "ResponseChars": 1203,
+    "ResponseBytes": 1203,
     "ErrorRate": 0
   }
 }

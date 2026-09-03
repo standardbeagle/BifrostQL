@@ -220,7 +220,7 @@ public sealed class FilteredUpdateExecutionTests : IAsyncLifetime
             new Dictionary<string, object?> { ["status"] = new Dictionary<string, object?> { ["_eq"] = "new" } },
             ctx);
 
-        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*mutation hooks*");
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*a mutation hook (approval, history, CDC) applies to this table*");
         (await CountAsync("status = 'paid'")).Should().Be(0);
     }
 

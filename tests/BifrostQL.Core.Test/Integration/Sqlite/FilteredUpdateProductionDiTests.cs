@@ -169,7 +169,7 @@ public sealed class FilteredUpdateProductionDiTests : IAsyncLifetime
 
         result.Errors.Should().NotBeNullOrEmpty();
         result.Errors![0].Message.Should().Contain(
-            "not available while mutation hooks (approval, history, CDC) are registered",
+            "not available while a mutation hook (approval, history, CDC) applies to this table",
             "the per-row refusal message is unchanged for a table a hook DOES act on");
         (await CountAsync("status = 'paid'")).Should().Be(0);
     }
@@ -184,7 +184,7 @@ public sealed class FilteredUpdateProductionDiTests : IAsyncLifetime
 
         result.Errors.Should().NotBeNullOrEmpty();
         result.Errors![0].Message.Should().Contain(
-            "not available while mutation hooks (approval, history, CDC) are registered");
+            "not available while a mutation hook (approval, history, CDC) applies to this table");
         (await CountAsync("status = 'paid'")).Should().Be(0);
     }
 }

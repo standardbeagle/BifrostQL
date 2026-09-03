@@ -55,6 +55,12 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         return false;
     }
 
+    /// <summary>
+    /// The writer acts only on a table marked <c>deferrable</c> — the same predicate the body
+    /// below uses to no-op — so a set-based fast path may skip it elsewhere.
+    /// </summary>
+    public bool AppliesTo(IDbTable table) => DeferredConfig.FromTable(table).IsDeferrable;
+
     public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
     {
         var config = DeferredConfig.FromTable(context.Table);

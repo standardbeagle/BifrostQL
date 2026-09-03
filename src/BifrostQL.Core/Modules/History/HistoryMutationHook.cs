@@ -43,6 +43,12 @@ namespace BifrostQL.Core.Modules.History
         internal sealed record BeforeImage(IReadOnlyDictionary<string, object?>? Row);
 
         /// <summary>
+        /// The writer acts only on a table that opts into <c>history</c> — the same predicate
+        /// both phases below use to no-op — so a set-based fast path may skip it elsewhere.
+        /// </summary>
+        public bool AppliesTo(IDbTable table) => HistoryConfig.FromTable(table).RecordsHistory;
+
+        /// <summary>
         /// Pre-write phase: capture the before-image of the row an UPDATE or DELETE is about
         /// to change. An INSERT has no before-image, so it captures nothing.
         /// </summary>

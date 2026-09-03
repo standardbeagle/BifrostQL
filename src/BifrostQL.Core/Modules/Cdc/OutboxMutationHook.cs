@@ -25,6 +25,14 @@ namespace BifrostQL.Core.Modules.Cdc
     /// </summary>
     public sealed class OutboxMutationHook : IInTransactionMutationHook
     {
+        /// <summary>
+        /// The writer acts only on a table that opts into <c>emit-events</c> — the same
+        /// predicate the body below uses to no-op — so a set-based fast path may skip it
+        /// elsewhere. Deliberately per TABLE and not per operation: applicability is asked
+        /// once for a whole batch, which may mix inserts, updates and deletes.
+        /// </summary>
+        public bool AppliesTo(IDbTable table) => CdcEventConfig.FromTable(table).EmitsEvents;
+
         public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
         {
             var config = CdcEventConfig.FromTable(context.Table);

@@ -123,6 +123,15 @@ namespace BifrostQL.Core.Modules.Approval
         public static BifrostExecutionError PendingApprovalError(string message)
             => new(message) { ErrorCode = PendingApprovalCode };
 
+        /// <summary>
+        /// The gate acts only on a table that opts into <c>approval</c>, so a set-based fast
+        /// path may skip it elsewhere. The approved-replay branch below is not a second
+        /// applicability: a replay always targets the gated table its pending row names, and
+        /// it applies ONE row through the single-row pipeline, never a batch or a filtered
+        /// update.
+        /// </summary>
+        public bool AppliesTo(IDbTable table) => ApprovalConfig.FromTable(table).RequiresApproval;
+
         public async ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context)
         {
             var config = ApprovalConfig.FromTable(context.Table);

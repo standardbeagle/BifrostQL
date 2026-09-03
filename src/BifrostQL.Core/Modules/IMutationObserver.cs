@@ -111,6 +111,21 @@ public sealed record MutationObserverContext
 public interface IBeforeCommitMutationHook
 {
     ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context);
+
+    /// <summary>
+    /// Whether this hook can act on <paramref name="table"/> at all — the question the
+    /// set-based fast paths (filtered update, bulk batch) must ask. Every built-in hook
+    /// no-ops for a table without its own metadata, and the built-ins are registered
+    /// UNCONDITIONALLY, so "is a hook registered?" is true in every host and would kill
+    /// both fast paths everywhere (finding H5).
+    ///
+    /// FAIL CLOSED: the default is true. A hook that cannot decide from the table's
+    /// metadata — any hook that does not override this — keeps the per-row path for every
+    /// table. Skipping a hook that would have run is a correctness bug (a missing history
+    /// row, an un-enqueued approval); keeping the slow path is only slower. Override ONLY
+    /// with the same predicate the hook's own body uses to no-op.
+    /// </summary>
+    bool AppliesTo(IDbTable table) => true;
 }
 
 // Composite for before-commit hooks. Parallel to MutationObservers, but with the
@@ -129,6 +144,19 @@ public sealed class BeforeCommitMutationHooks
 
     /// <summary>True when no hook is registered — the bulk batch fast path is only legal then.</summary>
     public bool IsEmpty => _hooks.Count == 0;
+
+    /// <summary>
+    /// True when at least one registered hook can act on <paramref name="table"/> — the
+    /// question the set-based fast paths ask. Registration alone answers nothing: the
+    /// built-ins are always registered and no-op per table.
+    /// </summary>
+    public bool AnyApplies(IDbTable table)
+    {
+        foreach (var hook in _hooks)
+            if (hook.AppliesTo(table))
+                return true;
+        return false;
+    }
 
     // Runs every hook in order and aggregates returned errors. Exceptions are
     // NOT caught — a throwing hook aborts the mutation just as returned errors
@@ -157,6 +185,13 @@ public sealed class BeforeCommitMutationHooks
 public interface IInTransactionMutationHook
 {
     ValueTask AfterWriteInTransactionAsync(MutationObserverContext context);
+
+    /// <summary>
+    /// Whether this hook can act on <paramref name="table"/> at all. Same contract — and
+    /// the same fail-closed default of true — as
+    /// <see cref="IBeforeCommitMutationHook.AppliesTo"/>.
+    /// </summary>
+    bool AppliesTo(IDbTable table) => true;
 }
 
 // Composite for after-write in-transaction hooks. Runs each in registration order
@@ -173,6 +208,18 @@ public sealed class InTransactionMutationHooks
 
     /// <summary>True when no hook is registered — the bulk batch fast path is only legal then.</summary>
     public bool IsEmpty => _hooks.Count == 0;
+
+    /// <summary>
+    /// True when at least one registered hook can act on <paramref name="table"/> — see
+    /// <see cref="BeforeCommitMutationHooks.AnyApplies"/>.
+    /// </summary>
+    public bool AnyApplies(IDbTable table)
+    {
+        foreach (var hook in _hooks)
+            if (hook.AppliesTo(table))
+                return true;
+        return false;
+    }
 
     public async ValueTask RunAsync(MutationObserverContext context)
     {

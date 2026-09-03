@@ -42,14 +42,51 @@ app.UseBifrostQL();        // standard JSON endpoint stays available
 app.Run();
 ```
 
-`UseBifrostBinary` accepts three optional parameters:
+`UseBifrostBinary` accepts these optional parameters:
 
 ```csharp
 app.UseBifrostBinary(
-    path: "/bifrost-ws",   // WebSocket endpoint path
+    path: "/bifrost-ws",       // WebSocket endpoint path
     chunkThreshold: 64 * 1024, // payloads above this are chunked (default 64 KB)
-    ackWindow: 8);          // max unacked chunks before backpressure (default 8)
+    ackWindow: 8,              // max unacked chunks before backpressure (default 8)
+    maxConnections: 100,       // concurrent sockets on this mount
+    firstFrameTimeout: TimeSpan.FromSeconds(30),
+    idleTimeout: TimeSpan.FromMinutes(10));
 ```
+
+### Authentication
+
+The binary endpoint serves the same schema as a GraphQL endpoint, so it carries that
+endpoint's authentication requirement. It resolves the requirement from the endpoint it
+serves — the one named by `graphqlPath`, or the single registered endpoint — and closes an
+anonymous connection with a `PolicyViolation` close status before reading a frame. Nothing
+is executed on such a connection.
+
+The requirement is one setting, not two, so the transport and the endpoint cannot drift
+apart. Serving anonymous callers is always an explicit choice: set `DisableAuth` on the
+endpoint, or pass `requireAuthentication: false` on the mount. A mount that cannot identify
+the endpoint it serves requires authentication.
+
+Set `graphqlPath` whenever more than one GraphQL endpoint is registered. Without it the
+mount cannot tell which endpoint it serves, so it resolves the schema by the
+single-endpoint rule and requires authentication.
+
+### Connection limits
+
+Each mount has its own admission counter. The slot is taken when the socket is upgraded —
+before the authentication check, because an accepted socket already costs a receive buffer
+— and an upgrade over `maxConnections` is refused with HTTP 503 without being accepted.
+
+Every read has a deadline. The first frame gets `firstFrameTimeout`, so a peer that
+connects and then says nothing cannot hold an admission slot; later frames get
+`idleTimeout`, which is generous because an established session is a pooled client that may
+sit quiet between queries. A connection past its deadline is closed with `PolicyViolation`.
+
+Chunked uploads grow from the bytes that actually arrive. The `total_bytes` a client
+declares bounds the transfer and feeds the admission caps (64 MB per transfer, 128 MB
+across one connection), but the server never allocates from it: a transfer that declares
+64 MB and delivers 40 bytes holds 40 bytes and is rejected when its last chunk arrives
+short.
 
 The JSON `/graphql` endpoint and the binary `/bifrost-ws` endpoint can run side-by-side on the same server. Clients pick whichever transport fits the request.
 

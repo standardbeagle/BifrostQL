@@ -66,6 +66,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 | gRPC | 5090 | `loopback` | `GrpcWireOptions.BindAddress` = `IPAddress.Loopback` | `MaxConcurrentConnections` 100 (Kestrel) | Kestrel HTTP/2 defaults | Kestrel HTTP/2 defaults | Kestrel HTTP/2 defaults |
 | LDAP / LDAPS | 389 / `LdapsPort` (nul 則無) | `loopback` | `LdapWireOptions.BindAddress` = `IPAddress.Loopback`（二 port 共此一 posture） | `MaxConnections` 100（跨二 listener 之總數） | `AuthenticationTimeout` 30 s | `IdleTimeout` 5 min | `MaxMessageLength` 1 MiB |
 | HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host's Kestrel | 隨 host 之 Kestrel 配置；BifrostQL 不自binds | — | host | host | host | host |
+| Binary WebSocket (`/bifrost-ws`) | host's Kestrel | 隨 host 之 Kestrel 配置；BifrostQL 不自binds | — | `UseBifrostBinary(maxConnections:)` 100（每 mount 一 counter，取 slot 於 upgrade，先於 identity gate） | `firstFrameTimeout` 30 s | `idleTimeout` 10 min | frame 4 MiB；reassembly 每 session 64 MiB、每 connection 128 MiB（皆由**received** bytes 累，非 client 所 declare） |
 
 規約，凡新 `IProtocolAdapter` 必守：
 
@@ -77,6 +78,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 - **Search/read surface 必 per-request bounded，且 client 唯得narrow。** LDAP `MaxSearchResults`/`MaxSearchDuration`/`MaxMembersPerEntry` 為 server ceiling；client 之 `sizeLimit`/`timeLimit`/page size 唯narrow，永不raise。觸限必report（`sizeLimitExceeded`/`timeLimitExceeded`/`adminLimitExceeded`），不得silent truncate——似完整之partial result 較explicit partial 尤惡。join fan-out 之bound 必per-entry 施，非唯aggregate：aggregate-only 則一巨group 得riding 於諸小group 之page。
 - **Continuation/paging cookie 必 MAC，且 binding 必 re-derive 於 live request。** cookie 唯carry position；scope 由 pipeline 之 tenant/policy/soft-delete 保，非由 cookie。binding（search shape、page size、identity fingerprint）入 MAC 而不transmit，故 cross-search / cross-identity replay 皆fail closed。forge、tamper、cross-context、expiry 必同一outcome。cookie 不validate 則explicit refuse，勿fallback「從頭再scan」。參 `LdapPageCookie`／`ODataContinuationToken`／`GrpcPageCursor`。
 - **Untrusted input 之 regex 必 bounded**：`RegexOptions.NonBacktracking` 或 match timeout，且 timeout 必 map 為 adapter 自有 exception type（見 `.claude/rules/protocol-adapter-security.md` invariant 1）。client-supplied pattern（LIKE 等）宜以 non-regex scan 行之。
+- **HTTP-mounted front door（middleware，非 `IProtocolAdapter`；binary WebSocket 是也）之 auth requirement 必自其所服 endpoint 導出，且 fail closed。** GraphQL endpoints 之 gate 置於各自 `Map` branch 內，故另路 mount 永不受其覆——mount 必自解 requirement（endpoint 不可辨、歧義、或 options 未配置皆 require auth），identity 經共享 `IBifrostAuthContextFactory` 投影，anonymous 唯 explicit（endpoint `DisableAuth` 或 mount 之 `requireAuthentication: false`）方得。且 client-declared size 永不即 allocation：reassembly memory 必由**已收** bytes 累，declared total 唯作 bound 與 admission 之用。
 
 ### Key Components
 

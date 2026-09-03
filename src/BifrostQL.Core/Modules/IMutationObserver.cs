@@ -142,9 +142,6 @@ public sealed class BeforeCommitMutationHooks
         _hooks = hooks;
     }
 
-    /// <summary>True when no hook is registered — the bulk batch fast path is only legal then.</summary>
-    public bool IsEmpty => _hooks.Count == 0;
-
     /// <summary>
     /// True when at least one registered hook can act on <paramref name="table"/> — the
     /// question the set-based fast paths ask. Registration alone answers nothing: the
@@ -205,9 +202,6 @@ public sealed class InTransactionMutationHooks
     {
         _hooks = hooks;
     }
-
-    /// <summary>True when no hook is registered — the bulk batch fast path is only legal then.</summary>
-    public bool IsEmpty => _hooks.Count == 0;
 
     /// <summary>
     /// True when at least one registered hook can act on <paramref name="table"/> — see

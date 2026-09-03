@@ -13,8 +13,9 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     /// Decides whether a batch may take the dialect's set-based fast path and, when it may,
     /// runs the FULL per-row mutation transformer chain and flattens the results into a
     /// <see cref="BulkBatchPlan"/>. Every condition the set-based statements cannot honor —
-    /// registered in-transaction hooks (approval/history/CDC need per-row before-images and
-    /// identities), upserts (per-row existence probe), state machines (per-row current-row
+    /// an in-transaction hook that APPLIES TO THE TABLE (approval/history/CDC need per-row
+    /// before-images and identities; the built-ins are registered in every host and no-op per
+    /// table, so applicability is the question, never registration), upserts (per-row existence probe), state machines (per-row current-row
     /// load), heterogeneous transformer filters — returns null so the caller keeps the
     /// per-row pipeline: falling back is normal operation, never an error.
     /// </summary>
@@ -174,14 +175,17 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 reason = "table has a state machine (needs the per-row current-row load)";
                 return false;
             }
-            if (ctx.Services?.GetService<BeforeCommitMutationHooks>() is { IsEmpty: false })
+            // Per-TABLE applicability, never mere registration: every host registers the
+            // history, approval, deferred and CDC hooks unconditionally, so asking "is any
+            // hook registered?" disabled this path in every host that ever shipped (H5).
+            if (ctx.Services?.GetService<BeforeCommitMutationHooks>()?.AnyApplies(table) == true)
             {
-                reason = "before-commit mutation hooks are registered";
+                reason = "before-commit mutation hooks apply to this table";
                 return false;
             }
-            if (ctx.Services?.GetService<InTransactionMutationHooks>() is { IsEmpty: false })
+            if (ctx.Services?.GetService<InTransactionMutationHooks>()?.AnyApplies(table) == true)
             {
-                reason = "in-transaction mutation hooks are registered";
+                reason = "in-transaction mutation hooks apply to this table";
                 return false;
             }
             reason = "";

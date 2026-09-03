@@ -16,8 +16,9 @@ namespace BifrostQL.Core.Resolvers
     /// <list type="bullet">
     /// <item>table not opted in (<see cref="FilteredUpdateConfig"/>) — re-checked here even
     /// though the SDL gate already hides the argument (a schema is not a security boundary);</item>
-    /// <item>before-commit / in-transaction hooks registered (approval, history, CDC need
-    /// per-row before-images and identities);</item>
+    /// <item>a before-commit / in-transaction hook that APPLIES TO THIS TABLE (approval,
+    /// history, CDC need per-row before-images and identities) — applicability, not mere
+    /// registration: the built-ins are registered in every host and no-op per table;</item>
     /// <item>state machine (per-row current-state validation) or optimistic-concurrency
     /// token (one client version cannot guard N rows, and a zero-affected filtered update is
     /// a legitimate outcome, not a CONFLICT);</item>
@@ -46,8 +47,11 @@ namespace BifrostQL.Core.Resolvers
                     $"Filtered update is not enabled for '{table.TableSchema}.{table.DbName}'. Set '{MetadataKeys.FilteredUpdate.Enabled}: {FilteredUpdateConfig.EnabledValue}' to opt in.");
             TableMutationPipeline.GuardNotHistoryTarget(table, ctx.Model);
 
-            if (ctx.Services?.GetService<BeforeCommitMutationHooks>() is { IsEmpty: false } ||
-                ctx.Services?.GetService<InTransactionMutationHooks>() is { IsEmpty: false })
+            // Per-TABLE applicability, never mere registration: every host registers the
+            // history, approval, deferred and CDC hooks unconditionally, so asking "is any
+            // hook registered?" refused this path in every host that ever shipped (H5).
+            if (ctx.Services?.GetService<BeforeCommitMutationHooks>()?.AnyApplies(table) == true ||
+                ctx.Services?.GetService<InTransactionMutationHooks>()?.AnyApplies(table) == true)
                 throw new BifrostExecutionError(
                     $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available while mutation hooks (approval, history, CDC) are registered — they need per-row semantics. Use the batch mutation instead.");
             if (StateMachineConfigCollector.FromTable(table) is not null)

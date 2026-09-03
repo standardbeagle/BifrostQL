@@ -228,6 +228,24 @@ code, not just re-checks of pgwire.
    read as success, or the fail-open has merely moved. Check the contract at
    the definition; do not infer it from the happy path.
 
+   (c) **The WHERE comes from PRE-chain client columns; zero rows on an
+   inferred write is a failure.** Build a delete/update predicate from the
+   caller's own columns snapshotted BEFORE the transformer chain (plus the
+   primary key) — never from the post-transformer data. A transformer that
+   stamps a column (`AuditMutationTransformer` writing `updated_at` under
+   `populate: updated-on`) turns that stamp into an extra `AND updated_at=@now`
+   WHERE term that matches zero rows, and the caller reports success.
+   `TableMutationPipeline.SelectPredicateColumns` is that contract; call it,
+   do not re-derive a filter (finding H4 —`TreeSyncExecutor` was the third
+   delete path and the only one that had drifted). And where the write target
+   was INFERRED rather than caller-supplied — a sync, reconcile, or cascade
+   deleting a row it just read — an affected-row count of 0 must throw and roll
+   back, not pass quietly: the row is known to exist, so 0 means the statement
+   silently did nothing. The single-row pipeline's tolerant return-0 exists
+   only because the client supplied the predicate; do not copy it into a seam
+   that derives its own targets. An empty predicate is likewise a hard error,
+   never a widening to an unscoped DELETE.
+
    **Fixture rule (why both hid):** the veto test's row had no pre-existing
    object, and every seam test used `id=1` on a single-key table — so
    neither bug could manifest. Any test covering a key-addressed write path

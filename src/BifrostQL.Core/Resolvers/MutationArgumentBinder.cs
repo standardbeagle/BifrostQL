@@ -17,9 +17,11 @@ namespace BifrostQL.Core.Resolvers
         /// <list type="bullet">
         /// <item><c>keyData</c> — primary-key columns, keyed by DATABASE column name
         /// (drives WHERE clauses / current-row loads, which are pure DB-name space).</item>
-        /// <item><c>standardData</c> — non-key columns, keeping their GraphQL field
-        /// names so mutation transformers (e.g. enum-name mapping) still resolve
-        /// columns by GraphQlName; normalized to DB names just before SQL generation.</item>
+        /// <item><c>standardData</c> — non-key columns as the client addressed them
+        /// (GraphQL field names). It only answers "is there anything to SET?"; the
+        /// real SET list is taken from the transformer chain's output, which is
+        /// rekeyed to DB column names once on the way in (see
+        /// <see cref="Modules.IMutationTransformers"/>).</item>
         /// <item><c>data</c> — the union, with key data (DB-named) overlaid on the
         /// standard data.</item>
         /// </list>

@@ -85,7 +85,8 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(
                     $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available: a transformer requires per-row semantics. Use the batch mutation instead.");
 
-            var dbData = ToDbColumnKeys(table, transformResult.Data);
+            // Database-named on the way out of the chain (see IMutationTransformers).
+            var dbData = transformResult.Data;
 
             var combined = transformResult.AdditionalFilter is null
                 ? userFilter

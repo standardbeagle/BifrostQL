@@ -48,9 +48,10 @@ namespace BifrostQL.Core.Modules
 
             foreach (var kv in data)
             {
-                var column = table.Columns.FirstOrDefault(
-                    c => string.Equals(c.GraphQlName, kv.Key, StringComparison.OrdinalIgnoreCase));
-                if (column == null)
+                // Keys are database column names: the chain rekeys its input before the
+                // first transformer runs. The enum column map and the value lookup are
+                // both keyed by column name, so one lookup covers both.
+                if (!table.ColumnLookup.TryGetValue(kv.Key, out var column))
                     continue;
                 if (!map.TryGetEnumType(table.DbName, column.ColumnName, out _))
                     continue;

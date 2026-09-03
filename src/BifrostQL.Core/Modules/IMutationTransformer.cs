@@ -152,6 +152,15 @@ public sealed class MutationTransformContext
 
 /// <summary>
 /// Composite wrapper for multiple mutation transformers.
+///
+/// <para>The wrap owns the mutation payload's NAME SPACE: it rekeys the incoming
+/// data from GraphQL field names to database column names ONCE, before the first
+/// transformer runs, and every transformer therefore sees database column names
+/// only (see <see cref="MutationTransformersWrap.TransformAsync"/>). Callers must
+/// route transformer application through this seam rather than invoking
+/// transformers directly, or a renamed column reaches them under a name none of
+/// their metadata (write-deny lists, state column, audit columns, enum column map)
+/// is expressed in.</para>
 /// </summary>
 public interface IMutationTransformers : IReadOnlyCollection<IMutationTransformer>
 {
@@ -175,7 +184,17 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         MutationTransformContext context)
     {
         var currentType = mutationType;
-        var currentData = data;
+        // Rekey GraphQL field names to real database column names ONCE, before any
+        // transformer runs. Client input is keyed by GraphQL field name, which can be
+        // sanitized or prefixed and so differ from the column ("sale-price" surfaces
+        // as "sale_price"); transformer configuration — policy write-deny lists, the
+        // state-machine state column, audit populate columns, the enum column map — is
+        // expressed in database column names. Splitting the two name spaces let a
+        // renamed column slip past the write-deny check and skip state-transition
+        // validation entirely. One rekey here means every transformer, and the SQL
+        // built from its output, shares one name space; keys that are already column
+        // names (tenant, soft-delete, audit) pass through untouched.
+        var currentData = Resolvers.DbParameterBinder.ToDbColumnKeys(table, data);
         var allErrors = new List<string>();
         // The classification of the FIRST transformer to abort (transformers run in
         // priority order, so the security band — policy/tenant — is seen first).

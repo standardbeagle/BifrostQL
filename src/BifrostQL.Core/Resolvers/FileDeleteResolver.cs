@@ -198,7 +198,8 @@ namespace BifrostQL.Core.Resolvers
                 await using var cmd = conn.CreateCommand();
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var dbData = DbParameterBinder.ToDbColumnKeys(table, transformResult.Data);
+                // Database-named on the way out of the chain (see IMutationTransformers).
+                var dbData = transformResult.Data;
                 var setData = dbData
                     .Where(d => !keyData.ContainsKey(d.Key))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);

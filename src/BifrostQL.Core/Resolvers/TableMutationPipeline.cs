@@ -127,10 +127,9 @@ namespace BifrostQL.Core.Resolvers
             transformResult.ThrowIfDenied();
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — actually reaches the SQL, and rekey
-            // GraphQL field names to real DB column names so sanitized/prefixed
-            // columns land in the right column. Mirrors the delete path.
-            data = ToDbColumnKeys(table, transformResult.Data);
+            // enum-name → DB-value mapping — actually reaches the SQL. It is already
+            // keyed by database column name: the chain rekeys once on the way in.
+            data = transformResult.Data;
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var insertInto = MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys);
@@ -248,11 +247,10 @@ namespace BifrostQL.Core.Resolvers
                 var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
                 // Adopt the (possibly rewritten) data so transformer output — e.g.
-                // enum-name → DB-value mapping — reaches the SQL, rekeyed to real DB
-                // column names. keyData is already DB-named (see MutationArgumentBinder),
-                // so the non-key split and WHERE share one name space; enum columns are
-                // non-key.
-                updatedData = ToDbColumnKeys(table, transformResult.Data);
+                // enum-name → DB-value mapping — reaches the SQL. Both it and keyData
+                // (see MutationArgumentBinder) are database-named, so the non-key split
+                // and the WHERE share one name space; enum columns are non-key.
+                updatedData = transformResult.Data;
                 var standardData = updatedData
                     .Where(d => !propertyInfo.keyData.ContainsKey(d.Key))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -341,10 +339,10 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            // Rekey to DB column names once so the PK split (via ColumnLookup) and
-            // the emitted WHERE/SET use one consistent name space even when a
+            // Database-named on the way out of the chain, so the PK split (via
+            // ColumnLookup) and the emitted WHERE/SET share one name space even when a
             // GraphQL field name differs from its column.
-            var dbData = ToDbColumnKeys(table, transformResult.Data);
+            var dbData = transformResult.Data;
 
             // A transformer may rewrite a delete into a soft-delete UPDATE (deleted_at
             // stamped); otherwise it stays a hard DELETE. Both scope their rows by the

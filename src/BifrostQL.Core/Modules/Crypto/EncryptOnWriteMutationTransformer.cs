@@ -128,15 +128,9 @@ namespace BifrostQL.Core.Modules.Crypto
         private static bool IsEncrypted(ColumnDto column)
             => !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt));
 
-        // Resolves a mutation-data key (GraphQL field name or raw DB column name) to its
-        // column, matching how the rest of the pipeline tolerates both name spaces.
+        // The transformer chain rekeys its input to database column names before the
+        // first transformer runs, so a mutation-data key is a column name here.
         private static ColumnDto? ResolveColumn(IDbTable table, string key)
-        {
-            if (table.GraphQlLookup.TryGetValue(key, out var byGraphQl))
-                return byGraphQl;
-            if (table.ColumnLookup.TryGetValue(key, out var byDb))
-                return byDb;
-            return null;
-        }
+            => table.ColumnLookup.TryGetValue(key, out var column) ? column : null;
     }
 }

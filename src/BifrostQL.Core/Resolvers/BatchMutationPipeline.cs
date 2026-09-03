@@ -332,10 +332,9 @@ namespace BifrostQL.Core.Resolvers
             transformResult.ThrowIfDenied();
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — reaches the SQL, rekeyed from GraphQL
-            // field names to real DB column names. When no transformer applies and
-            // names already match, this is effectively a no-op.
-            data = ToDbColumnKeys(table, transformResult.Data);
+            // enum-name → DB-value mapping — reaches the SQL. It is already keyed by
+            // database column name: the chain rekeys once on the way in.
+            data = transformResult.Data;
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             // Capture the generated identity (mirroring the single-row insert) so a CDC
@@ -366,9 +365,10 @@ namespace BifrostQL.Core.Resolvers
             var dialect = ctx.Dialect;
 
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            // keyData is DB-name space (drives WHERE + current-row load); tolerant of
-            // GraphQL field names. standardData keeps GraphQL names for transformers
-            // and is normalized to DB names before SQL generation.
+            // keyData is DB-name space (drives WHERE + current-row load); the client's
+            // key columns may arrive under their GraphQL field names, so map them.
+            // standardData only gates the "is there anything to SET?" check; the real
+            // SET list is re-derived from the chain's (DB-named) output below.
             var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
                 keyData[ToDbColumnName(table, d.Key)] = d.Value;
@@ -399,11 +399,10 @@ namespace BifrostQL.Core.Resolvers
             var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
             // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — reaches the SQL. The non-key SET split
-            // is recomputed against the (unchanged) primary-key set; enum columns are
-            // non-key. When no transformer applies, Transform returns the same data
-            // reference, so standardData is re-derived identically (no-op).
-            var updatedData = ToDbColumnKeys(table, transformResult.Data);
+            // enum-name → DB-value mapping — reaches the SQL. It is database-named on
+            // the way out of the chain. The non-key SET split is recomputed against the
+            // (unchanged) primary-key set; enum columns are non-key.
+            var updatedData = transformResult.Data;
             standardData = updatedData
                 .Where(d => !keyData.ContainsKey(d.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -473,9 +472,10 @@ namespace BifrostQL.Core.Resolvers
             // replaces — the primary-key predicate.
             var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            // Rekey to DB column names so the predicate split (via ColumnLookup) and the
-            // emitted WHERE/SET share one name space even for sanitized columns.
-            var dbData = ToDbColumnKeys(table, transformResult.Data);
+            // Database-named on the way out of the chain, so the predicate split (via
+            // ColumnLookup) and the emitted WHERE/SET share one name space even for
+            // sanitized columns.
+            var dbData = transformResult.Data;
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
 
             // Shared predicate-column contract with the single-row path

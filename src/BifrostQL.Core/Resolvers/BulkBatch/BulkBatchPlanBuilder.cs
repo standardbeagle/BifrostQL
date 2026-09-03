@@ -221,7 +221,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             if (data.Count == 0) return null;
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             transformResult.ThrowIfDenied();
-            var dbData = ToDbColumnKeys(table, transformResult.Data);
+            // Database-named on the way out of the chain (see IMutationTransformers).
+            var dbData = transformResult.Data;
             var columns = dbData.Keys.ToList();
             return new StagedRowParts(
                 BulkOpCode.Insert, columns, Array.Empty<string>(), dbData,
@@ -245,7 +246,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             transformResult.ThrowIfDenied();
             var filter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            var updatedData = ToDbColumnKeys(table, transformResult.Data);
+            var updatedData = transformResult.Data;
             var setColumns = updatedData.Keys.Where(k => !keyData.ContainsKey(k)).ToList();
             if (setColumns.Count == 0) return null;
 
@@ -274,13 +275,12 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             transformResult.ThrowIfDenied();
             var filter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
-            var dbData = ToDbColumnKeys(table, transformResult.Data);
+            var dbData = transformResult.Data;
 
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete rewrite: key columns scope the WHERE; the transformer-stamped
-                // deleted_at/deleted_by columns become the SET. Mirrors the per-row branch,
-                // including surfacing the PRE-rekey data to observers.
+                // deleted_at/deleted_by columns become the SET. Mirrors the per-row branch.
                 var keyColumns = dbData.Keys.Where(k => IsPrimaryKeyColumn(table, k)).ToList();
                 var setColumns = dbData.Keys.Where(k => !IsPrimaryKeyColumn(table, k)).ToList();
                 if (keyColumns.Count == 0 || setColumns.Count == 0) return null;

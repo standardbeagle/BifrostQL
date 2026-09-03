@@ -56,11 +56,10 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
     {
         var column = table.ColumnLookup[columnName];
 
-        // Inside TransformCore the data keys are still GraphQL field names (they are
-        // rekeyed to DB names downstream), so accept the token under either name.
+        // The chain rekeys its input to database column names before the first
+        // transformer runs, so the token is addressed by its column name here.
         var tokenKey = data.Keys.FirstOrDefault(k =>
-            string.Equals(k, columnName, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(k, column.GraphQlName, StringComparison.OrdinalIgnoreCase));
+            string.Equals(k, columnName, StringComparison.OrdinalIgnoreCase));
 
         if (tokenKey == null || data[tokenKey] == null)
             return Error($"Update of '{table.TableSchema}.{table.DbName}' must include the concurrency token column '{column.GraphQlName}' (the version the row was read at).", mutationType, data);

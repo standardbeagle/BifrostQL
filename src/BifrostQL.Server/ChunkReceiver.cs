@@ -50,6 +50,7 @@ namespace BifrostQL.Server
         public const int DefaultMaxTotalReassemblyBytes = 128 * 1024 * 1024;
 
         private readonly Dictionary<uint, ReassemblyState> _pending = new();
+        private long _currentAllocatedBytes;
         private readonly int _maxReassemblyBytes;
         private readonly int _maxPendingReassemblies;
         private readonly TimeSpan _reassemblyTtl;
@@ -146,13 +147,22 @@ namespace BifrostQL.Server
                 _currentReassemblyBytes += (long)chunk.TotalBytes;
             }
 
-            state.AddChunk(chunk.ChunkSequence, chunk.ChunkOffset, chunk.Payload);
+            var before = state.ReceivedBytes;
+            try
+            {
+                state.AddChunk(chunk.ChunkSequence, chunk.ChunkOffset, chunk.Payload);
+            }
+            finally
+            {
+                _currentAllocatedBytes += state.ReceivedBytes - before;
+            }
 
             if (!state.IsComplete)
                 return null;
 
             _pending.Remove(chunk.RequestId);
             _currentReassemblyBytes -= state.DeclaredBytes;
+            _currentAllocatedBytes -= state.ReceivedBytes;
             return state.GetAssembledPayload();
         }
 
@@ -162,12 +172,12 @@ namespace BifrostQL.Server
         public int PendingCount => _pending.Count;
 
         /// <summary>
-        /// Bytes this receiver currently holds in reassembly buffers for pending transfers.
-        /// Every pending session allocates its buffer from the client-DECLARED TotalBytes on
-        /// the first chunk, so this is that reservation — the memory a peer has already made
-        /// the server commit, whether or not it ever sends the data.
+        /// Bytes this receiver currently holds for pending transfers. Reassembly memory grows
+        /// from the fragments that actually ARRIVED, never from the client-declared TotalBytes,
+        /// so a peer cannot make the server commit memory it never sends: two 20-byte frames
+        /// declaring 64 MB hold 40 bytes.
         /// </summary>
-        public long AllocatedBytes => _currentReassemblyBytes;
+        public long AllocatedBytes => _currentAllocatedBytes;
 
         /// <summary>
         /// Evicts pending reassembly sessions that have received no chunks within the TTL.
@@ -189,7 +199,10 @@ namespace BifrostQL.Server
             foreach (var requestId in stale)
             {
                 if (_pending.TryGetValue(requestId, out var evicted))
+                {
                     _currentReassemblyBytes -= evicted.DeclaredBytes;
+                    _currentAllocatedBytes -= evicted.ReceivedBytes;
+                }
                 _pending.Remove(requestId);
             }
         }
@@ -207,19 +220,24 @@ namespace BifrostQL.Server
             };
         }
 
+        /// <summary>
+        /// One in-flight transfer. Holds the fragments that ARRIVED — never a buffer sized from
+        /// the client-declared total — so the memory a peer can pin is the memory it actually
+        /// sent. The declared total still bounds the transfer (offsets must fall inside it, and
+        /// the delivered bytes must add up to it before anything is assembled), but it is a
+        /// promise to be checked, not an allocation to be made.
+        /// </summary>
         private sealed class ReassemblyState
         {
-            private readonly byte[] _buffer;
-            private readonly bool[] _received;
-            private int _receivedCount;
+            private readonly Dictionary<uint, (ulong Offset, byte[] Data)> _chunks = new();
+            private readonly uint _totalChunks;
             private long _lastActivityTicks;
 
             public ReassemblyState(uint totalChunks, ulong totalBytes)
             {
-                // Size limits are validated by the caller (AddChunk) before construction,
-                // so both allocations here are bounded by the configured caps.
-                _buffer = new byte[(int)totalBytes];
-                _received = new bool[totalChunks];
+                // The declared sizes are validated by the caller (AddChunk) before construction;
+                // nothing is allocated from either of them here.
+                _totalChunks = totalChunks;
                 _lastActivityTicks = Environment.TickCount64;
                 DeclaredBytes = (long)totalBytes;
             }
@@ -227,7 +245,10 @@ namespace BifrostQL.Server
             /// <summary>The declared payload size this session reserved (for the aggregate cap).</summary>
             public long DeclaredBytes { get; }
 
-            public bool IsComplete => _receivedCount == _received.Length;
+            /// <summary>Bytes actually delivered so far — the memory this session holds.</summary>
+            public long ReceivedBytes { get; private set; }
+
+            public bool IsComplete => _chunks.Count == _totalChunks;
 
             public bool IsIdleLongerThan(TimeSpan ttl)
                 => Environment.TickCount64 - _lastActivityTicks >= (long)ttl.TotalMilliseconds;
@@ -236,29 +257,48 @@ namespace BifrostQL.Server
             {
                 _lastActivityTicks = Environment.TickCount64;
 
-                if (sequence >= _received.Length)
-                    throw new InvalidOperationException($"Chunk sequence {sequence} exceeds total {_received.Length}");
+                if (sequence >= _totalChunks)
+                    throw new InvalidOperationException($"Chunk sequence {sequence} exceeds total {_totalChunks}");
 
-                // Bounds-check the offset before copying. A hostile or corrupt chunk can
-                // declare an offset/length that falls outside the declared payload; reject
-                // it with a clear error rather than letting Buffer.BlockCopy throw.
-                // Compared without summing offset+length so a near-ulong.MaxValue offset
+                // Bounds-check the offset against the DECLARED size before retaining anything.
+                // A hostile or corrupt chunk can declare an offset/length outside the declared
+                // payload; reject it with a clear error rather than letting the assembly copy
+                // throw. Compared without summing offset+length so a near-ulong.MaxValue offset
                 // cannot wrap past the guard (which would then truncate to a negative int).
-                if (offset > (ulong)_buffer.Length || (ulong)data.Length > (ulong)_buffer.Length - offset)
+                if (offset > (ulong)DeclaredBytes || (ulong)data.Length > (ulong)DeclaredBytes - offset)
                     throw new InvalidOperationException(
-                        $"Chunk at offset {offset} with length {data.Length} exceeds payload size {_buffer.Length}");
+                        $"Chunk at offset {offset} with length {data.Length} exceeds payload size {DeclaredBytes}");
 
-                if (_received[sequence])
+                if (_chunks.ContainsKey(sequence))
                     return; // Duplicate chunk; ignore
 
-                Buffer.BlockCopy(data, 0, _buffer, (int)offset, data.Length);
-                _received[sequence] = true;
-                _receivedCount++;
+                // Retained bytes can never exceed the declared total: overlapping or repeated
+                // fragments must not let a transfer hold more than it promised (the per-session
+                // and aggregate caps are expressed against the declared total).
+                if (ReceivedBytes + data.Length > DeclaredBytes)
+                    throw new InvalidOperationException(
+                        $"Delivered bytes exceed the {DeclaredBytes}-byte payload the transfer declared");
+
+                _chunks[sequence] = (offset, data);
+                ReceivedBytes += data.Length;
             }
 
+            /// <summary>
+            /// Materializes the payload once every declared chunk has arrived. The delivered
+            /// bytes must add up to the declared total: a transfer that declares 64 MB and
+            /// delivers 40 bytes is refused here rather than materialized at the declared size,
+            /// which would reintroduce the pre-allocation this class exists to avoid.
+            /// </summary>
             public byte[] GetAssembledPayload()
             {
-                return _buffer;
+                if (ReceivedBytes != DeclaredBytes)
+                    throw new InvalidOperationException(
+                        $"Transfer declared {DeclaredBytes} bytes but delivered {ReceivedBytes}");
+
+                var buffer = new byte[DeclaredBytes];
+                foreach (var (offset, data) in _chunks.Values)
+                    Buffer.BlockCopy(data, 0, buffer, (int)offset, data.Length);
+                return buffer;
             }
         }
     }

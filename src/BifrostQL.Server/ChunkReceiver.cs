@@ -162,6 +162,14 @@ namespace BifrostQL.Server
         public int PendingCount => _pending.Count;
 
         /// <summary>
+        /// Bytes this receiver currently holds in reassembly buffers for pending transfers.
+        /// Every pending session allocates its buffer from the client-DECLARED TotalBytes on
+        /// the first chunk, so this is that reservation — the memory a peer has already made
+        /// the server commit, whether or not it ever sends the data.
+        /// </summary>
+        public long AllocatedBytes => _currentReassemblyBytes;
+
+        /// <summary>
         /// Evicts pending reassembly sessions that have received no chunks within the TTL.
         /// Called lazily when a new session is about to be created, so abandoned transfers
         /// cannot pin their buffers (or exhaust the pending-session limit) indefinitely.

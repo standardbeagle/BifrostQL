@@ -233,6 +233,40 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void PartialTransfer_DeclaringHugeTotal_AllocatesOnlyWhatArrived()
+        {
+            // H8(b): the reassembly buffer was sized from the CLIENT-DECLARED TotalBytes on
+            // the first chunk, so two 20-byte frames pinned 64 MB of server memory for the
+            // whole reassembly TTL. Memory must grow from bytes actually RECEIVED.
+            var receiver = new ChunkReceiver();
+            var data = new byte[20];
+            const ulong declared = 64UL * 1024 * 1024;
+
+            receiver.AddChunk(Chunk(1, data, 0, total: 4, offset: 0, totalBytes: declared)).Should().BeNull();
+            receiver.AddChunk(Chunk(1, data, 1, total: 4, offset: 20, totalBytes: declared)).Should().BeNull();
+
+            receiver.AllocatedBytes.Should().BeLessThan(1024 * 1024,
+                "40 bytes arrived; a 64 MB declaration is a promise, not an allocation");
+        }
+
+        [Fact]
+        public void TransferDeliveringFewerBytesThanDeclared_IsRejected()
+        {
+            // The completion counterpart: a client that declares 64 MB, sends all its
+            // declared chunks, and delivers 40 bytes must be refused rather than have the
+            // server materialize the declared size at assembly time.
+            var receiver = new ChunkReceiver();
+            var data = new byte[20];
+            const ulong declared = 64UL * 1024 * 1024;
+
+            receiver.AddChunk(Chunk(1, data, 0, total: 2, offset: 0, totalBytes: declared)).Should().BeNull();
+            var act = () => receiver.AddChunk(Chunk(1, data, 1, total: 2, offset: 20, totalBytes: declared));
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*declared*");
+            receiver.AllocatedBytes.Should().BeLessThan(1024 * 1024);
+        }
+
+        [Fact]
         public void AssembledBufferLength_MatchesDeclaredTotalBytes()
         {
             var receiver = new ChunkReceiver();

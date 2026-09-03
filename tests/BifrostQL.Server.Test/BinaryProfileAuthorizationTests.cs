@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net.WebSockets;
 using System.Security.Claims;
+using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
@@ -11,9 +14,14 @@ using BifrostQL.Model;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using GraphQL;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace BifrostQL.Server.Test
@@ -214,6 +222,223 @@ namespace BifrostQL.Server.Test
             Messages(result).Should().NotContain(m => m.Contains("Query execution failed"),
                 "the binary mount path must resolve the registered GraphQL schema, not throw");
             result.Data.Should().NotBeNull("the query executes against the resolved schema");
+        }
+
+        // ---- H8(a): the binary mount's own fail-closed identity gate ----
+        //
+        // UseBifrostEndpoints puts its auth gate INSIDE each GraphQL Map branch, so a
+        // binary transport mounted at its own path (/bifrost-ws) was never covered by it:
+        // an anonymous WebSocket peer reached ExecuteRequestAsync, whose
+        // CreateUserContext returns an EMPTY user context for an unauthenticated caller —
+        // and the query ran under it. These facts drive the REAL pipeline (a real
+        // WebSocket upgrade against a TestServer) because the defect is precisely in how
+        // the mount is wired, not in anything a unit-level double would reproduce.
+
+        private const string SecuredGraphQlPath = "/graphql/secured";
+        private const string OpenGraphQlPath = "/graphql/open";
+        private const string SecuredSocketPath = "/bifrost-ws-secured";
+        private const string OpenSocketPath = "/bifrost-ws-open";
+
+        private static async Task<IHost> BuildWebSocketHostAsync(string dbPath)
+        {
+            DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
+            await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
+            {
+                await conn.OpenAsync();
+                var ddl = conn.CreateCommand();
+                ddl.CommandText = "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT)";
+                await ddl.ExecuteNonQueryAsync();
+            }
+
+            var jwt = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["JwtSettings:Authority"] = "https://login.example.test",
+                    ["JwtSettings:ClientId"] = "test-client",
+                })
+                .Build();
+
+            var builder = new HostBuilder().ConfigureWebHost(web =>
+            {
+                web.UseTestServer();
+                web.ConfigureServices(services =>
+                {
+                    services.AddBifrostEndpoints(o =>
+                    {
+                        o.BindJwtSettings(jwt.GetSection("JwtSettings"));
+                        o.AddEndpoint(e =>
+                        {
+                            e.ConnectionString = $"Data Source={dbPath}";
+                            e.Provider = "sqlite";
+                            e.Path = SecuredGraphQlPath;
+                            e.PlaygroundPath = "/graphiql/secured";
+                            e.DisableAuth = false; // requires auth
+                        });
+                        o.AddEndpoint(e =>
+                        {
+                            e.ConnectionString = $"Data Source={dbPath}";
+                            e.Provider = "sqlite";
+                            e.Path = OpenGraphQlPath;
+                            e.PlaygroundPath = "/graphiql/open";
+                            e.DisableAuth = true; // anonymous allowed
+                        });
+                    });
+                    services.AddBifrostEngine();
+                });
+                web.Configure(app =>
+                {
+                    // Stands in for the deployment's authentication middleware: lands a
+                    // principal on the upgrade request when the test asks for one.
+                    app.Use(async (context, next) =>
+                    {
+                        if (context.Request.Headers["X-Test-User"].ToString() is { Length: > 0 } name)
+                        {
+                            var identity = new ClaimsIdentity(authenticationType: "test");
+                            identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, name));
+                            identity.AddClaim(new Claim(ClaimTypes.Name, name));
+                            context.User = new ClaimsPrincipal(identity);
+                        }
+                        await next(context);
+                    });
+                    app.UseWebSockets();
+                    app.UseBifrostEndpoints();
+                    app.UseBifrostBinary(SecuredSocketPath, graphqlPath: SecuredGraphQlPath);
+                    app.UseBifrostBinary(OpenSocketPath, graphqlPath: OpenGraphQlPath);
+                });
+            });
+
+            return await builder.StartAsync();
+        }
+
+        /// <summary>
+        /// Opens the socket, sends one Query frame, and reports what came back first: the
+        /// close status (when the server closed the connection) and the first non-close
+        /// frame (when it answered). "No query executed" is proven by the absence of a
+        /// Result/Error frame — nothing but the close arrives.
+        /// </summary>
+        private static async Task<(WebSocketCloseStatus? closeStatus, BifrostMessage? firstFrame)> QueryOverSocketAsync(
+            IHost host, string socketPath, string? user = null)
+        {
+            var wsClient = host.GetTestServer().CreateWebSocketClient();
+            if (user != null)
+                wsClient.ConfigureRequest = req => req.Headers["X-Test-User"] = user;
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            WebSocket socket;
+            try
+            {
+                socket = await wsClient.ConnectAsync(
+                    new Uri($"ws://localhost{socketPath}"), cts.Token);
+            }
+            catch (Exception)
+            {
+                // A refusal before the upgrade also means no query executed, but it carries
+                // no close status; report it as such.
+                return (null, null);
+            }
+
+            using (socket)
+            {
+                var request = new BifrostMessage
+                {
+                    RequestId = 7,
+                    Type = BifrostMessageType.Query,
+                    Query = "{ __typename }",
+                };
+                try
+                {
+                    await socket.SendAsync(
+                        new ArraySegment<byte>(request.ToBytes()),
+                        WebSocketMessageType.Binary, endOfMessage: true, cts.Token);
+                }
+                catch (WebSocketException)
+                {
+                    // Server already closed the socket; fall through to the receive below.
+                }
+
+                var buffer = new byte[64 * 1024];
+                try
+                {
+                    var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        return (result.CloseStatus, null);
+
+                    var frame = BifrostMessage.FromBytes(buffer.AsSpan(0, result.Count).ToArray());
+                    return (null, frame);
+                }
+                catch (WebSocketException)
+                {
+                    return (socket.CloseStatus, null);
+                }
+            }
+        }
+
+        [Fact]
+        public async Task AnonymousWebSocket_OnAuthRequiredEndpoint_IsClosed_WithoutExecutingTheQuery()
+        {
+            var dbPath = Path.Combine(Path.GetTempPath(), $"binary-authgate-{Guid.NewGuid():N}.db");
+            using var host = await BuildWebSocketHostAsync(dbPath);
+            try
+            {
+                var (closeStatus, frame) = await QueryOverSocketAsync(host, SecuredSocketPath);
+
+                frame.Should().BeNull(
+                    "an anonymous caller on an auth-required endpoint must get NO answer frame — " +
+                    "the query must never reach the engine");
+                closeStatus.Should().Be(WebSocketCloseStatus.PolicyViolation,
+                    "the binary mount must fail closed on the same auth requirement its GraphQL endpoint carries");
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+                if (File.Exists(dbPath)) File.Delete(dbPath);
+            }
+        }
+
+        [Fact]
+        public async Task AnonymousWebSocket_OnOpenEndpoint_StillExecutes()
+        {
+            // Non-vacuity: the gate follows the endpoint's own DisableAuth setting rather
+            // than denying every anonymous socket. Without this fact a blanket refusal
+            // would pass the test above.
+            var dbPath = Path.Combine(Path.GetTempPath(), $"binary-authgate-{Guid.NewGuid():N}.db");
+            using var host = await BuildWebSocketHostAsync(dbPath);
+            try
+            {
+                var (closeStatus, frame) = await QueryOverSocketAsync(host, OpenSocketPath);
+
+                closeStatus.Should().NotBe(WebSocketCloseStatus.PolicyViolation,
+                    "an endpoint that disables auth serves anonymous binary callers");
+                frame.Should().NotBeNull("the anonymous query executes on an open endpoint");
+                frame!.Type.Should().Be(BifrostMessageType.Result);
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+                if (File.Exists(dbPath)) File.Delete(dbPath);
+            }
+        }
+
+        [Fact]
+        public async Task AuthenticatedWebSocket_OnAuthRequiredEndpoint_PassesTheGate()
+        {
+            // The other half of non-vacuity: a caller carrying a real principal is served.
+            var dbPath = Path.Combine(Path.GetTempPath(), $"binary-authgate-{Guid.NewGuid():N}.db");
+            using var host = await BuildWebSocketHostAsync(dbPath);
+            try
+            {
+                var (closeStatus, frame) = await QueryOverSocketAsync(host, SecuredSocketPath, user: "alice");
+
+                closeStatus.Should().NotBe(WebSocketCloseStatus.PolicyViolation,
+                    "an authenticated caller passes the binary mount's identity gate");
+                frame.Should().NotBeNull("the authenticated query executes");
+                frame!.Type.Should().Be(BifrostMessageType.Result);
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+                if (File.Exists(dbPath)) File.Delete(dbPath);
+            }
         }
 
         [Fact]

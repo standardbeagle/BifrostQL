@@ -205,19 +205,6 @@ namespace BifrostQL.Mcp
         }
 
         /// <summary>
-        /// Builds the per-call user-context provider from the shared
-        /// <see cref="IBifrostAuthContextFactory"/> under the default fail-closed auth mode.
-        /// Identity is sourced ONLY through the factory — this adapter parses no claims of its
-        /// own. A stdio session carries no authenticated principal, so the factory projects an
-        /// empty (fail-closed) context; the provider is re-invoked on every tool call so a later
-        /// slice can attach a per-session principal to the carrier and have identity re-resolved
-        /// each call.
-        /// </summary>
-        internal static Func<IDictionary<string, object?>> CreateUserContextProvider(
-            IBifrostAuthContextFactory authContextFactory, IServiceProvider services)
-            => CreateUserContextProvider(authContextFactory, services, new McpAuthOptions());
-
-        /// <summary>
         /// Builds the per-call user-context provider selected by <paramref name="authOptions"/>.
         /// Identity flows ONLY through <paramref name="authContextFactory"/>: in bearer mode the
         /// presented token is validated FIRST and, only if valid, its

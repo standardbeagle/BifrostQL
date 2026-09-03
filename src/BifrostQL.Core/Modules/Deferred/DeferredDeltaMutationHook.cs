@@ -27,7 +27,8 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
     private const string HeldLifecycle = "held";
     private const string HookSource = "deferred-delta";
 
-    // A state bag may be shared by a batch or TreeSync transaction. The value is deliberately
+    // The change set lives in the per-TRANSACTION state bag, shared by every action of a batch
+    // or TreeSync transaction (a single-row write's transaction holds one action). The value is deliberately
     // typed and bound to that exact transaction seam; an id alone could be replayed into a
     // later mutation and attach its delta to the wrong held change set.
     private sealed record ActiveChangeSet(
@@ -43,9 +44,9 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         HashSet<string> TouchedTables);
 
     /// <summary>Returns the change set created for the current mutation transaction.</summary>
-    public static bool TryGetActiveChangeSetId(IDictionary<string, object?> mutationState, out object? id)
+    public static bool TryGetActiveChangeSetId(IDictionary<string, object?> transactionState, out object? id)
     {
-        if (mutationState.TryGetValue(ActiveChangeSetKey, out var stored) && stored is ActiveChangeSet active)
+        if (transactionState.TryGetValue(ActiveChangeSetKey, out var stored) && stored is ActiveChangeSet active)
         {
             id = active.Id;
             return true;
@@ -117,7 +118,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
     {
         var changeSetTable = RequireTable(context.Model!, MetadataKeys.Deferred.ChangeSet.Table);
         var deltaTable = RequireTable(context.Model!, MetadataKeys.Deferred.ChangeSetDelta.Table);
-        if (context.MutationState.TryGetValue(ActiveChangeSetKey, out var stored))
+        if (context.TransactionState.TryGetValue(ActiveChangeSetKey, out var stored))
         {
             if (stored is not ActiveChangeSet active)
                 throw new BifrostExecutionError("Deferred change-set mutation state has an invalid type.");
@@ -166,7 +167,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             id, HeldLifecycle, HookSource, context.Connection!, context.Transaction,
             (object?)context.Transaction ?? context.Connection!, context.Model!, changeSetTable, deltaTable,
             new HashSet<string>(StringComparer.Ordinal) { tableName });
-        context.MutationState[ActiveChangeSetKey] = created;
+        context.TransactionState[ActiveChangeSetKey] = created;
         return created;
     }
 

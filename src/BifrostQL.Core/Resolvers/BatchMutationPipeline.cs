@@ -105,6 +105,8 @@ namespace BifrostQL.Core.Resolvers
                 var execContext = new BatchExecutionContext(
                     table, ctx.Transformers, ctx.Model, ctx.ConnFactory.Dialect, conn, transaction,
                     ctx.UserContext, transformContext, ctx.ModuleArguments, ct, ctx.ConnFactory,
+                    // One per-transaction bag for the whole batch; each action gets its own
+                    // per-action bag when its hook context is built.
                     MutationObserverContext.NewMutationState());
                 foreach (var action in actions)
                 {
@@ -258,7 +260,9 @@ namespace BifrostQL.Core.Resolvers
             IReadOnlyDictionary<string, object?> ModuleArguments,
             CancellationToken Ct,
             IDbConnFactory ConnFactory,
-            IDictionary<string, object?> MutationState);
+            // Per-TRANSACTION state, shared by every action of the batch (the deferred held
+            // change set). Per-ACTION state is built fresh in RunHookedWriteAsync.
+            IDictionary<string, object?> TransactionState);
 
         private static async Task<BatchActionOutcome?> ExecuteAction(BatchExecutionContext ctx, BatchAction action)
         {
@@ -284,7 +288,9 @@ namespace BifrostQL.Core.Resolvers
         /// row that must not be written cannot be written "except for the other rows
         /// around it". The context — including the state scratchpad that pairs a
         /// before-image with the write it preceded — is scoped per action, never per
-        /// batch, so one row's before-image can never be paired with the next row's write.
+        /// batch, so one row's before-image, approval divert signal, or logical verb can
+        /// never be read as the next row's. Only the per-transaction bag (the deferred
+        /// held change set) spans the batch.
         /// <paramref name="write"/> returns the generated identity for an insert (so the
         /// event can name the row) or the affected-row count for an update/delete (so a
         /// zero-row no-op records nothing).
@@ -305,7 +311,10 @@ namespace BifrostQL.Core.Resolvers
                 Model = ctx.Model,
                 Dialect = ctx.Dialect,
                 ConnFactory = ctx.ConnFactory,
-                MutationState = ctx.MutationState,
+                // Per-ACTION scratchpad: fresh for every row, so one action's before-image,
+                // divert signal, or logical verb can never be read as the next action's.
+                MutationState = MutationObserverContext.NewMutationState(),
+                TransactionState = ctx.TransactionState,
             };
             if (logicalType is not null)
                 ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalType.Value);

@@ -97,7 +97,9 @@ public sealed class TreeSyncExecutor
 
         object? rootId = null;
         string? pendingApproval = null;
-        var treeMutationState = MutationObserverContext.NewMutationState();
+        // Per-TRANSACTION state for the whole tree (the deferred held change set every node's
+        // delta attaches to). Per-ACTION state is built fresh for each operation below.
+        var treeTransactionState = MutationObserverContext.NewMutationState();
 
         // Transaction control as SQL on the open connection (dialect keywords),
         // not the ADO.NET DbTransaction API — the boundary shows up in the SQL.
@@ -145,7 +147,7 @@ public sealed class TreeSyncExecutor
                 // transformer pipeline is active: a model is required to resolve what a hook
                 // writes into, and the raw-executor test path supplies none. The context —
                 // and the state bag pairing the two hook phases — is scoped per operation
-                // in the tree, never across operations.
+                // in the tree, never across operations; only the per-transaction bag spans them.
                 MutationObserverContext? hookContext = null;
                 if (model != null)
                 {
@@ -161,7 +163,8 @@ public sealed class TreeSyncExecutor
                         Model = model,
                         Dialect = _dialect,
                         ConnFactory = connFactory,
-                        MutationState = treeMutationState,
+                        MutationState = MutationObserverContext.NewMutationState(),
+                        TransactionState = treeTransactionState,
                     };
                     Approval.ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalMutationType);
                     await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);

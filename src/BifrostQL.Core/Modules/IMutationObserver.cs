@@ -69,16 +69,32 @@ public sealed record MutationObserverContext
     /// phases; a write path that runs only one phase leaves the other's entry absent,
     /// which every reader must treat as "not captured" and fail closed on rather than
     /// as an empty before-image. Required — no silent default — so the compiler forces
-    /// every write path to decide which bag a mutation's two phases share.
+    /// every write path to decide which bag a mutation's two phases share. Scoped per
+    /// ACTION even inside a multi-action transaction (a batch, a TreeSync): state that must
+    /// outlive one action belongs in <see cref="TransactionState"/>.
     /// </summary>
     public required IDictionary<string, object?> MutationState { get; init; }
+
+    /// <summary>
+    /// Scratchpad shared by every action of the SAME write transaction — a batch's rows, a
+    /// TreeSync's nodes, or the single row of a single-row write. This is the ONLY correct
+    /// home for state whose lifetime is the transaction rather than the action: the deferred
+    /// module's held change set, which every mutation of one transaction must attach its
+    /// delta to. Per-ACTION state (the history before-image, the approval divert signal and
+    /// logical verb) belongs in <see cref="MutationState"/> instead; keeping it here would
+    /// carry one action's decision into the next one's write. Defaults to a fresh bag, which
+    /// is exactly right for a write path whose transaction holds one action — a multi-action
+    /// path passes its own bag explicitly.
+    /// </summary>
+    public IDictionary<string, object?> TransactionState { get; init; } = NewMutationState();
 
     /// <summary>
     /// One scratchpad per mutation, shared by that mutation's before-commit and
     /// after-write in-transaction hook phases (see <see cref="MutationState"/>). Scoped
     /// per mutation — never per request, batch, or tree — so one row's before-image can
     /// never be paired with the next row's write. Ordinal keys: state keys are exact,
-    /// code-owned strings.
+    /// code-owned strings. Also builds the per-transaction bag
+    /// (<see cref="TransactionState"/>), which has the same shape but a wider lifetime.
     /// </summary>
     public static Dictionary<string, object?> NewMutationState() => new(StringComparer.Ordinal);
 }

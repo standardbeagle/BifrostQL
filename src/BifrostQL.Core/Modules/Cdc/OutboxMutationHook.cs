@@ -92,7 +92,7 @@ namespace BifrostQL.Core.Modules.Cdc
             var deferred = DeferredConfig.FromTable(context.Table);
             if (deferred.HoldEvents)
             {
-                if (!DeferredDeltaMutationHook.TryGetActiveChangeSetId(context.MutationState, out var changeSetId))
+                if (!DeferredDeltaMutationHook.TryGetActiveChangeSetId(context.TransactionState, out var changeSetId))
                     throw new BifrostExecutionError("CDC hold requires an active deferred change set in the mutation transaction.");
                 eventRow[DeferredOutboxColumns.ChangeSetId] = changeSetId;
                 eventRow[DeferredOutboxColumns.State] = DeferredOutboxColumns.PendingHold;

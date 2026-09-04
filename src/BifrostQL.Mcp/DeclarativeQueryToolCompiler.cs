@@ -317,23 +317,13 @@ public sealed class CompiledDeclarativeQueryTool
     /// <summary>
     /// Parses the id argument into the full ordered primary-key value list — an
     /// array in key order, a 'v1|v2' delimited string, or a single scalar for a
-    /// single-column key — reusing the shared <see cref="QueryToolCompiler"/>
-    /// coercion primitive (no bespoke key parser). Arity mismatches name the key
-    /// columns and both accepted forms, mirroring bifrost_row_context.
+    /// single-column key — through the shared arity-aware
+    /// <see cref="ToolJson.ParseKeyValues"/> (no bespoke key parser). Arity mismatches
+    /// name the key columns and both accepted forms, mirroring bifrost_row_context.
     /// </summary>
     private IReadOnlyList<object?> ParseKeyValues(JsonElement idElement)
     {
-        List<object?> raw = idElement.ValueKind switch
-        {
-            JsonValueKind.Array => idElement.EnumerateArray().Select(QueryToolCompiler.ToClrValue).ToList(),
-            JsonValueKind.String when _keyColumns.Count > 1 =>
-                idElement.GetString()!.Split('|').Select(s => (object?)s).ToList(),
-            JsonValueKind.String or JsonValueKind.Number =>
-                new List<object?> { QueryToolCompiler.ToClrValue(idElement) },
-            _ => throw new ToolPromptException(
-                $"Parameter '{IdParameterName}' must be a primary-key value: a scalar, an array in " +
-                "key-column order, or a 'v1|v2' delimited string."),
-        };
+        var raw = ToolJson.ParseKeyValues(idElement, _keyColumns.Count, IdParameterName);
 
         if (raw.Count != _keyColumns.Count)
             throw new ToolPromptException(

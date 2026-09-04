@@ -549,11 +549,14 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
-        public async Task Search_ExplicitlyNamingADeniedAttribute_StillTakesTheAuthoritativeDenial()
+        public async Task Search_ExplicitlyNamingADeniedAttribute_IsIndistinguishableFromAnUnknownOne()
         {
-            // Omission is the WILDCARD contract. A client that names a denied attribute gets the
-            // same refusal the pipeline raises for any denied read — naming it is a deliberate
-            // reach for that column, not an accident of `*`.
+            // The subschema hides a denied column from this identity, so to the caller the
+            // attribute does not exist. Naming it explicitly must then answer exactly as naming an
+            // attribute that really does not exist (RFC 4511 §4.5.1.8: unreadable attributes are
+            // simply not returned) — success, entry present, attribute absent. A denial here would
+            // let any caller enumerate the hidden columns by probing well-known attribute names on
+            // a success-vs-insufficientAccessRights difference (invariant 9: denied == unknown).
             var builder = LdapModelBuilder.Create()
                 .WithTable("users", t => t
                     .WithColumn("id", "int", isPrimaryKey: true)
@@ -567,10 +570,21 @@ namespace BifrostQL.Server.Test.Ldap
             var (executor, pipeline) = Build(builder);
             pipeline.WithPeople(1);
 
-            var outcome = await RunAsync(executor, Search(attributes: new[] { "uid", "mail" }));
+            var denied = await RunAsync(executor, Search(attributes: new[] { "uid", "mail" }));
+            var unknown = await RunAsync(executor, Search(attributes: new[] { "uid", "telexNumber" }));
 
-            outcome.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights);
-            outcome.Diagnostic.Should().BeEmpty();
+            denied.ResultCode.Should().Be(LdapResultCode.Success,
+                "naming a denied attribute must answer exactly as naming an unknown one");
+            denied.ResultCode.Should().Be(unknown.ResultCode);
+            denied.Diagnostic.Should().Be(unknown.Diagnostic);
+            denied.Entries.Should().HaveCount(1);
+            ValueOf(denied.Entries[0], "uid").Should().Be(ValueOf(unknown.Entries[0], "uid"));
+            denied.Entries[0].Attributes.Select(a => a.Type)
+                .Should().BeEquivalentTo(unknown.Entries[0].Attributes.Select(a => a.Type),
+                    "the denied attribute is absent, exactly as the unknown one");
+            pipeline.Intents.Should().OnlyContain(i =>
+                    i.Query.ScalarColumns.All(c => !string.Equals(c.DbDbName, "email", StringComparison.OrdinalIgnoreCase)),
+                "the denied column must never be selected, so the pipeline never has a denial to raise");
         }
 
         [Fact]

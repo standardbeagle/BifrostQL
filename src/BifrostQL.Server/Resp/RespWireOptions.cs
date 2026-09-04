@@ -47,6 +47,22 @@ namespace BifrostQL.Server.Resp
         public int MaxBulkLength { get; set; } = 1 << 20;
 
         /// <summary>
+        /// Hard cap on the TOTAL byte length of one top-level frame — every byte the decoder
+        /// consumes between the frame's first marker and its last terminator, elements of a nested
+        /// aggregate included. Applied on the UNAUTHENTICATED path (DoS guard).
+        ///
+        /// <para>The per-element caps do not bound a frame: <see cref="MaxBulkLength"/> bounds ONE
+        /// bulk string and <see cref="MaxAggregateElements"/> bounds ONE aggregate's element count,
+        /// so their product — about 1 TiB at the defaults — is what a single frame could reach, and
+        /// every decoded element is retained until the frame completes. The budget is decremented
+        /// per consumed byte and checked BEFORE any payload is allocated, so an oversized frame is
+        /// refused with a clean protocol error having materialized nothing. It is reset at each
+        /// top-level frame, never by an inner element (that would defeat the cap). Default 1 MiB,
+        /// matching the pgwire and LDAP per-message caps.</para>
+        /// </summary>
+        public int MaxFrameLength { get; set; } = 1 << 20;
+
+        /// <summary>
         /// Hard cap on the declared element count of any array/set/push/map, applied on the
         /// UNAUTHENTICATED path (DoS guard) so a huge multibulk count cannot pre-allocate an
         /// unbounded array. Default 1,048,576.

@@ -130,7 +130,7 @@ namespace BifrostQL.Server.Resp
                 // detections feed the same gate.
                 TransportConfidential = confidentialTransport || stream is SslStream,
             };
-            var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth);
+            var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth, _options.MaxFrameLength);
             // The pre-auth phase gets ONE cumulative deadline from connection start — not a fresh
             // AuthenticationTimeout per read. Otherwise a peer that sends any cheap frame (a failed
             // AUTH, a PING that answers NOAUTH) just before each read resets the timer forever and

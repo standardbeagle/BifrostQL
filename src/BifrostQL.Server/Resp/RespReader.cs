@@ -33,16 +33,18 @@ namespace BifrostQL.Server.Resp
         private readonly int _maxBulkLength;
         private readonly int _maxElements;
         private readonly int _maxNestingDepth;
+        private readonly int _maxFrameLength;
         private readonly byte[] _buffer = new byte[8192];
         private int _start;
         private int _end;
 
-        public RespReader(Stream stream, int maxBulkLength, int maxElements, int maxNestingDepth)
+        public RespReader(Stream stream, int maxBulkLength, int maxElements, int maxNestingDepth, int maxFrameLength)
         {
             _stream = stream ?? throw new ArgumentNullException(nameof(stream));
             _maxBulkLength = maxBulkLength;
             _maxElements = maxElements;
             _maxNestingDepth = maxNestingDepth;
+            _maxFrameLength = maxFrameLength;
         }
 
         /// <summary>

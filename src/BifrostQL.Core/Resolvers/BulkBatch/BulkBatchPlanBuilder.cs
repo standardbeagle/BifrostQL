@@ -245,6 +245,11 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 keyData[ToDbColumnName(table, d.Key)] = d.Value;
             if (keyData.Count == 0 || caseData.Count == keyData.Count) return null;
 
+            // Same rule as the per-row pipelines: a partial composite key joins the
+            // staging table on part of the key, so ONE statement rewrites every row
+            // sharing the supplied columns.
+            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
+
             // No CurrentRow: state-machine tables were gated off, and only they read it.
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, caseData, transformContext);
             transformResult.ThrowIfDenied();
@@ -280,6 +285,13 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             transformResult.ThrowIfDenied();
             var filter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
             var dbData = transformResult.Data;
+
+            // Checked once, before the soft-delete rewrite and the hard delete part
+            // ways: both derive their key columns from this same data, so a partial
+            // composite key would widen either statement to every row sharing the
+            // supplied key columns. Guarding both branches from one place keeps them
+            // from drifting apart the way sibling op classes do.
+            MutationArgumentBinder.RequireCompleteKey(table, dbData.Keys, "Delete");
 
             if (transformResult.MutationType == MutationType.Update)
             {

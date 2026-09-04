@@ -184,8 +184,9 @@ namespace BifrostQL.Server.Ldap
         /// admission slot is taken at accept, so a peer that never authenticates would otherwise hold
         /// it for the whole <see cref="IdleTimeout"/> window while failing binds keep the connection
         /// non-idle — an unauthenticated slot-exhaustion vector the idle timeout does not cover. Once
-        /// a CREDENTIALED bind succeeds the session is bounded by <see cref="IdleTimeout"/> instead;
-        /// an ANONYMOUS session gets a fresh deadline of the same length measured from its bind, so a
+        /// a CREDENTIALED bind succeeds the session is bounded by <see cref="IdleTimeout"/> instead.
+        /// The deadline is fixed at accept: an ANONYMOUS bind neither retires nor re-arms it (anonymous
+        /// binds are not rate limited, so a per-bind window could be renewed forever), so a
         /// credential-less peer holds a slot no longer than one that never bound. Default 30
         /// seconds, matching the pgwire handshake and RESP authentication deadlines.
         /// </summary>

@@ -122,10 +122,11 @@ namespace BifrostQL.Server.Ldap
             // authenticates must not be able to hold it past AuthenticationTimeout even while
             // sending traffic (failing binds keep the connection non-idle, so the idle timeout
             // alone does not reclaim the slot). The deadline is FIXED at accept and never slides
-            // with traffic; a credentialed bind retires it (an authenticated session is a
-            // legitimate pooled client, bounded by the idle timeout), while an ANONYMOUS bind only
-            // replaces it with an equally short anonymous-session lifetime — a credential-less
-            // peer holds a slot no longer than a peer that never bound at all.
+            // with traffic: only a CREDENTIALED bind retires it (an authenticated session is a
+            // legitimate pooled client, bounded by the idle timeout). An anonymous bind leaves it
+            // where it is — anonymous binds are not rate limited, so a deadline re-armed per bind
+            // would let a credential-less peer hold the slot forever by re-binding — and a
+            // credential-less peer therefore holds a slot no longer than one that never bound.
             DateTimeOffset? sessionDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
             try
             {
@@ -176,22 +177,19 @@ namespace BifrostQL.Server.Ldap
                     }
                     try
                     {
-                        var wasAuthenticated = session.Authenticated;
                         var dispatch = await DispatchAsync(wire, request, session, source, ct);
                         if (request.Operation is LdapBindRequest)
                         {
-                            if (session.Authenticated)
-                                // A successful bind: a credentialed session retires the deadline; an
-                                // anonymous one gets a short session lifetime measured from the bind.
-                                sessionDeadline = session.IsAnonymous
-                                    ? DateTimeOffset.UtcNow + _options.AuthenticationTimeout
-                                    : null;
-                            else if (wasAuthenticated)
-                                // A failed RE-bind reset the session to unauthenticated (RFC 4511
-                                // §4.2.1): grant one fresh pre-auth window. A failed bind on a
-                                // never-authenticated connection must NOT slide the accept-time
-                                // deadline, or failing binds would hold the slot forever.
-                                sessionDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
+                            if (session.Authenticated && !session.IsAnonymous)
+                                // A credentialed bind retires the deadline.
+                                sessionDeadline = null;
+                            else
+                                // Anonymous or failed: an armed deadline is NEVER moved (a failed
+                                // bind, or an anonymous re-bind, must not slide it or the peer holds
+                                // the slot forever). Only a session that WAS credentialed — a failed
+                                // re-bind reset it to anonymous (RFC 4511 §4.2.1), or it re-bound
+                                // anonymously — gets one fresh window armed here.
+                                sessionDeadline ??= DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
                         }
                         if (!dispatch.KeepOpen)
                             return; // Unbind / fatal op: close the connection

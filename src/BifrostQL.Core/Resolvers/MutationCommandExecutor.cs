@@ -1,6 +1,7 @@
 using System.Data.Common;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
@@ -152,6 +153,18 @@ namespace BifrostQL.Core.Resolvers
         /// Reads the current state-machine column for the keyed row inside the update
         /// transaction, so a state-transition transformer can gate on it. Returns null
         /// when the table has no state machine or no key values were supplied.
+        ///
+        /// <para>The read is narrowed by the SAME row scope the update itself carries —
+        /// the transformer chain's AdditionalFilter (tenant, policy row-scope,
+        /// soft-delete). Keying it on the primary key ALONE let the state-machine
+        /// transformer gate on a row the caller cannot write: a transition the victim's
+        /// stored state permits returned success (a zero-row no-op), while one it
+        /// forbids returned a denial, so the caller could walk another tenant's state
+        /// space one guess at a time. Scoped, an unreachable row reads as no row at all,
+        /// the transformer denies, and the answer is byte-identical to a row that does
+        /// not exist (.claude/rules/protocol-adapter-security.md invariant 2). This is
+        /// the read counterpart of invariant 8(c): the write already scoped itself, so
+        /// the read that gates it must scope itself the same way.</para>
         /// </summary>
         public static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
             DbConnection conn,
@@ -159,26 +172,64 @@ namespace BifrostQL.Core.Resolvers
             ISqlDialect dialect,
             IDbTable table,
             Dictionary<string, object?> keyData,
+            IMutationTransformers transformers,
+            MutationTransformContext scopeContext,
             CancellationToken cancellationToken = default)
         {
             var definition = StateMachineConfigCollector.FromTable(table);
             if (definition is null || keyData.Count == 0)
                 return null;
 
+            var scope = await RenderRowScopeAsync(table, keyData, transformers, scopeContext, dialect);
+
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
             var whereClause = BuildKeyPredicate(dialect, keyData.Keys);
-            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause};";
+            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause}{scope.WhereSuffix};";
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, keyData);
+            AddExtraParameters(cmd, scope.Parameters);
             var currentState = await cmd.ExecuteScalarAsync(cancellationToken);
             return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
             };
+        }
+
+        /// <summary>
+        /// Asks the mutation transformer chain — the SAME chain the write runs, never a
+        /// second hand-rolled construction of tenant/policy scope (invariant 4) — which
+        /// rows this caller may update on this table, and renders it as a WHERE suffix.
+        ///
+        /// <para>The probe payload is the PRIMARY KEY ONLY, deliberately: row scope is a
+        /// property of the caller and the table, so the key is all a scope-contributing
+        /// transformer needs. Passing the full payload would drag in the optimistic
+        /// concurrency token's predicate, and a stale token would then make the state
+        /// load read as "no such row" — reporting a lost update as an illegal transition
+        /// instead of the CONFLICT the write itself raises. Omitting the state column
+        /// also keeps the state-machine transformer itself a no-op here, so the probe
+        /// cannot deny on the very question it exists to answer.</para>
+        ///
+        /// <para>Only the filter is kept. Rewritten data, errors and flags are discarded:
+        /// the real chain run that follows produces them against the loaded state, and
+        /// this probe must never be the thing that aborts a mutation.</para>
+        /// </summary>
+        private static async Task<(string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters)> RenderRowScopeAsync(
+            IDbTable table,
+            Dictionary<string, object?> keyData,
+            IMutationTransformers transformers,
+            MutationTransformContext scopeContext,
+            ISqlDialect dialect)
+        {
+            var probe = await transformers.TransformAsync(
+                table,
+                MutationType.Update,
+                new Dictionary<string, object?>(keyData, StringComparer.OrdinalIgnoreCase),
+                scopeContext);
+            return RenderAdditionalFilter(probe.AdditionalFilter, dialect);
         }
 
         /// <summary>

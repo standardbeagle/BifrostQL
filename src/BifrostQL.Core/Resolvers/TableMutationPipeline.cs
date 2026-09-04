@@ -222,12 +222,25 @@ namespace BifrostQL.Core.Resolvers
             {
                 // Mutation transformers (e.g. the authorization policy engine) gate
                 // the update before any SQL is built; non-empty Errors abort it.
+                // The state load runs under this same context minus CurrentRow — that is
+                // what it is about to produce — so the chain can report the caller's row
+                // scope and the load can narrow itself to rows this update could reach.
+                var scopeContext = new MutationTransformContext
+                {
+                    Model = ctx.Model,
+                    UserContext = ctx.UserContext,
+                    Services = ctx.Services,
+                    RestoreSoftDeleted = ctx.RestoreSoftDeleted,
+                    RestoreHardDeleted = ctx.RestoreHardDeleted,
+                };
                 var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(
                     conn,
                     transaction,
                     dialect,
                     table,
                     propertyInfo.keyData,
+                    ctx.Transformers,
+                    scopeContext,
                     ctx.CancellationToken);
                 var transformContext = new MutationTransformContext
                 {
@@ -287,7 +300,13 @@ namespace BifrostQL.Core.Resolvers
                 // so an out-of-scope tenant/policy no-op does not fabricate an event.
                 await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
 
-                stateTransition = transformResult.StateTransition;
+                // Same rule as the in-transaction hooks above: a state transition is only
+                // real if a row actually changed state. A tenant/policy-scoped-away update
+                // affects zero rows, so publishing its transition would hand the observer
+                // chain — webhooks, CDC, workflow triggers — an event describing a row the
+                // caller never touched, and whose from/to states it is not allowed to see.
+                if (result > 0)
+                    stateTransition = transformResult.StateTransition;
             }, ctx.CancellationToken);
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);

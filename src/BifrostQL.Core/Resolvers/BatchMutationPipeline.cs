@@ -234,7 +234,10 @@ namespace BifrostQL.Core.Resolvers
                         MutationState = MutationObserverContext.NewMutationState(),
                     });
                 }
-                if (outcome.Transition is not null && transitionObservers is not null)
+                // Affected > 0 gates the transition exactly as it does on the single-row
+                // pipeline: a scoped-away action affects no rows, so its transition
+                // describes a row the caller never touched and must not be published.
+                if (outcome.Transition is not null && outcome.Affected > 0 && transitionObservers is not null)
                 {
                     await transitionObservers.NotifyAsync(outcome.Transition, userContext);
                 }
@@ -386,7 +389,13 @@ namespace BifrostQL.Core.Resolvers
 
             if (!keyData.Any() || !standardData.Any()) return null;
 
-            var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(ctx.Conn, ctx.Transaction, dialect, table, keyData);
+            // Scoped by the same chain-derived row scope the UPDATE below carries, so the
+            // state gate cannot read a row this caller could not write (see
+            // MutationCommandExecutor.LoadCurrentStateMachineRow). ctx.TransformContext
+            // carries no CurrentRow, which is exactly what the scope probe needs.
+            var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(
+                ctx.Conn, ctx.Transaction, dialect, table, keyData,
+                ctx.MutationTransformers, ctx.TransformContext, ctx.Ct);
             var updateTransformContext = currentRow is null
                 ? ctx.TransformContext
                 : new MutationTransformContext

@@ -97,4 +97,45 @@ public sealed class MutationArgumentBinderTests
         var act = () => MutationArgumentBinder.ResolvePrimaryKey(noPk, new object?[] { 1 });
         act.Should().Throw<BifrostExecutionError>().WithMessage("*has no primary key*");
     }
+
+    // --- RequireCompleteKey --------------------------------------------------
+    //
+    // The rule the write pipelines share. The batch upsert probe is guarded by it
+    // too and has no other direct coverage, since the GraphQL upsert input types
+    // its key columns as required and the mutation-intent surface has no upsert
+    // verb — so the contract is pinned here.
+
+    [Fact]
+    public void RequireCompleteKey_PartialCompositeKey_Throws()
+    {
+        var act = () => MutationArgumentBinder.RequireCompleteKey(
+            CompositeKey(), new[] { "school_id", "grade" }, "Upsert");
+
+        act.Should().Throw<BifrostExecutionError>()
+            .Which.ErrorCode.Should().Be(MutationArgumentBinder.PartialPrimaryKeyCode);
+    }
+
+    [Fact]
+    public void RequireCompleteKey_RefusalNamesCountsOnly_NeverKeyColumns()
+    {
+        // The refusal answers callers who may hold no read access to this table, so
+        // it must not disclose the model's key-column names.
+        var act = () => MutationArgumentBinder.RequireCompleteKey(
+            CompositeKey(), new[] { "school_id" }, "Update");
+
+        var message = act.Should().Throw<BifrostExecutionError>().Which.Message;
+        message.Should().Contain("supplied 1 primary-key column value(s) but 2 are expected");
+        message.Should().NotContain("student_id");
+    }
+
+    [Fact]
+    public void RequireCompleteKey_CompleteOrAbsentKey_IsAccepted()
+    {
+        // Complete composite key, complete single-column key, and no key column at
+        // all (a filtered delete) all pass; only a PARTIAL key is refused.
+        MutationArgumentBinder.RequireCompleteKey(
+            CompositeKey(), new[] { "student_id", "school_id", "grade" }, "Update");
+        MutationArgumentBinder.RequireCompleteKey(CompositeKey(), new[] { "grade" }, "Delete");
+        MutationArgumentBinder.RequireCompleteKey(Users(), new[] { "Id" }, "Update");
+    }
 }

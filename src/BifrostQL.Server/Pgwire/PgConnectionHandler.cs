@@ -71,15 +71,16 @@ namespace BifrostQL.Server.Pgwire
         {
             await using var stream = new DuplexPipeStream(connection.Transport);
             await HandleConnectionAsync(stream, connection.ConnectionClosed,
-                connection.RemoteEndPoint?.ToString());
+                ProtocolSourceKey.Of(connection.RemoteEndPoint));
         }
 
         /// <summary>
         /// Drives one connection's startup + authentication over <paramref name="rawStream"/>.
         /// Written against a plain <see cref="Stream"/> so it runs identically over a
         /// real socket (tests, production) and the TLS-wrapped stream after upgrade.
-        /// <paramref name="source"/> is the caller's remote endpoint string, the per-source
-        /// SCRAM rate-limit key; a null/empty source shares one bucket ("unknown").
+        /// <paramref name="source"/> is the per-source SCRAM rate-limit key — the client IP
+        /// via <see cref="ProtocolSourceKey"/>, never "ip:port" (an ephemeral port would make
+        /// the cap per-connection); a null/empty source shares one bucket ("unknown").
         /// </summary>
         internal async Task HandleConnectionAsync(Stream rawStream, CancellationToken ct, string? source = null)
         {

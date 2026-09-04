@@ -184,6 +184,34 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task AnonymousSession_IsClosed_AtItsSessionDeadline()
+        {
+            // An admitted anonymous bind sets Authenticated = true, which used to retire the
+            // pre-auth deadline entirely: a credential-less peer could then hold an admission slot
+            // forever by sending an occasional RootDSE probe (traffic defeats the idle timeout).
+            // An anonymous session gets a short lifetime instead — the same AuthenticationTimeout,
+            // measured from the bind — after which the server closes the connection.
+            var options = new LdapWireOptions
+            {
+                AnonymousBindEnabled = true,
+                AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
+                IdleTimeout = TimeSpan.FromSeconds(30),
+            };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            // Within the lifetime the session answers normally (the RootDSE is the anonymous surface).
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "")));
+            (await ReadAsync(fixture)).MessageId.Should().Be(2);
+
+            // Past it, the server closes: the client observes EOF, not a hang.
+            (await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5)))
+                .Should().BeNull("an anonymous session expires at its deadline; it must not hold a slot forever");
+        }
+
+        [Fact]
         public async Task AuthenticatedConnection_SurvivesPastThePreAuthDeadline()
         {
             // The deadline reclaims slots from UNAUTHENTICATED peers only; an authenticated session is

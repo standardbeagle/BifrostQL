@@ -93,15 +93,10 @@ namespace BifrostQL.Core.Resolvers
             {
                 // The probe says the row physically exists; the transformer row
                 // scope (tenant/policy, soft-delete IS NULL) decides whether the
-                // UPDATE can actually reach it. A scoped-away row affects zero
-                // rows, and the pipeline's Value is the KEY on a single-key table
-                // — not a count (protocol-adapter-security invariant 8(b)) — so
-                // the answer must come from AffectedRows: a zero-row upsert update
-                // is the update path's not-found response, never the victim's key.
-                var upsertCtx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
-                var (upsertValue, upsertAffected) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
-                    table, propertyInfo, upsertCtx);
-                return upsertAffected == 0 ? 0 : upsertValue;
+                // UPDATE can actually reach it. UpdateObject answers a zero-row
+                // update with the not-found response (0), never the victim's key,
+                // so a scoped-away upsert shares that answer by construction.
+                return await UpdateObject(context, table, mutationTransformers, model, conFactory, "upsert");
             }
 
             return await InsertObject(context, table, mutationTransformers, model, conFactory, "upsert");

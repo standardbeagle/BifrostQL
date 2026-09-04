@@ -105,7 +105,7 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 |----------|------|--------|
 | `_includeDeleted: Boolean` | query | Include soft-deleted rows alongside live rows |
 | `_onlyDeleted: Boolean` | query | Return **only** soft-deleted rows (takes precedence) — power a "recycle bin" view |
-| `_hardDelete: Boolean` | mutation | Bypass the soft-delete rewrite and issue a real `DELETE` |
+| `_hardDelete: Boolean` | mutation | Bypass the soft-delete rewrite and issue a real `DELETE` — **opt-in only**, see below |
 
 ```graphql
 # Administrative read — show the recycle bin
@@ -116,8 +116,27 @@ Soft delete converts DELETE mutations into UPDATE mutations that set a timestamp
 }
 ```
 
+### Hard delete is off by default
+
+`_hardDelete` physically removes rows, so it is **not** part of the schema of a plain
+soft-delete table. A table exposes the argument only when it opts in by naming the role
+allowed to use it:
+
+```
+"dbo.orders { soft-delete: deleted_at; soft-delete-hard-role: purge_admin; }"
+```
+
+On an opted-in table the caller must also hold the named role (`UserContext["roles"]`).
+Without the opt-in the argument is absent from the SDL, so the hard-delete branch is
+unreachable from GraphQL; a programmatic mutation intent that still carries the key is
+denied.
+
+The hard-delete branch deliberately adds **no** `deleted_at IS NULL` guard: purging
+already-soft-deleted rows is its purpose (a soft delete can never reach them). The role
+opt-in — not the row's delete state — is the guard.
+
 ```graphql
-# Permanently remove a row (bypasses soft-delete)
+# Permanently remove a row (requires soft-delete-hard-role opt-in + the role)
 mutation {
   orders(delete: { orderId: 42 }, _hardDelete: true) { orderId }
 }

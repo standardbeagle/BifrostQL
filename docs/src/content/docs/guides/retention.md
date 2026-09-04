@@ -46,8 +46,9 @@ scheduler must remember to apply.
 `retain` **requires** a `soft-delete` column (a table with no soft-delete has no
 already-soft-deleted rows to purge). To physically remove a row that a soft-delete UPDATE
 could never touch, the purge uses the pipeline's **declared hard-delete route**, gated by
-the table's `soft-delete-hard-role`. Configure that role so the system purge is authorized;
-a table with no declared role needs none.
+the table's `soft-delete-hard-role`. That declaration is now **required** for `retain`:
+hard delete defaults off, so a table with no declared role cannot be hard-purged and its
+retain purge is denied — declare the role so the system purge is authorized.
 
 `retain` takes **no `after <column>` clause** — redirecting it onto a live-row column is
 exactly what `ttl` is for, and mixing the two is rejected at load time.

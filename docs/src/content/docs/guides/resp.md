@@ -47,8 +47,17 @@ builder.Services.AddSingleton<IRespCredentialStore, MyCredentialStore>();
 | `Endpoint` | `null` | Registered BifrostQL endpoint path to read/write against; `null` selects the single registered endpoint. |
 | `EnableWrites` | `false` | Master gate for the write surface (SET/HSET/MSET/DEL). Off by default: every write is refused with a clean `-ERR` and executes nothing until a deployment opts in. |
 | `MaxBulkLength` | `1048576` (1 MiB) | DoS guard on the unauthenticated path: a bulk/inline length prefix beyond this is refused, never allocated. |
+| `MaxFrameLength` | `1048576` (1 MiB) | DoS guard on the total byte length of one top-level frame, elements of nested aggregates included. The per-element caps bound only single parts; without this a frame built from individually legal parts could reach roughly 1 TiB, all of it retained until the frame completes. Charged per consumed byte and checked before any payload is allocated; reset at each top-level frame. |
 | `MaxAggregateElements` | `1048576` | DoS guard: a declared array/map element count beyond this is refused, so a huge multibulk count cannot pre-allocate an unbounded array. |
 | `MaxNestingDepth` | `32` | DoS guard: how deeply aggregates may nest before the decoder refuses to descend (prevents a stack-overflow teardown of the host). |
+| `MaxConnections` | `100` | Concurrent connections admitted. The slot is reserved at ACCEPT — before the TLS handshake and before AUTH — so a peer that never completes a handshake cannot force work outside the cap. |
+| `AuthenticationTimeout` | `30s` | One cumulative budget for a connection to authenticate, never reset by traffic. Does not apply once authenticated, nor at all when `RequireAuthentication` is `false` (such a front door has no pre-auth phase; its connections live under `IdleTimeout`). |
+| `IdleTimeout` | `10m` | How long an authenticated connection may sit with no command. `Timeout.InfiniteTimeSpan` disables it. |
+| `MaxAuthAttemptsPerSource` | `100` | Authentication attempts admitted from one source per `AuthRateLimitWindow`. The source is the peer's address, or the connection itself when no address is known. |
+| `MaxAuthAttemptsPerAccount` | `10` | Authentication attempts admitted against one account name per `AuthRateLimitWindow`, whatever their source. Bounds a distributed guess at one login. |
+| `AuthRateLimitWindow` | `1m` | The fixed window both authentication-attempt caps count over. Over either cap the attempt is refused before the credential is resolved, with one fixed message that never varies by account. |
+| `ScanCursorSecret` | `null` | HMAC secret for SCAN cursors. Configure it to make cursors survive a restart and resolve across instances; absent one a per-instance random key is generated and the trade-off is logged at startup. |
+| `ScanCursorTtl` | `10m` | How long an issued SCAN cursor stays valid. An expired cursor is refused exactly like a forged one. |
 
 > **No STARTTLS.** RESP has no in-protocol TLS. `AUTH` crosses the wire in the
 > clear unless TLS is terminated at the listener or a proxy — the same operational
@@ -174,8 +183,13 @@ Cursor-paginated primary-key enumeration of one table. The reply is the Redis SC
   non-positive or unparseable COUNT is a syntax error.
 - **TYPE** is accepted and ignored — a Bifrost row has no single Redis type, so
   filtering by it would be dishonest.
-- The **cursor** is opaque and encodes only a primary-key position; a malformed
-  cursor is a clean `-ERR` and executes nothing.
+- The **cursor** is opaque, integrity-protected, and encodes only a primary-key
+  position — never scope, tenant, policy, or row content. Its MAC binds the
+  resolved table, the MATCH pattern, and the caller's identity, all re-derived
+  from the live request, so a cursor cannot be replayed against another table or
+  by another principal. Forgery, tampering, cross-context replay, and expiry all
+  produce the same clean `-ERR` and execute nothing — an unusable cursor is
+  refused explicitly, never silently restarted from the beginning.
 
 Enumeration runs through the query pipeline under the session identity, so only
 primary keys of rows the identity may see are ever emitted — on every page.

@@ -73,7 +73,7 @@ A tool declares **either** a read `root` **or** a write `mutation` — never bot
 | `table` | Only for `type: "id"` — the schema-qualified table the key belongs to; validated against the model. |
 | `description` | Strongly recommended. A parameter with no description logs a load-time warning. |
 | `values` | Only for `type: "enum"` — the allowed values. |
-| `default` | When present the parameter is **optional** (and omitted from the tool's `required` list). For an `enum`, the default must be one of `values`. |
+| `default` | When present the parameter is **optional** (and omitted from the tool's `required` list). For an `enum`, the default must be one of `values`. At call time an absent argument binds the default; a supplied argument that violates `values` or `type` is rejected before any query or write runs. |
 
 A parameter named `detail` is **reserved** for [detail gating](#detail-gating): if
 any include declares `detailGate`, a declared `detail` parameter must be
@@ -119,7 +119,7 @@ keyed by `as`.
 | `fields` | Columns of the related table to return (a collection include). Composite foreign keys are matched on every column pair — never a single-column guess. |
 | `filter` | A structured filter `{ "column": { "_op": value } }` ANDed onto the relation. Supports `and`/`or` groups. Column names are validated. All values bind as SQL parameters. |
 | `sort` | A single column, ascending; prefix `-` for descending (`"-Id"`). |
-| `limit` | Maximum related rows to return. |
+| `limit` | Maximum related rows to return. This can only **narrow** the built-in cap of 200 — an absent or larger limit is clamped to 200, and the many-to-many junction read behind a relation is capped at 50. A collection cut by either bound is flagged `truncated` in the result, never silently partial. |
 | `aggregate` | Aggregate measures over the relation. See below. |
 | `detailGate` | `"full"` hides this include unless the call passes `detail: "full"`. See [detail gating](#detail-gating). |
 

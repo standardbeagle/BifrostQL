@@ -79,6 +79,20 @@ namespace BifrostQL.Mcp.Test
                   "description": "Delete an order addressed by its primary key.",
                   "params": { "orderId": { "type": "id", "description": "order primary key" } },
                   "mutation": { "table": "main.orders", "action": "delete", "byId": "orderId" }
+                },
+                {
+                  "name": "set_order_status",
+                  "description": "Set an order's status to a declared enum value.",
+                  "params": {
+                    "orderId": { "type": "id", "description": "order primary key" },
+                    "status": { "type": "string", "values": ["open", "closed"], "default": "open" }
+                  },
+                  "mutation": {
+                    "table": "main.orders",
+                    "action": "update",
+                    "byId": "orderId",
+                    "values": { "status": "$status" }
+                  }
                 }
               ]
             }
@@ -95,6 +109,7 @@ namespace BifrostQL.Mcp.Test
                     id INTEGER PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
                     name TEXT NOT NULL,
+                    status TEXT NULL,
                     deleted_at TEXT NULL
                 )
                 """,
@@ -291,6 +306,61 @@ namespace BifrostQL.Mcp.Test
                 // the adapter never special-cased soft-delete.
                 (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE id = 1")).Should().Be(1L);
                 (await DbScalarAsync("SELECT deleted_at FROM orders WHERE id = 1")).Should().NotBeNull();
+            });
+        }
+
+        [Fact]
+        public async Task Update_AbsentParamWithDeclaredDefault_WritesTheDefault()
+        {
+            // M22: the input schema marks a defaulted param optional; binding must apply
+            // the declared default rather than throwing "requires parameter".
+            await WithClientAsync(enableWrites: true, null, async client =>
+            {
+                var update = await client.CallToolAsync("set_order_status", new Dictionary<string, object?>
+                {
+                    ["orderId"] = 1, ["confirm"] = true,
+                });
+                update.IsError.Should().NotBeTrue(update.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
+
+                (await DbScalarAsync("SELECT status FROM orders WHERE id = 1")).Should().Be("open",
+                    "an absent parameter with a declared default binds the default");
+            });
+        }
+
+        [Fact]
+        public async Task Update_ParamOutsideDeclaredEnum_IsRejectedAndWritesNothing()
+        {
+            // M22: the input schema advertises enum ["open","closed"]; a value outside
+            // it must be refused at bind with a client-shape error, never reaching SQL.
+            await WithClientAsync(enableWrites: true, null, async client =>
+            {
+                var update = await client.CallToolAsync("set_order_status", new Dictionary<string, object?>
+                {
+                    ["orderId"] = 1, ["status"] = "DROPPED", ["confirm"] = true,
+                });
+                update.IsError.Should().BeTrue("a value outside the declared enum is rejected at bind");
+
+                (await DbScalarAsync("SELECT status FROM orders WHERE id = 1")).Should().BeNull(
+                    "a rejected value must never be written");
+            });
+        }
+
+        [Fact]
+        public async Task Insert_ParamViolatingDeclaredType_IsRejectedAndWritesNothing()
+        {
+            // M22: the input schema declares type; a mismatched JSON kind is refused at
+            // bind. create_order's name is type "string" — a number must be rejected
+            // BEFORE the pipeline (pre-fix it passed through ToClrValue and was written).
+            await WithClientAsync(enableWrites: true, null, async client =>
+            {
+                var insert = await client.CallToolAsync("create_order", new Dictionary<string, object?>
+                {
+                    ["id"] = 42, ["name"] = 42,
+                });
+                insert.IsError.Should().BeTrue("a number for a string-typed parameter is rejected at bind");
+
+                (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE id = 42")).Should().Be(0L,
+                    "a rejected value must never be written");
             });
         }
     }

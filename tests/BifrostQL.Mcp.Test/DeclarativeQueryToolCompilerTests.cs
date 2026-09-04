@@ -464,6 +464,74 @@ public sealed class DeclarativeQueryToolCompilerTests
             ParseSingleStatement(statement.Sql);
     }
 
+    [Fact]
+    public async Task ExecuteCollectionIncludes_NoDeclaredLimit_CapsRowsAtBuiltInCeiling()
+    {
+        // M23: an include with no declared limit must still be bounded by the built-in
+        // tool cap (200) — an undeclared Limit is null, and ClampRowLimit(null) emits
+        // no LIMIT at all, turning a 500-row relation into an unbounded read.
+        var model = Model(withOrders: true);
+        var definition = Definition() with
+        {
+            Include = [new DeclarativeToolInclude { Relation = "orders", As = "orders", Fields = ["id"] }],
+        };
+        var executor = new RowCountingExecutor(500);
+        var compiled = DeclarativeQueryToolCompiler.Compile(definition, model, executor);
+
+        var results = await compiled.ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
+
+        results["orders"].Rows.Count.Should().BeLessThanOrEqualTo(200,
+            "an include with no declared limit is bounded by the built-in cap, not unlimited");
+        executor.Intents.Should().ContainSingle(i => i.Query.DbTable!.DbName == "orders")
+            .Which.Query.Limit.Should().NotBeNull("the ceiling must reach the query, not a client-side Take");
+    }
+
+    [Fact]
+    public async Task ExecuteCollectionIncludes_DeclaredLimitNarrowsButNeverWidensTheCeiling()
+    {
+        var model = Model(withOrders: true);
+        var executor = new RowCountingExecutor(500);
+
+        var narrow = Definition() with
+        {
+            Include = [new DeclarativeToolInclude { Relation = "orders", As = "orders", Fields = ["id"], Limit = 10 }],
+        };
+        var narrowResults = await DeclarativeQueryToolCompiler.Compile(narrow, model, executor)
+            .ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
+        narrowResults["orders"].Rows.Count.Should().BeLessThanOrEqualTo(10,
+            "a declared limit below the ceiling is honored");
+
+        var wide = Definition() with
+        {
+            Include = [new DeclarativeToolInclude { Relation = "orders", As = "orders", Fields = ["id"], Limit = 500 }],
+        };
+        var wideResults = await DeclarativeQueryToolCompiler.Compile(wide, model, executor)
+            .ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
+        wideResults["orders"].Rows.Count.Should().BeLessThanOrEqualTo(200,
+            "a declared limit can only narrow the built-in ceiling, never widen it");
+    }
+
+    [Fact]
+    public async Task ExecuteCollectionIncludes_ManyToManyJunctionRead_IsBounded()
+    {
+        // M23: the m2m junction read had NO limit at all. It must be bounded by the
+        // built-in junction cap (50), narrowing the target-id set it feeds.
+        var model = ManyToManyModel();
+        var definition = Definition() with
+        {
+            Include = [new DeclarativeToolInclude { Relation = "tags", As = "tags", Fields = ["id", "label"] }],
+        };
+        var executor = new RowCountingExecutor(500);
+        var compiled = DeclarativeQueryToolCompiler.Compile(definition, model, executor);
+
+        var results = await compiled.ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
+
+        executor.Intents.Should().ContainSingle(i => i.Query.DbTable!.DbName == "customer_tags")
+            .Which.Query.Limit.Should().NotBeNull("the junction read must carry a LIMIT");
+        results["tags"].Rows.Count.Should().BeLessThanOrEqualTo(50,
+            "the junction cap bounds the m2m collection it feeds");
+    }
+
     private static (string Sql, IReadOnlyList<SqlParameterInfo> Parameters) Render(GqlObjectQuery query, IDbModel model)
     {
         var sqls = new Dictionary<string, ParameterizedSql>();
@@ -677,6 +745,28 @@ public sealed class DeclarativeQueryToolCompilerTests
         DataType = name == "total" ? "decimal" : "nvarchar(50)",
         IsPrimaryKey = primaryKey, OrdinalPosition = ordinal,
     };
+
+    /// <summary>
+    /// Returns <paramref name="rowCount"/> rows per query, honoring the query's Limit
+    /// as a real database would (an unset Limit returns every row — the M23 bug shape).
+    /// </summary>
+    private sealed class RowCountingExecutor(int rowCount) : IQueryIntentExecutor
+    {
+        public List<QueryIntent> Intents { get; } = new();
+        public Task<IDbModel> GetModelAsync(string? endpoint = null) => throw new NotSupportedException();
+        public Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
+        {
+            Intents.Add(intent);
+            var effective = intent.Query.Limit is > 0 ? Math.Min(rowCount, intent.Query.Limit.Value) : rowCount;
+            var rows = Enumerable.Range(1, effective)
+                .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+                {
+                    ["id"] = (long)i, ["tag_id"] = (long)i, ["label"] = $"t{i}",
+                })
+                .ToList();
+            return Task.FromResult(new QueryIntentResult { Rows = rows, Sql = "SELECT 1" });
+        }
+    }
 
     private sealed class RecordingExecutor : IQueryIntentExecutor
     {

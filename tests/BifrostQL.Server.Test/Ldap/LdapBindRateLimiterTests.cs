@@ -88,6 +88,24 @@ public class LdapBindRateLimiterTests
     }
 
     [Fact]
+    public void PerAccountCap_CaseAndWhitespaceVariantsOfOneDn_ShareOneWindow()
+    {
+        // The account axis must key on the DN's canonical form (RFC 4514: attribute types and
+        // values match case-insensitively, separator whitespace is insignificant). Keyed on the
+        // raw string, every respelling of one DN opens a FRESH per-account window and the cap
+        // never trips on the brute force it exists to bound.
+        var clock = new Clock();
+        var limiter = new LdapBindRateLimiter(maxPerSource: 100, maxPerAccount: 2,
+            window: TimeSpan.FromMinutes(1), clock: clock.Get);
+
+        limiter.TryBind("a", "CN=Alice, DC=Example, DC=com").Should().BeTrue();
+        limiter.TryBind("b", "cn=alice,dc=example,dc=com").Should().BeTrue(
+            "the same DN spelled differently is the same account");
+        limiter.TryBind("c", "cn=ALICE,dc=EXAMPLE,dc=com").Should().BeFalse(
+            "case/whitespace variants of one DN must share its per-account window");
+    }
+
+    [Fact]
     public void OverCap_LiveFlood_MapStaysBounded_AndTrackedCounterStillCaps()
     {
         var clock = new Clock();

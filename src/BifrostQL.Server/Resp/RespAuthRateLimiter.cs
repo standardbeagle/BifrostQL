@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 
 namespace BifrostQL.Server.Resp
 {
@@ -38,7 +39,9 @@ namespace BifrostQL.Server.Resp
         private readonly Func<DateTimeOffset> _clock;
         private readonly int _maxTrackedKeys;
         private readonly ConcurrentDictionary<string, Window> _windows = new(StringComparer.Ordinal);
-        private readonly Lock _sweepGate = new();
+        // Plain object + Monitor rather than System.Threading.Lock: this assembly also targets
+        // net8.0, where that type does not exist.
+        private readonly object _sweepGate = new();
         private DateTimeOffset _lastSweep = DateTimeOffset.MinValue;
 
         public RespAuthRateLimiter(
@@ -112,7 +115,7 @@ namespace BifrostQL.Server.Resp
             // costs O(1) amortized per attempt, never an O(n) scan on every one. A thread that finds
             // the sweep running (or run too recently) skips it and the caller simply declines to
             // track the new key — correctness never depends on the sweep firing.
-            if (!_sweepGate.TryEnter())
+            if (!Monitor.TryEnter(_sweepGate))
                 return;
             try
             {
@@ -129,7 +132,7 @@ namespace BifrostQL.Server.Resp
             }
             finally
             {
-                _sweepGate.Exit();
+                Monitor.Exit(_sweepGate);
             }
         }
 

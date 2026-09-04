@@ -57,7 +57,10 @@ namespace BifrostQL.Server.Ldap
             try
             {
                 await using var transport = new DuplexPipeStream(connection.Transport);
-                var source = connection.RemoteEndPoint?.ToString() ?? "unknown";
+                // Keyed on the CLIENT, not the connection: an IPEndPoint's ToString() is
+                // "ip:port" with an ephemeral port, which would make the per-source bind cap
+                // per-connection — inert against the reconnect loop it exists to stop.
+                var source = ProtocolSourceKey.Of(connection.RemoteEndPoint);
 
                 SslStream ssl;
                 try

@@ -511,6 +511,26 @@ namespace BifrostQL.Server.Test.Ldap
         // ---- error funnel ----
 
         [Fact]
+        public async Task Search_WhenThePipelineDeniesAccess_AnswersInsufficientAccessRights()
+        {
+            // A policy/tenant denial (tagged ACCESS_DENIED by the transformer chain) is a CLIENT
+            // authorization outcome, not a server fault: the wire code must be
+            // insufficientAccessRights, mapped by CONDITION, with no detail about what was denied.
+            // Mapping it to operationsError both misreports the condition and contradicts the
+            // executor's documented anti-oracle contract.
+            var (executor, pipeline) = Build();
+            pipeline.WithPeople(3);
+            pipeline.Fault = new BifrostExecutionError("Access denied by authorization policy.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+
+            var outcome = await RunAsync(executor, Search());
+
+            outcome.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights,
+                "an access denial maps by condition, not to a generic server error");
+            outcome.Diagnostic.Should().BeEmpty("a denial never names what was denied");
+        }
+
+        [Fact]
         public async Task Search_WhenThePipelineFaults_AnswersGenericallyWithNoInternalDetail()
         {
             // A BifrostExecutionError can wrap driver or transformer text: qualified table names,

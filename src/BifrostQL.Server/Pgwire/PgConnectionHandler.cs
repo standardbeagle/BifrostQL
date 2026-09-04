@@ -36,6 +36,7 @@ namespace BifrostQL.Server.Pgwire
         private readonly PgWireOptions _options;
         private readonly PgCancellationRegistry _cancelRegistry;
         private readonly PgwireConnectionLimiter _connectionLimiter;
+        private readonly PgAuthRateLimiter _authRateLimiter;
         private readonly ILogger<PgConnectionHandler> _logger;
         private readonly Func<Stream, CancellationToken, Task<Stream>> _tlsUpgrade;
 
@@ -47,7 +48,8 @@ namespace BifrostQL.Server.Pgwire
             PgCancellationRegistry? cancelRegistry = null,
             PgwireConnectionLimiter? connectionLimiter = null,
             ILogger<PgConnectionHandler>? logger = null,
-            Func<Stream, CancellationToken, Task<Stream>>? tlsUpgrade = null)
+            Func<Stream, CancellationToken, Task<Stream>>? tlsUpgrade = null,
+            PgAuthRateLimiter? authRateLimiter = null)
         {
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
@@ -61,6 +63,8 @@ namespace BifrostQL.Server.Pgwire
             // Test seam: wraps the real TLS upgrade so a test can observe the upgraded stream's
             // disposal. Production always uses the default SslStream upgrade.
             _tlsUpgrade = tlsUpgrade ?? UpgradeToTlsAsync;
+            _authRateLimiter = authRateLimiter
+                ?? new PgAuthRateLimiter(options.MaxAuthAttemptsPerSource, options.AuthRateLimitWindow);
         }
 
         public override async Task OnConnectedAsync(ConnectionContext connection)
@@ -121,6 +125,18 @@ namespace BifrostQL.Server.Pgwire
                 {
                     await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
                         "StartupMessage missing required 'user' parameter.", ct);
+                    return;
+                }
+
+                // Per-source SCRAM throttle, checked BEFORE any credential lookup or hash work:
+                // one SCRAM verification costs PBKDF2(4096), so an unbounded attempt rate is an
+                // unauthenticated CPU-exhaustion vector. The refusal answers with the SAME
+                // invalid_password wire shape as a wrong password (no throttle-state oracle).
+                if (_options.AuthMethod == PgAuthMethod.ScramSha256
+                    && !_authRateLimiter.TryAcquire(string.IsNullOrEmpty(source) ? "unknown" : source))
+                {
+                    await RejectAsync(stream, PgWireProtocol.SqlStateInvalidPassword,
+                        "password authentication failed.", ct);
                     return;
                 }
 

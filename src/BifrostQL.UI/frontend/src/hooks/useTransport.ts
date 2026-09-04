@@ -11,8 +11,13 @@ import { TransportGraphQLFetcher } from '../lib/transport-fetcher';
 export interface UseTransportResult {
   transportMode: TransportMode;
   toggleTransport: () => void;
-  transport: QueryTransport | null;
   transportConnected: boolean;
+  /**
+   * Fetcher for the CURRENTLY selected mode and profile paths, or null while
+   * the effect has yet to build one for them. Never a fetcher over a superseded
+   * transport: a consumer that mounts children on this value therefore cannot
+   * issue a request to the previous profile's endpoint.
+   */
   editorFetcher: TransportGraphQLFetcher | null;
 }
 
@@ -33,7 +38,13 @@ export interface UseTransportResult {
 export function useTransport(graphqlPath: string, binaryPath: string): UseTransportResult {
   const [transportMode, setTransportMode] = useState<TransportMode>(() => loadTransportMode());
   const [transportConnected, setTransportConnected] = useState<boolean>(false);
-  const [transport, setTransport] = useState<QueryTransport | null>(null);
+  // The transport is published together with the identity it was built from, so
+  // render can tell a live transport from one the effect has not rebuilt yet.
+  // Publishing the instance alone left a window — one render after a profile or
+  // mode change — where the selection had moved but the transport had not, and
+  // anything mounted in that window queried the superseded endpoint.
+  const [published, setPublished] = useState<{ key: string; transport: QueryTransport } | null>(null);
+  const transportKey = `${transportMode}|${graphqlPath}|${binaryPath}`;
 
   const toggleTransport = useCallback(() => {
     setTransportMode((prev) => {
@@ -54,7 +65,7 @@ export function useTransport(graphqlPath: string, binaryPath: string): UseTransp
       // mid-session disconnect instead of freezing on its first sample.
       { onConnectedChange: (connected) => { if (!cancelled) setTransportConnected(connected); } },
     );
-    setTransport(active);
+    setPublished({ key: transportKey, transport: active });
     setTransportConnected(active.connected);
     // The binary transport opens its WebSocket lazily on first query, so issue a
     // tiny probe to exercise the connection up front; the editor shares this same
@@ -74,16 +85,19 @@ export function useTransport(graphqlPath: string, binaryPath: string): UseTransp
       cancelled = true;
       active.close();
     };
-  }, [transportMode, graphqlPath, binaryPath]);
+  }, [transportKey, transportMode, graphqlPath, binaryPath]);
 
   // Adapter that lets the embedded editor route every GraphQL request through
-  // the selected transport. Rebuilt alongside the transport so the editor
-  // remount (keyed on transportMode) picks up the new routing. Null until the
-  // effect has published the first transport instance.
+  // the selected transport. Null until the effect has published a transport
+  // built from the CURRENT selection — including across a change, so a consumer
+  // gated on this value unmounts rather than firing a query at the endpoint the
+  // user just navigated away from.
   const editorFetcher = useMemo(
-    () => (transport ? new TransportGraphQLFetcher(transport) : null),
-    [transport],
+    () => (published && published.key === transportKey
+      ? new TransportGraphQLFetcher(published.transport)
+      : null),
+    [published, transportKey],
   );
 
-  return { transportMode, toggleTransport, transport, transportConnected, editorFetcher };
+  return { transportMode, toggleTransport, transportConnected, editorFetcher };
 }

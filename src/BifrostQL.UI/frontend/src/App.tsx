@@ -285,9 +285,12 @@ export default function App() {
   // different set of module profiles. On failure fetchProfiles() falls back to
   // DEFAULT_PROFILES (single raw entry → picker disabled).
   const connectionKey = connectionInfo?.id ?? null;
-  // Tracks the last resolved profile id so the editor only remounts on a real
-  // change (kept in a ref so the comparison stays out of a setState updater).
-  const resolvedProfileRef = useRef(activeProfileId);
+  // The persisted profile id cannot be resolved against the real list until it
+  // arrives, so the editor must not mount before then: it caches the schema it
+  // introspects on mount forever (per-mount QueryClient, staleTime Infinity),
+  // and a mount on the raw default would pin profile A's schema over profile
+  // B's data for the rest of the session.
+  const [profilesResolved, setProfilesResolved] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetchProfiles().then((result) => {
@@ -295,16 +298,8 @@ export default function App() {
       const fetched = result.profiles;
       setApiProfiles(fetched);
       setProfilesUnavailable(result.status === 'unavailable' ? result.reason : null);
-      const nextId = resolveActiveProfile(fetched).id;
-      // Only remount the editor when the resolved profile actually changed.
-      // Bumping unconditionally made the editor mount twice on every startup
-      // (once on mount, again when profiles resolved to the same default),
-      // re-introspecting the schema and refetching all table data for nothing.
-      if (resolvedProfileRef.current !== nextId) {
-        resolvedProfileRef.current = nextId;
-        setEditorKey((k) => k + 1);
-      }
-      setActiveProfileId(nextId);
+      setActiveProfileId(resolveActiveProfile(fetched).id);
+      setProfilesResolved(true);
     });
     return () => { cancelled = true; };
   }, [connectionKey]);
@@ -312,10 +307,6 @@ export default function App() {
   const handleSelectProfile = useCallback((id: string) => {
     saveActiveProfileId(id);
     setActiveProfileId(id);
-    resolvedProfileRef.current = id;
-    // Remount the editor so it re-introspects the newly selected profile's
-    // schema from the profile-scoped GraphQL endpoint.
-    setEditorKey((k) => k + 1);
   }, []);
 
   const activeProfile = apiProfiles.find((p) => p.id === activeProfileId) ?? apiProfiles[0];
@@ -331,7 +322,7 @@ export default function App() {
     ? `/bifrost-ws?profile=${encodeURIComponent(serverProfile)}`
     : '/bifrost-ws';
 
-  const { transportMode, toggleTransport, transport, transportConnected, editorFetcher } =
+  const { transportMode, toggleTransport, transportConnected, editorFetcher } =
     useTransport(graphqlPath, binaryPath);
 
   const handleTryItNow = useCallback(() => {
@@ -492,12 +483,13 @@ export default function App() {
           <DashboardPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} />
         ) : editorPane === 'erd' && editorFetcher ? (
           <ErdPane fetcher={editorFetcher} onOpenTable={handleOpenDiagramTable} initialFilter={erdFocusTable} onInitialFilterConsumed={() => setErdFocusTable(null)} />
-        ) : editorFetcher && transport && transport.mode === transportMode ? (
-          // Only mount the editor once the effect has published a transport
-          // whose mode matches the current selection. During a mode toggle the
-          // old (now-closed) transport is still in state for one render; gating
-          // on the mode match keeps the editor off the closed instance until the
-          // fresh one is ready, avoiding a "BinaryTransport is closed" query.
+        ) : editorFetcher && profilesResolved ? (
+          // `editorFetcher` is null unless the published transport was built
+          // from the current mode AND the current profile's paths, so a mode
+          // toggle or a profile switch unmounts the editor for the render in
+          // between and remounts it on the new transport. That is what keeps
+          // its once-per-mount schema query off the superseded endpoint — and
+          // off the old, now-closed transport ("BinaryTransport is closed").
           <Editor
             key={`${editorKey}-${transportMode}-${editorRouteToken}`}
             uiPath={editorPath}

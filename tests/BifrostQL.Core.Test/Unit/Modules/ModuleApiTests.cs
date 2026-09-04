@@ -2,6 +2,8 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
+using BifrostQL.Core.Resolvers;
+using BifrostQL.Model;
 using FluentAssertions;
 using Xunit;
 
@@ -36,9 +38,21 @@ public class ModuleApiTests
     }
 
     [Fact]
-    public void MutationArgumentsSdl_SoftDeleteTable_EmitsHardDelete()
+    public void MutationArgumentsSdl_SoftDeleteTableWithoutHardRole_OmitsHardDelete()
     {
+        // M4: _hardDelete defaults OFF. Only a table carrying the
+        // soft-delete-hard-role opt-in exposes the argument; without it the SDL
+        // has no _hardDelete, so the pipeline's hard-delete branch is unreachable.
         var table = SoftDeleteTable();
+
+        ModuleApiRegistry.MutationArgumentsSdl(table).Should().BeEmpty(
+            "a soft-delete table without soft-delete-hard-role must not expose _hardDelete");
+    }
+
+    [Fact]
+    public void MutationArgumentsSdl_SoftDeleteTableWithHardRole_EmitsHardDelete()
+    {
+        var table = SoftDeleteTable(hardDeleteRole: "admin");
 
         ModuleApiRegistry.MutationArgumentsSdl(table).Should().Be(", _hardDelete: Boolean");
     }
@@ -175,6 +189,23 @@ public class ModuleApiTests
 
         result.MutationType.Should().Be(MutationType.Update);
         result.Data.Should().ContainKey("deleted_at");
+    }
+
+    [Fact]
+    public async Task HardDelete_WithoutHardRoleMetadata_IsDenied()
+    {
+        // M4: a caller-supplied hard_delete on a table that never opted in (no
+        // soft-delete-hard-role metadata) must be refused, not honored — the
+        // schema gate keeps the argument off the SDL, and the transformer is the
+        // fail-closed backstop for the programmatic (mutation-intent) route.
+        var table = SoftDeleteTable();
+        var transformer = new SoftDeleteMutationTransformer();
+        var context = MutationContext(table, hardDelete: true);
+
+        var result = await transformer.TransformAsync(table, MutationType.Delete, new() { ["Id"] = 1 }, context);
+
+        result.Errors.Should().ContainSingle(e => e.Contains("not enabled"));
+        result.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
     }
 
     [Fact]

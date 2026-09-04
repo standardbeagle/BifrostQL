@@ -80,6 +80,10 @@ namespace BifrostQL.Server.Test.Resp
             var options = new RespWireOptions
             {
                 AllowCleartextAuth = true, // the loopback test transport is not TLS
+                // The pre-auth deadline shares this test's clock, and the window rollover below
+                // jumps past 30 seconds; a real budget here would close the connection for reasons
+                // that have nothing to do with the limiter under test.
+                AuthenticationTimeout = TimeSpan.FromHours(1),
                 MaxAuthAttemptsPerSource = attemptsPerSource,
                 MaxAuthAttemptsPerAccount = attemptsPerSource,
                 AuthRateLimitWindow = Window,

@@ -505,8 +505,29 @@ code, not just re-checks of pgwire.
     holds (here: BifrostQL.Mcp and out-of-tree callers cannot mint; reflection
     is not a wire and is out of the threat model), never to delete the sentence.
 
-    Same shape is pending on `_hardDelete` (M4/M5) and on the workflow-trigger
-    suppression flag (`01M1KPA21MXSV6WS059S21BB81`).
+    Same shape is pending on the workflow-trigger suppression flag
+    (`01M1KPA21MXSV6WS059S21BB81`).
+
+    **`_hardDelete` (M4) resolved differently, and the difference is the rule.**
+    A token is for a privilege no external caller may ever hold. `_hardDelete`
+    is a privilege the OPERATOR grants per table, so it shipped as a
+    declaration gate on one predicate — the table carrying
+    `soft-delete-hard-role` — enforced twice: the SDL omits the argument
+    (`MutationArgumentsSdl`, both the mutation field and `_batch`), and
+    `GetHardDeleteDenial` refuses with `AccessDeniedCode` on the same
+    predicate, which closes the `IMutationIntentExecutor` route that has no
+    SDL to omit. **Both halves are required**: an SDL-only gate leaves the
+    programmatic route open, and a backstop-only gate advertises a privilege
+    that is always denied. When a privileged flag is operator-declarable,
+    gate it on the declaration in both places; reach for a token only when
+    nothing outside the mint boundary may hold the privilege at all.
+
+    Flipping such a default is breaking, and its blast radius reaches engines
+    that request the privilege on the operator's behalf: M4 made the retention
+    purge of a `retain` table without the role start failing, which falsified
+    a `retention.md` sentence no test covered. Grep the docs for the old
+    default before the docs commit (`steering-docs-follow-mechanism-changes.md`).
 
 <!-- invariant 14 written_at: 2026-09-04T03:00:00Z  source_event: task:01M1KPA1WXEYM3W99A5V1RRV77, git:f91dfeee,7a00fc2a -->
+<!-- invariant 14 amended_at: 2026-09-04T19:30:00Z  source_event: task:01M1KPA1ZWG8TQGCXCXWDNN7RB, git:9b43f138,13c8fa8c -->
 

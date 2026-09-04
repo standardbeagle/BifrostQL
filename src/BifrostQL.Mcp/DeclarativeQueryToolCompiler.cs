@@ -13,6 +13,27 @@ namespace BifrostQL.Mcp;
 /// </summary>
 public static class DeclarativeQueryToolCompiler
 {
+    /// <summary>
+    /// Built-in ceiling for a declared collection include (mirrors the generic data
+    /// tool's 200-row page cap). A declared include limit can only NARROW this
+    /// ceiling, never widen it; an absent limit gets the ceiling. The query carries
+    /// <c>ceiling + 1</c> as a truncation sentinel — never a client-side Take, which
+    /// would bound the response but not the database work.
+    /// </summary>
+    internal const int IncludeRowLimitCap = 200;
+
+    /// <summary>
+    /// Built-in ceiling for the m2m junction read that feeds a declared include
+    /// (mirrors the search tool's 50-row candidate cap). Bounded for the same reason:
+    /// the junction read materializes one row per relation edge before any target-side
+    /// limit could apply.
+    /// </summary>
+    internal const int JunctionRowLimitCap = 50;
+
+    internal static int EffectiveIncludeLimit(int? declared) =>
+        declared is > 0 ? Math.Min(declared.Value, IncludeRowLimitCap) : IncludeRowLimitCap;
+
+
     public static CompiledDeclarativeQueryTool Compile(
         DeclarativeToolDefinition definition,
         IDbModel model,
@@ -218,7 +239,8 @@ public sealed class CompiledDeclarativeQueryTool
         CancellationToken cancellationToken)
     {
         var query = QueryToolCompiler.BuildQuery(include.RelatedTable, include.Fields);
-        query.Limit = include.Definition.Limit;
+        var effectiveLimit = DeclarativeQueryToolCompiler.EffectiveIncludeLimit(include.Definition.Limit);
+        query.Limit = effectiveLimit + 1; // cap+1 sentinel: one extra row proves truncation
         query.IncludeResult = includeTotalCount;
         if (include.Sort is not null) query.Sort.Add(include.Sort);
 
@@ -230,11 +252,14 @@ public sealed class CompiledDeclarativeQueryTool
             var sourceValue = rootKeyByDbName[many.SourceColumn.DbName];
             var junction = QueryToolCompiler.BuildQuery(many.JunctionTable, [many.JunctionTargetColumn]);
             junction.Filter = RelationFilter(many.JunctionTable, many.JunctionSourceColumn, [sourceValue], null);
+            junction.Limit = DeclarativeQueryToolCompiler.JunctionRowLimitCap + 1; // same sentinel
             var junctionRows = await ExecuteQueryAsync(junction, userContext, cancellationToken);
-            var targetIds = junctionRows.Select(row => row[many.JunctionTargetColumn.DbName]).ToArray();
+            var junctionTruncated = junctionRows.Count > DeclarativeQueryToolCompiler.JunctionRowLimitCap;
+            var targetIds = junctionRows.Take(DeclarativeQueryToolCompiler.JunctionRowLimitCap)
+                .Select(row => row[many.JunctionTargetColumn.DbName]).ToArray();
             if (targetIds.Length == 0) return DeclarativeCollectionResult.Empty;
             query.Filter = RelationFilter(include.RelatedTable, many.TargetColumn, targetIds, include.Definition.Filter);
-            return await ExecuteCollectionResultAsync(query, userContext, cancellationToken);
+            return await ExecuteCollectionResultAsync(query, userContext, effectiveLimit, junctionTruncated, cancellationToken);
         }
 
         var link = include.Link!;
@@ -253,17 +278,25 @@ public sealed class CompiledDeclarativeQueryTool
             return DeclarativeCollectionResult.Empty;
 
         query.Filter = CompositeMatchFilter(include.RelatedTable, matchColumns, fromValues, include.Definition.Filter);
-        return await ExecuteCollectionResultAsync(query, userContext, cancellationToken);
+        return await ExecuteCollectionResultAsync(query, userContext, effectiveLimit, upstreamTruncated: false, cancellationToken);
     }
 
     private async Task<DeclarativeCollectionResult> ExecuteCollectionResultAsync(
-        GqlObjectQuery query, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        GqlObjectQuery query, IDictionary<string, object?> userContext, int effectiveLimit,
+        bool upstreamTruncated, CancellationToken cancellationToken)
     {
         var result = await _executor.ExecuteAsync(new QueryIntent
         {
             Query = query, UserContext = userContext, Endpoint = _endpoint,
         }, cancellationToken);
-        return new DeclarativeCollectionResult(result.Rows, result.TotalCount);
+        // The query asked for effectiveLimit + 1; one extra row means the collection
+        // was cut at the ceiling. Report it — a silently partial collection reads as
+        // complete, which is worse than an explicit truncation flag.
+        var truncated = upstreamTruncated || result.Rows.Count > effectiveLimit;
+        var rows = result.Rows.Count > effectiveLimit
+            ? result.Rows.Take(effectiveLimit).ToList()
+            : result.Rows;
+        return new DeclarativeCollectionResult(rows, result.TotalCount, truncated);
     }
 
     /// <summary>
@@ -401,10 +434,13 @@ public sealed class CompiledDeclarativeQueryTool
 /// One declared collection include's execution result: the (limited) rows plus the
 /// total number of matches within the caller's access scope, both from the same
 /// transformer-applied query so the count can never report a wider scope than the rows.
+/// <see cref="Truncated"/> is true when the built-in ceiling (or a declared limit that
+/// narrows it) cut the collection — never silently partial.
 /// </summary>
 public sealed record DeclarativeCollectionResult(
     IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows,
-    int? TotalCount)
+    int? TotalCount,
+    bool Truncated = false)
 {
     public static DeclarativeCollectionResult Empty { get; } = new([], 0);
 }
@@ -425,7 +461,7 @@ internal sealed record CompiledInclude(
             child.GraphQlName = Definition.Relation;
             child.FieldName = Definition.Relation;
             child.Alias = Definition.As;
-            child.Limit = Definition.Limit;
+            child.Limit = DeclarativeQueryToolCompiler.EffectiveIncludeLimit(Definition.Limit);
             if (Sort is not null)
                 child.Sort.Add(Sort);
             if (Definition.Filter is { } filter)

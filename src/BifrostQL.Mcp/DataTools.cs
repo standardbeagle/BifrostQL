@@ -511,6 +511,7 @@ namespace BifrostQL.Mcp
                 ["table"] = child.Table.DbName,
                 ["totalCount"] = result.TotalCount ?? result.Rows.Count,
                 ["rows"] = ToJsonRows(result.Rows),
+                ["truncated"] = result.Truncated,
             };
         }
 

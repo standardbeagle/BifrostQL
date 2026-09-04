@@ -482,6 +482,8 @@ public sealed class DeclarativeQueryToolCompilerTests
 
         results["orders"].Rows.Count.Should().BeLessThanOrEqualTo(200,
             "an include with no declared limit is bounded by the built-in cap, not unlimited");
+        results["orders"].Truncated.Should().BeTrue(
+            "a collection cut at the ceiling must flag truncation, never look complete");
         executor.Intents.Should().ContainSingle(i => i.Query.DbTable!.DbName == "orders")
             .Which.Query.Limit.Should().NotBeNull("the ceiling must reach the query, not a client-side Take");
     }
@@ -500,6 +502,8 @@ public sealed class DeclarativeQueryToolCompilerTests
             .ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
         narrowResults["orders"].Rows.Count.Should().BeLessThanOrEqualTo(10,
             "a declared limit below the ceiling is honored");
+        narrowResults["orders"].Truncated.Should().BeTrue(
+            "500 matching rows cut at the declared limit of 10 is a partial collection and says so");
 
         var wide = Definition() with
         {
@@ -527,9 +531,12 @@ public sealed class DeclarativeQueryToolCompilerTests
         var results = await compiled.ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
 
         executor.Intents.Should().ContainSingle(i => i.Query.DbTable!.DbName == "customer_tags")
-            .Which.Query.Limit.Should().NotBeNull("the junction read must carry a LIMIT");
-        results["tags"].Rows.Count.Should().BeLessThanOrEqualTo(50,
-            "the junction cap bounds the m2m collection it feeds");
+            .Which.Query.Limit.Should().Be(51,
+                "the junction read carries the built-in junction cap (50) plus the truncation sentinel");
+        results["tags"].Rows.Count.Should().BeLessThanOrEqualTo(200,
+            "the collection itself stays under the include ceiling");
+        results["tags"].Truncated.Should().BeTrue(
+            "a junction read cut at the cap must flag truncation, never look complete");
     }
 
     private static (string Sql, IReadOnlyList<SqlParameterInfo> Parameters) Render(GqlObjectQuery query, IDbModel model)

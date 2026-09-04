@@ -127,7 +127,7 @@ namespace BifrostQL.Mcp
 
             var data = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             foreach (var (column, value) in mutation.Values)
-                data[column] = ResolveValue(definition.Name, column, value, arguments);
+                data[column] = ResolveValue(definition, column, value, arguments);
 
             IReadOnlyList<object?>? primaryKey = mutation.ById is { } byId
                 ? ParsePrimaryKey(definition.Name, byId, arguments, keyColumnCount)
@@ -152,18 +152,59 @@ namespace BifrostQL.Mcp
         /// Resolves a declared column value: a <c>$param</c> reference binds the
         /// call-time argument; any other JSON value is a fixed literal. A fixed literal
         /// for a security-pinned column is still overridden by the pipeline transformer.
+        /// Binding honors the parameter declaration the input schema advertises
+        /// (M22): an absent argument falls back to the declared <c>default</c>, and a
+        /// present argument must satisfy the declared <c>type</c> and <c>enum</c> —
+        /// a violation is a client-shape <see cref="ToolPromptException"/> thrown
+        /// BEFORE any intent reaches the pipeline.
         /// </summary>
         private static object? ResolveValue(
-            string toolName, string column, JsonElement value, IReadOnlyDictionary<string, JsonElement> arguments)
+            DeclarativeToolDefinition definition, string column, JsonElement value,
+            IReadOnlyDictionary<string, JsonElement> arguments)
         {
             if (DeclarativeToolDocumentValidator.TryParameterReference(value) is { } parameterName)
             {
+                definition.Params.TryGetValue(parameterName, out var parameter);
                 if (!arguments.TryGetValue(parameterName, out var argument))
+                {
+                    if (parameter?.Default is { } declaredDefault)
+                        return QueryToolCompiler.ToClrValue(declaredDefault);
                     throw new ToolPromptException(
-                        $"Tool '{toolName}' requires parameter '{parameterName}' for column '{column}'.");
+                        $"Tool '{definition.Name}' requires parameter '{parameterName}' for column '{column}'.");
+                }
+                ValidateArgument(definition.Name, parameterName, argument, parameter);
                 return QueryToolCompiler.ToClrValue(argument);
             }
             return QueryToolCompiler.ToClrValue(value);
+        }
+
+        /// <summary>
+        /// Enforces at bind what <see cref="BuildInputSchema"/> advertises: enum
+        /// membership and the JSON kind implied by the declared type. The schema is
+        /// advisory to clients; this check is the enforcement. The message names only
+        /// the parameter — never the offending value.
+        /// </summary>
+        private static void ValidateArgument(
+            string toolName, string parameterName, JsonElement argument, DeclarativeToolParameter? parameter)
+        {
+            if (parameter is null)
+                return;
+            if (parameter.Values is { Count: > 0 } allowed &&
+                (argument.ValueKind != JsonValueKind.String
+                 || !allowed.Contains(argument.GetString(), StringComparer.Ordinal)))
+                throw new ToolPromptException(
+                    $"Parameter '{parameterName}' of tool '{toolName}' must be one of the declared values.");
+            var typeMatches = parameter.Type switch
+            {
+                "int" or "integer" => argument.ValueKind == JsonValueKind.Number && argument.TryGetInt64(out _),
+                "number" => argument.ValueKind == JsonValueKind.Number,
+                "bool" or "boolean" => argument.ValueKind is JsonValueKind.True or JsonValueKind.False,
+                "string" => argument.ValueKind == JsonValueKind.String,
+                _ => true, // "id" and unknown kinds are validated by their own consumers.
+            };
+            if (!typeMatches)
+                throw new ToolPromptException(
+                    $"Parameter '{parameterName}' of tool '{toolName}' must match its declared type.");
         }
 
         private static IReadOnlyList<object?> ParsePrimaryKey(

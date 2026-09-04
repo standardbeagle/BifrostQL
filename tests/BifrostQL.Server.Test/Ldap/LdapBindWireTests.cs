@@ -102,6 +102,30 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task FailedRebind_ResetsTheSessionToAnonymous()
+        {
+            // RFC 4511 §4.2.1: a failed Bind leaves the session ANONYMOUS — it must not keep the
+            // identity an earlier successful bind established, or a client that fat-fingers a
+            // rebind keeps operating (and being authorized) as the previous identity.
+            var options = new LdapWireOptions { AnonymousBindEnabled = true };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.BindRequest(name: "uid=alice", password: "wrong")));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.InvalidCredentials);
+
+            // After the failed rebind the session is anonymous: a directory-data search takes the
+            // anonymous rights-refusal, NOT the credentialed path (which, with no search executor
+            // on this fixture, would answer unwillingToPerform).
+            await fixture.Client.SendAsync(LdapWire.Message(3, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
+            var response = await ReadAsync(fixture);
+            response.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights,
+                "a failed rebind resets the session to anonymous (RFC 4511 §4.2.1)");
+        }
+
+        [Fact]
         public async Task RateLimitedBind_IsByteIdenticalToABadCredential_OnTheWire()
         {
             // The per-account cap is a hardening measure, not a signal. If a rate-limited attempt

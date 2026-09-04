@@ -67,6 +67,18 @@ implementations produce provably different output.
   that sanitizes to a different GraphQL name (a space or dash: `sale-price` ->
   `sale_price`), and assert the output does NOT contain the old key — a
   positive-only assertion misses a double-bind where both names reach SQL.
+- **A re-routing / state-transition test must assert the OLD target was not
+  hit.** Where a change moves work from one destination to another (H13: an
+  editor remount that had to issue its once-per-mount schema query over the
+  newly selected profile's transport), "the new destination is eventually
+  reached" is true on the buggy code too — it reaches the old one FIRST and
+  then the new one. Only the negative half is RED: no request to the old
+  endpoint after the switch, and the old endpoint is not the FIRST request at
+  startup. This generalizes the name-space bullet above from names to any
+  before/after target — endpoints, queues, tables, files. The fixture must also
+  make the two targets distinguishable (two profiles with different endpoints;
+  a single-profile fixture cannot tell them apart).
+  <!-- written_at: 2026-09-04T02:00:00Z  source_event: task:01M1KP68KCJPYTWCAY3A7A5TZ0, git:862fc8f8, git:322d1035 -->
 - **A test container is not the production container.** A fixture that builds a bare
   `ServiceCollection` and registers only what the test needs cannot see a defect whose
   cause is what the PRODUCTION registrar adds. The `updateWhere` / bulk-fast-path gates

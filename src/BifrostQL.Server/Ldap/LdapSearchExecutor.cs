@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -272,6 +273,12 @@ namespace BifrostQL.Server.Ldap
                 var target = resolution.Targets[targetIndex];
                 var offset = targetIndex == start.TargetIndex ? start.Offset : 0;
 
+                // The caller's read projection for this target, computed ONCE per family: the
+                // wildcard column set omits the columns this identity may not read, so one denied
+                // mapped attribute cannot fail the whole search (see RequiredColumns). The same
+                // evaluator the pipeline enforces — never a second, weaker check (invariant 4).
+                var visibility = SchemaReadVisibility.ProjectTable(target.Table, userContext);
+
                 var compiled = LdapFilterCompiler.Compile(request.Filter, target);
                 var scoped = ScopeFilter(target, compiled, resolution);
                 if (scoped is null)
@@ -287,7 +294,7 @@ namespace BifrostQL.Server.Ldap
                     ct.ThrowIfCancellationRequested();
 
                     var batch = await FetchBatchAsync(
-                        target, selection, request, scoped, offset, userContext, ct);
+                        target, selection, request, scoped, offset, userContext, visibility, ct);
                     if (batch.Count == 0)
                         break;
 
@@ -425,6 +432,7 @@ namespace BifrostQL.Server.Ldap
             IReadOnlyDictionary<string, object?> predicate,
             int offset,
             IDictionary<string, object?> userContext,
+            VisibleTable? visibility,
             CancellationToken ct)
         {
             var query = new GqlObjectQuery
@@ -438,7 +446,7 @@ namespace BifrostQL.Server.Ldap
                 Offset = offset > 0 ? offset : null,
             };
 
-            foreach (var column in LdapEntryProjector.RequiredColumns(target, selection, request.Filter))
+            foreach (var column in LdapEntryProjector.RequiredColumns(target, selection, request.Filter, visibility))
                 query.ScalarColumns.Add(new GqlObjectColumn(column.ColumnName));
 
             // A total order is required, not merely nice: without it the database may return rows in

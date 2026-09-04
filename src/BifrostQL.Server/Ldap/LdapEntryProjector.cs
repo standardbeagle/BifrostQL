@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Server.Ldap
@@ -150,9 +151,19 @@ namespace BifrostQL.Server.Ldap
         /// <para>The set is derived from the mapping, so it can never name the credential column;
         /// and it is deliberately NOT "every column of the table", because fetching columns the
         /// directory does not publish would put them one projection bug away from the wire.</para>
+        ///
+        /// <para><paramref name="visibility"/> is the caller's read projection
+        /// (<see cref="SchemaReadVisibility"/>, the same evaluator the pipeline enforces). A
+        /// WILDCARD selection (<c>*</c> or empty) asks for every READABLE attribute, so a selected
+        /// mapping whose column the caller may not read is omitted — the pipeline's column-read
+        /// guard rejects any query that selects it, and one denied column must not fail the whole
+        /// search. An EXPLICITLY named attribute keeps its column and takes the authoritative
+        /// denial (<c>insufficientAccessRights</c>), and filter-referenced columns always stay:
+        /// evaluating the filter without them would silently mis-match (anti-oracle).</para>
         /// </summary>
         public static IReadOnlyList<ColumnDto> RequiredColumns(
-            LdapEntryTarget target, LdapAttributeSelection selection, LdapFilter filter)
+            LdapEntryTarget target, LdapAttributeSelection selection, LdapFilter filter,
+            VisibleTable? visibility)
         {
             var columns = new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase);
 
@@ -163,8 +174,11 @@ namespace BifrostQL.Server.Ldap
             {
                 if (!selection.Includes(mapping.Attribute))
                     continue;
-                if (target.Table.ColumnLookup.TryGetValue(mapping.Column, out var column))
-                    columns[column.ColumnName] = column;
+                if (!target.Table.ColumnLookup.TryGetValue(mapping.Column, out var column))
+                    continue;
+                if (selection.All && visibility is not null && !visibility.HasColumn(column.ColumnName))
+                    continue; // wildcard: a denied column is omitted, not fetched into a guard rejection
+                columns[column.ColumnName] = column;
             }
 
             // The exact evaluation runs over the fetched row, so every attribute the filter

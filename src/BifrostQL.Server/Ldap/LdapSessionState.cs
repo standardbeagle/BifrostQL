@@ -9,9 +9,10 @@ namespace BifrostQL.Server.Ldap
     /// of one that has not), and whether the authenticated session is the ANONYMOUS one — which may
     /// read only the RootDSE and subschema (criterion 4).
     ///
-    /// <para>A failed bind never mutates this: it neither authenticates a session nor downgrades an
-    /// already-authenticated one (RFC 4513 §5.1.1). The projected <see cref="UserContext"/> is
-    /// carried here for the search slice, which will run every executed operation under it.</para>
+    /// <para>A failed bind RESETS this to the anonymous state (RFC 4511 §4.2.1): it neither
+    /// authenticates the session nor preserves an identity an earlier bind established. The
+    /// projected <see cref="UserContext"/> is carried here for the search slice, which will run
+    /// every executed operation under it.</para>
     /// </summary>
     internal sealed class LdapSessionState
     {

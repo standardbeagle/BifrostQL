@@ -458,13 +458,19 @@ namespace BifrostQL.Server.Ldap
             }
 
             var result = await _authenticator.AuthenticateAsync(bind, source, ct);
-            // RFC 4513: a failed bind leaves the session UNAUTHENTICATED — it never downgrades an
-            // already-authenticated session to anonymous, and it never authenticates one.
             if (result.Succeeded)
             {
                 session.Authenticated = true;
                 session.IsAnonymous = result.IsAnonymous;
                 session.UserContext = result.UserContext;
+            }
+            else
+            {
+                // RFC 4511 §4.2.1: a FAILED bind resets the session to anonymous — it must not
+                // keep the identity an earlier successful bind on this connection established.
+                session.Authenticated = false;
+                session.IsAnonymous = false;
+                session.UserContext = null;
             }
             await SendAsync(stream, LdapMessageWriter.BindResponse(messageId, result.ResultCode, result.DiagnosticMessage), ct);
         }

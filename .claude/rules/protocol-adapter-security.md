@@ -191,6 +191,17 @@ code, not just re-checks of pgwire.
    change worth surfacing). Any new `IProtocolAdapter` write command must be
    reviewed against both halves of this invariant before merging.
 
+   Corollary from the MCP write tools (H10/M21): resolving the caller's table
+   name is NOT a place to apply read visibility. A caller may be write-permitted
+   on a table it cannot read, so the write path resolves the name against the
+   FULL schema and lets the pipeline make the authorization decision — a
+   read-visibility pre-gate is the second evaluator invariant 4 forbids, just
+   inverted. What the visibility projection scopes is only the PROMPT: an
+   unknown name answers with the read tools' own did-you-mean list, restricted
+   to names this caller may read. So unknown-vs-denied stays indistinguishable
+   on the read surface, while the write surface still reaches the one evaluator
+   that may say no.
+
    Scope note from S3 slice 1: part (c) is about *routing the intent the
    operation actually means*, not about the literal `Delete` enum. Where the
    adapter's "object" is a COLUMN VALUE rather than a row (an S3 object
@@ -427,3 +438,16 @@ code, not just re-checks of pgwire.
     `Program.cs` top-level statements read `builder.Configuration` BEFORE the
     host builds, so `ConfigureAppConfiguration` is invisible to those reads —
     set feature switches with `UseSetting`.
+
+13. **Memoize a fail-closed identity seam per REQUEST, never per SESSION.** One
+    MCP tool call asked the user-context provider twice (role gate, then the
+    tool), and on stdio each ask re-ran the configured credential exchange —
+    real IdP I/O, bridged sync-over-async. The fix is a per-call memo at the
+    funnel boundary; a failed resolution is never memoized. The per-session
+    cache the finding originally proposed would keep serving a revoked or
+    expired credential until the peer disconnects — it converts a latency win
+    into the exact revocation fail-open that per-request revalidation exists to
+    prevent. Any adapter whose single request resolves identity at several seams
+    (gate, tool, projection) gets the per-call memo; the pinning fact asserts
+    invocations == 1 within one call AND == 2 across two calls, so a
+    session-scoped cache goes RED.

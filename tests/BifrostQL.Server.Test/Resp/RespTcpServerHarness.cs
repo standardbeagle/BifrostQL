@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Hosting;
 
 namespace BifrostQL.Server.Test.Resp
@@ -97,6 +98,7 @@ namespace BifrostQL.Server.Test.Resp
                 .AddSingleton(_host.Services.GetRequiredService<IQueryIntentExecutor>())
                 .AddSingleton(_host.Services.GetRequiredService<IMutationIntentExecutor>())
                 .AddSingleton(_options)
+                .AddSingleton(RespScanCursorKey.Resolve(_options, NullLogger.Instance))
                 .BuildServiceProvider();
             var handler = new RespConnectionHandler(
                 _credentials, BifrostAuthContextFactory.Instance, handlerServices, _options, RespDataHandlers.All());

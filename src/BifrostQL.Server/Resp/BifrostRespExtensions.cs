@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.Resp
 {
@@ -55,6 +56,11 @@ namespace BifrostQL.Server.Resp
             // field/value hash (HGETALL) or a single visible column (HGET).
             services.AddSingleton<IRespCommandHandler, RespHGetAllCommandHandler>();
             services.AddSingleton<IRespCommandHandler, RespHGetCommandHandler>();
+
+            // The SCAN cursor's MAC key is resolved ONCE (a per-call random key would make every
+            // issued cursor fail its own validation), like the gRPC page-token key.
+            services.TryAddSingleton(sp => RespScanCursorKey.Resolve(
+                options, sp.GetRequiredService<ILoggerFactory>().CreateLogger<RespScanCursorKey>()));
 
             // Slice-4 SCAN maps <table>:* to keyset pagination over the table's primary key, enumerated
             // through IQueryIntentExecutor under the session identity so only visible PKs are emitted.

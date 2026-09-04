@@ -5,6 +5,7 @@ using BifrostQL.Server;
 using BifrostQL.Server.Auth;
 using BifrostQL.Server.Resp;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BifrostQL.Server.Test.Resp
 {
@@ -126,6 +127,9 @@ namespace BifrostQL.Server.Test.Resp
                 .AddSingleton(Host.Services.GetRequiredService<IQueryIntentExecutor>())
                 .AddSingleton(Host.Services.GetRequiredService<IMutationIntentExecutor>())
                 .AddSingleton(options)
+                // SCAN cursors are MAC'd; the key is a singleton of the front door, so a host that
+                // serves SCAN must register one (there is no unsigned fallback).
+                .AddSingleton(RespScanCursorKey.Resolve(options, NullLogger.Instance))
                 .BuildServiceProvider();
             return RespFixture.StartAsync(store, handlerServices, options, RespDataHandlers.All());
         }

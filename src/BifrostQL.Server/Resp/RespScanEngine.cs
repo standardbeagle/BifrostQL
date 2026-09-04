@@ -1,4 +1,6 @@
+using System.Collections;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
@@ -150,55 +152,229 @@ namespace BifrostQL.Server.Resp
     }
 
     /// <summary>
-    /// The opaque SCAN cursor codec. A cursor is a stable continuation token that carries ONLY the
-    /// primary-key position to resume after — never any tenant/filter/identity data. The Redis start
-    /// sentinel <c>0</c> means "begin", and the engine returns <c>0</c> when the last page is reached.
+    /// The context a SCAN cursor is issued against and re-validated against on every continuation.
+    /// Every field is folded into the cursor's MAC and NONE of them is transmitted: each is
+    /// re-derived from the LIVE request. A cursor minted for one table, one MATCH pattern, or one
+    /// caller therefore recomputes a different MAC and fails closed.
     ///
-    /// <para>A non-start cursor is the Base64 of a JSON array of the key columns' invariant-string values.
-    /// It is deliberately structured only enough to round-trip a PK position; because the tenant/policy
-    /// filter is ANDed by the pipeline regardless of the cursor, a forged or hand-crafted cursor can never
-    /// widen visibility — at worst it names a start position, and the pipeline still bounds the results to
-    /// the caller's own rows.</para>
+    /// <para>The page size is deliberately NOT bound: Redis treats COUNT as a hint a client may vary
+    /// between calls of the same iteration, so binding it would reject legitimate clients.</para>
+    /// </summary>
+    internal readonly record struct RespScanBinding(
+        string TableKey, string MatchPattern, string IdentityFingerprint);
+
+    /// <summary>
+    /// The opaque, integrity-protected SCAN cursor. Structurally the construction the LDAP paged
+    /// results cookie, the OData <c>$skiptoken</c> and the gRPC page token already use.
+    ///
+    /// <para><b>The cursor carries POSITION ONLY</b> — the primary-key values to resume after, and
+    /// the issue time. It never carries scope, tenant, policy or row content. Containment does not
+    /// rest on the cursor: every page is fetched through <c>IQueryIntentExecutor</c>, which ANDs
+    /// tenant, soft-delete and policy predicates onto the query unconditionally, so a cursor
+    /// pointing anywhere still resolves to at most the caller's own visible rows. The MAC is the
+    /// tamper and replay guard, not the authorization boundary — it stops a client paging one table
+    /// and then swapping in another mid-sequence, or replaying another principal's position.</para>
+    ///
+    /// <para><b>Forgery, tampering, cross-context replay and expiry are ONE outcome</b>: the same
+    /// refusal, so none of them is distinguishable from the others. The MAC compare runs
+    /// unconditionally and in constant time BEFORE the payload is parsed, so a decode fault cannot
+    /// short-circuit the integrity gate (protocol-adapter-security invariant 2). A cursor that does
+    /// not validate is refused EXPLICITLY — never treated as "start from the top", which would turn
+    /// a tampered cursor into a silent full re-scan.</para>
     /// </summary>
     internal static class RespScanCursor
     {
+        /// <summary>
+        /// Version tag folded into the MAC. Bumping it makes every previously issued cursor fail
+        /// closed rather than being reinterpreted under a new payload layout.
+        /// </summary>
+        private const string Version = "respscan1";
+
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-        /// <summary>Encodes a PK position (each key column's invariant-string value, in schema order) into an opaque token.</summary>
-        public static string Encode(IReadOnlyList<string> segments)
+        /// <summary>Mints the cursor that resumes strictly after <paramref name="segments"/>.</summary>
+        public static string Issue(
+            IReadOnlyList<string> segments, DateTimeOffset issuedAt, RespScanBinding binding, byte[] secret)
         {
-            var json = JsonSerializer.Serialize(segments, JsonOptions);
-            return Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
+            ArgumentNullException.ThrowIfNull(segments);
+            ArgumentNullException.ThrowIfNull(secret);
+
+            var payload = issuedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture)
+                          + "|" + JsonSerializer.Serialize(segments, JsonOptions);
+            return Base64Url(Encoding.UTF8.GetBytes(payload)) + "." + Base64Url(ComputeMac(payload, binding, secret));
         }
 
-        /// <summary>Encodes a PK position from its raw column values (rendered invariantly).</summary>
-        public static string Encode(IReadOnlyList<object?> values) =>
-            Encode(values.Select(v => Convert.ToString(v, CultureInfo.InvariantCulture) ?? string.Empty).ToList());
+        /// <summary>Mints a cursor from raw key-column values, rendered invariantly.</summary>
+        public static string Issue(
+            IReadOnlyList<object?> values, DateTimeOffset issuedAt, RespScanBinding binding, byte[] secret) =>
+            Issue(
+                values.Select(v => Convert.ToString(v, CultureInfo.InvariantCulture) ?? string.Empty).ToList(),
+                issuedAt, binding, secret);
 
         /// <summary>
-        /// Decodes a cursor into its PK-position segments. The start sentinel <c>0</c> yields
-        /// <paramref name="segments"/> = null (begin from the first row). A structurally invalid cursor is a
-        /// clean failure — it is never coerced into a filter, so a malformed cursor cannot execute anything.
+        /// Validates <paramref name="cursor"/> against a binding re-derived from the LIVE request.
+        /// The Redis start sentinel <c>0</c> validates with <paramref name="segments"/> = null (begin
+        /// from the first row). Anything else that does not validate returns false — never a partial
+        /// or defaulted position.
         /// </summary>
-        public static bool TryDecode(string cursor, out IReadOnlyList<string>? segments)
+        public static bool TryValidate(
+            string cursor,
+            RespScanBinding binding,
+            byte[] secret,
+            DateTimeOffset now,
+            TimeSpan ttl,
+            out IReadOnlyList<string>? segments)
         {
+            ArgumentNullException.ThrowIfNull(secret);
             segments = null;
+
             if (cursor == RespProtocol.ScanStartCursor)
                 return true;
+            if (string.IsNullOrEmpty(cursor))
+                return false;
+
+            byte[] payloadBytes;
+            byte[] presentedMac;
+            try
+            {
+                var dot = cursor.IndexOf('.');
+                if (dot <= 0 || dot == cursor.Length - 1)
+                    return false;
+                payloadBytes = FromBase64Url(cursor[..dot]);
+                presentedMac = FromBase64Url(cursor[(dot + 1)..]);
+            }
+            // Decoding untrusted wire text catches the full parse family, not just FormatException:
+            // a truncated or over-length segment must become a clean refusal, never an unhandled
+            // fault on the connection loop (invariant 5).
+            catch (Exception ex) when (ex is FormatException or ArgumentException
+                                          or DecoderFallbackException or IndexOutOfRangeException)
+            {
+                return false;
+            }
+
+            string payload;
+            try
+            {
+                payload = Encoding.UTF8.GetString(payloadBytes);
+            }
+            catch (Exception ex) when (ex is ArgumentException or DecoderFallbackException)
+            {
+                return false;
+            }
+
+            // Unconditional constant-time compare, computed BEFORE the payload is parsed. Gating it
+            // behind a successful parse would let a malformed payload skip the integrity check and
+            // would leak, through timing, which cursors parse (invariant 2).
+            var expectedMac = ComputeMac(payload, binding, secret);
+            var macOk = CryptographicOperations.FixedTimeEquals(presentedMac, expectedMac);
+
+            var parsed = TryParsePayload(payload, out var candidate, out var issuedAtUnix);
+            if (!macOk || !parsed)
+                return false;
+
+            // An authentic but stale cursor fails exactly like a forged one — the same outcome, with
+            // no oracle separating "expired" from "never valid".
+            var age = now - DateTimeOffset.FromUnixTimeSeconds(issuedAtUnix);
+            if (age < TimeSpan.Zero || age > ttl)
+                return false;
+
+            segments = candidate;
+            return true;
+        }
+
+        /// <summary>
+        /// The stable identity fingerprint bound into a cursor so a different principal cannot replay
+        /// it. Built from the scalar and string-sequence entries of the session's user context — the
+        /// same values the pipeline scopes on — then hashed, so no identity plaintext reaches the
+        /// wire. Opaque entries are excluded: an unstable fingerprint would reject a principal's own
+        /// valid cursors.
+        /// </summary>
+        public static string FingerprintIdentity(IDictionary<string, object?>? userContext)
+        {
+            if (userContext is null)
+                return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(" anonymous")));
+
+            var parts = new List<string>();
+            foreach (var entry in userContext)
+            {
+                var rendered = RenderClaim(entry.Value);
+                if (rendered is not null)
+                    parts.Add(entry.Key + "=" + rendered);
+            }
+            parts.Sort(StringComparer.Ordinal);
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", parts))));
+        }
+
+        private static bool TryParsePayload(string payload, out IReadOnlyList<string>? segments, out long issuedAtUnix)
+        {
+            segments = null;
+            issuedAtUnix = 0;
+
+            var pipe = payload.IndexOf('|');
+            if (pipe <= 0)
+                return false;
+            // TryParse rather than Parse: a well-formed but out-of-range component throws
+            // OverflowException from the throwing overloads, which here would escape the handler.
+            if (!long.TryParse(payload[..pipe], NumberStyles.Integer, CultureInfo.InvariantCulture, out issuedAtUnix))
+                return false;
 
             try
             {
-                var bytes = Convert.FromBase64String(cursor);
-                var decoded = JsonSerializer.Deserialize<List<string>>(Encoding.UTF8.GetString(bytes), JsonOptions);
+                var decoded = JsonSerializer.Deserialize<List<string>>(payload[(pipe + 1)..], JsonOptions);
                 if (decoded is null || decoded.Count == 0)
                     return false;
                 segments = decoded;
                 return true;
             }
-            catch (Exception ex) when (ex is FormatException or JsonException or DecoderFallbackException)
+            catch (JsonException)
             {
                 return false;
             }
+        }
+
+        private static byte[] ComputeMac(string payload, RespScanBinding binding, byte[] secret)
+        {
+            // Length-prefixed fields make the canonical form injective: two distinct bindings cannot
+            // render to the same bytes, so they cannot share a MAC by construction rather than luck.
+            var canonical = new StringBuilder()
+                .Append(Version).Append('\n')
+                .Append(Prefixed(binding.TableKey)).Append('\n')
+                .Append(Prefixed(binding.MatchPattern)).Append('\n')
+                .Append(Prefixed(binding.IdentityFingerprint)).Append('\n')
+                .Append(Prefixed(payload))
+                .ToString();
+
+            return HMACSHA256.HashData(secret, Encoding.UTF8.GetBytes(canonical));
+        }
+
+        private static string Prefixed(string value) =>
+            value.Length.ToString(CultureInfo.InvariantCulture) + ":" + value;
+
+        private static string? RenderClaim(object? value) => value switch
+        {
+            null => null,
+            string s => s,
+            bool or byte or short or int or long or Guid => Convert.ToString(value, CultureInfo.InvariantCulture),
+            IEnumerable<string> sequence => "[" + string.Join(",", sequence) + "]",
+            IEnumerable enumerable => "[" + string.Join(",",
+                enumerable.Cast<object?>().Select(x => x?.ToString() ?? string.Empty)) + "]",
+            _ => null,
+        };
+
+        private static string Base64Url(byte[] bytes) =>
+            Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        private static byte[] FromBase64Url(string value)
+        {
+            var padded = value.Replace('-', '+').Replace('_', '/');
+            padded = (padded.Length % 4) switch
+            {
+                2 => padded + "==",
+                3 => padded + "=",
+                0 => padded,
+                _ => throw new FormatException("invalid base64url length."),
+            };
+            return Convert.FromBase64String(padded);
         }
     }
 }

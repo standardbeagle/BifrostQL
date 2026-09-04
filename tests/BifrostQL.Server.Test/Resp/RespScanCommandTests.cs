@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -98,11 +99,12 @@ namespace BifrostQL.Server.Test.Resp
         {
             var (_, services) = Arrange(Tenant1);
 
-            // Hand-craft a cursor positioned at widget id 3 — a row that belongs to tenant 2 and that
-            // tenant 1 could never legitimately obtain a cursor for. Feeding it must NOT let tenant 1
-            // step into tenant 2's rows: the tenant filter is ANDed by the pipeline regardless of the
-            // cursor, so the only rows returned are tenant 1's own ids strictly greater than 3 → {4}.
-            var forged = RespScanCursor.Encode(new[] { "3" });
+            // A cursor positioned at widget id 3 — a row that belongs to tenant 2 and that tenant 1
+            // could never legitimately reach a cursor for. It is minted under tenant 1's OWN binding,
+            // so the MAC validates and the test still exercises the property that matters: the
+            // POSITION cannot widen visibility. The tenant filter is ANDed by the pipeline regardless
+            // of the cursor, so the only rows returned are tenant 1's own ids above 3 → {4}.
+            var forged = Cursor(Tenant1, "3");
 
             var page = await ScanOnceAsync(services, forged, "widgets", count: "10");
 
@@ -116,7 +118,7 @@ namespace BifrostQL.Server.Test.Resp
         {
             var (_, services) = Arrange(Tenant1);
 
-            var forged = RespScanCursor.Encode(new[] { "0" });
+            var forged = Cursor(Tenant1, "0");
             var keys = new List<string>();
             var cursor = forged;
             do
@@ -245,6 +247,7 @@ namespace BifrostQL.Server.Test.Resp
             var store = new FakeRespCredentialStore();
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(new FakeScanExecutor(BuildModel()))
+                .AddSingleton(CursorKey())
                 .BuildServiceProvider();
             var options = new RespWireOptions { RequireAuthentication = true, AllowCleartextAuth = true };
 
@@ -268,6 +271,7 @@ namespace BifrostQL.Server.Test.Resp
             var executor = new FakeScanExecutor(BuildModel());
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(executor)
+                .AddSingleton(CursorKey())
                 .BuildServiceProvider();
             var session = new RespSession(1);
             session.Authenticate(tenant);
@@ -276,6 +280,22 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         private static readonly Dictionary<IServiceProvider, RespSession> _sessions = new();
+
+        private const string CursorSecret = "resp-scan-cursor-test-secret";
+
+        private static RespScanCursorKey CursorKey() =>
+            new(Encoding.UTF8.GetBytes(CursorSecret), TimeSpan.FromMinutes(10));
+
+        /// <summary>
+        /// Mints a validly signed cursor for a caller's own SCAN of <c>widgets</c> at the given
+        /// primary-key position — the position is the thing under test, not the signature.
+        /// </summary>
+        private static string Cursor(IDictionary<string, object?> identity, params string[] segments) =>
+            RespScanCursor.Issue(
+                segments,
+                DateTimeOffset.UtcNow,
+                new RespScanBinding("dbo.widgets", "widgets:*", RespScanCursor.FingerprintIdentity(identity)),
+                Encoding.UTF8.GetBytes(CursorSecret));
 
         private static Task<RespValue> Handle(IServiceProvider services, params string[] arguments) =>
             new RespScanCommandHandler().HandleAsync(

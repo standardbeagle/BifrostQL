@@ -132,6 +132,22 @@ namespace BifrostQL.Server.Resp
         public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
         /// <summary>
+        /// Secret the opaque SCAN cursor is MAC'd with. Configure it to make cursors survive a
+        /// restart and resolve across instances; absent one a per-instance random key is generated
+        /// and the trade-off is logged at startup. The cursor carries only a primary-key position —
+        /// the MAC is a tamper and replay guard, not the authorization boundary, which the query
+        /// pipeline holds unconditionally.
+        /// </summary>
+        public string? ScanCursorSecret { get; set; }
+
+        /// <summary>
+        /// How long an issued SCAN cursor stays valid. An expired cursor is refused exactly like a
+        /// forged one — the same outcome, so neither is distinguishable from the other. Default 10
+        /// minutes, comfortably above any real iteration.
+        /// </summary>
+        public TimeSpan ScanCursorTtl { get; set; } = TimeSpan.FromMinutes(10);
+
+        /// <summary>
         /// Registered BifrostQL endpoint path (e.g. <c>/graphql</c>) whose model, schema and
         /// connection authenticated sessions execute their data commands against. Null selects
         /// the single registered endpoint. Unused by slice-1 plumbing; carried for the data

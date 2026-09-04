@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Hosting;
 
 namespace BifrostQL.Server.Test.Resp
@@ -102,6 +103,9 @@ namespace BifrostQL.Server.Test.Resp
                 .AddSingleton(_host.Services.GetRequiredService<IQueryIntentExecutor>())
                 .AddSingleton(_host.Services.GetRequiredService<IMutationIntentExecutor>())
                 .AddSingleton(options)
+                // SCAN cursors are MAC'd; the key is a singleton of the front door, so a host that
+                // serves SCAN must register one (there is no unsigned fallback).
+                .AddSingleton(RespScanCursorKey.Resolve(options, NullLogger.Instance))
                 .BuildServiceProvider();
 
             await using var fixture = await RespFixture.StartAsync(store, handlerServices, options, RespDataHandlers.All());

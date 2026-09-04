@@ -50,7 +50,23 @@ namespace BifrostQL.Server.Resp
                 if (table is null)
                     return RespValue.Err(matchError!);
 
-                if (!RespScanCursor.TryDecode(parsed.Cursor, out var cursorSegments))
+                // The binding is re-derived from the LIVE request — the resolved table, the MATCH
+                // pattern the caller sent, and the session's identity — and folded into the MAC
+                // without being transmitted. A cursor minted for another table, another pattern or
+                // another principal therefore recomputes a different MAC and fails closed, so a
+                // client cannot page one table and swap in another mid-sequence.
+                var cursorKey = context.Services.GetRequiredService<RespScanCursorKey>();
+                var binding = new RespScanBinding(
+                    $"{table.TableSchema}.{table.DbName}",
+                    parsed.MatchPattern!,
+                    RespScanCursor.FingerprintIdentity(context.Session.UserContext));
+
+                // Forgery, tampering, cross-context replay and expiry are ONE outcome, and an
+                // unusable cursor is refused EXPLICITLY: treating it as "start from the top" would
+                // turn a tampered cursor into a silent full re-scan.
+                if (!RespScanCursor.TryValidate(
+                        parsed.Cursor, binding, cursorKey.Secret, cursorKey.Clock(), cursorKey.Ttl,
+                        out var cursorSegments))
                     return RespValue.Err($"{RespProtocol.ErrPrefix}invalid cursor");
 
                 IReadOnlyList<object?>? afterKey = null;
@@ -68,7 +84,7 @@ namespace BifrostQL.Server.Resp
 
                 var nextCursor = page.NextAfterKey is null
                     ? RespProtocol.ScanStartCursor
-                    : RespScanCursor.Encode(page.NextAfterKey);
+                    : RespScanCursor.Issue(page.NextAfterKey, cursorKey.Clock(), binding, cursorKey.Secret);
 
                 var keyItems = page.Keys.Select(k => (RespValue)RespValue.Bulk(k)).ToArray();
                 return RespValue.Arr(RespValue.Bulk(nextCursor), RespValue.Arr(keyItems));

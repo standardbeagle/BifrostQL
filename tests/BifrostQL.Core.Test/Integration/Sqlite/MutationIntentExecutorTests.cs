@@ -1,3 +1,4 @@
+using System.Reflection;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
@@ -288,6 +289,117 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         (await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*outside the caller's tenant scope*"))
             .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
         (await ScalarAsync("SELECT tenant_id FROM orders WHERE id = 20")).Should().Be("2");
+    }
+
+    // ---- restore is an unforgeable capability (M2) -----------------------
+
+    /// <summary>
+    /// An external <see cref="IMutationIntentExecutor"/> caller (MCP write tool,
+    /// protocol adapter, host code) must not be able to re-create a hard-deleted
+    /// row by asking for the Restore action. Only the deferred undo engine — which
+    /// holds the internal restore capability — may mint a restore intent.
+    /// </summary>
+    [Fact]
+    public async Task Restore_ExternalIntentWithoutCapability_CannotReinsertHardDeletedRow()
+    {
+        var executor = BuildExecutor();
+        await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?> { ["row_version"] = 5 },
+            PrimaryKey = new object?[] { 10 }, UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Restore,
+            Data = new Dictionary<string, object?> { ["id"] = 10L, ["tenant_id"] = 1L, ["name"] = "tenant-one-order", ["row_version"] = 5L },
+            UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        await act.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("*restore capability*");
+        (await ScalarAsync("SELECT COUNT(*) FROM orders WHERE id = 10")).Should().Be("0", "the deleted row stays deleted");
+    }
+
+    /// <summary>
+    /// The soft-delete half: a forged restore intent must not lift the
+    /// <c>deleted_at IS NULL</c> guard that <see cref="MutationTransformerBase"/>
+    /// drops only for the deferred undo path.
+    /// </summary>
+    [Fact]
+    public async Task Restore_ExternalIntentWithoutCapability_LeavesSoftDeletedRowDeleted()
+    {
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "events", Action = MutationIntentAction.Restore,
+            Data = new Dictionary<string, object?> { ["label"] = "already-soft-deleted", ["deleted_at"] = null },
+            PrimaryKey = new object?[] { 2 }, UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        // Message-scoped on purpose: before the fix this path threw a DIFFERENT error
+        // ("PrimaryKey is not valid for an insert"), so an untyped throw assertion here
+        // would have been vacuous.
+        await act.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("*restore capability*");
+        (await ScalarAsync("SELECT deleted_at FROM events WHERE id = 2")).Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// The ordinary update route stays scoped by the soft-delete guard, so an
+    /// external caller cannot un-delete a row by writing <c>deleted_at = NULL</c>
+    /// through a plain Update either.
+    /// </summary>
+    [Fact]
+    public async Task Update_ExternalIntent_CannotClearSoftDeleteOnDeletedRow()
+    {
+        var executor = BuildExecutor();
+
+        var result = await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "events", Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?> { ["deleted_at"] = null },
+            PrimaryKey = new object?[] { 2 }, UserContext = TenantContext(1), Endpoint = EndpointPath,
+        });
+
+        result.AffectedRows.Should().Be(0);
+        (await ScalarAsync("SELECT deleted_at FROM events WHERE id = 2")).Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// Public-surface guard: no restore member of <see cref="MutationIntent"/> may
+    /// be forgeable from outside the assembly. A bool/enum/string flag, or a marker
+    /// type an external caller can construct or read off a public static member,
+    /// makes the capability a suggestion rather than a capability.
+    /// </summary>
+    [Fact]
+    public void MutationIntent_ExposesNoExternallyMintableRestoreMember()
+    {
+        var restoreMembers = typeof(MutationIntent)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.Name.Contains("Restore", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var member in restoreMembers)
+        {
+            var type = Nullable.GetUnderlyingType(member.PropertyType) ?? member.PropertyType;
+
+            (type.IsPrimitive || type.IsEnum || type == typeof(string))
+                .Should().BeFalse($"{member.Name} must not be a forgeable scalar flag");
+            type.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+                .Should().BeEmpty($"external code must not be able to construct {type.Name}");
+            type.GetFields(BindingFlags.Public | BindingFlags.Static)
+                .Where(f => type.IsAssignableFrom(f.FieldType))
+                .Should().BeEmpty($"{type.Name} must expose no public static instance");
+            type.GetProperties(BindingFlags.Public | BindingFlags.Static)
+                .Where(p => type.IsAssignableFrom(p.PropertyType))
+                .Should().BeEmpty($"{type.Name} must expose no public static instance");
+            type.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Where(m => type.IsAssignableFrom(m.ReturnType))
+                .Should().BeEmpty($"{type.Name} must expose no public factory");
+        }
     }
 
     // ---- update: concurrency + audit ------------------------------------

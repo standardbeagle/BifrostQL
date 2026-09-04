@@ -156,9 +156,28 @@ namespace BifrostQL.Server.Test
             okBody.Should().Equal(CompositeBytes);
 
             var (missing, body, _) = await RequestAsync("/_blob/parts/image", "?k.a=1");
-            missing.Should().Be(400);
-            System.Text.Encoding.UTF8.GetString(body).Should().Contain("k.b",
-                "a composite key is addressed in full — never a first-column guess");
+            missing.Should().Be(404);
+            System.Text.Encoding.UTF8.GetString(body).Should().Be("Not found.",
+                "a partial composite key is a shape check — it must not name the missing column");
+        }
+
+        // Finding M12: every shape check runs BEFORE the pipeline gate, so a 400 that
+        // names the PK column/type — where an unknown or read-denied table answers 404 —
+        // lets a read-denied caller enumerate tables, blob columns and key names.
+        [Theory]
+        [InlineData("/_blob/ghosts/data", "?k.id=1")]   // unknown table
+        [InlineData("/_blob/vault/secret", "?k.id=1")]  // policy read-denied table
+        [InlineData("/_blob/vault/secret", null)]       // denied table, no key at all
+        [InlineData("/_blob/files/data", null)]         // known table, missing key
+        [InlineData("/_blob/files/data", "?k.id=abc")]  // known table, malformed key
+        public async Task ShapeChecks_NeverPreemptThePipelineGate_AllAnswerTheIdentical404(
+            string path, string? query)
+        {
+            var (status, body, _) = await RequestAsync(path, query);
+
+            status.Should().Be(404);
+            System.Text.Encoding.UTF8.GetString(body).Should().Be("Not found.",
+                "unknown, denied and malformed-key must be indistinguishable — no identifiers on the wire");
         }
 
         [Theory]

@@ -29,7 +29,13 @@ public sealed class S3StorageProvider : IStorageProvider, IStorageFolderProvider
         };
 
         await client.PutObjectAsync(request, cancellationToken);
-        return await GetPresignedUrlAsync(bucketConfig, fileKey, expirationMinutes: 15, forUpload: false);
+
+        // Return a stable storage reference, never a presigned URL: a presigned
+        // GET is a short-lived capability, and persisting it (as the upload path
+        // once did) leaves a dead credential in the column JSON and every
+        // history/CDC/audit copy (finding M25). Access URLs are computed on
+        // read via GetPresignedUrlAsync with a clamped expiry.
+        return $"s3://{bucketConfig.BucketName}/{key}";
     }
 
     public async Task<byte[]> DownloadAsync(

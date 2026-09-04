@@ -148,8 +148,14 @@ namespace BifrostQL.Core.Storage
             var provider = _providerFactory.GetProvider(bucketConfig);
             var effectiveFileKey = FileMetadata.GenerateFileKey(table.DbName, column.ColumnName, recordId, originalFileName);
 
-            // Upload to storage
-            var accessUrl = await provider.UploadAsync(bucketConfig, effectiveFileKey, content, contentType, cancellationToken);
+            // Upload to storage. The provider's return value (an opaque storage
+            // reference; for S3 previously a presigned GET) is deliberately NOT
+            // persisted: an access URL is a capability that expires, and storing
+            // it in the column JSON would copy it into history/CDC/audit as a
+            // dead-or-leaked credential (finding M25). The column stores the
+            // storage key only; access URLs are computed on read by
+            // GetFileUrlAsync.
+            await provider.UploadAsync(bucketConfig, effectiveFileKey, content, contentType, cancellationToken);
 
             // Create and return metadata. BucketName/ProviderType are recorded
             // for informational/audit purposes only — they are never read back
@@ -165,7 +171,6 @@ namespace BifrostQL.Core.Storage
                 BucketName = bucketConfig.BucketName,
                 ProviderType = bucketConfig.ProviderType,
                 UploadedAt = DateTime.UtcNow,
-                AccessUrl = accessUrl,
                 // Computed here, once, so every upload path (GraphQL resolver and
                 // protocol adapters alike) persists the same ETag definition.
                 ETag = System.Convert.ToHexString(
@@ -367,8 +372,34 @@ namespace BifrostQL.Core.Storage
             var bucketConfig = GetBucketConfig(table, column, model)
                 ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
 
+            var effectiveExpiration = ClampUrlExpirationMinutes(bucketConfig, expirationMinutes);
             var provider = _providerFactory.GetProvider(bucketConfig);
-            return await provider.GetPresignedUrlAsync(bucketConfig, metadata.FileKey, expirationMinutes, forUpload: false);
+            return await provider.GetPresignedUrlAsync(bucketConfig, metadata.FileKey, effectiveExpiration, forUpload: false);
+        }
+
+        /// <summary>
+        /// Resolves the effective presigned-URL lifetime for a caller-supplied
+        /// <paramref name="expirationMinutes"/>: clamped down to the bucket's
+        /// configured <see cref="StorageBucketConfig.MaxPresignedUrlExpirationMinutes"/>
+        /// ceiling (the client can only narrow). A non-positive value is
+        /// rejected as a <see cref="Resolvers.BifrostExecutionError"/> rather
+        /// than reaching the provider (where <c>int.MaxValue</c> previously
+        /// surfaced as an unmapped <see cref="ArgumentOutOfRangeException"/>
+        /// from <c>DateTime.AddMinutes</c> — finding M25).
+        /// </summary>
+        public int ClampUrlExpirationMinutes(IDbTable table, ColumnDto column, IDbModel model, int expirationMinutes)
+        {
+            var bucketConfig = GetBucketConfig(table, column, model)
+                ?? throw new InvalidOperationException($"No storage configuration found for {table.DbName}.{column.ColumnName}");
+            return ClampUrlExpirationMinutes(bucketConfig, expirationMinutes);
+        }
+
+        private static int ClampUrlExpirationMinutes(StorageBucketConfig bucketConfig, int expirationMinutes)
+        {
+            if (expirationMinutes <= 0)
+                throw new Resolvers.BifrostExecutionError(
+                    $"expirationMinutes must be a positive number of minutes; got {expirationMinutes}.");
+            return Math.Min(expirationMinutes, bucketConfig.MaxPresignedUrlExpirationMinutes);
         }
     }
 }

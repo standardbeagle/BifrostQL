@@ -19,7 +19,10 @@ namespace BifrostQL.Core.Storage
         /// <param name="content">File content as byte array</param>
         /// <param name="contentType">MIME type of the file</param>
         /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>URI or path to access the stored file</returns>
+        /// <returns>An opaque storage reference for the stored object (e.g.
+        /// <c>s3://bucket/key</c>, <c>local://key</c>). Never a presigned or
+        /// otherwise capability-bearing URL — access URLs are computed on read
+        /// via <see cref="GetPresignedUrlAsync"/>, never persisted.</returns>
         Task<string> UploadAsync(
             StorageBucketConfig bucketConfig,
             string fileKey,

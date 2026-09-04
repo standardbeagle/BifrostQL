@@ -54,6 +54,15 @@ deterministic address cannot ask for the bytes to be written at it, so this rule
 is enforced by the signature rather than by every future call site remembering
 it.
 
+**Access URLs are computed on read, never stored.** `IStorageProvider.UploadAsync`
+returns an opaque storage reference (`s3://bucket/key`, `local://key`), never a
+presigned URL — a presigned URL is a short-lived capability, and persisting it in
+the column JSON would copy a dead credential into every history/CDC/audit row.
+The column stores the storage key only; `GetFileUrlAsync` mints the URL at read
+time with the caller's expiry clamped down to the bucket's
+`MaxPresignedUrlExpirationMinutes` (default 60; metadata key `maxurlexpiry`),
+rejecting non-positive values as `BifrostExecutionError`.
+
 **`FileStorageService` is the only sanctioned upload path.** A raw
 `IStorageProvider.UploadAsync(config, anyKey, …)` writes bytes at a caller-chosen
 storage key and so drops the address/storage-key decoupling above (invariant 8a).

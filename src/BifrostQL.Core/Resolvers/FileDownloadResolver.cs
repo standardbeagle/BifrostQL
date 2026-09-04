@@ -73,11 +73,20 @@ namespace BifrostQL.Core.Resolvers
                     $"File metadata for '{table.DbName}.{column.ColumnName}' record '{recordId}' " +
                     "could not be parsed; the stored file reference is corrupt.");
 
+            // Clamp the caller-supplied expiry to the bucket's configured
+            // ceiling before it is used anywhere: unclamped, int.MaxValue
+            // overflowed DateTime.AddMinutes into an unmapped
+            // ArgumentOutOfRangeException, and large values ran past the
+            // SigV4 7-day signature maximum (finding M25). The same clamped
+            // value drives both the URL and the reported ExpiresAt.
+            var effectiveExpiration = _storageService.ClampUrlExpirationMinutes(
+                table, column, model, expirationMinutes);
+
             // Generate presigned URL for access. The storage target always
             // comes from the column's configuration, never from the
             // row-persisted metadata (see FileStorageService).
             var accessUrl = await _storageService.GetFileUrlAsync(
-                table, column, model, fileMetadata, expirationMinutes, context.CancellationToken);
+                table, column, model, fileMetadata, effectiveExpiration, context.CancellationToken);
 
             // Return file info
             return new FileDownloadResult
@@ -88,7 +97,7 @@ namespace BifrostQL.Core.Resolvers
                 Size = fileMetadata.Size,
                 AccessUrl = accessUrl,
                 UploadedAt = fileMetadata.UploadedAt,
-                ExpiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes)
+                ExpiresAt = DateTime.UtcNow.AddMinutes(effectiveExpiration)
             };
         }
 

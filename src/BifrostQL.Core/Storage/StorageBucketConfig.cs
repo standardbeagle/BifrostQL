@@ -47,6 +47,14 @@ namespace BifrostQL.Core.Storage
         public string[]? AllowedMimeTypes { get; set; }
 
         /// <summary>
+        /// Maximum lifetime, in minutes, of a presigned access URL handed to a
+        /// caller (default 60). Caller-supplied expirations are clamped down to
+        /// this ceiling; the client can only narrow. Keep it under the
+        /// provider's own signature limit (SigV4: 7 days).
+        /// </summary>
+        public int MaxPresignedUrlExpirationMinutes { get; set; } = 60;
+
+        /// <summary>
         /// Parses bucket configuration from metadata value.
         /// Format: "bucket:name;provider:local;prefix:path;maxSize:10485760"
         /// </summary>
@@ -96,6 +104,10 @@ namespace BifrostQL.Core.Storage
                     case "maxsize":
                     case "maxfilesize":
                         config.MaxFileSize = Utils.MetadataNumber.PositiveLong(value, config.MaxFileSize, key);
+                        break;
+                    case "maxurlexpiry":
+                    case "maxpresignedurlexpirationminutes":
+                        config.MaxPresignedUrlExpirationMinutes = Utils.MetadataNumber.PositiveInt(value, config.MaxPresignedUrlExpirationMinutes, key);
                         break;
                     case "mimetypes":
                     case "allowedmimetypes":

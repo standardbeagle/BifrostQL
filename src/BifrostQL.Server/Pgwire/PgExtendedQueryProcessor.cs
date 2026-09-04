@@ -174,6 +174,20 @@ namespace BifrostQL.Server.Pgwire
             for (var i = 0; i < formatCodeCount; i++) paramFormats.Add(reader.ReadInt16());
 
             var valueCount = reader.ReadInt16();
+
+            // The format-code count must be 0 (all text), 1 (one code for all values), or exactly
+            // the value count (per-value codes) — ResolveFormat's per-value branch indexes
+            // formatCodes[index], so any other count throws ArgumentOutOfRangeException OUTSIDE the
+            // decode try below, escaping the query loop and the connection handler's catch filter
+            // and dropping the connection with no ErrorResponse (finding M15, invariants 1/5).
+            // Refuse honestly and enter skip-until-Sync so the session survives.
+            if (formatCodeCount is not 0 and not 1 && formatCodeCount != valueCount)
+            {
+                await FailAsync(PgWireProtocol.SqlStateProtocolViolation,
+                    "parameter format code count must be 0, 1, or match the parameter count.", ct);
+                return;
+            }
+
             var values = new List<object?>();
             for (var i = 0; i < valueCount; i++)
             {

@@ -94,6 +94,7 @@ namespace BifrostQL.Server.Pgwire
 
             var admitted = true;
             PgCancellationRegistration? cancellation = null;
+            Stream? sessionStream = null;
             try
             {
                 // ---- Pre-auth deadline ----
@@ -108,6 +109,7 @@ namespace BifrostQL.Server.Pgwire
                 var handshakeToken = handshakeDeadline.Token;
 
                 var (stream, startup, negotiatedTls) = await NegotiateStartupAsync(rawStream, handshakeToken);
+                sessionStream = stream;
                 if (startup is null)
                     return; // client closed or a handled non-startup packet (Cancel/GSS)
 
@@ -204,6 +206,11 @@ namespace BifrostQL.Server.Pgwire
             {
                 if (cancellation is not null) _cancelRegistry.Unregister(cancellation);
                 if (admitted) _connectionLimiter.Release();
+                // Dispose the TLS-upgraded stream when negotiation wrapped the raw socket: an
+                // undisposed SslStream never sends close_notify and leaks the inner socket past
+                // the session. The raw stream itself is owned by the caller and left alone.
+                if (sessionStream is not null && !ReferenceEquals(sessionStream, rawStream))
+                    sessionStream.Dispose();
             }
         }
 

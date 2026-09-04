@@ -72,9 +72,18 @@ namespace BifrostQL.Server.Test.Resp
             Client = new RespTestClient(clientSocket.GetStream());
         }
 
-        public static async Task<RespFixture> StartAsync(
+        public static Task<RespFixture> StartAsync(
             IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
             params IRespCommandHandler[] dataHandlers)
+            => StartAsync(store, services, options, clock: null, dataHandlers);
+
+        /// <summary>
+        /// As above, with an injected clock so a test can drive the connection loop's deadlines
+        /// through virtual time instead of waiting out a real 30-second budget.
+        /// </summary>
+        public static async Task<RespFixture> StartAsync(
+            IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
+            Func<DateTimeOffset>? clock, params IRespCommandHandler[] dataHandlers)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -87,7 +96,7 @@ namespace BifrostQL.Server.Test.Resp
 
             var handler = new RespConnectionHandler(
                 store, BifrostAuthContextFactory.Instance, services, options,
-                dataHandlers.Length > 0 ? dataHandlers : null);
+                dataHandlers.Length > 0 ? dataHandlers : null, logger: null, connectionLimiter: null, clock: clock);
             // Close the server socket when the handler returns (QUIT / protocol-error / EOF), exactly
             // as Kestrel closes the connection when OnConnectedAsync returns — so a client blocked on a
             // read observes EOF instead of hanging.

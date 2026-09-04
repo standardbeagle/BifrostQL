@@ -27,9 +27,13 @@ public enum MutationIntentAction
 /// every <see cref="IMutationIntentExecutor"/> caller — an MCP write tool, a
 /// protocol adapter, host code — could un-delete rows simply by setting it. This
 /// type has no public constructor and no public factory or static instance, so an
-/// instance can only be minted inside BifrostQL.Core (the deferred undo engine).
-/// An external caller can name the property but can never produce a value for it,
-/// which makes forgery a compile-time impossibility rather than a runtime check.
+/// instance can only be minted from BifrostQL.Core's internals — the deferred undo
+/// engine, plus the first-party assemblies on Core's <c>InternalsVisibleTo</c> list
+/// (Server, the dialect packages, Benchmarks, Core.Test). BifrostQL.Mcp and every
+/// out-of-tree caller are outside that boundary. An external caller can name the
+/// property but can never produce a value for it, which makes forgery a
+/// compile-time impossibility rather than a runtime check; reflection is not a
+/// wire and is not part of the threat model.
 /// Same shape as <see cref="Modules.History.HistoryErasure.Marker"/> and
 /// <c>ApprovalInterceptMutationHook.MarkApprovedReplay</c>.</para>
 /// </summary>

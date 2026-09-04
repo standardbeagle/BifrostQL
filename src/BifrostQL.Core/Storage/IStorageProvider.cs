@@ -19,8 +19,8 @@ namespace BifrostQL.Core.Storage
         /// <param name="content">File content as byte array</param>
         /// <param name="contentType">MIME type of the file</param>
         /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>An opaque storage reference for the stored object (e.g.
-        /// <c>s3://bucket/key</c>, <c>local://key</c>). Never a presigned or
+        /// <returns>An opaque storage reference for the stored object (S3:
+        /// <c>s3://bucket/key</c>; local: the absolute filesystem path). Never a presigned or
         /// otherwise capability-bearing URL — access URLs are computed on read
         /// via <see cref="GetPresignedUrlAsync"/>, never persisted.</returns>
         Task<string> UploadAsync(

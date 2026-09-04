@@ -12,14 +12,15 @@ namespace BifrostQL.Core.Schema
         public static string GetFileStorageTypeDefinitions()
         {
             return @"
-# File upload result type
+# File upload result type. Carries no accessUrl: an access URL is a
+# short-lived capability minted on read by _fileDownload, never persisted
+# or returned from the write (finding M25).
 type FileUploadResult {
     success: Boolean!
     fileKey: String
     originalName: String
     contentType: String
     size: Int
-    accessUrl: String
     uploadedAt: String
 }
 
@@ -43,7 +44,6 @@ type FileMetadata {
     bucketName: String
     providerType: String
     uploadedAt: String!
-    accessUrl: String
 }
 
 # Storage bucket configuration

@@ -125,7 +125,6 @@ namespace BifrostQL.Core.Resolvers
                 OriginalName = fileMetadata.OriginalName,
                 ContentType = fileMetadata.ContentType,
                 Size = fileMetadata.Size,
-                AccessUrl = fileMetadata.AccessUrl,
                 UploadedAt = fileMetadata.UploadedAt
             };
         }
@@ -161,7 +160,6 @@ namespace BifrostQL.Core.Resolvers
         public string? OriginalName { get; set; }
         public string? ContentType { get; set; }
         public long Size { get; set; }
-        public string? AccessUrl { get; set; }
         public DateTime UploadedAt { get; set; }
     }
 }

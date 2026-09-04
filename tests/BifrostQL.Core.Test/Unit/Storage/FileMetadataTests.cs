@@ -18,7 +18,6 @@ public class FileMetadataTests
             BucketName = "my-bucket",
             ProviderType = "local",
             UploadedAt = new DateTime(2024, 1, 15, 10, 30, 0, DateTimeKind.Utc),
-            AccessUrl = "file:///path/to/file.txt"
         };
 
         var json = metadata.ToJson();
@@ -29,11 +28,17 @@ public class FileMetadataTests
         Assert.Contains("\"Size\":1024", json);
         Assert.Contains("\"BucketName\":\"my-bucket\"", json);
         Assert.Contains("\"ProviderType\":\"local\"", json);
-        Assert.Contains("\"AccessUrl\":\"file:///path/to/file.txt\"", json);
+        // Finding M25: the pointer carries no access URL at all — not even a
+        // null slot for one — so nothing capability-shaped can reach the column.
+        Assert.DoesNotContain("AccessUrl", json);
     }
 
+    /// <summary>
+    /// Rows written before finding M25 carry a persisted (long-dead) AccessUrl.
+    /// They must still deserialize; the value is dropped, never surfaced.
+    /// </summary>
     [Fact]
-    public void FromJson_DeserializesAllProperties()
+    public void FromJson_DeserializesAllProperties_IgnoringLegacyAccessUrl()
     {
         var json = @"{
             ""FileKey"": ""test/file.txt"",
@@ -55,7 +60,7 @@ public class FileMetadataTests
         Assert.Equal(1024, metadata.Size);
         Assert.Equal("my-bucket", metadata.BucketName);
         Assert.Equal("local", metadata.ProviderType);
-        Assert.Equal("file:///path/to/file.txt", metadata.AccessUrl);
+        Assert.Null(typeof(FileMetadata).GetProperty("AccessUrl"));
     }
 
     [Fact]

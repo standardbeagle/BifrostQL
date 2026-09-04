@@ -42,16 +42,6 @@ namespace BifrostQL.Core.Storage
         public DateTime UploadedAt { get; set; }
 
         /// <summary>
-        /// Legacy deserialization surface only — never populated on write.
-        /// Rows written before the M25 fix may carry a short-lived access URL
-        /// here; new uploads store the storage key (<see cref="FileKey"/>)
-        /// only, and access URLs are computed on read
-        /// (<see cref="FileStorageService.GetFileUrlAsync"/>). Do not set this
-        /// from any write path.
-        /// </summary>
-        public string? AccessUrl { get; set; }
-
-        /// <summary>
         /// Additional metadata as key-value pairs
         /// </summary>
         public Dictionary<string, string>? CustomMetadata { get; set; }

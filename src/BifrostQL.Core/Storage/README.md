@@ -55,7 +55,8 @@ is enforced by the signature rather than by every future call site remembering
 it.
 
 **Access URLs are computed on read, never stored.** `IStorageProvider.UploadAsync`
-returns an opaque storage reference (`s3://bucket/key`, `local://key`), never a
+returns an opaque storage reference (S3: `s3://bucket/key`; local: the absolute
+filesystem path), never a
 presigned URL — a presigned URL is a short-lived capability, and persisting it in
 the column JSON would copy a dead credential into every history/CDC/audit row.
 The column stores the storage key only; `GetFileUrlAsync` mints the URL at read

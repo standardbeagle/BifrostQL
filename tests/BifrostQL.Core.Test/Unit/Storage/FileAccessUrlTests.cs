@@ -76,9 +76,9 @@ public class FileAccessUrlTests
 
         var json = metadata.ToJson();
         Assert.DoesNotContain("X-Amz-Signature", json);
-        // The capability field is never populated at all: the column JSON
-        // stores the storage key (FileKey), not a URL.
-        Assert.DoesNotContain("\"AccessUrl\":\"http", json);
+        // There is no capability field at all: the column JSON stores the
+        // storage key (FileKey), not a URL.
+        Assert.DoesNotContain("AccessUrl", json);
         Assert.Contains(metadata.FileKey, json);
     }
 

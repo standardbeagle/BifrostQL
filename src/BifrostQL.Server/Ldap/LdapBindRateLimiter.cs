@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 
 namespace BifrostQL.Server.Ldap
@@ -65,13 +67,27 @@ namespace BifrostQL.Server.Ldap
         /// </summary>
         public bool TryBind(string source, string account)
         {
+            var accountKey = AccountKey(account);
             var now = _clock();
             // Check both axes first without mutating, so a trip on one axis does not consume the other.
             if (Peek($"s:{source}", now) >= _maxPerSource) return false;
-            if (Peek($"a:{account}", now) >= _maxPerAccount) return false;
+            if (Peek($"a:{accountKey}", now) >= _maxPerAccount) return false;
             Increment($"s:{source}", now);
-            Increment($"a:{account}", now);
+            Increment($"a:{accountKey}", now);
             return true;
+        }
+
+        // The per-account key is the DN's canonical comparison form (RFC 4514: attribute types and
+        // values match case-insensitively, separator whitespace is insignificant), hashed. The
+        // canonical form makes every respelling of one DN share ONE window — keyed on the raw
+        // string, "cn=Alice, dc=x" and "CN=alice,dc=x" would each get a fresh per-account cap and
+        // the brute-force bound would never trip. The hash bounds the tracked key's length: a bind
+        // DN may run to nearly MaxMessageLength, and an unbounded attacker-controlled key would let
+        // each tracked counter cost ~1 MiB.
+        private static string AccountKey(string account)
+        {
+            var canonical = LdapDn.CanonicalKey(account) ?? account;
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
         }
 
         private int Peek(string key, DateTimeOffset now) =>

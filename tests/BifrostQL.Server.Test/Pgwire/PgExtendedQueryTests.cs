@@ -299,5 +299,42 @@ namespace BifrostQL.Server.Test.Pgwire
             result.TransactionStatus.Should().Be('I');
             result.ErrorMessage.Should().NotContain(garbage);
         }
+
+        [Fact]
+        public async Task BindMismatchedFormatCodeCount_YieldsCleanError_SessionSurvives()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            // M15: a Bind whose format-code count is neither 0, 1, nor the value count (2 codes
+            // for 3 values) used to index formatCodes out of range in ResolveFormat — an
+            // ArgumentOutOfRangeException OUTSIDE the decode try, which escaped the query loop
+            // and the connection handler's catch filter, dropping the connection with no
+            // ErrorResponse. It must instead be a clean protocol_violation + skip-until-Sync.
+            await client.SendParseAsync("", "SELECT id FROM users WHERE id = $1", PgTypeMap.OidInt4);
+            await client.SendBindMismatchedFormatCodesAsync("", "",
+                formatCodes: new short[] { 0, 0 }, "1", "2", "3");
+            await client.SendExecuteAsync(""); // discarded during skip-until-Sync
+            await client.SendSyncAsync();
+
+            var result = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation);
+            result.BindComplete.Should().BeFalse();
+            result.TransactionStatus.Should().Be('I');
+
+            // The session survives: a follow-up valid Parse/Bind/Execute round-trips normally.
+            await client.SendParseAsync("", "SELECT id FROM users WHERE id = $1", PgTypeMap.OidInt4);
+            await client.SendBindAsync("", "", "5");
+            await client.SendExecuteAsync("");
+            await client.SendSyncAsync();
+
+            var second = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            second.HasError.Should().BeFalse();
+            second.BindComplete.Should().BeTrue();
+            second.CommandTag.Should().Be("SELECT 2");
+        }
     }
 }

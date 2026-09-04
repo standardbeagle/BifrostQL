@@ -350,6 +350,31 @@ namespace BifrostQL.Server.Test.Pgwire
             await WriteFrontendAsync(PgWireProtocol.BindMessage, body.ToArray());
         }
 
+        /// <summary>
+        /// Bind with a MALFORMED format-code count: <paramref name="formatCodes"/> codes followed by
+        /// <paramref name="textValues"/> values where the count is neither 0, 1, nor the value count
+        /// (a protocol violation the server must reject cleanly, never fault on).
+        /// </summary>
+        public async Task SendBindMismatchedFormatCodesAsync(
+            string portalName, string statementName, short[] formatCodes, params string?[] textValues)
+        {
+            using var body = new MemoryStream();
+            WriteCString(body, portalName);
+            WriteCString(body, statementName);
+            WriteInt16(body, (short)formatCodes.Length);
+            foreach (var code in formatCodes) WriteInt16(body, code);
+            WriteInt16(body, (short)textValues.Length);
+            foreach (var value in textValues)
+            {
+                if (value is null) { WriteInt32(body, -1); continue; }
+                var bytes = Encoding.UTF8.GetBytes(value);
+                WriteInt32(body, bytes.Length);
+                body.Write(bytes);
+            }
+            WriteInt16(body, 0); // result format codes: none → all text
+            await WriteFrontendAsync(PgWireProtocol.BindMessage, body.ToArray());
+        }
+
         public async Task SendDescribeStatementAsync(string statementName)
             => await SendDescribeAsync(PgWireProtocol.DescribeStatement, statementName);
 

@@ -17,6 +17,7 @@
 		<PackageReference Include="FluentAssertions" Version="8.8.0" />
 		<PackageReference Include="GraphQL-Parser" Version="9.5.1" />
 		<PackageReference Include="GraphQL.Client" Version="6.1.0" />
+		<PackageReference Include="GraphQL.SystemTextJson" Version="8.3.0" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
 		<PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="170.157.0" />
 		<PackageReference Include="SqlParserCS" Version="0.6.5" />

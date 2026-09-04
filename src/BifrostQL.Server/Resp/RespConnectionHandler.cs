@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Net;
 using System.Net.Security;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
@@ -36,6 +37,7 @@ namespace BifrostQL.Server.Resp
         private readonly Func<DateTimeOffset> _clock;
         private readonly IReadOnlyDictionary<string, IRespCommandHandler> _dataHandlers;
         private readonly RespConnectionLimiter _connectionLimiter;
+        private readonly RespAuthRateLimiter _authRateLimiter;
         private readonly ILogger<RespConnectionHandler> _logger;
         private static long _connectionCounter;
 
@@ -55,12 +57,20 @@ namespace BifrostQL.Server.Resp
             IEnumerable<IRespCommandHandler>? dataHandlers = null,
             ILogger<RespConnectionHandler>? logger = null,
             RespConnectionLimiter? connectionLimiter = null,
-            Func<DateTimeOffset>? clock = null)
+            Func<DateTimeOffset>? clock = null,
+            RespAuthRateLimiter? authRateLimiter = null)
         {
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
             // One handler instance serves every connection (Kestrel resolves it once), so the
             // admission counter lives for the front door's lifetime, as in pgwire.
             _connectionLimiter = connectionLimiter ?? new RespConnectionLimiter(options?.MaxConnections ?? 100);
+            // Shared across every connection of this front door, like the admission counter: a
+            // per-connection limiter would bound nothing, since reconnecting is free.
+            _authRateLimiter = authRateLimiter ?? new RespAuthRateLimiter(
+                options?.MaxAuthAttemptsPerSource ?? 100,
+                options?.MaxAuthAttemptsPerAccount ?? 10,
+                options?.AuthRateLimitWindow ?? TimeSpan.FromMinutes(1),
+                _clock);
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -81,7 +91,10 @@ namespace BifrostQL.Server.Resp
             await using var stream = new DuplexPipeStream(connection.Transport);
             await HandleConnectionAsync(
                 stream, connection.ConnectionClosed, confidential,
-                alreadyAdmitted: connection.Items.ContainsKey(AdmittedItemKey));
+                alreadyAdmitted: connection.Items.ContainsKey(AdmittedItemKey),
+                // The ADDRESS only: including the ephemeral port would give every reconnect a fresh
+                // budget and make the per-source cap inert.
+                source: (connection.RemoteEndPoint as IPEndPoint)?.Address.ToString());
         }
 
         /// <summary>
@@ -94,7 +107,8 @@ namespace BifrostQL.Server.Resp
         /// credential is read.
         /// </summary>
         internal async Task HandleConnectionAsync(
-            Stream stream, CancellationToken ct, bool confidentialTransport = false, bool alreadyAdmitted = false)
+            Stream stream, CancellationToken ct, bool confidentialTransport = false,
+            bool alreadyAdmitted = false, string? source = null)
         {
             // ---- Admission, BEFORE the codec reads a byte ----
             // The listener had NO connection cap at all: any peer could exhaust sockets, threads
@@ -104,7 +118,7 @@ namespace BifrostQL.Server.Resp
             // direct stream, a non-Kestrel host) still acquires here, so no path is uncapped.
             if (alreadyAdmitted)
             {
-                await RunConnectionAsync(stream, ct, confidentialTransport);
+                await RunConnectionAsync(stream, ct, confidentialTransport, source);
                 return;
             }
 
@@ -116,7 +130,7 @@ namespace BifrostQL.Server.Resp
 
             try
             {
-                await RunConnectionAsync(stream, ct, confidentialTransport);
+                await RunConnectionAsync(stream, ct, confidentialTransport, source);
             }
             finally
             {
@@ -141,10 +155,16 @@ namespace BifrostQL.Server.Resp
             return preAuthDeadlineAt.Value - now;
         }
 
-        private async Task RunConnectionAsync(Stream stream, CancellationToken ct, bool confidentialTransport)
+        private async Task RunConnectionAsync(
+            Stream stream, CancellationToken ct, bool confidentialTransport, string? source = null)
         {
-            var session = new RespSession(Interlocked.Increment(ref _connectionCounter))
+            var id = Interlocked.Increment(ref _connectionCounter);
+            var session = new RespSession(id)
             {
+                // Absent a known peer address the connection itself is the bucket, so an unknown
+                // source still bounds one socket's guessing instead of pooling every peer into one
+                // budget a single attacker could spend on everyone's behalf.
+                Source = string.IsNullOrEmpty(source) ? $"conn:{id}" : source,
                 // A direct SslStream (tests, non-Kestrel hosts) is confidential too; both
                 // detections feed the same gate.
                 TransportConfidential = confidentialTransport || stream is SslStream,
@@ -413,6 +433,8 @@ namespace BifrostQL.Server.Resp
                 // confidentiality requirement, checked before the credential is resolved.
                 if (!await RequireConfidentialTransportAsync(stream, session, ct))
                     return;
+                if (!await AdmitAuthAttemptAsync(stream, session, authUser, ct))
+                    return;
                 if (!await TryAuthenticateAsync(session, authUser, authPass ?? string.Empty, ct))
                 {
                     await Reply(stream, RespValue.Err(RespProtocol.WrongPassError), ct);
@@ -457,6 +479,13 @@ namespace BifrostQL.Server.Resp
                     return;
             }
 
+            // Attempt budget BEFORE the credential is resolved or compared, so a guessing loop is
+            // refused at essentially no cost. The refusal names only the rate limit: varying it by
+            // whether the account exists would rebuild the enumeration oracle the uniform WRONGPASS
+            // reply exists to prevent.
+            if (!await AdmitAuthAttemptAsync(stream, session, user, ct))
+                return;
+
             if (!await TryAuthenticateAsync(session, user, pass, ct))
             {
                 // Redis keeps the connection usable after a failed AUTH so the client can retry.
@@ -489,6 +518,23 @@ namespace BifrostQL.Server.Resp
                 "(TLS not configured and AllowCleartextAuth is off).",
                 _options.Port);
             await Reply(stream, RespValue.Err(RespProtocol.CleartextAuthRefusedError), ct);
+            return false;
+        }
+
+        /// <summary>
+        /// Counts one authentication attempt against this connection's source and the supplied
+        /// account, answering the uniform rate-limit refusal once either budget is spent. Called
+        /// before any credential lookup or compare, by both AUTH and inline <c>HELLO … AUTH</c>.
+        /// </summary>
+        private async Task<bool> AdmitAuthAttemptAsync(
+            Stream stream, RespSession session, string user, CancellationToken ct)
+        {
+            if (_authRateLimiter.TryAttempt(session.Source, user))
+                return true;
+            // The account is deliberately absent from the log line as well as the reply.
+            _logger.LogWarning(
+                "resp: authentication attempt refused by the rate limiter (source {Source}).", session.Source);
+            await Reply(stream, RespValue.Err(RespProtocol.AuthRateLimitedError), ct);
             return false;
         }
 

@@ -25,6 +25,13 @@ namespace BifrostQL.Server.Resp
         /// </summary>
         public bool TransportConfidential { get; set; }
 
+        /// <summary>
+        /// The rate-limiting bucket this connection's authentication attempts count against: the
+        /// peer's address where the listener knows it, the connection itself otherwise. Never a
+        /// value shared across peers — one hostile source could then spend everyone else's budget.
+        /// </summary>
+        public string Source { get; set; } = string.Empty;
+
         /// <summary>Negotiated RESP protocol version (2 until a client sends <c>HELLO 3</c>).</summary>
         public int Protocol { get; set; } = RespProtocol.Resp2;
 

@@ -99,6 +99,22 @@ implementations produce provably different output.
   condition reads the DI container must build it through the production registrar
   (`AddBifrostQL` / `BifrostServiceRegistrar`), not by hand.
   <!-- written_at: 2026-09-03T22:00:00Z  source_event: task:01M1KP14CKVVE0FEKMXFVWMSGF, git:292976a2, git:66e2dac0 -->
+- **A test that supplies a guard's KEY by hand cannot see how production derives
+  it.** Where a limiter, cache, or bucket is addressed by a key the production
+  entry point computes (a per-source rate limit, a cache partition, a dedupe
+  bucket), a fixture that calls the guard with a fixed literal key proves only
+  that the guard counts. The pgwire SCRAM throttle's shipped test passed one
+  constant source string and stayed green while `OnConnectedAsync` handed the
+  limiter `RemoteEndPoint.ToString()` — "ip:port", a fresh ephemeral port per
+  reconnect, so the cap was per-connection and never tripped against the
+  reconnect loop it exists to bound. Drive the PRODUCTION entry point
+  (`ConnectionContext` / Kestrel seam), and give the fixture >=2 identities that
+  are EQUAL on the dimension the key must collapse to and DIFFERENT on the
+  dimension it must drop (two `IPEndPoint`s, one address, two ports). LDAPS
+  carried the same `RemoteEndPoint.ToString()` keying at the time of writing —
+  the key-derivation shape recurs per adapter, so the address-only helper
+  (`ProtocolSourceKey.Of`) is the fix and this fixture is what pins it.
+  <!-- written_at: 2026-09-04T16:10:00Z  source_event: task:01M1KPC4M29E79XY29MJS0MRYQ, git:a728a6fe, git:dca3f6b5 -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

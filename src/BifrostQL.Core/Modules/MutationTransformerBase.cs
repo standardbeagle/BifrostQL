@@ -105,7 +105,8 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
     {
         // _hardDelete: bypass the soft-delete rewrite and run a real DELETE.
         // No IS NULL filter is added so already-soft-deleted rows can be purged.
-        // Optionally role-gated via the soft-delete-hard-role metadata key.
+        // Default OFF: only tables carrying the soft-delete-hard-role opt-in
+        // allow it, and then only for callers holding the named role.
         if (mutationType == MutationType.Delete && IsHardDeleteRequested(context))
         {
             var denial = GetHardDeleteDenial(table, context);
@@ -161,14 +162,20 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
         context.ModuleArguments.TryGetValue(SoftDeleteModuleApi.HardDeleteKey, out var val) && val is true;
 
     /// <summary>
-    /// Returns an error message when the table's <c>soft-delete-hard-role</c>
-    /// metadata names a role the caller does not hold; null when allowed.
+    /// Returns an error message when hard delete is not allowed on the table;
+    /// null when allowed. Hard delete defaults OFF (M4): a table that does not
+    /// name a required role via <c>soft-delete-hard-role</c> never permits it,
+    /// whatever the caller's roles. On an opted-in table the caller must hold
+    /// the named role. This is the fail-closed backstop for the programmatic
+    /// (mutation-intent) route — the schema gate keeps <c>_hardDelete</c> off
+    /// the SDL of a non-opted-in table, but an intent's ModuleArguments can
+    /// still carry the key.
     /// </summary>
     private static string? GetHardDeleteDenial(IDbTable table, MutationTransformContext context)
     {
         if (!table.Metadata.TryGetValue(MetadataKeys.SoftDelete.HardDeleteRole, out var roleVal) ||
             roleVal is not string requiredRole || string.IsNullOrWhiteSpace(requiredRole))
-            return null;
+            return $"Hard delete on '{table.TableSchema}.{table.DbName}' is not enabled for this table.";
 
         if (ExtractRoles(context.UserContext).Any(r => string.Equals(r, requiredRole, StringComparison.OrdinalIgnoreCase)))
             return null;

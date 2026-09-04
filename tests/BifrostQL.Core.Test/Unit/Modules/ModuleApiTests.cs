@@ -163,9 +163,10 @@ public class ModuleApiTests
     [Fact]
     public async Task HardDelete_BypassesSoftDeleteRewrite()
     {
-        var table = SoftDeleteTable();
+        var table = SoftDeleteTable(hardDeleteRole: "admin");
         var transformer = new SoftDeleteMutationTransformer();
-        var context = MutationContext(table, hardDelete: true);
+        var context = MutationContext(table, hardDelete: true,
+            userContext: new Dictionary<string, object?> { ["roles"] = new[] { "admin" } });
 
         var data = new Dictionary<string, object?> { ["Id"] = 1 };
         var result = await transformer.TransformAsync(table, MutationType.Delete, data, context);

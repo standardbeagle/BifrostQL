@@ -38,7 +38,9 @@ public interface IModuleApi
 ///   query  — <c>_includeDeleted: Boolean</c> (deleted rows included),
 ///            <c>_onlyDeleted: Boolean</c> (only deleted rows; wins over _includeDeleted)
 ///   delete — <c>_hardDelete: Boolean</c> (real DELETE, bypasses the soft-delete rewrite;
-///            optionally gated by the <c>soft-delete-hard-role</c> table metadata key)
+///            emitted ONLY when the table carries the <c>soft-delete-hard-role</c>
+///            metadata opt-in — hard delete defaults OFF, and the role named by that
+///            key is required to use it)
 /// </summary>
 public sealed class SoftDeleteModuleApi : IModuleApi
 {
@@ -68,6 +70,13 @@ public sealed class SoftDeleteModuleApi : IModuleApi
     public IEnumerable<ModuleArgument> GetMutationArguments(IDbTable table)
     {
         if (!IsEnabled(table))
+            yield break;
+        // _hardDelete defaults OFF (M4): only a table that opted in by naming a
+        // required role via soft-delete-hard-role exposes the argument. Without the
+        // opt-in the SDL has no _hardDelete, so the pipeline's hard-delete branch is
+        // unreachable from GraphQL; the transformer denies the programmatic route.
+        if (!table.Metadata.TryGetValue(MetadataKeys.SoftDelete.HardDeleteRole, out var roleVal) ||
+            roleVal is not string role || string.IsNullOrWhiteSpace(role))
             yield break;
         yield return new ModuleArgument(HardDeleteArg, "Boolean", HardDeleteKey,
             "Permanently delete the row instead of soft-deleting it.");

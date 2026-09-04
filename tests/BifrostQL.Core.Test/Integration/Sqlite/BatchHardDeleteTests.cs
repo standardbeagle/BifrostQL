@@ -50,7 +50,7 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
         var factory = new SqliteDbConnFactory(ConnString);
         var loader = new DbModelLoader(factory, new MetadataLoader(new[]
         {
-            "*.users { soft-delete: deleted_at }",
+            "*.users { soft-delete: deleted_at; soft-delete-hard-role: purge_admin }",
             "*.users.updated_at { populate: updated-on }",
         }));
         _model = await loader.LoadAsync();
@@ -170,6 +170,12 @@ public sealed class BatchHardDeleteTests : IAsyncLifetime
             options.Schema = schema;
             options.Query = mutation;
             options.RequestServices = provider;
+            // _hardDelete defaults OFF (M4): the fixture table opts in via
+            // soft-delete-hard-role, so the caller must hold the named role.
+            options.UserContext = new Dictionary<string, object?>
+            {
+                ["roles"] = new[] { "purge_admin" },
+            };
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = factory,

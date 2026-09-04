@@ -297,6 +297,32 @@ code, not just re-checks of pgwire.
    inventing a second gate.
    <!-- written_at: 2026-09-03T23:10:00Z  source_event: task:01M1KPA1T5WSGTZB5B07RFTEFS, git:a9870e61 -->
 
+   **(d) A read that GATES a write carries the write's own scope, and the
+   write's event fires only on affected rows.** Part (b) says the adapter
+   builds no predicate; the converse is that a pre-write read — a state-machine
+   current-row load, a before-image, a concurrency current row — must be
+   narrowed by the SAME `AdditionalFilter` the update will carry, not by the
+   primary key alone. A PK-only load lets a transformer gate on a row the caller
+   cannot write, and the gate's answer is observable: a permitted transition
+   returned a silent zero-row success while a forbidden one returned "State
+   transition is not permitted." — an oracle reading another tenant's stored
+   state. Take the scope from the transformer chain itself (run it as a
+   FILTER-ONLY probe with a PK-only payload, keep the filter, discard data and
+   errors), never from a second hand-rolled tenant/policy predicate — invariant
+   4's rule applies to the write path too. Exclude the optimistic-concurrency
+   token from the probe deliberately: it is the one filter contributor that
+   depends on the payload, and including it makes a stale token read as "no such
+   row", surfacing a lost update as an illegal transition instead of the
+   CONFLICT the write itself raises. Not every pre-write read needs this — a
+   before-image whose result is DISCARDED on a zero-row write may stay PK-only;
+   the test is whether the read's result can change the RESPONSE. Paired half:
+   every observer/event emission on a write (transition notifications, webhooks,
+   CDC, workflow triggers) is gated on `AffectedRows > 0`, as the in-transaction
+   history/outbox hooks already were — a scoped-away write affects no rows, so an
+   ungated event ships another tenant's row state to the observer chain. Gate on
+   `AffectedRows`, never on the pipeline's scalar return `Value` (invariant 8(b)).
+   <!-- written_at: 2026-09-04T02:15:00Z  source_event: task:01M1KPA1W14FJDK7J3JH43DSXT, git:e695d7f0, git:e0b11bc7 -->
+
    Full write-up: `docs/solutions/bifrostql/s3-slice1-address-vs-storage-key-2026-07-16.md`.
 
 9. **A wire-facing exception catch clause must be complete AND symmetric

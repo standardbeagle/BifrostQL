@@ -190,7 +190,7 @@ namespace BifrostQL.Server.Resp
             var values = new object?[keyColumns.Count];
             for (var i = 0; i < keyColumns.Count; i++)
             {
-                if (!RespReadEngine.TryCoerceKeySegment(keyColumns[i], segments[i], out var value, out _))
+                if (!RespReadEngine.TryCoerceKeySegment(keyColumns[i], segments[i], i + 1, out var value, out _))
                 {
                     error = $"{RespProtocol.ErrPrefix}invalid cursor";
                     return null;

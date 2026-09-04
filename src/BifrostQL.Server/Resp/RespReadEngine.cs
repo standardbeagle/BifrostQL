@@ -117,21 +117,25 @@ namespace BifrostQL.Server.Resp
             if (!index.ByName.TryGetValue(tableName, out var table))
                 return RespKeyParse.Failure($"{RespProtocol.ErrPrefix}unknown table '{tableName}'");
 
+            // Every diagnostic below is built from the CALLER'S OWN key and from counts — never from
+            // the resolved model. Parsing runs against the raw model, ahead of any policy filter, so
+            // this text answers callers with no read access to the table; naming its key columns or
+            // their database types would make a rejected GET an introspection channel with no
+            // authorization behind it (protocol-adapter-security invariant 3).
             var keyColumns = table.KeyColumns.ToList();
             if (keyColumns.Count == 0)
-                return RespKeyParse.Failure($"{RespProtocol.ErrPrefix}table '{table.DbName}' has no primary key");
+                return RespKeyParse.Failure($"{RespProtocol.ErrPrefix}key '{rawKey}' addresses a table with no primary key");
 
             var pkSegments = segments.Skip(1).ToArray();
             if (pkSegments.Length != keyColumns.Count)
                 return RespKeyParse.Failure(
                     $"{RespProtocol.ErrPrefix}key '{rawKey}' supplies {pkSegments.Length} value segment(s) " +
-                    $"but table '{table.DbName}' has a {keyColumns.Count}-column primary key " +
-                    $"({string.Join(", ", keyColumns.Select(c => c.ColumnName))})");
+                    $"but {keyColumns.Count} are expected");
 
             var values = new object?[keyColumns.Count];
             for (var i = 0; i < keyColumns.Count; i++)
             {
-                if (!TryCoerceKeySegment(keyColumns[i], pkSegments[i], out var value, out var error))
+                if (!TryCoerceKeySegment(keyColumns[i], pkSegments[i], i + 1, out var value, out var error))
                     return RespKeyParse.Failure(error);
                 values[i] = value;
             }
@@ -394,7 +398,8 @@ namespace BifrostQL.Server.Resp
         /// data-tool coercion (which BifrostQL.Server cannot reference); non-numeric columns keep the
         /// raw string. A numeric segment that does not parse is a clean, client-safe error.
         /// </summary>
-        internal static bool TryCoerceKeySegment(ColumnDto column, string segment, out object? value, out string error)
+        internal static bool TryCoerceKeySegment(
+            ColumnDto column, string segment, int position, out object? value, out string error)
         {
             error = string.Empty;
             switch (ClassifyKeyColumn(column))
@@ -419,7 +424,9 @@ namespace BifrostQL.Server.Resp
             }
 
             value = null;
-            error = $"{RespProtocol.ErrPrefix}value '{segment}' is not valid for key column '{column.ColumnName}' ({column.DataType})";
+            // Position, not identity: the caller's own segment plus where it sits is enough to fix
+            // the key, while the column's name and database type stay behind the policy boundary.
+            error = $"{RespProtocol.ErrPrefix}value '{segment}' is not valid for key segment {position}";
             return false;
         }
 

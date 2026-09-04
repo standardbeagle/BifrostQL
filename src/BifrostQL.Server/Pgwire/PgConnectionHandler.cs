@@ -66,15 +66,18 @@ namespace BifrostQL.Server.Pgwire
         public override async Task OnConnectedAsync(ConnectionContext connection)
         {
             await using var stream = new DuplexPipeStream(connection.Transport);
-            await HandleConnectionAsync(stream, connection.ConnectionClosed);
+            await HandleConnectionAsync(stream, connection.ConnectionClosed,
+                connection.RemoteEndPoint?.ToString());
         }
 
         /// <summary>
         /// Drives one connection's startup + authentication over <paramref name="rawStream"/>.
         /// Written against a plain <see cref="Stream"/> so it runs identically over a
         /// real socket (tests, production) and the TLS-wrapped stream after upgrade.
+        /// <paramref name="source"/> is the caller's remote endpoint string, the per-source
+        /// SCRAM rate-limit key; a null/empty source shares one bucket ("unknown").
         /// </summary>
-        internal async Task HandleConnectionAsync(Stream rawStream, CancellationToken ct)
+        internal async Task HandleConnectionAsync(Stream rawStream, CancellationToken ct, string? source = null)
         {
             // ---- Connection-limit admission, BEFORE any work ----
             // Reserve the slot at accept — ahead of the pre-startup negotiation, the TLS

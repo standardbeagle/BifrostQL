@@ -293,6 +293,67 @@ namespace BifrostQL.Server.Test.Pgwire
             }
         }
 
+        [Fact]
+        public async Task Scram_PerSourceThrottle_RefusesBeforeChallenge()
+        {
+            // LOW: one SCRAM attempt per connection costs PBKDF2(4096) with no per-source
+            // throttle. With MaxAuthAttemptsPerSource = 2, the third connection from the same
+            // source must be refused BEFORE the SASL challenge is issued (no hash work), with
+            // the SAME invalid_password wire shape as a wrong password (no throttle oracle).
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            var options = new PgWireOptions { AuthMethod = PgAuthMethod.ScramSha256, MaxAuthAttemptsPerSource = 2 };
+            var handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, EmptyServices(), options);
+            const string source = "203.0.113.7:5000";
+
+            // Attempts 1-2 (wrong password): admitted to the SCRAM exchange — the challenge
+            // is issued and the outcome is the ordinary invalid_password rejection.
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var (client, cleanup) = await StartConnectionAsync(handler, source);
+                await client.SendStartupAsync("alice");
+                await client.DoScramExpectingFailureAsync("wrong");
+                var rejected = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+                rejected.WasRejected.Should().BeTrue();
+                rejected.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidPassword);
+                await cleanup();
+            }
+
+            // Attempt 3: over the per-source cap. The FIRST backend message after startup is
+            // the ErrorResponse — no AuthenticationSASL challenge is issued, proving the
+            // refusal precedes any credential lookup or PBKDF2 work.
+            var (throttled, throttledCleanup) = await StartConnectionAsync(handler, source);
+            await throttled.SendStartupAsync("alice");
+            var first = await throttled.ReadNextMessageAsync().WaitAsync(Timeout);
+            PgHandshakeClient.ErrorSqlStateOf(first.Type, first.Body).Should().Be(
+                PgWireProtocol.SqlStateInvalidPassword,
+                "a rate-limited source is refused with the same wire shape as a failed auth, before the challenge");
+            await throttledCleanup();
+        }
+
+        /// <summary>Opens a loopback connection, pumps the handler on the server end, and returns the
+        /// client plus a cleanup that tears the connection down and drains the server task.</summary>
+        private static async Task<(PgHandshakeClient Client, Func<Task> Cleanup)> StartConnectionAsync(
+            PgConnectionHandler handler, string source)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var clientSocket = new TcpClient();
+            var connectTask = clientSocket.ConnectAsync(IPAddress.Loopback, port);
+            var serverSocket = await listener.AcceptTcpClientAsync();
+            await connectTask;
+
+            var serverTask = handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None, source);
+            return (new PgHandshakeClient(clientSocket.GetStream()), async () =>
+            {
+                clientSocket.Dispose();
+                try { await serverTask.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch { /* connection teardown races are expected on dispose */ }
+                serverSocket.Dispose();
+                listener.Stop();
+            });
+        }
+
         // ---- fixtures / principals -----------------------------------------
         private static IServiceProvider EmptyServices() => new ServiceCollection().BuildServiceProvider();
 

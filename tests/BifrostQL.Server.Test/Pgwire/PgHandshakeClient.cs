@@ -119,6 +119,35 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         /// <summary>
+        /// Drives the SASL handshake with a WRONG password: the server answers the client-final
+        /// with an ErrorResponse instead of AuthenticationSaslFinal, which this variant tolerates.
+        /// </summary>
+        public async Task DoScramExpectingFailureAsync(string password)
+        {
+            var (type, body) = await ReadBackendAsync();
+            RequireAuth(type, body, PgWireProtocol.AuthSasl);
+
+            var client = new ScramTestClient();
+            var clientFirst = client.ClientFirstMessage();
+
+            using var initial = new MemoryStream();
+            WriteCString(initial, PgWireProtocol.ScramSha256);
+            var clientFirstBytes = Encoding.UTF8.GetBytes(clientFirst);
+            var len = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(len, clientFirstBytes.Length);
+            initial.Write(len);
+            initial.Write(clientFirstBytes);
+            await WriteFrontendAsync(PgWireProtocol.PasswordMessage, initial.ToArray());
+
+            var (contType, contBody) = await ReadBackendAsync();
+            var serverFirst = RequireAuthText(contType, contBody, PgWireProtocol.AuthSaslContinue);
+
+            var clientFinal = client.ClientFinalMessage(serverFirst, password, out _);
+            await WriteFrontendAsync(PgWireProtocol.PasswordMessage, Encoding.UTF8.GetBytes(clientFinal));
+            // The rejection ErrorResponse is consumed by WaitForReadyOrErrorAsync.
+        }
+
+        /// <summary>
         /// Drives the SASL handshake but sends a malformed client-first-message (a valid
         /// GS2 header with no <c>r=</c> nonce) so the server rejects it as a protocol
         /// violation instead of continuing the exchange.
@@ -248,6 +277,13 @@ namespace BifrostQL.Server.Test.Pgwire
                 }
             }
         }
+
+        /// <summary>Reads the next single backend message (e.g. to observe what follows a startup).</summary>
+        public Task<(byte Type, byte[] Body)> ReadNextMessageAsync() => ReadBackendAsync();
+
+        /// <summary>The SQLSTATE of an ErrorResponse body, or null for any other message type.</summary>
+        public static string? ErrorSqlStateOf(byte type, byte[] body)
+            => type == PgWireProtocol.ErrorResponse ? ParseError(body).Code : null;
 
         private static void RequireAuth(byte type, byte[] body, int expectedSubCode)
         {

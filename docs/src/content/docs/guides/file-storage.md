@@ -32,7 +32,8 @@ A bucket config resolves from the column, then the table, then the host default,
 table can override the model and a column can override its table.
 
 `storage` accepts `bucket`, `provider`, `prefix`, `region`, `endpoint`, `pathstyle`,
-`maxsize`, and `mimetypes`. An unknown key or a malformed segment fails model load rather
+`maxsize`, `mimetypes`, and `maxurlexpiry` (the longest presigned-URL lifetime in
+minutes that `_fileDownload` will mint, default 60). An unknown key or a malformed segment fails model load rather
 than being ignored — a typo in a size cap is a security setting that silently stops
 applying.
 
@@ -56,7 +57,6 @@ The column stores a JSON pointer, not the bytes:
   "BucketName": "uploads",
   "ProviderType": "local",
   "UploadedAt": "2026-08-17T14:22:33.123Z",
-  "AccessUrl": "/srv/uploads/avatars/users/avatar/42_...png",
   "ETag": "9f3ac1b7…",
   "CustomMetadata": null
 }
@@ -65,7 +65,9 @@ The column stores a JSON pointer, not the bytes:
 The storage key is generated per upload from the table, column, record id, a timestamp,
 and eight random hex characters. `BucketName` and `ProviderType` are informational — the
 read path resolves the live bucket config from metadata, so moving a bucket does not
-require rewriting stored pointers.
+require rewriting stored pointers. The pointer never holds an access URL: a presigned
+URL is a short-lived capability, and a stored one would be copied into every history,
+CDC and audit row. `_fileDownload` mints the URL at read time.
 
 ## The GraphQL surface
 
@@ -76,7 +78,6 @@ mutation Upload($f: Upload!) {
   _fileUpload(table: "users", column: "avatar", recordId: "42", file: $f) {
     success
     fileKey
-    accessUrl
     size
   }
 }
@@ -187,7 +188,11 @@ MinIO; leave them unset to use the region endpoint. Credentials come from the st
 credential chain — BifrostQL configures none of its own, so instance roles, environment
 variables, and profiles all work as they do for any AWS SDK client.
 
-`_fileDownload` returns a presigned GET URL, expiring in 15 minutes by default.
+`_fileDownload` returns a presigned GET URL, expiring in 15 minutes by default. The
+caller's `expirationMinutes` can only narrow: it is clamped down to the bucket's
+`maxurlexpiry` (default 60 minutes), and a non-positive value is rejected. `expiresAt`
+reports the clamped lifetime. `_fileUpload` returns no URL at all — fetch one with
+`_fileDownload` after the upload.
 
 ## Virtual folder columns
 

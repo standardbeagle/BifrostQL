@@ -58,6 +58,7 @@ Storage configuration options:
 - `endpoint`/`endpointUrl`: Custom endpoint for S3-compatible services
 - `maxSize`/`maxFileSize`: Maximum file size in bytes
 - `mimetypes`/`allowedMimeTypes`: Allowed MIME types
+- `maxurlexpiry`/`maxPresignedUrlExpirationMinutes`: Longest presigned-URL lifetime in minutes `_fileDownload` will mint (default 60); a caller's `expirationMinutes` is clamped down to it
 
 ## GraphQL Operations
 
@@ -103,7 +104,6 @@ mutation {
     originalName
     contentType
     size
-    accessUrl
     uploadedAt
   }
 }
@@ -130,10 +130,12 @@ File metadata is stored as JSON in the database column:
   "Size": 102456,
   "BucketName": "my-app-files",
   "ProviderType": "local",
-  "UploadedAt": "2024-01-15T14:30:00Z",
-  "AccessUrl": "/path/to/file"
+  "UploadedAt": "2024-01-15T14:30:00Z"
 }
 ```
+
+The pointer never holds an access URL. `_fileDownload` mints a presigned URL on read;
+the upload result carries none.
 
 ## Storage Providers
 

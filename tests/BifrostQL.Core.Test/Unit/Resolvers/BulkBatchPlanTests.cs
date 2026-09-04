@@ -361,4 +361,113 @@ public sealed class BulkBatchPlanTests
 
         built.Should().BeNull();
     }
+
+    // ---- partial composite keys (M3) ----
+    //
+    // The set-based fast path re-derives the key split itself, so it needs the same
+    // rule the per-row pipelines enforce: a predicate built from PART of a composite
+    // key addresses no row. Here the damage is one statement, not one row — the
+    // staged UPDATE/DELETE joins the target table to the staging table on the key
+    // columns, so a key column short means the join matches every row sharing the
+    // supplied column and the single statement rewrites or removes them all.
+    //
+    // The RED signature is that key-column list: pre-fix these facts report the plan
+    // was built and joined on {"LineNo"} alone, against a two-column key
+    // (OrderId, LineNo).
+
+    private static readonly string[] FullKey = { "OrderId", "LineNo" };
+
+    /// <summary>
+    /// The key columns the plan would join on, or empty when the build refused —
+    /// refusing means nothing reaches a set-based statement at all.
+    /// </summary>
+    private static string[] JoinedKeyColumns(BulkBatchPlanBuilder.BuiltBulkBatch? built)
+        => built is null
+            ? Array.Empty<string>()
+            : built.Plan.Groups.Single().KeyColumns.ToArray();
+
+    [Fact]
+    public async Task BulkUpdate_WithPartialCompositeKey_ReachesNoSetBasedStatement()
+    {
+        var ctx = BuildContext(BuildModel());
+        BulkBatchPlanBuilder.BuiltBulkBatch? built = null;
+
+        var thrown = await Record.ExceptionAsync(async () =>
+            built = await BuildAsync(ctx,
+                Update(("LineNo", 1), ("Status", "a")),
+                Update(("LineNo", 2), ("Status", "b"))));
+
+        JoinedKeyColumns(built).Should().BeEmpty(
+            "a set-based UPDATE joined on one column of a two-column key rewrites every row sharing it");
+        thrown.Should().BeOfType<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public async Task BulkHardDelete_WithPartialCompositeKey_ReachesNoSetBasedStatement()
+    {
+        var ctx = BuildContext(BuildModel());
+        BulkBatchPlanBuilder.BuiltBulkBatch? built = null;
+
+        var thrown = await Record.ExceptionAsync(async () =>
+            built = await BuildAsync(ctx, Delete(("LineNo", 1)), Delete(("LineNo", 2))));
+
+        JoinedKeyColumns(built).Should().BeEmpty(
+            "a set-based DELETE joined on one column of a two-column key removes every row sharing it");
+        thrown.Should().BeOfType<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public async Task BulkSoftDelete_WithPartialCompositeKey_ReachesNoSetBasedStatement()
+    {
+        // The soft-delete rewrite takes its own branch in StageDelete and derives its
+        // key columns separately, so it needs the guard in its own right.
+        var ctx = BuildContext(
+            BuildModel(t => t
+                .WithColumn("deleted_at", "datetime2", isNullable: true)
+                .WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")),
+            transformers: new IMutationTransformer[] { new SoftDeleteMutationTransformer() });
+        BulkBatchPlanBuilder.BuiltBulkBatch? built = null;
+
+        var thrown = await Record.ExceptionAsync(async () =>
+            built = await BuildAsync(ctx, Delete(("LineNo", 1)), Delete(("LineNo", 2))));
+
+        JoinedKeyColumns(built).Should().BeEmpty(
+            "the soft-delete rewrite stamps deleted_at on every row the partial key matches");
+        thrown.Should().BeOfType<BifrostExecutionError>();
+    }
+
+    [Fact]
+    public async Task BulkUpdate_WithCompleteCompositeKey_StillTakesTheFastPath()
+    {
+        // Positive control: the guard must not push a legitimate composite-key batch
+        // off the fast path. Key value 0 is included, so presence can never be
+        // decided by truthiness.
+        var ctx = BuildContext(BuildModel());
+
+        var built = await BuildAsync(ctx,
+            Update(("OrderId", 0), ("LineNo", 0), ("Status", "a")),
+            Update(("OrderId", 1), ("LineNo", 2), ("Status", "b")));
+
+        JoinedKeyColumns(built).Should().BeEquivalentTo(FullKey);
+    }
+
+    [Fact]
+    public async Task BulkUpdate_WithSingleColumnKey_StillTakesTheFastPath()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Widgets", t => t
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithMetadata("bulk-batch-threshold", "1"))
+            .Build();
+        var ctx = BuildContext(model);
+
+        var built = await BulkBatchPlanBuilder.TryBuildAsync(
+            model.GetTableFromDbName("Widgets"),
+            new[] { Update(("Id", 1), ("Name", "a")), Update(("Id", 2), ("Name", "b")) },
+            ctx,
+            TransformContext(ctx));
+
+        JoinedKeyColumns(built).Should().BeEquivalentTo(new[] { "Id" });
+    }
 }

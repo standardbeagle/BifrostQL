@@ -119,6 +119,16 @@ namespace BifrostQL.Server.Ldap
                 // "something went wrong on the server".
                 throw;
             }
+            catch (Core.Resolvers.BifrostExecutionError ex) when (
+                ex.ErrorCode == Core.Resolvers.BifrostExecutionError.AccessDeniedCode)
+            {
+                // An authorization denial from the transformer chain (tenant scope, row/column
+                // policy), mapped by CONDITION — never by op class (invariant 10). The wire code
+                // is insufficientAccessRights with an empty diagnostic: the client's own request
+                // was refused, and nothing names what was denied. The detail stays in the log.
+                _logger.LogDebug(ex, "ldap search denied by policy.");
+                return LdapSearchOutcome.Refused(LdapResultCode.InsufficientAccessRights);
+            }
             catch (Exception ex)
             {
                 // Everything else — a BifrostExecutionError wrapping driver/transformer text, a

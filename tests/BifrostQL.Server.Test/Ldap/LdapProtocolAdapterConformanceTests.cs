@@ -68,14 +68,16 @@ namespace BifrostQL.Server.Test.Ldap
         protected override bool AdapterSupportsMutations => false;
 
         /// <summary>
-        /// Every fail-closed condition reaches the client as a result code with an empty
-        /// diagnostic — a tenant denial, a policy denial, and a pipeline fault are deliberately
-        /// indistinguishable on the wire. Both the "selected a denied column" and the "no tenant
-        /// identity" facts therefore expect the SAME sanitized signal, which is the point: the
-        /// client learns it was refused and nothing about what it was refused.
+        /// Every fail-closed AUTHORIZATION condition reaches the client as
+        /// <c>insufficientAccessRights</c> with an empty diagnostic — a tenant denial and a policy
+        /// denial are deliberately indistinguishable on the wire, mapped by CONDITION through the
+        /// executor's single funnel (protocol-adapter-security invariant 10): the transformer chain
+        /// tags both with <c>ACCESS_DENIED</c>, and the funnel maps that code here. The client
+        /// learns it was refused and nothing about what it was refused. An untagged server FAULT
+        /// still maps to <c>operationsError</c>.
         /// </summary>
         protected override string ExpectedRejectionFragment(string canonicalServerFragment) =>
-            LdapResultCode.OperationsError.ToString();
+            LdapResultCode.InsufficientAccessRights.ToString();
 
         /// <summary>
         /// Per-column mappings, one direction each. Kept beside the metadata rules above so the

@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,8 +35,11 @@ namespace BifrostQL.Server.Resp
 
             // The per-connection handler is resolved by the Kestrel listener from DI. A single
             // instance is shared across all connections (Kestrel resolves it once), so the
-            // admission counter it consults must be the SAME instance for every connection.
-            services.TryAddSingleton(new RespConnectionLimiter(options.MaxConnections));
+            // admission counter it consults must be the SAME instance for every connection. It is
+            // captured here rather than resolved later because the admission middleware below runs
+            // outside the DI-resolved handler, and both must consult the one counter.
+            var connectionLimiter = new RespConnectionLimiter(options.MaxConnections);
+            services.TryAddSingleton(connectionLimiter);
             services.TryAddSingleton<RespConnectionHandler>();
 
             // Slice-2 read commands attach at the IRespCommandHandler seam — the connection handler
@@ -86,12 +90,55 @@ namespace BifrostQL.Server.Resp
             services.PostConfigure<KestrelServerOptions>(kestrel =>
                 kestrel.Listen(options.BindAddress, options.Port, listen =>
                 {
+                    // ADMISSION FIRST — ahead of UseHttps. Kestrel composes connection middleware
+                    // so the first-registered runs outermost, which is the only place the slot can
+                    // be reserved at ACCEPT. Held inside the connection handler it was taken after
+                    // the TLS handshake, so a peer that never sent a ClientHello cost a connection
+                    // and a TLS state machine the cap could not see: that bounds admitted sessions,
+                    // not the work an unauthenticated peer can force. Mirrors the gRPC listener.
+                    listen.Use(next => async connection =>
+                    {
+                        if (!connectionLimiter.TryAcquire())
+                        {
+                            await RefuseAsync(connection, options.ServerCertificate is null);
+                            return;
+                        }
+                        // Tells the handler the slot is already held, so it does not take a second
+                        // one for the same connection and halve the effective cap.
+                        connection.Items[RespConnectionHandler.AdmittedItemKey] = true;
+                        try
+                        {
+                            await next(connection);
+                        }
+                        finally
+                        {
+                            connectionLimiter.Release();
+                        }
+                    });
                     if (options.ServerCertificate is not null)
                         listen.UseHttps(options.ServerCertificate);
                     listen.UseConnectionHandler<RespConnectionHandler>();
                 }));
 
             return services;
+        }
+
+        /// <summary>
+        /// Turns away an over-cap connection. On a cleartext listener the peer gets the RESP
+        /// refusal it can actually parse; on a TLS listener the refusal happens before the
+        /// handshake, where no RESP byte can be spoken, so the connection is simply aborted —
+        /// writing plaintext ahead of a ClientHello would desync the client instead of informing
+        /// it. Either way nothing is read from the peer and the slot is never held.
+        /// </summary>
+        private static async Task RefuseAsync(ConnectionContext connection, bool cleartext)
+        {
+            if (cleartext)
+            {
+                await connection.Transport.Output.WriteAsync(
+                    Encoding.ASCII.GetBytes($"-{RespProtocol.TooManyConnectionsError}\r\n"));
+            }
+            await connection.Transport.Output.CompleteAsync();
+            connection.Abort();
         }
     }
 }

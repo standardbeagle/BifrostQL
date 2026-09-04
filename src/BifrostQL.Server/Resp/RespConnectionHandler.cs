@@ -39,6 +39,14 @@ namespace BifrostQL.Server.Resp
         private readonly ILogger<RespConnectionHandler> _logger;
         private static long _connectionCounter;
 
+        /// <summary>
+        /// Marker the listener's admission middleware sets on a connection whose slot it already
+        /// reserved (at ACCEPT, ahead of the TLS handshake). Its absence means this connection came
+        /// in through some other path — a direct stream, a non-Kestrel host — and the handler takes
+        /// the slot itself, so admission is enforced on every path but never counted twice.
+        /// </summary>
+        internal const string AdmittedItemKey = "bifrost.resp.admitted";
+
         public RespConnectionHandler(
             IRespCredentialStore credentials,
             IBifrostAuthContextFactory authFactory,
@@ -71,7 +79,9 @@ namespace BifrostQL.Server.Resp
             // is present. Direct-SslStream callers (tests) are detected in HandleConnectionAsync.
             var confidential = connection.Features.Get<ITlsHandshakeFeature>() is not null;
             await using var stream = new DuplexPipeStream(connection.Transport);
-            await HandleConnectionAsync(stream, connection.ConnectionClosed, confidential);
+            await HandleConnectionAsync(
+                stream, connection.ConnectionClosed, confidential,
+                alreadyAdmitted: connection.Items.ContainsKey(AdmittedItemKey));
         }
 
         /// <summary>
@@ -83,12 +93,21 @@ namespace BifrostQL.Server.Resp
         /// confidential (TLS on the listener) — the transport gate consults it before any
         /// credential is read.
         /// </summary>
-        internal async Task HandleConnectionAsync(Stream stream, CancellationToken ct, bool confidentialTransport = false)
+        internal async Task HandleConnectionAsync(
+            Stream stream, CancellationToken ct, bool confidentialTransport = false, bool alreadyAdmitted = false)
         {
             // ---- Admission, BEFORE the codec reads a byte ----
             // The listener had NO connection cap at all: any peer could exhaust sockets, threads
-            // and memory with no credentials. The slot is reserved at ACCEPT, ahead of decoding and
-            // AUTH, so an unauthenticated peer can never force work outside the cap.
+            // and memory with no credentials. On the Kestrel path the slot is reserved even earlier
+            // — by listener middleware at ACCEPT, ahead of the TLS handshake — and that connection
+            // arrives marked, so taking it again here would halve the cap. Every other path (a
+            // direct stream, a non-Kestrel host) still acquires here, so no path is uncapped.
+            if (alreadyAdmitted)
+            {
+                await RunConnectionAsync(stream, ct, confidentialTransport);
+                return;
+            }
+
             if (!_connectionLimiter.TryAcquire())
             {
                 await RespWriter.WriteAsync(stream, RespValue.Err(RespProtocol.TooManyConnectionsError), ct);

@@ -26,6 +26,8 @@ dotnet run --project src/BifrostQL.Host  # Web server
 
 Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，否則誤入 epic gate。多 TFM 相容問題（新 BCL API、TFM-conditioned packages）epic 層不見，release 層乃見——release-tests 失敗多屬此類。
 
+故凡改 `src/BifrostQL.Server/`、`src/BifrostQL.Core/`、`src/BifrostQL.Abstractions/`（皆 multi-TFM）之 slice，收工前必行 `dotnet build BifrostQL.sln` 一次。epic-tier `dotnet test` 唯建 net10.0，故 net9+ 專屬之 BCL API 全綠而破 release tier（H11 之 `System.Threading.Lock` 即是）。全 solution build 數十秒，release-tests 失敗則一 rewind。
+
 ## Edit Source, Not Generated Output
 
 - Desktop UI 前端源在 `src/BifrostQL.UI/frontend`。

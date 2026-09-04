@@ -254,47 +254,60 @@ namespace BifrostQL.Server.Pgwire
             Stream stream, CancellationToken ct)
         {
             var negotiatedTls = false;
-            for (var packet = 0; ; packet++)
+            var raw = stream;
+            try
             {
-                if (packet >= MaxPreStartupPackets)
-                    throw new PgProtocolException(
-                        $"too many pre-startup packets ({MaxPreStartupPackets}) without a StartupMessage.");
-
-                var (code, rest) = await PgProtocolIO.ReadStartupPacketAsync(stream, ct);
-                switch (code)
+                for (var packet = 0; ; packet++)
                 {
-                    case PgWireProtocol.SslRequestCode:
-                        if (_options.ServerCertificate is null)
-                        {
-                            // No certificate: decline TLS. The client decides whether to
-                            // proceed in the clear or disconnect.
+                    if (packet >= MaxPreStartupPackets)
+                        throw new PgProtocolException(
+                            $"too many pre-startup packets ({MaxPreStartupPackets}) without a StartupMessage.");
+
+                    var (code, rest) = await PgProtocolIO.ReadStartupPacketAsync(stream, ct);
+                    switch (code)
+                    {
+                        case PgWireProtocol.SslRequestCode:
+                            if (_options.ServerCertificate is null)
+                            {
+                                // No certificate: decline TLS. The client decides whether to
+                                // proceed in the clear or disconnect.
+                                await PgProtocolIO.WriteRawByteAsync(stream, (byte)'N', ct);
+                                continue;
+                            }
+                            await PgProtocolIO.WriteRawByteAsync(stream, (byte)'S', ct);
+                            stream = await _tlsUpgrade(stream, ct);
+                            negotiatedTls = true;
+                            continue;
+
+                        case PgWireProtocol.GssEncRequestCode:
                             await PgProtocolIO.WriteRawByteAsync(stream, (byte)'N', ct);
                             continue;
-                        }
-                        await PgProtocolIO.WriteRawByteAsync(stream, (byte)'S', ct);
-                        stream = await _tlsUpgrade(stream, ct);
-                        negotiatedTls = true;
-                        continue;
 
-                    case PgWireProtocol.GssEncRequestCode:
-                        await PgProtocolIO.WriteRawByteAsync(stream, (byte)'N', ct);
-                        continue;
+                        case PgWireProtocol.CancelRequestCode:
+                            // An out-of-band CancelRequest on its own connection: [Int32 PID][Int32 secret].
+                            // Match it against the registry (best-effort, fail-closed on a wrong/unknown
+                            // secret) and then close — a CancelRequest connection never runs queries.
+                            HandleCancelRequest(rest);
+                            return (stream, null, negotiatedTls);
 
-                    case PgWireProtocol.CancelRequestCode:
-                        // An out-of-band CancelRequest on its own connection: [Int32 PID][Int32 secret].
-                        // Match it against the registry (best-effort, fail-closed on a wrong/unknown
-                        // secret) and then close — a CancelRequest connection never runs queries.
-                        HandleCancelRequest(rest);
-                        return (stream, null, negotiatedTls);
+                        case PgWireProtocol.ProtocolVersion3:
+                            return (stream, rest, negotiatedTls);
 
-                    case PgWireProtocol.ProtocolVersion3:
-                        return (stream, rest, negotiatedTls);
-
-                    default:
-                        await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
-                            $"unsupported startup protocol code {code}.", ct);
-                        return (stream, null, negotiatedTls);
+                        default:
+                            await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
+                                $"unsupported startup protocol code {code}.", ct);
+                            return (stream, null, negotiatedTls);
+                    }
                 }
+            }
+            catch
+            {
+                // The caller only ever sees the stream this method RETURNS. If the upgrade
+                // succeeded and the negotiation then failed (peer dropped, handshake deadline,
+                // malformed pre-startup packet), the SslStream is still local here — dispose it
+                // so the failure path never leaks it past the connection.
+                if (!ReferenceEquals(stream, raw)) stream.Dispose();
+                throw;
             }
         }
 
@@ -319,13 +332,22 @@ namespace BifrostQL.Server.Pgwire
         private async Task<Stream> UpgradeToTlsAsync(Stream inner, CancellationToken ct)
         {
             var ssl = new SslStream(inner, leaveInnerStreamOpen: false);
-            await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            try
             {
-                ServerCertificate = _options.ServerCertificate,
-                ClientCertificateRequired = false,
-                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-            }, ct);
-            return ssl;
+                await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = _options.ServerCertificate,
+                    ClientCertificateRequired = false,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                }, ct);
+                return ssl;
+            }
+            catch
+            {
+                // A failed handshake never hands the stream to anyone; release it here.
+                ssl.Dispose();
+                throw;
+            }
         }
 
         /// <summary>AuthenticationCleartextPassword challenge; constant-time secret compare.</summary>

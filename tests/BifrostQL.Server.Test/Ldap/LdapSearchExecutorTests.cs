@@ -511,6 +511,64 @@ namespace BifrostQL.Server.Test.Ldap
         // ---- error funnel ----
 
         [Fact]
+        public async Task Search_Wildcard_OmitsADeniedMappedAttribute_InsteadOfFailingTheWholeSearch()
+        {
+            // A `*` (or empty) selection asks for every READABLE attribute. A mapped attribute whose
+            // column the caller may not read must be OMITTED from the fetch — the pipeline's
+            // column-read guard rejects any query that selects it, so without the omission one
+            // denied column fails the entire wildcard search.
+            var builder = LdapModelBuilder.Create()
+                .WithTable("users", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("username", "nvarchar")
+                    .WithColumn("full_name", "nvarchar")
+                    .WithColumn("email", "nvarchar")
+                    .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
+                    .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={username},ou=people")
+                    .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username,cn=full_name,mail=email")
+                    .WithMetadata(MetadataKeys.Policy.ReadDeny, "email"));
+            var (executor, pipeline) = Build(builder);
+            pipeline.WithPeople(2);
+
+            var outcome = await RunAsync(executor, Search()); // no attribute list = all user attributes
+
+            outcome.ResultCode.Should().Be(LdapResultCode.Success,
+                "one denied column must not fail a wildcard search");
+            var entry = outcome.Entries.Should().ContainSingle().Subject;
+            ValueOf(entry, "uid").Should().NotBeNull();
+            ValueOf(entry, "cn").Should().NotBeNull();
+            entry.Attributes.Select(a => a.Type).Should().NotContain("mail",
+                "the denied attribute is omitted, exactly as an ACL-hidden attribute");
+            pipeline.Intents.Should().OnlyContain(i =>
+                    i.Query.ScalarColumns.All(c => !string.Equals(c.DbDbName, "email", StringComparison.OrdinalIgnoreCase)),
+                "the denied column must never be selected in the first place");
+        }
+
+        [Fact]
+        public async Task Search_ExplicitlyNamingADeniedAttribute_StillTakesTheAuthoritativeDenial()
+        {
+            // Omission is the WILDCARD contract. A client that names a denied attribute gets the
+            // same refusal the pipeline raises for any denied read — naming it is a deliberate
+            // reach for that column, not an accident of `*`.
+            var builder = LdapModelBuilder.Create()
+                .WithTable("users", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("username", "nvarchar")
+                    .WithColumn("email", "nvarchar")
+                    .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
+                    .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={username},ou=people")
+                    .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username,mail=email")
+                    .WithMetadata(MetadataKeys.Policy.ReadDeny, "email"));
+            var (executor, pipeline) = Build(builder);
+            pipeline.WithPeople(1);
+
+            var outcome = await RunAsync(executor, Search(attributes: new[] { "uid", "mail" }));
+
+            outcome.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights);
+            outcome.Diagnostic.Should().BeEmpty();
+        }
+
+        [Fact]
         public async Task Search_WhenThePipelineDeniesAccess_AnswersInsufficientAccessRights()
         {
             // A policy/tenant denial (tagged ACCESS_DENIED by the transformer chain) is a CLIENT

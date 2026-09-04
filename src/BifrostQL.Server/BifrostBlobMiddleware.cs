@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -50,9 +51,10 @@ namespace BifrostQL.Server
     /// <see cref="QueryIntent"/> through <see cref="IQueryIntentExecutor"/>, so tenant
     /// isolation, soft-delete, policy row scope and column read guards apply
     /// unskippably. Every not-found-shaped condition — absent row, NULL value,
-    /// non-blob or unknown column, pipeline denial — maps to the SAME constant 404
-    /// (invariant 10 / the S3 precedent): a denial is indistinguishable from absence,
-    /// and no message ever carries model, driver, or transformer text (invariant 3).</para>
+    /// unknown or policy-hidden table/column, non-blob column, missing or malformed
+    /// key parameter, pipeline denial — maps to the SAME constant 404 (invariant 10 /
+    /// the S3 precedent): a denial is indistinguishable from absence, and no message
+    /// ever carries model, driver, or transformer text (invariant 3).</para>
     ///
     /// <para><b>Windows and chunking.</b> The endpoint advertises
     /// <c>Accept-Ranges: bytes</c> and honors single-range requests with 206 partial
@@ -165,22 +167,38 @@ namespace BifrostQL.Server
                 || string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase)).ToList();
             var table = tables.Count == 1 ? tables[0]
                 : tables.FirstOrDefault(t => string.Equals(t.GraphQlName, tableName, StringComparison.OrdinalIgnoreCase));
-            var column = table?.Columns.FirstOrDefault(c =>
+
+            // Resolve through the SAME read-visibility projection the introspection
+            // surfaces use (invariant 4): a policy-denied table or column is null here
+            // exactly as an unknown one is. This does not substitute for the pipeline
+            // gate — the projection's null and the pipeline's denial produce the
+            // IDENTICAL wire answer below and in the InvokeAsync catch, so gating the
+            // shape checks on it only moves the denial earlier, never to a different
+            // condition.
+            var visible = table is null ? null : SchemaReadVisibility.ProjectTable(table, userContext);
+            var column = visible?.Columns.FirstOrDefault(c =>
                 string.Equals(c.GraphQlName, columnName, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(c.DbName, columnName, StringComparison.OrdinalIgnoreCase));
 
-            // Unknown table, unknown column, and a column that is not a blob all read
-            // as the same 404 as an absent row — this endpoint serves binary content,
+            // Unknown or read-denied table, unknown or unreadable column, a non-blob
+            // column, and — below — a missing or malformed key all read as the SAME
+            // 404 as an absent row, with no identifiers. These shape checks run BEFORE
+            // the pipeline gate, so any answer that distinguishes them (a 400 naming
+            // the key column, say) is an existence/enumeration oracle for a
+            // read-denied caller (finding M12). This endpoint serves binary content;
             // it is not an introspection surface.
-            if (table is null || column is null || !BinaryDbTypes.Contains(BaseType(column.DataType)))
+            if (visible is null || column is null || !BinaryDbTypes.Contains(BaseType(column.DataType)))
             {
                 await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
                 return;
             }
 
             // EVERY primary-key column must be supplied (k.<graphQlName>=value) —
-            // composite keys are addressed in full, never by a first-column guess.
-            var keyColumns = table.KeyColumns.ToList();
+            // composite keys are addressed in full, never by a first-column guess. A
+            // missing, duplicated or unparseable key is the same 404: naming the key
+            // column or its type here would disclose the key shape before the
+            // pipeline gate.
+            var keyColumns = table!.KeyColumns.ToList();
             if (keyColumns.Count == 0)
             {
                 await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
@@ -192,14 +210,12 @@ namespace BifrostQL.Server
                 var raw = context.Request.Query[$"k.{key.GraphQlName}"];
                 if (raw.Count != 1 || string.IsNullOrEmpty(raw[0]))
                 {
-                    await WriteTextAsync(context, StatusCodes.Status400BadRequest,
-                        $"Missing key parameter 'k.{key.GraphQlName}'.");
+                    await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
                     return;
                 }
                 if (!TryConvertKey(raw[0]!, key.DataType, out var keyValue))
                 {
-                    await WriteTextAsync(context, StatusCodes.Status400BadRequest,
-                        $"Key parameter 'k.{key.GraphQlName}' is not a valid {BaseType(key.DataType)} value.");
+                    await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
                     return;
                 }
                 filter[key.GraphQlName] = new Dictionary<string, object?> { ["_eq"] = keyValue };

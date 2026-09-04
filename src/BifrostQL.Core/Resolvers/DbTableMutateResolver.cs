@@ -90,7 +90,19 @@ namespace BifrostQL.Core.Resolvers
             // concurrent writer cannot cause silent data corruption here.
             if (propertyInfo.keyData.Any()
                 && await RowExistsAsync(conFactory, dialect, table, propertyInfo.keyData, context.CancellationToken))
-                return await UpdateObject(context, table, mutationTransformers, model, conFactory, "upsert");
+            {
+                // The probe says the row physically exists; the transformer row
+                // scope (tenant/policy, soft-delete IS NULL) decides whether the
+                // UPDATE can actually reach it. A scoped-away row affects zero
+                // rows, and the pipeline's Value is the KEY on a single-key table
+                // — not a count (protocol-adapter-security invariant 8(b)) — so
+                // the answer must come from AffectedRows: a zero-row upsert update
+                // is the update path's not-found response, never the victim's key.
+                var upsertCtx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
+                var (upsertValue, upsertAffected) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
+                    table, propertyInfo, upsertCtx);
+                return upsertAffected == 0 ? 0 : upsertValue;
+            }
 
             return await InsertObject(context, table, mutationTransformers, model, conFactory, "upsert");
         }
@@ -187,7 +199,13 @@ namespace BifrostQL.Core.Resolvers
         {
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
             var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
-            return await TableMutationPipeline.UpdateAsync(table, propertyInfo, ctx);
+            var (value, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(table, propertyInfo, ctx);
+            // A scoped-away (tenant/policy/soft-delete) or vanished row affects zero
+            // rows, and Value is the KEY on a single-key table, not a count
+            // (invariant 8(b)). A no-op update therefore answers 0 — the not-found
+            // response the upsert update branch reuses — never the key of a row the
+            // caller did not touch.
+            return affectedRows == 0 ? 0 : value;
         }
 
         // Filtered set-update: { set: fieldset, where: filter } — argument extraction

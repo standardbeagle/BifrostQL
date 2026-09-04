@@ -265,6 +265,56 @@ namespace BifrostQL.Server.Test.Pgwire
                 "the TLS-upgraded stream must be disposed when the connection ends (close_notify, inner socket release)");
         }
 
+        [Fact]
+        public async Task TlsSession_AbortedBeforeStartup_DisposesTheUpgradedStream()
+        {
+            // The disposal in HandleConnectionAsync's finally only sees the stream that
+            // NegotiateStartupAsync RETURNS. A peer that completes the TLS upgrade and then
+            // drops (or stalls into the handshake deadline, or sends a malformed pre-startup
+            // packet) makes the negotiation throw with the upgraded stream still local to it —
+            // the exact unauthenticated-peer path where the leak is cheapest to force.
+            var cert = CreateSelfSignedCert();
+            var tracker = new DisposalTrackingStream();
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, ServerCertificate = cert };
+
+            async Task<Stream> TrackTlsUpgrade(Stream inner, CancellationToken ct)
+            {
+                var ssl = new SslStream(inner, leaveInnerStreamOpen: false);
+                await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = cert,
+                    ClientCertificateRequired = false,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                }, ct);
+                tracker.Inner = ssl;
+                return tracker;
+            }
+
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var clientSocket = new TcpClient();
+            var connectTask = clientSocket.ConnectAsync(IPAddress.Loopback, port);
+            var serverSocket = await listener.AcceptTcpClientAsync();
+            await connectTask;
+
+            var handler = new PgConnectionHandler(
+                store, BifrostAuthContextFactory.Instance, EmptyServices(), options, tlsUpgrade: TrackTlsUpgrade);
+            var serverTask = handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None);
+
+            var client = new PgHandshakeClient(clientSocket.GetStream());
+            await client.NegotiateTlsAsync();
+
+            // Drop the connection with no StartupMessage ever sent.
+            clientSocket.Dispose();
+            try { await serverTask.WaitAsync(Timeout); } catch { /* teardown races are fine */ }
+            listener.Stop();
+
+            tracker.Disposed.Should().BeTrue(
+                "an upgraded stream abandoned before startup must still be disposed on the failure path");
+        }
+
         /// <summary>A delegating stream that records its own disposal.</summary>
         private sealed class DisposalTrackingStream : Stream
         {

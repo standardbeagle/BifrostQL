@@ -218,7 +218,7 @@ Mutation hook state has TWO scopes on `MutationObserverContext` (`Modules/IMutat
 
 - BifrostQL.UI header toggle 切 HTTP 與 binary transports，且**實路由** editor queries。`src/BifrostQL.UI/frontend/src/lib/transport-fetcher.ts` 之 `TransportGraphQLFetcher` 以 `QueryTransport` 造 edit-db `GraphQLFetcher` adapter，注入 `<Editor fetcher=...>`；故 editor 全數據路徑（`useSchema`、`useDataTable`、mutation hooks、stats）皆行經所選 transport。
 - edit-db `Editor` 受 `fetcher?: GraphQLFetcher` prop；其諸 hook 由 `useFetcher()` context 取之，故單一注入即覆全部 query。改此縫須確保新增數據路徑仍經 `useFetcher()`，勿另建 HTTP client。
-- App.tsx 依 `transportMode` + active profile 建 transport（`useMemo`，無副作用；binary socket 惰性開），並以 `key={editorKey-transportMode}` remount editor 使 toggle 即時改路由。profile `?profile=` query param 同灌 `graphqlPath` 與 `binaryPath`。
+- `hooks/useTransport.ts` 依 `transportMode` + active profile 於 effect 建 transport（binary socket 惰性開），並與其 identity（`mode|graphqlPath|binaryPath`）同 publish；`editorFetcher` 唯 identity 合現選時非 null。App.tsx 以 `editorFetcher && profilesResolved` gate editor mount，故 toggle 或 profile switch 皆令 editor unmount 一 render 後 remount 於新 transport（勿為 profile 變 bump `editorKey`——H13 之根由即此；`key` 今唯載 `editorKey-transportMode-editorRouteToken`）。profile `?profile=` query param 同灌 `graphqlPath` 與 `binaryPath`。
 
 ## Testing
 

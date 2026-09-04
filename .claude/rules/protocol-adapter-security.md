@@ -323,6 +323,28 @@ code, not just re-checks of pgwire.
    `AffectedRows`, never on the pipeline's scalar return `Value` (invariant 8(b)).
    <!-- written_at: 2026-09-04T02:15:00Z  source_event: task:01M1KPA1W14FJDK7J3JH43DSXT, git:e695d7f0, git:e0b11bc7 -->
 
+   **(e) A storage provider's write path returns a LOCATOR, never a capability.
+   Capability URLs are minted on read, with a server-clamped TTL.** M25:
+   `S3StorageProvider.UploadAsync` returned a 15-minute presigned GET and
+   `FileStorageService` stored it in the column's pointer JSON as
+   `FileMetadata.AccessUrl` — a bearer credential written into the database, and
+   therefore copied into every history row, CDC message and audit export, where it
+   outlives its own expiry and every access check that would have refused to mint
+   it again. The rule generalizes past S3 to any signed URL, SAS token, or
+   pre-authorized handle: the write path may persist only the opaque key that
+   addresses the object; the capability is derived per read, under the reader's own
+   identity. Two follow-throughs the review had to force:
+   (i) **remove the property, do not merely stop writing it** — a nulled slot left
+   "for legacy deserialization" is still on the wire (a permanently-null
+   `_fileUpload.accessUrl`) and is exactly where the next write path puts a
+   capability back; unknown-member tolerance already reads old rows.
+   (ii) **a caller-supplied TTL is a request to NARROW, never to widen** — clamp it
+   against a configured server maximum (`maxurlexpiry`, default 60 min), reject
+   non-positive, and report the clamped value. Unclamped it reaches the provider's
+   own ceiling (SigV4's 7 days) or throws an unmapped
+   `ArgumentOutOfRangeException` past the funnel (invariant 5).
+   <!-- written_at: 2026-09-04T23:40:00Z  source_event: task:01M1KPC4HZPRSM4ED1WANEY340, git:eee41212, git:1a0f045e -->
+
    Full write-up: `docs/solutions/bifrostql/s3-slice1-address-vs-storage-key-2026-07-16.md`.
 
 9. **A wire-facing exception catch clause must be complete AND symmetric

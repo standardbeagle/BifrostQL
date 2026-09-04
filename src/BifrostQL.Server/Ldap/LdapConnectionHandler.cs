@@ -118,21 +118,26 @@ namespace BifrostQL.Server.Ldap
             // Session state for THIS connection: whether a bind has authenticated it, and whether that
             // bind was anonymous (an anonymous session is limited to the RootDSE/subschema — criterion 4).
             var session = new LdapSessionState { TlsEstablished = tlsEstablished };
-            // Pre-auth deadline: the admission slot was taken at accept, so an unauthenticated peer
-            // must not be able to hold it past this even while sending traffic (failing binds keep the
-            // connection non-idle, so the idle timeout alone does not reclaim the slot).
-            var preAuthDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
+            // Session deadline: the admission slot was taken at accept, so a peer that never
+            // authenticates must not be able to hold it past AuthenticationTimeout even while
+            // sending traffic (failing binds keep the connection non-idle, so the idle timeout
+            // alone does not reclaim the slot). The deadline is FIXED at accept and never slides
+            // with traffic; a credentialed bind retires it (an authenticated session is a
+            // legitimate pooled client, bounded by the idle timeout), while an ANONYMOUS bind only
+            // replaces it with an equally short anonymous-session lifetime — a credential-less
+            // peer holds a slot no longer than a peer that never bound at all.
+            DateTimeOffset? sessionDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
             try
             {
                 while (true)
                 {
                     var readTimeout = _options.IdleTimeout;
-                    if (!session.Authenticated)
+                    if (sessionDeadline is { } deadline)
                     {
-                        var remaining = preAuthDeadline - DateTimeOffset.UtcNow;
+                        var remaining = deadline - DateTimeOffset.UtcNow;
                         if (remaining <= TimeSpan.Zero)
                         {
-                            _logger.LogDebug("ldap connection did not authenticate within {Timeout}; closing.",
+                            _logger.LogDebug("ldap connection reached its {Timeout} session deadline; closing.",
                                 _options.AuthenticationTimeout);
                             return;
                         }
@@ -171,7 +176,23 @@ namespace BifrostQL.Server.Ldap
                     }
                     try
                     {
+                        var wasAuthenticated = session.Authenticated;
                         var dispatch = await DispatchAsync(wire, request, session, source, ct);
+                        if (request.Operation is LdapBindRequest)
+                        {
+                            if (session.Authenticated)
+                                // A successful bind: a credentialed session retires the deadline; an
+                                // anonymous one gets a short session lifetime measured from the bind.
+                                sessionDeadline = session.IsAnonymous
+                                    ? DateTimeOffset.UtcNow + _options.AuthenticationTimeout
+                                    : null;
+                            else if (wasAuthenticated)
+                                // A failed RE-bind reset the session to unauthenticated (RFC 4511
+                                // §4.2.1): grant one fresh pre-auth window. A failed bind on a
+                                // never-authenticated connection must NOT slide the accept-time
+                                // deadline, or failing binds would hold the slot forever.
+                                sessionDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
+                        }
                         if (!dispatch.KeepOpen)
                             return; // Unbind / fatal op: close the connection
                         if (dispatch.Upgraded is { } upgraded)

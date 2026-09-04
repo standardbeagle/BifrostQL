@@ -183,8 +183,10 @@ namespace BifrostQL.Server.Ldap
         /// Pre-auth deadline: how long a connection may stay UNAUTHENTICATED before it is closed. The
         /// admission slot is taken at accept, so a peer that never authenticates would otherwise hold
         /// it for the whole <see cref="IdleTimeout"/> window while failing binds keep the connection
-        /// non-idle — an unauthenticated slot-exhaustion vector the idle timeout does not cover. Once a
-        /// bind succeeds the session is bounded by <see cref="IdleTimeout"/> instead. Default 30
+        /// non-idle — an unauthenticated slot-exhaustion vector the idle timeout does not cover. Once
+        /// a CREDENTIALED bind succeeds the session is bounded by <see cref="IdleTimeout"/> instead;
+        /// an ANONYMOUS session gets a fresh deadline of the same length measured from its bind, so a
+        /// credential-less peer holds a slot no longer than one that never bound. Default 30
         /// seconds, matching the pgwire handshake and RESP authentication deadlines.
         /// </summary>
         public TimeSpan AuthenticationTimeout { get; set; } = TimeSpan.FromSeconds(30);

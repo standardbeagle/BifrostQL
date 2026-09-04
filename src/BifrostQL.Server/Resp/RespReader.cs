@@ -37,6 +37,7 @@ namespace BifrostQL.Server.Resp
         private readonly byte[] _buffer = new byte[8192];
         private int _start;
         private int _end;
+        private int _frameRemaining;
 
         public RespReader(Stream stream, int maxBulkLength, int maxElements, int maxNestingDepth, int maxFrameLength)
         {
@@ -53,6 +54,10 @@ namespace BifrostQL.Server.Resp
         /// </summary>
         public async Task<RespValue?> ReadValueAsync(CancellationToken ct)
         {
+            // The frame budget is reset HERE and only here — at a top-level frame boundary. An
+            // inner element that reset it would let a hostile peer refill the budget forever and
+            // defeat the cap entirely (the same reasoning as the nesting-depth counter).
+            _frameRemaining = _maxFrameLength;
             var marker = await ReadRawByteAsync(ct);
             if (marker < 0)
                 return null; // clean EOF between frames
@@ -224,6 +229,10 @@ namespace BifrostQL.Server.Resp
 
         private async Task<byte[]> ReadExactAsync(int count, CancellationToken ct)
         {
+            // Charge the WHOLE declared length to the frame budget before allocating: a hostile
+            // length prefix must be refused having materialized nothing, not after a proportional
+            // allocation the cap then complains about.
+            Consume(count);
             var result = new byte[count];
             var got = 0;
             while (got < count)
@@ -251,6 +260,10 @@ namespace BifrostQL.Server.Resp
         {
             if (_start >= _end && !await FillAsync(ct))
                 return -1;
+            // Every consumed byte — markers, length lines, payload terminators, and each element of
+            // a nested aggregate — is charged to the one budget, so the cap bounds the frame rather
+            // than any single part of it.
+            Consume(1);
             return _buffer[_start++];
         }
 
@@ -259,6 +272,18 @@ namespace BifrostQL.Server.Resp
             _start = 0;
             _end = await _stream.ReadAsync(_buffer, ct);
             return _end > 0;
+        }
+
+        /// <summary>
+        /// Draws <paramref name="count"/> bytes from the current frame's budget, refusing the frame
+        /// as a clean protocol error once it is spent. Called BEFORE the bytes are read or the
+        /// buffer they land in is allocated.
+        /// </summary>
+        private void Consume(int count)
+        {
+            if (count > _frameRemaining)
+                throw new RespProtocolException($"frame exceeds maximum length {_maxFrameLength}.");
+            _frameRemaining -= count;
         }
 
         private static long ParseLong(string text)

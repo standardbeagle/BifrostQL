@@ -264,6 +264,12 @@ primary-key value: a scalar, an array in key-column order, or a `"v1|v2"`
 delimited string for composite keys — never just the first key column. Arity and
 column coercion are enforced downstream by the pipeline (composite-key safe).
 
+The key's arity decides how `|` is read, on every tool alike. Only a composite
+key treats it as a separator; on a single-column key it is an ordinary character
+of the value, so a row keyed `"a|b"` addresses that one row rather than splitting
+into two key values. Pass the array form whenever a composite key's own values
+may contain `|`.
+
 ### Schema resources
 
 The same schema payloads are also served as MCP resources:
@@ -312,7 +318,8 @@ policy-denied column, an unsupported filter shape, an out-of-range cursor) surfa
 as **prompt-style tool errors** — the tool returns `isError` with a message the
 agent can act on, not a JSON-RPC protocol fault that tears down the session. An
 unknown table or column name comes back with a nearest-name "did you mean"
-suggestion and the list of valid names. A tampered or corrupted pagination cursor
+suggestion and the list of valid names — the names this caller may read, never
+the whole schema. A tampered or corrupted pagination cursor
 collapses to one clear invalid-cursor prompt rather than silently clamping (which
 would mask tampering).
 
@@ -325,9 +332,23 @@ answered with a stable code and the detail is logged server-side only:
 
 | Condition | Wire code | What the agent should do |
 |---|---|---|
-| Authorization refusal — policy denial, or an identity carrying no tenant | `access_denied` | Try a table it is permitted to read, or ask the user to supply the missing context. |
+| A table the caller may not READ, named to any read tool | none — the `Unknown table '<name>'` prompt | Pick a table from the list the prompt gives; a denied table and a name that does not exist are deliberately indistinguishable. |
+| Authorization refusal reaching the pipeline — a tenant-less identity, a policy-denied column, a denied write | `access_denied` | Try a table it is permitted to read, or ask the user to supply the missing context. |
 | Any other server-side execution failure | `execution_error` | Not retryable as-is; the identical call will fail the same way. |
 | Unmapped OIDC issuer | generic authentication error | Re-authenticate; the issuer name is never on the wire. |
+
+The first row is the one condition answered *before* the request reaches the
+server. Every read tool — `bifrost_query`, `bifrost_row_context`,
+`bifrost_aggregate`, `bifrost_search`, and the schema tools — resolves the table
+name against the caller's readable schema, the projection the same policy
+evaluator produces for the data path. A table it may not read is therefore
+answered exactly like one that does not exist, down to the list of available
+tables: a distinguishable refusal would confirm the table exists, and confirming
+existence is the enumeration oracle this surface is built to deny. The same rule
+governs column names, so a read-denied column is "unknown" and never appears in a
+"did you mean" list. The write tools resolve against the full schema instead —
+read visibility is not a write gate — so a write to a table the caller cannot
+read still reaches the pipeline and is answered by its decision.
 
 The code is stable and identical on every op class — tool calls, `tools/list`,
 and the schema resources alike — so an agent can branch on it. The result is a

@@ -38,6 +38,17 @@ implementations produce provably different output.
 
 - Construct the test fixture from the bug's *minimal reproduction*, not the
   default fixture.
+- **Pick the fixture's ENTRY POINT by reachability, not by familiarity — a
+  schema-validated front door masks pipeline bugs.** The GraphQL front door
+  types its update/delete inputs with the key columns required, so it cannot
+  submit the malformed shape at all: the M3 partial-composite-key task's first
+  RED went six-facts GREEN against provably buggy code, because the front door
+  rejected the input before the pipeline ever saw it. The reachable surface for
+  a pipeline/seam defect is the seam a caller can actually reach with a free
+  dictionary — here `IMutationIntentExecutor` (the protocol-adapter write seam,
+  whose `Data` is built from the wire). Before writing the test, ask which
+  caller can actually construct the bad input; drive the intent seam, not the
+  schema-validated front.
 - Parameterize the shared builder with a default preserving prior behavior
   rather than mutating the shared fixture (keeps blast radius to one test).
 - **Where the affected population is a CLOSED ENUMERATION, span every kind, not

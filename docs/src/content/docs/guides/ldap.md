@@ -62,8 +62,8 @@ builder.Services.AddSingleton<ILdapBindObserver, MyBindAuditor>();
 | `AnonymousBindEnabled` | `false` | Whether an anonymous bind is admitted at all. Off by default; even when on, the session reaches only the RootDSE and the subschema. |
 | `Endpoint` | `null` | Registered BifrostQL endpoint whose directory model this front door serves; `null` selects the single registered endpoint. |
 | `MaxConnections` | `100` | Concurrent connections across **both** listeners, so opening LDAPS does not double the ceiling. Slots are taken at accept, before any TLS handshake. |
-| `AuthenticationTimeout` | `30 s` | Pre-auth deadline. A connection that has not authenticated by then is closed, because failing binds keep a connection non-idle and would otherwise hold an admission slot for the whole idle window. |
-| `IdleTimeout` | `5 min` | How long an authenticated connection may sit idle before it is closed. |
+| `AuthenticationTimeout` | `30 s` | Session deadline, fixed at accept. A connection that has not **credentialed** by then is closed, because failing binds keep a connection non-idle and would otherwise hold an admission slot for the whole idle window. An anonymous session lives only until this same deadline — re-binding anonymously never extends it. A failed re-bind on a credentialed session drops it to anonymous and re-arms one window. |
+| `IdleTimeout` | `5 min` | How long a credentialed connection may sit idle before it is closed. |
 | `TlsHandshakeTimeout` | `30 s` | Deadline for a handshake on either surface; the admission slot is already held while it runs. |
 | `MaxMessageLength` | `1 MiB` | Cap on one LDAPMessage, applied on the unauthenticated path before the body buffer is allocated. |
 | `MaxNestingDepth` | `32` | How deeply a filter may nest. The decoder recurses per level, so an unbounded filter would overflow the stack — which is uncatchable and takes the whole host process down. |
@@ -273,7 +273,7 @@ written down in configuration.
 
 | Operation | Behavior |
 |-----------|----------|
-| **Bind** (simple) | Verified against `ILdapCredentialStore` + `ILdapPasswordHasher`. Refused with `confidentialityRequired` on a cleartext transport, `unwillingToPerform` when no authenticator is registered, `invalidCredentials` for every authentication failure class. A failed bind leaves the session **unauthenticated** — it never downgrades an already-bound session. |
+| **Bind** (simple) | Verified against `ILdapCredentialStore` + `ILdapPasswordHasher`. Refused with `confidentialityRequired` on a cleartext transport, `unwillingToPerform` when no authenticator is registered, `invalidCredentials` for every authentication failure class. A failed bind resets the session to **anonymous** (RFC 4511 §4.2.1) — an identity an earlier bind established on the connection does not survive a failed re-bind. |
 | **Search** | Executes as bounded, transformed query intents. Zero or more `SearchResultEntry` messages then exactly one `SearchResultDone`, on every path — success, refusal, or fault. |
 | **Unbind** | Closes the connection. No response, by protocol. |
 | **Abandon** | A silent no-op. The loop answers one request at a time, so by the time an Abandon is decoded the operation it names has completed. Cancellation of a search that *is* in flight comes from the connection token and the search's own deadline, both linked — a client that drops the connection stops the work against the database. |
@@ -306,8 +306,15 @@ are never concatenated into SQL.
 ## Attributes, members, and the subschema
 
 A search returns the attributes it was asked for, or all mapped attributes when it
-names none. `1.1` (the no-attributes OID) returns bare DNs, and `typesOnly` returns
-attribute types with no values.
+names none — in both cases only the attributes whose column the bound identity may
+read. A mapped attribute the policy denies to this identity is simply absent, exactly
+as an attribute that does not exist (RFC 4511 §4.5.1.8), whether the request named it
+or used `*`: naming it never turns into a denial, so a caller cannot tell a hidden
+column from a missing one. A filter that references a denied attribute is the one
+exception — it is still fetched and the pipeline refuses the search, because
+evaluating the filter without the column would silently mis-match. `1.1` (the
+no-attributes OID) returns bare DNs, and `typesOnly` returns attribute types with no
+values.
 
 **`member`** is synthesized for an entry whose table declares `ldap-member`. Values
 are DNs built from the *target* family's own mapping, escaped like any other DN.
@@ -416,7 +423,7 @@ scope them.
 | Unsupported **critical** control, or a bad/forged/expired paging cookie | `unavailableCriticalExtension` (12) |
 | Credentialed bind on a cleartext transport | `confidentialityRequired` (13) |
 | Any bind failure whatsoever | `invalidCredentials` (49) |
-| Search before binding; anonymous session reaching for data; session with no projected identity | `insufficientAccessRights` (50) |
+| Search before binding; anonymous session reaching for data; session with no projected identity; a tenant or policy denial raised by the pipeline (an explicitly named attribute is never the trigger — see below) | `insufficientAccessRights` (50) |
 | StartTLS with no certificate configured | `unavailable` (52) |
 | StartTLS out of order | `operationsError` (1) |
 | Unsupported extended operation; bind or search on a listener with no seam to serve it | `unwillingToPerform` (53) |

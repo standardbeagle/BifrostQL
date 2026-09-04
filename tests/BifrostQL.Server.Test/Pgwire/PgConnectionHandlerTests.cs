@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -210,8 +212,88 @@ namespace BifrostQL.Server.Test.Pgwire
             result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation);
         }
 
-        // ---- fixtures / principals -----------------------------------------
+        [Fact]
+        public async Task TlsSession_End_DisposesTheUpgradedStream()
+        {
+            // LOW: the SslStream from UpgradeToTlsAsync was never disposed (no close_notify,
+            // inner socket leaked past the session). The upgraded stream must be disposed when
+            // the connection ends. Asserted via a disposal-tracking wrapper around the real
+            // SslStream, injected through the handler's TLS-upgrade seam.
+            var cert = CreateSelfSignedCert();
+            var tracker = new DisposalTrackingStream();
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, ServerCertificate = cert };
 
+            async Task<Stream> TrackTlsUpgrade(Stream inner, CancellationToken ct)
+            {
+                var ssl = new SslStream(inner, leaveInnerStreamOpen: false);
+                await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = cert,
+                    ClientCertificateRequired = false,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                }, ct);
+                tracker.Inner = ssl;
+                return tracker;
+            }
+
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var clientSocket = new TcpClient();
+            var connectTask = clientSocket.ConnectAsync(IPAddress.Loopback, port);
+            var serverSocket = await listener.AcceptTcpClientAsync();
+            await connectTask;
+
+            var handler = new PgConnectionHandler(
+                store, BifrostAuthContextFactory.Instance, EmptyServices(), options, tlsUpgrade: TrackTlsUpgrade);
+            var serverTask = handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None);
+
+            var client = new PgHandshakeClient(clientSocket.GetStream());
+            await client.NegotiateTlsAsync();
+            await client.SendStartupAsync("alice");
+            await client.DoCleartextAsync("s3cret");
+            var result = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+            result.ReadyForQuery.Should().BeTrue("the TLS session authenticates normally");
+
+            // End the session; the server must dispose the upgraded stream as it tears down.
+            clientSocket.Dispose();
+            try { await serverTask.WaitAsync(Timeout); } catch { /* teardown races are fine */ }
+            listener.Stop();
+
+            tracker.Disposed.Should().BeTrue(
+                "the TLS-upgraded stream must be disposed when the connection ends (close_notify, inner socket release)");
+        }
+
+        /// <summary>A delegating stream that records its own disposal.</summary>
+        private sealed class DisposalTrackingStream : Stream
+        {
+            public Stream Inner { get; set; } = Stream.Null;
+            public bool Disposed { get; private set; }
+
+            public override bool CanRead => Inner.CanRead;
+            public override bool CanSeek => false;
+            public override bool CanWrite => Inner.CanWrite;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override void Flush() => Inner.Flush();
+            public override Task FlushAsync(CancellationToken ct) => Inner.FlushAsync(ct);
+            public override int Read(byte[] buffer, int offset, int count) => Inner.Read(buffer, offset, count);
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => Inner.ReadAsync(buffer, ct);
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => Inner.Write(buffer, offset, count);
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default) => Inner.WriteAsync(buffer, ct);
+
+            protected override void Dispose(bool disposing)
+            {
+                Disposed = true;
+                if (disposing) Inner.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+
+        // ---- fixtures / principals -----------------------------------------
         private static IServiceProvider EmptyServices() => new ServiceCollection().BuildServiceProvider();
 
         private static ClaimsPrincipal TenantPrincipal(string userId, string tenantId) =>

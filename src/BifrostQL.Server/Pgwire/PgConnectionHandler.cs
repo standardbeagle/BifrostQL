@@ -37,6 +37,7 @@ namespace BifrostQL.Server.Pgwire
         private readonly PgCancellationRegistry _cancelRegistry;
         private readonly PgwireConnectionLimiter _connectionLimiter;
         private readonly ILogger<PgConnectionHandler> _logger;
+        private readonly Func<Stream, CancellationToken, Task<Stream>> _tlsUpgrade;
 
         public PgConnectionHandler(
             IPgCredentialStore credentials,
@@ -45,7 +46,8 @@ namespace BifrostQL.Server.Pgwire
             PgWireOptions options,
             PgCancellationRegistry? cancelRegistry = null,
             PgwireConnectionLimiter? connectionLimiter = null,
-            ILogger<PgConnectionHandler>? logger = null)
+            ILogger<PgConnectionHandler>? logger = null,
+            Func<Stream, CancellationToken, Task<Stream>>? tlsUpgrade = null)
         {
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
@@ -56,6 +58,9 @@ namespace BifrostQL.Server.Pgwire
             _cancelRegistry = cancelRegistry ?? new PgCancellationRegistry();
             _connectionLimiter = connectionLimiter ?? new PgwireConnectionLimiter(options.MaxConnections);
             _logger = logger ?? NullLogger<PgConnectionHandler>.Instance;
+            // Test seam: wraps the real TLS upgrade so a test can observe the upgraded stream's
+            // disposal. Production always uses the default SslStream upgrade.
+            _tlsUpgrade = tlsUpgrade ?? UpgradeToTlsAsync;
         }
 
         public override async Task OnConnectedAsync(ConnectionContext connection)
@@ -102,7 +107,7 @@ namespace BifrostQL.Server.Pgwire
                 handshakeDeadline.CancelAfter(_options.HandshakeTimeout);
                 var handshakeToken = handshakeDeadline.Token;
 
-                var (stream, startup) = await NegotiateStartupAsync(rawStream, handshakeToken);
+                var (stream, startup, negotiatedTls) = await NegotiateStartupAsync(rawStream, handshakeToken);
                 if (startup is null)
                     return; // client closed or a handled non-startup packet (Cancel/GSS)
 
@@ -120,9 +125,11 @@ namespace BifrostQL.Server.Pgwire
                 // sending the challenge, so no credential is read and the refusal cannot
                 // vary by account existence (no enumeration oracle). The dev override is
                 // OFF by default and warned about at startup. SCRAM never wires the
-                // password, so it is exempt.
+                // password, so it is exempt. Confidentiality is tracked by the negotiation
+                // itself, never by a type check on the stream (a decorated SslStream would
+                // defeat `is SslStream`).
                 if (_options.AuthMethod == PgAuthMethod.Cleartext
-                    && stream is not SslStream
+                    && !negotiatedTls
                     && !_options.AllowCleartextPasswordWithoutTls)
                 {
                     await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
@@ -216,9 +223,10 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         private const int MaxPreStartupPackets = 4;
 
-        private async Task<(Stream Stream, ReadOnlyMemory<byte>? StartupBody)> NegotiateStartupAsync(
+        private async Task<(Stream Stream, ReadOnlyMemory<byte>? StartupBody, bool NegotiatedTls)> NegotiateStartupAsync(
             Stream stream, CancellationToken ct)
         {
+            var negotiatedTls = false;
             for (var packet = 0; ; packet++)
             {
                 if (packet >= MaxPreStartupPackets)
@@ -237,7 +245,8 @@ namespace BifrostQL.Server.Pgwire
                             continue;
                         }
                         await PgProtocolIO.WriteRawByteAsync(stream, (byte)'S', ct);
-                        stream = await UpgradeToTlsAsync(stream, ct);
+                        stream = await _tlsUpgrade(stream, ct);
+                        negotiatedTls = true;
                         continue;
 
                     case PgWireProtocol.GssEncRequestCode:
@@ -249,15 +258,15 @@ namespace BifrostQL.Server.Pgwire
                         // Match it against the registry (best-effort, fail-closed on a wrong/unknown
                         // secret) and then close — a CancelRequest connection never runs queries.
                         HandleCancelRequest(rest);
-                        return (stream, null);
+                        return (stream, null, negotiatedTls);
 
                     case PgWireProtocol.ProtocolVersion3:
-                        return (stream, rest);
+                        return (stream, rest, negotiatedTls);
 
                     default:
                         await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
                             $"unsupported startup protocol code {code}.", ct);
-                        return (stream, null);
+                        return (stream, null, negotiatedTls);
                 }
             }
         }

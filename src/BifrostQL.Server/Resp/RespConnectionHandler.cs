@@ -170,8 +170,14 @@ namespace BifrostQL.Server.Resp
                     // Authenticated: a fresh IdleTimeout per read — a pooled Redis client legitimately
                     // sits idle and each command resets the idle clock. Expiry cancels the in-flight
                     // read and the lifecycle catch closes.
+                    // A front door that requires no authentication has no pre-auth phase to bound:
+                    // its sessions never become IsAuthenticated, so keying the budget off that flag
+                    // alone dropped every anonymous connection 30 seconds after connect. Such a
+                    // session is treated as past the handshake and lives under the idle timeout,
+                    // which an active client resets on every command.
+                    var pastHandshake = session.IsAuthenticated || !_options.RequireAuthentication;
                     var deadline = ComputeReadDeadline(
-                        session.IsAuthenticated, _clock(), preAuthDeadlineAt, _options.IdleTimeout);
+                        pastHandshake, _clock(), preAuthDeadlineAt, _options.IdleTimeout);
                     if (deadline is { } exhausted && exhausted <= TimeSpan.Zero)
                         return; // pre-auth budget spent without authenticating — drop the slot
                     using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);

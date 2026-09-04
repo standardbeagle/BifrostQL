@@ -33,8 +33,8 @@ namespace BifrostQL.Server.Test.Resp
         public async Task The_slot_is_taken_at_accept_even_when_the_peer_never_starts_the_tls_handshake()
         {
             using var certificate = SelfSigned();
-            var port = FreePort();
-            using var host = await StartAsync(port, certificate, maxConnections: 1);
+            var (host, port) = await StartOnAFreePortAsync(certificate, maxConnections: 1);
+            using var _ = host;
             var limiter = host.Services.GetRequiredService<RespConnectionLimiter>();
 
             // A silent peer: connected, not one byte sent, no ClientHello. This is the cheapest
@@ -56,6 +56,27 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         // ---- fixtures --------------------------------------------------------
+
+        /// <summary>
+        /// Binds a real listener, retrying on a lost port race: the free-port probe releases the
+        /// port before Kestrel claims it, so a concurrently running test can take it in between.
+        /// </summary>
+        private static async Task<(IHost Host, int Port)> StartOnAFreePortAsync(
+            X509Certificate2 certificate, int maxConnections)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                var port = FreePort();
+                try
+                {
+                    return (await StartAsync(port, certificate, maxConnections), port);
+                }
+                catch (IOException) when (attempt < 5)
+                {
+                    // Another listener claimed the probed port; try a different one.
+                }
+            }
+        }
 
         private static async Task<IHost> StartAsync(int port, X509Certificate2 certificate, int maxConnections)
         {

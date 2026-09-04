@@ -103,6 +103,26 @@ namespace BifrostQL.Server.Resp
         public TimeSpan AuthenticationTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
         /// <summary>
+        /// Maximum authentication attempts admitted from one source within
+        /// <see cref="AuthRateLimitWindow"/>. Redis keeps a connection usable after a failed AUTH so
+        /// a client can retry, which left password guessing unbounded: one socket could try forever
+        /// and reconnecting cost nothing. The source is the peer's address where the listener knows
+        /// it, and the connection itself otherwise — never a shared bucket, which one hostile peer
+        /// could use to lock everyone else out. Default 100, matching the LDAP bind limiter.
+        /// </summary>
+        public int MaxAuthAttemptsPerSource { get; set; } = 100;
+
+        /// <summary>
+        /// Maximum authentication attempts admitted against one account name within
+        /// <see cref="AuthRateLimitWindow"/>, whatever their source. Bounds a distributed guess at
+        /// one login, which the per-source cap alone cannot see. Default 10, matching LDAP.
+        /// </summary>
+        public int MaxAuthAttemptsPerAccount { get; set; } = 10;
+
+        /// <summary>The fixed window both authentication-attempt caps are counted over. Default 1 minute.</summary>
+        public TimeSpan AuthRateLimitWindow { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
         /// Maximum time an AUTHENTICATED connection may sit with no command before it is closed.
         /// Bounds the resource an abandoned-but-open client holds; the client simply reconnects.
         /// Default 10 minutes — far above any real client's keepalive interval, so it reaps leaks

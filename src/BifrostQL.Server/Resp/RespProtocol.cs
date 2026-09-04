@@ -143,6 +143,14 @@ namespace BifrostQL.Server.Resp
         public const string WrongPassError =
             "WRONGPASS invalid username-password pair or user is disabled.";
 
+        /// <summary>
+        /// Refusal once a source or an account has spent its authentication-attempt budget for the
+        /// current window. Deliberately identical whatever the account is — and whatever the
+        /// password is — so it cannot be read as a signal about which logins exist.
+        /// </summary>
+        public const string AuthRateLimitedError =
+            "ERR too many authentication attempts; try again later.";
+
         /// <summary>Refusal when HELLO is issued unauthenticated on an auth-required front door.</summary>
         public const string HelloNoAuthError =
             "NOAUTH HELLO must be called with the client already authenticated, otherwise the " +

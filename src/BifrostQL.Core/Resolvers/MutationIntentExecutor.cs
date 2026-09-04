@@ -16,6 +16,39 @@ public enum MutationIntentAction
 }
 
 /// <summary>
+/// The capability that authorizes a <see cref="MutationIntentAction.Restore"/>
+/// intent, and says which kind of restore it is.
+///
+/// <para><b>Why a capability object, not a bool.</b> A restore lifts the
+/// <c>deleted_at IS NULL</c> guard (<see cref="Modules.MutationTransformerBase"/>)
+/// and takes the captured-image re-insert route past the tenant transformer's
+/// normal insert pinning (<see cref="Modules.TenantMutationTransformer"/>). Those
+/// are undo-engine privileges, not caller privileges: expressed as a public bool,
+/// every <see cref="IMutationIntentExecutor"/> caller — an MCP write tool, a
+/// protocol adapter, host code — could un-delete rows simply by setting it. This
+/// type has no public constructor and no public factory or static instance, so an
+/// instance can only be minted inside BifrostQL.Core (the deferred undo engine).
+/// An external caller can name the property but can never produce a value for it,
+/// which makes forgery a compile-time impossibility rather than a runtime check.
+/// Same shape as <see cref="Modules.History.HistoryErasure.Marker"/> and
+/// <c>ApprovalInterceptMutationHook.MarkApprovedReplay</c>.</para>
+/// </summary>
+public sealed class MutationRestoreCapability
+{
+    /// <summary>Restores a soft-deleted row in place (an update that clears the soft-delete column).</summary>
+    internal static readonly MutationRestoreCapability SoftDeleted = new(softDeleted: true);
+
+    /// <summary>Re-inserts a hard-deleted row from its captured before-image.</summary>
+    internal static readonly MutationRestoreCapability HardDeleted = new(softDeleted: false);
+
+    private MutationRestoreCapability(bool softDeleted) => IsSoftDeleted = softDeleted;
+
+    internal bool IsSoftDeleted { get; }
+
+    internal static MutationRestoreCapability For(bool softDeleted) => softDeleted ? SoftDeleted : HardDeleted;
+}
+
+/// <summary>
 /// A protocol-adapter write request expressed as plain data — no GraphQL text.
 /// Adapters (OData, gRPC, custom binary ops, …) build the intent from their own
 /// wire format and hand it to <see cref="IMutationIntentExecutor"/>, which runs
@@ -31,10 +64,13 @@ public sealed class MutationIntent
     public required MutationIntentAction Action { get; init; }
 
     /// <summary>
-    /// Distinguishes restoration of a soft-deleted row from re-insertion of a
-    /// hard-deleted row. Only the deferred undo engine creates restore intents.
+    /// Required for <see cref="MutationIntentAction.Restore"/>, and it also
+    /// distinguishes restoration of a soft-deleted row from re-insertion of a
+    /// hard-deleted one. Only the deferred undo engine can mint one — see
+    /// <see cref="MutationRestoreCapability"/>; a restore intent without it is
+    /// refused before any transformer runs.
     /// </summary>
-    public bool RestoreSoftDeleted { get; init; }
+    public MutationRestoreCapability? Restore { get; init; }
 
     /// <summary>
     /// Column values, keyed by GraphQL field name or database column name
@@ -206,6 +242,12 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         // endpoint, or a stale caller after a schema reset).
         var table = model.GetTableFromDbName(intent.Table);
 
+        // The restore capability gate runs FIRST — before argument shaping, before
+        // any transformer — so a caller without it builds nothing and cannot probe
+        // the restore route's behaviour. External code cannot construct a
+        // MutationRestoreCapability, so this can only trip on a forged intent.
+        var restore = ResolveRestoreCapability(intent);
+
         var ctx = new MutationPipelineContext
         {
             Model = model,
@@ -219,16 +261,15 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             // transformers exactly as the GraphQL resolver's captured arguments do.
             ModuleArguments = intent.ModuleArguments,
             Services = _services,
-            RestoreSoftDeleted = intent.Action == MutationIntentAction.Restore && intent.RestoreSoftDeleted,
-            RestoreHardDeleted = intent.Action == MutationIntentAction.Restore && !intent.RestoreSoftDeleted,
+            RestoreSoftDeleted = restore is { IsSoftDeleted: true },
+            RestoreHardDeleted = restore is { IsSoftDeleted: false },
             CancellationToken = cancellationToken,
         };
 
         // An update carries a real affected-row count out to the adapter: its own
         // Value is the primary key on a single-key table, which no caller can read
         // as "did this change a row?".
-        if (intent.Action == MutationIntentAction.Update ||
-            (intent.Action == MutationIntentAction.Restore && intent.RestoreSoftDeleted))
+        if (intent.Action == MutationIntentAction.Update || restore is { IsSoftDeleted: true })
         {
             var (updateValue, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
                 table, MutationArgumentBinder.SplitProperties(table, intent.Data, intent.PrimaryKey), ctx);
@@ -285,6 +326,28 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
 
         var totalAffected = await BatchMutationPipeline.ExecuteBatchAsync(table, actions, ctx);
         return new MutationBatchIntentResult { TotalAffected = totalAffected };
+    }
+
+    /// <summary>
+    /// Returns the intent's restore capability, refusing a Restore action that
+    /// carries none and a capability attached to any other action. Restore is an
+    /// undo-engine privilege: it lifts the soft-delete guard and takes the
+    /// captured-image re-insert route, so it is not part of the externally
+    /// reachable write surface at all.
+    /// </summary>
+    private static MutationRestoreCapability? ResolveRestoreCapability(MutationIntent intent)
+    {
+        if (intent.Action != MutationIntentAction.Restore)
+        {
+            return intent.Restore is null
+                ? null
+                : throw new BifrostExecutionError(
+                    $"A restore capability is only valid on a Restore intent, not on '{intent.Action}'.");
+        }
+
+        return intent.Restore ?? throw new BifrostExecutionError(
+            "Restore requires the internal restore capability held by the deferred undo engine; " +
+            "it is not available to external callers.");
     }
 
     private static Task<object?> InsertAsync(IDbTable table, MutationIntent intent, MutationPipelineContext ctx)

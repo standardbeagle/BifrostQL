@@ -131,7 +131,11 @@ public sealed class DeferredUndoEngine
                 "restore" => MutationIntentAction.Restore,
                 _ => throw new BifrostExecutionError("The deferred delta has an invalid inverse operation."),
             },
-            RestoreSoftDeleted = restoringSoftDeletedRow,
+            // The undo engine is the only holder of the restore capability; an
+            // inverse delete carries none.
+            Restore = delta.InverseOp == "restore"
+                ? MutationRestoreCapability.For(restoringSoftDeletedRow)
+                : null,
             Data = data,
             PrimaryKey = delta.InverseOp == "restore" && !restoringSoftDeletedRow
                 ? null

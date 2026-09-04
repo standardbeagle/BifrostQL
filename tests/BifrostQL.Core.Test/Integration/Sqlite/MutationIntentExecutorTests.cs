@@ -245,7 +245,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
 
         var result = await executor.ExecuteAsync(new MutationIntent
         {
-            Table = "orders", Action = MutationIntentAction.Restore,
+            Table = "orders", Action = MutationIntentAction.Restore, Restore = MutationRestoreCapability.HardDeleted,
             Data = new Dictionary<string, object?> { ["id"] = 10L, ["tenant_id"] = 1L, ["name"] = "tenant-one-order", ["row_version"] = 5L },
             UserContext = TenantContext(1), Endpoint = EndpointPath,
         });
@@ -261,7 +261,9 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
 
         var result = await executor.ExecuteAsync(new MutationIntent
         {
-            Table = "events", Action = MutationIntentAction.Restore, RestoreSoftDeleted = true,
+            // Positive control: minted the way the deferred undo engine mints it.
+            Table = "events", Action = MutationIntentAction.Restore,
+            Restore = MutationRestoreCapability.SoftDeleted,
             Data = new Dictionary<string, object?> { ["label"] = "already-soft-deleted", ["deleted_at"] = null },
             PrimaryKey = new object?[] { 2 }, UserContext = TenantContext(1), Endpoint = EndpointPath,
         });
@@ -277,7 +279,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
 
         var act = () => executor.ExecuteAsync(new MutationIntent
         {
-            Table = "orders", Action = MutationIntentAction.Restore,
+            Table = "orders", Action = MutationIntentAction.Restore, Restore = MutationRestoreCapability.HardDeleted,
             Data = new Dictionary<string, object?> { ["id"] = 20L, ["tenant_id"] = 2L, ["name"] = "tenant-two-order", ["row_version"] = 3L },
             UserContext = TenantContext(1), Endpoint = EndpointPath,
         });

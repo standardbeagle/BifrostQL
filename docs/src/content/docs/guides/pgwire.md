@@ -50,6 +50,9 @@ builder.Services.AddSingleton<IPgCredentialStore, MyCredentialStore>();
 | `AuthMethod` | `ScramSha256` | `ScramSha256` (secret never sent) or `Cleartext` (sent over the TLS-wrapped socket). |
 | `MaxConnections` | `100` | Concurrent admitted connections; the next is refused cleanly with `53300 too_many_connections`. |
 | `ServerCertificate` | *(none — required)* | Cert presented on `SSLRequest`. The port refuses to start without it. |
+| `HandshakeTimeout` | `30s` | Pre-auth deadline from accept to `ReadyForQuery`; a silent or slow peer is cut off. |
+| `MaxAuthAttemptsPerSource` | `100` | SCRAM attempts admitted from one client IP per `AuthRateLimitWindow`. Over the cap, the refusal is issued before any credential lookup or PBKDF2 work, with the same `28P01 invalid_password` shape as a wrong password. |
+| `AuthRateLimitWindow` | `1m` | Fixed window for the per-source SCRAM cap. |
 | `Endpoint` | `null` | Registered BifrostQL endpoint path to read against; `null` selects the single endpoint. |
 
 ## Authentication and identity mapping

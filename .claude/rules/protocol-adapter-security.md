@@ -384,8 +384,29 @@ code, not just re-checks of pgwire.
    have equalized the bodies while leaving unknown (no DB round trip)
    distinguishable from denied (one round trip). Prefer the projection route.
 
+   **The symmetry obligation also runs WITHIN a single op, across the ways a
+   caller can NAME the same object.** M12 was two branches of one middleware;
+   LDAP M20 was two spellings of one search: a denied attribute reached by the
+   `*` wildcard was omitted from the entry, while the SAME attribute named
+   explicitly in the selection list fetched it and surfaced the pipeline's
+   `insufficientAccessRights`. The caller's own subschema hides that attribute
+   from this identity, so on this wire it does not exist — and success-with-
+   omission versus an explicit denial is exactly the hidden-vs-nonexistent
+   oracle. Wherever a request can address a field, column, attribute or key by
+   name AND by a wildcard/projection/`SELECT *`, both routes must resolve
+   through the SAME caller-scoped projection (`SchemaReadVisibility`) and
+   produce the same wire shape; a denied name answers as an unknown name does.
+   The exception is a name the caller can also FILTER on: filter-referenced
+   columns must still be refused rather than silently dropped, because
+   silently ignoring a predicate would return rows the caller's filter excluded
+   — a correctness fail-open that outranks the oracle. The fixture must pair a
+   denied name with an unknown one in the SAME op and assert the responses are
+   byte-identical; a test that only exercises the wildcard route passes over
+   the explicit one.
+
    Full write-up:
    `docs/solutions/bifrostql/s3-epic-close-crosscutting-error-mapping-2026-07-17.md`.
+   <!-- amended_at: 2026-09-04T23:10:00Z  source_event: task:01M1KPC4MXF2621FXFZZCVF7ZM, git:e0c546b3,019822ef,dfe1d5e2 -->
 
 <!-- invariant 9 amended_at: 2026-09-04T20:00:00Z  source_event: task:01M1KPC4FPVK9M52V2N9NBRCWK, git:9ee6e995,e7e90b5a -->
 
@@ -554,6 +575,38 @@ code, not just re-checks of pgwire.
     a `retention.md` sentence no test covered. Grep the docs for the old
     default before the docs commit (`steering-docs-follow-mechanism-changes.md`).
 
+15. **A pre-auth deadline may only be RETIRED by an action that costs the peer
+    credentials — never RE-ARMED by a free one.** AGENTS.md already requires
+    every adapter to arm a deadline at accept. The LDAP M17 fix armed one and
+    then re-armed it on every successful bind, including an ANONYMOUS bind —
+    and anonymous binds carry no secret, so they are (correctly) exempt from
+    `MaxBindAttempts*`. A credential-less peer re-binding anonymously inside
+    each window held its admission slot indefinitely: the same slot-exhaustion
+    vector the deadline exists to close, one message type over, and a deadline
+    that any free action renews is equivalent to no deadline at all.
+
+    The rule generalizes past LDAP bind: any unauthenticated message an adapter
+    accepts before the credentialed handshake completes — an anonymous or
+    unauthenticated bind, a ping/NOOP/keepalive, a StartTLS or renegotiation, a
+    protocol-version negotiation, a cancel request — is FREE, because nothing
+    rate-limits it and nothing proves who sent it. None of them may move the
+    deadline. Concretely (`LdapConnectionHandler`): fix the deadline at accept;
+    only a credentialed bind clears it; every other outcome leaves an armed
+    deadline untouched (`??=`), and a fresh bounded window is armed only on the
+    transition BACK to anonymous (a failed re-bind of a previously credentialed
+    session — invariant 12's reset), so that state is bounded too rather than
+    unbounded-because-previously-authenticated.
+
+    Third occurrence on this contract: RESP H11 (no-auth mode killed the 30 s
+    deadline outright), pgwire M15, LDAP M17 — so treat "what retires this
+    deadline, and can the peer cause that for free?" as a review question on
+    every adapter handshake, not a re-check of LDAP. The pinning fact is a
+    LOOP: N free actions spaced inside the window, asserting the connection is
+    closed DURING the loop. A single free action cannot distinguish a renewed
+    deadline from a still-armed one, so a one-shot fixture is vacuous
+    (`regression-test-non-vacuous.md`).
+
 <!-- invariant 14 written_at: 2026-09-04T03:00:00Z  source_event: task:01M1KPA1WXEYM3W99A5V1RRV77, git:f91dfeee,7a00fc2a -->
 <!-- invariant 14 amended_at: 2026-09-04T19:30:00Z  source_event: task:01M1KPA1ZWG8TQGCXCXWDNN7RB, git:9b43f138,13c8fa8c -->
+<!-- invariant 15 written_at: 2026-09-04T23:10:00Z  source_event: task:01M1KPC4MXF2621FXFZZCVF7ZM, git:a2a97269,9402082a,adf6fc5c -->
 

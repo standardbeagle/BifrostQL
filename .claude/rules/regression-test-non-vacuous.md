@@ -115,6 +115,22 @@ implementations produce provably different output.
   the key-derivation shape recurs per adapter, so the address-only helper
   (`ProtocolSourceKey.Of`) is the fix and this fixture is what pins it.
   <!-- written_at: 2026-09-04T16:10:00Z  source_event: task:01M1KPC4M29E79XY29MJS0MRYQ, git:a728a6fe, git:dca3f6b5 -->
+- **A COLUMN-level policy fixture needs `policy-actions` too, or it is a
+  TABLE-level denial wearing a column-level name.** `PolicyConfigCollector`
+  sets `HasPolicy` if ANY policy key is present, and `PolicyEvaluator.CanAct`
+  then requires the action to be in `AllowedActions` — which
+  `policy-read-deny: body` alone leaves EMPTY. So a table declaring only a
+  read-deny column is denied WHOLESALE to every non-admin, and a test asserting
+  "selecting the denied column is rejected" passes without the column guard
+  ever running. Write `policy-actions: read` alongside the deny list whenever
+  the subject under test is the COLUMN. This cost the LDAP M20 slice a rewrite
+  of its first RED, and the shared conformance fixture
+  (`ProtocolAdapterConformanceTests.cs:210`, `documents { policy-read-deny: body }`)
+  carries the same defect into 8 derived suites — its
+  `Read_SelectingPolicyDeniedColumn_IsRejected` /
+  `Read_FilteringOnPolicyDeniedColumn_IsRejected` facts are currently
+  table-level denial tests (tracked follow-up).
+  <!-- written_at: 2026-09-04T23:10:00Z  source_event: task:01M1KPC4MXF2621FXFZZCVF7ZM, git:0c2b6d37 -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

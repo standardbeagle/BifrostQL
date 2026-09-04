@@ -6,6 +6,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Breaking — `_fileUpload.accessUrl` removed; presigned URLs are no longer stored
+
+- File metadata no longer persists a presigned access URL. `FileMetadata.AccessUrl` and the `accessUrl` field on `FileUploadResult` are gone from the schema and from the stored column JSON, so a capability URL is no longer written into the database (and thence into history, CDC and audit copies). Rows that already carry a persisted `AccessUrl` still deserialize. Migration: mint a URL per read with `_fileDownload`; the removed field was either an expired 15-minute S3 URL or a server filesystem path.
+- `_fileDownload`'s `expirationMinutes` is now clamped to a per-bucket maximum (`maxurlexpiry` / `maxPresignedUrlExpirationMinutes`, default 60). A caller value may only narrow the window; a non-positive value is rejected and `expiresAt` reports the clamped time.
+
 ### Breaking — `_hardDelete` requires the `soft-delete-hard-role` opt-in
 
 - `_hardDelete` is no longer generated on every soft-delete table. The schema emits it only on tables declaring `soft-delete-hard-role: <role>`, and the caller must hold that role; a programmatic mutation intent carrying `hard_delete` on a non-opted-in table is denied (`ACCESS_DENIED`). `retain` retention therefore requires the role declaration. Migration: add `soft-delete-hard-role` to each table that needs physical deletes. See `docs/src/content/docs/reference/changelog.md`.

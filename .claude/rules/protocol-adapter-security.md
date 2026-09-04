@@ -360,8 +360,34 @@ code, not just re-checks of pgwire.
    epic implementing one cross-cutting contract across N slices needs an
    epic-close gate that reviews the seam, not the slice.
 
+   **The symmetry obligation covers branches that never reach the catch at
+   all.** A front door's PRE-PIPELINE shape checks — table/column lookup,
+   key parse, arity — answer before any executor call, so no funnel and no
+   catch clause sees them; they are nonetheless the same wire, and every one
+   of them must produce the wire shape the PIPELINE's denial produces, with
+   no identifiers. `BifrostBlobMiddleware` (M12) resolved table and column
+   from the RAW model and answered 400 naming the PK column and its data
+   type for a missing/malformed `k.<pk>`, while policy/tenant denial after
+   `executor.ExecuteAsync` answered 404 — a read-denied caller enumerated
+   tables, blob columns and key names on the 400-vs-404 difference, and the
+   comment above the branch claimed the opposite. Two rules: (a) resolve the
+   model through the caller-scoped projection (`SchemaReadVisibility`, which
+   calls the same evaluator as invariant 4) so a denied table or column is
+   null exactly as an unknown one; (b) route unknown, denied, non-blob,
+   missing, duplicated and malformed key through ONE constant response
+   writer, and assert BODY equality in the test, not just status — a
+   status-only assertion passes a 404 that still names the column. The
+   `denied-table-WITHOUT-key` row is the fixture that proves the parse never
+   runs ahead of the visibility check; without it the test is vacuous.
+   Timing is not a second oracle here only because every shape check is
+   in-memory — a "defer the checks until after the pipeline read" fix would
+   have equalized the bodies while leaving unknown (no DB round trip)
+   distinguishable from denied (one round trip). Prefer the projection route.
+
    Full write-up:
    `docs/solutions/bifrostql/s3-epic-close-crosscutting-error-mapping-2026-07-17.md`.
+
+<!-- invariant 9 amended_at: 2026-09-04T20:00:00Z  source_event: task:01M1KPC4FPVK9M52V2N9NBRCWK, git:9ee6e995,e7e90b5a -->
 
 10. **Route every op class through ONE error-mapping funnel — AND ensure
     upstream throw sites tag the same condition with the same signal.** This

@@ -6,6 +6,14 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Breaking — `_hardDelete` requires the `soft-delete-hard-role` opt-in
+
+- `_hardDelete` is no longer generated on every soft-delete table. The schema emits it only on tables declaring `soft-delete-hard-role: <role>`, and the caller must hold that role; a programmatic mutation intent carrying `hard_delete` on a non-opted-in table is denied (`ACCESS_DENIED`). `retain` retention therefore requires the role declaration. Migration: add `soft-delete-hard-role` to each table that needs physical deletes. See `docs/src/content/docs/reference/changelog.md`.
+
+### Fixed — zero-row update/upsert no longer returns the key
+
+- A single-key `update` (and the update branch of `upsert`) whose row was scoped away by tenant/policy/soft-delete, or vanished, returned the supplied key as if it had been written. Both now answer `0` — the same not-found answer composite-key tables already gave — so a caller cannot learn a cross-tenant key from the response. Batch `TotalAffected` was already count-only.
+
 ### Added — multi-model mutation surface (generous save recipes)
 
 - **`delta:`** collection-diff save on every table's mutation field: `{ inserted, updated, deleted }` flattens onto the batch pipeline in that order — one transaction, `batch-max-size`, `batch-duplicate-policy`, and the set-based bulk fast path unchanged. Returns the total affected count.

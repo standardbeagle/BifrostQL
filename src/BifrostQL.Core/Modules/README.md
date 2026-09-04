@@ -134,12 +134,18 @@ Soft delete is the reference implementation. With
 
 # Mutations: delete soft-deletes by default
 mutation { users(delete: { id: 5 }) }                      # sets deleted_at
-mutation { users(delete: { id: 5 }, _hardDelete: true) }   # real DELETE (also purges soft-deleted rows)
 ```
 
-Hard delete can be role-gated:
-`"dbo.users { soft-delete: deleted_at; soft-delete-hard-role: admin }"` —
-callers without the role in `UserContext["roles"]` get an error.
+Hard delete is off by default: `_hardDelete` is absent from the schema unless the
+table opts in by naming the role allowed to use it —
+`"dbo.users { soft-delete: deleted_at; soft-delete-hard-role: admin }"`. On an
+opted-in table, callers holding that role in `UserContext["roles"]` may run a
+real DELETE (which also purges already-soft-deleted rows); everyone else, and any
+programmatic intent on a table without the opt-in, gets an access-denied error.
+
+```graphql
+mutation { users(delete: { id: 5 }, _hardDelete: true) }   # real DELETE; opted-in table + role only
+```
 
 Server-side overrides still work via the user context: globally
 (`UserContext["include_deleted"] = true`) or per table

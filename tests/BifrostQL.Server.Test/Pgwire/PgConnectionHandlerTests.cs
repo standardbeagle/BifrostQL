@@ -330,6 +330,81 @@ namespace BifrostQL.Server.Test.Pgwire
             await throttledCleanup();
         }
 
+        [Fact]
+        public async Task Scram_PerSourceThrottle_KeysOnClientIp_NotTheEphemeralPort()
+        {
+            // The production entry point (OnConnectedAsync) derives the throttle key from the
+            // Kestrel RemoteEndPoint. Every reconnect carries a FRESH ephemeral port, and the
+            // attack this throttle exists for IS a reconnect loop (one SCRAM attempt per
+            // connection) — so a key of "ip:port" makes the per-source cap per-connection and
+            // the guard never trips in production. Three connections from ONE address on THREE
+            // ports: the third must be refused before the challenge.
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            var options = new PgWireOptions { AuthMethod = PgAuthMethod.ScramSha256, MaxAuthAttemptsPerSource = 2 };
+            var handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, EmptyServices(), options);
+            var address = IPAddress.Parse("203.0.113.7");
+
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var (client, cleanup) = await StartKestrelConnectionAsync(handler, new IPEndPoint(address, 40000 + attempt));
+                await client.SendStartupAsync("alice");
+                await client.DoScramExpectingFailureAsync("wrong");
+                var rejected = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+                rejected.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidPassword);
+                await cleanup();
+            }
+
+            var (throttled, throttledCleanup) = await StartKestrelConnectionAsync(handler, new IPEndPoint(address, 40002));
+            await throttled.SendStartupAsync("alice");
+            var first = await throttled.ReadNextMessageAsync().WaitAsync(Timeout);
+            PgHandshakeClient.ErrorSqlStateOf(first.Type, first.Body).Should().Be(
+                PgWireProtocol.SqlStateInvalidPassword,
+                "the per-source cap must be keyed on the client IP, not on the connection's ephemeral port");
+            await throttledCleanup();
+        }
+
+        /// <summary>Like <see cref="StartConnectionAsync"/> but enters through the Kestrel
+        /// <c>OnConnectedAsync</c> path with a synthetic <see cref="Microsoft.AspNetCore.Connections.ConnectionContext"/>
+        /// carrying <paramref name="remote"/>, so the production source-key derivation is under test.</summary>
+        private static async Task<(PgHandshakeClient Client, Func<Task> Cleanup)> StartKestrelConnectionAsync(
+            PgConnectionHandler handler, IPEndPoint remote)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var clientSocket = new TcpClient();
+            var connectTask = clientSocket.ConnectAsync(IPAddress.Loopback, port);
+            var serverSocket = await listener.AcceptTcpClientAsync();
+            await connectTask;
+
+            var serverStream = serverSocket.GetStream();
+            var context = new Microsoft.AspNetCore.Connections.DefaultConnectionContext
+            {
+                Transport = new StreamDuplexPipe(serverStream),
+                RemoteEndPoint = remote,
+            };
+            var serverTask = handler.OnConnectedAsync(context);
+            return (new PgHandshakeClient(clientSocket.GetStream()), async () =>
+            {
+                clientSocket.Dispose();
+                try { await serverTask.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch { /* connection teardown races are expected on dispose */ }
+                serverSocket.Dispose();
+                listener.Stop();
+            });
+        }
+
+        private sealed class StreamDuplexPipe : System.IO.Pipelines.IDuplexPipe
+        {
+            public StreamDuplexPipe(Stream stream)
+            {
+                Input = System.IO.Pipelines.PipeReader.Create(stream);
+                Output = System.IO.Pipelines.PipeWriter.Create(stream);
+            }
+            public System.IO.Pipelines.PipeReader Input { get; }
+            public System.IO.Pipelines.PipeWriter Output { get; }
+        }
+
         /// <summary>Opens a loopback connection, pumps the handler on the server end, and returns the
         /// client plus a cleanup that tears the connection down and drains the server task.</summary>
         private static async Task<(PgHandshakeClient Client, Func<Task> Cleanup)> StartConnectionAsync(

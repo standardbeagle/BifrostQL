@@ -389,6 +389,12 @@ namespace BifrostQL.Core.Resolvers
 
             if (!keyData.Any() || !standardData.Any()) return null;
 
+            // Same rule as the single-row update (TableMutationPipeline): a partial
+            // composite key widens the WHERE from one row to every row sharing the
+            // supplied key columns. Checked before the state-machine load, which reads
+            // by the same predicate.
+            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
+
             // Scoped by the same chain-derived row scope the UPDATE below carries, so the
             // state gate cannot read a row this caller could not write (see
             // MutationCommandExecutor.LoadCurrentStateMachineRow). ctx.TransformContext
@@ -573,6 +579,12 @@ namespace BifrostQL.Core.Resolvers
             var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
                 keyData[ToDbColumnName(table, d.Key)] = d.Value;
+
+            // An upsert's identity IS a primary key, so it must be whole before it is
+            // used to decide insert-or-update: a partial key probes — and then updates
+            // — rows it does not identify. Checked before the probe, so a partial key
+            // never reaches the database at all.
+            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Upsert");
 
             if (keyData.Count > 0 && await RowExistsAsync(ctx, keyData))
                 return await ExecuteUpdate(ctx, data);

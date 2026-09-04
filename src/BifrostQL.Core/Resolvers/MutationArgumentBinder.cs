@@ -83,5 +83,53 @@ namespace BifrostQL.Core.Resolvers
             return keyColumns.Zip(primaryKeyValues, (col, val) => new { col.ColumnName, Value = val })
                 .ToDictionary(x => x.ColumnName, x => x.Value);
         }
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> for a write whose primary key is incomplete.
+        /// </summary>
+        public const string PartialPrimaryKeyCode = "PARTIAL_PRIMARY_KEY";
+
+        /// <summary>
+        /// Rejects a PARTIAL primary key as a write predicate. A key column set that
+        /// is missing any of the table's key columns does not address a row: on a
+        /// composite key <c>(id, region)</c> a predicate built from <c>region</c>
+        /// alone spans every row sharing that region, so an update rewrites them all
+        /// and a delete removes them all — a bulk write wearing the shape of a
+        /// single-row one. The GraphQL front door types its update/delete inputs with
+        /// the key columns required, but the pipelines are also reached by
+        /// <see cref="IMutationIntentExecutor"/>, whose data comes straight off an
+        /// adapter's wire, so the invariant belongs here, where the predicate is
+        /// built, rather than in one front door.
+        ///
+        /// <para>Supplying NO key column is a different case and stays allowed: an
+        /// update with no key affects nothing, and a delete addressed purely by
+        /// non-key predicate columns is the pipeline's documented filtered delete
+        /// (<see cref="TableMutationPipeline.SelectPredicateColumns"/>).</para>
+        ///
+        /// <para>Presence is decided by COLUMN PRESENCE in
+        /// <paramref name="suppliedDbColumns"/> — never by a value's truthiness — so a
+        /// key value of <c>0</c>, an empty string, or null counts as supplied.
+        /// Columns are database-named, matched case-insensitively. The message carries counts only,
+        /// never the model's key-column names: it answers callers who may hold no
+        /// read access to the table (see
+        /// <c>.claude/rules/protocol-adapter-security.md</c> invariant 3).</para>
+        /// </summary>
+        public static void RequireCompleteKey(
+            IDbTable table, IEnumerable<string> suppliedDbColumns, string operation)
+        {
+            var keyColumns = table.KeyColumns.ToList();
+            if (keyColumns.Count <= 1)
+                return;
+
+            var predicateColumns = new HashSet<string>(suppliedDbColumns, StringComparer.OrdinalIgnoreCase);
+            var supplied = keyColumns.Count(c => predicateColumns.Contains(c.ColumnName));
+            if (supplied == 0 || supplied == keyColumns.Count)
+                return;
+
+            throw new BifrostExecutionError(
+                $"{operation} of '{table.TableSchema}.{table.DbName}' supplied {supplied} primary-key column value(s) " +
+                $"but {keyColumns.Count} are expected. A partial primary key does not address a row.")
+            { ErrorCode = PartialPrimaryKeyCode };
+        }
     }
 }

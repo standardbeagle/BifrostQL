@@ -206,6 +206,11 @@ namespace BifrostQL.Core.Resolvers
             if (!propertyInfo.keyData.Any())
                 return (0, 0);
 
+            // A partial key would widen the WHERE from one row to every row sharing
+            // the supplied key columns. Checked before the state-machine load, which
+            // reads by the same predicate.
+            MutationArgumentBinder.RequireCompleteKey(table, propertyInfo.keyData.Keys, "Update");
+
             if (!propertyInfo.standardData.Any())
                 return (0, 0);
 
@@ -379,13 +384,22 @@ namespace BifrostQL.Core.Resolvers
         /// zero rows. Values come from the (possibly rewritten) transformed data so an
         /// enum-name → DB-value mapping on a predicate column still reaches the WHERE.
         /// Shared with the batch pipeline (<see cref="BatchMutationPipeline"/>) so both
-        /// delete paths enforce the same WHERE/SET contract.
+        /// delete paths enforce the same WHERE/SET contract — including the completeness
+        /// of the primary key, which is checked here so every delete seam (single-row
+        /// hard, single-row soft, batch) gets it from one place: a predicate carrying
+        /// SOME of a composite key spans every row sharing those columns.
         /// </summary>
         internal static Dictionary<string, object?> SelectPredicateColumns(
             Dictionary<string, object?> dbData, HashSet<string> clientColumns, IDbTable table)
-            => dbData
+        {
+            var predicateData = dbData
                 .Where(kv => clientColumns.Contains(kv.Key) || IsPrimaryKeyColumn(table, kv.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+
+            MutationArgumentBinder.RequireCompleteKey(table, predicateData.Keys, "Delete");
+
+            return predicateData;
+        }
 
         // Soft-delete: the delete was transformed to UPDATE. The SET list carries ONLY
         // the columns a transformer stamped (soft-delete deleted_at/deleted_by, audit

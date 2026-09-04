@@ -526,6 +526,7 @@ namespace BifrostQL.Server.Test.Ldap
                     .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
                     .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={username},ou=people")
                     .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username,cn=full_name,mail=email")
+                    .WithMetadata(MetadataKeys.Policy.Actions, "read")
                     .WithMetadata(MetadataKeys.Policy.ReadDeny, "email"));
             var (executor, pipeline) = Build(builder);
             pipeline.WithPeople(2);
@@ -534,11 +535,14 @@ namespace BifrostQL.Server.Test.Ldap
 
             outcome.ResultCode.Should().Be(LdapResultCode.Success,
                 "one denied column must not fail a wildcard search");
-            var entry = outcome.Entries.Should().ContainSingle().Subject;
-            ValueOf(entry, "uid").Should().NotBeNull();
-            ValueOf(entry, "cn").Should().NotBeNull();
-            entry.Attributes.Select(a => a.Type).Should().NotContain("mail",
-                "the denied attribute is omitted, exactly as an ACL-hidden attribute");
+            outcome.Entries.Should().HaveCount(2);
+            foreach (var entry in outcome.Entries)
+            {
+                ValueOf(entry, "uid").Should().NotBeNull();
+                ValueOf(entry, "cn").Should().NotBeNull();
+                entry.Attributes.Select(a => a.Type).Should().NotContain("mail",
+                    "the denied attribute is omitted, exactly as an ACL-hidden attribute");
+            }
             pipeline.Intents.Should().OnlyContain(i =>
                     i.Query.ScalarColumns.All(c => !string.Equals(c.DbDbName, "email", StringComparison.OrdinalIgnoreCase)),
                 "the denied column must never be selected in the first place");
@@ -558,6 +562,7 @@ namespace BifrostQL.Server.Test.Ldap
                     .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
                     .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={username},ou=people")
                     .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username,mail=email")
+                    .WithMetadata(MetadataKeys.Policy.Actions, "read")
                     .WithMetadata(MetadataKeys.Policy.ReadDeny, "email"));
             var (executor, pipeline) = Build(builder);
             pipeline.WithPeople(1);

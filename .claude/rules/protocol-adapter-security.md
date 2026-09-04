@@ -477,3 +477,36 @@ code, not just re-checks of pgwire.
     (gate, tool, projection) gets the per-call memo; the pinning fact asserts
     invocations == 1 within one call AND == 2 across two calls, so a
     session-scoped cache goes RED.
+
+14. **A privileged pipeline behaviour is opened by an unforgeable reference
+    token, never by a public bool or enum an external caller can set.** Restore
+    (M2) shipped as `MutationIntent.RestoreSoftDeleted`, a public bool that
+    lifted the soft-delete guard in `MutationTransformerBase` and took the
+    captured-image re-insert past `TenantMutationTransformer`'s insert pinning —
+    so every `IMutationIntentExecutor` caller (MCP write tools, protocol
+    adapters, host code) could un-delete rows or re-create hard-deleted ones by
+    setting a flag. The shape that holds is a sealed type with no public
+    constructor, factory, or settable static (`MutationRestoreCapability`,
+    `HistoryErasure.Marker`, `ApprovalInterceptMutationHook.MarkApprovedReplay`
+    — three instances, so treat it as the default for any new
+    engine-only privilege): the caller can name the property but can never
+    produce a value, making forgery a compile-time impossibility rather than a
+    runtime check. Gate on the token BEFORE argument shaping and before any
+    transformer, so a token-less call builds nothing and cannot be probed; a
+    token attached to the wrong action is refused, not ignored.
+
+    **The mint boundary is the `InternalsVisibleTo` list, and the type's doc
+    comment must name it.** "Can only be minted inside BifrostQL.Core" was
+    false — Core grants internals to Server, the dialect packages, Benchmarks
+    and Core.Test, all of which can mint one. An XML doc comment on a security
+    type is a load-bearing claim in exactly the way a `docs/` sentence is (see
+    `steering-docs-follow-mechanism-changes.md`): coverage words are the tell,
+    and the repair is to state the real boundary and the guarantee that still
+    holds (here: BifrostQL.Mcp and out-of-tree callers cannot mint; reflection
+    is not a wire and is out of the threat model), never to delete the sentence.
+
+    Same shape is pending on `_hardDelete` (M4/M5) and on the workflow-trigger
+    suppression flag (`01M1KPA21MXSV6WS059S21BB81`).
+
+<!-- invariant 14 written_at: 2026-09-04T03:00:00Z  source_event: task:01M1KPA1WXEYM3W99A5V1RRV77, git:f91dfeee,7a00fc2a -->
+

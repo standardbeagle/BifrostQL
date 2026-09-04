@@ -146,6 +146,19 @@ surfaced the expected 6× RED. Both implementer and reviewer hit it.
   against the specific UNSAFE FALL-THROUGH it prevents (e.g. a raw predicate on
   a column the backstop does not cover), not against merely disabling it.
 
+## An unforgeability claim cannot be proven from inside the trust boundary
+
+A test asserting that some type or capability is unforgeable by external callers
+runs in a test assembly that Core grants `InternalsVisibleTo` — so the test CAN
+mint the thing it claims nobody can mint, and any runtime negative it writes is
+about its own restraint, not about the boundary. Prove such a claim with a
+**public-surface reflection assert** (no public constructor, no public factory,
+no public settable static / no forgeable scalar flag on the carrier type) PLUS a
+runtime negative for the refusal path. The reflection half is the one that goes
+RED when someone re-adds a public way in; the runtime half only pins the error.
+Source: `MutationRestoreCapability` (M2) —
+`protocol-adapter-security.md` invariant 14.
+
 ## Related
 
 - `docs/solutions/bifrostql/crypto-blind-index-read-routing-2026-07-24.md`

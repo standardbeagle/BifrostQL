@@ -212,6 +212,39 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task AnonymousRebinds_DoNotExtendTheSessionDeadline()
+        {
+            // Anonymous binds are not rate limited (they carry no secret), so if each successful
+            // anonymous bind re-armed the deadline, a credential-less peer would hold an admission
+            // slot forever by re-binding anonymously every few seconds — the M17 vector, one
+            // message type over. The deadline is fixed at ACCEPT: re-binding anonymously past it
+            // observes the close, not a fresh window.
+            var options = new LdapWireOptions
+            {
+                AnonymousBindEnabled = true,
+                AuthenticationTimeout = TimeSpan.FromMilliseconds(600),
+                IdleTimeout = TimeSpan.FromSeconds(30),
+            };
+            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+
+            // Re-bind anonymously at ~2/3 of the window, three times: each re-bind lands before the
+            // MOST RECENT bind's window would expire, so a sliding deadline keeps every one alive
+            // while the accept-time deadline closes the connection during the loop.
+            LdapResponse? response = null;
+            for (var messageId = 1; messageId <= 3; messageId++)
+            {
+                await Task.Delay(400);
+                await fixture.Client.SendAsync(LdapWire.Message(messageId, LdapWire.BindRequest(name: "", password: "")));
+                response = await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                if (response is null)
+                    break;
+            }
+
+            response.Should().BeNull(
+                "the session deadline is fixed at accept; an anonymous re-bind must not re-arm it");
+        }
+
+        [Fact]
         public async Task AuthenticatedConnection_SurvivesPastThePreAuthDeadline()
         {
             // The deadline reclaims slots from UNAUTHENTICATED peers only; an authenticated session is

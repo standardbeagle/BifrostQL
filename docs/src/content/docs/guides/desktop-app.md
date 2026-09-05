@@ -131,9 +131,12 @@ its server.
 
 **It is a testing flag, not a deployment option.** Enabling it puts a surface that
 runs arbitrary SQL against the active connection onto a socket, which removes the
-assumption the bridge's design rests on. It is off by default, binds only where
-the UI host already binds, and logs a warning at startup. Do not enable it on a
-host anyone else can reach.
+assumption the bridge's design rests on. It is off by default, is refused outright
+in combination with `--expose` (startup exits non-zero: loopback binding is the
+bridge's only safeguard, and `--expose` removes it), and logs a warning at
+startup. Bridge POSTs additionally require `Content-Type: application/json` and
+the preflight-forcing `X-Bifrost-Bridge: 1` header, so no cross-origin no-cors
+request can reach a handler. Do not enable it on a host anyone else can reach.
 
 ## Theming the editor
 

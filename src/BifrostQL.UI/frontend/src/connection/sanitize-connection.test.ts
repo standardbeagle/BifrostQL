@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { parseAdoConnectionString, parsePort } from './sanitize-connection';
+import { parseAdoConnectionString, parsePort, redactConnectionStringSecrets } from './sanitize-connection';
+
+describe('redactConnectionStringSecrets', () => {
+  it('redacts a quoted password containing a semicolon without persisting a fragment', () => {
+    const redacted = redactConnectionStringSecrets('Host=x;Password="ab;cd";Port=1');
+    expect(redacted).toBe('Host=x;Password=<redacted>;Port=1');
+    expect(redacted).not.toContain('cd');
+  });
+
+  it('redacts a single-quoted password containing a semicolon', () => {
+    const redacted = redactConnectionStringSecrets("Host=x;Password='ab;cd';Port=1");
+    expect(redacted).toBe('Host=x;Password=<redacted>;Port=1');
+    expect(redacted).not.toContain('cd');
+  });
+});
 
 describe('parsePort', () => {
   it('accepts exact integer ports in range', () => {

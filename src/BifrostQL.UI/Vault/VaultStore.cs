@@ -143,7 +143,8 @@ public static class VaultStore
 
         // Atomic write: write to temp, then rename
         var tmpPath = path + ".tmp";
-        await File.WriteAllBytesAsync(tmpPath, output);
+        await using (var stream = OpenSecretFileForWrite(tmpPath))
+            await stream.WriteAsync(output);
         SetFilePermissions(tmpPath);
         File.Move(tmpPath, path, overwrite: true);
     }
@@ -162,9 +163,19 @@ public static class VaultStore
         var key = new byte[KeySize];
         RandomNumberGenerator.Fill(key);
 
-        await File.WriteAllBytesAsync(path, key);
+        await using (var stream = OpenSecretFileForWrite(path))
+            await stream.WriteAsync(key);
         SetFilePermissions(path);
     }
+
+    /// <summary>
+    /// Create seam for vault secret files (vault payload, master key). The file
+    /// must be born with owner-only permissions — a create-with-default-umask
+    /// then chmod leaves a window where the AES master key is readable by other
+    /// accounts. Internal so tests can assert the mode while the stream is open.
+    /// </summary>
+    internal static FileStream OpenSecretFileForWrite(string path)
+        => new(path, FileMode.Create, FileAccess.Write, FileShare.None);
 
     /// <summary>
     /// Derive key path from vault path (sibling file).

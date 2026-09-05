@@ -218,4 +218,26 @@ public sealed class VaultStoreTests : IDisposable
         key1.Should().HaveCount(32);
         key2.Should().Equal(key1);
     }
+
+    /// <summary>
+    /// The vault writes bytes then chmods, leaving a window where the file —
+    /// including the AES master key — exists with the default umask mode.
+    /// The file must be created at 0600 atomically: assert the mode while the
+    /// stream returned by the create seam is still OPEN.
+    /// </summary>
+    [Fact]
+    public void OpenSecretFileForWrite_CreatesFileAt0600_WhileStreamOpen()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
+            return; // UnixCreateMode is a no-op on Windows; the ACL path covers it
+
+        var path = Path.Combine(_dir, "secret.bin");
+        using (VaultStore.OpenSecretFileForWrite(path))
+        {
+            File.GetUnixFileMode(path).Should().Be(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                "the secret file must be born 0600 — a create-then-chmod window "
+                + "leaves the master key readable by other accounts");
+        }
+    }
 }

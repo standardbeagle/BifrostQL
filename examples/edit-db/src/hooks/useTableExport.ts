@@ -23,12 +23,12 @@ import { useSaveFile } from './useSaveFile';
  * <see cref="DEFAULT_ROW_CAP"/> bounds the drain; the result reports
  * `truncated` so the caller can warn instead of silently shipping a partial file.
  */
-export function useTableExport(): (table: Table, format: ExportFormat) => Promise<ExportResult> {
+export function useTableExport(): (table: Table, format: ExportFormat, signal?: AbortSignal) => Promise<ExportResult> {
     const schema = useSchema();
     const fetcher = useFetcher();
     const saveFile = useSaveFile();
 
-    return useCallback(async (table: Table, format: ExportFormat) => {
+    return useCallback(async (table: Table, format: ExportFormat, signal?: AbortSignal) => {
         const query = buildQuery(table, schema, '', [], undefined, undefined, undefined, { fields: 'export' });
         if (!query) throw new Error(`Cannot export '${table.label ?? table.name}': no export query could be built.`);
         const columns = exportableColumns(table);
@@ -38,9 +38,10 @@ export function useTableExport(): (table: Table, format: ExportFormat) => Promis
             headers: columns.map((c) => c.label ?? c.name),
             csv: { bom: true },
             rowCap: DEFAULT_ROW_CAP,
-            fetchPage: async (offset, limit) => {
+            signal,
+            fetchPage: async (offset, limit, pageSignal) => {
                 const res = await fetcher.query<Record<string, { total: number; data: Record<string, unknown>[] }>>(
-                    query, { limit, offset });
+                    query, { limit, offset }, { signal: pageSignal });
                 const page = res?.[table.name];
                 const records = page?.data ?? [];
                 return {

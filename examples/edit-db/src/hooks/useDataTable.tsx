@@ -839,11 +839,11 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
             rowCap: options.rowCap,
             // Grid CSV targets Excel — emit the BOM so it opens as UTF-8.
             csv: { bom: true },
-            fetchPage: async (offset, limit) => {
+            fetchPage: async (offset, limit, signal) => {
                 // Override only the paging window; every filter/sort variable
                 // stays as the grid built it.
                 const vars = { ...queryVariables, limit, offset };
-                const pageData = await fetcher.query<QueryData>(exportQuery, vars, { signal: options.signal });
+                const pageData = await fetcher.query<QueryData>(exportQuery, vars, { signal });
                 let pageRecords: RowData[];
                 let total: number;
                 if (drill && !canFlatFilterDrill(drill.childJoin)) {

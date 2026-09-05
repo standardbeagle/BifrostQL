@@ -154,8 +154,12 @@ export interface ExportAllOptions {
      * Pull one page at the given offset. This is the ONLY data seam — the caller
      * closes over the existing fetcher/query-builder so the current filters and
      * sort are honored, and no new HTTP client is introduced.
+     *
+     * The abort signal is passed to the seam on every page — not left for each
+     * call site to close over — so cancelling reaches the IN-FLIGHT request,
+     * not just the loop's next iteration.
      */
-    fetchPage: (offset: number, limit: number) => Promise<ExportPage>;
+    fetchPage: (offset: number, limit: number, signal: AbortSignal | undefined) => Promise<ExportPage>;
     /** Page size for each fetch. Default 500. */
     pageSize?: number;
     /** Hard stop after this many rows; the result is marked `truncated`. */
@@ -206,7 +210,7 @@ export async function exportAllRows(
     let known = Number.POSITIVE_INFINITY;
     while (offset < known) {
         throwIfAborted(signal);
-        const page = await options.fetchPage(offset, pageSize);
+        const page = await options.fetchPage(offset, pageSize, signal);
         total = page.total;
         known = page.total;
 

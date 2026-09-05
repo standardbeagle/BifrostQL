@@ -208,6 +208,21 @@ implementations produce provably different output.
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.
+- **A culture fixture proves the PROVIDER argument, not the number GRAMMAR.**
+  The `concurrencyToken` fix passed `CultureInfo.InvariantCulture` to
+  `long.Parse` / `decimal.Parse` in `FilePointerAccess.CoerceToken` and pinned it
+  with a de-DE fact, which was green against the defect still there:
+  `decimal.Parse(s, provider)` defaults to `NumberStyles.Number` and
+  `double.Parse(s, provider)` to `Float | AllowThousands`, so `"1,5"` reads as
+  15 on EVERY host — a malformed token matched the stored `15` and the guarded
+  write passed the lost-update guard. A culture-swap fixture can only vary the
+  provider, so it cannot see this; pair it with a fact in the DEFAULT culture
+  that a token outside the invariant wire form (group separator, surrounding
+  space, exponent where none is legal) is REFUSED as invalid, not reinterpreted.
+  Fix by naming the STYLE (`NumberStyles.Integer` / `NumberStyles.Float`), not
+  only the provider: the provider chooses the glyphs, the style chooses the
+  grammar.
+  <!-- written_at: 2026-09-05T18:10:00Z  source_event: task:01M1RX4ER8SQZW37SZABPGJRZR, git:c7837344, git:cfe1fec4, git:5f74dcf7 -->
 - **A size cap on a wire has TWO inputs — declared and received — and the
   fixture must make the RECEIVED one bind.** A body/frame cap is normally two
   branches: an early refusal on the client-declared size (`Content-Length`, a

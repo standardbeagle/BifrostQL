@@ -157,6 +157,17 @@ code, not just re-checks of pgwire.
    treat "decode untrusted wire input" as needing this checklist item on
    every new protocol adapter, not just re-checks of pgwire.
 
+   **The same decode owes an explicit `NumberStyles`, not just an explicit
+   culture.** `decimal.Parse(s, provider)` defaults to `NumberStyles.Number`
+   and `double.Parse(s, provider)` to `Float | AllowThousands`, so a
+   group-separated token (`"1,5"`) is ACCEPTED as a different number on every
+   host, whatever the provider — a malformed wire value silently becomes a
+   valid one instead of the clean parse error invariant 5 exists to produce.
+   Name the grammar the wire actually has (`NumberStyles.Integer` for the
+   integer family, `NumberStyles.Float` for decimal/float); the culture
+   argument alone is only half the fix.
+   <!-- written_at: 2026-09-05T18:10:00Z  source_event: task:01M1RX4ER8SQZW37SZABPGJRZR, git:cfe1fec4, git:5f74dcf7 -->
+
 6. **A recursive wire/untrusted-input decoder must bound nesting depth
    BEFORE recursing — width/size caps are not sufficient.** The RESP
    slice-1 aggregate decoder (`RespReader.ReadAggregateAsync` /

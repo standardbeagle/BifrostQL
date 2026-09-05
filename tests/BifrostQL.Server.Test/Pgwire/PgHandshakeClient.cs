@@ -30,6 +30,12 @@ namespace BifrostQL.Server.Test.Pgwire
         /// <summary>Backend secret key from the captured BackendKeyData, echoed in a CancelRequest.</summary>
         public int BackendSecret { get; private set; }
 
+        /// <summary>
+        /// The SCRAM server-first-message (<c>r=,s=,i=</c>) captured by the last SASL exchange,
+        /// so a test can compare the salt the server advertised across connections.
+        /// </summary>
+        public string? LastServerFirst { get; private set; }
+
         public async Task NegotiateTlsAsync()
         {
             // SSLRequest: [Int32 len=8][Int32 code].
@@ -110,6 +116,7 @@ namespace BifrostQL.Server.Test.Pgwire
 
             var (contType, contBody) = await ReadBackendAsync();
             var serverFirst = RequireAuthText(contType, contBody, PgWireProtocol.AuthSaslContinue);
+            LastServerFirst = serverFirst;
 
             var clientFinal = client.ClientFinalMessage(serverFirst, password, out _);
             await WriteFrontendAsync(PgWireProtocol.PasswordMessage, Encoding.UTF8.GetBytes(clientFinal));
@@ -141,6 +148,7 @@ namespace BifrostQL.Server.Test.Pgwire
 
             var (contType, contBody) = await ReadBackendAsync();
             var serverFirst = RequireAuthText(contType, contBody, PgWireProtocol.AuthSaslContinue);
+            LastServerFirst = serverFirst;
 
             var clientFinal = client.ClientFinalMessage(serverFirst, password, out _);
             await WriteFrontendAsync(PgWireProtocol.PasswordMessage, Encoding.UTF8.GetBytes(clientFinal));

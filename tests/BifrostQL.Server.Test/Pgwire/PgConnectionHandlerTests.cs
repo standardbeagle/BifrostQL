@@ -196,6 +196,47 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Scram_UnknownUser_RunsToProofStep_WithStableDecoySalt()
+        {
+            // A real user's verifier carries ONE stored salt, so the server-first message for
+            // "alice" advertises the same s= on every connection. If the decoy verifier for an
+            // unknown user drew a fresh random salt per connection, two connections as "ghost"
+            // would advertise different salts — a user-existence oracle by salt change
+            // (RFC 5802 §5.1 / RFC 7677: the mock salt for an unknown user must be a
+            // deterministic function of the username). Invariant 2's cost symmetry is not
+            // enough; the wire shape must be stable too. Two unknown users, two connections
+            // each: same user => same salt, different users => different salts (a single
+            // well-known decoy salt would itself be an oracle), and every attempt reaches
+            // the proof step and fails as invalid_password, never earlier.
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            var options = new PgWireOptions { AuthMethod = PgAuthMethod.ScramSha256 };
+            var handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, EmptyServices(), options);
+
+            async Task<string> SaltFor(string username, string source)
+            {
+                var (client, cleanup) = await StartConnectionAsync(handler, source);
+                await client.SendStartupAsync(username);
+                await client.DoScramExpectingFailureAsync("wrong");
+                var rejected = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+                rejected.WasRejected.Should().BeTrue();
+                rejected.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidPassword,
+                    "an unknown user fails at the proof step with the wrong-password wire shape");
+                await cleanup();
+                return client.LastServerFirst!.Split(',').Single(f => f.StartsWith("s=", StringComparison.Ordinal));
+            }
+
+            var ghost1 = await SaltFor("ghost", "203.0.113.20:5001");
+            var ghost2 = await SaltFor("ghost", "203.0.113.21:5002");
+            var phantom = await SaltFor("phantom", "203.0.113.22:5003");
+            var alice1 = await SaltFor("alice", "203.0.113.23:5004");
+            var alice2 = await SaltFor("alice", "203.0.113.24:5005");
+
+            alice1.Should().Be(alice2, "a stored verifier has one salt");
+            ghost1.Should().Be(ghost2, "the decoy salt must be a deterministic function of the username");
+            ghost1.Should().NotBe(phantom, "a constant decoy salt would mark every unknown user");
+        }
+
+        [Fact]
         public async Task MalformedStartup_IsRejected()
         {
             // Arrange

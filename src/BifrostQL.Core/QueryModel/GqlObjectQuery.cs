@@ -465,7 +465,10 @@ namespace BifrostQL.Core.QueryModel
                 PagedKeys.RowNumber,
                 PagedKeys.Total,
                 tableJoin.ConnectedTable.Offset,
-                ClampRowLimit(ctx.Model, tableJoin.ConnectedTable.Limit));
+                // The per-parent window resolves its default BEFORE the clamp, like the
+                // root SELECT: ConnectedPaging's own null -> 100 default sits below the
+                // ceiling and would hand each parent 100 children under a ceiling of 5.
+                ClampRowLimit(ctx.Model, tableJoin.ConnectedTable.Limit ?? DefaultRowWindow));
 
             return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
         }

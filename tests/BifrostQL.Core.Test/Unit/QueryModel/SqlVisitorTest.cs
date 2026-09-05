@@ -166,6 +166,34 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task FloatLiteral_UnderCommaDecimalCulture_ParsesInvariant()
+        {
+            // A GraphQL float literal is dot-decimal on the wire regardless of host
+            // culture. Convert.ToDouble(string) honours CurrentCulture, so under
+            // de-DE "1.5" parsed as 15 — a silently wrong filter value. Parse must
+            // be invariant-culture.
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+            try
+            {
+                var ctx = new SqlContext();
+                var sut = new SqlVisitor();
+
+                var ast = Parser.Parse("query { workshops(filter: { rating: { _eq: 1.5 } }) { id } }");
+                await sut.VisitAsync(ast, ctx);
+
+                var filterArg = ctx.Fields.Single().Arguments!.Single(a => a.Name == "filter");
+                var filter = (Dictionary<string, object?>)filterArg.Value!;
+                var rating = (Dictionary<string, object?>)filter["rating"]!;
+                rating["_eq"].Should().Be(1.5d);
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+            }
+        }
+
+        [Fact]
         public async Task AndFilterSuccess()
         {
             var ctx = new SqlContext();

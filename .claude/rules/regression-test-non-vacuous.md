@@ -58,6 +58,12 @@ implementations produce provably different output.
   `_rawQuery`, `_dbSchema`) as separate facts, which is what proved the
   `__typename` case real rather than a no-op the visitor never collects. One
   representative kind leaves the rest free to regress independently.
+- **A shared conformance-kit fact must be revert-proven in EVERY opt-in
+  derivation, not in one.** The kit's test body is shared, but each derived
+  suite supplies its own hook/fixture, and the vacuity lives in the hook. The
+  frame-cap fact was proven RED on the RESP derivation and shipped vacuous on
+  the LDAP one. Run the mutant against each suite that sets the opt-in flag.
+  <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1N05460G65T9XXDAPMHGKKS, git:31990a6d -->
 - **Narrowing a broad path needs facts for the shapes the BROAD path already
   served.** The bullet above spans the population that must FAIL; this is its
   complement — the population that must keep WORKING. When a fix replaces
@@ -200,7 +206,13 @@ implementations produce provably different output.
   it. Second instance of the same shape: the binary WebSocket reassembly cap
   already counts received bytes rather than the client's declared total
   (AGENTS.md, `/bifrost-ws` row), and M14's chat POST cap repeated it on HTTP.
+  The mirror half: a probe of the DECLARED branch must actually SEND the bytes
+  it declares. The LDAP frame-cap probe declared 64 KiB and wrote 64 bytes; on
+  unguarded code the truncated stream's EOF throws the SAME
+  `LdapProtocolException` the cap throws, so the mutant stayed GREEN — a
+  short-write fixture proves nothing about a declared-size guard.
   <!-- written_at: 2026-09-05T03:10:00Z  source_event: task:01M1KP3S56ACGSETB02AMK4Z00, git:6f95328f -->
+  <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1N05460G65T9XXDAPMHGKKS, git:31990a6d -->
 - **Where TWO bounds narrow the same window, the fixture must make the OTHER
   one bind.** A surface-level cap tested with the server ceiling above it
   exercises only its own arithmetic, so a sentinel or flag that skips the

@@ -145,44 +145,11 @@ namespace BifrostQL.Server
             bool? requireAuthentication = null)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
-            var requiresAuth = requireAuthentication ?? ResolveFrontendAuthRequirement(app, path);
+            var requiresAuth = requireAuthentication
+                ?? MountAuthRequirement.Resolve(app.ApplicationServices, path);
             app.Map(path, branch =>
                 branch.UseMiddleware<BifrostFrontendMiddleware>(frontend, engine, path, requiresAuth));
             return app;
-        }
-
-        /// <summary>
-        /// Whether the frontend mount must require an authenticated identity, taken from the
-        /// GraphQL endpoint whose schema it serves — the mount carries that endpoint's surface, so
-        /// it must carry its auth requirement (AGENTS.md, HTTP-mount rule). The GraphQL endpoints
-        /// enforce theirs INSIDE their own <c>Map</c> branch, which is why a frontend mount is not
-        /// covered by it and has to resolve the requirement here.
-        ///
-        /// <para>Fail closed: a deployment configured through neither options object — or a mount
-        /// whose served endpoint cannot be identified, or is ambiguous — requires authentication.
-        /// Serving anonymously is only ever an EXPLICIT choice (<c>DisableAuth</c> on the endpoint,
-        /// or <c>requireAuthentication: false</c> here).</para>
-        /// </summary>
-        private static bool ResolveFrontendAuthRequirement(IApplicationBuilder app, string path)
-        {
-            var multiDb = app.ApplicationServices.GetService<BifrostMultiDbOptions>();
-            if (multiDb != null)
-            {
-                var served = multiDb.Endpoints.FirstOrDefault(
-                    e => string.Equals(e.Path, path, StringComparison.OrdinalIgnoreCase));
-                // A mount whose path names no registered endpoint resolves its schema by the
-                // single-endpoint fallback (BifrostEngine.ExecuteAsync), so follow the same rule
-                // here; with several endpoints the target is ambiguous and the safe reading is
-                // "requires auth".
-                served ??= multiDb.Endpoints.Count == 1 ? multiDb.Endpoints[0] : null;
-                return served is null || !served.DisableAuth;
-            }
-
-            var singleDb = app.ApplicationServices.GetService<BifrostSetupOptions>();
-            if (singleDb != null)
-                return singleDb.IsUsingAuth;
-
-            return true;
         }
 
         /// <summary>

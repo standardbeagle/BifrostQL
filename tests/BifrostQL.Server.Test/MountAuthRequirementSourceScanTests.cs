@@ -41,24 +41,26 @@ public class MountAuthRequirementSourceScanTests
             "reintroducing a second copy of one security decision is the drift this task removes");
 
         // Exactly one file may DECLARE the derivation. A re-added copy under any new name
-        // still carries the derivation's shape: a method returning the auth requirement
-        // from the served endpoint's DisableAuth flag.
-        var derivationShape = new Regex(@"static\s+bool\s+\w*Auth\w*Requirement\s*\(", RegexOptions.Compiled);
-        var declaringFiles = files
-            .Where(f => derivationShape.IsMatch(perFile[f]))
-            .ToList();
-        declaringFiles.Should().ContainSingle(
-            "exactly one derivation of a mount's auth requirement may exist; " +
-            "a second one is a second security decision that will drift. Offenders: "
-            + string.Join(", ", declaringFiles.Select(Path.GetFileName)));
-
-        // The shared helper must exist and be the declared derivation.
+        // still carries the derivation's shapes: a method named *AuthRequirement, or the
+        // single-endpoint fallback branch that mirrors BifrostEngine's schema resolution.
         var helperFiles = files
             .Where(f => perFile[f].Contains("static class MountAuthRequirement"))
             .ToList();
         helperFiles.Should().ContainSingle(
             "MountAuthRequirement is the one shared derivation the binary, frontend, and " +
             "GraphQL mounts all call");
+        var helperFile = helperFiles[0];
+
+        var methodShape = new Regex(@"static\s+bool\s+\w*AuthRequirement\s*\(", RegexOptions.Compiled);
+        var fallbackShape = "Endpoints.Count == 1 ? multiDb.Endpoints[0]";
+        var offenders = files
+            .Where(f => f != helperFile
+                     && (methodShape.IsMatch(perFile[f]) || perFile[f].Contains(fallbackShape)))
+            .ToList();
+        offenders.Should().BeEmpty(
+            "exactly one derivation of a mount's auth requirement may exist (MountAuthRequirement); " +
+            "a second one is a second security decision that will drift. Offenders: "
+            + string.Join(", ", offenders.Select(Path.GetFileName)));
     }
 
     private static string? LocateServerSourceRoot([CallerFilePath] string callerFilePath = "")

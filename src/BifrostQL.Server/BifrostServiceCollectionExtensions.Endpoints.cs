@@ -40,7 +40,7 @@ namespace BifrostQL.Server
 
             foreach (var endpoint in options.Endpoints)
             {
-                var requiresAuth = !endpoint.DisableAuth;
+                var requiresAuth = MountAuthRequirement.ForEndpoint(endpoint);
                 app.Map(endpoint.Path, branch =>
                 {
                     // Per-endpoint fail-closed gate: an unauthenticated request to an
@@ -118,7 +118,8 @@ namespace BifrostQL.Server
             // Pass a concrete (never-null) list so UseMiddleware can match the argument by
             // type; an empty list is equivalent to "same-origin only" in the middleware.
             IReadOnlyList<string> origins = allowedOrigins ?? Array.Empty<string>();
-            var requiresAuth = requireAuthentication ?? ResolveBinaryAuthRequirement(app, schemaPath);
+            var requiresAuth = requireAuthentication
+                ?? MountAuthRequirement.Resolve(app.ApplicationServices, schemaPath);
             app.Map(path, branch =>
                 branch.UseMiddleware<BifrostBinaryMiddleware>(
                     engine,
@@ -135,39 +136,6 @@ namespace BifrostQL.Server
                     firstFrameTimeout ?? default,
                     idleTimeout ?? default));
             return app;
-        }
-
-        /// <summary>
-        /// Whether the binary mount must require an authenticated identity, taken from the
-        /// GraphQL endpoint whose schema it serves — the transport carries that endpoint's
-        /// surface, so it must carry its auth requirement. The GraphQL endpoints enforce theirs
-        /// INSIDE their own <c>Map</c> branch, which is why a binary mount at its own path is
-        /// not covered by it and has to resolve the requirement here.
-        ///
-        /// <para>Fail closed: a deployment that has not been configured through either options
-        /// object — or one whose binary mount serves an endpoint that cannot be identified —
-        /// requires authentication. Serving anonymously is only ever an EXPLICIT choice
-        /// (<c>DisableAuth</c> on the endpoint, or <c>requireAuthentication: false</c> here).</para>
-        /// </summary>
-        private static bool ResolveBinaryAuthRequirement(IApplicationBuilder app, string schemaPath)
-        {
-            var multiDb = app.ApplicationServices.GetService<BifrostMultiDbOptions>();
-            if (multiDb != null)
-            {
-                var served = multiDb.Endpoints.FirstOrDefault(
-                    e => string.Equals(e.Path, schemaPath, StringComparison.OrdinalIgnoreCase));
-                // A mount whose graphqlPath names no registered endpoint resolves its schema by
-                // the single-endpoint fallback, so follow the same rule here; with several
-                // endpoints the target is ambiguous and the safe reading is "requires auth".
-                served ??= multiDb.Endpoints.Count == 1 ? multiDb.Endpoints[0] : null;
-                return served is null || !served.DisableAuth;
-            }
-
-            var singleDb = app.ApplicationServices.GetService<BifrostSetupOptions>();
-            if (singleDb != null)
-                return singleDb.IsUsingAuth;
-
-            return true;
         }
 
         /// <summary>

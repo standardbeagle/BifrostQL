@@ -32,6 +32,27 @@ out-of-range value. Each bucket now declares `maxurlexpiry`
 narrow the window, a non-positive value is rejected, and `expiresAt` reports the
 clamped expiry.
 
+### Breaking — `_join` / `_single` containers and the `dynamic-joins` switch removed
+
+Every row type advertised `_join` and `_single` container fields (types `<T>_join` /
+`<T>_single`, one `<table>(on: [String!])` member per table) that the query builder
+could never execute — selecting one failed with "A requested field does not name a
+queryable table." An advertised field that cannot execute is a defect, so the
+containers are removed rather than implemented:
+
+- `_join` / `_single` and the `<T>_join` / `<T>_single` types no longer appear in the
+  SDL.
+- The model-level `dynamic-joins` metadata key is retired. It is now an unrecognized
+  `:root` key, and model load fails with the standard unknown-key error until it is
+  removed.
+- The explicit `_join_<table>` path accepts only `_eq` / `_neq` as the `on` operator;
+  every other operator, a multi-column `on`, or a malformed `on` value is refused with
+  an identifier-free error.
+
+**Migration:** delete `dynamic-joins` from `:root` metadata and navigate through the
+relationship fields BifrostQL derives from foreign keys and declared `join` metadata
+(see [Joins](/BifrostQL/guides/joins/)).
+
 ### Breaking — `_hardDelete` now requires the `soft-delete-hard-role` opt-in
 
 `_hardDelete` used to be generated on **every** soft-delete table, so any caller could

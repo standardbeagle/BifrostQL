@@ -311,7 +311,6 @@ Rules use CSS-like selectors to target tables and columns:
 | `visibility` | `hidden` | Hide from GraphQL schema |
 | `label` | column name | Display label column for the table |
 | `auto-join` | `true`/`false` | Enable automatic join inference |
-| `dynamic-joins` | `true`/`false` | Emit `_join` / `_single` containers |
 | `default-limit` | number | Default page size |
 | `de-pluralize` | `true`/`false` | De-pluralize table names in schema |
 | `raw-sql` | `enabled`/`disabled` | Expose guarded `_rawQuery` |

@@ -10,7 +10,7 @@
 
 - **Dynamic schema generation** from SQL Server, PostgreSQL, MySQL, and SQLite databases
 - **Zero N+1 problem**—generates one SQL query per table, not per row
-- **Dynamic joins** via `__join` fields on every table
+- **Relationship fields** on every table, derived from foreign keys and declared `join` metadata
 - **Directus-style filtering** (`_eq`, `_contains`, `_gt`, `_in`, etc.)
 - **Automatic mutations** for insert, update, upsert, and delete
 - **Module system** for cross-cutting concerns (tenant isolation, soft-delete, auditing)

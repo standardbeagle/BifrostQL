@@ -107,9 +107,9 @@ namespace BifrostQL.Core.Resolvers
             var result = new List<AggregateValueColumn>();
             foreach (var (opGroup, operation) in AggregateSurface.ValueOps)
             {
-                if (!selected.TryGetValue(opGroup, out var opField))
+                if (!selected.TryGetValue(opGroup, out var opFields))
                     continue;
-                foreach (var columnName in SelectedSubFieldNames(context, opField))
+                foreach (var columnName in SelectedSubFieldNames(context, opFields))
                 {
                     if (!numericByName.TryGetValue(columnName, out var column))
                         throw new BifrostExecutionError($"Unknown aggregate column '{columnName}' under '{opGroup}' on aggregate of '{_table.GraphQlName}'.");
@@ -120,32 +120,57 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// The AST nodes of the fields selected directly under the aggregate field
-        /// (group keys, <c>_count</c>, op groups). Keyed by the field's schema name,
-        /// not its response alias, so op-group detection is alias-independent.
+        /// Every AST node selected under the aggregate field (group keys,
+        /// <c>_count</c>, op groups), keyed by the field's schema name — not its
+        /// response alias — so op-group detection is alias-independent. One schema
+        /// field may appear as several nodes (<c>s1: _sum {…} s2: _sum {…}</c>, or a
+        /// flat selection plus a fragment spread); all of them are kept, because each
+        /// carries its own sub-selection. Walked from the raw selection set rather
+        /// than <see cref="IResolveFieldContext.SubFields"/>, which is keyed by
+        /// response key and holds one node per key.
         /// </summary>
-        private static IReadOnlyDictionary<string, GraphQLParser.AST.GraphQLField> SelectedFieldNodes(IResolveFieldContext context)
+        private static IReadOnlyDictionary<string, List<GraphQLParser.AST.GraphQLField>> SelectedFieldNodes(IResolveFieldContext context)
         {
-            var nodes = new Dictionary<string, GraphQLParser.AST.GraphQLField>(StringComparer.Ordinal);
-            if (context.SubFields != null)
-                foreach (var sub in context.SubFields.Values)
-                    nodes[sub.Field.Name.StringValue] = sub.Field;
+            var nodes = new Dictionary<string, List<GraphQLParser.AST.GraphQLField>>(StringComparer.Ordinal);
+            WalkSelections(context, context.FieldAst.SelectionSet, f =>
+            {
+                if (!nodes.TryGetValue(f.Name.StringValue, out var list))
+                    nodes[f.Name.StringValue] = list = new List<GraphQLParser.AST.GraphQLField>();
+                list.Add(f);
+            });
             return nodes;
         }
 
         /// <summary>
-        /// The schema field names selected under one op group field, walking inline
-        /// fragments and named fragment spreads so fragment-wrapped selections
-        /// aggregate exactly the same columns as flat ones.
+        /// The distinct schema field names selected under one op group across all of
+        /// its nodes, in first-selection order. Distinct because the same field
+        /// selected twice (<c>total: amount amount</c>, or a fragment overlapping a
+        /// flat selection) must project one SQL alias — the reader's column index
+        /// cannot hold a duplicate. Introspection fields (<c>__typename</c>) are legal
+        /// on the op-group object but are not columns, so they are skipped rather
+        /// than rejected.
         /// </summary>
-        private static IEnumerable<string> SelectedSubFieldNames(IResolveFieldContext context, GraphQLParser.AST.GraphQLField field)
+        private static IEnumerable<string> SelectedSubFieldNames(IResolveFieldContext context, IEnumerable<GraphQLParser.AST.GraphQLField> opFields)
         {
             var names = new List<string>();
-            CollectSubFieldNames(context, field.SelectionSet, names);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var opField in opFields)
+                WalkSelections(context, opField.SelectionSet, f =>
+                {
+                    var name = f.Name.StringValue;
+                    if (!name.StartsWith("__", StringComparison.Ordinal) && seen.Add(name))
+                        names.Add(name);
+                });
             return names;
         }
 
-        private static void CollectSubFieldNames(IResolveFieldContext context, GraphQLParser.AST.GraphQLSelectionSet? selectionSet, List<string> names)
+        /// <summary>
+        /// Visits every field node directly under a selection set, descending into
+        /// inline fragments and named fragment spreads so fragment-wrapped selections
+        /// are seen exactly as flat ones. Unknown fragment names are a validation
+        /// error before execution, so an unresolved spread never reaches here.
+        /// </summary>
+        private static void WalkSelections(IResolveFieldContext context, GraphQLParser.AST.GraphQLSelectionSet? selectionSet, Action<GraphQLParser.AST.GraphQLField> visit)
         {
             if (selectionSet == null)
                 return;
@@ -154,17 +179,17 @@ namespace BifrostQL.Core.Resolvers
                 switch (selection)
                 {
                     case GraphQLParser.AST.GraphQLField f:
-                        names.Add(f.Name.StringValue);
+                        visit(f);
                         break;
                     case GraphQLParser.AST.GraphQLInlineFragment inline:
-                        CollectSubFieldNames(context, inline.SelectionSet, names);
+                        WalkSelections(context, inline.SelectionSet, visit);
                         break;
                     case GraphQLParser.AST.GraphQLFragmentSpread spread:
                         var fragment = context.Document?.Definitions
                             .OfType<GraphQLParser.AST.GraphQLFragmentDefinition>()
                             .FirstOrDefault(d => d.FragmentName.Name.StringValue == spread.FragmentName.Name.StringValue);
                         if (fragment != null)
-                            CollectSubFieldNames(context, fragment.SelectionSet, names);
+                            WalkSelections(context, fragment.SelectionSet, visit);
                         break;
                 }
             }

@@ -149,6 +149,18 @@ implementations produce provably different output.
   `Read_FilteringOnPolicyDeniedColumn_IsRejected` facts are currently
   table-level denial tests (tracked follow-up).
   <!-- written_at: 2026-09-04T23:10:00Z  source_event: task:01M1KPC4MXF2621FXFZZCVF7ZM, git:0c2b6d37 -->
+- **A substring assertion over composed SQL is not a fact about the fragment
+  under test.** The M9 nested-collection RED asserted the restricted join-id
+  sub-query contained `LIMIT 100`, and it passed against provably unpaged code:
+  the composed flat-collection statement embeds that sub-query AND appends its
+  own `LIMIT 10000`, whose text contains `LIMIT 100` as a prefix. Any SQL-text
+  fact about a fragment that a larger statement later embeds must assert on the
+  BUILDER's output for that fragment (here `GetRestrictedSqlParameterized`), not
+  on the composed statement set — and where the keyword recurs with different
+  operands, match a token boundary or parse with ScriptDom rather than
+  `Contains`. The implementer self-caught this one; the generalization is that a
+  numeric literal in a SQL-text assertion is a prefix of every longer literal.
+  <!-- written_at: 2026-09-05T04:30:00Z  source_event: task:01M1KNYNQAKE5FHC06NKF607N4, git:7ce42c98, git:063f6acb -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

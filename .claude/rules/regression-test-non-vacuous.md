@@ -192,6 +192,19 @@ implementations produce provably different output.
   `.Split` shapes missed the C# 12 collection expression `.Split(['|'])`, which
   a net10 assembly can legally use, so a real offender would have passed.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MWB3HVPFH6W3VQDH20Q58N, git:a4b8fb4e -->
+- **Changing a DEFAULT value is a change to every branch that CONSUMES it.**
+  The edit-db connection form's Postgres default moved from `postgres` to
+  `Environment.UserName`, and the tests asserted only that the new value rode
+  the payload — but `PsqlDatabaseLister` spawns `sudo -u <user> psql` for any
+  non-null user, so a fresh host still failed (`sudo -u <self>` refused, no
+  sudo in a container). Pin the CONSUMER's behaviour under the new default —
+  extract a pure seam that returns the artefact (here `BuildProcessStartInfo`,
+  asserting the argv actually spawned), not just that the default is sent.
+  Same slice, second half: a RED that fails by TIMEOUT on a missing label is
+  not a RED on the payload — it goes red against the fixed code too. Assert the
+  payload NEGATIVELY (`!== 'postgres'`) so only the defect can produce the
+  failure.
+  <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1QNKK8C17R76EWBFW81VRJJ, git:2e8b5a67, git:c6c281b3 -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

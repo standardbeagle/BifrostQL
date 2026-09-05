@@ -33,6 +33,7 @@ import {
 import type { ApiProfile } from './profiles/types';
 import { EditorHeader, type EditorPane } from './EditorHeader';
 import { useHealthCheck } from './hooks/useHealthCheck';
+import { installNavigationGuard } from './lib/navigation-guard';
 import { useTransport } from './hooks/useTransport';
 import { useConnectionFlows } from './hooks/useConnectionFlows';
 import './connection/connection.css';
@@ -71,6 +72,11 @@ export default function App() {
     noticeTimer.current = setTimeout(() => setShellNotice(null), 4000);
   }, []);
   useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
+  // Desktop-shell hardening: the Photino window places no restriction on
+  // top-frame navigation (and Photino 4.x exposes no navigation event to hook
+  // host-side), so the page itself cancels any anchor-driven top-frame
+  // navigation away from the local origin the shell was served from.
+  useEffect(() => installNavigationGuard(), []);
   // The native bridge answers synchronously, but the opt-in HTTP transport has to
   // be probed, so this starts at the synchronous answer and upgrades if the probe
   // finds one. Without the probe the desktop-only panes would stay hidden in a

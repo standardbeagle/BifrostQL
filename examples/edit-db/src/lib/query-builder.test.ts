@@ -297,6 +297,20 @@ describe('buildColumnFilters', () => {
         ]);
     });
 
+    it('coerces a wire-string filter value to the column type (drill-down)', () => {
+        // chart-model emits drill filters as `String(row[dimension])`; with an
+        // Int/Boolean dimension the variable would otherwise be declared
+        // `$cf_x_0: Int` while carrying "5", and the server rejects it.
+        const filters = [
+            { id: 'age', value: { operator: '_eq', value: '5' } as ColumnFilterValue },
+            { id: 'active', value: { operator: '_eq', value: 'true' } as ColumnFilterValue },
+        ];
+        const result = buildColumnFilters(filters, table);
+        expect(result.errors).toEqual([]);
+        expect(result.variables).toEqual({ cf_age_0: 5, cf_active_1: true });
+        expect(result.params).toEqual(['$cf_age_0: Int', '$cf_active_1: Boolean']);
+    });
+
     it('builds _null filter without variable', () => {
         const filters = [{ id: 'name', value: { operator: '_null', value: true } as ColumnFilterValue }];
         const result = buildColumnFilters(filters, table);

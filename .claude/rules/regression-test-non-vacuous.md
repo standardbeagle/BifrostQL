@@ -117,6 +117,15 @@ implementations produce provably different output.
   condition reads the DI container must build it through the production registrar
   (`AddBifrostQL` / `BifrostServiceRegistrar`), not by hand.
   <!-- written_at: 2026-09-03T22:00:00Z  source_event: task:01M1KP14CKVVE0FEKMXFVWMSGF, git:292976a2, git:66e2dac0 -->
+  Same shape one level down: **a test FAKE inherits the interface's DEFAULT
+  bodies, so a fact written over the fake is not a fact about the production
+  override.** Three of M31's eight new facts ran against `DbModelTestFixture`
+  and exercised `IDbModel`'s default `TryGet*` implementations while
+  `DbModel`'s own overrides (built on its lazy indexes) stayed uncovered —
+  green whatever they did. Any fact about a member the interface supplies a
+  default for must construct the real implementation (as
+  `EnumTableAmbiguityTests` does), not the fake.
+  <!-- written_at: 2026-09-05T08:30:00Z  source_event: task:01M1MN9W82B2J1S2J3TQ3FJ0K0, git:68c2f8e1 -->
 - **A test that supplies a guard's KEY by hand cannot see how production derives
   it.** Where a limiter, cache, or bucket is addressed by a key the production
   entry point computes (a per-source rate limit, a cache partition, a dedupe

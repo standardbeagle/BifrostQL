@@ -82,6 +82,22 @@ code, not just re-checks of pgwire.
    caller's own arguments or from the policy-projected visible schema —
    never from the raw model, the driver, or a transformer.
 
+   **A lookup miss on a caller-supplied NAME is resolved positively, never
+   caught.** `DbModel`'s throwing table lookups embed the queried name
+   ("failed table lookup on db name: {tableName}") and surface as a raw
+   `ArgumentOutOfRangeException` — a BCL type no adapter funnel owns. H6
+   wrapped one call site in try/catch and left the other overloads echoing the
+   name; M31 swept the closed set instead. The shape that holds: a `TryGet*`
+   overload on the model interface (`IDbModel.TryGetTableFromDbName` /
+   `TryGetTableByFullGraphQlName`), used at every client-reachable site, with
+   the miss mapped onto the adapter's own error carrying no identifier. Keep
+   the throwing overload only where the name is MODEL- or CONFIG-derived (the
+   caller already knows it exists), and record which construction sites feed it
+   in the commit body so the enumeration can be confirmed rather than
+   re-derived. Generalizes to any registry/model lookup whose exception text
+   embeds the queried key.
+   <!-- written_at: 2026-09-05T08:30:00Z  source_event: task:01M1MN9W82B2J1S2J3TQ3FJ0K0, git:306f428c, git:ff74533c -->
+
    Sanitizing does not mean unactionable. Where the caller is a program (an
    LLM agent, a driver), keep a stable machine-readable CODE and a category
    distinct enough to choose a next action — retry-with-different-input

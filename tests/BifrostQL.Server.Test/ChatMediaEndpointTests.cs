@@ -100,6 +100,24 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task Get_media_response_carries_nosniff_and_content_disposition()
+        {
+            // Stored bytes are attacker-controlled content served from this origin:
+            // like the blob endpoint, the media route must pin the sniffed type
+            // (nosniff) and declare a disposition so stored markup can never
+            // execute inline. Octet-stream falls back to an attachment.
+            var client = await StartAsync();
+
+            using var image = await client.SendAsync(BuildGet("/_chat/media/documents/1", "tenant-a"));
+            using var unknown = await client.SendAsync(BuildGet("/_chat/media/documents/2", "tenant-a"));
+
+            image.Headers.GetValues("X-Content-Type-Options").Should().Equal("nosniff");
+            image.Content.Headers.ContentDisposition!.DispositionType.Should().Be("inline");
+            unknown.Headers.GetValues("X-Content-Type-Options").Should().Equal("nosniff");
+            unknown.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment");
+        }
+
+        [Fact]
         public async Task Get_media_unrecognized_bytes_fall_back_to_octet_stream()
         {
             var client = await StartAsync();

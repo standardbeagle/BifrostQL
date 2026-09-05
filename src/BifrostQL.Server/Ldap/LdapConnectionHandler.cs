@@ -43,6 +43,7 @@ namespace BifrostQL.Server.Ldap
         private readonly LdapTlsProvider? _tls;
         private readonly LdapSearchExecutor? _search;
         private readonly ILogger<LdapConnectionHandler> _logger;
+        private readonly Func<DateTimeOffset> _clock;
 
         public LdapConnectionHandler(
             LdapWireOptions options,
@@ -50,7 +51,8 @@ namespace BifrostQL.Server.Ldap
             LdapBindAuthenticator? authenticator = null,
             LdapTlsProvider? tls = null,
             LdapSearchExecutor? search = null,
-            ILogger<LdapConnectionHandler>? logger = null)
+            ILogger<LdapConnectionHandler>? logger = null,
+            Func<DateTimeOffset>? clock = null)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _connections = connectionLimiter ?? new LdapBoundedCounter(options.MaxConnections, "MaxConnections");
@@ -58,6 +60,7 @@ namespace BifrostQL.Server.Ldap
             _tls = tls;
             _search = search;
             _logger = logger ?? NullLogger<LdapConnectionHandler>.Instance;
+            _clock = clock ?? (() => DateTimeOffset.UtcNow);
         }
 
         /// <summary>The per-source bind rate-limit key; see <see cref="ProtocolSourceKey"/>.</summary>
@@ -127,7 +130,9 @@ namespace BifrostQL.Server.Ldap
             // where it is — anonymous binds are not rate limited, so a deadline re-armed per bind
             // would let a credential-less peer hold the slot forever by re-binding — and a
             // credential-less peer therefore holds a slot no longer than one that never bound.
-            DateTimeOffset? sessionDeadline = DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
+            // The clock is injectable so the fixed-at-accept fact is proven deterministically,
+            // not against a wall clock under load.
+            DateTimeOffset? sessionDeadline = _clock() + _options.AuthenticationTimeout;
             try
             {
                 while (true)
@@ -135,7 +140,7 @@ namespace BifrostQL.Server.Ldap
                     var readTimeout = _options.IdleTimeout;
                     if (sessionDeadline is { } deadline)
                     {
-                        var remaining = deadline - DateTimeOffset.UtcNow;
+                        var remaining = deadline - _clock();
                         if (remaining <= TimeSpan.Zero)
                         {
                             _logger.LogDebug("ldap connection reached its {Timeout} session deadline; closing.",
@@ -189,7 +194,7 @@ namespace BifrostQL.Server.Ldap
                                 // the slot forever). Only a session that WAS credentialed — a failed
                                 // re-bind reset it to anonymous (RFC 4511 §4.2.1), or it re-bound
                                 // anonymously — gets one fresh window armed here.
-                                sessionDeadline ??= DateTimeOffset.UtcNow + _options.AuthenticationTimeout;
+                                sessionDeadline ??= _clock() + _options.AuthenticationTimeout;
                         }
                         if (!dispatch.KeepOpen)
                             return; // Unbind / fatal op: close the connection

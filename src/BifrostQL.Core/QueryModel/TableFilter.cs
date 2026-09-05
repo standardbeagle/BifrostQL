@@ -433,11 +433,14 @@ namespace BifrostQL.Core.QueryModel
         internal readonly record struct FilterParts(string Joins, string Where, List<SqlParameterInfo> Parameters);
 
         /// <summary>
-        /// Backwards-compatible single-fragment render. Leaf/AND/OR filters return
-        /// their WHERE predicate; a pure relationship filter returns its join
-        /// fragment; a mixed filter returns "<c>{joins} WHERE {where}</c>". Prefer
-        /// <see cref="RenderParts"/> when assembling SQL so joins and predicates
-        /// land in their correct clauses.
+        /// Single-fragment render. Leaf/AND/OR filters return their WHERE
+        /// predicate; a pure relationship filter returns its join fragment; a mixed
+        /// filter returns "<c>{joins} WHERE {where}</c>". No production path calls
+        /// this any more — every assembler uses <see cref="RenderParts"/> so joins
+        /// and predicates land in their correct clauses (splicing this fragment
+        /// after a hard <c>WHERE</c> is how "WHERE INNER JOIN" was produced). It
+        /// remains only as the render entry point the TableFilter unit tests
+        /// assert against.
         /// </summary>
         public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias = null)
         {

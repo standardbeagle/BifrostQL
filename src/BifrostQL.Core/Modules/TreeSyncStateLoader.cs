@@ -222,8 +222,14 @@ public sealed class TreeSyncStateLoader
         if (securityFilter == null)
             return "";
 
-        var rendered = securityFilter.ToSqlParameterized(_model, _dialect, securityParams, alias: table.DbName);
-        return rendered.Sql;
+        // The predicate is spliced into an existing WHERE, so a relationship-shaped
+        // filter (one that needs an INNER JOIN) cannot be honoured here; refuse it
+        // rather than emit "AND (INNER JOIN ...)" and let the database reject it.
+        var parts = securityFilter.RenderParts(_model, _dialect, securityParams, alias: table.DbName);
+        if (!string.IsNullOrWhiteSpace(parts.Joins))
+            throw new BifrostExecutionError(
+                "Tree sync cannot apply a row-scope filter that requires a relationship join.");
+        return parts.Where;
     }
 
     private static ColumnDto? SingleKey(IDbTable table)

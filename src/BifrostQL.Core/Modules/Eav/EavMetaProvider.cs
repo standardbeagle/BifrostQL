@@ -118,8 +118,14 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         var rowFilter = readChain.RowFilter;
         if (rowFilter != null)
         {
-            var rendered = rowFilter.ToSqlParameterized(context.Model, dialect, securityParams, alias: metaTable.DbName);
-            securityWhere = rendered.Sql;
+            // Spliced into an existing WHERE, so a relationship-shaped filter (one
+            // that needs an INNER JOIN) cannot be honoured; refuse it rather than
+            // emit "AND (INNER JOIN ...)" and let the database reject it.
+            var parts = rowFilter.RenderParts(context.Model, dialect, securityParams, alias: metaTable.DbName);
+            if (!string.IsNullOrWhiteSpace(parts.Joins))
+                throw new BifrostExecutionError(
+                    "EAV _meta cannot apply a row-scope filter that requires a relationship join.");
+            securityWhere = parts.Where;
         }
 
         var whereClause = string.IsNullOrEmpty(securityWhere)

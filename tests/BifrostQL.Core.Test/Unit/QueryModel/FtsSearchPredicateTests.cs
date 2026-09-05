@@ -46,6 +46,10 @@ public class FtsSearchPredicateTests
             new Dictionary<string, object?> { { FilterOperators.Search, search } }, "Articles");
         var parameters = new SqlParameterCollection();
         var rendered = filter.RenderParts(model, dialect, parameters, alias);
+        // A search node is predicate-only. The retired single-fragment render would
+        // have surfaced a stray join in the combined text; returning only Where
+        // must not let one slip past unobserved.
+        rendered.Joins.Should().BeEmpty("a _search predicate never contributes a join");
         return (rendered.Where, rendered.Parameters.ToList());
     }
 

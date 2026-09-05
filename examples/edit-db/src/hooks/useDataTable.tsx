@@ -183,7 +183,9 @@ function buildJoinColumn(
             // Route boundary: single-column keys arrive RAW from
             // getJoinedRowPkValue and are encoded here; composite keys are
             // already the rowIdOf-encoded route (each part pre-encoded), so
-            // encoding again would double-encode the '%' into '%25'.
+            // encoding again would double-encode the '%' into '%25'. The drill
+            // frame's filterId is a route too (TableView `id` -> buildPkEqVariables
+            // decodes it), so it carries joinedRoute, not the raw key.
             const joinedRoute = composite ? joinedPk : encodeRouteParts([joinedPk]);
             return (
                 <span className="group/fk inline-flex items-center gap-0.5">
@@ -207,7 +209,7 @@ function buildJoinColumn(
                                 e.stopPropagation();
                                 onOpenColumn({
                                     tableName: anchorJoin.destinationTable,
-                                    filterId: joinedPk,
+                                    filterId: joinedRoute,
                                 });
                             }}
                             aria-label="Open in side column"

@@ -21,7 +21,7 @@ import {
     dayBoundary,
     type ColumnFilterValue,
 } from './query-builder';
-import { buildPkEqFilter } from './row-id';
+import { buildPkEqFilter, encodeRouteParts } from './row-id';
 import type { Table, SchemaContextValue, Column, Join, TableIndex } from '../types/schema';
 
 // ── Test Fixtures ──────────────────────────────────────────────
@@ -1170,6 +1170,19 @@ describe('buildPkEqVariables', () => {
         // '::' is the composite delimiter; a single-PK value that contains it is
         // encoded to "%3A%3A" by getRowPkValue and must round-trip back verbatim.
         expect(buildPkEqVariables('x%3A%3Ay', table)).toEqual({ id: 'x::y' });
+    });
+
+    it('round-trips a raw key that itself looks percent-encoded through the route producer', () => {
+        // The `id`/`filterId` a drill frame carries is a ROUTE, decoded here. A raw
+        // key such as "a%2Fb" must therefore be produced by encodeRouteParts first
+        // (-> "a%252Fb"); handing the raw key to this consumer decodes it to "a/b"
+        // and filters for a row that does not exist.
+        const table = makeTable({
+            primaryKeys: ['code'],
+            columns: [makeColumn({ name: 'code', paramType: 'String!', isPrimaryKey: true })],
+        });
+        expect(buildPkEqVariables(encodeRouteParts(['a%2Fb']), table)).toEqual({ id: 'a%2Fb' });
+        expect(buildPkEqVariables(encodeRouteParts(['US/CA']), table)).toEqual({ id: 'US/CA' });
     });
 
     it('leaves a numeric single PK untouched after decoding', () => {

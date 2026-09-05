@@ -19,6 +19,7 @@ public class KeyParserHygieneTests
         ("Split-char", new Regex(@"\.Split\(\s*'\|'", RegexOptions.Compiled)),
         ("Split-string", new Regex(@"\.Split\(\s*""\|""", RegexOptions.Compiled)),
         ("Split-array", new Regex(@"\.Split\(\s*new(\[\])?\s*(char)?\s*\[\]\s*\{\s*'\|'", RegexOptions.Compiled)),
+        ("Split-collection", new Regex(@"\.Split\(\s*\[\s*'\|'", RegexOptions.Compiled)),
         ("IndexOf-pipe", new Regex(@"\.IndexOf\(\s*'\|'", RegexOptions.Compiled)),
     };
 
@@ -30,13 +31,13 @@ public class KeyParserHygieneTests
         Assert.True(Directory.Exists(mcpSrc), $"MCP source directory not found: {mcpSrc}");
 
         var offenders = new List<string>();
+        var allowedHits = 0;
         foreach (var file in Directory.EnumerateFiles(mcpSrc, "*.cs", SearchOption.AllDirectories))
         {
             var relative = Path.GetRelativePath(repoRoot, file).Replace(Path.DirectorySeparatorChar, '/');
             if (relative.Contains("/bin/") || relative.Contains("/obj/"))
                 continue;
-            if (Path.GetFileName(file) == AllowedFileName)
-                continue;
+            var allowed = Path.GetFileName(file) == AllowedFileName;
 
             var lines = File.ReadAllLines(file);
             for (var i = 0; i < lines.Length; i++)
@@ -46,12 +47,20 @@ public class KeyParserHygieneTests
                     continue;
                 foreach (var (id, pattern) in Shapes)
                 {
-                    if (pattern.IsMatch(lines[i]))
+                    if (!pattern.IsMatch(lines[i]))
+                        continue;
+                    if (allowed)
+                        allowedHits++;
+                    else
                         offenders.Add($"{relative}:{i + 1} ({id}): {lines[i].Trim()}");
                 }
             }
         }
 
+        // The scan must SEE the one legitimate split: zero hits everywhere would also be
+        // "zero offenders", so a pattern set that stopped matching real code stays vacuously green.
+        Assert.True(allowedHits > 0,
+            $"Expected {AllowedFileName} to contain the '|' key split (ToolJson.ParseKeyValues); the scan patterns no longer match real code.");
         Assert.True(offenders.Count == 0,
             "'|' key splitting outside ToolJson.cs. Use ToolJson.ParseKeyValues — the single home of the arity-aware key-split rule:\n"
             + string.Join("\n", offenders));

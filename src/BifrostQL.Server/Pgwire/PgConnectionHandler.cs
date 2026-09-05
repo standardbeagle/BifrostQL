@@ -164,8 +164,8 @@ namespace BifrostQL.Server.Pgwire
                 try
                 {
                     verified = _options.AuthMethod == PgAuthMethod.Cleartext
-                        ? await AuthenticateCleartextAsync(stream, login, handshakeToken)
-                        : await AuthenticateScramAsync(stream, login, handshakeToken);
+                        ? await AuthenticateCleartextAsync(stream, username, login, handshakeToken)
+                        : await AuthenticateScramAsync(stream, username, login, handshakeToken);
                 }
                 catch (PgScramProtocolException ex)
                 {
@@ -351,7 +351,7 @@ namespace BifrostQL.Server.Pgwire
         }
 
         /// <summary>AuthenticationCleartextPassword challenge; constant-time secret compare.</summary>
-        private static async Task<bool> AuthenticateCleartextAsync(Stream stream, PgLogin? login, CancellationToken ct)
+        private static async Task<bool> AuthenticateCleartextAsync(Stream stream, string username, PgLogin? login, CancellationToken ct)
         {
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.AuthenticationRequest,
                 PgBackend.AuthenticationCleartextPassword(), ct);
@@ -366,13 +366,13 @@ namespace BifrostQL.Server.Pgwire
             // enumeration): both sides run one PBKDF2 with the same iteration count. Run the
             // verify unconditionally BEFORE the null check — short-circuiting on
             // `login is null` would skip the PBKDF2 and leak existence by timing.
-            var verifier = login?.Verifier ?? PgScramVerifier.NewDecoy();
+            var verifier = login?.Verifier ?? PgScramVerifier.Decoy(username);
             var matches = verifier.VerifyPassword(Encoding.UTF8.GetString(supplied));
             return login is not null && matches;
         }
 
         /// <summary>AuthenticationSASL(SCRAM-SHA-256) exchange; the secret never crosses the wire.</summary>
-        private async Task<bool> AuthenticateScramAsync(Stream stream, PgLogin? login, CancellationToken ct)
+        private async Task<bool> AuthenticateScramAsync(Stream stream, string username, PgLogin? login, CancellationToken ct)
         {
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.AuthenticationRequest,
                 PgBackend.AuthenticationSasl(PgWireProtocol.ScramSha256), ct);
@@ -386,9 +386,10 @@ namespace BifrostQL.Server.Pgwire
                 throw new PgProtocolException($"Unsupported SASL mechanism '{mechanism}'.");
 
             // Run the exchange even for an unknown user (decoy verifier, structurally
-            // identical) so it fails at the proof step like a wrong password, not with an
-            // earlier, distinguishable error.
-            var scram = ScramSha256Server.Create(login?.Verifier ?? PgScramVerifier.NewDecoy());
+            // identical, with a salt derived from the username so it is stable across
+            // connections) so it fails at the proof step like a wrong password, not with an
+            // earlier, distinguishable error or a salt that changes per connection.
+            var scram = ScramSha256Server.Create(login?.Verifier ?? PgScramVerifier.Decoy(username));
             try
             {
                 var serverFirst = scram.HandleClientFirst(clientFirst);

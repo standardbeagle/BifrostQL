@@ -27,7 +27,7 @@ namespace BifrostQL.Server.Pgwire
         private static readonly byte[] ServerKeyLabel = System.Text.Encoding.ASCII.GetBytes("Server Key");
 
         /// <summary>Derives a verifier from a password with a fresh random salt.</summary>
-        public static PgScramVerifier Derive(string password, int iterations = DefaultIterations, int saltBytes = 16)
+        public static PgScramVerifier Derive(string password, int iterations = DefaultIterations, int saltBytes = SaltLength)
             => Derive(password, RandomNumberGenerator.GetBytes(saltBytes), iterations);
 
         /// <summary>Derives a verifier from a password with an explicit salt (deterministic tests).</summary>
@@ -58,13 +58,23 @@ namespace BifrostQL.Server.Pgwire
             return CryptographicOperations.FixedTimeEquals(derived.StoredKey, StoredKey);
         }
 
+        private const int SaltLength = 16;
+        // Per-process key for the decoy salt. A real user's verifier has ONE salt, so its
+        // server-first message advertises the same s= on every connection; the decoy salt
+        // must therefore be a deterministic function of the username (RFC 5802 §5.1,
+        // RFC 7677 — Postgres derives its mock salt from a per-cluster nonce the same way),
+        // or two connections as the same unknown name reveal the user by salt change.
+        private static readonly byte[] DecoySaltKey = RandomNumberGenerator.GetBytes(KeyLength);
+
         /// <summary>
-        /// A structurally identical verifier with random keys and the default iteration count,
-        /// used for an unknown user so the exchange fails at the proof step with the same work
-        /// and wire shape as a wrong password (no user-existence oracle, invariant 2).
+        /// A structurally identical verifier for an unknown user: a salt derived
+        /// deterministically from the username, the default iteration count, and random keys
+        /// no proof can match. The exchange then fails at the proof step with the same work
+        /// and the same wire shape as a wrong password (no user-existence oracle, invariant 2).
         /// </summary>
-        internal static PgScramVerifier NewDecoy()
-            => new(RandomNumberGenerator.GetBytes(16), DefaultIterations,
+        internal static PgScramVerifier Decoy(string username)
+            => new(HMACSHA256.HashData(DecoySaltKey, System.Text.Encoding.UTF8.GetBytes(username))[..SaltLength],
+                DefaultIterations,
                 RandomNumberGenerator.GetBytes(KeyLength), RandomNumberGenerator.GetBytes(KeyLength));
     }
 }

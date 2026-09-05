@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.UI.Web
 {
@@ -39,10 +40,13 @@ namespace BifrostQL.UI.Web
                 }
                 catch (Exception ex)
                 {
+                    // Driver text can embed the full connection string (Password=
+                    // and all) — scrub before it crosses the HTTP boundary, same
+                    // contract as the vault connect endpoint.
                     return Results.BadRequest(new
                     {
                         success = false,
-                        error = ex.Message
+                        error = SecretScrubber.Scrub(ex.Message) ?? ""
                     });
                 }
             });
@@ -76,7 +80,7 @@ namespace BifrostQL.UI.Web
                 }
                 catch (Exception ex)
                 {
-                    return Results.BadRequest(new { error = ex.Message, databases = Array.Empty<string>() });
+                    return Results.BadRequest(new { error = SecretScrubber.Scrub(ex.Message) ?? "", databases = Array.Empty<string>() });
                 }
             });
 

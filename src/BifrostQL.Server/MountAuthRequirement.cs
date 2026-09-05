@@ -7,7 +7,7 @@ namespace BifrostQL.Server
     /// protocol frontend, GraphQL mount) requires an authenticated identity. H8 and H14
     /// each carried a private copy of this decision (one on the binary mount, one on the
     /// frontend mount); two copies of one security decision drift, one copy cannot
-    /// (<see cref="MountAuthRequirementSourceScanTests"/> pins the single-derivation shape).
+    /// (<c>MountAuthRequirementSourceScanTests</c> in BifrostQL.Server.Test pins the single-derivation shape).
     ///
     /// <para>The requirement is taken from the GraphQL endpoint whose schema the mount
     /// serves — the mount carries that endpoint's surface, so it must carry its auth

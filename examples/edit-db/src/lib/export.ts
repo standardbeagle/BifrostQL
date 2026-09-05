@@ -27,16 +27,28 @@ export const UTF8_BOM = '﻿';
 const NEEDS_QUOTING = /["\n\r,]/;
 
 /**
+ * Leading characters that a spreadsheet (Excel, the export target — see the
+ * `bom` option) executes as a formula instead of displaying as text
+ * (CWE-1236). Such cells get a leading apostrophe so they open as text.
+ */
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+
+/**
  * Render one cell value as an RFC4180 CSV field.
  *
  * `null`/`undefined` become a bare empty field; an empty string becomes a
  * quoted empty pair (`""`) so the two stay distinguishable in the output bytes.
  * bigint and Date get exact/stable string forms; objects are JSON-encoded.
+ * String values that would execute as a spreadsheet formula are prefixed with
+ * an apostrophe.
  */
 export function formatCsvCell(value: unknown): string {
     if (value === null || value === undefined) return '';
-    const text = stringifyCell(value);
+    let text = stringifyCell(value);
     if (text === '') return '""';
+    if (typeof value === 'string' && FORMULA_TRIGGER.test(text)) {
+        text = `'${text}`;
+    }
     if (NEEDS_QUOTING.test(text)) {
         return `"${text.replace(/"/g, '""')}"`;
     }

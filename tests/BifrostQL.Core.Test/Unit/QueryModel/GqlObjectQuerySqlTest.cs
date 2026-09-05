@@ -763,6 +763,48 @@ public sealed class GqlObjectQuerySqlTest
     }
 
     [Fact]
+    public void AddSqlParameterized_AggregateWithRelationshipLinkFilter_EmitsJoinBeforeWhere()
+    {
+        // A relationship-shaped link filter (a predicate on a table related to the
+        // aggregate's destination) renders an INNER JOIN fragment. Splicing that
+        // single-fragment render after the aggregate's hard " WHERE " prefix yields
+        // the invalid "WHERE INNER JOIN ...". The link filter must be rendered as
+        // parts: joins extend the FROM clause, only the predicate lands in WHERE.
+        var dbModel = StandardTestFixtures.UsersWithOrders();
+        var usersTable = dbModel.GetTableFromDbName("Users");
+        var link = usersTable.MultiLinks["orders"];
+
+        var aggregateColumn = new GqlAggregateColumn(
+            new List<(LinkDirection, TableLinkDto)> { (LinkDirection.OneToMany, link) },
+            "Total",
+            "totalOrderAmount",
+            AggregateOperationType.Sum);
+        aggregateColumn.LinkFilters.Add(TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            { "user", new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "bob" } } } } }
+        }, "Orders"));
+
+        var query = GqlObjectQueryBuilder.Create()
+            .WithDbTable(usersTable)
+            .WithColumns("Id")
+            .WithAggregateColumn(aggregateColumn)
+            .Build();
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        var parameters = new SqlParameterCollection();
+
+        // Act
+        query.AddSqlParameterized(dbModel, Dialect, sqls, parameters);
+
+        // Assert — token-boundary match plus a full grammar parse: a bare Contains
+        // check alone cannot catch a join spliced into the WHERE clause.
+        var aggregateSql = sqls["Users=>agg_totalOrderAmount"].Sql;
+        aggregateSql.Should().Contain("INNER JOIN");
+        aggregateSql.Should().NotContain("WHERE INNER JOIN");
+        SqlSyntax.AssertValid(aggregateSql, "aggregate link filter emits joins in FROM, predicates in WHERE");
+    }
+
+    [Fact]
     public void AddSqlParameterized_AggregateOnKeylessTable_ThrowsClearError()
     {
         // Arrange — a keyless source table (a view / table without a PK).

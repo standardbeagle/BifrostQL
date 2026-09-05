@@ -146,7 +146,8 @@ namespace BifrostQL.Server
             // profile absent from the registry is an error. Auth/role requirements on a named
             // profile are enforced here.
             var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
-            var profileResult = BifrostProfileResolver.Resolve(profileRegistry, context);
+            var profileResult = BifrostProfileResolver.Resolve(
+                profileRegistry, context, options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>());
             if (profileResult.HasError)
                 return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError(profileResult.ErrorMessage!) } };
             var profileName = profileResult.ProfileName;

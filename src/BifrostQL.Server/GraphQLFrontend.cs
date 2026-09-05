@@ -8,6 +8,7 @@ using GraphQL.Transport;
 using GraphQL.Types;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -159,7 +160,8 @@ namespace BifrostQL.Server
             var httpContext = services?.GetService<IHttpContextAccessor>()?.HttpContext;
             var profileRegistry = services?.GetService<BifrostProfileRegistry>();
 
-            var profileResolution = BifrostProfileResolver.Resolve(profileRegistry, httpContext);
+            var profileResolution = BifrostProfileResolver.Resolve(
+                profileRegistry, httpContext, services?.GetService<ILogger<GraphQLFrontend>>());
             if (profileResolution.HasError)
             {
                 return new BifrostResult

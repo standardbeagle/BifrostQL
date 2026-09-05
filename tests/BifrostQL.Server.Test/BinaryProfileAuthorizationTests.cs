@@ -157,8 +157,8 @@ namespace BifrostQL.Server.Test
             var result = await RunEngineAsync(AdminProfile);
 
             Messages(result).Should().ContainSingle()
-                .Which.Should().Contain("requires authentication",
-                    "the binary engine must enforce the profile's RequireRole like the HTTP path");
+                .Which.Should().Be("Profile requires authentication.",
+                    "the binary engine must enforce the profile's RequireRole like the HTTP path, with a constant message");
         }
 
         [Fact]
@@ -167,7 +167,7 @@ namespace BifrostQL.Server.Test
             var result = await RunEngineAsync(AdminProfile, "Viewer");
 
             Messages(result).Should().ContainSingle()
-                .Which.Should().Contain("requires role");
+                .Which.Should().Be("Profile requires an additional role.");
         }
 
         [Fact]

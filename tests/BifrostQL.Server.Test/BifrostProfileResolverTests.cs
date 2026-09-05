@@ -194,7 +194,7 @@ namespace BifrostQL.Server.Test
             }
 
             var logger = new ListLogger();
-            return (BifrostProfileResolver.Resolve(registry, context), logger);
+            return (BifrostProfileResolver.Resolve(registry, context, logger), logger);
         }
 
         private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger

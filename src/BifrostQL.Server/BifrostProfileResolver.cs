@@ -1,5 +1,6 @@
 using BifrostQL.Core.Modules;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -60,7 +61,7 @@ namespace BifrostQL.Server
         /// <see cref="ProfileNames.System.Default"/>, which is never registrable) or whose role
         /// requirement the caller does not satisfy produces an error (fail-closed).
         /// </summary>
-        public static BifrostProfileResolution Resolve(BifrostProfileRegistry? registry, HttpContext? context)
+        public static BifrostProfileResolution Resolve(BifrostProfileRegistry? registry, HttpContext? context, ILogger? logger = null)
         {
             var profileName = context != null ? ResolveProfileName(context) : null;
 
@@ -83,12 +84,23 @@ namespace BifrostQL.Server
 
             if (profile.RequireRole != null)
             {
+                // The wire message is CONSTANT: naming the profile or the required role
+                // would hand an unauthenticated caller the authorization map of the
+                // deployment (which profiles exist, which roles guard them). The role is
+                // diagnostic detail — logged server-side only, with the profile name
+                // gated on the safe identifier charset (log-injection surface).
                 var user = context!.User;
                 if (user?.Identity?.IsAuthenticated != true)
-                    return new BifrostProfileResolution { ErrorMessage = $"Profile '{profileName}' requires authentication." };
+                {
+                    logger?.LogWarning("Profile {Profile} requires role {Role}; caller is unauthenticated.", SafeProfileNameForLog(profileName), profile.RequireRole);
+                    return new BifrostProfileResolution { ErrorMessage = "Profile requires authentication." };
+                }
 
                 if (!user.IsInRole(profile.RequireRole))
-                    return new BifrostProfileResolution { ErrorMessage = $"Profile '{profileName}' requires role '{profile.RequireRole}'." };
+                {
+                    logger?.LogWarning("Profile {Profile} requires role {Role}.", SafeProfileNameForLog(profileName), profile.RequireRole);
+                    return new BifrostProfileResolution { ErrorMessage = "Profile requires an additional role." };
+                }
             }
 
             return new BifrostProfileResolution { ProfileName = profileName, Profile = profile };
@@ -140,5 +152,13 @@ namespace BifrostQL.Server
             }
             return true;
         }
+
+        /// <summary>
+        /// The profile name as it may appear in a server-side log: the raw name when it is a
+        /// safe identifier, otherwise a placeholder so attacker-controlled text (newlines,
+        /// markup) never reaches the log verbatim.
+        /// </summary>
+        private static string SafeProfileNameForLog(string name)
+            => IsSafeProfileName(name) ? name : "(unsafe-name)";
     }
 }

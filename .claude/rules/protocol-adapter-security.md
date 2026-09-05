@@ -642,7 +642,13 @@ code, not just re-checks of pgwire.
     LOOP: N free actions spaced inside the window, asserting the connection is
     closed DURING the loop. A single free action cannot distinguish a renewed
     deadline from a still-armed one, so a one-shot fixture is vacuous
-    (`regression-test-non-vacuous.md`).
+    (`regression-test-non-vacuous.md`). The loop must advance an INJECTED
+    clock, not sleep real time — a wall-clock margin under a few hundred ms
+    flakes under the parallel epic gate (LDAP M17's fact, twice), and every
+    adapter handler already takes a `Func<DateTimeOffset>` clock (RESP, now
+    LDAP), so a new deadline fact has no excuse to sleep.
+    <!-- amended_at: 2026-09-05T00:00:00Z  source_event: task:01M1QX52E7ZCY5QRZ8JMZ2BJHY, git:baba20a5 -->
+
 
 <!-- invariant 14 written_at: 2026-09-04T03:00:00Z  source_event: task:01M1KPA1WXEYM3W99A5V1RRV77, git:f91dfeee,7a00fc2a -->
 <!-- invariant 14 amended_at: 2026-09-04T19:30:00Z  source_event: task:01M1KPA1ZWG8TQGCXCXWDNN7RB, git:9b43f138,13c8fa8c -->

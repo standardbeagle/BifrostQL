@@ -119,7 +119,7 @@ keyed by `as`.
 | `fields` | Columns of the related table to return (a collection include). Composite foreign keys are matched on every column pair — never a single-column guess. |
 | `filter` | A structured filter `{ "column": { "_op": value } }` ANDed onto the relation. Supports `and`/`or` groups. Column names are validated. All values bind as SQL parameters. |
 | `sort` | A single column, ascending; prefix `-` for descending (`"-Id"`). |
-| `limit` | Maximum related rows to return. This can only **narrow** the built-in cap of 200 — an absent or larger limit is clamped to 200, and the many-to-many junction read behind a relation is capped at 50. A collection cut by either bound is flagged `truncated` in the result, never silently partial. |
+| `limit` | Maximum related rows to return. This can only **narrow** the built-in cap of 200 — an absent or larger limit is clamped to 200, and the many-to-many junction read behind a relation is capped at 50. The server's `max-query-rows` ceiling narrows both further. A collection cut by any of these bounds is named in the response's top-level `truncated` array (empty when nothing was cut; row-context child summaries carry a `truncated` boolean), never silently partial. |
 | `aggregate` | Aggregate measures over the relation. See below. |
 | `detailGate` | `"full"` hides this include unless the call passes `detail: "full"`. See [detail gating](#detail-gating). |
 

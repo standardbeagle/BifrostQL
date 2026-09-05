@@ -51,7 +51,9 @@ namespace BifrostQL.Server
         {
             ArgumentNullException.ThrowIfNull(context);
 
-            BifrostIdentityGate.Project(context, out var userContext);
+            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            if (outcome == BifrostIdentityOutcome.Unprojectable)
+                throw new BifrostIdentityRejectedException();
             return userContext;
         }
     }

@@ -1,9 +1,11 @@
 using System.Security.Claims;
+using BifrostQL.Core.Auth;
 using BifrostQL.Server.Auth;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -102,7 +104,23 @@ namespace BifrostQL.Server
             if (principal.FindFirstValue(LocalAuthClaims.Provider) == mapper.Provider)
                 return true;
 
-            var identity = mapper.Map(principal);
+            AppIdentity identity;
+            try
+            {
+                identity = mapper.Map(principal);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                // The mapper refuses a malformed provider principal (no subject claim).
+                // Answer 403 here — the same status the HTTP mounts answer for the same
+                // condition (protocol-adapter-security invariant 9) — instead of letting
+                // the mapper's fault, which names the provider, escape to the host (M13).
+                context.RequestServices.GetService<ILoggerFactory>()
+                    ?.CreateLogger(typeof(UIAuthMiddleware))
+                    .LogWarning(ex, "OIDC principal could not be normalized; refusing the request.");
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return false;
+            }
             var normalized = LocalAuthEndpoint.BuildPrincipal(identity);
 
             await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, normalized)

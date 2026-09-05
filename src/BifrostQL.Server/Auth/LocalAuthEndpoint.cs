@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.Auth
 {
@@ -330,7 +331,23 @@ namespace BifrostQL.Server.Auth
                 return;
             }
 
-            var identity = BifrostContext.BuildAppIdentity(principal);
+            AppIdentity identity;
+            try
+            {
+                identity = BifrostContext.BuildAppIdentity(principal);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // An authenticated principal with no subject claim. Refused with the same
+                // 403 the HTTP mounts answer for the same condition (protocol-adapter-security
+                // invariant 9), never escaped to the host as an unhandled fault (M13); the
+                // detail goes to the log only.
+                context.RequestServices?.GetService<ILoggerFactory>()
+                    ?.CreateLogger(typeof(LocalAuthEndpoint))
+                    .LogWarning(ex, "Session principal could not be projected; refusing the request.");
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
             await context.Response.WriteAsJsonAsync(identity, context.RequestAborted).ConfigureAwait(false);
         }
     }

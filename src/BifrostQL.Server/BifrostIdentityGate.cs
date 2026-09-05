@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server
 {
@@ -63,10 +65,15 @@ namespace BifrostQL.Server
             {
                 projected = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
             }
-            catch
+            catch (Exception ex)
             {
                 // Unmapped issuer / malformed principal. Fail closed, and answer from the
-                // middleware rather than letting the fault reach the host.
+                // middleware rather than letting the fault reach the host. The wire gets a
+                // constant 403; the diagnosable detail (issuer, missing claim) goes ONLY to
+                // the server log, so a refused identity is never silent server-side.
+                context.RequestServices?.GetService<ILoggerFactory>()
+                    ?.CreateLogger(typeof(BifrostIdentityGate))
+                    .LogWarning(ex, "Caller identity could not be projected; refusing the request.");
                 return BifrostIdentityOutcome.Unprojectable;
             }
 

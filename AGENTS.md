@@ -111,6 +111,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 | `IQueryIntentExecutor` | `Resolvers/QueryIntentExecutor.cs` | Adapter read seam — programmatic `GqlObjectQuery`, transformers unskippable |
 | `IMutationIntentExecutor` | `Resolvers/MutationIntentExecutor.cs` | Adapter write seam — full mutation transformer chain via `TableMutationPipeline` |
 | `IBifrostAuthContextFactory` | `BifrostQL.Server/BifrostAuthContextFactory.cs` | Shared identity projection for all transport gates, fail-closed |
+| `BifrostErrorSink` | `Resolvers/BifrostErrorSink.cs` | 「sanitize the wire, keep the detail」之唯一 seam：`LookupMiss(wireMessage, detail, site)` 以 Debug 記 caller-supplied name 於 server-side，返 sanitized `BifrostExecutionError`。process-wide static（`QueryField`、`BifrostDispatcher` 所建 resolvers 無 DI），`Logger` 由 HTTP middleware／intent executors 以 `??=` 接——first writer wins。凡 lookup miss 之 sanitized throw 必經此，勿另寫 log+throw 對 |
 | `ProtocolAdapterConformanceTests` | `tests/BifrostQL.AdapterConformance/` | Derivable security-conformance kit; write adapters set `AdapterSupportsMutations`. Further opt-in flags: `AdapterSupportsAuthRateLimit`, `AdapterSupportsFrameLimit`, `AdapterSupportsContinuationTokens` — each enables shared facts whose fixture hook the derivation supplies, so revert-prove per derivation |
 
 ## Design Patterns

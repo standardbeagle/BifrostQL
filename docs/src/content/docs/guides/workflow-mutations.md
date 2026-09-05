@@ -125,6 +125,20 @@ A workflow endpoint **must not reimplement authorization**. The repository alrea
 
 Because both paths terminate in the same evaluator and the same policy metadata, a permission change is made in **one place** — the table's `policy-*` metadata — and it applies to raw CRUD and every workflow endpoint at once.
 
+`GetBifrostUserContext()` is a projection, not a gate. An unauthenticated request yields an **empty** context, which scopes away only tables that declare tenant metadata — so the endpoint gates authentication itself (`RequireAuthorization()` or an explicit `IsAuthenticated` check) before calling it. An *authenticated* principal that Bifrost cannot identify — a token from an OIDC issuer with no registered claim mapper, or a principal with no subject claim — makes it throw `BifrostIdentityRejectedException` rather than hand back an empty context: an empty context is not a refusal, and the `IsAuthenticated` gate has already let that principal through. Catch it and answer `403`, the same status the GraphQL, frontend, binary and chat mounts answer for the same condition; its message is a constant and carries no issuer or claim detail.
+
+```csharp
+IDictionary<string, object?> userContext;
+try
+{
+    userContext = http.GetBifrostUserContext();
+}
+catch (BifrostIdentityRejectedException)
+{
+    return Results.StatusCode(StatusCodes.Status403Forbidden);
+}
+```
+
 If the workflow needs an operation-level permission that no table policy expresses (e.g. a `members:manage` permission claim gating *who may renew*), check the caller's `permissions` claim in the endpoint. Keep table-row authorization in the policy engine; use the claim check only for the operation-level gate.
 
 ## The audit log

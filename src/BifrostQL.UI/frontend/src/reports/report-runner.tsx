@@ -36,13 +36,19 @@ function filterArgs(definition: ReportDefinition): { params: string; args: strin
   return source.filter ? { params: `$filter: ${source.filterType}`, args: 'filter: $filter, ', variables: { filter: source.filter } } : { params: '', args: '', variables: {} };
 }
 
+/** The detail-field list pageQuery selects, in order (columns + band keys). */
+function detailFields(definition: ReportDefinition): string[] {
+  const bands = definition.groupBands ?? [];
+  // Band keys must be both selected and ordered. Without this, page order can
+  // interleave one group around another and make a streamed table repeat bands.
+  return [...new Set([...definition.columns.map((column) => column.column), ...bands.map((band) => band.column)])];
+}
+
 function pageQuery(definition: ReportDefinition): string {
   const source = sourceOf(definition);
   const filter = filterArgs(definition);
   const bands = definition.groupBands ?? [];
-  // Band keys must be both selected and ordered. Without this, page order can
-  // interleave one group around another and make a streamed table repeat bands.
-  const fields = [...new Set([...definition.columns.map((column) => column.column), ...bands.map((band) => band.column)])];
+  const fields = detailFields(definition);
   const sort = bands.length ? `sort: [${bands.map((band) => `${band.column}_${band.sortDir ?? 'asc'}`).join(', ')}], ` : '';
   return `query ReportPage($offset: Int!, $limit: Int!${filter.params ? `, ${filter.params}` : ''}) { ${source.table}(${filter.args}${sort}offset: $offset, limit: $limit) { total data { ${fields.join(' ')} } } }`;
 }
@@ -68,12 +74,6 @@ export interface RunReportOptions {
   rowCap?: number;
 }
 
-/** The detail-field list pageQuery selects, in order (columns + band keys). */
-function detailFields(definition: ReportDefinition): string[] {
-  const bands = definition.groupBands ?? [];
-  return [...new Set([...definition.columns.map((column) => column.column), ...bands.map((band) => band.column)])];
-}
-
 /**
  * Drain the detail rows through the shared exporter so the report gets the
  * same row cap, abort handling, and lying-total guard as every other paged
@@ -97,7 +97,9 @@ async function fetchRows(
     rowCap: options.rowCap ?? DEFAULT_ROW_CAP,
     signal: options.signal,
     fetchPage: async (offset, limit) => {
-      const response = await fetcher.query<Record<string, { total: number; data: Record<string, unknown>[] }>>(pageQuery(definition), { offset, limit, ...filter.variables });
+      // The signal reaches the transport too, so an unmount cancels the page
+      // already in flight and not only the next one.
+      const response = await fetcher.query<Record<string, { total: number; data: Record<string, unknown>[] }>>(pageQuery(definition), { offset, limit, ...filter.variables }, { signal: options.signal });
       const page = response[source.table];
       return { total: page?.total ?? 0, rows: (page?.data ?? []).map((row) => fields.map((field) => row[field])) };
     },
@@ -113,7 +115,7 @@ export async function runReport(fetcher: GraphQLFetcher, definitionInput: Report
   const definition = parseReportDefinition(definitionInput);
   if (!definition) throw new Error('Invalid report definition.');
   const filter = filterArgs(definition);
-  const aggregate = await fetcher.query<Record<string, Record<string, unknown>[]>>(aggregateQuery(definition), filter.variables);
+  const aggregate = await fetcher.query<Record<string, Record<string, unknown>[]>>(aggregateQuery(definition), filter.variables, { signal: options.signal });
   const bands = definition.groupBands ?? [];
   const bandTotals = bands.map((band, index) => {
     const columns = bands.slice(0, index + 1).map((item) => item.column);

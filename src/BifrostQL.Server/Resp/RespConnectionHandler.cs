@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using BifrostQL.Server.Pgwire; // DuplexPipeStream: shared Kestrel IDuplexPipe→Stream glue, not pgwire-specific.
@@ -38,6 +39,14 @@ namespace BifrostQL.Server.Resp
         private readonly IReadOnlyDictionary<string, IRespCommandHandler> _dataHandlers;
         private readonly RespConnectionLimiter _connectionLimiter;
         private readonly RespAuthRateLimiter _authRateLimiter;
+        private readonly IPasswordHasher<string> _passwordHasher;
+        // A hash computed lazily (once per handler instance, which Kestrel resolves once) so an
+        // unknown username spends the same PBKDF2 work as a real verification — the miss path
+        // must not return before any VerifyHashedPassword call, or the hashing cost becomes a
+        // user-existence timing oracle (invariant 2). Mirrors ODataAuthenticator's dummy hash.
+        private string? _dummyHash;
+        private string DummyHash => _dummyHash ??= _passwordHasher.HashPassword(
+            "^@bifrost-resp-timing-guard", "^@bifrost-resp-timing-guard-password");
         private readonly ILogger<RespConnectionHandler> _logger;
         private static long _connectionCounter;
 
@@ -58,7 +67,8 @@ namespace BifrostQL.Server.Resp
             ILogger<RespConnectionHandler>? logger = null,
             RespConnectionLimiter? connectionLimiter = null,
             Func<DateTimeOffset>? clock = null,
-            RespAuthRateLimiter? authRateLimiter = null)
+            RespAuthRateLimiter? authRateLimiter = null,
+            IPasswordHasher<string>? passwordHasher = null)
         {
             _clock = clock ?? (() => DateTimeOffset.UtcNow);
             // One handler instance serves every connection (Kestrel resolves it once), so the
@@ -72,6 +82,7 @@ namespace BifrostQL.Server.Resp
                 options?.AuthRateLimitWindow ?? TimeSpan.FromMinutes(1),
                 _clock);
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
+            _passwordHasher = passwordHasher ?? new PasswordHasher<string>();
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _services = services ?? throw new ArgumentNullException(nameof(services));
             _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -548,12 +559,13 @@ namespace BifrostQL.Server.Resp
         {
             var login = await _credentials.FindAsync(user, ct);
 
-            // Run the fixed-time compare unconditionally against the real secret or a random
-            // decoy, BEFORE the null/existence check, so an unknown user is not distinguishable
-            // from a wrong password by timing (short-circuiting on `login is null` would leak it).
-            var expected = Encoding.UTF8.GetBytes(login?.Secret ?? DecoySecret());
-            var supplied = Encoding.UTF8.GetBytes(pass);
-            var matches = CryptographicOperations.FixedTimeEquals(supplied, expected);
+            // Run the hash verification UNCONDITIONALLY against the real hash or a precomputed
+            // dummy hash, BEFORE the null/existence check, so an unknown user spends the same
+            // PBKDF2 work as a wrong password and is not distinguishable by timing —
+            // short-circuiting on `login is null` would skip the verify and leak it (invariant 2).
+            var hash = login?.PasswordHash ?? DummyHash;
+            var matches = _passwordHasher.VerifyHashedPassword(user, hash, pass)
+                != PasswordVerificationResult.Failed;
             if (login is null || !matches)
                 return false;
 
@@ -676,8 +688,6 @@ namespace BifrostQL.Server.Resp
             sb.Append($"proto:{session.Protocol}\r\n");
             return sb.ToString();
         }
-
-        private static string DecoySecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
         private static bool IsHelloOption(string argument)
         {

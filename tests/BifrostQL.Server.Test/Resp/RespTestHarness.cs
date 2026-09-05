@@ -2,18 +2,21 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Claims;
 using BifrostQL.Server.Resp;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server.Test.Resp
 {
-    /// <summary>A test credential store: an in-memory username → (secret, principal) map.</summary>
+    /// <summary>A test credential store: an in-memory username → (password hash, principal) map.</summary>
     internal sealed class FakeRespCredentialStore : IRespCredentialStore
     {
+        private static readonly PasswordHasher<string> Hasher = new();
         private readonly Dictionary<string, RespLogin> _logins = new(StringComparer.Ordinal);
 
+        /// <summary>Provisions the login the way production stores must: hash-only, no plaintext.</summary>
         public FakeRespCredentialStore Add(string username, string secret, ClaimsPrincipal principal)
         {
-            _logins[username] = new RespLogin(secret, principal);
+            _logins[username] = new RespLogin(Hasher.HashPassword(username, secret), principal);
             return this;
         }
 
@@ -84,6 +87,16 @@ namespace BifrostQL.Server.Test.Resp
         public static async Task<RespFixture> StartAsync(
             IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
             Func<DateTimeOffset>? clock, params IRespCommandHandler[] dataHandlers)
+            => await StartAsync(store, services, options, clock, passwordHasher: null, dataHandlers);
+
+        /// <summary>
+        /// As above, with an injected password hasher so a test can count verifications and
+        /// prove the unknown-user path verifies against the dummy hash unconditionally.
+        /// </summary>
+        public static async Task<RespFixture> StartAsync(
+            IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
+            Func<DateTimeOffset>? clock, IPasswordHasher<string>? passwordHasher,
+            params IRespCommandHandler[] dataHandlers)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -96,7 +109,8 @@ namespace BifrostQL.Server.Test.Resp
 
             var handler = new RespConnectionHandler(
                 store, BifrostAuthContextFactory.Instance, services, options,
-                dataHandlers.Length > 0 ? dataHandlers : null, logger: null, connectionLimiter: null, clock: clock);
+                dataHandlers.Length > 0 ? dataHandlers : null, logger: null, connectionLimiter: null, clock: clock,
+                passwordHasher: passwordHasher);
             // Close the server socket when the handler returns (QUIT / protocol-error / EOF), exactly
             // as Kestrel closes the connection when OnConnectedAsync returns — so a client blocked on a
             // read observes EOF instead of hanging.

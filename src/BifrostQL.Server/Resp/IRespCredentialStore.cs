@@ -3,19 +3,20 @@ using System.Security.Claims;
 namespace BifrostQL.Server.Resp
 {
     /// <summary>
-    /// A resolved Redis login: the shared secret the <c>AUTH</c> command proves knowledge
-    /// of, and the <see cref="ClaimsPrincipal"/> that login maps to. The principal is the
-    /// <i>candidate</i> identity only — it is still projected through
+    /// A resolved Redis login: the one-way password hash the <c>AUTH</c> command's password
+    /// is verified against, and the <see cref="ClaimsPrincipal"/> that login maps to. The
+    /// principal is the <i>candidate</i> identity only — it is still projected through
     /// <see cref="IBifrostAuthContextFactory"/>, which is where a subject-less or
     /// unmapped-issuer principal is rejected. A store must never hand back an anonymous or
     /// ambient identity to stand in for a failed lookup; it returns <c>null</c> instead.
     /// </summary>
-    /// <param name="Secret">
-    /// The shared secret (password / API key / client secret) the <c>AUTH</c> password is
-    /// compared against in constant time.
+    /// <param name="PasswordHash">
+    /// A <see cref="Microsoft.AspNetCore.Identity.PasswordHasher{TUser}"/> hash of the shared
+    /// secret (password / API key / client secret), produced with the AUTH username as the
+    /// user argument. The store never holds the plaintext secret.
     /// </param>
     /// <param name="Principal">The authenticated identity this login maps to on success.</param>
-    public sealed record RespLogin(string Secret, ClaimsPrincipal Principal);
+    public sealed record RespLogin(string PasswordHash, ClaimsPrincipal Principal);
 
     /// <summary>
     /// Resolves a Redis <c>AUTH</c> username to a <see cref="RespLogin"/>. This is the
@@ -38,9 +39,9 @@ namespace BifrostQL.Server.Resp
         /// Implementations MUST perform a constant-time lookup and MUST NOT short-circuit on an
         /// unknown user: returning <c>null</c> faster for a missing username than a present one
         /// reintroduces a user-existence timing oracle that the connection handler's
-        /// <see cref="System.Security.Cryptography.CryptographicOperations.FixedTimeEquals"/>
-        /// decoy compare is specifically there to close. Mirror the pgwire credential-store
-        /// contract: the cost of a lookup must not reveal whether the account exists.
+        /// unconditional dummy-hash verification is specifically there to close. Mirror the
+        /// pgwire credential-store contract: the cost of a lookup must not reveal whether the
+        /// account exists.
         /// </remarks>
         Task<RespLogin?> FindAsync(string username, CancellationToken cancellationToken);
     }

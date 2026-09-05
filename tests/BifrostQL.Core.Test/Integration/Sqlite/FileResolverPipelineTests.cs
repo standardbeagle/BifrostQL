@@ -502,6 +502,30 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The invariant wire form has no group separator, so a comma is not a decimal token
+    /// in ANY culture. <c>decimal.Parse(token, InvariantCulture)</c> defaults to
+    /// <c>NumberStyles.Number</c>, which allows thousands separators: "1,5" parses as 15 —
+    /// a malformed token silently accepted as a different one, and reported as CONFLICT
+    /// instead of as invalid. The parse must use a style without <c>AllowThousands</c>.
+    /// </summary>
+    [Fact]
+    public async Task Delete_OnDecimalTokenTable_CommaDecimalToken_IsRefusedAsInvalidNotConflict()
+    {
+        await Exec($"INSERT INTO dec_docs(id, row_version, file_data) VALUES (1, 15, '{Pointer("dec.bin")}')");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileDeleteResolver(_storageService);
+
+        var act = async () => await resolver.ResolveAsync(Context(model, services, "dec_docs", "1",
+            new Dictionary<string, object?> { ["concurrencyToken"] = "1,5" }));
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .WithMessage("*not a valid Decimal value*",
+                "\"1,5\" is not the invariant wire form; the stored 15 must not match it as a thousands-grouped 15");
+        (await Scalar("SELECT file_data FROM dec_docs WHERE id = 1")).Should().NotBeNull("a refused token writes nothing");
+    }
+
+    /// <summary>
     /// Temporal family: .NET parses ISO-8601 tokens culture-independently, so the
     /// culture-divergent wire shape is the day/month-ambiguous form a dot-decimal
     /// (en-US-style) client legitimately sends. Under de-DE, culture-sensitive

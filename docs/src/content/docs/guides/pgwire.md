@@ -58,11 +58,15 @@ builder.Services.AddSingleton<IPgCredentialStore, MyCredentialStore>();
 ## Authentication and identity mapping
 
 A pg client presents a **startup username**. `IPgCredentialStore.FindAsync(username)`
-resolves it to a `PgLogin(Secret, Principal)`:
+resolves it to a `PgLogin(Verifier, Principal)`:
 
-- **`Secret`** — the shared secret (API key, client secret, password) the wire
-  authentication proves knowledge of. Under SCRAM-SHA-256 it is the PBKDF2 input and
-  never crosses the wire; under `Cleartext` it is compared in constant time.
+- **`Verifier`** — a SCRAM-SHA-256 verifier (`PgScramVerifier`: salt, iterations,
+  StoredKey, ServerKey per RFC 5802 §3) derived from the shared secret with
+  `PgScramVerifier.Derive(password)`. The store never holds the plaintext secret:
+  under SCRAM the server verifies the client proof against the StoredKey directly and
+  the secret never crosses the wire; under `Cleartext` the supplied password is
+  re-derived against the stored salt and compared in constant time
+  (`PgScramVerifier.VerifyPassword`).
 - **`Principal`** — the `ClaimsPrincipal` that login maps to. This is the *candidate*
   identity only: it is still projected through
   [`IBifrostAuthContextFactory`](/BifrostQL/guides/protocol-adapters/#identity-the-auth-context-factory),

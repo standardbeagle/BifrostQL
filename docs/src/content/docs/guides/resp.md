@@ -69,10 +69,13 @@ builder.Services.AddSingleton<IRespCredentialStore, MyCredentialStore>();
 A client authenticates with `AUTH <user> <pass>` (or `AUTH <pass>`, which resolves
 the Redis-default `default` user), or inline via `HELLO <proto> AUTH <user> <pass>`.
 `IRespCredentialStore.FindAsync(username)` resolves the username to a
-`RespLogin(Secret, Principal)`:
+`RespLogin(PasswordHash, Principal)`:
 
-- **`Secret`** — the shared secret (API key, client secret, password) the `AUTH`
-  password is compared against in constant time.
+- **`PasswordHash`** — a one-way ASP.NET Core `PasswordHasher<string>` hash of the
+  shared secret (API key, client secret, password), produced with the username as the
+  user argument: `new PasswordHasher<string>().HashPassword(username, secret)`. The
+  store never holds the plaintext secret; the `AUTH` password is verified against the
+  hash.
 - **`Principal`** — the `ClaimsPrincipal` that login maps to. This is the *candidate*
   identity only: it is still projected through
   [`IBifrostAuthContextFactory`](/BifrostQL/guides/protocol-adapters/#identity-the-auth-context-factory),
@@ -89,9 +92,9 @@ The tenant/policy claims on the mapped principal are what scope every subsequent
 read. There is no anonymous access unless a deployment explicitly clears
 `RequireAuthentication`.
 
-The credential lookup and password compare run in constant time (a fixed-time
-compare against a decoy secret for an unknown user), so the front door does not
-leak whether an account exists.
+The credential lookup and password verification run the same work either way (a hash
+verification against a precomputed dummy hash for an unknown user), so the front door
+does not leak whether an account exists.
 
 ## The supported command map
 

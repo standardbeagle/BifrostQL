@@ -6,6 +6,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Breaking — `PgLogin.Secret` replaced by a SCRAM verifier; `RespLogin.Secret` by `PasswordHash`
+
+- The pgwire and RESP credential stores no longer hold plaintext secrets. `PgLogin` now carries `PgScramVerifier` (salt, iterations, StoredKey, ServerKey per RFC 5802 §3): the SCRAM path verifies the client proof against the StoredKey directly, and the cleartext path re-derives and constant-time compares via `PgScramVerifier.VerifyPassword`. `RespLogin` now carries `PasswordHash`, a one-way ASP.NET Core `PasswordHasher<string>` hash verified with `VerifyHashedPassword` (same contract as `LocalUserStore` and the OData Basic store). The unknown-user decoy work is unchanged in cost — a structurally identical decoy verifier on pgwire, a precomputed dummy hash on RESP — so the anti-enumeration timing invariant still holds. Migration: provision pgwire logins with `PgScramVerifier.Derive(password)` and RESP logins with `new PasswordHasher<string>().HashPassword(username, password)` at credential-creation time, and discard the plaintext. See `docs/src/content/docs/guides/pgwire.md` and `docs/src/content/docs/guides/resp.md`.
+
 ### Breaking — `ODataBasicCredential.Secret` replaced by `PasswordHash`
 
 - The OData Basic-auth contract no longer carries a plaintext-equivalent shared secret. `ODataAuthenticator` used to compare `SHA256(secret)` to `SHA256(password)`, which forced every `IODataBasicCredentialStore` to hold the password itself. The record now carries `PasswordHash`, a one-way ASP.NET Core `PasswordHasher<string>` hash verified with `VerifyHashedPassword` (same contract as `LocalUserStore`); the anti-enumeration dummy work for unknown/disabled usernames is a precomputed hash verification. Migration: provision the hash at credential-creation time with `new PasswordHasher<string>().HashPassword(username, password)` and discard the plaintext. See `docs/src/content/docs/guides/odata.md`.

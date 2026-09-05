@@ -90,6 +90,18 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var expose = parseResult.GetValue(exposeOption);
     state.VaultPath = parseResult.GetValue(vaultPathOption);
 
+    // The bridge has no authentication of its own — loopback binding is its only
+    // safeguard. --expose publishes it to the LAN, so the combination is refused
+    // outright rather than warned about.
+    if (expose && enableHttpBridge)
+    {
+        Console.Error.WriteLine(
+            "--expose cannot be combined with --enable-http-bridge: the bridge runs SQL " +
+            "with no authentication, and --expose would publish it beyond loopback. " +
+            "Drop one of the two flags.");
+        return 2;
+    }
+
     state.ConnectionString = connectionString;
     if (connectionString != null)
         state.Provider = DbConnFactoryResolver.DetectProvider(connectionString);

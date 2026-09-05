@@ -3,9 +3,10 @@ using System.Diagnostics;
 namespace BifrostQL.UI.Web
 {
     /// <summary>
-    /// Lists PostgreSQL databases by shelling out to <c>psql</c> via <c>sudo -u &lt;user&gt;</c>.
-    /// Used for peer/ident auth where the .NET process runs as a different OS user
-    /// than the one PostgreSQL expects for peer authentication.
+    /// Lists PostgreSQL databases by shelling out to <c>psql</c> — directly for
+    /// the OS user the host runs as, or via <c>sudo -u &lt;user&gt;</c> for an
+    /// allow-listed account. Used for peer/ident auth where PostgreSQL
+    /// authenticates by OS user.
     /// </summary>
     public static class PsqlDatabaseLister
     {
@@ -63,7 +64,12 @@ namespace BifrostQL.UI.Web
         internal static ProcessStartInfo BuildProcessStartInfo(string? psqlUser)
         {
             var psi = new ProcessStartInfo();
-            if (!string.IsNullOrWhiteSpace(psqlUser))
+            // The current user (and no requested user) runs plain psql: peer
+            // auth already sees the right OS account, and sudo refuses
+            // `-u <self>` without a sudoers rule. sudo is only for allow-listed
+            // accounts other than the one the host runs as.
+            if (!string.IsNullOrWhiteSpace(psqlUser)
+                && !string.Equals(psqlUser, Environment.UserName, StringComparison.Ordinal))
             {
                 if (!IsPsqlUserPermitted(psqlUser))
                     throw new InvalidOperationException(
@@ -112,14 +118,6 @@ namespace BifrostQL.UI.Web
         /// the comma-separated BIFROST_UI_PSQL_PEER_USERS environment allow-list.
         /// </summary>
         internal static bool IsPsqlUserPermitted(string psqlUser)
-        {
-            if (string.Equals(psqlUser, Environment.UserName, StringComparison.Ordinal))
-                return true;
-            var allowList = Environment.GetEnvironmentVariable("BIFROST_UI_PSQL_PEER_USERS");
-            if (string.IsNullOrWhiteSpace(allowList))
-                return false;
-            return allowList.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Contains(psqlUser, StringComparer.Ordinal);
-        }
+            => GetPermittedPsqlUsers().Contains(psqlUser, StringComparer.Ordinal);
     }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getMultiJoinRows, getSingleJoinRow, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl } from './useDataTable';
 import { serializeColumnFilters } from '../lib/query-builder';
+import { encodeRouteParts } from '../lib/row-id';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Join, Table } from '../types/schema';
 
@@ -103,12 +104,20 @@ describe('getJoinedRowPkValue', () => {
         multiJoins: [], singleJoins: [],
     });
 
-    it('route-encodes a single-PK joined id so special characters survive the route', () => {
-        // The value becomes a route segment decoded by parsePkRoute; raw "/",
-        // "%", "::", or spaces would build a broken or mis-split link.
-        expect(getJoinedRowPkValue({ id: 'a/b c' }, tbl(['id']))).toBe('a%2Fb%20c');
-        expect(getJoinedRowPkValue({ id: 'x::y' }, tbl(['id']))).toBe('x%3A%3Ay');
-        expect(getJoinedRowPkValue({ id: '50%' }, tbl(['id']))).toBe('50%25');
+    it('returns the raw single-PK key so the FK popover `_eq` filter matches', () => {
+        // FkCellPopover uses this value as the `_eq` variable. A String FK of
+        // "US/CA" (or one with a space / "%") route-encoded to "US%2FCA" never
+        // matches a stored row, so the popover shows "Record not found".
+        expect(getJoinedRowPkValue({ id: 'US/CA' }, tbl(['id']))).toBe('US/CA');
+        expect(getJoinedRowPkValue({ id: 'a b' }, tbl(['id']))).toBe('a b');
+        expect(getJoinedRowPkValue({ id: '50%' }, tbl(['id']))).toBe('50%');
+    });
+
+    it('route-encodes the raw key at the route boundary only', () => {
+        // The Link route segment must still carry the encoded form, decoded by
+        // parsePkRoute; encodeRouteParts is the one producer of that encoding.
+        expect(encodeRouteParts([getJoinedRowPkValue({ id: 'US/CA' }, tbl(['id']))])).toBe('US%2FCA');
+        expect(encodeRouteParts([getJoinedRowPkValue({ id: 'x::y' }, tbl(['id']))])).toBe('x%3A%3Ay');
     });
 
     it('leaves plain numeric ids unchanged (encoding is identity)', () => {

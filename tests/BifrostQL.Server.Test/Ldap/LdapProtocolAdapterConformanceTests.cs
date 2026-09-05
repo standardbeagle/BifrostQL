@@ -210,6 +210,65 @@ namespace BifrostQL.Server.Test.Ldap
             new(new ClaimsIdentity(
                 new[] { new Claim(ClaimTypes.NameIdentifier, "user-no-tenant") }, authenticationType: "ldap"));
 
+        // ---- (f) total-frame byte cap ---------------------------------------
+        //
+        // LdapMessageReader bounds the declared body length of one LDAPMessage envelope
+        // (MaxMessageLength) BEFORE allocating or pulling the payload. The probe declares a
+        // 64 KiB body under a 4 KiB cap through a counting stream, then decodes two in-budget
+        // messages on one stream to show the per-message budget is independent per frame.
+
+        protected override bool AdapterSupportsFrameLimit => true;
+
+        protected override async Task<FrameLimitProbe> ProbeFrameLimitAsync()
+        {
+            const int budget = 4096;
+            const int declared = 64 * 1024;
+
+            // SEQUENCE + long-form 4-byte length declaring 64 KiB, with only a stub of real
+            // payload behind it: a reader that pulls the declared payload before checking the
+            // cap would materialize far more than the header.
+            var wire = new MemoryStream();
+            wire.WriteByte(LdapProtocol.Sequence);
+            wire.WriteByte(0x84);
+            wire.WriteByte((byte)((declared >> 24) & 0xFF));
+            wire.WriteByte((byte)((declared >> 16) & 0xFF));
+            wire.WriteByte((byte)((declared >> 8) & 0xFF));
+            wire.WriteByte((byte)(declared & 0xFF));
+            wire.Write(new byte[64]);
+            wire.Position = 0;
+
+            var counting = new CountingStream(wire);
+            var reader = new LdapMessageReader(budget, maxNestingDepth: 32, maxFilterComponents: 100, maxSearchAttributes: 100);
+            var refused = false;
+            try
+            {
+                await reader.ReadRequestAsync(counting, default);
+            }
+            catch (LdapProtocolException)
+            {
+                refused = true;
+            }
+
+            // Two legal messages, each within the cap, on ONE stream: both decode.
+            var legalWire = new MemoryStream();
+            var first = LdapWire.Message(1, LdapWire.BindRequest(name: BindDn, password: "x"));
+            var second = LdapWire.Message(2, LdapWire.BindRequest(name: BindDn, password: "y"));
+            legalWire.Write(first);
+            legalWire.Write(second);
+            legalWire.Position = 0;
+            var legalReader = new LdapMessageReader(budget, maxNestingDepth: 32, maxFilterComponents: 100, maxSearchAttributes: 100);
+            var firstOk = await legalReader.ReadRequestAsync(legalWire, default);
+            var secondOk = await legalReader.ReadRequestAsync(legalWire, default);
+
+            return new FrameLimitProbe
+            {
+                OversizedRefused = refused,
+                OversizedBytesRead = counting.BytesRead,
+                OversizedDeclaredBytes = declared,
+                TopLevelBudgetResetVerified = firstOk is not null && secondOk is not null,
+            };
+        }
+
         /// <summary>
         /// The rejection as the client actually receives it: a result code and nothing else. The
         /// message carries no table, column, or context-key name because the wire carries none.

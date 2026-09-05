@@ -784,6 +784,59 @@ namespace BifrostQL.AdapterConformance
                 "a rate-limit refusal that varies with account existence is an enumeration oracle — byte equality, not Contains");
         }
 
+        // ---- (f) total-frame byte cap (adapters with a framed wire) ----------
+        //
+        // Opt-in, same shape as AdapterSupportsMutations: an adapter whose decoder frames
+        // untrusted bytes (RESP aggregates, LDAP BER envelopes, pgwire messages) sets
+        // AdapterSupportsFrameLimit = true and implements ProbeFrameLimitAsync; HTTP front doors
+        // riding Kestrel and the echo fixture inherit the default and stay silent.
+
+        /// <summary>What the derivation observed when probing its decoder's total-frame byte budget.</summary>
+        protected sealed class FrameLimitProbe
+        {
+            /// <summary>Whether the oversized frame was refused at all.</summary>
+            public required bool OversizedRefused { get; init; }
+
+            /// <summary>Bytes the decoder actually pulled from the stream for the oversized frame (counting stream).</summary>
+            public required long OversizedBytesRead { get; init; }
+
+            /// <summary>The payload byte count the oversized frame DECLARED.</summary>
+            public required long OversizedDeclaredBytes { get; init; }
+
+            /// <summary>Whether two consecutive in-budget top-level frames both decoded on one stream.</summary>
+            public required bool TopLevelBudgetResetVerified { get; init; }
+        }
+
+        /// <summary>
+        /// Whether the adapter's wire decoder bounds the TOTAL byte length of one top-level frame
+        /// (per-element caps are not sufficient — their product is the real bound). Default false.
+        /// </summary>
+        protected virtual bool AdapterSupportsFrameLimit => false;
+
+        /// <summary>
+        /// Drives the adapter's real decoder with (1) one frame whose declared size exceeds the
+        /// frame budget, through a counting stream, and (2) two consecutive in-budget top-level
+        /// frames on one stream. Required when <see cref="AdapterSupportsFrameLimit"/> is true.
+        /// </summary>
+        protected virtual Task<FrameLimitProbe> ProbeFrameLimitAsync()
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterSupportsFrameLimit)} but does not override {nameof(ProbeFrameLimitAsync)}.");
+
+        [Fact]
+        public async Task Frame_OverBudget_IsRefusedBeforePayloadIsRead_AndBudgetResetsPerTopLevelFrame()
+        {
+            if (!AdapterSupportsFrameLimit) return;
+
+            var probe = await ProbeFrameLimitAsync();
+
+            probe.OversizedRefused.Should().BeTrue(
+                "a frame whose declared size exceeds the budget must be refused");
+            probe.OversizedBytesRead.Should().BeLessThan(probe.OversizedDeclaredBytes,
+                "the refusal must precede pulling the declared payload — a cap that fires only after the bytes are materialized bounds nothing");
+            probe.TopLevelBudgetResetVerified.Should().BeTrue(
+                "the byte budget resets only at a top-level frame boundary; consecutive in-budget frames must both decode");
+        }
+
         /// <summary>
         /// Captures the generated SQL per table at the AfterExecute phase (the
         /// phase carrying SQL text), so the suite can assert on SQL no matter what

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
@@ -243,6 +244,54 @@ namespace BifrostQL.Server.Test.Resp
                 Lookups++;
                 return _inner.FindAsync(username, cancellationToken);
             }
+        }
+
+        // ---- (f) total-frame byte cap ---------------------------------------
+        //
+        // RespReader bounds the TOTAL bytes of one top-level frame (MaxFrameLength), resetting
+        // the budget only at a top-level boundary. The probe mirrors RespFrameLengthTests: an
+        // oversized bulk string whose declared payload is never pulled, then two in-budget
+        // frames on one stream proving the reset.
+
+        protected override bool AdapterSupportsFrameLimit => true;
+
+        protected override async Task<FrameLimitProbe> ProbeFrameLimitAsync()
+        {
+            // Declared 64 KiB — comfortably under MaxBulkLength, so only a FRAME budget can
+            // refuse it. The payload is really on the wire: without the cap it decodes fine.
+            const int payloadLength = 64 * 1024;
+            var wire = new MemoryStream();
+            wire.Write(Encoding.ASCII.GetBytes($"${payloadLength}\r\n"));
+            wire.Write(new byte[payloadLength]);
+            wire.Write(Encoding.ASCII.GetBytes("\r\n"));
+            wire.Position = 0;
+
+            var counting = new CountingStream(wire);
+            var reader = new RespReader(counting, 1 << 20, 1 << 20, 32, maxFrameLength: 4096);
+            var refused = false;
+            try
+            {
+                await reader.ReadValueAsync(default);
+            }
+            catch (Exception)
+            {
+                refused = true;
+            }
+
+            // Two top-level frames, each within a 16-byte budget, on ONE stream: both decode,
+            // which only holds if the budget resets per top-level frame (never inside one).
+            var resetWire = new MemoryStream(Encoding.ASCII.GetBytes("$3\r\nfoo\r\n$3\r\nbar\r\n"));
+            var resetReader = new RespReader(resetWire, 1 << 20, 1 << 20, 32, maxFrameLength: 16);
+            var first = await resetReader.ReadValueAsync(default);
+            var second = await resetReader.ReadValueAsync(default);
+
+            return new FrameLimitProbe
+            {
+                OversizedRefused = refused,
+                OversizedBytesRead = counting.BytesRead,
+                OversizedDeclaredBytes = payloadLength,
+                TopLevelBudgetResetVerified = first is RespBulkString && second is RespBulkString,
+            };
         }
 
         /// <summary>Formats a mutation request's primary key as the RESP key <c>&lt;table&gt;:&lt;pk…&gt;</c>.</summary>

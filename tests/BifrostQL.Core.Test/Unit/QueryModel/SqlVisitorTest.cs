@@ -194,6 +194,38 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public async Task NegativeIntLiteral_UnderNonHyphenNegativeSignCulture_BoxesAsInt()
+        {
+            // A GraphQL int literal is always ASCII '-' + digits on the wire. int.TryParse(text)
+            // / long.TryParse(text) take the CURRENT culture, so under a culture whose
+            // NegativeSign is not U+002D both fail and a small negative literal falls through to
+            // BigInteger — which the VisitIntValueAsync comment says breaks the `(int?)` casts
+            // that read limit/offset arguments. Parse must be Integer + InvariantCulture.
+            // (The sign must NOT be U+2212: the runtime always accepts both U+002D and U+2212
+            // as minus, so a "−" fixture would be vacuous — verified on net10.0.)
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            var customSign = (System.Globalization.CultureInfo)previous.Clone();
+            customSign.NumberFormat.NegativeSign = "NEG"; // not U+002D/U+2212, so '-' fails to parse
+            System.Globalization.CultureInfo.CurrentCulture = customSign;
+            try
+            {
+                var ctx = new SqlContext();
+                var sut = new SqlVisitor();
+
+                var ast = Parser.Parse("query { workshops(limit: -5) { id } }");
+                await sut.VisitAsync(ast, ctx);
+
+                var limitArg = ctx.Fields.Single().Arguments!.Single(a => a.Name == "limit");
+                limitArg.Value.Should().BeOfType<int>("small negative literals must box as Int32 for the (int?) casts downstream");
+                limitArg.Value.Should().Be(-5);
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+            }
+        }
+
+        [Fact]
         public async Task AndFilterSuccess()
         {
             var ctx = new SqlContext();

@@ -8,7 +8,6 @@ namespace BifrostQL.Core.Schema
     /// database schemas become top-level query fields grouping their tables.
     /// In this mode: query { sales { orders(...) { ... } } hr { employees(...) { ... } } }
     /// Tables in the default schema remain directly on the root query type.
-    /// Cross-schema _join containers reference tables across all schemas.
     /// </summary>
     public static class SchemaFieldSchemaGenerator
     {
@@ -18,7 +17,7 @@ namespace BifrostQL.Core.Schema
         /// Non-default schemas get their own query/mutation types.
         /// All table type definitions, join definitions, etc. remain global (not nested).
         /// </summary>
-        public static string SchemaTextFromModel(IDbModel model, SchemaFieldConfig config, bool includeDynamicJoins = true)
+        public static string SchemaTextFromModel(IDbModel model, SchemaFieldConfig config)
         {
             var builder = new StringBuilder();
             var typeMapper = model.TypeMapper;
@@ -81,12 +80,7 @@ namespace BifrostQL.Core.Schema
             // All table type definitions remain global (for cross-schema join support)
             foreach (var generator in allTableGenerators)
             {
-                if (includeDynamicJoins)
-                {
-                    builder.AppendLine(generator.GetDynamicJoinDefinition(model, false));
-                    builder.AppendLine(generator.GetDynamicJoinDefinition(model, true));
-                }
-                builder.AppendLine(generator.GetTableTypeDefinition(model, includeDynamicJoins));
+                builder.AppendLine(generator.GetTableTypeDefinition(model));
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
             }
 

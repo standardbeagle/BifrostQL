@@ -15,7 +15,7 @@ public sealed class DbTableBatchResolverTests
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;
 
     private static string GetSchemaText(IDbModel model)
-        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     #region Schema Generation Tests
 

@@ -330,7 +330,7 @@ public class EavModuleTests
         var generator = new TableSchemaGenerator(
             model.Tables.First(t => t.DbName == "wp_posts"));
 
-        var sdl = generator.GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = generator.GetTableTypeDefinition(model);
 
         // _meta is now emitted through the uniform computed-column loop, so it
         // carries the same "name : Type" spacing as every other field.
@@ -349,7 +349,7 @@ public class EavModuleTests
         var generator = new TableSchemaGenerator(
             model.Tables.First(t => t.DbName == "wp_posts"));
 
-        var sdl = generator.GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = generator.GetTableTypeDefinition(model);
 
         sdl.Should().NotContain("_meta");
     }
@@ -372,7 +372,7 @@ public class EavModuleTests
         var metaGenerator = new TableSchemaGenerator(
             model.Tables.First(t => t.DbName == "wp_postmeta"));
 
-        var sdl = metaGenerator.GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = metaGenerator.GetTableTypeDefinition(model);
 
         sdl.Should().NotContain("_meta"); // the meta (child) table gets no _meta field — only the parent does
     }
@@ -406,8 +406,8 @@ public class EavModuleTests
         var usersGenerator = new TableSchemaGenerator(
             model.Tables.First(t => t.DbName == "wp_users"));
 
-        postsGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta : JSON");
-        usersGenerator.GetTableTypeDefinition(model, false).Should().Contain("_meta : JSON");
+        postsGenerator.GetTableTypeDefinition(model).Should().Contain("_meta : JSON");
+        usersGenerator.GetTableTypeDefinition(model).Should().Contain("_meta : JSON");
     }
 
     #endregion

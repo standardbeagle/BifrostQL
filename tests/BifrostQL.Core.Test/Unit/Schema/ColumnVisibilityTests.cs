@@ -22,7 +22,7 @@ public class ColumnVisibilityTests
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;
 
     private static string SchemaText(IDbModel model) =>
-        (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     // Arrange: companies(company_id, name, phone) with no hide rule.
     private static IDbModel BuildVisibleModel() =>

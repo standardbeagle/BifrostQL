@@ -21,7 +21,7 @@ public class RelationshipFieldNameTests
             .Build();
         var users = model.Tables.Single(t => t.GraphQlName == "users");
 
-        var sdl = new TableSchemaGenerator(users).GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(users).GetTableTypeDefinition(model);
         var aggregate = new TableSchemaGenerator(users).GetAggregateLinkDefinitions();
 
         sdl.Should().Contain("orders(filter: TableFilterordersInput, limit: Int, offset: Int, sort: [ordersSortEnum!]) : orders_paged");
@@ -41,7 +41,7 @@ public class RelationshipFieldNameTests
             .Build();
         var categories = model.Tables.Single(t => t.GraphQlName == "categories");
 
-        var sdl = new TableSchemaGenerator(categories).GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(categories).GetTableTypeDefinition(model);
         var aggregate = new TableSchemaGenerator(categories).GetAggregateLinkDefinitions();
 
         sdl.Should().Contain("categories : categories");
@@ -78,7 +78,7 @@ public class RelationshipFieldNameTests
         };
         categories.MultiLinks.Add(selfLink.ChildFieldName, selfLink);
 
-        var sdl = new TableSchemaGenerator(categories).GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(categories).GetTableTypeDefinition(model);
 
         selfLink.ChildFieldName.Should().Be("categories_children_2");
         sdl.Should().Contain("categories_children(filter: TableFiltercategories_childrenInput, limit: Int, offset: Int, sort: [categories_childrenSortEnum!]) : categories_children_paged");

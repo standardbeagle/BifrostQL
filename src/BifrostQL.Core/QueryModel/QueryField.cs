@@ -201,16 +201,24 @@ namespace BifrostQL.Core.QueryModel
             var onArg = Arguments.FirstOrDefault(a => a.Name == "on");
 
             if (onArg == null)
-                throw new BifrostExecutionError($"join on table {parent.GraphQlName} missing on argument.");
+                throw new BifrostExecutionError("A join field is missing its 'on' argument.");
 
-            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to object");
+            var columns = (onArg.Value as IDictionary<string, object?>) ?? throw new BifrostExecutionError("A join 'on' argument must be an object mapping one column to an operator pair.");
             if (columns.Keys.Count != 1)
-                throw new ArgumentException("on joins only support one column per table");
-            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to convert on value to a string");
+                throw new BifrostExecutionError("A join 'on' argument supports exactly one column per table.");
+            var relation = columns.Values.First() as IDictionary<string, object?> ?? throw new BifrostExecutionError("A join 'on' value must be an object mapping an operator to a column.");
+            if (relation.Keys.Count != 1)
+                throw new BifrostExecutionError("A join 'on' value must name exactly one operator.");
+            // The join vocabulary is equality only. The operator is spliced into the
+            // ON clause via dialect.GetOperator, so an unvalidated client operator
+            // would reach SQL text; anything outside _eq/_neq is a shape fault.
+            var joinOperator = relation.Keys.First();
+            if (joinOperator is not ("_eq" or "_neq"))
+                throw new BifrostExecutionError("A join 'on' operator must be _eq or _neq.");
             var connected = ToSqlData(model);
 
             var fromGraphQlName = columns.Keys.First();
-            var connectedGraphQlName = relation.Values?.First()?.ToString() ?? throw new BifrostExecutionError($"While joining table {parent.GraphQlName}, unable to resolve join column {relation?.Keys?.FirstOrDefault()}");
+            var connectedGraphQlName = relation.Values?.First()?.ToString() ?? throw new BifrostExecutionError("A join 'on' value must name a column.");
 
             // The `on:` argument names columns by their GraphQL field names. Map them
             // to real DB column names so an explicit `_join_` works on tables whose
@@ -231,7 +239,7 @@ namespace BifrostQL.Core.QueryModel
                 ConnectedTable = connected,
                 FromColumn = fromDbColumn,
                 ConnectedColumn = connectedDbColumn,
-                Operator = relation.Keys.First(),
+                Operator = joinOperator,
                 QueryType = GetQueryType(Name),
             };
         }

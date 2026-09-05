@@ -14,7 +14,7 @@ public sealed class ComputedColumnModuleTests
     public void TableSchema_IncludesSqlAndProviderComputedFields()
     {
         var table = BuildModel().GetTableFromDbName("Orders");
-        var sdl = new TableSchemaGenerator(table).GetTableTypeDefinition(BuildModel(), includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(table).GetTableTypeDefinition(BuildModel());
 
         sdl.Should().Contain("totalWithTax : Float");
         sdl.Should().Contain("shippingEstimate : String");

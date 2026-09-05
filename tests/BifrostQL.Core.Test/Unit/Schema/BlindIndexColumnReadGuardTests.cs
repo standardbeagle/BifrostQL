@@ -86,7 +86,7 @@ public class BlindIndexColumnReadGuardTests
         var model = SecretsModel();
         var table = model.GetTableFromDbName("secrets");
 
-        var sdl = new TableSchemaGenerator(table).GetTableTypeDefinition(model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(table).GetTableTypeDefinition(model);
 
         sdl.Should().NotContain("ssn_bidx");
         sdl.Should().Contain("ssn");

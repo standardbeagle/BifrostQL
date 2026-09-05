@@ -22,7 +22,7 @@ public sealed class PolymorphicLinkTests
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;
 
     private static string GetSchemaText(IDbModel model)
-        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, false })!;
+        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     /// <summary>
     /// A CRM-like model: companies, contacts, deals and a shared polymorphic

@@ -236,26 +236,7 @@ namespace BifrostQL.Core.Schema
             return $"{HistorySurface.HistoryFieldName(_table)}(limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!] filter: {target.TableFilterTypeName}): {target.GraphQlName}_paged";
         }
 
-        public string GetDynamicJoinDefinition(IDbModel model, bool single)
-        {
-            var builder = new StringBuilder();
-            var historyTargets = HistorySurface.ResolveTargets(model);
-            builder.AppendLine($"type {_table.GraphQlName}_{(single ? "single" : "join")} {{");
-            foreach (var joinTable in model.Tables)
-            {
-                // History targets are system tables — never navigable, even via the
-                // dynamic `_join`/`_single` escape hatch (which would bypass the trail
-                // field's forced predicates entirely).
-                if (historyTargets.Contains(joinTable))
-                    continue;
-                builder.AppendLine(
-                    $"\t{joinTable.GraphQlName}(on: [String!]) : {joinTable.GraphQlName}");
-            }
-            builder.AppendLine("}");
-            return builder.ToString();
-        }
-
-        public string GetTableTypeDefinition(IDbModel model, bool includeDynamicJoins)
+        public string GetTableTypeDefinition(IDbModel model)
         {
             var builder = new StringBuilder();
             builder.AppendLine($"type {_table.GraphQlName} {{");
@@ -303,12 +284,6 @@ namespace BifrostQL.Core.Schema
             // loop above (synthesized by ComputedColumnConfigCollector.AddEavMeta),
             // so it resolves via the provider-computed-column pipeline rather than
             // being a dead schema-only stub.
-
-            if (includeDynamicJoins)
-            {
-                builder.AppendLine($"\t_single : {_table.GraphQlName}_single");
-                builder.AppendLine($"\t_join : {_table.GraphQlName}_join");
-            }
 
             builder.AppendLine("}");
 

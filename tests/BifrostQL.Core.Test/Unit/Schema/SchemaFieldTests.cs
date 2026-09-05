@@ -502,7 +502,7 @@ public class SchemaFieldSchemaGeneratorTests
     }
 
     [Fact]
-    public void FieldMode_DynamicJoins_ReferenceAllTables()
+    public void FieldMode_NoDynamicJoinContainers_Emitted()
     {
         var model = CreateMultiSchemaModel();
         var config = new SchemaFieldConfig
@@ -513,10 +513,13 @@ public class SchemaFieldSchemaGeneratorTests
 
         var schema = SchemaFieldSchemaGenerator.SchemaTextFromModel(model, config);
 
-        // Dynamic join types for each table should reference all tables (cross-schema)
-        schema.Should().Contain("type Users_join {");
-        schema.Should().Contain("type Orders_join {");
-        schema.Should().Contain("type Employees_join {");
+        // The bare `_join`/`_single` container types were removed (M10): they were
+        // advertised but could never execute.
+        schema.Should().NotContain("type Users_join {");
+        schema.Should().NotContain("type Users_single {");
+        schema.Should().NotContain("_join :");
+        schema.Should().NotContain("_single :");
+        schema.Should().Contain("type Users {");
     }
 
     [Fact]
@@ -679,7 +682,7 @@ public class SchemaFieldSchemaGeneratorTests
             DefaultSchema = "dbo",
         };
 
-        var schema = SchemaFieldSchemaGenerator.SchemaTextFromModel(model, config, includeDynamicJoins: false);
+        var schema = SchemaFieldSchemaGenerator.SchemaTextFromModel(model, config);
 
         schema.Should().NotContain("type Users_join {");
         schema.Should().Contain("type Users {");
@@ -728,7 +731,7 @@ public class SchemaFieldBackwardCompatibilityTests
                 .WithColumn("Total", "decimal"))
             .Build();
 
-        var schema = (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        var schema = (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
         schema.Should().Contain("type database {");
         schema.Should().Contain("Users(");

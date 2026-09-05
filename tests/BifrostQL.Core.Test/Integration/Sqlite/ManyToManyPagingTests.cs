@@ -89,7 +89,7 @@ public sealed class ManyToManyPagingTests : IAsyncLifetime
         // Sanity: the junction was detected as a many-to-many bridge.
         posts.ManyToManyLinks.Should().ContainKey("tags");
 
-        var sdl = new TableSchemaGenerator(posts).GetTableTypeDefinition(_model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(posts).GetTableTypeDefinition(_model);
 
         sdl.Should().Contain("tags(filter: TableFiltertagsInput, limit: Int, offset: Int, sort: [tagsSortEnum!]) : tags_paged");
     }

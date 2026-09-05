@@ -25,7 +25,7 @@ public sealed class GenericTableQueryTests
         .GetMethod("GetGenericTableTypes", BindingFlags.Static | BindingFlags.NonPublic)!;
 
     private static string GetSchemaText(IDbModel model)
-        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     private static bool InvokeIsGenericTableEnabled(IDbModel model)
         => (bool)IsGenericTableEnabledMethod.Invoke(null, new object[] { model })!;

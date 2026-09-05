@@ -43,7 +43,12 @@ namespace BifrostQL.Core.QueryModel
             var visitor = new SqlVisitor();
             var model = new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables() };
             var ast = Parser.Parse($"query {{ work__shops {{ data {{ id sess:_join_sessions(on: {{id: {{{op}: workshopid}}}}) {{ id }} }} }} }}");
-            var act = () => visitor.VisitAsync(ast, ctx).AsTask();
+            // ToJoin runs when the visited tree is materialized, not during VisitAsync.
+            var act = async () =>
+            {
+                await visitor.VisitAsync(ast, ctx);
+                ctx.GetFinalQueries(model);
+            };
             var error = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
             error.Message.Should().NotContain("workshopid", "a shape fault must not echo caller-supplied identifiers");
         }
@@ -57,7 +62,11 @@ namespace BifrostQL.Core.QueryModel
             var visitor = new SqlVisitor();
             var model = new DbModel { Tables = SqlVisitorToSqlTest.GetFakeTables() };
             var ast = Parser.Parse("query { work__shops { data { id sess:_join_sessions(on: {id: {_eq: workshopid} number: {_eq: status}}) { id } } } }");
-            var act = () => visitor.VisitAsync(ast, ctx).AsTask();
+            var act = async () =>
+            {
+                await visitor.VisitAsync(ast, ctx);
+                ctx.GetFinalQueries(model);
+            };
             await act.Should().ThrowAsync<BifrostExecutionError>();
         }
     }

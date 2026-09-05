@@ -22,7 +22,7 @@ public sealed class RawSqlValidatorTests
         .GetMethod("IsRawSqlEnabled", BindingFlags.Static | BindingFlags.NonPublic)!;
 
     private static string GetSchemaText(IDbModel model)
-        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     private static bool InvokeIsRawSqlEnabled(IDbModel model)
         => (bool)IsRawSqlEnabledMethod.Invoke(null, new object[] { model })!;

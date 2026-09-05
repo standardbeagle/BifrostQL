@@ -70,9 +70,9 @@ public sealed class StateMachineTransitionsTests
         var model = BuildModel();
 
         var memberSdl = new TableSchemaGenerator(model.GetTableFromDbName("Members"))
-            .GetTableTypeDefinition(model, includeDynamicJoins: false);
+            .GetTableTypeDefinition(model);
         var noteSdl = new TableSchemaGenerator(model.GetTableFromDbName("Notes"))
-            .GetTableTypeDefinition(model, includeDynamicJoins: false);
+            .GetTableTypeDefinition(model);
 
         memberSdl.Should().Contain("_availableTransitions : [String!]");
         noteSdl.Should().NotContain("_availableTransitions");

@@ -10,7 +10,7 @@ namespace BifrostQL.Core.Schema
 {
     internal static class SchemaGenerator
     {
-        public static string SchemaTextFromModel(IDbModel model, bool includeDynamicJoins = true)
+        public static string SchemaTextFromModel(IDbModel model)
         {
             var builder = new StringBuilder();
             var typeMapper = model.TypeMapper;
@@ -75,12 +75,7 @@ namespace BifrostQL.Core.Schema
 
             foreach (var generator in tableGenerators)
             {
-                if (includeDynamicJoins)
-                {
-                    builder.AppendLine(generator.GetDynamicJoinDefinition(model, false));
-                    builder.AppendLine(generator.GetDynamicJoinDefinition(model, true));
-                }
-                builder.AppendLine(generator.GetTableTypeDefinition(model, includeDynamicJoins));
+                builder.AppendLine(generator.GetTableTypeDefinition(model));
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
                 builder.AppendLine(generator.GetAggregateTypeDefinitions());
             }

@@ -123,10 +123,8 @@ namespace BifrostQL.Core.Schema
             // Table types, filter types, input types for this database
             foreach (var generator in tableGenerators)
             {
-                builder.AppendLine(generator.GetTableTypeDefinition(model, true));
+                builder.AppendLine(generator.GetTableTypeDefinition(model));
                 builder.AppendLine(generator.GetPagedTableTypeDefinition());
-                builder.AppendLine(generator.GetDynamicJoinDefinition(model, false));
-                builder.AppendLine(generator.GetDynamicJoinDefinition(model, true));
                 // A history target has no mutation field, so its mutation input
                 // types would be unreferenced orphans — skip them, mirroring
                 // SchemaGenerator. Its filter/sort/enum types below stay: the

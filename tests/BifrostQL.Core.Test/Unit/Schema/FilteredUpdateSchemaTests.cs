@@ -20,7 +20,7 @@ public sealed class FilteredUpdateSchemaTests
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;
 
     private static string GetSchemaText(IDbModel model)
-        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     private static IDbModel BuildModel(bool optIn)
         => DbModelTestFixture.Create()

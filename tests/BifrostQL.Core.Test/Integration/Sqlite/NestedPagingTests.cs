@@ -79,7 +79,7 @@ public sealed class NestedPagingTests : IAsyncLifetime
         // The posts collection on blogs is a multi-link, so it must surface the
         // paged wrapper plus limit/offset/sort args.
         var blogs = _model.GetTableFromDbName("blogs");
-        var sdl = new TableSchemaGenerator(blogs).GetTableTypeDefinition(_model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(blogs).GetTableTypeDefinition(_model);
 
         sdl.Should().Contain("posts(filter: TableFilterpostsInput, limit: Int, offset: Int, sort: [postsSortEnum!]) : posts_paged");
     }

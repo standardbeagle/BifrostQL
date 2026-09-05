@@ -103,13 +103,18 @@ public sealed class AdvertisedSchemaShapeTests : IAsyncLifetime
 
             foreach (var field in rowType!.Fields)
             {
-                if (Named(field.ResolvedType) is not IComplexGraphType)
-                    continue; // scalar/enum column fields execute trivially with the root read
+                var isObjectField = Named(field.ResolvedType) is IComplexGraphType;
+                var hasRequiredArgs = field.Arguments?.Any(a => a.ResolvedType is NonNullGraphType && a.DefaultValue is null) == true;
+                if (!isObjectField && !hasRequiredArgs)
+                    continue; // plain scalar/enum column fields execute trivially with the root read
 
+                var args = FillArguments(field, 0, out var argReason);
+                if (args is null)
+                    throw new InvalidOperationException($"Field '{table.GraphQlName}.{field.Name}' shape cannot be exercised: {argReason}");
                 var selection = MinimalSelection(field, 0, out var reason);
-                if (selection is null)
+                if (selection is null && reason != null)
                     throw new InvalidOperationException($"Field '{table.GraphQlName}.{field.Name}' shape cannot be exercised: {reason}");
-                var document = $"{{ {table.GraphQlName} {{ data {{ {field.Name}{selection} }} }} }}";
+                var document = $"{{ {table.GraphQlName} {{ data {{ {field.Name}{args}{selection} }} }} }}";
                 await ExecuteAndAssertNoErrors(document, $"relationship field '{table.GraphQlName}.{field.Name}'");
                 executed.Add($"{table.GraphQlName}.{field.Name}");
             }
@@ -118,7 +123,7 @@ public sealed class AdvertisedSchemaShapeTests : IAsyncLifetime
         // Closed enumeration: FK-derived relationship shapes on the row types —
         // single-link (posts.blog) and multi-link (blogs.posts) — plus the _agg
         // column aggregate. No other object-typed field may be advertised.
-        executed.Should().Contain(new[] { "blogs._agg", "blogs.posts", "posts._agg", "posts.blog" });
+        executed.Should().Contain(new[] { "blogs._agg", "blogs.posts", "posts._agg", "posts.blogs" });
         executed.Should().HaveCount(4, "every advertised relationship shape is enumerated above; a new shape requires a deliberate fixture update");
     }
 
@@ -163,27 +168,33 @@ public sealed class AdvertisedSchemaShapeTests : IAsyncLifetime
         if (field.Arguments is null)
             return string.Empty;
         var parts = new List<string>();
+        var enumArgsFilled = 0;
         foreach (var arg in field.Arguments)
         {
             if (arg.ResolvedType is not NonNullGraphType nonNull || arg.DefaultValue is not null)
                 continue; // optional — the client may narrow, never must
-            var literal = LiteralFor(nonNull.ResolvedType!, depth, out reason);
+            // Distinct enum values per argument position: a pivot's rowKeys and
+            // pivotColumn must name different columns.
+            var literal = LiteralFor(nonNull.ResolvedType!, depth, enumArgsFilled, out reason);
             if (literal is null)
                 return null;
+            if (Named(nonNull.ResolvedType) is EnumerationGraphType
+                || (nonNull.ResolvedType is ListGraphType list && Named(list.ResolvedType) is EnumerationGraphType))
+                enumArgsFilled++;
             parts.Add($"{arg.Name}: {literal}");
         }
         return parts.Count == 0 ? string.Empty : $"({string.Join(", ", parts)})";
     }
 
-    private static string? LiteralFor(IGraphType type, int depth, out string? reason)
+    private static string? LiteralFor(IGraphType type, int depth, int enumOrdinal, out string? reason)
     {
         reason = null;
         switch (type)
         {
             case NonNullGraphType nn:
-                return LiteralFor(nn.ResolvedType!, depth, out reason);
+                return LiteralFor(nn.ResolvedType!, depth, enumOrdinal, out reason);
             case ListGraphType list:
-                var inner = LiteralFor(list.ResolvedType!, depth, out reason);
+                var inner = LiteralFor(list.ResolvedType!, depth, enumOrdinal, out reason);
                 return inner is null ? null : $"[{inner}]";
             case EnumerationGraphType enumeration:
                 var values = enumeration.Values?.Select(v => v.Name).ToList() ?? new List<string>();
@@ -192,15 +203,23 @@ public sealed class AdvertisedSchemaShapeTests : IAsyncLifetime
                     reason = "enum with no values";
                     return null;
                 }
-                return values.FirstOrDefault(v => v.Equals("count", StringComparison.OrdinalIgnoreCase)) ?? values[0];
+                return values.FirstOrDefault(v => v.Equals("count", StringComparison.OrdinalIgnoreCase))
+                    ?? values[enumOrdinal % values.Count];
             case IInputObjectGraphType input when depth < 3:
-                var first = input.Fields.FirstOrDefault();
+                // Nested `_agg` values must route through a relationship link, so
+                // the OUTERMOST input prefers an input-object (link) field; deeper
+                // inputs terminate on the bare `column` leaf (the link inputs form
+                // a cycle across FK-related tables).
+                var first = (depth == 0
+                        ? input.Fields.FirstOrDefault(f => Named(f.ResolvedType) is IInputObjectGraphType)
+                        : null)
+                    ?? input.Fields.FirstOrDefault();
                 if (first is null)
                 {
                     reason = "input object with no fields";
                     return null;
                 }
-                var leaf = LiteralFor(first.ResolvedType!, depth + 1, out reason);
+                var leaf = LiteralFor(first.ResolvedType!, depth + 1, 0, out reason);
                 return leaf is null ? null : $"{{ {first.Name}: {leaf} }}";
             case ScalarGraphType scalar:
                 return scalar.Name switch
@@ -211,7 +230,7 @@ public sealed class AdvertisedSchemaShapeTests : IAsyncLifetime
                     _ => nullWithReason(out reason, $"cannot synthesize a literal for scalar '{scalar.Name}'"),
                 };
             default:
-                reason = $"cannot synthesize a literal for '{type}'";
+                reason = $"cannot synthesize a literal for '{type}' (runtime type {type.GetType().FullName})";
                 return null;
         }
 
@@ -233,11 +252,13 @@ public sealed class AdvertisedSchemaShapeTests : IAsyncLifetime
     private static string? SelectionFor(IComplexGraphType type, int depth, out string? reason)
     {
         reason = null;
-        // A grouped-aggregate row must select an aggregate datum (_count) — group
-        // keys alone are a refused shape — so prefer it over plain columns.
+        // A grouped-aggregate row must select an aggregate datum (_count) and
+        // nothing ungrouped — group keys alone are a refused shape.
+        var countField = type.Fields.FirstOrDefault(f => f.Name == "_count");
+        if (countField is not null)
+            return "{ _count }";
         var leaves = type.Fields
             .Where(f => Named(f.ResolvedType) is not IComplexGraphType)
-            .OrderByDescending(f => f.Name == "_count")
             .Take(2)
             .ToList();
         if (leaves.Count > 0)

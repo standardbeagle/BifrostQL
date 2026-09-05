@@ -676,11 +676,10 @@ public class StoredProcedureSchemaGenerationTests
 
     private static string GetSchemaText(IDbModel model)
     {
-        var includeDynamicJoins = model.GetMetadataBool("dynamic-joins", true);
         var method = typeof(DbSchema).Assembly
             .GetType("BifrostQL.Core.Schema.SchemaGenerator")!
             .GetMethod("SchemaTextFromModel", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public)!;
-        return (string)method.Invoke(null, new object[] { model, includeDynamicJoins })!;
+        return (string)method.Invoke(null, new object[] { model })!;
     }
 
     private static string ExtractTypeBlock(string schemaText, string typePrefix)

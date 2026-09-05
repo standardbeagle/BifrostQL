@@ -13,8 +13,7 @@ namespace BifrostQL.Core.Schema
         public static ISchema FromModel(IDbModel model, BifrostProfile? profile)
         {
             // profile reserved for per-profile schema gating (Slice 3)
-            var includeDynamicJoins = model.GetMetadataBool(MetadataKeys.Relationships.DynamicJoins, true);
-            var schemaText = SchemaGenerator.SchemaTextFromModel(model, includeDynamicJoins);
+            var schemaText = SchemaGenerator.SchemaTextFromModel(model);
             var dispatcher = new BifrostDispatcher(model);
             var schema = GraphQL.Types.Schema.For<DbSchemaBuilder>(schemaText, builder =>
             {

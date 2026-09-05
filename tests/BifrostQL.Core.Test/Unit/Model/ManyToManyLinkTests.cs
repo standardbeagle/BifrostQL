@@ -19,8 +19,8 @@ public sealed class ManyToManyLinkTests
         .GetType("BifrostQL.Core.Schema.SchemaGenerator")!
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;
 
-    private static string GetSchemaText(IDbModel model, bool includeDynamicJoins = false)
-        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, includeDynamicJoins })!;
+    private static string GetSchemaText(IDbModel model)
+        => (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     #region Auto-Detection via Foreign Keys
 

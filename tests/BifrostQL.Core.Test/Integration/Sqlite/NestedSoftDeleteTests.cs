@@ -80,7 +80,7 @@ public sealed class NestedSoftDeleteTests : IAsyncLifetime
     public void Schema_NestedMultiLink_SoftDeleteTable_EmitsIncludeDeletedArg()
     {
         var blogs = _model.GetTableFromDbName("blogs");
-        var sdl = new TableSchemaGenerator(blogs).GetTableTypeDefinition(_model, includeDynamicJoins: false);
+        var sdl = new TableSchemaGenerator(blogs).GetTableTypeDefinition(_model);
 
         // The nested posts collection must surface the soft-delete query args.
         sdl.Should().Contain("_includeDeleted: Boolean");

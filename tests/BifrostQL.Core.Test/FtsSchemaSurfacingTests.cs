@@ -21,7 +21,7 @@ public class FtsSchemaSurfacingTests
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;
 
     private static string SchemaText(IDbModel model) =>
-        (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model, true })!;
+        (string)SchemaTextFromModelMethod.Invoke(null, new object[] { model })!;
 
     // articles(id, title, body) with title/body declared searchable.
     private static IDbModel BuildSearchableModel() =>

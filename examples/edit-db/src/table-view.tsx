@@ -17,6 +17,7 @@ import { Table, Column } from './types/schema';
 import type { DrillFrame } from './lib/drill-stack';
 import { encodePkRoute, parsePkRoute, pkFilterFor, rowIdOf, buildPkEqFilter, type PkFilter } from './lib/row-id';
 import { buildSingleRowQuery, buildRowsByPkQuery } from './lib/query-builder';
+import { describeDeleteRows } from './lib/delete-summary';
 import { buildColumnFilters, getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
 import type { ColumnFiltersState } from '@tanstack/react-table';
@@ -169,6 +170,15 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
     }, [deleteTarget, deleteMutation]);
 
     const deleteCount = deleteTarget?.type === 'batch' ? deleteTarget.pks.length : 1;
+
+    // Name the rows in the confirmation. "Delete 1 row?" asks the reader to
+    // trust that the row they meant is the row that was selected, which is the
+    // one thing a confirmation exists to check.
+    const deleteSummary = useMemo(() => {
+        if (!deleteTarget) return null;
+        const pks = deleteTarget.type === 'batch' ? deleteTarget.pks : [deleteTarget.pk];
+        return describeDeleteRows(pks, rows as readonly Record<string, unknown>[]);
+    }, [deleteTarget, rows]);
 
     // Keep the expand callback's row mirror current (see rowsRef above).
     rowsRef.current = rows as readonly Record<string, unknown>[];
@@ -527,6 +537,16 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 title={`Delete ${deleteCount} ${deleteCount === 1 ? 'row' : 'rows'}?`}
                 description={
                     <>
+                        {deleteSummary && deleteSummary.labels.length > 0 && (
+                            <ul className="mb-2 list-none space-y-0.5 text-sm font-medium">
+                                {deleteSummary.labels.map((label) => (
+                                    <li key={label} className="truncate">{label}</li>
+                                ))}
+                                {deleteSummary.remaining > 0 && (
+                                    <li className="text-muted-foreground">and {deleteSummary.remaining} more</li>
+                                )}
+                            </ul>
+                        )}
                         <p>This action cannot be undone.</p>
                         {deleteMutation.error && (
                             <p className="mt-2 text-sm text-destructive">{deleteMutation.error.message}</p>

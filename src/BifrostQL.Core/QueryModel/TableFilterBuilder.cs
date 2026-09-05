@@ -4,7 +4,7 @@ namespace BifrostQL.Core.QueryModel
 {
     /// <summary>
     /// Public, validating fluent builder for <see cref="TableFilter"/>. The renderer
-    /// (<see cref="TableFilter.ToSqlParameterized"/>) already supports comparison, IN,
+    /// (<c>TableFilter.RenderParts</c>) already supports comparison, IN,
     /// NULL, BETWEEN (range), OR, and single-link relationship predicates — but
     /// <c>TableFilter</c>'s constructor is <c>internal</c> and the only public factory
     /// (<see cref="Modules.TableFilterFactory"/>) builds just eq/in/null, so consumer

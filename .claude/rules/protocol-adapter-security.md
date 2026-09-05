@@ -590,8 +590,18 @@ code, not just re-checks of pgwire.
     holds (here: BifrostQL.Mcp and out-of-tree callers cannot mint; reflection
     is not a wire and is out of the threat model), never to delete the sentence.
 
-    Same shape is pending on the workflow-trigger suppression flag
-    (`01M1KPA21MXSV6WS059S21BB81`).
+    **Fourth instance: `WorkflowTriggerSuppression`** (`17b06d8e`, task
+    `01M1KPA21MXSV6WS059S21BB81`). The workflow-trigger suppression flag was
+    `UserContext["_bifrostSuppressWorkflowTriggers"] is bool` — a typed claim from
+    any identity provider, or a wire-context entry, silenced every post-commit
+    observer for that request. Now `WorkflowTriggerHost` stamps the sealed marker
+    and `MutationNotifier.IsWorkflowTriggerSuppressed` checks reference equality
+    against `WorkflowTriggerSuppression.Instance`. The strip in
+    `IdentityContextMapper`/`WireContextMerger` is defense-in-depth only: the
+    Server's legacy per-claim-type projection (`BifrostContext`) still copies an
+    unknown claim type under the key as a `string[]`, and the reference gate is
+    what refuses it. When both halves exist, the gate is the load-bearing one;
+    a test that only proves the strip has not proved the privilege is closed.
 
     **`_hardDelete` (M4) resolved differently, and the difference is the rule.**
     A token is for a privilege no external caller may ever hold. `_hardDelete`

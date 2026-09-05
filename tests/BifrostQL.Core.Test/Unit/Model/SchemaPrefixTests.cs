@@ -90,8 +90,6 @@ public class SchemaPrefixTests
         orders.ColumnFilterTypeName.Should().Be("FilterTypesales_OrdersEnumInput");
         orders.TableFilterTypeName.Should().Be("TableFiltersales_OrdersInput");
         orders.TableColumnSortEnumName.Should().Be("sales_OrdersSortEnum");
-        orders.JoinFieldName.Should().Be("_join_sales_Orders");
-        orders.SingleFieldName.Should().Be("_single_sales_Orders");
         orders.AggregateValueTypeName.Should().Be("sales_Orders_AggregateValue");
         orders.GetActionTypeName(MutateActions.Insert).Should().Be("Insert_sales_Orders");
     }

@@ -44,8 +44,6 @@ namespace BifrostQL.Core.Model
         public string ColumnFilterTypeName => $"FilterType{GraphQlName}EnumInput";
         public string TableFilterTypeName => $"TableFilter{GraphQlName}Input";
         public string TableColumnSortEnumName => $"{GraphQlName}SortEnum";
-        public string JoinFieldName => $"_join_{GraphQlName}";
-        public string SingleFieldName => $"_single_{GraphQlName}";
         public string AggregateValueTypeName => $"{GraphQlName}_AggregateValue";
         public bool MatchName(string fullName) =>
             string.Equals(FullName, fullName, StringComparison.InvariantCultureIgnoreCase)

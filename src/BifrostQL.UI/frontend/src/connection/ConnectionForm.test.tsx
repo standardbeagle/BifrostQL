@@ -149,3 +149,68 @@ describe('ConnectionForm database discovery', () => {
     expect(alert.textContent).toMatch(/no databases/i);
   });
 });
+
+/**
+ * M26b follow-up: with peer auth the form hardcoded `psqlUser: 'postgres'`,
+ * so on any host not logged in as `postgres` the listing was refused. The form
+ * must default to the host's current user (always permitted by the gate) and
+ * only offer accounts the host reports as permitted.
+ */
+describe('ConnectionForm peer auth OS user', () => {
+  const loadButton = () => screen.getByTitle('Load databases from server');
+
+  beforeEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const peerUsersPayload = { current: 'alice', permitted: ['alice', 'postgres'] };
+
+  function stubPeerFetch(databasesResponse: Partial<Response>) {
+    const posts: { url: string; body: string }[] = [];
+    vi.stubGlobal('fetch', vi.fn((input: unknown, init?: { body?: string }) => {
+      const url = String(input);
+      if (url.includes('/api/databases/peer-users')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(peerUsersPayload) } as Response);
+      }
+      posts.push({ url, body: init?.body ?? '' });
+      return Promise.resolve(databasesResponse as Response);
+    }));
+    return posts;
+  }
+
+  async function renderPeerForm(posts: unknown) {
+    render(<ConnectionForm provider="postgres" onConnect={() => {}} onBack={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/Peer \/ Ident/i));
+    // Wait for the permitted-user choices before interacting, so the form has
+    // settled on its default OS user.
+    await screen.findByLabelText(/OS user/i);
+    fireEvent.click(loadButton());
+    return posts as { url: string; body: string }[];
+  }
+
+  it('submits the host current user, not a hardcoded postgres', async () => {
+    const posts = stubPeerFetch({ ok: true, json: () => Promise.resolve({ databases: ['appdb'] }) });
+
+    await renderPeerForm(posts);
+
+    await waitFor(() => expect(posts.some((p) => p.url === '/api/databases')).toBe(true));
+    const payload = JSON.parse(posts.find((p) => p.url === '/api/databases')!.body);
+    expect(payload.peerAuth).toBe(true);
+    expect(payload.psqlUser).toBe('alice');
+  });
+
+  it('renders a refusal as a validation message naming the permitted accounts', async () => {
+    const posts = stubPeerFetch({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({
+        error: 'The requested psql OS user is not permitted. Permitted accounts for peer auth: alice.',
+      }),
+    });
+
+    await renderPeerForm(posts);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Permitted accounts for peer auth: alice');
+    expect(alert.textContent).not.toMatch(/server returned 400/);
+  });
+});

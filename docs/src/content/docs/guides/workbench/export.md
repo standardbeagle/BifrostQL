@@ -25,7 +25,13 @@ in the repo.
   `+`, `-`, `@`, tab, or carriage return gets a leading apostrophe so a
   spreadsheet opens it as text instead of running it as a formula. Numeric
   column values arrive typed and are left alone, so a negative number stays a
-  number.
+  number. That exemption is a `typeof value === 'string'` test, so it depends on
+  the wire type: `Int`, `BigInt` and `Decimal` serialize as JSON numbers today
+  (`ExactNumericScalars` adds no custom `Serialize`, and the client parses the
+  response with plain `JSON.parse`), so a `-5` cell is a JS number. If a numeric
+  scalar is ever serialized as a decimal string — the input direction already
+  accepts one — every negative value in that column starts getting an
+  apostrophe. Change the guard with the serializer, not after a bug report.
 - **BigInt-safe JSON.** A BigInt primary-key value round-trips without precision
   loss (carried as a string, never a `Number`-coerced value), and dates keep a
   documented, stable format.

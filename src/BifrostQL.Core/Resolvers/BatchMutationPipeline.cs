@@ -41,9 +41,25 @@ namespace BifrostQL.Core.Resolvers
         /// The table's maximum batch size (<see cref="MetadataKeys.Batch.MaxSize"/>,
         /// default 100), enforced on every batch entry point.
         /// </summary>
+        /// <summary>
+        /// The table's maximum batch size (<see cref="MetadataKeys.Batch.MaxSize"/>,
+        /// default 100), enforced on every batch entry point. ModelConfigValidator
+        /// rejects a malformed value at model load; this backstop covers models built
+        /// without validation, surfacing a wire-safe <see cref="BifrostExecutionError"/>
+        /// instead of a raw <see cref="InvalidOperationException"/>.
+        /// </summary>
         internal static int GetMaxBatchSize(IDbTable table)
-            => Utils.MetadataNumber.PositiveInt(
-                table.GetMetadataValue(MetadataKeys.Batch.MaxSize), DefaultMaxBatchSize, MetadataKeys.Batch.MaxSize);
+        {
+            try
+            {
+                return Utils.MetadataNumber.PositiveInt(
+                    table.GetMetadataValue(MetadataKeys.Batch.MaxSize), DefaultMaxBatchSize, MetadataKeys.Batch.MaxSize);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new BifrostExecutionError(ex.Message, ex);
+            }
+        }
 
         /// <summary>
         /// Executes the batch inside one transaction and returns the total affected

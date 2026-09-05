@@ -64,6 +64,7 @@ namespace BifrostQL.Core.Model
                 ValidateHistoryTokens(table, errors);
                 ValidateFtsColumns(table, errors);
                 ValidateRetention(table, errors);
+                ValidateNumericWriteLimits(table, errors);
                 ValidateDeferred(table, errors);
                 ValidateApproval(table, errors);
                 ValidateFeed(table, errors);
@@ -376,6 +377,39 @@ namespace BifrostQL.Core.Model
                     ? MetadataKeys.Retention.Retain
                     : MetadataKeys.Retention.Ttl;
                 errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Fail-fast validation for the numeric write-path limits
+        /// (<c>batch-max-size</c> / <c>bulk-batch-threshold</c> /
+        /// <c>filtered-update-max-affected</c>). These are operator-facing caps parsed
+        /// per request; a typo would otherwise surface as an error on the first
+        /// mutation instead of failing model load. Reuses the runtime parsers
+        /// (<see cref="BatchMutationPipeline.GetMaxBatchSize"/> et al.) so validation
+        /// cannot drift from runtime behavior — note the runtime backstop throws
+        /// <see cref="BifrostExecutionError"/>, whose message names the offending key.
+        /// </summary>
+        private static void ValidateNumericWriteLimits(IDbTable table, List<string> errors)
+        {
+            foreach (var (key, parse) in new (string Key, Func<IDbTable, int> Parse)[]
+            {
+                (MetadataKeys.Batch.MaxSize, BatchMutationPipeline.GetMaxBatchSize),
+                (MetadataKeys.Batch.BulkThreshold, Resolvers.BulkBatch.BulkBatchPlanBuilder.GetBulkThreshold),
+                (MetadataKeys.FilteredUpdate.MaxAffected, Modules.FilteredUpdateConfig.MaxAffected),
+            })
+            {
+                if (string.IsNullOrWhiteSpace(table.GetMetadataValue(key)))
+                    continue; // Absent means the runtime default applies — nothing to validate.
+
+                try
+                {
+                    parse(table);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add(Problem(table, key, table.GetMetadataValue(key), ex.Message));
+                }
             }
         }
 

@@ -41,7 +41,9 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 return DefaultBulkThreshold;
             if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
                 return parsed;
-            throw new InvalidOperationException(
+            // Backstop for models built without ModelConfigValidator (which rejects a
+            // malformed threshold at load): fail the request with a wire-safe error.
+            throw new BifrostExecutionError(
                 $"Metadata '{MetadataKeys.Batch.BulkThreshold}' must be an integer, but was '{raw}'.");
         }
 

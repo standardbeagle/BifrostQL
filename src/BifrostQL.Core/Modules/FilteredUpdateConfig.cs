@@ -17,8 +17,22 @@ public static class FilteredUpdateConfig
     public static bool IsEnabled(IDbTable table) =>
         string.Equals(table.GetMetadataValue(MetadataKeys.FilteredUpdate.Enabled), EnabledValue, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Max rows one filtered update may affect (default 100, aligned with batch-max-size).</summary>
-    public static int MaxAffected(IDbTable table) =>
-        Utils.MetadataNumber.PositiveInt(
-            table.GetMetadataValue(MetadataKeys.FilteredUpdate.MaxAffected), DefaultMaxAffected, MetadataKeys.FilteredUpdate.MaxAffected);
+    /// <summary>
+    /// Max rows one filtered update may affect (default 100, aligned with batch-max-size).
+    /// ModelConfigValidator rejects a malformed value at model load; this backstop covers
+    /// models built without validation, surfacing a wire-safe BifrostExecutionError
+    /// instead of a raw InvalidOperationException.
+    /// </summary>
+    public static int MaxAffected(IDbTable table)
+    {
+        try
+        {
+            return Utils.MetadataNumber.PositiveInt(
+                table.GetMetadataValue(MetadataKeys.FilteredUpdate.MaxAffected), DefaultMaxAffected, MetadataKeys.FilteredUpdate.MaxAffected);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new Resolvers.BifrostExecutionError(ex.Message, ex);
+        }
+    }
 }

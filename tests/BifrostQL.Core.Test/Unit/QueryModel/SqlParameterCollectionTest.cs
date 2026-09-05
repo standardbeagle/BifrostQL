@@ -32,6 +32,43 @@ public sealed class SqlParameterCollectionTest
 
     #endregion
 
+    #region AddParameter return value
+
+    [Fact]
+    public void AddParameter_ReturnsTheBoundInfo()
+    {
+        // Callers that bind several values (TableFilter's _in/_between/_like) used
+        // to recover their own parameters via Parameters.TakeLast(n), which
+        // re-materializes and re-sorts the whole collection per bind — O(n² log n)
+        // on wide _in lists. AddParameter returns the SqlParameterInfo it bound so
+        // callers keep it directly.
+        var sut = new SqlParameterCollection();
+
+        var info = sut.AddParameter(42, "int");
+
+        info.Name.Should().Be("@p0");
+        info.Value.Should().Be(42);
+        info.DbType.Should().Be("int");
+        sut.Parameters.Should().ContainSingle().Which.Should().Be(info);
+    }
+
+    [Fact]
+    public void AddParameters_ReturnedInfos_MatchBindOrder()
+    {
+        // Binding N values must yield N parameters whose names appear in the SQL
+        // in the same order the values were bound; a mutant returning the wrong
+        // info (e.g. off-by-one index) must go RED here.
+        var sut = new SqlParameterCollection();
+
+        var infos = new[] { "a", "b", "c" }.Select(v => sut.AddParameter(v)).ToList();
+
+        infos.Select(i => i.Name).Should().Equal("@p0", "@p1", "@p2");
+        infos.Select(i => i.Value).Should().Equal("a", "b", "c");
+        sut.Parameters.Select(p => p.Name).Should().Equal("@p0", "@p1", "@p2");
+    }
+
+    #endregion
+
     #region AddParameter Tests
 
     [Fact]

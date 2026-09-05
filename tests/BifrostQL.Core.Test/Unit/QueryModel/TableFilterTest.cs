@@ -659,6 +659,25 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public void Builder_In_ParametersMatchSqlPlaceholdersInBindOrder()
+        {
+            // Wide _in lists must bind one parameter per value, in order, and the
+            // ParameterizedSql must carry exactly those SqlParameterInfo objects —
+            // a mutant that re-reads the shared collection (e.g. TakeLast over a
+            // mutated set) or binds a different value goes RED.
+            var filter = TableFilterBuilder.For(BuilderTable())
+                .In("id", new object?[] { "AAA", "BBB", "CCC" })
+                .Build();
+            var parameters = new SqlParameterCollection();
+
+            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+
+            sut.Sql.Should().Contain("IN (@p0,@p1,@p2)");
+            sut.Parameters.Select(p => p.Name).Should().Equal("@p0", "@p1", "@p2");
+            sut.Parameters.Select(p => p.Value).Should().Equal("AAA", "BBB", "CCC");
+        }
+
+        [Fact]
         public void Builder_UnknownOperator_ThrowsAtBuildTime()
         {
             var act = () => TableFilterBuilder.For(BuilderTable()).Compare("id", "_bogus", 1);

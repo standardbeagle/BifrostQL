@@ -22,6 +22,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 ### Breaking — `_join` / `_single` containers and `dynamic-joins` removed
 
 - Every row type used to advertise `_join: <T>_join` and `_single: <T>_single` container fields whose `<table>(on: [String!])` members could never execute (the query builder only understood an `on: { column: { _eq: column } }` object and threw on the bare container). The containers, their `<T>_join`/`<T>_single` types, and the model-level `dynamic-joins` metadata switch (`MetadataKeys.Relationships.DynamicJoins`) are gone. `dynamic-joins` is now an unrecognized `:root` key, so a model that still declares it fails to load with the standard unknown-key error. Migration: delete `dynamic-joins` from `:root` metadata and use the FK-derived and `join`-declared relationship fields. The explicit `_join_<table>` query path now accepts only `_eq`/`_neq` as the `on` operator and reports every shape fault as an identifier-free `BifrostExecutionError`.
+- The name producers for the removed containers are gone too: the two `_join_`-/`_single_`-prefixed field-name properties on `IDbTable` (and their `DbTable` implementations) are deleted. They had no remaining consumer after the container removal, and keeping them invited a future SDL emitter to re-wire a shape the query builder cannot execute. Breaking for out-of-tree `IDbTable` implementers only.
 
 ### Breaking — `_hardDelete` requires the `soft-delete-hard-role` opt-in
 

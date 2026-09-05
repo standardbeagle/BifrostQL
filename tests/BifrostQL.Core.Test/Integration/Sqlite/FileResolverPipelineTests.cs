@@ -51,6 +51,8 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
         "main.hist_docs { history: enabled }",
         "main.cdc_docs { emit-events: insert,update,delete; event-payload: changed }",
         "main.ver_docs { concurrency-token: row_version }",
+        "main.dec_docs { concurrency-token: row_version }",
+        "main.dt_docs { concurrency-token: row_version }",
     };
 
     public async Task InitializeAsync()
@@ -64,6 +66,8 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
         await Exec("CREATE TABLE hist_docs (id INTEGER PRIMARY KEY, file_data TEXT NULL)");
         await Exec("CREATE TABLE cdc_docs (id INTEGER PRIMARY KEY, file_data TEXT NULL)");
         await Exec("CREATE TABLE ver_docs (id INTEGER PRIMARY KEY, row_version INTEGER NOT NULL, file_data TEXT NULL)");
+        await Exec("CREATE TABLE dec_docs (id INTEGER PRIMARY KEY, row_version NUMERIC NOT NULL, file_data TEXT NULL)");
+        await Exec("CREATE TABLE dt_docs (id INTEGER PRIMARY KEY, row_version DATETIME NOT NULL, file_data TEXT NULL)");
         // A key column whose name is not a valid ADO parameter identifier: the raw
         // `@{k}` placeholders the hand-rolled SQL built could never bind it.
         await Exec("CREATE TABLE space_docs (\"doc id\" INTEGER PRIMARY KEY, file_data TEXT NULL)");
@@ -156,7 +160,7 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
     private async Task<IDbModel> LoadModelAsync()
     {
         var model = await new DbModelLoader(_connFactory, new MetadataLoader(Rules)).LoadAsync();
-        foreach (var table in new[] { "gated_docs", "hist_docs", "cdc_docs", "ver_docs", "space_docs", "part_docs" })
+        foreach (var table in new[] { "gated_docs", "hist_docs", "cdc_docs", "ver_docs", "dec_docs", "dt_docs", "space_docs", "part_docs" })
         {
             var column = model.GetTableFromDbName(table).ColumnLookup["file_data"];
             column.Metadata[MetadataKeys.Storage.Config] = "provider:recording;bucket:bucket";
@@ -459,6 +463,86 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
         (await Scalar("SELECT file_data FROM ver_docs WHERE id = 2")).Should().BeNull();
         _storage.DeletedKeys.Should().ContainSingle(
             "the object this call uploaded is unreferenced once the guarded write is rejected");
+    }
+
+    // ---- culture-invariant token parsing (CoerceToken) ----
+
+    /// <summary>
+    /// The token arrives on the GraphQL wire in invariant (dot-decimal) form regardless
+    /// of host culture. Under a comma-decimal culture (de-DE), culture-sensitive
+    /// <c>decimal.Parse</c> reads "1.5" as 15, so the guard predicate misses the row
+    /// and a CORRECT token reads as CONFLICT — a lost write for the client. Parse must
+    /// be invariant-culture.
+    /// </summary>
+    [Fact]
+    public async Task Delete_OnDecimalTokenTable_UnderCommaDecimalCulture_TheCurrentDotDecimalToken_Succeeds()
+    {
+        await Exec($"INSERT INTO dec_docs(id, row_version, file_data) VALUES (1, 1.5, '{Pointer("dec.bin")}')");
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileDeleteResolver(_storageService);
+
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+        try
+        {
+            var result = await resolver.ResolveAsync(Context(model, services, "dec_docs", "1",
+                new Dictionary<string, object?> { ["concurrencyToken"] = "1.5" }));
+
+            result.Should().Be(true, "\"1.5\" is the invariant wire form of the stored token");
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+        (await Scalar("SELECT file_data FROM dec_docs WHERE id = 1")).Should().BeNull();
+        Convert.ToDecimal(await Scalar("SELECT row_version FROM dec_docs WHERE id = 1"),
+                System.Globalization.CultureInfo.InvariantCulture)
+            .Should().Be(2.5m, "a guarded write advances the decimal token in the same statement");
+    }
+
+    /// <summary>
+    /// Temporal family: .NET parses ISO-8601 tokens culture-independently, so the
+    /// culture-divergent wire shape is the day/month-ambiguous form a dot-decimal
+    /// (en-US-style) client legitimately sends. Under de-DE, culture-sensitive
+    /// <c>DateTimeOffset.Parse</c> reads "09/05/2026" as 9 May instead of 5 September,
+    /// shifting the guard off the row — a correct token becomes a wrong one and the
+    /// write reads as CONFLICT. Invariant parsing keeps the guard on the stored value.
+    /// </summary>
+    [Fact]
+    public async Task Delete_OnDateTimeTokenTable_UnderCommaDecimalCulture_TheCurrentToken_Succeeds()
+    {
+        await using (var cmd = new SqliteCommand(
+            "INSERT INTO dt_docs(id, row_version, file_data) VALUES (1, $ts, $p)", _keepAlive))
+        {
+            cmd.Parameters.AddWithValue("$ts", new DateTimeOffset(2026, 9, 5, 12, 34, 56, TimeSpan.Zero));
+            cmd.Parameters.AddWithValue("$p", Pointer("dt.bin"));
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var stored = Convert.ToString(
+            await Scalar("SELECT row_version FROM dt_docs WHERE id = 1"),
+            System.Globalization.CultureInfo.InvariantCulture);
+        var model = await LoadModelAsync();
+        var services = BuildServices();
+        var resolver = new FileDeleteResolver(_storageService);
+
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+        try
+        {
+            var result = await resolver.ResolveAsync(Context(model, services, "dt_docs", "1",
+                new Dictionary<string, object?> { ["concurrencyToken"] = "09/05/2026 12:34:56 +00:00" }));
+
+            result.Should().Be(true, "the token names 5 September 2026, the stored value");
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+        (await Scalar("SELECT file_data FROM dt_docs WHERE id = 1")).Should().BeNull();
+        Convert.ToString(await Scalar("SELECT row_version FROM dt_docs WHERE id = 1"),
+                System.Globalization.CultureInfo.InvariantCulture)
+            .Should().NotBe(stored, "a guarded write restamps the datetime token");
     }
 
     /// <summary>

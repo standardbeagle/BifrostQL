@@ -27,6 +27,60 @@ public sealed class PsqlDatabaseListerTests
     }
 
     [Fact]
+    public void BuildProcessStartInfo_NullUser_RunsPlainPsql()
+    {
+        // No requested OS user -> psql runs as the invoking user; sudo is
+        // never involved.
+        var psi = PsqlDatabaseLister.BuildProcessStartInfo(null);
+
+        psi.FileName.Should().Be("psql");
+        psi.ArgumentList.Should().NotContain("-u");
+    }
+
+    [Fact]
+    public void BuildProcessStartInfo_CurrentUser_RunsPlainPsql()
+    {
+        // The host's own account is the form's default and needs no privilege
+        // escalation: sudo refuses `-u <self>` without a sudoers rule and is
+        // absent in containers, so routing the default through sudo breaks
+        // peer auth on exactly the hosts the default exists for.
+        var psi = PsqlDatabaseLister.BuildProcessStartInfo(Environment.UserName);
+
+        psi.FileName.Should().Be("psql",
+            "the current user needs no sudo; plain psql authenticates by peer");
+        psi.ArgumentList.Should().NotContain("-u");
+    }
+
+    [Fact]
+    public void BuildProcessStartInfo_AllowListedOtherUser_UsesSudo()
+    {
+        const string other = "bifrost-peer-test-account";
+        var previous = Environment.GetEnvironmentVariable("BIFROST_UI_PSQL_PEER_USERS");
+        Environment.SetEnvironmentVariable("BIFROST_UI_PSQL_PEER_USERS", other);
+        try
+        {
+            var psi = PsqlDatabaseLister.BuildProcessStartInfo(other);
+
+            psi.FileName.Should().Be("sudo",
+                "an allow-listed account other than the current user must go through sudo -u");
+            psi.ArgumentList.Should().Equal("-u", other, "psql");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("BIFROST_UI_PSQL_PEER_USERS", previous);
+        }
+    }
+
+    [Fact]
+    public void BuildProcessStartInfo_UnlistedUser_IsRefusedBeforeAnyProcess()
+    {
+        var act = () => PsqlDatabaseLister.BuildProcessStartInfo("root");
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*not*permitted*");
+    }
+
+    [Fact]
     public async Task ListDatabasesAsync_CurrentUser_IsNotRefused()
     {
         // The current OS user is always allowed. The refusal is the only outcome

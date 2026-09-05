@@ -33,34 +33,9 @@ namespace BifrostQL.UI.Web
                 psqlArgs.AddRange(new[] { "-p", port });
             }
 
-            var psi = new ProcessStartInfo();
-            if (!string.IsNullOrWhiteSpace(psqlUser))
-            {
-                // The caller picks the OS user psql runs as through sudo — refuse
-                // anyone but the current user or an explicit operator allow-list
-                // (BIFROST_UI_PSQL_PEER_USERS, comma-separated). Without this gate
-                // the desktop API is a privilege-escalation proxy.
-                if (!IsPsqlUserPermitted(psqlUser))
-                    throw new InvalidOperationException(
-                        "The requested psql OS user is not permitted. Permitted accounts for peer auth: " +
-                        string.Join(", ", GetPermittedPsqlUsers()) + ".");
-                // Use sudo -u <user> psql for peer auth as a different OS user
-                psi.FileName = "sudo";
-                psi.ArgumentList.Add("-u");
-                psi.ArgumentList.Add(psqlUser);
-                psi.ArgumentList.Add("psql");
-            }
-            else
-            {
-                psi.FileName = "psql";
-            }
+            var psi = BuildProcessStartInfo(psqlUser);
             foreach (var arg in psqlArgs)
                 psi.ArgumentList.Add(arg);
-
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
 
             using var proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start psql");
@@ -76,6 +51,39 @@ namespace BifrostQL.UI.Web
             }
 
             return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        /// <summary>
+        /// Builds the process invocation for the requested OS user. The caller
+        /// picks the OS user psql runs as through sudo — refuse anyone but the
+        /// current user or an explicit operator allow-list
+        /// (BIFROST_UI_PSQL_PEER_USERS, comma-separated). Without this gate the
+        /// desktop API is a privilege-escalation proxy.
+        /// </summary>
+        internal static ProcessStartInfo BuildProcessStartInfo(string? psqlUser)
+        {
+            var psi = new ProcessStartInfo();
+            if (!string.IsNullOrWhiteSpace(psqlUser))
+            {
+                if (!IsPsqlUserPermitted(psqlUser))
+                    throw new InvalidOperationException(
+                        "The requested psql OS user is not permitted. Permitted accounts for peer auth: " +
+                        string.Join(", ", GetPermittedPsqlUsers()) + ".");
+                // Use sudo -u <user> psql for peer auth as a different OS user
+                psi.FileName = "sudo";
+                psi.ArgumentList.Add("-u");
+                psi.ArgumentList.Add(psqlUser);
+                psi.ArgumentList.Add("psql");
+            }
+            else
+            {
+                psi.FileName = "psql";
+            }
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            return psi;
         }
 
         /// <summary>

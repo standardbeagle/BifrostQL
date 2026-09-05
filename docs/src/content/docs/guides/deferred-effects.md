@@ -79,8 +79,11 @@ example `90d` or `12h`. There is no default window. `hold-events` is optional. `
 parks outbound events until undo-window finalization; `until-approved` parks them until
 an authorized reviewer approves the live change or rejects it with a compensating undo.
 
-`deferrable` requires both `concurrency-token` and `history`; model loading rejects a
-partial configuration.
+`deferrable` requires both `concurrency-token` and `history`, and the `history` value
+must record `update` and `delete` (a bare `history: enabled` qualifies); model loading
+rejects a partial configuration, including a `history` subset such as
+`history: insert` — the undo path reconstructs reverse deltas from the history
+before-image, which is captured only for recorded operations.
 
 ## Durable-store contract
 

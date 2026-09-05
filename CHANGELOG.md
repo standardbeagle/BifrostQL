@@ -6,9 +6,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
-### Breaking — `TableFilter.ToSqlParameterized` removed; use `RenderParts`
+### Breaking — `TableFilter.ToSqlParameterized` removed; no public read-side render remains
 
-- The single-fragment render that concatenated `{joins} WHERE {where}` is gone. Splicing that fragment after a hard `WHERE` produced `WHERE INNER JOIN ...` once already, and with zero production callers left it survived only as a trap for the next assembler. `RenderParts` (returns `FilterParts` with separate `Joins` / `Where` / `Parameters`) is the only render entry point; place joins in the FROM clause and the predicate in the WHERE clause. The same-named `GqlAggregateColumn.ToSqlParameterized` / `GroupedAggregateQuery.ToSqlParameterized` overloads are different types and are unchanged. Breaking for out-of-tree `TableFilter` render callers only.
+- The single-fragment render that concatenated `{joins} WHERE {where}` is gone. Splicing that fragment after a hard `WHERE` produced `WHERE INNER JOIN ...` once already, and with zero production callers left it survived only as a trap for the next assembler. The engine renders filters through the internal `RenderParts` (separate `Joins` / `Where` / `Parameters`, each placed in its own clause); that seam is deliberately not public. Out-of-tree code that rendered a `TableFilter` to SQL itself has no replacement: hand the filter to the engine instead (`GqlObjectQuery.Filter` / `IQueryIntentExecutor`, or `MutationTransformResult.AdditionalFilter` on the write path). `RenderForMutation` stays public but accepts only the equality/IS NULL shapes mutation transformers produce. The same-named `GqlAggregateColumn.ToSqlParameterized` / `GroupedAggregateQuery.ToSqlParameterized` overloads are different types and are unchanged.
 
 ### Breaking — `PgLogin.Secret` replaced by a SCRAM verifier; `RespLogin.Secret` by `PasswordHash`
 

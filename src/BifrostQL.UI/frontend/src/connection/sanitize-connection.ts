@@ -25,11 +25,37 @@ function normalizeConnectionStringKey(key: string): string {
   return key.trim().toLowerCase().replace(/[_-]+/g, ' ');
 }
 
+/**
+ * Splits on ';' only outside single/double quotes. A bare split(";") breaks a
+ * quoted value containing a semicolon (Password="ab;cd") into an unkeyed tail
+ * (`cd"`), which then persists as a stray fragment of the secret.
+ */
+function splitConnectionStringParts(connectionString: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let quote: string | null = null;
+  for (const ch of connectionString) {
+    if (quote !== null) {
+      current += ch;
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+    } else if (ch === ';') {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
 export function redactConnectionStringSecrets(connectionString: string): string {
   if (!connectionString) return '';
 
-  return connectionString
-    .split(';')
+  return splitConnectionStringParts(connectionString)
     .map((part) => {
       const equalsIndex = part.indexOf('=');
       if (equalsIndex < 0) return part;

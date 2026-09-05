@@ -732,11 +732,23 @@ namespace BifrostQL.Server
 
             try
             {
+                // Per-message projection through the SAME shared gate as the upgrade-time
+                // check: one identity decision per mount, and a projection fault (unmapped
+                // OIDC issuer, subject-less principal) becomes an error frame here instead
+                // of escaping the message loop (M13).
+                var outcome = BifrostIdentityGate.Project(httpContext, out var userContext);
+                if (outcome == BifrostIdentityOutcome.Unprojectable)
+                {
+                    response.Type = BifrostMessageType.Error;
+                    response.Errors.Add("The caller identity is not accepted by this deployment.");
+                    return response;
+                }
+
                 var bifrostRequest = new BifrostRequest
                 {
                     Query = request.Query,
                     Variables = variables,
-                    UserContext = BifrostAuthContextFactory.Resolve(httpContext).CreateUserContext(httpContext),
+                    UserContext = userContext,
                     RequestServices = httpContext.RequestServices,
                     CancellationToken = httpContext.RequestAborted,
                 };
@@ -763,13 +775,6 @@ namespace BifrostQL.Server
                 {
                     response.Payload = await SerializeResultPayloadAsync(result, httpContext);
                 }
-            }
-            catch (UnmappedOidcIssuerException)
-            {
-                // Token from an OIDC issuer this deployment has not mapped — fail closed
-                // instead of degrading the principal through the local claim path.
-                response.Type = BifrostMessageType.Error;
-                response.Errors.Add("Forbidden: unrecognized token issuer");
             }
             catch (Exception ex)
             {

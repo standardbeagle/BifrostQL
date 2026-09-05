@@ -42,22 +42,39 @@ namespace BifrostQL.Server
                 return;
             }
 
-            var request = await _serializer.ReadAsync<GraphQLRequest>(context.Request.Body, context.RequestAborted);
+            // One funnel for body parse + identity projection + execution (M13): every
+            // condition maps to a GraphQL-shaped error with a status of its own — 400 for a
+            // malformed body, 403 for an unprojectable identity — and no exception text ever
+            // reaches the wire (.claude/rules/protocol-adapter-security.md invariants 3/10).
+            GraphQLRequest? request;
+            try
+            {
+                request = await _serializer.ReadAsync<GraphQLRequest>(context.Request.Body, context.RequestAborted);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogDebug(ex, "GraphQL request body could not be parsed.");
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
+                    "The request body could not be parsed.");
+                return;
+            }
             if (request == null)
             {
-                context.Response.StatusCode = 400;
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
+                    "The request body could not be parsed.");
                 return;
             }
 
-            IDictionary<string, object?> userContext;
-            try
+            // The shared gate is the ONLY identity projection on this mount. Anonymous stays
+            // anonymous here (an empty user context): per-endpoint auth enforcement lives in
+            // the branch gate UseBifrostEndpoints installs, not in this middleware. A FAULTED
+            // projection (unmapped OIDC issuer, subject-less principal) is refused here and
+            // never escapes to the host as an unhandled fault.
+            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            if (outcome == BifrostIdentityOutcome.Unprojectable)
             {
-                userContext = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
-            }
-            catch (UnmappedOidcIssuerException)
-            {
-                // Token from an OIDC issuer this deployment has not mapped — fail closed.
-                context.Response.StatusCode = 403;
+                await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                    "The caller identity is not accepted by this deployment.");
                 return;
             }
 
@@ -100,6 +117,23 @@ namespace BifrostQL.Server
 
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = 200;
+            await _serializer.WriteAsync(context.Response.Body, result, context.RequestAborted);
+        }
+
+        /// <summary>
+        /// The one error writer for this mount's funnel: a GraphQL-shaped
+        /// <c>{"errors":[...]}</c> body under a condition-mapped status, carrying only the
+        /// generic message — never exception text
+        /// (.claude/rules/protocol-adapter-security.md invariant 3).
+        /// </summary>
+        private async Task WriteErrorAsync(HttpContext context, int statusCode, string message)
+        {
+            context.Response.ContentType = "application/json";
+            context.Response.StatusCode = statusCode;
+            var result = new ExecutionResult
+            {
+                Errors = new ExecutionErrors { new ExecutionError(message) },
+            };
             await _serializer.WriteAsync(context.Response.Body, result, context.RequestAborted);
         }
 

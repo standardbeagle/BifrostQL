@@ -66,22 +66,38 @@ namespace BifrostQL.Server
             var outcome = BifrostIdentityGate.Project(context, out var identityContext);
             if (outcome == BifrostIdentityOutcome.Unprojectable)
             {
-                // Token from an OIDC issuer this deployment mapped nothing for. Answered here,
-                // never allowed to escape to the host, and never a degraded identity — the same
-                // handling as the GraphQL sibling (BifrostHttpMiddleware) and the chat mount.
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                // Token from an OIDC issuer this deployment mapped nothing for, or a
+                // malformed principal (e.g. no subject claim). Answered here, never allowed
+                // to escape to the host, and never a degraded identity — the same handling
+                // as the GraphQL sibling (BifrostHttpMiddleware) and the chat mount.
+                await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                    "The caller identity is not accepted by this deployment.");
                 return;
             }
             if (outcome == BifrostIdentityOutcome.Anonymous && _requireAuthenticatedIdentity)
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await WriteErrorAsync(context, StatusCodes.Status401Unauthorized,
+                    "Authentication is required.");
                 return;
             }
 
-            var bifrostRequest = await _frontend.ParseAsync(context.Request.Body, context.RequestAborted);
+            // The same funnel covers the body parse: a malformed body maps to a 400 with a
+            // GraphQL-shaped error, never an exception escaping to the host (M13).
+            BifrostRequest? bifrostRequest;
+            try
+            {
+                bifrostRequest = await _frontend.ParseAsync(context.Request.Body, context.RequestAborted);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
+                    "The request body could not be parsed.");
+                return;
+            }
             if (bifrostRequest == null)
             {
-                context.Response.StatusCode = 400;
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
+                    "The request body could not be parsed.");
                 return;
             }
 
@@ -109,6 +125,24 @@ namespace BifrostQL.Server
 
             context.Response.ContentType = _frontend.ResponseContentType;
             context.Response.StatusCode = 200;
+            await _frontend.SerializeAsync(context.Response.Body, result, context.RequestAborted);
+        }
+
+        /// <summary>
+        /// The one error writer for this mount's funnel: a GraphQL-shaped
+        /// <c>{"errors":[...]}</c> body (through the frontend's own serializer, so the wire
+        /// format stays the frontend's) under a condition-mapped status, carrying only the
+        /// generic message — never exception text
+        /// (.claude/rules/protocol-adapter-security.md invariant 3).
+        /// </summary>
+        private async Task WriteErrorAsync(HttpContext context, int statusCode, string message)
+        {
+            context.Response.ContentType = _frontend.ResponseContentType;
+            context.Response.StatusCode = statusCode;
+            var result = new BifrostResult
+            {
+                Errors = new[] { new BifrostResultError { Message = message } },
+            };
             await _frontend.SerializeAsync(context.Response.Body, result, context.RequestAborted);
         }
 

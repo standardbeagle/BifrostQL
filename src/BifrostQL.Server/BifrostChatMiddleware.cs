@@ -192,24 +192,21 @@ namespace BifrostQL.Server
             }
 
             // Fail-closed identity gate, BEFORE the body is read and before any
-            // store or provider call: anonymous is 401, an unmapped OIDC issuer is
-            // 403 (never a degraded identity).
-            if (context.User?.Identity?.IsAuthenticated != true)
+            // store or provider call: anonymous is 401, an unprojectable identity
+            // (unmapped OIDC issuer, subject-less principal) is 403 — never a degraded
+            // identity, and the projection fault never escapes to the host. The shared
+            // gate is the ONLY projection on this mount (M13).
+            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            if (outcome == BifrostIdentityOutcome.Anonymous)
             {
                 await WriteErrorAsync(context, StatusCodes.Status401Unauthorized,
                     "unauthenticated", "Authentication is required.");
                 return;
             }
-
-            IDictionary<string, object?> userContext;
-            try
-            {
-                userContext = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
-            }
-            catch (UnmappedOidcIssuerException)
+            if (outcome == BifrostIdentityOutcome.Unprojectable)
             {
                 await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
-                    "forbidden", "The token issuer is not accepted by this deployment.");
+                    "forbidden", "The caller identity is not accepted by this deployment.");
                 return;
             }
 

@@ -27,12 +27,19 @@ namespace BifrostQL.Server
     }
 
     /// <summary>
-    /// The one identity projection every non-GraphQL HTTP surface in this assembly runs its callers
-    /// through. Both <see cref="BifrostSavedObjectsMiddleware"/> and
-    /// <see cref="BifrostAppMetadataMiddleware"/> used to hand-roll this, and the two copies had
-    /// already drifted: saved-objects caught the projection fault and answered 401, app-metadata let
-    /// it escape to the host as a 500 with a stack trace wherever a developer exception page was
-    /// enabled. Two copies of one security decision drift; one copy cannot.
+    /// The one identity projection every HTTP surface in this assembly runs its callers
+    /// through (M13) — the GraphQL mount (<see cref="BifrostHttpMiddleware"/>), the
+    /// protocol-frontend mount (<see cref="BifrostFrontendMiddleware"/>), the binary
+    /// WebSocket mount (<see cref="BifrostBinaryMiddleware"/>), the chat mount
+    /// (<see cref="BifrostChatMiddleware"/>) and the workflow sidecar helper
+    /// (<see cref="HttpContextWorkflowExtensions"/>). Hand-rolled copies of this projection
+    /// drifted: saved-objects caught the projection fault and answered 401 while
+    /// app-metadata let it escape to the host as a 500, and the GraphQL mount caught only
+    /// <c>UnmappedOidcIssuerException</c> while a subject-less principal escaped as
+    /// <c>InvalidOperationException</c>. Two copies of one security decision drift; one
+    /// copy cannot. Non-HTTP protocol adapters (LDAP/RESP/pgwire/S3/OData/Feeds/Prometheus/
+    /// gRPC) project their own carrier types through the same factory under their own
+    /// per-adapter funnels.
     /// </summary>
     internal static class BifrostIdentityGate
     {

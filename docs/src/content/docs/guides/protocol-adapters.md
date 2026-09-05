@@ -89,10 +89,14 @@ Build the query tree against the model returned by `GetModelAsync` for the **sam
 var model = await _executor.GetModelAsync(request.Endpoint);
 // Positive resolve: the throwing GetTableFromDbName embeds the queried name in
 // its exception message, which must never reach the client. TryGetTableFromDbName
-// (and TryGetTableByFullGraphQlName) let the adapter map a miss onto its own
-// sanitized, adapter-owned error.
+// (and TryGetTableByFullGraphQlName) let the adapter map a miss onto a sanitized
+// error. Use the shared BifrostErrorSink seam so the raw name is logged
+// server-side in the same call that produces the sanitized wire error:
 if (!model.TryGetTableFromDbName(request.Table, out var table))
-    throw new BifrostExecutionError("The requested table was not found.");
+    throw BifrostErrorSink.LookupMiss(
+        "The requested table was not found.",
+        $"Table lookup miss: '{request.Table}'.",
+        "MyAdapter");
 
 var query = new GqlObjectQuery
 {

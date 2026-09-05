@@ -47,11 +47,13 @@ interface RowData {
 }
 
 // Joined rows in GraphQL responses are aliased as `{ id: destCol }` for single-PK destinations.
-// Composite-PK destinations come back with every PK column verbatim; produce a composite
-// route via rowIdOf so links navigate to /<table>/<pk1>::<pk2>.
-// The single-key case must route-encode too (matching getRowPkValue): the value
-// becomes a route segment decoded by parsePkRoute, so a raw string PK containing
-// "/", "%", "::", or spaces would otherwise build a broken or mis-split link.
+// This returns the RAW single-column key: FkCellPopover sends it as the `_eq`
+// variable, and a route-encoded value ("US%2FCA") never matches a stored row
+// ("US/CA"). Encoding happens only at the route boundary — the Link below wraps
+// it in encodeRouteParts, matching getRowPkValue's route contract with
+// parsePkRoute. Composite-PK destinations come back with every PK column
+// verbatim and keep their rowIdOf-encoded route (the popover rebuilds its
+// filter from the source row and ignores fkValue for composite joins).
 //
 // The destination schema is REQUIRED. `row.id` is that GraphQL alias, not a column
 // named "id", and it only carries row identity once we know the destination table
@@ -61,7 +63,10 @@ interface RowData {
 // Exported for tests.
 export function getJoinedRowPkValue(row: RowData | undefined, joinSchema: Table | undefined): string {
     if (!row || !joinSchema) return "";
-    if ((joinSchema.primaryKeys?.length ?? 0) <= 1) return encodeRouteParts([row?.id]);
+    if ((joinSchema.primaryKeys?.length ?? 0) <= 1) {
+        const value = row?.id;
+        return value === null || value === undefined ? "" : String(value);
+    }
     return rowIdOf(row as Record<string, unknown>, joinSchema, 0);
 }
 
@@ -175,6 +180,11 @@ function buildJoinColumn(
             // key), so there is no route to link to. Show the label as plain text
             // rather than a link that navigates nowhere useful.
             if (!joinedPk) return <>{joined?.label as string}</>;
+            // Route boundary: single-column keys arrive RAW from
+            // getJoinedRowPkValue and are encoded here; composite keys are
+            // already the rowIdOf-encoded route (each part pre-encoded), so
+            // encoding again would double-encode the '%' into '%25'.
+            const joinedRoute = composite ? joinedPk : encodeRouteParts([joinedPk]);
             return (
                 <span className="group/fk inline-flex items-center gap-0.5">
                     <FkCellPopover
@@ -184,7 +194,7 @@ function buildJoinColumn(
                         join={anchorJoin}
                         sourceRow={row.original as Record<string, unknown>}
                     >
-                        <Link to={"/" + joinSchema?.name + "/" + joinedPk} className="text-primary hover:text-primary/80 hover:underline">
+                        <Link to={"/" + joinSchema?.name + "/" + joinedRoute} className="text-primary hover:text-primary/80 hover:underline">
                             {joined?.label as string}
                         </Link>
                     </FkCellPopover>

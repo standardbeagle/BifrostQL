@@ -93,6 +93,16 @@ It applies per entry and is off unless set, including for entries saved before t
 
 A connection string passed straight to `bifrostui` is used verbatim, so it carries whatever `TrustServerCertificate` you put in it and nothing is added on your behalf — see [TrustServerCertificate](/reference/configuration/#trustservercertificate) for what accepting it costs.
 
+### PostgreSQL peer authentication
+
+The "peer auth" option on the PostgreSQL connection form lists databases by running `sudo -u postgres psql`. Because the OS account is chosen by the request, the host only honours the account it is itself running as; any other account must be named in the `BIFROST_UI_PSQL_PEER_USERS` environment variable (comma-separated) before `bifrostui` starts. The form asks for `postgres`, so peer auth from the UI needs that entry unless you are logged in as `postgres`:
+
+```bash
+BIFROST_UI_PSQL_PEER_USERS=postgres bifrostui
+```
+
+A request for an account outside the list is refused before any process is started.
+
 ## What it does
 
 The desktop app bundles a full BifrostQL server inside a native window:

@@ -90,7 +90,8 @@ namespace BifrostQL.Server.Test
         public async Task<HttpClient> StartAsync(
             int historyLimit = 50, string? systemPrompt = null, IQueryObserver[]? observers = null,
             IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false,
-            string[]? extraMetadata = null, Action<IServiceCollection>? configureServices = null)
+            string[]? extraMetadata = null, Action<IServiceCollection>? configureServices = null,
+            Action<BifrostChatOptions>? configureChat = null)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>
@@ -135,6 +136,7 @@ namespace BifrostQL.Server.Test
                     {
                         o.HistoryLimit = historyLimit;
                         o.SystemPrompt = systemPrompt;
+                        configureChat?.Invoke(o);
                     });
                     app.UseBifrostEndpoints();
                 });

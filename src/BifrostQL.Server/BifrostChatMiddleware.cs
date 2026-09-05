@@ -39,6 +39,18 @@ namespace BifrostQL.Server
         public int HistoryLimit { get; set; } = 50;
 
         /// <summary>
+        /// Maximum length of a single chat message's <c>content</c>, in characters.
+        /// Every persisted message rides later completions in history (up to
+        /// <see cref="HistoryLimit"/> of them), so an unbounded message is an
+        /// unbounded per-completion payload: an over-cap message is rejected with
+        /// 400 before any store call. The request body itself is bounded at
+        /// 4 × MaxMessageLength + 1 KiB (JSON envelope and UTF-8 expansion
+        /// headroom); over that is 413 before the body is materialized. Default:
+        /// 32768.
+        /// </summary>
+        public int MaxMessageLength { get; set; } = 32 * 1024;
+
+        /// <summary>
         /// Optional system prompt prepended to every completion request. Deployment
         /// configuration only — never client input.
         /// </summary>

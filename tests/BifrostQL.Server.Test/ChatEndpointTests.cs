@@ -288,6 +288,53 @@ namespace BifrostQL.Server.Test
             (await _h.ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be(0L);
         }
 
+        // ---- message size bounds (M14) ---------------------------------------
+
+        [Fact]
+        public async Task PostMessage_ContentOverMaxMessageLength_Is400_AndPersistsNothing()
+        {
+            // Every persisted message rides later completions in history, so the
+            // content is bounded BEFORE any store call: over-cap is a 400, no row.
+            var client = await _h.StartAsync(configureChat: o => o.MaxMessageLength = 64);
+            var conversationId = await _h.CreateConversationAsync(client, "tenant-a");
+
+            using var response = await _h.PostMessageAsync(client, conversationId, new string('x', 65));
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            var body = await response.Content.ReadAsStringAsync();
+            body.Should().Contain("invalid-request");
+            (await _h.ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be(0L,
+                "an over-cap message is rejected before any database write");
+            _h.Fake.Calls.Should().BeEmpty("the provider is never called for a rejected message");
+        }
+
+        [Fact]
+        public async Task PostMessage_BodyOverRequestCap_Is413_AndPersistsNothing()
+        {
+            // The request body itself is capped (4x MaxMessageLength + 1 KiB JSON
+            // envelope headroom), so a huge body never materializes in memory.
+            var client = await _h.StartAsync(configureChat: o => o.MaxMessageLength = 64);
+            var conversationId = await _h.CreateConversationAsync(client, "tenant-a");
+
+            using var response = await _h.PostMessageAsync(client, conversationId, new string('x', 2 * 1024));
+
+            response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+            (await _h.ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be(0L);
+            _h.Fake.Calls.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task PostMessage_ContentAtMaxMessageLength_IsAccepted()
+        {
+            var client = await _h.StartAsync(configureChat: o => o.MaxMessageLength = 64);
+            var conversationId = await _h.CreateConversationAsync(client, "tenant-a");
+
+            using var response = await _h.PostMessageAsync(client, conversationId, new string('x', 64));
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await _h.ScalarAsync("SELECT COUNT(*) FROM messages WHERE role = 'user'")).Should().Be(1L);
+        }
+
         // ---- startup validation --------------------------------------------------
 
         [Fact]

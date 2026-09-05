@@ -33,9 +33,10 @@ namespace BifrostQL.Core.QueryModel
             var filter = TableFilterFactory.Equals("Orders", "tenant_id", 7);
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(model, Dialect, parameters, "Orders");
+            var sut = filter.RenderParts(model, Dialect, parameters, "Orders");
 
-            sut.Sql.Should().Be("[Orders].[tenant_id] = @p0");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("[Orders].[tenant_id] = @p0");
             sut.Parameters.Should().ContainSingle().Which.Value.Should().Be(7);
         }
 
@@ -67,13 +68,14 @@ namespace BifrostQL.Core.QueryModel
             }, "Orders");
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(model, Dialect, parameters, "Orders");
+            var sut = filter.RenderParts(model, Dialect, parameters, "Orders");
 
             // The DB column name is emitted inside the relationship sub-query, never
             // the GraphQL name.
-            sut.Sql.Should().Contain("[email_address]");
-            sut.Sql.Should().NotContain("[emailAddress]");
-            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Joins.Should().Contain("[email_address]");
+            sut.Joins.Should().NotContain("[emailAddress]");
+            sut.Joins.Should().Contain("INNER JOIN");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().ContainSingle().Which.Value.Should().Be("a@b.c");
         }
 
@@ -108,8 +110,9 @@ namespace BifrostQL.Core.QueryModel
             });
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
-            sut.Sql.Should().Be("[table].[id] = @p0");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("[table].[id] = @p0");
             sut.Parameters.Should().HaveCount(1);
             sut.Parameters[0].Value.Should().Be("321");
         }
@@ -134,8 +137,9 @@ namespace BifrostQL.Core.QueryModel
             });
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
-            sut.Sql.Should().Be("[table].[id] = @p0");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("[table].[id] = @p0");
             sut.Parameters.Should().HaveCount(1);
             sut.Parameters[0].Value.Should().Be("321");
         }
@@ -166,8 +170,9 @@ namespace BifrostQL.Core.QueryModel
             });
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
-            sut.Sql.Should().Be($"(([table].[id] = @p0) {joinType.ToUpper()} ([table].[{column2}_ha] > @p1))");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be($"(([table].[id] = @p0) {joinType.ToUpper()} ([table].[{column2}_ha] > @p1))");
             sut.Parameters.Should().HaveCount(2);
             sut.Parameters[0].Value.Should().Be("321");
             sut.Parameters[1].Value.Should().Be("321");
@@ -200,10 +205,13 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain("[table].[sessionId_db]");
+            sut.Joins.Should().Contain("INNER JOIN");
+            // The ON clause always references the link's child key; the scalar
+            // predicate lands in the WHERE under whichever column the case used.
+            sut.Joins.Should().Contain("[table].[sessionId_db]");
+            sut.Where.Should().Contain($"[table].[{column2}_db]");
             sut.Parameters.Count.Should().BeGreaterThanOrEqualTo(1);
         }
 
@@ -228,13 +236,14 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("[j0]");
-            sut.Sql.Should().Contain("[j1]");
+            sut.Joins.Should().Contain("[j0]");
+            sut.Joins.Should().Contain("[j1]");
+            sut.Where.Should().BeEmpty();
             // A "SELECT * FROM [t] {joins}" wrapper must parse — the duplicate-alias
             // bug produced two "[j]" and failed the grammar.
-            SqlSyntax.AssertValid($"SELECT * FROM [table]{sut.Sql}", "two relationship filters use distinct aliases");
+            SqlSyntax.AssertValid($"SELECT * FROM [table]{sut.Joins}", "two relationship filters use distinct aliases");
         }
 
         [Fact]
@@ -257,7 +266,7 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var act = () => filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var act = () => filter.RenderParts(dbModel, Dialect, parameters, "table");
 
             act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*OR over relationship*");
@@ -280,12 +289,13 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, alias);
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, alias);
 
             // Complex nested joins produce parameterized SQL with JOIN
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain($"[{result}].[sessionId_db]");
-            sut.Sql.Should().Contain("@p0");
+            sut.Joins.Should().Contain("INNER JOIN");
+            sut.Joins.Should().Contain($"[{result}].[sessionId_db]");
+            sut.Joins.Should().Contain("@p0");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().HaveCount(1);
             sut.Parameters[0].Value.Should().Be(321);
         }
@@ -305,12 +315,13 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
 
             // Double nested produces parameterized SQL with nested JOINs
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain("[table].[sessionId_db]");
-            sut.Sql.Should().Contain("@p0");
+            sut.Joins.Should().Contain("INNER JOIN");
+            sut.Joins.Should().Contain("[table].[sessionId_db]");
+            sut.Joins.Should().Contain("@p0");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().HaveCount(1);
             sut.Parameters[0].Value.Should().Be(321);
         }
@@ -339,9 +350,10 @@ namespace BifrostQL.Core.QueryModel
             });
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "t");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "t");
 
-            sut.Sql.Should().Be("(([t].[status] = @p0) AND ([t].[owner_id] = @p1))");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("(([t].[status] = @p0) AND ([t].[owner_id] = @p1))");
             sut.Parameters.Should().HaveCount(2);
             sut.Parameters[0].Value.Should().Be("open");
             sut.Parameters[1].Value.Should().Be(7);
@@ -369,11 +381,12 @@ namespace BifrostQL.Core.QueryModel
             });
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "t");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "t");
 
-            sut.Sql.Should().Contain("[t].[a] = @p0");
-            sut.Sql.Should().Contain("[t].[b] = @p1");
-            sut.Sql.Should().Contain("[t].[c] = @p2");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Contain("[t].[a] = @p0");
+            sut.Where.Should().Contain("[t].[b] = @p1");
+            sut.Where.Should().Contain("[t].[c] = @p2");
             sut.Parameters.Should().HaveCount(3);
         }
 
@@ -399,7 +412,7 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var act = () => filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var act = () => filter.RenderParts(dbModel, Dialect, parameters, "table");
 
             act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*unsupported shape*");
@@ -427,18 +440,19 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("INNER JOIN");
+            sut.Joins.Should().Contain("INNER JOIN");
             // Both predicates are present against the (parent) Sessions table, ANDed.
-            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
-            sut.Sql.Should().Contain("[Sessions].[workshopId] = @p1");
-            sut.Sql.Should().Contain(" AND ");
+            sut.Joins.Should().Contain("[Sessions].[id] = @p0");
+            sut.Joins.Should().Contain("[Sessions].[workshopId] = @p1");
+            sut.Joins.Should().Contain(" AND ");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().HaveCount(2);
             sut.Parameters[0].Value.Should().Be(1);
             sut.Parameters[1].Value.Should().Be(2);
             SqlSyntax.AssertValid(
-                $"SELECT * FROM [table]{sut.Sql}", "multi-predicate relationship filter renders valid SQL");
+                $"SELECT * FROM [table]{sut.Joins}", "multi-predicate relationship filter renders valid SQL");
         }
 
         [Fact]
@@ -463,13 +477,14 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
-            sut.Sql.Should().Contain("[Sessions].[workshopId] = @p1");
+            sut.Joins.Should().Contain("[Sessions].[id] = @p0");
+            sut.Joins.Should().Contain("[Sessions].[workshopId] = @p1");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().HaveCount(2);
             SqlSyntax.AssertValid(
-                $"SELECT * FROM [table]{sut.Sql}", "explicit-and relationship filter renders valid SQL");
+                $"SELECT * FROM [table]{sut.Joins}", "explicit-and relationship filter renders valid SQL");
         }
 
         [Fact]
@@ -486,11 +501,12 @@ namespace BifrostQL.Core.QueryModel
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
-            var sut = filter.ToSqlParameterized(dbModel, Dialect, parameters, "table");
+            var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
-            sut.Sql.Should().NotContain(" AND ");
+            sut.Joins.Should().Contain("INNER JOIN");
+            sut.Joins.Should().Contain("[Sessions].[id] = @p0");
+            sut.Joins.Should().NotContain(" AND ");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().ContainSingle().Which.Value.Should().Be(42);
         }
 
@@ -516,10 +532,11 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Be("[table].[id_db] > @p0");
-            sut.Sql.Should().NotContain("AAA", "the value must be bound as a parameter, never a literal");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("[table].[id_db] > @p0");
+            sut.Where.Should().NotContain("AAA", "the value must be bound as a parameter, never a literal");
             sut.Parameters.Should().ContainSingle().Which.Value.Should().Be("AAA");
         }
 
@@ -531,13 +548,14 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("[table].[id_db] IN (");
-            sut.Sql.Should().Contain("@p0");
-            sut.Sql.Should().Contain("@p1");
-            sut.Sql.Should().NotContain("AAA");
-            sut.Sql.Should().NotContain("BBB");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Contain("[table].[id_db] IN (");
+            sut.Where.Should().Contain("@p0");
+            sut.Where.Should().Contain("@p1");
+            sut.Where.Should().NotContain("AAA");
+            sut.Where.Should().NotContain("BBB");
             sut.Parameters.Should().HaveCount(2);
         }
 
@@ -549,9 +567,10 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Be("[table].[id_db] IS NULL");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("[table].[id_db] IS NULL");
             sut.Parameters.Should().BeEmpty();
         }
 
@@ -563,11 +582,12 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("[table].[sessionId_db] BETWEEN @p0 AND @p1");
-            sut.Sql.Should().NotContain("AAA");
-            sut.Sql.Should().NotContain("BBB");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Contain("[table].[sessionId_db] BETWEEN @p0 AND @p1");
+            sut.Where.Should().NotContain("AAA");
+            sut.Where.Should().NotContain("BBB");
             sut.Parameters.Should().HaveCount(2);
         }
 
@@ -581,11 +601,12 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Be("(([table].[id_db] = @p0) OR ([table].[sessionId_db] = @p1))");
-            sut.Sql.Should().NotContain("AAA");
-            sut.Sql.Should().NotContain("BBB");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Be("(([table].[id_db] = @p0) OR ([table].[sessionId_db] = @p1))");
+            sut.Where.Should().NotContain("AAA");
+            sut.Where.Should().NotContain("BBB");
             sut.Parameters.Should().HaveCount(2);
         }
 
@@ -597,11 +618,12 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("INNER JOIN");
-            sut.Sql.Should().Contain("[Sessions].[id] = @p0");
-            sut.Sql.Should().NotContain("AAA");
+            sut.Joins.Should().Contain("INNER JOIN");
+            sut.Joins.Should().Contain("[Sessions].[id] = @p0");
+            sut.Joins.Should().NotContain("AAA");
+            sut.Where.Should().BeEmpty();
             sut.Parameters.Should().ContainSingle().Which.Value.Should().Be("AAA");
         }
 
@@ -618,14 +640,17 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
             foreach (var literal in new[] { "AAA", "BBB", "CCC", "DDD", "EEE", "FFF" })
-                sut.Sql.Should().NotContain(literal, "every value must be a bound parameter");
-            sut.Sql.Should().Contain("@p0");
+            {
+                sut.Joins.Should().NotContain(literal, "every value must be a bound parameter");
+                sut.Where.Should().NotContain(literal, "every value must be a bound parameter");
+            }
+            sut.Where.Should().Contain("@p0");
             sut.Parameters.Should().HaveCount(6); // eq(1) + between(2) + related(1) + or(2)
             SqlSyntax.AssertValid(
-                $"SELECT * FROM [table]{sut.Sql}", "builder mixed tree renders valid SQL");
+                $"SELECT * FROM [table]{sut.Joins} WHERE {sut.Where}", "builder mixed tree renders valid SQL");
         }
 
         [Fact]
@@ -652,7 +677,7 @@ namespace BifrostQL.Core.QueryModel
             model.GetTableFromDbName("tableName1").Returns(GetTableModel()["tableName1"]);
             var parameters = new SqlParameterCollection();
 
-            var act = () => filter.ToSqlParameterized(model, Dialect, parameters, "table");
+            var act = () => filter.RenderParts(model, Dialect, parameters, "table");
 
             act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .Which.ErrorCode.Should().Be("INVALID_FILTER_OPERATOR");
@@ -670,9 +695,10 @@ namespace BifrostQL.Core.QueryModel
                 .Build();
             var parameters = new SqlParameterCollection();
 
-            var sut = filter.ToSqlParameterized(BuilderModel(), Dialect, parameters, "table");
+            var sut = filter.RenderParts(BuilderModel(), Dialect, parameters, "table");
 
-            sut.Sql.Should().Contain("IN (@p0,@p1,@p2)");
+            sut.Joins.Should().BeEmpty();
+            sut.Where.Should().Contain("IN (@p0,@p1,@p2)");
             sut.Parameters.Select(p => p.Name).Should().Equal("@p0", "@p1", "@p2");
             sut.Parameters.Select(p => p.Value).Should().Equal("AAA", "BBB", "CCC");
         }

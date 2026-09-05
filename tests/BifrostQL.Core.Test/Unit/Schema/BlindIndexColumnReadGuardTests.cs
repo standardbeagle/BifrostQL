@@ -141,8 +141,9 @@ public class BlindIndexColumnReadGuardTests
         Service(NewManager()).ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
-        var rendered = query.Filter!.ToSqlParameterized(model, SqliteDialect.Instance, parameters);
-        rendered.Sql.Should().Contain("\"ssn_bidx\"");
+        var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
+        rendered.Joins.Should().BeEmpty();
+        rendered.Where.Should().Contain("\"ssn_bidx\"");
     }
 
     [Fact]

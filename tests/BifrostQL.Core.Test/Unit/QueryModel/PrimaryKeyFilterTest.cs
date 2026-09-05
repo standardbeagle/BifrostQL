@@ -31,9 +31,10 @@ namespace BifrostQL.Core.QueryModel
                 }
             });
             var parameters = new SqlParameterCollection();
-            var sql = filter.ToSqlParameterized(dbModel, Dialect, parameters);
+            var sql = filter.RenderParts(dbModel, Dialect, parameters, null);
 
-            sql.Sql.Should().Be("[Users].[Id] = @p0");
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Be("[Users].[Id] = @p0");
             parameters.Parameters.Should().HaveCount(1);
             parameters.Parameters[0].Value.Should().Be("42");
         }
@@ -60,11 +61,12 @@ namespace BifrostQL.Core.QueryModel
                 }
             });
             var parameters = new SqlParameterCollection();
-            var sql = filter.ToSqlParameterized(dbModel, Dialect, parameters);
+            var sql = filter.RenderParts(dbModel, Dialect, parameters, null);
 
-            sql.Sql.Should().Contain("AND");
-            sql.Sql.Should().Contain("[TenantOrders].[TenantId] = @p0");
-            sql.Sql.Should().Contain("[TenantOrders].[OrderId] = @p1");
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Contain("AND");
+            sql.Where.Should().Contain("[TenantOrders].[TenantId] = @p0");
+            sql.Where.Should().Contain("[TenantOrders].[OrderId] = @p1");
             parameters.Parameters.Should().HaveCount(2);
             parameters.Parameters[0].Value.Should().Be("100");
             parameters.Parameters[1].Value.Should().Be("200");
@@ -149,9 +151,10 @@ namespace BifrostQL.Core.QueryModel
                 }
             });
             var parameters = new SqlParameterCollection();
-            var sql = filter.ToSqlParameterized(dbModel, Dialect, parameters);
+            var sql = filter.RenderParts(dbModel, Dialect, parameters, null);
 
-            sql.Sql.Should().Be("[Users].[Id] IS NULL");
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Be("[Users].[Id] IS NULL");
             parameters.Parameters.Should().HaveCount(0);
         }
 
@@ -182,8 +185,9 @@ namespace BifrostQL.Core.QueryModel
 
             result.Filter.Should().NotBeNull();
             var parameters = new SqlParameterCollection();
-            var sql = result.Filter!.ToSqlParameterized(model, Dialect, parameters);
-            sql.Sql.Should().Contain("[Users].[Id] = @p0");
+            var sql = result.Filter!.RenderParts(model, Dialect, parameters, null);
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Contain("[Users].[Id] = @p0");
             parameters.Parameters[0].Value.Should().Be("42");
         }
 
@@ -221,8 +225,9 @@ namespace BifrostQL.Core.QueryModel
 
             result.Filter.Should().NotBeNull();
             var parameters = new SqlParameterCollection();
-            var sql = result.Filter!.ToSqlParameterized(model, Dialect, parameters);
-            sql.Sql.Should().Contain("[Users].[Name] = @p0");
+            var sql = result.Filter!.RenderParts(model, Dialect, parameters, null);
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Contain("[Users].[Name] = @p0");
             parameters.Parameters[0].Value.Should().Be("Alice");
         }
 
@@ -265,10 +270,11 @@ namespace BifrostQL.Core.QueryModel
 
             result.Filter.Should().NotBeNull();
             var parameters = new SqlParameterCollection();
-            var sql = result.Filter!.ToSqlParameterized(model, Dialect, parameters);
-            sql.Sql.Should().Contain("AND");
-            sql.Sql.Should().Contain("[Users].[Name] = @p0");
-            sql.Sql.Should().Contain("[Users].[Id] = @p1");
+            var sql = result.Filter!.RenderParts(model, Dialect, parameters, null);
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Contain("AND");
+            sql.Where.Should().Contain("[Users].[Name] = @p0");
+            sql.Where.Should().Contain("[Users].[Id] = @p1");
             parameters.Parameters.Should().HaveCount(2);
         }
 
@@ -326,10 +332,11 @@ namespace BifrostQL.Core.QueryModel
 
             result.Filter.Should().NotBeNull();
             var parameters = new SqlParameterCollection();
-            var sql = result.Filter!.ToSqlParameterized(model, Dialect, parameters);
-            sql.Sql.Should().Contain("AND");
-            sql.Sql.Should().Contain("TenantId");
-            sql.Sql.Should().Contain("OrderId");
+            var sql = result.Filter!.RenderParts(model, Dialect, parameters, null);
+            sql.Joins.Should().BeEmpty();
+            sql.Where.Should().Contain("AND");
+            sql.Where.Should().Contain("TenantId");
+            sql.Where.Should().Contain("OrderId");
             parameters.Parameters.Should().HaveCount(2);
         }
 

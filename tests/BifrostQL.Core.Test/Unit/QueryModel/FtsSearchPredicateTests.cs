@@ -45,8 +45,8 @@ public class FtsSearchPredicateTests
         var filter = TableFilter.FromObject(
             new Dictionary<string, object?> { { FilterOperators.Search, search } }, "Articles");
         var parameters = new SqlParameterCollection();
-        var rendered = filter.ToSqlParameterized(model, dialect, parameters, alias);
-        return (rendered.Sql, rendered.Parameters.ToList());
+        var rendered = filter.RenderParts(model, dialect, parameters, alias);
+        return (rendered.Where, rendered.Parameters.ToList());
     }
 
     public static IEnumerable<object[]> Dialects() => new[]
@@ -196,7 +196,7 @@ public class FtsSearchPredicateTests
             new Dictionary<string, object?> { { FilterOperators.Search, "widget" } }, "Rollup");
         var parameters = new SqlParameterCollection();
 
-        var act = () => filter.ToSqlParameterized(model, SqliteDialect.Instance, parameters, "Rollup");
+        var act = () => filter.RenderParts(model, SqliteDialect.Instance, parameters, "Rollup");
 
         act.Should().Throw<BifrostExecutionError>().WithMessage("*single-column primary key*");
     }

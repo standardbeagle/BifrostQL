@@ -90,10 +90,11 @@ public class BlindIndexQueryRoutingTests
         Service(manager).ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
-        var rendered = query.Filter!.ToSqlParameterized(model, SqliteDialect.Instance, parameters);
+        var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
 
         // The predicate targets the blind-index sibling, never the ciphertext column.
-        rendered.Sql.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
+        rendered.Joins.Should().BeEmpty();
+        rendered.Where.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
         // The bound value is the write path's search token for the plaintext.
         var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "123-45-6789");
         parameters.Parameters.Should().ContainSingle().Which.Value.Should().Be(expected);
@@ -128,9 +129,10 @@ public class BlindIndexQueryRoutingTests
         Service(manager).ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
-        var rendered = query.Filter!.ToSqlParameterized(model, SqliteDialect.Instance, parameters);
+        var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
         // The nested encrypted predicate now targets the blind-index sibling, never the ciphertext.
-        rendered.Sql.Should().Contain("ssn_bidx").And.NotContain("\"ssn\"");
+        rendered.Joins.Should().Contain("ssn_bidx").And.NotContain("\"ssn\"");
+        rendered.Where.Should().BeEmpty();
         // Its bound value is the write path's search token for the plaintext.
         var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "123-45-6789");
         parameters.Parameters.Select(p => p.Value).Should().Contain(expected);
@@ -146,9 +148,10 @@ public class BlindIndexQueryRoutingTests
         Service(manager).ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
-        var rendered = query.Filter!.ToSqlParameterized(model, SqliteDialect.Instance, parameters);
+        var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
 
-        rendered.Sql.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
+        rendered.Joins.Should().BeEmpty();
+        rendered.Where.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
         parameters.Parameters.Select(p => p.Value).Should().Equal(
             BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "111-11-1111"),
             BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "222-22-2222"));
@@ -248,8 +251,9 @@ public class BlindIndexQueryRoutingTests
         Service(NewManager()).ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
-        var rendered = query.Filter!.ToSqlParameterized(model, SqliteDialect.Instance, parameters);
-        rendered.Sql.Should().Contain("\"id\"").And.NotContain("bidx");
+        var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
+        rendered.Joins.Should().BeEmpty();
+        rendered.Where.Should().Contain("\"id\"").And.NotContain("bidx");
         parameters.Parameters.Should().ContainSingle().Which.Value.Should().Be(1);
     }
 }

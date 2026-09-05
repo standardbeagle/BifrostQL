@@ -283,4 +283,108 @@ public class ModelConfigValidatorTests
 
         act.Should().NotThrow();
     }
+
+    // --- LOW (review-2026-09): numeric write-path metadata must fail at model load ---
+    // batch-max-size / bulk-batch-threshold / filtered-update-max-affected previously
+    // parsed only per request (BatchMutationPipeline.GetMaxBatchSize et al.), so a typo
+    // surfaced as an InvalidOperationException on the first mutation instead of failing
+    // model load with an actionable message.
+
+    [Theory]
+    [InlineData(MetadataKeys.Batch.MaxSize, "1O0")]
+    [InlineData(MetadataKeys.Batch.MaxSize, "0")]
+    [InlineData(MetadataKeys.Batch.MaxSize, "-5")]
+    [InlineData(MetadataKeys.Batch.BulkThreshold, "soon")]
+    [InlineData(MetadataKeys.FilteredUpdate.MaxAffected, "many")]
+    [InlineData(MetadataKeys.FilteredUpdate.MaxAffected, "0")]
+    public void Validate_InvalidNumericWritePathMetadata_ThrowsWithKey(string key, string value)
+    {
+        // Arrange
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Total", "decimal")
+                .WithMetadata(key, value))
+            .Build();
+
+        // Act
+        var act = () => ModelConfigValidator.Validate(model);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.Orders").And.Contain(key).And.Contain(value);
+    }
+
+    [Theory]
+    [InlineData(MetadataKeys.Batch.MaxSize, "500")]
+    [InlineData(MetadataKeys.Batch.BulkThreshold, "0")]  // 0 or negative legally DISABLES the fast path
+    [InlineData(MetadataKeys.Batch.BulkThreshold, "-1")]
+    [InlineData(MetadataKeys.Batch.BulkThreshold, "50")]
+    [InlineData(MetadataKeys.FilteredUpdate.MaxAffected, "100")]
+    public void Validate_ValidNumericWritePathMetadata_DoesNotThrow(string key, string value)
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Total", "decimal")
+                .WithMetadata(key, value))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    // Runtime backstops: even with validation at load, a model built from a source that
+    // skips the validator must still fail the request — as a wire-safe
+    // BifrostExecutionError, not a raw InvalidOperationException.
+    [Fact]
+    public void GetMaxBatchSize_InvalidMetadata_ThrowsBifrostExecutionError()
+    {
+        var table = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithMetadata(MetadataKeys.Batch.MaxSize, "1O0"))
+            .Build().Tables.Single();
+
+        var act = () => BifrostQL.Core.Resolvers.BatchMutationPipeline.GetMaxBatchSize(table);
+
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .Which.Message.Should().Contain(MetadataKeys.Batch.MaxSize);
+    }
+
+    [Fact]
+    public void GetBulkThreshold_InvalidMetadata_ThrowsBifrostExecutionError()
+    {
+        var table = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithMetadata(MetadataKeys.Batch.BulkThreshold, "soon"))
+            .Build().Tables.Single();
+
+        var act = () => BifrostQL.Core.Resolvers.BulkBatch.BulkBatchPlanBuilder.GetBulkThreshold(table);
+
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .Which.Message.Should().Contain(MetadataKeys.Batch.BulkThreshold);
+    }
+
+    [Fact]
+    public void FilteredUpdateMaxAffected_InvalidMetadata_ThrowsBifrostExecutionError()
+    {
+        var table = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithMetadata(MetadataKeys.FilteredUpdate.MaxAffected, "many"))
+            .Build().Tables.Single();
+
+        var act = () => BifrostQL.Core.Modules.FilteredUpdateConfig.MaxAffected(table);
+
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .Which.Message.Should().Contain(MetadataKeys.FilteredUpdate.MaxAffected);
+    }
 }

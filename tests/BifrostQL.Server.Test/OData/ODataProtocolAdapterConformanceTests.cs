@@ -40,16 +40,13 @@ namespace BifrostQL.Server.Test.OData
     /// the wire text differs by OData's own security contract, so <see cref="ExpectedRejectionFragment"/>
     /// is overridden:
     /// <list type="bullet">
-    /// <item>The kit's <c>documents</c> table declares <c>policy-read-deny: body</c> and NO
-    /// <c>policy-actions</c>, so its <see cref="BifrostQL.Core.Auth.TablePolicy"/> has a policy but an
-    /// empty allow-list — <see cref="BifrostQL.Core.Auth.PolicyEvaluator.CanAct"/> denies table READ
-    /// for a non-admin on BOTH the query path (the priority-1 policy transformer) and OData. OData
-    /// applies that SAME authoritative gate in <see cref="ODataModelVisibility"/>, so the whole table
-    /// is INVISIBLE (.claude/rules/protocol-adapter-security.md invariant 4) and selecting OR filtering
-    /// the denied column is a clean 404 — deliberately indistinguishable from a non-existent set, the
-    /// STRONGEST anti-oracle. The denied column (indeed the whole table) cannot be read; the read is
-    /// refused with zero rows. The wire text is thus OData's sanitized "not found", not the query
-    /// path's field-level "not permitted by authorization policy" message.</item>
+    /// <item>The kit's <c>documents</c> table declares <c>policy-actions: read</c> with
+    /// <c>policy-read-deny: body</c>, so the TABLE is readable and only the <c>body</c> column is
+    /// denied. OData applies the SAME authoritative gate in <see cref="ODataModelVisibility"/>, so
+    /// the denied column is absent from the caller-visible EDM — and a <c>$select</c>/<c>$filter</c>
+    /// naming it is refused by the middleware's own query validation EXACTLY as a nonexistent
+    /// property is ("unknown property", built from the caller's own arguments; invariant 4: hidden
+    /// is indistinguishable from nonexistent). The read is still rejected with zero rows.</item>
     /// <item>A <b>missing tenant identity</b> is modelled (as RESP does) by an authenticated
     /// principal carrying no tenant claim, so the request passes auth and reaches the pipeline, where
     /// the tenant transformer fails closed with an AccessDenied-coded fault. The middleware maps that
@@ -75,6 +72,20 @@ namespace BifrostQL.Server.Test.OData
         // Both still throw with zero rows — only the surfaced wire text is relaxed from the
         // canonical server fragment, never the fail-closed assertion.
         protected override string ExpectedRejectionFragment(string canonicalServerFragment) => "not found";
+
+        // Reject, not omit: $select names the denied column explicitly, and the middleware's query
+        // validation refuses it exactly as it refuses a nonexistent property — the denied column is
+        // absent from the caller-visible EDM, so "unknown property" is the honest wire shape
+        // (invariant 4). Silently dropping a $select term would return a shape the caller did not ask for.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
+        // Selecting the denied column: refused as an unknown property, indistinguishable from a
+        // nonexistent one (the denied column is not in the caller-visible EDM).
+        protected override string ExpectedSelectRejectionFragment(string canonicalServerFragment) => "unknown property";
+
+        // Filtering on the denied column: same field-validation refusal — a predicate the wire
+        // cannot see is never silently dropped (it would return rows the caller's filter excluded).
+        protected override string ExpectedFilterRejectionFragment(string canonicalServerFragment) => "unknown property";
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

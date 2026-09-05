@@ -68,7 +68,7 @@ namespace BifrostQL.Server.Test.Grpc
             // policy-write-deny mirrors the existing policy-read-deny on the same column so the
             // write path has a real policy-deny to exercise; grpc-write opts the table into the
             // write allow-list so the deny is reached at the mutation pipeline, not the door gate.
-            "*.documents { policy-read-deny: body; policy-write-deny: body; grpc-write: enabled }",
+            "*.documents { policy-actions: read; policy-read-deny: body; policy-write-deny: body; grpc-write: enabled }",
         };
 
         // gRPC is driven on its own HTTP/2 front door bound to the base fixture's real executors, so
@@ -104,6 +104,11 @@ namespace BifrostQL.Server.Test.Grpc
         // fact MissingTenant_ReadAndWrite_SurfaceTheSameDeniedStatus.
         protected override string ExpectedWriteRejectionFragment(string canonicalServerFragment)
             => "The request was denied by policy.";
+
+        // Reject: a List read resolves the row's fields through the shared read pipeline, whose
+        // column guard throws on the denied field; the single funnel sanitizes that to the generic
+        // PERMISSION_DENIED text above — the wire never serves a partial row.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
 
         public override async Task InitializeAsync()
         {

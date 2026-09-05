@@ -54,7 +54,7 @@ namespace BifrostQL.Server.Test.Ldap
             "*.orders { tenant-filter: tenant_id; soft-delete: deleted_at; "
                 + "ldap-object-class: bifrostOrder; ldap-dn-template: cn={name},ou=orders; "
                 + "ldap-attributes: cn=name,orderId=id,orderTenant=tenant_id }",
-            "*.documents { policy-read-deny: body; "
+            "*.documents { policy-actions: read; policy-read-deny: body; "
                 + "ldap-object-class: bifrostDocument; ldap-dn-template: cn={title},ou=documents; "
                 + "ldap-attributes: cn=title,docId=id,docBody=body }",
         };
@@ -78,6 +78,11 @@ namespace BifrostQL.Server.Test.Ldap
         /// </summary>
         protected override string ExpectedRejectionFragment(string canonicalServerFragment) =>
             LdapResultCode.InsufficientAccessRights.ToString();
+
+        // Omit, not reject: the caller's own subschema projection hides the denied attribute, so on
+        // this wire it does not exist — the entry is returned with docBody simply absent, and an
+        // explicit denial would be the hidden-vs-nonexistent oracle (invariant 9 amendment, M20).
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Omit;
 
         /// <summary>
         /// Per-column mappings, one direction each. Kept beside the metadata rules above so the

@@ -16,6 +16,11 @@ namespace BifrostQL.Server.Test
         protected override void RegisterAdapter(BifrostMultiDbOptions options)
             => options.AddProtocolAdapter<EchoProtocolAdapter>();
 
+        // Reject: the echo adapter is a thin pass-through over the shared read pipeline, so the
+        // pipeline's chosen mechanism (PolicyFilterTransformer.AssertColumnsReadable throws) is
+        // the wire behavior verbatim — this is the reference derivation the default describes.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)
         {

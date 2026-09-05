@@ -94,8 +94,10 @@ namespace BifrostQL.AdapterConformance
     /// <item><b>SQL is parameterized</b> — caller-supplied values bind as
     /// <c>@p</c> parameters and are never inlined into SQL text.</item>
     /// <item><b>Policy read guards hold</b> — a <c>policy-read-deny</c> column is
-    /// rejected whether selected or used as a filter oracle, and a missing tenant
-    /// identity fails closed.</item>
+    /// stopped whether selected (rejected, or omitted where the wire hides denied
+    /// columns by construction — see <see cref="DeniedColumnSelection"/>) or used
+    /// as a filter oracle (always rejected), and a missing tenant identity fails
+    /// closed.</item>
     /// <item><b>Mutations run the transformer chain</b> (write-capable adapters
     /// only, see <see cref="AdapterSupportsMutations"/>) — inserts pin the caller's
     /// tenant, cross-tenant update/delete are no-ops, deletes on a soft-delete
@@ -207,12 +209,19 @@ namespace BifrostQL.AdapterConformance
         private static readonly string[] DefaultMetadataRules =
         {
             "*.orders { tenant-filter: tenant_id; soft-delete: deleted_at }",
-            "*.documents { policy-read-deny: body }",
+            // policy-actions: read makes the TABLE readable, so only the body column is denied
+            // and the column-level facts below actually reach the column guard. Without it the
+            // evaluator's empty AllowedActions denies documents WHOLESALE, and both column facts
+            // pass on the table-level denial without the column guard ever running (vacuous —
+            // .claude/rules/regression-test-non-vacuous.md, "A COLUMN-level policy fixture needs
+            // policy-actions too").
+            "*.documents { policy-actions: read; policy-read-deny: body }",
         };
 
         /// <summary>
         /// The schema-metadata rules the fixture's tables carry. Defaults to the shared security
-        /// fixture (orders tenant-filter + soft-delete, documents policy-read-deny). A derived suite
+        /// fixture (orders tenant-filter + soft-delete, documents readable with a policy-read-deny
+        /// on the body column only). A derived suite
         /// whose adapter gates a surface by a per-table metadata opt-in (e.g. the gRPC front door's
         /// <c>grpc-write</c> write allow-list) overrides this to add that opt-in to the SAME tables —
         /// the tenant/soft-delete/policy semantics the kit asserts are unchanged, only an
@@ -362,6 +371,44 @@ namespace BifrostQL.AdapterConformance
             => ExpectedRejectionFragment(canonicalServerFragment);
 
         /// <summary>
+        /// The expected rejection text for the explicit-SELECTION of a policy-denied column
+        /// specifically. Defaults to <see cref="ExpectedRejectionFragment"/>. A wire that hides
+        /// denied columns from its caller-visible schema (OData's EDM, the MCP read compiler)
+        /// answers an explicit selection of one exactly as it answers a NONEXISTENT column —
+        /// its own unknown-field validation text, built from the caller's own arguments
+        /// (invariant 4: hidden is indistinguishable from nonexistent) — and overrides this to
+        /// that text. The ASSERT is unchanged (the read is rejected, zero rows).
+        /// </summary>
+        protected virtual string ExpectedSelectRejectionFragment(string canonicalServerFragment)
+            => ExpectedRejectionFragment(canonicalServerFragment);
+
+        /// <summary>How an adapter answers a read whose selection explicitly names a policy-read-denied column.</summary>
+        protected enum DeniedColumnSelectionExpectation
+        {
+            /// <summary>The read is refused and zero rows are delivered (the query-path default:
+            /// <c>PolicyFilterTransformer.AssertColumnsReadable</c> rejects rather than silently
+            /// stripping a column the caller asked for).</summary>
+            Reject,
+
+            /// <summary>The read succeeds and the denied column is dropped from every row — the
+            /// wire shape the caller's own visibility projection already advertises (LDAP omits
+            /// the attribute; RESP's HGETALL serves only visible columns), so an explicit denial
+            /// would be the hidden-vs-nonexistent oracle of protocol-adapter-security invariant 9.</summary>
+            Omit,
+        }
+
+        /// <summary>
+        /// The per-adapter expectation for the explicit-selection fact. The default is
+        /// <see cref="DeniedColumnSelectionExpectation.Reject"/> (the query pipeline's chosen
+        /// mechanism — see <c>PolicyFilterTransformer</c>'s "Chosen mechanism" note); an adapter
+        /// whose wire hides denied columns by construction overrides this to
+        /// <see cref="DeniedColumnSelectionExpectation.Omit"/> WITH a one-line reason. The
+        /// expectation is adapter-relative; the ASSERT is not: the denied value never reaches
+        /// the caller either way.
+        /// </summary>
+        protected virtual DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
+        /// <summary>
         /// The expected rejection text for a fail-closed WRITE specifically. Defaults to
         /// <see cref="ExpectedRejectionFragment"/>. A write-capable adapter whose write path sanitizes
         /// a fail-closed fault to a different generic status than its read path (e.g. gRPC maps a
@@ -449,15 +496,40 @@ namespace BifrostQL.AdapterConformance
         // ---- (c) column/table permissions ----------------------------------
 
         [Fact]
-        public async Task Read_SelectingPolicyDeniedColumn_IsRejected()
+        public async Task Read_SelectingPolicyDeniedColumn_IsStopped()
         {
-            await AssertReadRejectedAsync(new ConformanceReadRequest
+            // The fixture's policy-actions: read keeps the documents TABLE readable, so this fact
+            // reaches the COLUMN guard — the expected fragment matches the column-deny message
+            // ("...not permitted by authorization policy"), never the table-deny one
+            // ("Access denied by authorization policy."), so a fixture regression back to a
+            // wholesale table denial goes RED here instead of passing vacuously.
+            var request = new ConformanceReadRequest
             {
                 Table = "documents",
                 Columns = new[] { "id", "body" },
                 Principal = TenantPrincipal("user-a", "tenant-a"),
                 Endpoint = EndpointPath,
-            }, "not permitted by authorization policy");
+            };
+
+            if (DeniedColumnSelection == DeniedColumnSelectionExpectation.Omit)
+            {
+                var rows = await ExecuteReadAsync(request);
+                rows.Should().NotBeEmpty(
+                    "policy-actions: read makes documents readable; only the body column is denied");
+                rows.Select(r => r.TryGetValue("body", out var value) ? value : null)
+                    .Should().OnlyContain(
+                        value => value == null,
+                        "an omit adapter drops the denied column from every row — the denied value never crosses the wire");
+                rows.Should().OnlyContain(
+                    r => r.ContainsKey("id"),
+                    "the readable columns still come through; omission must not swallow the row");
+                return;
+            }
+
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteReadAsync(request));
+            FlattenMessages(ex).Should().Contain(
+                ExpectedSelectRejectionFragment("not permitted by authorization policy"),
+                "the adapter must surface the server-side rejection, not swallow or replace it");
         }
 
         [Fact]

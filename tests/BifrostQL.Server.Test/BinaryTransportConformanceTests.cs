@@ -39,6 +39,10 @@ namespace BifrostQL.Server.Test
         private const string SocketPath = "/bifrost-ws";
         private const string ClaimsHeader = "X-Test-Claims";
 
+        // Reject: the binary wire carries arbitrary GraphQL text, so the selection is an explicit
+        // field list the engine's column guard refuses — the same shape the HTTP GraphQL front door produces.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
         private uint _requestId;
 
         // The binary transport is not an IProtocolAdapter — it is mounted as middleware below.

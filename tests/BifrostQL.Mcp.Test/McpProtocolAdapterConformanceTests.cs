@@ -43,24 +43,28 @@ namespace BifrostQL.Mcp.Test
         /// unchanged — the read/write is still rejected and nothing is delivered or written; only
         /// the EXPECTED text is adapter-relative.
         ///
-        /// <para>ONE override covers the read, filter and write facts, and that is the point:
+        /// <para>ONE override covers the fail-closed identity facts, and that is the point:
         /// the funnel maps by CONDITION, never by op class, so an authorization refusal carries
         /// the identical code on every path (invariant 10's parity requirement). A separate
         /// override per fact would be the first sign that parity had been lost.</para>
-        ///
-        /// <para>The one split is by CONDITION, not by op class, so parity holds. The fixture's
-        /// <c>documents</c> table carries policy metadata without <c>policy-actions: read</c>, so
-        /// the evaluator denies the TABLE to this principal and
-        /// <c>SchemaReadVisibility</c> omits it — every MCP surface (schema overview, describe,
-        /// aggregate, search, row_context, and now query) already answers a table the caller may
-        /// not read exactly as it answers one that does not exist, because a distinguishable
-        /// refusal is itself the introspection oracle invariant 4 forbids. The ASSERT is still a
-        /// rejection with no rows delivered; only the non-disclosing text differs.</para>
         /// </summary>
         protected override string ExpectedRejectionFragment(string canonicalServerFragment) =>
-            canonicalServerFragment.Contains("authorization policy", StringComparison.Ordinal)
-                ? "Unknown table"
-                : "access_denied";
+            "access_denied";
+
+        // Reject, not omit: bifrost_query's field validation resolves the caller's field list
+        // against the caller-scoped visibility projection, so the denied column answers EXACTLY as
+        // a nonexistent one ("Unknown column", listing only the columns this caller may read —
+        // invariant 4). The fixture's documents table is readable (policy-actions: read), so the
+        // refusal is the column guard's, not a table-level denial.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
+        // Selecting the denied column: the same unknown-column refusal as a nonexistent field.
+        protected override string ExpectedSelectRejectionFragment(string canonicalServerFragment) => "Unknown column";
+
+        // Filtering on the denied column: same unknown-column refusal — a predicate naming a
+        // column the caller cannot see is refused, never silently dropped (a dropped predicate
+        // would return rows the caller's filter excluded).
+        protected override string ExpectedFilterRejectionFragment(string canonicalServerFragment) => "Unknown column";
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)

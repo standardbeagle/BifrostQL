@@ -53,6 +53,11 @@ namespace BifrostQL.Server.Test.Pgwire
         protected override string ExpectedRejectionFragment(string canonicalServerFragment)
             => PgWireProtocol.AccessDeniedErrorMessage;
 
+        // Reject: the wire speaks SQL (SELECT id, body FROM documents), so the selection is
+        // explicit and the read pipeline's column guard refuses it; the funnel sanitizes the
+        // reason to 42501 (ExpectedRejectionFragment above).
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)
         {

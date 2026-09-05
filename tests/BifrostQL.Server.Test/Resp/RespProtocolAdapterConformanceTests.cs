@@ -68,6 +68,11 @@ namespace BifrostQL.Server.Test.Resp
         protected override string ExpectedRejectionFragment(string canonicalServerFragment)
             => RespProtocol.AccessDeniedError;
 
+        // Reject: HGETALL resolves the row through the shared read pipeline over the table's
+        // columns, so a denied column on the table fails the read closed (-NOPERM) rather than
+        // serving a partial hash the caller cannot distinguish from a complete one.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)
         {

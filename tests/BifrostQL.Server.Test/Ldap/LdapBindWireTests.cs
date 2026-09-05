@@ -211,6 +211,15 @@ namespace BifrostQL.Server.Test.Ldap
                 .Should().BeNull("an anonymous session expires at its deadline; it must not hold a slot forever");
         }
 
+        /// <summary>A manually advanced clock, so a deadline fact is driven by the TEST, not by
+        /// the wall clock of a box running the parallel epic gate.</summary>
+        private sealed class SettableClock
+        {
+            private DateTimeOffset _now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            public DateTimeOffset Now => _now;
+            public void Advance(TimeSpan by) => _now += by;
+        }
+
         [Fact]
         public async Task AnonymousRebinds_DoNotExtendTheSessionDeadline()
         {
@@ -219,22 +228,38 @@ namespace BifrostQL.Server.Test.Ldap
             // slot forever by re-binding anonymously every few seconds — the M17 vector, one
             // message type over. The deadline is fixed at ACCEPT: re-binding anonymously past it
             // observes the close, not a fresh window.
+            //
+            // The deadline is driven by an injected clock the TEST advances, so the fact does not
+            // depend on wall-clock scheduling under the parallel epic gate (the 600 ms timeout vs
+            // 3×400 ms delays of the wall-clock version left a ~200 ms margin that a loaded box
+            // could shift — the flake this rewrite removes). Each re-bind lands at +400 ms of the
+            // PREVIOUS bind, inside any per-bind sliding window, while the cumulative 1600 ms is
+            // past the accept-time 600 ms deadline: a sliding deadline answers all four binds and
+            // stays open (RED), the fixed deadline closes the connection.
+            var clock = new SettableClock();
             var options = new LdapWireOptions
             {
                 AnonymousBindEnabled = true,
                 AuthenticationTimeout = TimeSpan.FromMilliseconds(600),
                 IdleTimeout = TimeSpan.FromSeconds(30),
             };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+            await using var fixture = await LdapFixture.StartAsync(
+                options, authenticator: Authenticator(options), tls: true, clock: () => clock.Now);
 
-            // Re-bind anonymously at ~2/3 of the window, three times: each re-bind lands before the
-            // MOST RECENT bind's window would expire, so a sliding deadline keeps every one alive
-            // while the accept-time deadline closes the connection during the loop.
             LdapResponse? response = null;
-            for (var messageId = 1; messageId <= 3; messageId++)
+            for (var messageId = 1; messageId <= 4; messageId++)
             {
-                await Task.Delay(400);
-                await fixture.Client.SendAsync(LdapWire.Message(messageId, LdapWire.BindRequest(name: "", password: "")));
+                if (messageId > 1)
+                    clock.Advance(TimeSpan.FromMilliseconds(400));
+                try
+                {
+                    await fixture.Client.SendAsync(LdapWire.Message(messageId, LdapWire.BindRequest(name: "", password: "")));
+                }
+                catch (IOException)
+                {
+                    response = null; // the server already closed the connection
+                    break;
+                }
                 response = await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5));
                 if (response is null)
                     break;

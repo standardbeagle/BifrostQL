@@ -438,7 +438,8 @@ namespace BifrostQL.Server.Test.Ldap
             LdapBindAuthenticator? authenticator = null,
             LdapConnectionHandler? handler = null,
             bool tls = false,
-            LdapSearchExecutor? search = null)
+            LdapSearchExecutor? search = null,
+            Func<DateTimeOffset>? clock = null)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -454,7 +455,8 @@ namespace BifrostQL.Server.Test.Ldap
             // it: a fixture with a certificate can StartTLS, one without answers it unavailable.
             var connectionHandler = handler
                 ?? new LdapConnectionHandler(
-                    options, connectionLimiter, authenticator, LdapTlsProvider.Create(options), search);
+                    options, connectionLimiter, authenticator, LdapTlsProvider.Create(options), search,
+                    clock: clock);
             var client = new LdapTestClient(clientSocket.GetStream());
             var cancellation = new CancellationTokenSource();
 

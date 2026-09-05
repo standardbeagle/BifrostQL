@@ -273,13 +273,7 @@ namespace BifrostQL.Server
             var response = context.Response;
             var (mime, extension, inline) = Sniff(bytes);
             response.Headers["Accept-Ranges"] = "bytes";
-            response.Headers["X-Content-Type-Options"] = "nosniff";
-            response.Headers.CacheControl = "private, no-store";
-            response.ContentType = mime;
-            // Only magic-byte-verified image types render inline; everything else is
-            // an attachment so stored markup can never execute on this origin.
-            var fileName = $"{tableName}-{columnName}{extension}";
-            response.Headers.ContentDisposition = $"{(inline ? "inline" : "attachment")}; filename=\"{fileName}\"";
+            StoredBinaryContentHeaders.Apply(response, mime, $"{tableName}-{columnName}{extension}", inline);
 
             var (start, length, satisfiable, isPartial) = ResolveRange(context.Request.Headers.Range.ToString(), bytes.Length);
             if (!satisfiable)
@@ -387,6 +381,26 @@ namespace BifrostQL.Server
             context.Response.StatusCode = status;
             context.Response.ContentType = "text/plain; charset=utf-8";
             await context.Response.WriteAsync(body, context.RequestAborted);
+        }
+    }
+
+    /// <summary>
+    /// The shared safety headers for serving stored, caller-controlled bytes from
+    /// this origin — used by the blob endpoint (<see cref="BifrostBlobMiddleware"/>)
+    /// and the chat media route (<see cref="BifrostChatMiddleware"/>). The content
+    /// type is always magic-byte-sniffed and pinned with <c>nosniff</c>; only
+    /// verified-safe types may render inline, everything else is an attachment so
+    /// stored markup can never execute on this origin.
+    /// </summary>
+    internal static class StoredBinaryContentHeaders
+    {
+        public static void Apply(HttpResponse response, string contentType, string fileName, bool inline)
+        {
+            response.Headers["X-Content-Type-Options"] = "nosniff";
+            response.Headers.CacheControl = "private, no-store";
+            response.ContentType = contentType;
+            response.Headers.ContentDisposition =
+                $"{(inline ? "inline" : "attachment")}; filename=\"{fileName}\"";
         }
     }
 

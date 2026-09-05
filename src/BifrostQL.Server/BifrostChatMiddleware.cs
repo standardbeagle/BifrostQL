@@ -84,7 +84,9 @@ namespace BifrostQL.Server
     /// reference needs no signature), sniffs the image content type from the bytes
     /// (octet-stream fallback), and streams the binary. Unknown table, non-media
     /// table, URL-mode table (clients use the stored URL directly), cross-tenant
-    /// and nonexistent row are all the same 404.</item>
+    /// and nonexistent row are all the same 404. The sniffed content type is pinned
+    /// with <c>nosniff</c> and a Content-Disposition (inline only for verified
+    /// images), shared with the blob endpoint.</item>
     /// </list>
     ///
     /// Chat connectors (<see cref="ChatConnectorRegistry"/>) expose tools to the model;
@@ -466,8 +468,14 @@ namespace BifrostQL.Server
                 }
 
                 context.Response.StatusCode = StatusCodes.Status200OK;
-                context.Response.ContentType =
-                    MediaContentSniffer.SniffImageMediaType(bytes) ?? MediaContentSniffer.DefaultContentType;
+                var sniffed = MediaContentSniffer.SniffImageMediaType(bytes);
+                // Only magic-byte-verified image types render inline; anything else
+                // is an attachment so stored markup can never execute on this origin.
+                StoredBinaryContentHeaders.Apply(
+                    context.Response,
+                    sniffed ?? MediaContentSniffer.DefaultContentType,
+                    $"{tableName}-{rawRowId}{MediaExtension(sniffed)}",
+                    inline: sniffed is not null);
                 context.Response.ContentLength = bytes.Length;
                 await context.Response.Body.WriteAsync(bytes, context.RequestAborted);
             }
@@ -501,6 +509,16 @@ namespace BifrostQL.Server
             rowId = rawRowId;
             return true;
         }
+
+        /// <summary>File extension for the media route's Content-Disposition filename.</summary>
+        private static string MediaExtension(string? mediaType) => mediaType switch
+        {
+            "image/png" => ".png",
+            "image/jpeg" => ".jpg",
+            "image/gif" => ".gif",
+            "image/webp" => ".webp",
+            _ => ".bin",
+        };
 
         private static byte[]? TryDecodeBase64(string base64)
         {

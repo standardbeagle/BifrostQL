@@ -21,6 +21,11 @@ in the repo.
   from the empty string.
 - **Excel BOM option.** With the BOM option enabled, the UTF-8 byte-order mark
   is the first bytes of the file.
+- **Formula-injection guard (CWE-1236).** A text value that starts with `=`,
+  `+`, `-`, `@`, tab, or carriage return gets a leading apostrophe so a
+  spreadsheet opens it as text instead of running it as a formula. Numeric
+  column values arrive typed and are left alone, so a negative number stays a
+  number.
 - **BigInt-safe JSON.** A BigInt primary-key value round-trips without precision
   loss (carried as a string, never a `Number`-coerced value), and dates keep a
   documented, stable format.

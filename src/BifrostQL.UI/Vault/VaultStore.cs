@@ -175,7 +175,17 @@ public static class VaultStore
     /// accounts. Internal so tests can assert the mode while the stream is open.
     /// </summary>
     internal static FileStream OpenSecretFileForWrite(string path)
-        => new(path, FileMode.Create, FileAccess.Write, FileShare.None);
+    {
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+        };
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        return new FileStream(path, options);
+    }
 
     /// <summary>
     /// Derive key path from vault path (sibling file).

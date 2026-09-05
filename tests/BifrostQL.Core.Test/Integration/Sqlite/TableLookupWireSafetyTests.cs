@@ -235,4 +235,23 @@ public sealed class TableLookupWireSafetyTests : IAsyncLifetime
 
         AssertSanitized(act.Should().Throw<Exception>().Which);
     }
+
+    // ---- TryGet contract (all three overloads, closed enumeration) --------
+
+    [Fact]
+    public void TryGet_UnknownNames_ReturnFalse()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("widget", t => t.WithPrimaryKey("id"))
+            .Build();
+
+        model.TryGetTableFromDbName(PhantomTable, out _).Should().BeFalse();
+        model.TryGetTableFromDbName("dbo", PhantomTable, out _).Should().BeFalse();
+        model.TryGetTableByFullGraphQlName(PhantomTable, out _).Should().BeFalse();
+
+        model.TryGetTableFromDbName("widget", out var byBare).Should().BeTrue();
+        byBare.Should().NotBeNull();
+        model.TryGetTableByFullGraphQlName("widget", out var byGraphQl).Should().BeTrue();
+        byGraphQl.Should().NotBeNull();
+    }
 }

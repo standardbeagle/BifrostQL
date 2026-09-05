@@ -39,10 +39,14 @@ namespace BifrostQL.Core.Resolvers
             if (string.IsNullOrWhiteSpace(recordId))
                 throw new BifrostExecutionError("Record ID is required");
 
-            // Resolve table and column
-            var table = model.GetTableFromDbName(tableName);
+            // Resolve table and column. Positive resolve: the throwing lookup's
+            // message embeds the caller-supplied table name, which must never reach
+            // the wire (finding M31); the same rule drops the name from the
+            // column-miss message.
+            if (!model.TryGetTableFromDbName(tableName, out var table))
+                throw new BifrostExecutionError("The requested table was not found.");
             if (!table.ColumnLookup.TryGetValue(columnName, out var column))
-                throw new BifrostExecutionError($"Column '{columnName}' not found in table '{tableName}'");
+                throw new BifrostExecutionError($"Column '{columnName}' was not found on the requested table");
 
             // Verify this is a file storage column
             if (!_storageService.IsFileStorageColumn(table, column, model))

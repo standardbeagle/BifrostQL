@@ -243,8 +243,11 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
 
         // Fail fast on a table outside the resolved endpoint's model (wrong
-        // endpoint, or a stale caller after a schema reset).
-        var table = model.GetTableFromDbName(intent.Table);
+        // endpoint, or a stale caller after a schema reset). Positive resolve:
+        // the throwing lookup's message embeds the caller-supplied name, which
+        // must never reach the wire (finding M31).
+        if (!model.TryGetTableFromDbName(intent.Table, out var table))
+            throw new BifrostExecutionError("The mutation intent names a table that is not part of the endpoint's model.");
 
         // The restore capability gate runs FIRST — before argument shaping, before
         // any transformer — so a caller without it builds nothing and cannot probe
@@ -305,7 +308,8 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         var inputs = await IntentEndpointResolver.ResolveAsync(_endpoints, intent.Endpoint);
         var model = IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", intent.Endpoint);
         var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
-        var table = model.GetTableFromDbName(intent.Table);
+        if (!model.TryGetTableFromDbName(intent.Table, out var table))
+            throw new BifrostExecutionError("The mutation intent names a table that is not part of the endpoint's model.");
 
         var actions = intent.Actions.Select(action => new BatchMutationPipeline.BatchAction(
             action.Action switch

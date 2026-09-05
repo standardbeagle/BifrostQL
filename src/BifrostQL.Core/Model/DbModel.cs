@@ -28,6 +28,53 @@ namespace BifrostQL.Core.Model
         /// same-named table in another schema).
         /// </summary>
         IDbTable GetTableFromDbName(string schema, string dbName);
+
+        /// <summary>
+        /// Non-throwing counterpart of <see cref="GetTableByFullGraphQlName"/> for
+        /// client-reachable call sites: a miss is an expected client-shape fault, so
+        /// the caller maps it onto its own sanitized error instead of catching an
+        /// exception whose message embeds the queried name (protocol-adapter-security
+        /// invariant 3; finding M31).
+        /// </summary>
+        bool TryGetTableByFullGraphQlName(string fullName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+        {
+            table = Tables.FirstOrDefault(t => t.MatchName(fullName));
+            return table is not null;
+        }
+
+        /// <summary>
+        /// Non-throwing counterpart of <see cref="GetTableFromDbName(string)"/>. Returns
+        /// false on a miss AND on an ambiguous bare name: the caller cannot resolve
+        /// either positively, and the fail-fast ambiguity signal stays on the throwing
+        /// overload for callers that know the name must exist.
+        /// </summary>
+        bool TryGetTableFromDbName(string tableName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+        {
+            table = null;
+            foreach (var t in Tables)
+            {
+                if (!string.Equals(t.DbName, tableName, StringComparison.InvariantCultureIgnoreCase)) continue;
+                if (table is not null)
+                {
+                    // Ambiguous bare name: a positive resolve is impossible.
+                    table = null;
+                    return false;
+                }
+                table = t;
+            }
+            return table is not null;
+        }
+
+        /// <summary>
+        /// Non-throwing counterpart of <see cref="GetTableFromDbName(string, string)"/>.
+        /// </summary>
+        bool TryGetTableFromDbName(string schema, string dbName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+        {
+            table = Tables.FirstOrDefault(t =>
+                string.Equals(t.DbName, dbName, StringComparison.InvariantCultureIgnoreCase)
+                && string.Equals(t.TableSchema, schema, StringComparison.InvariantCultureIgnoreCase));
+            return table is not null;
+        }
         IDictionary<string, object?> Metadata { get; init; }
         string? GetMetadataValue(string property);
         bool GetMetadataBool(string property, bool defaultValue);
@@ -181,6 +228,23 @@ namespace BifrostQL.Core.Model
                 : throw new ArgumentOutOfRangeException(nameof(dbName), $"{schema}.{dbName}",
                     $"failed table lookup on qualified db name: {schema}.{dbName}");
         }
+
+        public bool TryGetTableByFullGraphQlName(string fullName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+            => _byGraphQlName.Value.TryGetValue(fullName, out table);
+
+        public bool TryGetTableFromDbName(string tableName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+        {
+            var index = _byDbName.Value;
+            if (index.Ambiguous.Contains(tableName))
+            {
+                table = null;
+                return false;
+            }
+            return index.ByBare.TryGetValue(tableName, out table);
+        }
+
+        public bool TryGetTableFromDbName(string schema, string dbName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+            => _byDbName.Value.ByQualified.TryGetValue(QualifiedDbNameKey(schema, dbName), out table);
 
         /// <summary>
         /// Collects EAV configurations from table metadata using the collector pattern.

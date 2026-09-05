@@ -139,28 +139,22 @@ namespace BifrostQL.Core.QueryModel
         }
 
         /// <summary>
-        /// Resolves the table backing a query node. The model's lookup signals "no such
-        /// table" with <see cref="ArgumentOutOfRangeException"/>, whose message carries the
-        /// caller-supplied name; on the GraphQL wire that surfaces as an
-        /// ARGUMENT_OUT_OF_RANGE error echoing the identifier back. A client-shape fault
-        /// maps to the adapter-owned execution error with no identifier in its text.
+        /// Resolves the table backing a query node via a positive lookup. A miss is a
+        /// client-shape fault: it maps to the adapter-owned execution error with no
+        /// identifier in its text (the throwing model lookup's message carries the
+        /// caller-supplied name; finding M31, protocol-adapter-security invariant 3).
         /// </summary>
         private static IDbTable ResolveTable(IDbModel model, string tableName)
         {
-            try
-            {
-                return model.GetTableByFullGraphQlName(tableName);
-            }
-            catch (ArgumentOutOfRangeException)
-            {
+            if (!model.TryGetTableByFullGraphQlName(tableName, out var table))
                 throw new BifrostExecutionError("A requested field does not name a queryable table.");
-            }
+            return table;
         }
 
         private static bool IsMultiLink(IDbModel model, IQueryField parent, string fieldName)
         {
             var normalizedFieldName = NormalizeColumnName(fieldName);
-            var parentTable = model.GetTableByFullGraphQlName(NormalizeColumnName(parent.Name));
+            var parentTable = ResolveTable(model, NormalizeColumnName(parent.Name));
             // A single-link sharing the field name (self-referential FK) takes
             // precedence — it stays a bare object, so don't treat it as paged.
             if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out _)
@@ -181,7 +175,7 @@ namespace BifrostQL.Core.QueryModel
             if (parent == null)
                 return normalizedFieldName;
 
-            var parentTable = model.GetTableByFullGraphQlName(NormalizeColumnName(parent.Name));
+            var parentTable = ResolveTable(model, NormalizeColumnName(parent.Name));
             if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out var singleLink)
                 || (singleLink = parentTable.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 // The TABLE name, not the link's field name: the caller feeds this

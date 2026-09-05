@@ -44,10 +44,14 @@ namespace BifrostQL.Core.Resolvers
             if (fileContent == null || fileContent.Length == 0)
                 throw new BifrostExecutionError("File content is required");
 
-            // Resolve table and column
-            var table = model.GetTableFromDbName(tableName);
+            // Resolve table and column. Positive resolve: the throwing lookup's
+            // message embeds the caller-supplied table name, which must never reach
+            // the wire (finding M31); the same rule drops the name from the
+            // column-miss message.
+            if (!model.TryGetTableFromDbName(tableName, out var table))
+                throw new BifrostExecutionError("The requested table was not found.");
             if (!table.ColumnLookup.TryGetValue(columnName, out var column))
-                throw new BifrostExecutionError($"Column '{columnName}' not found in table '{tableName}'");
+                throw new BifrostExecutionError($"Column '{columnName}' was not found on the requested table");
 
             // Verify this is a file storage column
             if (!_storageService.IsFileStorageColumn(table, column, model))
@@ -65,7 +69,7 @@ namespace BifrostQL.Core.Resolvers
             var (rowVisible, _) = await FilePointerAccess.ReadPointerAsync(
                 bifrost, table, column, keyData, context.CancellationToken);
             if (!rowVisible)
-                throw new BifrostExecutionError($"Record not found or not accessible in table '{tableName}'.");
+                throw new BifrostExecutionError("Record not found or not accessible on the requested table.");
 
             // The content goes to a FRESH random storage key, never to an address
             // derived from the caller's input: UploadFileAsync takes no storage-key
@@ -108,7 +112,7 @@ namespace BifrostQL.Core.Resolvers
             if (affectedRows == 0)
             {
                 await TryDeleteOrphanBlobAsync(table, column, model, fileMetadata, context.CancellationToken);
-                throw new BifrostExecutionError($"Record not found or not accessible in table '{tableName}'.");
+                throw new BifrostExecutionError("Record not found or not accessible on the requested table.");
             }
 
             // Re-upload orphans the previous object referenced by the row's prior

@@ -145,9 +145,11 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
             throw new BifrostExecutionError("Query intent has no table: GqlObjectQuery.DbTable must be set.");
 
         // Fail fast when the intent's table is not part of the resolved endpoint's
-        // model (wrong endpoint, or a stale model after a schema reset). Throws
-        // with the table name — no fallback.
-        model.GetTableFromDbName(query.DbTable.DbName);
+        // model (wrong endpoint, or a stale model after a schema reset). Positive
+        // resolve with no fallback — and no caller-supplied name in the error text
+        // (finding M31).
+        if (!model.TryGetTableFromDbName(query.DbTable.DbName, out _))
+            throw new BifrostExecutionError("The query intent's table is not part of the endpoint's model.");
 
         // Engine self-metrics (Prometheus slice-5): resolve the singleton when a scrape surface is
         // registered so intent (adapter) reads record their outcome + transformer duration; null

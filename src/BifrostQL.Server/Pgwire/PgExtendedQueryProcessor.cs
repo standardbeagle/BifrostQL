@@ -524,6 +524,10 @@ namespace BifrostQL.Server.Pgwire
         /// for its declared type raises <see cref="FormatException"/>/<see cref="ArgumentException"/>,
         /// and an out-of-range numeric raises <see cref="OverflowException"/> — the Bind caller
         /// turns any of these into a clean bind error (skip-until-Sync), never an unhandled throw.
+        /// The numeric grammars are pinned explicitly (invariant 5): the provider alone only
+        /// chooses glyphs — <c>decimal.Parse(s, provider)</c> defaults to
+        /// <see cref="NumberStyles.Number"/> and <c>double.Parse</c> to Float|AllowThousands, so a
+        /// group-separated token ("1,5") would be ACCEPTED as 15 on every host.
         /// </summary>
         private static object? DecodeTextParameter(int oid, byte[] raw)
         {
@@ -532,10 +536,10 @@ namespace BifrostQL.Server.Pgwire
             {
                 PgTypeMap.OidBool => ParseBool(text),
                 PgTypeMap.OidInt2 or PgTypeMap.OidInt4 or PgTypeMap.OidInt8
-                    => long.Parse(text, CultureInfo.InvariantCulture),
+                    => long.Parse(text, NumberStyles.Integer, CultureInfo.InvariantCulture),
                 PgTypeMap.OidFloat4 or PgTypeMap.OidFloat8
-                    => double.Parse(text, CultureInfo.InvariantCulture),
-                PgTypeMap.OidNumeric => decimal.Parse(text, CultureInfo.InvariantCulture),
+                    => double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture),
+                PgTypeMap.OidNumeric => decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture),
                 PgTypeMap.OidUuid => Guid.Parse(text),
                 PgTypeMap.OidDate or PgTypeMap.OidTimestamp
                     => DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.None),

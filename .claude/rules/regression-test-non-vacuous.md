@@ -152,15 +152,18 @@ implementations produce provably different output.
   ever running. Write `policy-actions: read` alongside the deny list whenever
   the subject under test is the COLUMN. This cost the LDAP M20 slice a rewrite
   of its first RED, and the shared conformance fixture
-  (`ProtocolAdapterConformanceTests.cs:210`, `documents { policy-read-deny: body }`)
-  carries the same defect into 8 derived suites — its
-   `Read_SelectingPolicyDeniedColumn_IsRejected` /
-   `Read_FilteringOnPolicyDeniedColumn_IsRejected` facts are currently
-   table-level denial tests (fixed: the fixture now carries
-   `policy-actions: read`, the select fact is per-adapter Reject/Omit via
-   `DeniedColumnSelection`, and removing `IsColumnAllowed` from the read path
-   takes the fact RED in all 8 derived suites).
+  (`ProtocolAdapterConformanceTests.cs`, `documents { policy-read-deny: body }`)
+  carried the same defect into 8 derived suites: its
+  `Read_SelectingPolicyDeniedColumn_IsRejected` /
+  `Read_FilteringOnPolicyDeniedColumn_IsRejected` facts were table-level
+  denial tests. Fixed in task `01M1QAJZ3ET9XHQJGWNTZ47GSQ`: the fixture now
+  carries `policy-actions: read`, the select fact
+  (`Read_SelectingPolicyDeniedColumn_IsStopped`) is per-adapter Reject/Omit
+  via `DeniedColumnSelection`, and forcing `IsColumnAllowed` to Allow on the
+  read path takes both facts RED in all 8 derived suites (16 RED, replayed
+  in review).
   <!-- written_at: 2026-09-04T23:10:00Z  source_event: task:01M1KPC4MXF2621FXFZZCVF7ZM, git:0c2b6d37 -->
+  <!-- amended_at: 2026-09-05T09:30:00Z  source_event: task:01M1QAJZ3ET9XHQJGWNTZ47GSQ, git:ea632a0e -->
 - **A substring assertion over composed SQL is not a fact about the fragment
   under test.** The M9 nested-collection RED asserted the restricted join-id
   sub-query contained `LIMIT 100`, and it passed against provably unpaged code:

@@ -392,8 +392,9 @@ namespace BifrostQL.AdapterConformance
 
             /// <summary>The read succeeds and the denied column is dropped from every row — the
             /// wire shape the caller's own visibility projection already advertises (LDAP omits
-            /// the attribute; RESP's HGETALL serves only visible columns), so an explicit denial
-            /// would be the hidden-vs-nonexistent oracle of protocol-adapter-security invariant 9.</summary>
+            /// the attribute — the only Omit derivation today; RESP's HGETALL reads every table
+            /// column through the pipeline and so is a Reject), so an explicit denial would be
+            /// the hidden-vs-nonexistent oracle of protocol-adapter-security invariant 9.</summary>
             Omit,
         }
 

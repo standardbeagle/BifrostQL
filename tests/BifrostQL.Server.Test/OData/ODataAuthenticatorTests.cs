@@ -19,6 +19,21 @@ namespace BifrostQL.Server.Test.OData
         private static ODataAuthenticator Build(IODataBasicCredentialStore? store = null)
             => new(BifrostAuthContextFactory.Instance, store);
 
+        /// <summary>
+        /// LOW bundle item 3: the credential record must not carry a plaintext-equivalent
+        /// shared secret. The authenticator compares SHA-256(secret) to SHA-256(password),
+        /// which forces every store to hold the password itself. The contract must carry a
+        /// one-way password hash instead (PasswordHasher-style, mirroring LocalUserStore).
+        /// </summary>
+        [Fact]
+        public void Credential_contract_carries_no_plaintext_equivalent_secret()
+        {
+            typeof(ODataBasicCredential).GetProperties().Select(p => p.Name)
+                .Should().NotContain("Secret",
+                    "a store holding 'Secret' holds a plaintext-equivalent: the authenticator "
+                    + "must verify against a one-way hash, not compare digests of a shared secret");
+        }
+
         private static ODataAuthenticator BuildWithUser()
             => Build(new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal()));

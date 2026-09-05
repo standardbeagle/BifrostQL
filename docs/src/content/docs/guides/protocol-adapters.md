@@ -87,7 +87,12 @@ Build the query tree against the model returned by `GetModelAsync` for the **sam
 
 ```csharp
 var model = await _executor.GetModelAsync(request.Endpoint);
-var table = model.GetTableFromDbName(request.Table);   // unknown table throws
+// Positive resolve: the throwing GetTableFromDbName embeds the queried name in
+// its exception message, which must never reach the client. TryGetTableFromDbName
+// (and TryGetTableByFullGraphQlName) let the adapter map a miss onto its own
+// sanitized, adapter-owned error.
+if (!model.TryGetTableFromDbName(request.Table, out var table))
+    throw new BifrostExecutionError("The requested table was not found.");
 
 var query = new GqlObjectQuery
 {

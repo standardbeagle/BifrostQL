@@ -330,5 +330,67 @@ namespace BifrostQL.Server.Test.Grpc
             // ("...not permitted by authorization policy") must not reach the wire (invariant 3).
             writeFault.Status.Detail.Should().NotContainAny("authorization", "body", "documents", "SQL");
         }
+
+        // ---- (g) continuation-token integrity --------------------------------
+        //
+        // GrpcPageCursor MACs every List page token against a binding re-derived from the LIVE
+        // request (table, query shape hash, page size, identity fingerprint); the wire refusal for
+        // any invalid token is the single generic INVALID_ARGUMENT message through the one status
+        // funnel, so all six tampers surface byte-identically.
+
+        protected override bool AdapterSupportsContinuationTokens => true;
+
+        protected override Task<ContinuationReplayOutcome> ReplayContinuationAsync(ContinuationTamper tamper)
+        {
+            var secret = new byte[32];
+            for (var i = 0; i < secret.Length; i++) secret[i] = (byte)(i + 1);
+            var wrongSecret = new byte[32]; // a key the server does not hold
+            var now = new DateTimeOffset(2026, 9, 5, 0, 0, 0, TimeSpan.Zero);
+            var ttl = TimeSpan.FromHours(1);
+            var binding = new GrpcPageBinding("orders", "shape-hash", 100, "fingerprint-user-a");
+            var replayBinding = tamper switch
+            {
+                // Cross-context target: a DIFFERENT table. The token position is a bare row offset
+                // for EVERY table, so no payload arity check can refuse a cross-table replay —
+                // only the MAC over the re-derived binding can.
+                ContinuationTamper.CrossContext => binding with { Table = "documents" },
+                ContinuationTamper.CrossIdentity => binding with { IdentityFingerprint = "fingerprint-user-b" },
+                _ => binding,
+            };
+            string Issue(byte[] key, DateTimeOffset at) => GrpcPageCursor.Issue(7, at, binding, key);
+            var token = tamper switch
+            {
+                ContinuationTamper.Forged => Issue(wrongSecret, now),
+                ContinuationTamper.Tampered => TamperToken(Issue(secret, now)),
+                ContinuationTamper.Expired => Issue(secret, now - ttl - ttl),
+                ContinuationTamper.Unparseable => "not-a-token-at-all",
+                _ => Issue(secret, now),
+            };
+
+            int? offset = null;
+            string? wireText = null;
+            try
+            {
+                offset = GrpcPageCursor.Decode(token, replayBinding, secret, now, ttl);
+            }
+            catch (GrpcRequestException ex)
+            {
+                wireText = ex.Message;
+            }
+            return Task.FromResult(new ContinuationReplayOutcome
+            {
+                Refused = wireText is not null,
+                WireText = wireText,
+                ResumedFromStart = offset == 0,
+            });
+        }
+
+        /// <summary>Flips one payload character (before the MAC separator), keeping valid base64url.</summary>
+        private static string TamperToken(string token)
+        {
+            var chars = token.ToCharArray();
+            chars[0] = chars[0] == 'A' ? 'B' : 'A';
+            return new string(chars);
+        }
     }
 }

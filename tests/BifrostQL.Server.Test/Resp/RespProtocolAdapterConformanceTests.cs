@@ -294,6 +294,59 @@ namespace BifrostQL.Server.Test.Resp
             };
         }
 
+        // ---- (g) continuation-token integrity --------------------------------
+        //
+        // RespScanCursor MACs every SCAN cursor against a binding re-derived from the LIVE
+        // request (table, MATCH pattern, identity fingerprint); the wire refusal for any invalid
+        // cursor is the single "ERR invalid cursor" line from the SCAN command handler, so all
+        // six tampers surface byte-identically.
+
+        protected override bool AdapterSupportsContinuationTokens => true;
+
+        protected override Task<ContinuationReplayOutcome> ReplayContinuationAsync(ContinuationTamper tamper)
+        {
+            var secret = new byte[32];
+            for (var i = 0; i < secret.Length; i++) secret[i] = (byte)(i + 1);
+            var wrongSecret = new byte[32]; // a key the server does not hold
+            var now = new DateTimeOffset(2026, 9, 5, 0, 0, 0, TimeSpan.Zero);
+            var ttl = TimeSpan.FromHours(1);
+            var binding = new RespScanBinding("main.orders", "orders:*", "fingerprint-user-a");
+            var replayBinding = tamper switch
+            {
+                // Cross-context target: documents.id is a single INTEGER key — the SAME arity as
+                // orders.id — so an arity check on the cursor payload cannot pass for the MAC.
+                ContinuationTamper.CrossContext => new RespScanBinding("main.documents", "documents:*", "fingerprint-user-a"),
+                ContinuationTamper.CrossIdentity => binding with { IdentityFingerprint = "fingerprint-user-b" },
+                _ => binding,
+            };
+            string Issue(byte[] key, DateTimeOffset at) =>
+                RespScanCursor.Issue(new object?[] { 1 }, at, binding, key);
+            var token = tamper switch
+            {
+                ContinuationTamper.Forged => Issue(wrongSecret, now),
+                ContinuationTamper.Tampered => TamperToken(Issue(secret, now)),
+                ContinuationTamper.Expired => Issue(secret, now - ttl - ttl),
+                ContinuationTamper.Unparseable => "not-a-cursor-at-all",
+                _ => Issue(secret, now),
+            };
+
+            var accepted = RespScanCursor.TryValidate(token, replayBinding, secret, now, ttl, out var segments);
+            return Task.FromResult(new ContinuationReplayOutcome
+            {
+                Refused = !accepted,
+                WireText = accepted ? null : $"{RespProtocol.ErrPrefix}invalid cursor",
+                ResumedFromStart = accepted && segments is null,
+            });
+        }
+
+        /// <summary>Flips one payload character (before the MAC separator), keeping valid base64url.</summary>
+        private static string TamperToken(string token)
+        {
+            var chars = token.ToCharArray();
+            chars[0] = chars[0] == 'A' ? 'B' : 'A';
+            return new string(chars);
+        }
+
         /// <summary>Formats a mutation request's primary key as the RESP key <c>&lt;table&gt;:&lt;pk…&gt;</c>.</summary>
         private static string BuildKey(string table, IReadOnlyList<object?>? primaryKey, IReadOnlyDictionary<string, object?> data)
         {

@@ -381,5 +381,60 @@ namespace BifrostQL.Server.Test.Ldap
             public bool Verify(ReadOnlySpan<byte> password, string passwordHash) =>
                 passwordHash != DecoyHash && passwordHash == "hash:" + Encoding.UTF8.GetString(password);
         }
+
+        // ---- (g) continuation-token integrity --------------------------------
+        //
+        // LdapPageCookie MACs every paged-results cookie against a binding re-derived from the
+        // LIVE continuation request (search shape hash, page size, identity fingerprint); the
+        // wire refusal for any invalid cookie is the single UnavailableCriticalExtension result
+        // with an empty diagnostic from LdapSearchExecutor, so all six tampers surface
+        // byte-identically.
+
+        protected override bool AdapterSupportsContinuationTokens => true;
+
+        protected override Task<ContinuationReplayOutcome> ReplayContinuationAsync(ContinuationTamper tamper)
+        {
+            var secret = new byte[32];
+            for (var i = 0; i < secret.Length; i++) secret[i] = (byte)(i + 1);
+            var wrongSecret = new byte[32]; // a key the server does not hold
+            var now = new DateTimeOffset(2026, 9, 5, 0, 0, 0, TimeSpan.Zero);
+            var ttl = TimeSpan.FromHours(1);
+            var binding = new LdapPageBinding("orders-search-shape", 100, "fingerprint-user-a");
+            var replayBinding = tamper switch
+            {
+                // Cross-context target: a DIFFERENT search shape. The cookie position is a fixed
+                // (targetIndex, offset) pair for EVERY shape, so the payload arity is identical by
+                // construction and only the MAC over the re-derived shape hash can refuse the replay.
+                ContinuationTamper.CrossContext => binding with { SearchShapeHash = "documents-search-shape" },
+                ContinuationTamper.CrossIdentity => binding with { IdentityFingerprint = "fingerprint-user-b" },
+                _ => binding,
+            };
+            byte[] Issue(byte[] key, DateTimeOffset at) =>
+                LdapPageCookie.Issue(new LdapPagePosition(1, 5), at, binding, key);
+            var cookie = tamper switch
+            {
+                ContinuationTamper.Forged => Issue(wrongSecret, now),
+                ContinuationTamper.Tampered => TamperCookie(Issue(secret, now)),
+                ContinuationTamper.Expired => Issue(secret, now - ttl - ttl),
+                ContinuationTamper.Unparseable => Encoding.ASCII.GetBytes("not-a-cookie"),
+                _ => Issue(secret, now),
+            };
+
+            var accepted = LdapPageCookie.TryDecode(cookie, replayBinding, secret, now, ttl, out var position);
+            return Task.FromResult(new ContinuationReplayOutcome
+            {
+                Refused = !accepted,
+                WireText = accepted ? null : LdapResultCode.UnavailableCriticalExtension.ToString(),
+                ResumedFromStart = accepted && position.Equals(new LdapPagePosition(0, 0)),
+            });
+        }
+
+        /// <summary>Flips one payload byte, keeping the cookie well-formed base64url text.</summary>
+        private static byte[] TamperCookie(byte[] cookie)
+        {
+            var tampered = (byte[])cookie.Clone();
+            tampered[0] = tampered[0] == (byte)'A' ? (byte)'B' : (byte)'A';
+            return tampered;
+        }
     }
 }

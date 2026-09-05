@@ -837,6 +837,102 @@ namespace BifrostQL.AdapterConformance
                 "the byte budget resets only at a top-level frame boundary; consecutive in-budget frames must both decode");
         }
 
+        // ---- (g) continuation-token integrity (adapters with a paged read) -----
+        //
+        // Opt-in, same shape as AdapterSupportsMutations: an adapter whose wire paginates a
+        // read with an opaque continuation token (LDAP paged-results cookie, OData $skiptoken,
+        // gRPC page token, RESP SCAN cursor) sets AdapterSupportsContinuationTokens = true and
+        // implements ReplayContinuationAsync; adapters without the surface (the echo fixture)
+        // inherit the default and the fact stays silent — no skip noise, no forced stub.
+
+        /// <summary>The tamper the conformance kit applies to a continuation token before replaying it.</summary>
+        protected enum ContinuationTamper
+        {
+            /// <summary>Minted with a MAC key the server does not hold.</summary>
+            Forged,
+
+            /// <summary>A genuinely issued token whose bytes were altered after issue.</summary>
+            Tampered,
+
+            /// <summary>A valid token replayed against a DIFFERENT table/search shape whose key
+            /// arity is the SAME as the issuing context's, so an arity check on the payload cannot
+            /// stand in for the integrity guard.</summary>
+            CrossContext,
+
+            /// <summary>A valid token replayed under a different caller identity.</summary>
+            CrossIdentity,
+
+            /// <summary>A valid token replayed after its TTL elapsed.</summary>
+            Expired,
+
+            /// <summary>Wire bytes that were never a token at all.</summary>
+            Unparseable,
+        }
+
+        /// <summary>What the derivation observed replaying one tampered continuation token.</summary>
+        protected sealed class ContinuationReplayOutcome
+        {
+            /// <summary>Whether the replay was refused at all.</summary>
+            public required bool Refused { get; init; }
+
+            /// <summary>
+            /// The wire-visible refusal identity (error line, result code, or exception message) the
+            /// adapter produced; null when the replay was not refused. The kit asserts byte equality
+            /// across every tamper — any variation is an oracle separating "forged" from "expired".
+            /// </summary>
+            public required string? WireText { get; init; }
+
+            /// <summary>
+            /// Whether the replay was accepted as "start the scan from the beginning". A token that
+            /// does not validate must be refused EXPLICITLY; treating it as the start sentinel turns
+            /// a tampered token into a silent full re-scan.
+            /// </summary>
+            public required bool ResumedFromStart { get; init; }
+        }
+
+        /// <summary>
+        /// Whether the adapter's wire carries an opaque, integrity-protected continuation token for
+        /// paged reads (AGENTS.md listener posture: "continuation/paging cookie must be MAC'd").
+        /// Default false; an adapter without the surface leaves it alone.
+        /// </summary>
+        protected virtual bool AdapterSupportsContinuationTokens => false;
+
+        /// <summary>
+        /// Mints a continuation token through the adapter's real cursor type, applies
+        /// <paramref name="tamper"/>, replays it against the binding the LIVE continuation request
+        /// would re-derive, and reports the outcome. Required when
+        /// <see cref="AdapterSupportsContinuationTokens"/> is true. The cross-context replay MUST
+        /// target a table/search shape with the same key arity as the issuing context.
+        /// </summary>
+        protected virtual Task<ContinuationReplayOutcome> ReplayContinuationAsync(ContinuationTamper tamper)
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterSupportsContinuationTokens)} but does not override {nameof(ReplayContinuationAsync)}.");
+
+        [Fact]
+        public async Task ContinuationToken_ForgeTamperReplayExpiryUnparseable_AllRefuseIdentically()
+        {
+            if (!AdapterSupportsContinuationTokens) return;
+
+            var outcomes = new Dictionary<ContinuationTamper, ContinuationReplayOutcome>();
+            foreach (var tamper in Enum.GetValues<ContinuationTamper>())
+                outcomes[tamper] = await ReplayContinuationAsync(tamper);
+
+            foreach (var (tamper, outcome) in outcomes)
+            {
+                outcome.Refused.Should().BeTrue(
+                    "a {0} continuation token must be refused explicitly — accepting it is a replay or re-scan hole",
+                    tamper);
+                outcome.ResumedFromStart.Should().BeFalse(
+                    "a {0} continuation token must never restart the scan from the beginning",
+                    tamper);
+                outcome.WireText.Should().NotBeNull(
+                    "a refused {0} continuation must carry the adapter's wire refusal text", tamper);
+            }
+
+            outcomes.Values.Select(o => o.WireText).Distinct().Should().ContainSingle(
+                "forgery, tamper, cross-context replay, cross-identity replay, expiry and garbage are ONE refusal outcome — any variation is an oracle");
+        }
+
         /// <summary>
         /// Captures the generated SQL per table at the AfterExecute phase (the
         /// phase carrying SQL text), so the suite can assert on SQL no matter what

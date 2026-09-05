@@ -387,4 +387,92 @@ public class ModelConfigValidatorTests
         act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
             .Which.Message.Should().Contain(MetadataKeys.FilteredUpdate.MaxAffected);
     }
+
+    // --- M7 (review-2026-09): deferrable requires history to record update+delete ---
+    // HistoryMutationHook captures the before-image only for operations the table's
+    // history records; on a deferrable table whose history omits update or delete,
+    // DeferredDeltaMutationHook then throws "No before-image was captured" on EVERY
+    // update/delete — a load-time misconfiguration surfacing per request.
+
+    private static void WithHistoryContractColumns(DbModelTestFixture.TableBuilder t)
+    {
+        t.WithSchema("dbo").WithPrimaryKey(MetadataKeys.History.Column.Id);
+        foreach (var col in MetadataKeys.History.HistoryColumns)
+        {
+            if (string.Equals(col, MetadataKeys.History.Column.Id, StringComparison.OrdinalIgnoreCase))
+                continue;
+            t.WithColumn(col, "nvarchar", isNullable: true);
+        }
+    }
+
+    private static void WithChangeSetColumns(DbModelTestFixture.TableBuilder t)
+    {
+        t.WithSchema("dbo").WithPrimaryKey(MetadataKeys.Deferred.ChangeSet.Column.Id);
+        foreach (var col in MetadataKeys.Deferred.ChangeSet.Columns)
+        {
+            if (string.Equals(col, MetadataKeys.Deferred.ChangeSet.Column.Id, StringComparison.OrdinalIgnoreCase))
+                continue;
+            t.WithColumn(col, "nvarchar", isNullable: true);
+        }
+    }
+
+    private static void WithChangeSetDeltaColumns(DbModelTestFixture.TableBuilder t)
+    {
+        t.WithSchema("dbo").WithPrimaryKey(MetadataKeys.Deferred.ChangeSetDelta.Column.Id);
+        foreach (var col in MetadataKeys.Deferred.ChangeSetDelta.Columns)
+        {
+            if (string.Equals(col, MetadataKeys.Deferred.ChangeSetDelta.Column.Id, StringComparison.OrdinalIgnoreCase))
+                continue;
+            t.WithColumn(col, "nvarchar", isNullable: true);
+        }
+    }
+
+    // A fully valid deferrable model except for the history operation subset under
+    // test: concurrency token, history target, and both deferred stores all satisfy
+    // their contracts, so only the op-subset guard can fail validation.
+    private static IDbModel BuildDeferrableModel(string historyOps)
+        => DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("Orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithColumn("version", "int", isNullable: true)
+                .WithMetadata(MetadataKeys.Deferred.Deferrable, MetadataKeys.Deferred.Enabled)
+                .WithMetadata(MetadataKeys.Deferred.UndoWindow, "90d")
+                .WithMetadata(MetadataKeys.Concurrency.Token, "version")
+                .WithMetadata(MetadataKeys.History.Enabled, historyOps))
+            .WithTable("__history", WithHistoryContractColumns)
+            .WithTable("change_sets", WithChangeSetColumns)
+            .WithTable("change_set_deltas", WithChangeSetDeltaColumns)
+            .Build();
+
+    [Theory]
+    [InlineData("insert,delete")] // update not recorded: no before-image for updates
+    [InlineData("insert,update")] // delete not recorded: no before-image for deletes
+    [InlineData("insert")]        // neither recorded
+    public void Validate_Deferrable_HistoryMissingUpdateOrDeleteOp_Throws(string historyOps)
+    {
+        var model = BuildDeferrableModel(historyOps);
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("dbo.Orders")
+            .And.Contain(MetadataKeys.Deferred.Deferrable)
+            .And.Contain(MetadataKeys.History.Enabled)
+            .And.Contain("update").And.Contain("delete");
+    }
+
+    [Theory]
+    [InlineData("update,delete")]
+    [InlineData("enabled")] // all operations
+    public void Validate_Deferrable_HistoryRecordsUpdateAndDelete_DoesNotThrow(string historyOps)
+    {
+        var model = BuildDeferrableModel(historyOps);
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
 }

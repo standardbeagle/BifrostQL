@@ -384,7 +384,11 @@ async function sendHttpBridgeRequest<T>(
   try {
     const response = await fetch(`${HTTP_BRIDGE_PREFIX}/${encodeURIComponent(kind)}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        // Preflight-forcing marker the server requires (CSRF guard, M24b).
+        "x-bifrost-bridge": "1",
+      },
       body: JSON.stringify(payload ?? null),
       signal: controller.signal,
     });

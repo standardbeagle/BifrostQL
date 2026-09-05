@@ -9,7 +9,7 @@ namespace BifrostQL.Server.Test.Ldap;
 /// (or other raw control) byte. A literal <c>0x00</c> in a source file makes git
 /// classify the file as binary, so <c>git diff</c> / <c>git log -p</c> show
 /// "Binary files differ" and review of the file goes blind. Control characters
-/// belong in escape sequences (<c>\0</c>, <c></c>), never as raw bytes.
+/// belong in escape sequences (<c>\0</c>, <c>\u001B</c>), never as raw bytes.
 /// </summary>
 public class SourceControlByteHygieneTests
 {
@@ -39,7 +39,7 @@ public class SourceControlByteHygieneTests
         }
 
         violations.Should().BeEmpty(
-            "C# sources must not contain literal control bytes; use escape sequences (\\0, ) instead:\n"
+            "C# sources must not contain literal control bytes; use escape sequences (\\0, \\u001B) instead:\n"
             + string.Join("\n", violations));
     }
 

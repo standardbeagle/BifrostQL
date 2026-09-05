@@ -324,6 +324,29 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task PostMessage_ChunkedBodyOverRequestCap_Is413_AndPersistsNothing()
+        {
+            // A Content-Length header can lie or be absent (chunked transfer): the
+            // cap must bind on RECEIVED bytes, not on the declared total.
+            var client = await _h.StartAsync(configureChat: o => o.MaxMessageLength = 64);
+            var conversationId = await _h.CreateConversationAsync(client, "tenant-a");
+
+            var payload = JsonSerializer.Serialize(new { content = new string('x', 2 * 1024) });
+            var request = ChatEndpointHost.Post(
+                $"/_chat/conversations/{conversationId}/messages", null, "user-of-tenant-a", "tenant-a");
+            request.Headers.TransferEncodingChunked = true;
+            request.Content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(payload)));
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            request.Content.Headers.ContentLength = null;
+
+            using var response = await client.SendAsync(request);
+
+            response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+            (await _h.ScalarAsync("SELECT COUNT(*) FROM messages")).Should().Be(0L);
+            _h.Fake.Calls.Should().BeEmpty();
+        }
+
+        [Fact]
         public async Task PostMessage_ContentAtMaxMessageLength_IsAccepted()
         {
             var client = await _h.StartAsync(configureChat: o => o.MaxMessageLength = 64);

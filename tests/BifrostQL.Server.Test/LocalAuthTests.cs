@@ -290,6 +290,28 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task SessionEndpoint_AuthenticatedSubjectlessPrincipal_Returns403_NotAnEscapedFault()
+        {
+            // Arrange: an AUTHENTICATED principal with no NameIdentifier/sub/Name claim.
+            // BuildAppIdentity refuses it; pre-M13 that InvalidOperationException escaped
+            // the endpoint to the host instead of answering the mounts' 403.
+            var context = new DefaultHttpContext();
+            context.Request.Method = HttpMethods.Get;
+            context.User = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim(ClaimTypes.Email, "nosubject@example.test") }, authenticationType: "test"));
+            var body = new MemoryStream();
+            context.Response.Body = body;
+
+            // Act
+            var act = () => LocalAuthEndpoint.HandleSessionAsync(context);
+
+            // Assert
+            await act.Should().NotThrowAsync("a subject-less principal is a refusal, not a host fault");
+            context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+            body.Length.Should().Be(0, "a refused session carries no identity and no exception text");
+        }
+
+        [Fact]
         public async Task SessionEndpoint_NonGetMethod_Returns405()
         {
             // Arrange

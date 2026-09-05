@@ -57,6 +57,27 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task MappedIssuerPrincipalWithoutSubject_Is403_NotAnEscapedFault()
+        {
+            // A principal from a MAPPED issuer whose token carries no subject: the mapper
+            // refuses it. Pre-M13 that ArgumentException (naming the provider) escaped the
+            // middleware to the host; the condition must answer 403 like every other mount.
+            var (pipeline, nextCalled, services) = BuildPipeline();
+            var context = new DefaultHttpContext { RequestServices = services };
+            context.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+            {
+                new Claim("iss", GoogleIssuer),
+                new Claim("email", "nosubject@example.test"),
+            }, "oauth2"));
+
+            var act = () => pipeline(context);
+
+            await act.Should().NotThrowAsync("a malformed provider principal is a refusal, not a host fault");
+            context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+            nextCalled().Should().BeFalse("a principal the mapper refuses must not proceed");
+        }
+
+        [Fact]
         public async Task LocalPrincipalWithoutIssuer_Proceeds()
         {
             var (pipeline, nextCalled, services) = BuildPipeline();

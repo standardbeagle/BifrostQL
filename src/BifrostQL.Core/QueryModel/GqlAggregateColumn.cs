@@ -104,17 +104,20 @@ namespace BifrostQL.Core.QueryModel
                 // policy filter the transformers produced for it. The filter is
                 // rendered against the `next` alias and applied at this join
                 // level, so scoped rows are excluded before they propagate up the
-                // aggregate chain. Security transformers emit leaf/AND equality
-                // filters here, which render as plain WHERE predicates.
+                // aggregate chain. Rendered as parts: a relationship-shaped filter
+                // contributes an INNER JOIN that extends the FROM clause, while
+                // only its predicate lands in WHERE — splicing the single-fragment
+                // render after a hard " WHERE " produced the invalid
+                // "WHERE INNER JOIN ..." (design item 9).
                 var linkFilter = i < LinkFilters.Count ? LinkFilters[i] : null;
                 if (linkFilter != null)
                 {
-                    var rendered = linkFilter.ToSqlParameterized(model, dialect, parameters, alias: "next");
-                    if (!string.IsNullOrWhiteSpace(rendered.Sql))
-                    {
-                        sql += $" WHERE {rendered.Sql}";
-                        linkFilterParams.AddRange(rendered.Parameters);
-                    }
+                    var parts = linkFilter.RenderParts(model, dialect, parameters, alias: "next");
+                    if (!string.IsNullOrWhiteSpace(parts.Joins))
+                        sql += parts.Joins;
+                    if (!string.IsNullOrWhiteSpace(parts.Where))
+                        sql += $" WHERE {parts.Where}";
+                    linkFilterParams.AddRange(parts.Parameters);
                 }
             }
 

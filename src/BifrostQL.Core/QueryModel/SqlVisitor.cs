@@ -77,10 +77,14 @@ namespace BifrostQL.Core.QueryModel
             var text = value.Value.ToString();
             // Box each branch as object independently: a `cond ? int : long` ternary has type
             // long, which would box even small values as Int64 and break the `(int?)` casts.
+            // Parse with Integer + InvariantCulture: the bare TryParse overloads take the CURRENT
+            // culture, so under a culture whose NegativeSign is not the ASCII hyphen a wire "-5"
+            // would fail both parses and box as BigInteger (GraphQL int literals are always
+            // ASCII '-' + digits).
             object parsed;
-            if (int.TryParse(text, out var i))
+            if (int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var i))
                 parsed = i;
-            else if (long.TryParse(text, out var l))
+            else if (long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var l))
                 parsed = l;
             else
                 // A GraphQLIntValue is grammar-guaranteed to be an integer literal, so

@@ -166,7 +166,7 @@ namespace BifrostQL.Server.Test.Ldap
                     _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
                 });
             }
-            return string.Join(" ", parts);
+            return string.Join("\0", parts);
         }
 
         // ---- filter interpretation ----

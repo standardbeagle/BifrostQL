@@ -938,10 +938,9 @@ public class QuickStartEndToEndTests : IDisposable
     }
 
     // ══════════════════════════════════════════════════════════
-    // Schema Structure — _join and _single Fields Exist in SDL
-    // Note: Dynamic join container fields are in the GraphQL schema but
-    // the resolver pipeline doesn't fully support runtime execution yet.
-    // These tests verify schema structure only.
+    // Schema Structure — no _join / _single container fields in the SDL
+    // The bare dynamic-join containers were advertised but could never
+    // execute (M10); the SDL must not offer them on any sample schema.
     // ══════════════════════════════════════════════════════════
 
     [Theory]
@@ -950,13 +949,13 @@ public class QuickStartEndToEndTests : IDisposable
     [InlineData("crm")]
     [InlineData("classroom")]
     [InlineData("project-tracker")]
-    public async Task AllSchemas_DynamicJoinFieldExists(string schema)
+    public async Task AllSchemas_NoDynamicJoinContainerFields(string schema)
     {
         await using var ctx = await CreateBifrostContext(schema);
 
         foreach (var table in ctx.Model.Tables)
         {
-            // Use introspection to verify _join and _single fields exist on the row type
+            // Use introspection to verify _join and _single are absent from the row type
             var result = await ctx.ExecuteAsync($@"
                 query {{
                     __type(name: ""{table.GraphQlName}"") {{
@@ -972,12 +971,12 @@ public class QuickStartEndToEndTests : IDisposable
             var fields = JsonSerializer.Deserialize<List<Dictionary<string, JsonElement>>>(fieldsJson)!;
             var fieldNames = fields.Select(f => Str(f["name"])).ToList();
 
-            fieldNames.Should().Contain("_join",
-                $"table '{table.GraphQlName}' should have _join field");
-            fieldNames.Should().Contain("_single",
-                $"table '{table.GraphQlName}' should have _single field");
+            fieldNames.Should().NotContain("_join",
+                $"table '{table.GraphQlName}' must not advertise the unexecutable _join container");
+            fieldNames.Should().NotContain("_single",
+                $"table '{table.GraphQlName}' must not advertise the unexecutable _single container");
 
-            _output.WriteLine($"[{schema}] {table.GraphQlName}: _join and _single present in schema");
+            _output.WriteLine($"[{schema}] {table.GraphQlName}: no _join/_single containers in schema");
         }
     }
 

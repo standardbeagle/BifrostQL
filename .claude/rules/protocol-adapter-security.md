@@ -48,6 +48,21 @@ generalized to every non-GraphQL front door built on `IProtocolAdapter`
    compare first (or unconditionally), then AND the null/existence check —
    never gate the compare behind it.
 
+   **And the decoy must match a real user on EVERY observable, not only on
+   timing.** Salt, iteration count and challenge shape are on the wire before
+   any proof is sent, so they must be STABLE PER USERNAME across repeated
+   connections — RFC 5802 §5.1's deterministic mock salt. `NewDecoy()` with a
+   fresh random salt per connection is a user-existence oracle in the opposite
+   direction: real users are stable, unknown ones are not. Fixed by
+   `PgScramVerifier.Decoy(username)`, salt = HMAC(per-process key, username).
+   Note the trigger: swapping a credential store's shape (plaintext → SCRAM
+   verifier with a FIXED stored salt) changed what a real user emits, so the
+   decoy had to change with it — pre-verifier code was safe only by accident.
+   Fixture: open TWO connections for the SAME unknown username and assert the
+   server-first messages are byte-equal (salt AND iteration count) and that the
+   handshake still reaches the proof step; one connection cannot see it.
+   <!-- amended_at: 2026-09-05T00:00:00Z  source_event: task:01M1KPC4P7HGBP8JHRCGK7DW5V, git:859eec42 -->
+
 Both were caught by review, not by tests, on the pgwire slice; treat them as
 a checklist item for review of any new protocol adapter's handshake/auth
 code, not just re-checks of pgwire.

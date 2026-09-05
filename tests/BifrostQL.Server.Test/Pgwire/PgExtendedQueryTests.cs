@@ -300,6 +300,41 @@ namespace BifrostQL.Server.Test.Pgwire
             result.ErrorMessage.Should().NotContain(garbage);
         }
 
+        [Theory]
+        [InlineData(PgTypeMap.OidNumeric)]
+        [InlineData(PgTypeMap.OidFloat8)]
+        public async Task BindGroupSeparatedNumericParam_YieldsCleanBindError_QueryNeverExecutes(int oid)
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out var captured);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            // "1,5" is not a valid wire numeric. decimal.Parse(text, InvariantCulture) defaults to
+            // NumberStyles.Number and double.Parse to Float | AllowThousands, so both ACCEPT the
+            // group separator and decode 15 — the malformed bind value silently reaches the filter
+            // predicate as valid data instead of raising the clean bind error invariant 5 requires
+            // (protocol-adapter-security.md). The grammar must be named: NumberStyles.Float.
+            const string grouped = "1,5";
+            await client.SendParseAsync("", "SELECT id FROM users WHERE id = $1", oid);
+            await client.SendBindAsync("", "", grouped);
+            await client.SendExecuteAsync(""); // discarded during skip-until-Sync
+            await client.SendSyncAsync();
+
+            var result = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            // Clean bind ErrorResponse — same path as the malformed/overflow numeric facts above.
+            result.HasError.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateProtocolViolation);
+            result.BindComplete.Should().BeFalse();
+            result.TransactionStatus.Should().Be('I');
+            result.ErrorMessage.Should().NotContain(grouped);
+
+            // The query must NEVER execute: on the buggy code it runs with a predicate carrying
+            // the reinterpreted value 15.
+            captured.ExecuteCount.Should().Be(0);
+            captured.Intent.Should().BeNull();
+        }
+
         [Fact]
         public async Task BindMismatchedFormatCodeCount_YieldsCleanError_SessionSurvives()
         {

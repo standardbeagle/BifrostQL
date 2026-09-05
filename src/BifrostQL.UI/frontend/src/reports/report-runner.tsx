@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { exportAllRows, type GraphQLFetcher } from '@standardbeagle/edit-db';
+import { exportAllRows, DEFAULT_ROW_CAP, type GraphQLFetcher } from '@standardbeagle/edit-db';
 import { parseReportDefinition, reportTotalKey, type ReportDefinition, type ReportTotal } from './report-definition';
 
 export interface ReportData {
   rows: Record<string, unknown>[];
+  /** True when the row cap stopped the detail fetch before `total`. */
+  truncated: boolean;
   /** One server aggregate map per group band, keyed by that band's columns. */
   bandTotals: Map<string, Record<string, unknown>>[];
   /** Compatibility alias for the deepest band's aggregate map. */
@@ -59,21 +61,55 @@ function aggregateQuery(definition: ReportDefinition): string {
   return `query ReportTotals${variables} { ${aggregates.join(' ')} grand: ${source.table}Aggregate(${filter.args.replace(/, $/, '')}) { ${grandSelection} } }`;
 }
 
-async function fetchRows(fetcher: GraphQLFetcher, definition: ReportDefinition, pageSize: number): Promise<Record<string, unknown>[]> {
+export interface RunReportOptions {
+  /** Abort mid-run; the promise rejects and no further page is requested. */
+  signal?: AbortSignal;
+  /** Hard stop after this many detail rows; the result is marked truncated. */
+  rowCap?: number;
+}
+
+/** The detail-field list pageQuery selects, in order (columns + band keys). */
+function detailFields(definition: ReportDefinition): string[] {
+  const bands = definition.groupBands ?? [];
+  return [...new Set([...definition.columns.map((column) => column.column), ...bands.map((band) => band.column)])];
+}
+
+/**
+ * Drain the detail rows through the shared exporter so the report gets the
+ * same row cap, abort handling, and lying-total guard as every other paged
+ * surface. The exporter serializes; NDJSON lines parse straight back to row
+ * objects keyed by field name.
+ */
+async function fetchRows(
+  fetcher: GraphQLFetcher,
+  definition: ReportDefinition,
+  pageSize: number,
+  options: RunReportOptions,
+): Promise<{ rows: Record<string, unknown>[]; truncated: boolean }> {
   const source = sourceOf(definition);
   const filter = filterArgs(definition);
-  const rows: Record<string, unknown>[] = [];
-  for (let offset = 0; ; ) {
-    const response = await fetcher.query<Record<string, { total: number; data: Record<string, unknown>[] }>>(pageQuery(definition), { offset, limit: pageSize, ...filter.variables });
-    const page = response[source.table];
-    rows.push(...(page?.data ?? []));
-    if (!page || rows.length >= page.total || page.data.length === 0) return rows;
-    offset += page.data.length;
-  }
+  const fields = detailFields(definition);
+  const result = await exportAllRows({
+    headers: fields,
+    format: 'json',
+    json: { mode: 'lines' },
+    pageSize,
+    rowCap: options.rowCap ?? DEFAULT_ROW_CAP,
+    signal: options.signal,
+    fetchPage: async (offset, limit) => {
+      const response = await fetcher.query<Record<string, { total: number; data: Record<string, unknown>[] }>>(pageQuery(definition), { offset, limit, ...filter.variables });
+      const page = response[source.table];
+      return { total: page?.total ?? 0, rows: (page?.data ?? []).map((row) => fields.map((field) => row[field])) };
+    },
+  });
+  const rows = result.content
+    ? result.content.split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+    : [];
+  return { rows, truncated: result.truncated };
 }
 
 /** Fetch detail pages and totals independently. Totals are never calculated from detail rows. */
-export async function runReport(fetcher: GraphQLFetcher, definitionInput: ReportDefinition, pageSize = definitionInput.pageSize ?? 500): Promise<ReportData> {
+export async function runReport(fetcher: GraphQLFetcher, definitionInput: ReportDefinition, pageSize = definitionInput.pageSize ?? 500, options: RunReportOptions = {}): Promise<ReportData> {
   const definition = parseReportDefinition(definitionInput);
   if (!definition) throw new Error('Invalid report definition.');
   const filter = filterArgs(definition);
@@ -92,7 +128,8 @@ export async function runReport(fetcher: GraphQLFetcher, definitionInput: Report
   const groupTotals = bandTotals[bandTotals.length - 1] ?? new Map<string, Record<string, unknown>>();
   const grandTotals: Record<string, unknown> = {};
   for (const total of definition.grandTotals ?? []) grandTotals[reportTotalKey(total)] = aggregateValue(aggregate.grand?.[0] ?? {}, total);
-  return { rows: await fetchRows(fetcher, definition, pageSize), bandTotals, groupTotals, grandTotals };
+  const detail = await fetchRows(fetcher, definition, pageSize, options);
+  return { rows: detail.rows, truncated: detail.truncated, bandTotals, groupTotals, grandTotals };
 }
 
 /** Full-result CSV export; the shared exporter owns paging and RFC4180 escaping. */
@@ -115,7 +152,14 @@ export async function buildReportCsv(fetcher: GraphQLFetcher, definitionInput: R
 export function ReportRunner({ definition, fetcher, now = new Date() }: { definition: ReportDefinition; fetcher: GraphQLFetcher; now?: Date }) {
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void runReport(fetcher, definition).then(setData).catch((reason) => setError(String(reason))); }, [fetcher, definition]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    runReport(fetcher, definition, undefined, { signal: controller.signal })
+      .then((result) => { if (!cancelled) setData(result); })
+      .catch((reason) => { if (!cancelled) setError(String(reason)); });
+    return () => { cancelled = true; controller.abort(); };
+  }, [fetcher, definition]);
   if (error) return <div role="alert">{error}</div>;
   if (!data) return <div>Running report…</div>;
   const bands = definition.groupBands ?? [];
@@ -140,6 +184,6 @@ export function ReportRunner({ definition, fetcher, now = new Date() }: { defini
     <table><thead><tr>{definition.columns.map((column) => <th key={column.column}>{column.label ?? column.column}</th>)}</tr></thead><tbody>
       {body}
     </tbody></table>
-    <footer className="bifrost-report__page-footer"><ReportPageFields fields={definition.pageFooter} now={now} />{Object.entries(data.grandTotals).map(([key, value]) => <span key={key}>{key}: {String(value ?? '')} </span>)}</footer>
+    <footer className="bifrost-report__page-footer"><ReportPageFields fields={definition.pageFooter} now={now} />{data.truncated && <span className="bifrost-report__truncated">Showing the first {data.rows.length} rows (row cap reached).</span>}{Object.entries(data.grandTotals).map(([key, value]) => <span key={key}>{key}: {String(value ?? '')} </span>)}</footer>
   </section>;
 }

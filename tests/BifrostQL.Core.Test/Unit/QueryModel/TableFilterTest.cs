@@ -638,6 +638,27 @@ namespace BifrostQL.Core.QueryModel
         }
 
         [Fact]
+        public void UnknownOperator_ThrowsBifrostExecutionError_WithClientShapeCode()
+        {
+            // Programmatic TableFilter callers (protocol adapters) got a generic
+            // ArgumentException for an unknown operator — indistinguishable from an
+            // ambient BCL fault. The dialect must surface a BifrostExecutionError
+            // carrying a stable, client-actionable error code.
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "id", new Dictionary<string, object?> { { "_bogus", 1 } } }
+            }, "tableName1");
+            var model = Substitute.For<IDbModel>();
+            model.GetTableFromDbName("tableName1").Returns(GetTableModel()["tableName1"]);
+            var parameters = new SqlParameterCollection();
+
+            var act = () => filter.ToSqlParameterized(model, Dialect, parameters, "table");
+
+            act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+                .Which.ErrorCode.Should().Be("INVALID_FILTER_OPERATOR");
+        }
+
+        [Fact]
         public void Builder_UnknownOperator_ThrowsAtBuildTime()
         {
             var act = () => TableFilterBuilder.For(BuilderTable()).Compare("id", "_bogus", 1);

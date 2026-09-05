@@ -147,7 +147,10 @@ namespace BifrostQL.Core.QueryModel
         private static IDbTable ResolveTable(IDbModel model, string tableName)
         {
             if (!model.TryGetTableByFullGraphQlName(tableName, out var table))
-                throw new BifrostExecutionError("A requested field does not name a queryable table.");
+                throw BifrostErrorSink.LookupMiss(
+                    "A requested field does not name a queryable table.",
+                    $"Query-field table miss: '{tableName}'.",
+                    nameof(QueryField));
             return table;
         }
 

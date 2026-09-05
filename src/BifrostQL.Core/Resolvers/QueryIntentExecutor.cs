@@ -117,6 +117,11 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         _transformerService = transformerService ?? throw new ArgumentNullException(nameof(transformerService));
         _observers = observers;
         _services = services;
+        // Adapter reads never pass through the HTTP middleware, so wire the shared
+        // sanitized-error sink from the host's container when it has logging.
+        BifrostErrorSink.Logger ??=
+            (_services?.GetService(typeof(Microsoft.Extensions.Logging.ILoggerFactory))
+                as Microsoft.Extensions.Logging.ILoggerFactory)?.CreateLogger(nameof(BifrostErrorSink));
         _engineMetrics = new Lazy<BifrostQL.Core.Observers.EngineMetrics?>(() =>
             _services?.GetService(typeof(BifrostQL.Core.Observers.EngineMetrics))
                 as BifrostQL.Core.Observers.EngineMetrics);
@@ -149,7 +154,10 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         // resolve with no fallback — and no caller-supplied name in the error text
         // (finding M31).
         if (!model.TryGetTableFromDbName(query.DbTable.DbName, out _))
-            throw new BifrostExecutionError("The query intent's table is not part of the endpoint's model.");
+            throw BifrostErrorSink.LookupMiss(
+                "The query intent's table is not part of the endpoint's model.",
+                $"Query intent table miss: '{query.DbTable.DbName}' on endpoint '{intent.Endpoint}'.",
+                nameof(QueryIntentExecutor));
 
         // Engine self-metrics (Prometheus slice-5): resolve the singleton when a scrape surface is
         // registered so intent (adapter) reads record their outcome + transformer duration; null

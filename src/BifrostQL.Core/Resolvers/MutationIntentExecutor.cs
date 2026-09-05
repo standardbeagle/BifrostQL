@@ -232,6 +232,11 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
         _transformers = transformers ?? throw new ArgumentNullException(nameof(transformers));
         _services = services;
+        // Adapter writes never pass through the HTTP middleware, so wire the shared
+        // sanitized-error sink from the host's container when it has logging.
+        BifrostErrorSink.Logger ??=
+            (_services?.GetService(typeof(Microsoft.Extensions.Logging.ILoggerFactory))
+                as Microsoft.Extensions.Logging.ILoggerFactory)?.CreateLogger(nameof(BifrostErrorSink));
     }
 
     public async Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
@@ -247,7 +252,10 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         // the throwing lookup's message embeds the caller-supplied name, which
         // must never reach the wire (finding M31).
         if (!model.TryGetTableFromDbName(intent.Table, out var table))
-            throw new BifrostExecutionError("The mutation intent names a table that is not part of the endpoint's model.");
+            throw BifrostErrorSink.LookupMiss(
+                "The mutation intent names a table that is not part of the endpoint's model.",
+                $"Mutation intent table miss: '{intent.Table}' on endpoint '{intent.Endpoint}'.",
+                nameof(MutationIntentExecutor));
 
         // The restore capability gate runs FIRST — before argument shaping, before
         // any transformer — so a caller without it builds nothing and cannot probe
@@ -309,7 +317,10 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         var model = IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", intent.Endpoint);
         var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
         if (!model.TryGetTableFromDbName(intent.Table, out var table))
-            throw new BifrostExecutionError("The mutation intent names a table that is not part of the endpoint's model.");
+            throw BifrostErrorSink.LookupMiss(
+                "The mutation intent names a table that is not part of the endpoint's model.",
+                $"Mutation batch intent table miss: '{intent.Table}' on endpoint '{intent.Endpoint}'.",
+                nameof(MutationIntentExecutor));
 
         var actions = intent.Actions.Select(action => new BatchMutationPipeline.BatchAction(
             action.Action switch

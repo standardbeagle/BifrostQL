@@ -49,7 +49,10 @@ namespace BifrostQL.Core.Resolvers
             // the wire (finding M31); the same rule drops the name from the
             // column-miss message.
             if (!model.TryGetTableFromDbName(tableName, out var table))
-                throw new BifrostExecutionError("The requested table was not found.");
+                throw BifrostErrorSink.LookupMiss(
+                    "The requested table was not found.",
+                    $"File upload table miss: '{tableName}'.",
+                    nameof(FileUploadResolver));
             if (!table.ColumnLookup.TryGetValue(columnName, out var column))
                 throw new BifrostExecutionError($"Column '{columnName}' was not found on the requested table");
 

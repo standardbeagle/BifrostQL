@@ -131,7 +131,10 @@ namespace BifrostQL.Core.Resolvers
             // name in its exception message, which would surface verbatim on the wire
             // (finding M31, protocol-adapter-security invariant 3).
             if (!_model.TryGetTableByFullGraphQlName(tableName, out var table))
-                throw new BifrostExecutionError("The requested table does not exist.");
+                throw BifrostErrorSink.LookupMiss(
+                    "The requested table does not exist.",
+                    $"Generic table query table miss: '{tableName}'.",
+                    nameof(GenericTableQueryResolver));
 
             // History targets are system tables: the generic `_table` escape hatch
             // may not read them either — it would bypass the trail field's forced

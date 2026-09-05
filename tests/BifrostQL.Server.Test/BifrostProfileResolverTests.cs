@@ -1,6 +1,7 @@
 using BifrostQL.Core.Modules;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using System.Security.Claims;
 using Xunit;
 
 namespace BifrostQL.Server.Test
@@ -131,6 +132,84 @@ namespace BifrostQL.Server.Test
             result.ActiveProfile.Name.Should().Be(ProfileNames.System.Default);
             result.ActiveProfile.Modules.Should().NotBeNull("empty-array, not null, drives the fail-closed filter");
             result.ActiveProfile.Modules.Should().BeEmpty();
+        }
+
+        /// <summary>
+        /// LOW bundle item 2: the role-gate failure must be a CONSTANT message carrying
+        /// neither the profile name nor the required role — two different role-gated
+        /// profiles produce byte-identical errors to an unauthenticated caller, and the
+        /// role is logged server-side only.
+        /// </summary>
+        [Fact]
+        public void RoleGatedProfile_Unauthenticated_ErrorIsConstant_AndLoggedServerSide()
+        {
+            var registry = new BifrostProfileRegistry();
+            registry.Add(new BifrostProfile { Name = "alpha", RequireRole = "admin" });
+            registry.Add(new BifrostProfile { Name = "beta", RequireRole = "superuser" });
+
+            var alpha = ResolveRoleGated(registry, "alpha", authenticated: false, roles: Array.Empty<string>());
+            var beta = ResolveRoleGated(registry, "beta", authenticated: false, roles: Array.Empty<string>());
+
+            alpha.result.HasError.Should().BeTrue();
+            alpha.result.ErrorMessage.Should().Be(beta.result.ErrorMessage,
+                "the same condition must produce the same wire shape across profiles");
+            alpha.result.ErrorMessage.Should().NotContain("alpha").And.NotContain("admin")
+                .And.NotContain("beta").And.NotContain("superuser");
+            alpha.logger.Messages.Should().Contain(m => m.Contains("admin"),
+                "the required role is diagnostic detail: logged server-side, never on the wire");
+        }
+
+        /// <summary>
+        /// Same invariant for an authenticated caller lacking the required role: constant
+        /// message, no profile/role names on the wire, role logged server-side.
+        /// </summary>
+        [Fact]
+        public void RoleGatedProfile_WrongRole_ErrorIsConstant_AndLoggedServerSide()
+        {
+            var registry = new BifrostProfileRegistry();
+            registry.Add(new BifrostProfile { Name = "alpha", RequireRole = "admin" });
+            registry.Add(new BifrostProfile { Name = "beta", RequireRole = "superuser" });
+
+            var alpha = ResolveRoleGated(registry, "alpha", authenticated: true, roles: new[] { "viewer" });
+            var beta = ResolveRoleGated(registry, "beta", authenticated: true, roles: new[] { "viewer" });
+
+            alpha.result.HasError.Should().BeTrue();
+            alpha.result.ErrorMessage.Should().Be(beta.result.ErrorMessage);
+            alpha.result.ErrorMessage.Should().NotContain("alpha").And.NotContain("admin")
+                .And.NotContain("beta").And.NotContain("superuser");
+            alpha.logger.Messages.Should().Contain(m => m.Contains("admin"));
+        }
+
+        private static (BifrostProfileResolution result, ListLogger logger) ResolveRoleGated(
+            BifrostProfileRegistry registry, string profile, bool authenticated, string[] roles)
+        {
+            var context = new DefaultHttpContext();
+            context.Request.Headers["X-BifrostQL-Profile"] = profile;
+            if (authenticated)
+            {
+                var identity = new ClaimsIdentity(authenticationType: "test");
+                foreach (var role in roles)
+                    identity.AddClaim(new Claim(ClaimTypes.Role, role));
+                context.User = new ClaimsPrincipal(identity);
+            }
+
+            var logger = new ListLogger();
+            return (BifrostProfileResolver.Resolve(registry, context), logger);
+        }
+
+        private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger
+        {
+            public List<string> Messages { get; } = new();
+
+            IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
+            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+            public void Log<TState>(
+                Microsoft.Extensions.Logging.LogLevel logLevel,
+                Microsoft.Extensions.Logging.EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+                => Messages.Add(formatter(state, exception));
         }
     }
 }

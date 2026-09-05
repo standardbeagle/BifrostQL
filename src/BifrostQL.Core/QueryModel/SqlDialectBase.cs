@@ -182,7 +182,7 @@ public abstract class SqlDialectBase : ISqlDialect
             $"wrong rows. Valid operators: _eq, _neq, _lt, _lte, _gt, _gte, _contains, " +
             $"_starts_with, _ends_with, _like, _ncontains, _nstarts_with, _nends_with, " +
             $"_nlike, _in, _nin, _between, _nbetween.")
-        { ErrorCode = "INVALID_FILTER_OPERATOR" }
+        { ErrorCode = FilterOperators.InvalidOperatorErrorCode }
     };
 
     /// <inheritdoc />

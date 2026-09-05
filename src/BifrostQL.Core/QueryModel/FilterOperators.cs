@@ -64,5 +64,14 @@ namespace BifrostQL.Core.QueryModel
         /// the exact phrase "lazy dog".
         /// </summary>
         public const string Search = "_search";
+
+        /// <summary>
+        /// <see cref="Resolvers.BifrostExecutionError.ErrorCode"/> a dialect attaches
+        /// when asked to lower an operator outside this vocabulary. Programmatic
+        /// <see cref="TableFilter"/> callers (protocol adapters) classify on it as
+        /// retry-with-different-input; a silent fallback to <c>=</c> would match
+        /// the wrong rows.
+        /// </summary>
+        public const string InvalidOperatorErrorCode = "INVALID_FILTER_OPERATOR";
     }
 }

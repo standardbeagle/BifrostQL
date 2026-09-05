@@ -127,4 +127,47 @@ describe('runReport', () => {
     const csv = await buildReportCsv({ query } as GraphQLFetcher, definition, 2);
     expect(csv.split('\r\n')).toEqual(['region,owner,amount', 'east,a,1', 'east,b,2', 'west,c,3']);
   });
+
+  it('stops at the row cap and reports the result as truncated', async () => {
+    // The detail fetch drains to `total`; with no cap a huge or lying total
+    // pages the whole table into the browser. A cap must stop paging and flag it.
+    const query = vi.fn(async (text: string, variables?: Record<string, unknown>) => {
+      if (text.includes('ordersAggregate')) return { grand: [{ _sum: { amount: 6 } }] };
+      const offset = variables?.offset as number;
+      const rows = [
+        { region: 'east', owner: 'a', amount: 1 }, { region: 'east', owner: 'b', amount: 2 },
+        { region: 'west', owner: 'c', amount: 3 },
+      ];
+      return { orders: { total: 3, data: rows.slice(offset, offset + 2) } };
+    });
+
+    const result = await runReport({ query } as GraphQLFetcher, { ...definition, groupBands: undefined }, 2, { rowCap: 2 });
+
+    expect(result.rows).toHaveLength(2);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('unmounting aborts the in-flight detail fetch and drops the late result', async () => {
+    // Resolve the first detail page manually; before the fix the loop keeps
+    // paging to `total` after unmount and the late result still calls setState.
+    const pages: Array<(value: unknown) => void> = [];
+    const query = vi.fn((text: string, _variables?: Record<string, unknown>) => {
+      if (text.includes('ordersAggregate')) {
+        return Promise.resolve({ grand: [{ _sum: { amount: 6 } }] });
+      }
+      return new Promise((resolve) => pages.push(resolve));
+    });
+    const { unmount } = render(<ReportRunner definition={{ ...definition, groupBands: undefined }} fetcher={{ query } as GraphQLFetcher} />);
+
+    // Aggregate resolves; the first detail page is now in flight.
+    await waitFor(() => expect(pages).toHaveLength(1));
+    unmount();
+    pages[0]({ orders: { total: 3, data: [
+      { region: 'east', owner: 'a', amount: 1 }, { region: 'east', owner: 'b', amount: 2 },
+    ] } });
+
+    // Give any continuation a chance to run: no further page may be requested.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(pages).toHaveLength(1);
+  });
 });

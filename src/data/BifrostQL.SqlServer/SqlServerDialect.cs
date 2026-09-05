@@ -240,7 +240,7 @@ public sealed class SqlServerDialect : SqlDialectBase
         var predicates = request.Terms.Select(term =>
         {
             var phrase = "\"" + term.Text.Replace("\"", "\"\"") + "\"";
-            var p = request.Parameters.AddParameter(phrase);
+            var p = request.Parameters.AddParameter(phrase).Name;
             return $"CONTAINS(({columnList}), {p})";
         }).ToList();
 

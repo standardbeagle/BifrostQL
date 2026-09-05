@@ -310,10 +310,10 @@ namespace BifrostQL.Core.QueryModel
                 : op is FilterOperators.StartsWith or FilterOperators.NStartsWith ? LikePatternType.StartsWith
                 : LikePatternType.EndsWith;
             var escapedValue = value is string s ? dialect.EscapeLikeValue(s) : value;
-            var paramName = parameters.AddParameter(escapedValue);
+            var param = parameters.AddParameter(escapedValue);
             return new ParameterizedSql(
-                $"{columnRef} {sqlOp} {dialect.LikePattern(paramName, patternType)}{dialect.LikeEscapeClause}",
-                parameters.Parameters.TakeLast(1).ToList());
+                $"{columnRef} {sqlOp} {dialect.LikePattern(param.Name, patternType)}{dialect.LikeEscapeClause}",
+                new[] { param });
         }
 
         // _like/_nlike intentionally pass the raw pattern through — the caller owns
@@ -321,9 +321,9 @@ namespace BifrostQL.Core.QueryModel
         private static ParameterizedSql BuildRawLike(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string op, object? value)
         {
             var sqlOp = dialect.GetOperator(op);
-            var paramName = parameters.AddParameter(value);
-            return new ParameterizedSql($"{columnRef} {sqlOp} {paramName}",
-                parameters.Parameters.TakeLast(1).ToList());
+            var param = parameters.AddParameter(value);
+            return new ParameterizedSql($"{columnRef} {sqlOp} {param.Name}",
+                new[] { param });
         }
 
         // IN clause. Each parameter is cast to the column type (Postgres: a text-bound
@@ -331,9 +331,9 @@ namespace BifrostQL.Core.QueryModel
         private static ParameterizedSql BuildInList(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string? columnType, string op, object? value)
         {
             var sqlOp = dialect.GetOperator(op);
-            // Materialize once: the value is enumerated for the empty check, the parameter
-            // bind, and the count. A lazy/single-use source would otherwise re-run (or, worse,
-            // yield a different count for TakeLast than was bound).
+            // Materialize once: the value is enumerated for the empty check and the
+            // parameter bind. A lazy/single-use source would otherwise re-run (or,
+            // worse, yield a different count than was bound).
             var values = ((value as IEnumerable<object?>) ?? Array.Empty<object?>()).ToList();
             // An empty list makes "col IN ()" / "col NOT IN ()" — a syntax error every
             // dialect rejects, turning a client-supplied empty array into a 500. Emit
@@ -341,8 +341,9 @@ namespace BifrostQL.Core.QueryModel
             // (always false); everything is NOT IN it (always true).
             if (values.Count == 0)
                 return new ParameterizedSql(op == FilterOperators.In ? "1 = 0" : "1 = 1", Array.Empty<SqlParameterInfo>());
-            parameters.AddParameters(values);
-            var added = parameters.Parameters.TakeLast(values.Count).ToList();
+            // AddParameter returns the info it bound; keep it directly instead of
+            // re-reading the collection (TakeLast re-sorted the whole set per bind).
+            var added = values.Select(v => parameters.AddParameter(v)).ToList();
             var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));
             return new ParameterizedSql($"{columnRef} {sqlOp} ({paramRefs})", added);
         }
@@ -358,19 +359,22 @@ namespace BifrostQL.Core.QueryModel
                 throw new BifrostExecutionError(
                     $"Operator '{op}' requires exactly two values (lower and upper bound); got {values.Length}.");
 
-            var p1 = dialect.CastParameterReference(parameters.AddParameter(values[0]), columnType);
-            var p2 = dialect.CastParameterReference(parameters.AddParameter(values[1]), columnType);
-            return new ParameterizedSql($"{columnRef} {sqlOp} {p1} AND {p2}",
-                parameters.Parameters.TakeLast(2).ToList());
+            var p1 = parameters.AddParameter(values[0]);
+            var p2 = parameters.AddParameter(values[1]);
+            var r1 = dialect.CastParameterReference(p1.Name, columnType);
+            var r2 = dialect.CastParameterReference(p2.Name, columnType);
+            return new ParameterizedSql($"{columnRef} {sqlOp} {r1} AND {r2}",
+                new[] { p1, p2 });
         }
 
         // Simple comparison (default)
         private static ParameterizedSql BuildComparison(ISqlDialect dialect, SqlParameterCollection parameters, string columnRef, string? columnType, string op, object? value)
         {
             var sqlOp = dialect.GetOperator(op);
-            var param = dialect.CastParameterReference(parameters.AddParameter(value), columnType);
-            return new ParameterizedSql($"{columnRef} {sqlOp} {param}",
-                parameters.Parameters.TakeLast(1).ToList());
+            var param = parameters.AddParameter(value);
+            var reference = dialect.CastParameterReference(param.Name, columnType);
+            return new ParameterizedSql($"{columnRef} {sqlOp} {reference}",
+                new[] { param });
         }
 
         /// <summary>

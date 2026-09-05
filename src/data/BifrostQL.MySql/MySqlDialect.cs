@@ -139,7 +139,7 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
         var predicates = request.Terms.Select(term =>
         {
             var phrase = "\"" + term.Text.Replace("\"", "\"\"") + "\"";
-            var p = request.Parameters.AddParameter(phrase);
+            var p = request.Parameters.AddParameter(phrase).Name;
             return $"MATCH({columnList}) AGAINST({p} IN BOOLEAN MODE)";
         }).ToList();
 

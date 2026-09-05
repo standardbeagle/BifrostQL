@@ -78,7 +78,7 @@ public sealed class SqlParameterCollectionTest
         var sut = new SqlParameterCollection();
 
         // Act
-        var name = sut.AddParameter(42);
+        var name = sut.AddParameter(42).Name;
 
         // Assert
         name.Should().Be("@p0");
@@ -91,9 +91,9 @@ public sealed class SqlParameterCollectionTest
         var sut = new SqlParameterCollection();
 
         // Act
-        var name0 = sut.AddParameter("first");
-        var name1 = sut.AddParameter("second");
-        var name2 = sut.AddParameter("third");
+        var name0 = sut.AddParameter("first").Name;
+        var name1 = sut.AddParameter("second").Name;
+        var name2 = sut.AddParameter("third").Name;
 
         // Assert
         name0.Should().Be("@p0");
@@ -123,7 +123,7 @@ public sealed class SqlParameterCollectionTest
         var sut = new SqlParameterCollection();
 
         // Act
-        var returnedName = sut.AddParameter("test");
+        var returnedName = sut.AddParameter("test").Name;
 
         // Assert
         sut.Parameters[0].Name.Should().Be(returnedName);
@@ -163,7 +163,7 @@ public sealed class SqlParameterCollectionTest
         var sut = new SqlParameterCollection();
 
         // Act
-        var name = sut.AddParameter(null);
+        var name = sut.AddParameter(null).Name;
 
         // Assert
         name.Should().Be("@p0");
@@ -338,7 +338,7 @@ public sealed class SqlParameterCollectionTest
         // Act
         Parallel.For(0, threadCount, i =>
         {
-            names[i] = sut.AddParameter(i);
+            names[i] = sut.AddParameter(i).Name;
         });
 
         // Assert
@@ -373,7 +373,7 @@ public sealed class SqlParameterCollectionTest
         // Act
         Parallel.For(0, threadCount, _ =>
         {
-            var name = sut.AddParameter("value");
+            var name = sut.AddParameter("value").Name;
             var index = int.Parse(name.Replace("@p", ""));
             indices.Add(index);
         });
@@ -530,7 +530,7 @@ public sealed class SqlParameterCollectionTest
         var sut = new SqlParameterCollection();
 
         // Act
-        var name = sut.AddParameter("test");
+        var name = sut.AddParameter("test").Name;
 
         // Assert
         name.Should().Be("@p0");
@@ -543,11 +543,11 @@ public sealed class SqlParameterCollectionTest
         var sut = new SqlParameterCollection();
 
         // Act
-        var p0 = sut.AddParameter("first");
+        var p0 = sut.AddParameter("first").Name;
         var batch1 = sut.AddParameters(new object?[] { "a", "b" });
-        var p3 = sut.AddParameter("middle");
+        var p3 = sut.AddParameter("middle").Name;
         var batch2 = sut.AddParameters(new object?[] { "x", "y", "z" });
-        var p7 = sut.AddParameter("last");
+        var p7 = sut.AddParameter("last").Name;
 
         // Assert
         p0.Should().Be("@p0");

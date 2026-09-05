@@ -310,8 +310,8 @@ public abstract class SqlDialectBase : ISqlDialect
         return expr switch
         {
             SqlExpr.Col col => LowerColumn(col, table),
-            SqlExpr.Param p => parameters.AddParameter(p.Value, p.DbType),
-            SqlExpr.Lit lit => parameters.AddParameter(lit.Value),
+            SqlExpr.Param p => parameters.AddParameter(p.Value, p.DbType).Name,
+            SqlExpr.Lit lit => parameters.AddParameter(lit.Value).Name,
             SqlExpr.Fn fn => LowerFunction(fn, table, parameters),
             SqlExpr.Cast cast =>
                 $"CAST({LowerExpression(cast.Operand, table, parameters)} AS {RenderCastType(cast.TargetType)})",

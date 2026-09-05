@@ -255,7 +255,7 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var userId = collection.AddParameter(42, "int");
+        var userId = collection.AddParameter(42, "int").Name;
 
         var table = _dialect.EscapeIdentifier("Users");
         var select = new ParameterizedSql($"SELECT * FROM {table}", collection.Parameters);
@@ -273,9 +273,9 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var name = collection.AddParameter("John%", "nvarchar");
-        var minAge = collection.AddParameter(18, "int");
-        var maxAge = collection.AddParameter(65, "int");
+        var name = collection.AddParameter("John%", "nvarchar").Name;
+        var minAge = collection.AddParameter(18, "int").Name;
+        var maxAge = collection.AddParameter(65, "int").Name;
 
         var table = _dialect.TableReference("dbo", "Users");
         var likePattern = _dialect.LikePattern(name, LikePatternType.StartsWith);
@@ -296,9 +296,9 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var firstName = collection.AddParameter("John", "nvarchar");
-        var lastName = collection.AddParameter("Doe", "nvarchar");
-        var email = collection.AddParameter("john@example.com", "nvarchar");
+        var firstName = collection.AddParameter("John", "nvarchar").Name;
+        var lastName = collection.AddParameter("Doe", "nvarchar").Name;
+        var email = collection.AddParameter("john@example.com", "nvarchar").Name;
 
         var table = _dialect.TableReference("dbo", "Users");
         var identity = _dialect.LastInsertedIdentity;
@@ -317,9 +317,9 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var newStatus = collection.AddParameter("Active", "nvarchar");
-        var updatedAt = collection.AddParameter(DateTime.UtcNow, "datetime2");
-        var userId = collection.AddParameter(42, "int");
+        var newStatus = collection.AddParameter("Active", "nvarchar").Name;
+        var updatedAt = collection.AddParameter(DateTime.UtcNow, "datetime2").Name;
+        var userId = collection.AddParameter(42, "int").Name;
 
         var table = _dialect.TableReference("dbo", "Users");
 
@@ -335,7 +335,7 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var userId = collection.AddParameter(42, "int");
+        var userId = collection.AddParameter(42, "int").Name;
 
         var table = _dialect.TableReference("dbo", "Users");
 
@@ -389,9 +389,9 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var minOrderTotal = collection.AddParameter(100.00m, "decimal");
-        var status = collection.AddParameter("Completed", "nvarchar");
-        var searchTerm = collection.AddParameter("Premium", "nvarchar");
+        var minOrderTotal = collection.AddParameter(100.00m, "decimal").Name;
+        var status = collection.AddParameter("Completed", "nvarchar").Name;
+        var searchTerm = collection.AddParameter("Premium", "nvarchar").Name;
 
         var users = _dialect.TableReference("dbo", "Users");
         var orders = _dialect.TableReference("sales", "Orders");
@@ -418,8 +418,8 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var threshold = collection.AddParameter(1000, "int");
-        var category = collection.AddParameter("Electronics", "nvarchar");
+        var threshold = collection.AddParameter(1000, "int").Name;
+        var category = collection.AddParameter("Electronics", "nvarchar").Name;
 
         var orders = _dialect.TableReference("dbo", "Orders");
         var products = _dialect.TableReference("dbo", "Products");
@@ -441,7 +441,7 @@ public sealed class SqlSyntaxValidationTest
     {
         // Arrange
         var collection = new SqlParameterCollection();
-        var minCount = collection.AddParameter(5, "int");
+        var minCount = collection.AddParameter(5, "int").Name;
 
         var orders = _dialect.TableReference("sales", "Orders");
         var pagination = _dialect.Pagination(new[] { "TotalOrders DESC" }, 0, 10);

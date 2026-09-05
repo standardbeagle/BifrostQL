@@ -134,7 +134,7 @@ public sealed class SqliteDialect : StandardConcatDialectBase
         var predicates = request.Terms.Select(term =>
         {
             var phrase = "\"" + term.Text.Replace("\"", "\"\"") + "\"";
-            var p = request.Parameters.AddParameter(phrase);
+            var p = request.Parameters.AddParameter(phrase).Name;
             return $"{keyRef} IN (SELECT {rowId} FROM {ftsTable} WHERE {ftsTable} MATCH {p})";
         }).ToList();
 

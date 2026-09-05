@@ -275,13 +275,13 @@ public sealed class PostgresDialect : StandardConcatDialectBase
 
         string? langRef = null;
         if (!string.IsNullOrWhiteSpace(request.Language))
-            langRef = $"{request.Parameters.AddParameter(request.Language)}::regconfig";
+            langRef = $"{request.Parameters.AddParameter(request.Language).Name}::regconfig";
 
         var tsvector = langRef == null ? $"to_tsvector({doc})" : $"to_tsvector({langRef}, {doc})";
 
         var predicates = request.Terms.Select(term =>
         {
-            var p = request.Parameters.AddParameter(term.Text);
+            var p = request.Parameters.AddParameter(term.Text).Name;
             var fn = term.IsPhrase ? "phraseto_tsquery" : "plainto_tsquery";
             var tsquery = langRef == null ? $"{fn}({p})" : $"{fn}({langRef}, {p})";
             return $"({tsvector}) @@ {tsquery}";

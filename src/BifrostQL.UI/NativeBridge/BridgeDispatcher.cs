@@ -117,7 +117,9 @@ namespace BifrostQL.UI.NativeBridge
             {
                 // Scrub so a connection-string parse error can't leak a password.
                 var scrubbed = BuildScrubbedMessage(ex);
-                _logger?.LogError(ex, "NativeBridge: handler for request {Id} threw", requestId);
+                // No exception object: the default formatter would call ex.ToString(),
+                // bypassing the scrubber and leaking driver text into the log.
+                _logger?.LogError("NativeBridge: handler for request {Id} threw {Type}: {Message}", requestId, ex.GetType().Name, scrubbed);
                 try { SendError(requestId, scrubbed); }
                 catch (Exception sendEx) { _logger?.LogError(sendEx, "NativeBridge: failed to send error envelope"); }
             }
@@ -148,8 +150,9 @@ namespace BifrostQL.UI.NativeBridge
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "NativeBridge: handler for kind {Kind} threw", kind);
-                return (true, null, BuildScrubbedMessage(ex));
+                var scrubbed = BuildScrubbedMessage(ex);
+                _logger?.LogError("NativeBridge: handler for kind {Kind} threw {Type}: {Message}", kind, ex.GetType().Name, scrubbed);
+                return (true, null, scrubbed);
             }
         }
 

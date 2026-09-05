@@ -68,6 +68,28 @@ namespace BifrostQL.Server.Test.Resp
             known.Should().Be(RespProtocol.AuthRateLimitedError);
         }
 
+        /// <summary>
+        /// Pins the subtype's ACCOUNT axis in isolation. The wire facts above set both caps equal
+        /// on a single source, so a <see cref="RespAuthRateLimiter"/> that quietly stopped passing
+        /// the account through (admitting with a null account, as pgwire legitimately does) would
+        /// stay green on them: the source axis alone still refuses. Many sources hammering ONE
+        /// login must trip the account cap while the per-source budget is nowhere near spent.
+        /// </summary>
+        [Fact]
+        public void Per_account_cap_is_enforced_across_sources()
+        {
+            var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var limiter = new RespAuthRateLimiter(
+                maxPerSource: 100, maxPerAccount: 2, window: Window, clock: () => now);
+
+            limiter.TryAttempt("10.0.0.1", "victim").Should().BeTrue();
+            limiter.TryAttempt("10.0.0.2", "victim").Should().BeTrue();
+            limiter.TryAttempt("10.0.0.3", "victim").Should().BeFalse(
+                "the per-account window is at its cap although no source has spent its budget");
+            limiter.TryAttempt("10.0.0.3", "other").Should().BeTrue(
+                "the account cap is per login, not per source: a different login from the same source is admitted");
+        }
+
         // ---- fixtures --------------------------------------------------------
 
         private static Task<RespFixture> StartAsync(Func<DateTimeOffset> clock, int attemptsPerSource)

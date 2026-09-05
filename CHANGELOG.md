@@ -6,6 +6,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Breaking — `ODataBasicCredential.Secret` replaced by `PasswordHash`
+
+- The OData Basic-auth contract no longer carries a plaintext-equivalent shared secret. `ODataAuthenticator` used to compare `SHA256(secret)` to `SHA256(password)`, which forced every `IODataBasicCredentialStore` to hold the password itself. The record now carries `PasswordHash`, a one-way ASP.NET Core `PasswordHasher<string>` hash verified with `VerifyHashedPassword` (same contract as `LocalUserStore`); the anti-enumeration dummy work for unknown/disabled usernames is a precomputed hash verification. Migration: provision the hash at credential-creation time with `new PasswordHasher<string>().HashPassword(username, password)` and discard the plaintext. See `docs/src/content/docs/guides/odata.md`.
+
 ### Breaking — `_fileUpload.accessUrl` removed; presigned URLs are no longer stored
 
 - File metadata no longer persists a presigned access URL. `FileMetadata.AccessUrl` and the `accessUrl` field on `FileUploadResult` are gone from the schema and from the stored column JSON, so a capability URL is no longer written into the database (and thence into history, CDC and audit copies). Rows that already carry a persisted `AccessUrl` still deserialize. Migration: mint a URL per read with `_fileDownload`; the removed field was either an expired 15-minute S3 URL or a server filesystem path.

@@ -38,14 +38,20 @@ namespace BifrostQL.Server.Test.OData
             => "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
     }
 
-    /// <summary>In-memory Basic credential store for tests; unknown usernames resolve to null (never a fallback).</summary>
+    /// <summary>
+    /// In-memory Basic credential store for tests; unknown usernames resolve to null (never a
+    /// fallback). Holds only a one-way PasswordHasher hash of each password — mirroring the
+    /// production contract, the plaintext is discarded at provisioning time.
+    /// </summary>
     internal sealed class FakeODataBasicCredentialStore : IODataBasicCredentialStore
     {
+        private static readonly Microsoft.AspNetCore.Identity.PasswordHasher<string> Hasher = new();
         private readonly Dictionary<string, ODataBasicCredential> _credentials = new(StringComparer.Ordinal);
 
-        public FakeODataBasicCredentialStore Add(string username, string secret, ClaimsPrincipal principal, bool enabled = true)
+        public FakeODataBasicCredentialStore Add(string username, string password, ClaimsPrincipal principal, bool enabled = true)
         {
-            _credentials[username] = new ODataBasicCredential(username, secret, principal, enabled);
+            _credentials[username] = new ODataBasicCredential(
+                username, Hasher.HashPassword(username, password), principal, enabled);
             return this;
         }
 

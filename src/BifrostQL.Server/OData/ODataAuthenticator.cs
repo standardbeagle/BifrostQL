@@ -1,7 +1,7 @@
 using System.Security.Claims;
-using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.OData
@@ -15,18 +15,17 @@ namespace BifrostQL.Server.OData
     /// <see cref="HttpContext.User"/>, populated by the host's authentication middleware. It is
     /// projected as-is; an unauthenticated request fails closed with 401.</item>
     /// <item><b>Basic</b>: the username is resolved through an optional
-    /// <see cref="IODataBasicCredentialStore"/> and the password compared in constant time
-    /// before the resolved principal is projected.</item>
+    /// <see cref="IODataBasicCredentialStore"/> and the password verified against the stored
+    /// one-way <see cref="PasswordHasher{TUser}"/> hash before the resolved principal is
+    /// projected. The store holds no plaintext-equivalent.</item>
     /// </list>
     ///
     /// <para>Security posture (see .claude/rules/protocol-adapter-security.md):</para>
     /// <list type="bullet">
-    /// <item>The password comparison runs UNCONDITIONALLY against a decoy secret when the
-    /// username is unknown or disabled, so an unknown username is indistinguishable by timing or
-    /// response from a known one with a wrong password (invariant 2). The existence/enabled
-    /// check is ANDed AFTER the constant-time compare, never gated before it. Both sides are
-    /// SHA-256 digested first, so the compare is fixed-length and password length is not
-    /// leaked.</item>
+    /// <item>The password verification runs UNCONDITIONALLY against a precomputed dummy hash
+    /// when the username is unknown or disabled, so an unknown username is indistinguishable by
+    /// timing or response from a known one with a wrong password (invariant 2). The
+    /// existence/enabled check is ANDed AFTER the verification, never gated before it.</item>
     /// <item>Every client-fault path throws <see cref="ODataProtocolException"/> — the single
     /// type the middleware's catch filters on — so nothing escapes to the host on adversarial
     /// input (invariant 1).</item>
@@ -37,24 +36,32 @@ namespace BifrostQL.Server.OData
     /// </summary>
     public sealed class ODataAuthenticator
     {
-        // A fixed, non-secret decoy used to keep the compare work identical for an
-        // unknown/disabled username. Its only requirement is that a real client cannot know it,
-        // which holds because it never leaves the process and no credential is provisioned with it.
-        private const string DecoySecret = "bifrost-odata-decoy-secret-not-a-real-credential";
+        // A precomputed PasswordHasher hash used only to spend the same PBKDF2 work on an
+        // unknown/disabled username as a real verification does (mirroring LocalUserStore's
+        // dummy hash). Without it, a missing credential returns before any
+        // VerifyHashedPassword call, so the ~100 ms hashing cost becomes a timing oracle that
+        // distinguishes "no such user" from "wrong password".
+        private readonly string _dummyHash;
+        private const string DummyUsername = "^@bifrost-odata-timing-guard";
+        private const string DummyPassword = "^@bifrost-odata-timing-guard-password";
         private const string BasicPrefix = "Basic ";
 
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly IODataBasicCredentialStore? _basicStore;
+        private readonly IPasswordHasher<string> _passwordHasher;
         private readonly ILogger? _logger;
 
         public ODataAuthenticator(
             IBifrostAuthContextFactory authFactory,
             IODataBasicCredentialStore? basicStore = null,
-            ILogger<ODataAuthenticator>? logger = null)
+            ILogger<ODataAuthenticator>? logger = null,
+            IPasswordHasher<string>? passwordHasher = null)
         {
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _basicStore = basicStore;
             _logger = logger;
+            _passwordHasher = passwordHasher ?? new PasswordHasher<string>();
+            _dummyHash = _passwordHasher.HashPassword(DummyUsername, DummyPassword);
         }
 
         /// <summary>
@@ -89,14 +96,13 @@ namespace BifrostQL.Server.OData
             var credential = await _basicStore.FindAsync(username, ct);
             var usable = credential is { Enabled: true };
 
-            // UNCONDITIONAL constant-time compare against the real secret when usable, otherwise
-            // a decoy. Both sides are SHA-256 digested so the compare is fixed-length regardless
-            // of password length. The existence/enabled check is ANDed only AFTER the compare has
-            // run, so an unknown username does the same work as a known one (invariant 2).
-            var secret = usable ? credential!.Secret : DecoySecret;
-            var passwordMatches = CryptographicOperations.FixedTimeEquals(
-                SHA256.HashData(Encoding.UTF8.GetBytes(secret)),
-                SHA256.HashData(Encoding.UTF8.GetBytes(password)));
+            // UNCONDITIONAL PasswordHasher verification against the real hash when usable,
+            // otherwise the precomputed dummy hash — the miss and wrong-password paths spend
+            // the same PBKDF2 work, so account existence is not a timing oracle (invariant 2).
+            // The existence/enabled check is ANDed only AFTER the verification has run.
+            var hash = usable ? credential!.PasswordHash : _dummyHash;
+            var passwordMatches =
+                _passwordHasher.VerifyHashedPassword(username, hash, password) != PasswordVerificationResult.Failed;
 
             if (!(passwordMatches && usable))
                 throw ODataProtocolException.Unauthorized("Invalid credentials.");

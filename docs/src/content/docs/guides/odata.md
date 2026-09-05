@@ -81,7 +81,9 @@ are accepted:
   fails closed with `401`.
 - **Basic**. Optional. Register an `IODataBasicCredentialStore` to resolve a
   username to its credential and candidate identity; the presented password is
-  compared in constant time. A deployment that only accepts Bearer registers no
+  verified against the credential's one-way `PasswordHasher<string>` hash
+  (`ODataBasicCredential.PasswordHash`), so the store never holds a
+  plaintext-equivalent. A deployment that only accepts Bearer registers no
   store, and a Basic request then fails closed with `401`.
 
 ```csharp
@@ -90,12 +92,19 @@ are accepted:
 builder.Services.AddSingleton<IODataBasicCredentialStore, MyODataBasicCredentialStore>();
 ```
 
-An unknown username is compared against a fixed decoy secret so it does the same
-work as a known one — an attacker cannot distinguish "no such user" from "wrong
-password" by timing or response (anti-enumeration). A subject-less principal, an
-unmapped OIDC issuer, or a projection that yields an empty user context all fail
-closed with `403` — never a degraded or anonymous context. No projection detail
-ever reaches the wire; it is logged server-side only.
+An unknown username is verified against a fixed dummy hash so it spends the
+same PBKDF2 work as a known one — an attacker cannot distinguish "no such user"
+from "wrong password" by timing or response (anti-enumeration). A subject-less
+principal, an unmapped OIDC issuer, or a projection that yields an empty user
+context all fail closed with `403` — never a degraded or anonymous context. No
+projection detail ever reaches the wire; it is logged server-side only.
+
+> **Migration (unreleased):** `ODataBasicCredential.Secret` was replaced by
+> `PasswordHash`. Previously the authenticator compared
+> `SHA256(secret) == SHA256(password)`, which forced every store to hold the
+> password itself (a plaintext-equivalent). Stores must now provision
+> `PasswordHash` with `new PasswordHasher<string>().HashPassword(username, password)`
+> at credential-creation time and discard the plaintext.
 
 ### Credential caveats for BI tools
 

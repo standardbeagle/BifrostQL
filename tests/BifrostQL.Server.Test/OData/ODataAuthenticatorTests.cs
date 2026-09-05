@@ -57,6 +57,40 @@ namespace BifrostQL.Server.Test.OData
             userContext["user"].Should().BeSameAs(ctx.User);
         }
 
+        /// <summary>
+        /// LOW bundle item 3 (positive half): a store holding ONLY a one-way hash — the
+        /// plaintext password never enters the credential record — authenticates the right
+        /// password and rejects the wrong one.
+        /// </summary>
+        [Fact]
+        public async Task Hash_only_credential_authenticates_the_right_password_only()
+        {
+            var hasher = new Microsoft.AspNetCore.Identity.PasswordHasher<string>();
+            var hashOnly = new ODataBasicCredential(
+                ODataTestAuth.Username,
+                hasher.HashPassword(ODataTestAuth.Username, ODataTestAuth.Password),
+                ODataTestAuth.Principal("hash-sub"),
+                Enabled: true);
+            var store = new HashOnlyStore(hashOnly);
+            var auth = Build(store);
+
+            var ok = new DefaultHttpContext();
+            ok.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, ODataTestAuth.Password);
+            (await auth.AuthenticateAsync(ok, CancellationToken.None)).Should().NotBeEmpty();
+
+            var wrong = new DefaultHttpContext();
+            wrong.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, "wrong-password");
+            await AuthShouldThrow(auth, wrong);
+        }
+
+        private sealed class HashOnlyStore : IODataBasicCredentialStore
+        {
+            private readonly ODataBasicCredential _credential;
+            public HashOnlyStore(ODataBasicCredential credential) => _credential = credential;
+            public Task<ODataBasicCredential?> FindAsync(string username, CancellationToken cancellationToken)
+                => Task.FromResult(username == _credential.Username ? _credential : null);
+        }
+
         [Fact]
         public async Task Valid_basic_credentials_project_through_the_shared_factory()
         {

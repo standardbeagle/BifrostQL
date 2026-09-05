@@ -30,6 +30,16 @@ different surface, none of them security work:
 - Prose is not the only carrier. A **code snippet** showing the old
   construction is load-bearing in exactly the same way, and a reader copies it
   verbatim.
+- **A replacement named in a breaking entry must be REACHABLE by the audience
+  the entry addresses.** A CHANGELOG breaking note tells out-of-tree callers
+  what to migrate to, so naming an `internal` member is a false claim, not a
+  terse one: the caller cannot compile it. The `TableFilter.ToSqlParameterized`
+  removal pointed at `RenderParts`, which is internal — the honest entry states
+  the real end state (no public read-side render remains by design; route
+  through the engine seams, `RenderForMutation` is the only public render).
+  Check the accessibility of every symbol a migration note names; where nothing
+  public replaces it, say the removal is deliberate and name the seam.
+  <!-- written_at: 2026-09-05T14:30:00Z  source_event: task:01M1RX501DZFH39JDV61V0G231, git:1598160f -->
 
 <!-- written_at: 2026-09-04T02:00:00Z  source_event: task:01M1KP68KCJPYTWCAY3A7A5TZ0, git:534cadcc; recurrence: H8, H9, H13 -->
 

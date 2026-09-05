@@ -182,6 +182,17 @@ implementations produce provably different output.
   `Contains`. The implementer self-caught this one; the generalization is that a
   numeric literal in a SQL-text assertion is a prefix of every longer literal.
   <!-- written_at: 2026-09-05T04:30:00Z  source_event: task:01M1KNYNQAKE5FHC06NKF607N4, git:7ce42c98, git:063f6acb -->
+- **Splitting a composed artefact into PARTS un-covers every part an assertion
+  stops reading.** The inverse of the bullet above: where the old fact asserted
+  on the combined text, a migration to the parts (`TableFilter.RenderParts`'s
+  `.Where` / `.Joins`) narrows what each fact can see — the FTS predicate tests
+  surfaced only `.Where`, so a search predicate that began emitting a join went
+  unobserved, while the retired single-fragment render would have shown it.
+  When migrating assertions from a composed artefact to its parts: every site
+  gains a NEGATIVE fact on the parts it does not assert
+  (`parts.Joins.Should().BeEmpty()`), and a test helper must not return one part
+  while discarding the others — return the whole shape and let each fact narrow.
+  <!-- written_at: 2026-09-05T14:30:00Z  source_event: task:01M1RX501DZFH39JDV61V0G231, git:860347aa, git:481b9aba -->
 - **A source-scan / hygiene test must assert the ALLOWLISTED hit, not just zero
   offenders.** "No offender matched" and "the pattern set matched nothing at
   all" are the same GREEN, so a scan whose regexes drift away from real code

@@ -419,8 +419,11 @@ export function DataTable<TData>({
     }, []);
     const commitCell = useCallback((rowId: string, columnId: string, value: unknown) => {
         setEditingCell(null);
+        // A save-all in flight snapshots and then resets the staged set; a
+        // commit landing mid-save would be dropped without a toast, so refuse it.
+        if (savingEdits) return;
         onCellCommit?.(rowId, columnId, value);
-    }, [onCellCommit]);
+    }, [onCellCommit, savingEdits]);
     const cancelEditCell = useCallback(() => setEditingCell(null), []);
 
     const buildRowPkFilter = useCallback((rowId: string): PkFilter | null => {
@@ -705,9 +708,9 @@ export function DataTable<TData>({
                                     visibleKey={visibleColumnKey}
                                     pending={pendingEdits?.get(row.id)}
                                     editingColumnId={editingCell?.rowId === row.id ? editingCell.columnId : null}
-                                    inlineEditableColumns={onCellCommit ? inlineEditableColumns : undefined}
+                                    inlineEditableColumns={onCellCommit && !savingEdits ? inlineEditableColumns : undefined}
                                     inlineBooleanColumns={inlineBooleanColumns}
-                                    onStartEditCell={onCellCommit ? startEditCell : undefined}
+                                    onStartEditCell={onCellCommit && !savingEdits ? startEditCell : undefined}
                                     onCommitCell={commitCell}
                                     onCancelEditCell={cancelEditCell}
                                     onRowSelect={onRowSelect}

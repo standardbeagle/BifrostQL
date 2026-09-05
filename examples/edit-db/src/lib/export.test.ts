@@ -30,6 +30,22 @@ describe('formatCsvCell', () => {
         expect(formatCsvCell('a\r\nb')).toBe('"a\r\nb"');
     });
 
+    it('neutralizes spreadsheet formula triggers (CWE-1236)', () => {
+        // The grid export targets Excel (bom: true in useDataTable), and Excel
+        // executes a cell whose text starts with =, +, -, @, tab, or CR as a
+        // formula. Such cells get a leading apostrophe so they open as text.
+        for (const hostile of ['=1+1', '+SUM(A1)', '-2+3', '@cmd', '\tcmd', '\rcmd']) {
+            const cell = formatCsvCell(hostile);
+            expect(cell.startsWith(hostile[0])).toBe(false);
+            const unquoted =
+                cell.startsWith('"') && cell.endsWith('"') ? cell.slice(1, -1) : cell;
+            expect(unquoted).toBe(`'${hostile}`);
+        }
+        // Plain leading-dash text in numbers rendered from the number type is
+        // real numeric data, not a string attack: left alone.
+        expect(formatCsvCell(-5)).toBe('-5');
+    });
+
     it('renders a bigint as its exact decimal string', () => {
         expect(formatCsvCell(9007199254740993n)).toBe('9007199254740993');
     });

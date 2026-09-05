@@ -170,8 +170,10 @@ internal static class FilePointerAccess
         {
             return graphQlType switch
             {
-                "Int" or "Short" or "Byte" or "BigInt" => long.Parse(token, CultureInfo.InvariantCulture),
-                "Decimal" => decimal.Parse(token, CultureInfo.InvariantCulture),
+                // Explicit styles, as in S3ObjectKeyMap: the wire form carries no group
+                // separator, and the default NumberStyles.Number would read "1,5" as 15.
+                "Int" or "Short" or "Byte" or "BigInt" => long.Parse(token, NumberStyles.Integer, CultureInfo.InvariantCulture),
+                "Decimal" => decimal.Parse(token, NumberStyles.Float, CultureInfo.InvariantCulture),
                 "DateTime" or "DateTimeOffset" => DateTimeOffset.Parse(token, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
                 // An unsupported token type is the transformer's error to report, with the
                 // one message every write path shares; pass the value through untouched.

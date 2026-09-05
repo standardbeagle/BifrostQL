@@ -289,6 +289,19 @@ implementations produce provably different output.
   binding bound, and assert truncation is reported there — "the window is
   full" is the condition, not "the surface cap was reached".
   <!-- written_at: 2026-09-04T19:30:00Z  source_event: task:01M1KP68F2P0W005FV72CYPAXH, git:78981baa -->
+- **Where a guard counts on N INDEPENDENT AXES, the fixture must make each axis
+  bind ALONE, or an axis can be dropped silently.** Sibling of the bullet above:
+  that one is two bounds on one window, this is one bound per axis. Every RESP
+  auth-limiter fact set the per-SOURCE and per-ACCOUNT caps to the same value and
+  drove a single source, so the two axes were indistinguishable — a subtype
+  forwarding `TryAdmit(source, null)` (dropping the account axis entirely) stayed
+  GREEN, and the shared base's own mutant proof said nothing about which subtype
+  forwards which argument. Give each axis a DIFFERENT cap and >1 identity on the
+  other axis, so only the axis under test can trip. Applies to every fold of N
+  copies into base + forwarding subtypes (`ProtocolAuthAttemptLimiter`,
+  `ProtocolConnectionLimiter`): mutate each SUBTYPE's forwarding, not only the
+  base — a per-adapter brute-force bound is lost silently otherwise.
+  <!-- written_at: 2026-09-05T23:30:00Z  source_event: task:01M1N0546XVQTX1Q619JJ2ABFT, git:1b79cee3 -->
 - **A guard that compares a client-supplied value to a typed column must be
   fixtured on a NON-string column.** The wire type is part of the guard's
   correctness: the file-mutation `concurrencyToken: String` argument reached

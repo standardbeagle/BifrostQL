@@ -474,6 +474,18 @@ describe('DataTable inline cell editing', () => {
         expect(screen.queryByLabelText('Edit cell value')).toBeNull();
     });
 
+    it('inline editing is disabled while a save-all is in flight', () => {
+        // Save-all snapshots the staged set, awaits, then resets; a cell
+        // committed mid-save would be dropped by that reset without a toast.
+        // While savingEdits is true no editor may open and no commit may fire.
+        const onCellCommit = vi.fn();
+        renderEditable({ onCellCommit, savingEdits: true });
+
+        fireEvent.doubleClick(screen.getByTestId('grade-1-cs-101').closest('td')!);
+        expect(screen.queryByLabelText('Edit cell value')).toBeNull();
+        expect(onCellCommit).not.toHaveBeenCalled();
+    });
+
     it('a pending cell renders the staged value dirty, and the toolbar offers Save all / Discard', () => {
         const onSaveAllEdits = vi.fn();
         const onDiscardAllEdits = vi.fn();

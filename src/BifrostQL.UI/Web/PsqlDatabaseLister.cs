@@ -36,6 +36,14 @@ namespace BifrostQL.UI.Web
             var psi = new ProcessStartInfo();
             if (!string.IsNullOrWhiteSpace(psqlUser))
             {
+                // The caller picks the OS user psql runs as through sudo — refuse
+                // anyone but the current user or an explicit operator allow-list
+                // (BIFROST_UI_PSQL_PEER_USERS, comma-separated). Without this gate
+                // the desktop API is a privilege-escalation proxy.
+                if (!IsPsqlUserPermitted(psqlUser))
+                    throw new InvalidOperationException(
+                        "The requested psql OS user is not permitted: only the current user " +
+                        "or an entry in BIFROST_UI_PSQL_PEER_USERS may be used for peer auth.");
                 // Use sudo -u <user> psql for peer auth as a different OS user
                 psi.FileName = "sudo";
                 psi.ArgumentList.Add("-u");
@@ -68,6 +76,21 @@ namespace BifrostQL.UI.Web
             }
 
             return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        /// <summary>
+        /// The current OS user is always permitted; anything else must be named in
+        /// the comma-separated BIFROST_UI_PSQL_PEER_USERS environment allow-list.
+        /// </summary>
+        internal static bool IsPsqlUserPermitted(string psqlUser)
+        {
+            if (string.Equals(psqlUser, Environment.UserName, StringComparison.Ordinal))
+                return true;
+            var allowList = Environment.GetEnvironmentVariable("BIFROST_UI_PSQL_PEER_USERS");
+            if (string.IsNullOrWhiteSpace(allowList))
+                return false;
+            return allowList.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Contains(psqlUser, StringComparer.Ordinal);
         }
     }
 }

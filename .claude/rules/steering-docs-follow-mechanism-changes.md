@@ -32,3 +32,37 @@ different surface, none of them security work:
   verbatim.
 
 <!-- written_at: 2026-09-04T02:00:00Z  source_event: task:01M1KP68KCJPYTWCAY3A7A5TZ0, git:534cadcc; recurrence: H8, H9, H13 -->
+
+## Retiring a VALIDATED key breaks shipped config, not just prose
+
+Where the retired name is a metadata key or config option that a validator
+rejects when unknown, a stale carrier is not a misleading sentence — it is a
+**startup failure in the shipped product**. `ModelConfigValidator` throws on an
+unrecognized `:root` key, so M10's removal of `dynamic-joins` from
+`KnownDatabaseKeys` meant `src/BifrostQL.Host/appsettings.json` and
+`templates/bifrost/appsettings.json` — both still declaring the key — would have
+failed `dotnet run` and every project scaffolded from the template. The
+implementer's own report did not mention it; review found it (`60fc44b6`).
+
+So the grep is over the REPO, not the steering corpus. For any retired
+identifier, key, or option name, `git grep` the whole tree and clear every hit
+in these carriers before submitting:
+
+- `**/*.json` / `**/*.kdl` — shipped `appsettings`, sample and fixture config.
+  A validated key here is the startup-failure carrier.
+- `templates/` — scaffolded output inherits the stale key, and nothing in the
+  repo's own test run exercises it.
+- `README.md`, `SKILLS.md`, `CHANGELOG.md` — reader-facing carriers outside
+  `docs/`. A removal is a breaking change and needs its CHANGELOG entry.
+- `tests/**` — an assertion on the OLD shape is a carrier too: it either fails
+  (noise) or, worse, still passes and pins the retired behaviour. M10 left a
+  UI.Tests assertion inverted (`962cd1e9`).
+- `examples/` — copied verbatim by readers, same as a docs snippet.
+
+Corollary for planning: a removal task's `fileScope` must be derived from
+`git grep <identifier>` across the whole repo, **not** from the files that
+implement or emit the mechanism. M10 was scoped to the emitter and missed four
+carriers; M25 was scoped to the SDL and missed the reader. The emitter is where
+the change starts, never where it ends.
+
+<!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1KNYNX5NA7CEVRJ4R7BFC7V, git:60fc44b6, git:962cd1e9, git:cf6d48bd; recurrence: M10, M25 -->

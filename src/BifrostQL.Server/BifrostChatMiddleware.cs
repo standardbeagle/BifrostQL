@@ -285,10 +285,10 @@ namespace BifrostQL.Server
 
         private async Task CreateConversationAsync(HttpContext context, IDictionary<string, object?> userContext)
         {
-            var (body, bodyError) = await ReadBodyAsync<CreateConversationRequest>(context);
+            var (body, bodyError, tooLarge) = await ReadBodyAsync<CreateConversationRequest>(context, MaxRequestBodyBytes);
             if (bodyError != null)
             {
-                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request", bodyError);
+                await WriteBodyErrorAsync(context, bodyError, tooLarge);
                 return;
             }
 
@@ -317,16 +317,25 @@ namespace BifrostQL.Server
         {
             var cancellation = context.RequestAborted;
 
-            var (body, bodyError) = await ReadBodyAsync<PostMessageRequest>(context);
+            var (body, bodyError, tooLarge) = await ReadBodyAsync<PostMessageRequest>(context, MaxRequestBodyBytes);
             if (bodyError != null)
             {
-                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request", bodyError);
+                await WriteBodyErrorAsync(context, bodyError, tooLarge);
                 return;
             }
             if (string.IsNullOrWhiteSpace(body?.Content))
             {
                 await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
                     "invalid-request", "A non-empty 'content' field is required.");
+                return;
+            }
+            // Bounded BEFORE any store call: every persisted message rides later
+            // completions (up to HistoryLimit of them), so an unbounded message is
+            // an unbounded per-completion payload.
+            if (body.Content.Length > _options.MaxMessageLength)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request",
+                    $"The 'content' field must be at most {_options.MaxMessageLength} characters.");
                 return;
             }
 
@@ -587,10 +596,10 @@ namespace BifrostQL.Server
         private async Task ResolveConfirmationAsync(
             HttpContext context, IDictionary<string, object?> userContext, object conversationId, string confirmationId)
         {
-            var (body, bodyError) = await ReadBodyAsync<ResolveConfirmationRequest>(context);
+            var (body, bodyError, tooLarge) = await ReadBodyAsync<ResolveConfirmationRequest>(context, MaxRequestBodyBytes);
             if (bodyError != null)
             {
-                await WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request", bodyError);
+                await WriteBodyErrorAsync(context, bodyError, tooLarge);
                 return;
             }
             if (body?.Approve is not { } approve)
@@ -803,24 +812,54 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Reads the request body as JSON. An empty body reads as a null body (the
-        /// create route's title is optional); malformed JSON reports the caller error.
+        /// Reads the request body as JSON, bounded at <paramref name="maxBytes"/> —
+        /// an over-cap declared or actual body is <paramref name="tooLarge"/> (413 at
+        /// the endpoint) and is never fully materialized. An empty body reads as a
+        /// null body (the create route's title is optional); malformed JSON reports
+        /// the caller error.
         /// </summary>
-        private static async Task<(T? Body, string? Error)> ReadBodyAsync<T>(HttpContext context) where T : class
+        private static async Task<(T? Body, string? Error, bool TooLarge)> ReadBodyAsync<T>(
+            HttpContext context, long maxBytes) where T : class
         {
-            using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
-            var raw = await reader.ReadToEndAsync(context.RequestAborted);
+            if (context.Request.ContentLength > maxBytes)
+                return (null, "The request body is too large.", true);
+
+            var buffer = new MemoryStream();
+            var chunk = new byte[8192];
+            while (true)
+            {
+                var read = await context.Request.Body.ReadAsync(chunk, context.RequestAborted);
+                if (read == 0)
+                    break;
+                if (buffer.Length + read > maxBytes)
+                    return (null, "The request body is too large.", true);
+                buffer.Write(chunk, 0, read);
+            }
+
+            var raw = Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
             if (string.IsNullOrWhiteSpace(raw))
-                return (null, null);
+                return (null, null, false);
             try
             {
-                return (JsonSerializer.Deserialize<T>(raw, Json), null);
+                return (JsonSerializer.Deserialize<T>(raw, Json), null, false);
             }
             catch (JsonException)
             {
-                return (null, "The request body is not valid JSON.");
+                return (null, "The request body is not valid JSON.", false);
             }
         }
+
+        /// <summary>
+        /// The request-body byte cap: 4 × MaxMessageLength covers worst-case UTF-8
+        /// expansion of the largest legal message, plus 1 KiB of JSON envelope.
+        /// </summary>
+        private long MaxRequestBodyBytes => 4L * _options.MaxMessageLength + 1024;
+
+        /// <summary>Writes the body-read outcome: over-cap is 413, anything else 400.</summary>
+        private static Task WriteBodyErrorAsync(HttpContext context, string error, bool tooLarge) =>
+            tooLarge
+                ? WriteErrorAsync(context, StatusCodes.Status413PayloadTooLarge, "payload-too-large", error)
+                : WriteErrorAsync(context, StatusCodes.Status400BadRequest, "invalid-request", error);
 
         private static Task WriteNotFoundAsync(HttpContext context) =>
             WriteErrorAsync(context, StatusCodes.Status404NotFound, "not-found", "Conversation not found.");

@@ -355,9 +355,11 @@ namespace BifrostQL.Server.Test
         {
             Func<Task> badLimit = () => BuildOptionHostAsync(o => o.HistoryLimit = 0);
             Func<Task> badPath = () => BuildOptionHostAsync(o => o.Path = "no-slash");
+            Func<Task> badMessageLength = () => BuildOptionHostAsync(o => o.MaxMessageLength = 0);
 
             (await badLimit.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*HistoryLimit*");
             (await badPath.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*Path*");
+            (await badMessageLength.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*MaxMessageLength*");
         }
 
         private async Task BuildOptionHostAsync(

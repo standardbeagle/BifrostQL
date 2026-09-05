@@ -35,6 +35,9 @@ namespace BifrostQL.Server
             if (options.HistoryLimit < 1)
                 throw new InvalidOperationException(
                     "BifrostChatOptions.HistoryLimit must be at least 1.");
+            if (options.MaxMessageLength < 1)
+                throw new InvalidOperationException(
+                    "BifrostChatOptions.MaxMessageLength must be at least 1.");
             if (options.MaxToolIterations < 1)
                 throw new InvalidOperationException(
                     "BifrostChatOptions.MaxToolIterations must be at least 1.");

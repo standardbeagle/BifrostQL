@@ -140,6 +140,48 @@ namespace BifrostQL.Server.Test.OData
             ex.HttpStatus.Should().Be(401);
         }
 
+        /// <summary>
+        /// Invariant 2 (protocol-adapter-security.md): the hash verification runs
+        /// UNCONDITIONALLY. An unknown and a disabled username must each spend exactly one
+        /// VerifyHashedPassword, the same as a known one — a guard that returns before the
+        /// verification turns the PBKDF2 cost into an account-existence timing oracle. The
+        /// counting hasher pins the call count rather than wall-clock, so the fact is
+        /// deterministic; a gated compare goes RED with 0 calls.
+        /// </summary>
+        [Theory]
+        [InlineData("nobody", true)]
+        [InlineData(ODataTestAuth.Username, false)]
+        public async Task Unknown_or_disabled_username_still_runs_one_hash_verification(string username, bool enabled)
+        {
+            var hasher = new CountingPasswordHasher();
+            var store = new FakeODataBasicCredentialStore().Add(
+                ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal(), enabled: enabled);
+            var auth = new ODataAuthenticator(BifrostAuthContextFactory.Instance, store, passwordHasher: hasher);
+            hasher.VerifyCalls = 0; // discard the constructor's dummy-hash provisioning
+
+            var ctx = new DefaultHttpContext();
+            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(username, ODataTestAuth.Password);
+
+            await AuthShouldThrow(auth, ctx);
+            hasher.VerifyCalls.Should().Be(1,
+                "the existence/enabled check is ANDed after the verification, never gated before it");
+        }
+
+        private sealed class CountingPasswordHasher : Microsoft.AspNetCore.Identity.IPasswordHasher<string>
+        {
+            private readonly Microsoft.AspNetCore.Identity.PasswordHasher<string> _inner = new();
+            public int VerifyCalls;
+
+            public string HashPassword(string user, string password) => _inner.HashPassword(user, password);
+
+            public Microsoft.AspNetCore.Identity.PasswordVerificationResult VerifyHashedPassword(
+                string user, string hashedPassword, string providedPassword)
+            {
+                VerifyCalls++;
+                return _inner.VerifyHashedPassword(user, hashedPassword, providedPassword);
+            }
+        }
+
         [Fact]
         public async Task Disabled_basic_credential_fails_the_same_as_unknown()
         {

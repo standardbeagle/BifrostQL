@@ -2,6 +2,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Storage;
@@ -155,7 +156,11 @@ internal static class FilePointerAccess
     /// Converts the token argument (a string on the wire, because one field serves
     /// numeric and datetime tokens alike) to the token column's own type. Without this
     /// the guard predicate would compare a text literal to a numeric column and match no
-    /// row — a silent CONFLICT on every correct token. An unparseable value is refused
+    /// row — a silent CONFLICT on every correct token. The token is invariant-culture
+    /// wire data (dot-decimal, ISO-8601), so every parse here pins
+    /// <see cref="CultureInfo.InvariantCulture"/>: culture-sensitive parsing would read
+    /// "1.5" as 15 under a comma-decimal host culture and shift the guard off the row.
+    /// An unparseable value is refused
     /// with an adapter-owned message; the parse exception itself never reaches the wire.
     /// </summary>
     private static object CoerceToken(IDbModel model, ColumnDto tokenColumn, string token)
@@ -165,9 +170,9 @@ internal static class FilePointerAccess
         {
             return graphQlType switch
             {
-                "Int" or "Short" or "Byte" or "BigInt" => long.Parse(token),
-                "Decimal" => decimal.Parse(token),
-                "DateTime" or "DateTimeOffset" => DateTimeOffset.Parse(token),
+                "Int" or "Short" or "Byte" or "BigInt" => long.Parse(token, CultureInfo.InvariantCulture),
+                "Decimal" => decimal.Parse(token, CultureInfo.InvariantCulture),
+                "DateTime" or "DateTimeOffset" => DateTimeOffset.Parse(token, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
                 // An unsupported token type is the transformer's error to report, with the
                 // one message every write path shares; pass the value through untouched.
                 _ => token,

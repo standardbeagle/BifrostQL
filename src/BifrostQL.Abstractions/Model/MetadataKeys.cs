@@ -582,12 +582,6 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string ManyToMany = "many-to-many";
 
-            /// <summary>
-            /// Model-level toggle for emitting dynamic <c>_join</c> / <c>_single</c>
-            /// containers in the GraphQL schema. Defaults to true.
-            /// </summary>
-            public const string DynamicJoins = "dynamic-joins";
-
             /// <summary>Model-level toggle for automatic join discovery.</summary>
             public const string AutoJoin = "auto-join";
 

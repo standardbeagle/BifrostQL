@@ -164,18 +164,13 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var m2mLink in table.ManyToManyLinks)
                     tableType.FieldFor(m2mLink.Value.TargetTable.GraphQlName).Resolver = this;
 
-                // Previously this method also looped over every table pair
-                // and wired `_join_<table>` / `_single_<table>` resolvers.
-                // The schema generator never emits those per-pair fields
-                // (TableSchemaGenerator.cs:91-97 keeps the per-pair codegen
-                // commented out and only emits the bare `_single`/`_join`
-                // fields), so the loop wrote to orphan field configs that
-                // no GraphQL operation ever reached. Removed.
-                //
-                // If per-pair `_join_<table>`/`_single_<table>` fields are
-                // wanted again, restore the schema codegen *and* add this
-                // loop back together — see docs/research/agg-dialect-survey.md
-                // for the wiring contract.
+                // No dynamic-join resolvers: the schema generator emits neither
+                // per-pair `_join_<table>`/`_single_<table>` fields nor the bare
+                // `_join`/`_single` containers (the containers were removed in
+                // M10 because their `on: [String!]` shape could never execute).
+                // Only the FK/metadata relationship fields wired above are
+                // navigable; a dynamic-join surface needs schema codegen and a
+                // resolver wired here together.
             }
 
             query.FieldFor("_dbSchema").Resolver = this;

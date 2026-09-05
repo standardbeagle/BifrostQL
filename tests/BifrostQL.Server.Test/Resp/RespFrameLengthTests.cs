@@ -92,40 +92,5 @@ namespace BifrostQL.Server.Test.Resp
             // Load-bearing: AGENTS.md's posture table records this number for the RESP row.
             new RespWireOptions().MaxFrameLength.Should().Be(1 << 20);
         }
-
-        /// <summary>A pass-through stream that records how many bytes the decoder actually pulled.</summary>
-        private sealed class CountingStream : Stream
-        {
-            private readonly Stream _inner;
-
-            public CountingStream(Stream inner) => _inner = inner;
-
-            public int BytesRead { get; private set; }
-
-            public override async ValueTask<int> ReadAsync(
-                Memory<byte> buffer, CancellationToken cancellationToken = default)
-            {
-                var read = await _inner.ReadAsync(buffer, cancellationToken);
-                BytesRead += read;
-                return read;
-            }
-
-            public override int Read(byte[] buffer, int offset, int count)
-            {
-                var read = _inner.Read(buffer, offset, count);
-                BytesRead += read;
-                return read;
-            }
-
-            public override bool CanRead => true;
-            public override bool CanSeek => false;
-            public override bool CanWrite => false;
-            public override long Length => _inner.Length;
-            public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
-            public override void Flush() { }
-            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-            public override void SetLength(long value) => throw new NotSupportedException();
-            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        }
     }
 }

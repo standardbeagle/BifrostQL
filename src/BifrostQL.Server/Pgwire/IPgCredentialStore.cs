@@ -3,20 +3,22 @@ using System.Security.Claims;
 namespace BifrostQL.Server.Pgwire
 {
     /// <summary>
-    /// A resolved PostgreSQL login: the shared secret the wire authentication proves
+    /// A resolved PostgreSQL login: the SCRAM verifier the wire authentication proves
     /// knowledge of, and the <see cref="ClaimsPrincipal"/> that login maps to. The
     /// principal is the <i>candidate</i> identity only — it is still projected through
     /// <see cref="IBifrostAuthContextFactory"/>, which is where a subject-less or
     /// unmapped-issuer principal is rejected. A store must never hand back an anonymous
     /// or ambient identity to stand in for a failed lookup; it returns <c>null</c> instead.
     /// </summary>
-    /// <param name="Secret">
-    /// The shared secret (API key, client secret, password). The cleartext path compares
-    /// against it in constant time; the SCRAM-SHA-256 path uses it as the PBKDF2 input,
-    /// so the client proves knowledge of it without transmitting it.
+    /// <param name="Verifier">
+    /// The SCRAM-SHA-256 verifier (salt, iterations, StoredKey, ServerKey) derived from the
+    /// shared secret with <see cref="PgScramVerifier.Derive(string, int, int)"/>. The store
+    /// never holds the plaintext secret: the SCRAM path verifies the client proof against
+    /// the StoredKey directly, and the cleartext path re-derives and compares in constant
+    /// time via <see cref="PgScramVerifier.VerifyPassword"/>.
     /// </param>
     /// <param name="Principal">The authenticated identity this login maps to on success.</param>
-    public sealed record PgLogin(string Secret, ClaimsPrincipal Principal);
+    public sealed record PgLogin(PgScramVerifier Verifier, ClaimsPrincipal Principal);
 
     /// <summary>
     /// Resolves a PostgreSQL startup username to a <see cref="PgLogin"/>. This is the

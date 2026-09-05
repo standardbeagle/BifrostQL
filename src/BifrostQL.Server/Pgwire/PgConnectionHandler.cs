@@ -361,13 +361,13 @@ namespace BifrostQL.Server.Pgwire
                 throw new PgProtocolException($"Expected PasswordMessage, got '{(char)message.Type}'.");
 
             var supplied = TrimTrailingNul(message.Body);
-            // Compare against the real secret, or a random decoy for an unknown user, so
-            // the reject path costs the same either way (no trivial user enumeration).
-            // Run the fixed-time compare unconditionally BEFORE the null check so an
-            // unknown user is not distinguishable from a wrong password by timing —
-            // short-circuiting on `login is null` would skip the compare and leak it.
-            var expected = Encoding.UTF8.GetBytes(login?.Secret ?? DecoySecret());
-            var matches = CryptographicOperations.FixedTimeEquals(supplied, expected);
+            // Verify against the real verifier, or a structurally identical decoy verifier for
+            // an unknown user, so the reject path costs the same either way (no trivial user
+            // enumeration): both sides run one PBKDF2 with the same iteration count. Run the
+            // verify unconditionally BEFORE the null check — short-circuiting on
+            // `login is null` would skip the PBKDF2 and leak existence by timing.
+            var verifier = login?.Verifier ?? PgScramVerifier.NewDecoy();
+            var matches = verifier.VerifyPassword(Encoding.UTF8.GetString(supplied));
             return login is not null && matches;
         }
 
@@ -385,9 +385,10 @@ namespace BifrostQL.Server.Pgwire
             if (!string.Equals(mechanism, PgWireProtocol.ScramSha256, StringComparison.Ordinal))
                 throw new PgProtocolException($"Unsupported SASL mechanism '{mechanism}'.");
 
-            // Run the exchange even for an unknown user (decoy secret) so it fails at the
-            // proof step like a wrong password, not with an earlier, distinguishable error.
-            var scram = ScramSha256Server.Create(login?.Secret ?? DecoySecret());
+            // Run the exchange even for an unknown user (decoy verifier, structurally
+            // identical) so it fails at the proof step like a wrong password, not with an
+            // earlier, distinguishable error.
+            var scram = ScramSha256Server.Create(login?.Verifier ?? PgScramVerifier.NewDecoy());
             try
             {
                 var serverFirst = scram.HandleClientFirst(clientFirst);
@@ -687,7 +688,5 @@ namespace BifrostQL.Server.Pgwire
 
         private static byte[] TrimTrailingNul(byte[] body)
             => body.Length > 0 && body[^1] == 0 ? body[..^1] : body;
-
-        private static string DecoySecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
     }
 }

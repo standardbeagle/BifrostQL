@@ -16,7 +16,7 @@ namespace BifrostQL.Server.Test.Pgwire
         {
             // Arrange: fixed salt/iterations for determinism; client and server share the secret.
             const string password = "s3cr3t-api-key";
-            var server = new ScramSha256Server(password, Encoding.ASCII.GetBytes("0123456789abcdef"), 4096);
+            var server = new ScramSha256Server(PgScramVerifier.Derive(password, Encoding.ASCII.GetBytes("0123456789abcdef"), 4096));
             var client = new ScramTestClient();
 
             // Act: full round trip.
@@ -32,7 +32,7 @@ namespace BifrostQL.Server.Test.Pgwire
         public void WrongPassword_FailsProofVerification()
         {
             // Arrange: the client computes its proof with a different secret than the server holds.
-            var server = new ScramSha256Server("correct-horse", Encoding.ASCII.GetBytes("0123456789abcdef"), 4096);
+            var server = new ScramSha256Server(PgScramVerifier.Derive("correct-horse", Encoding.ASCII.GetBytes("0123456789abcdef"), 4096));
             var client = new ScramTestClient();
             var serverFirst = server.HandleClientFirst(client.ClientFirstMessage());
             var clientFinal = client.ClientFinalMessage(serverFirst, "battery-staple", out _);
@@ -46,7 +46,7 @@ namespace BifrostQL.Server.Test.Pgwire
         public void MalformedClientFirst_MissingNonce_Throws()
         {
             // Arrange
-            var server = new ScramSha256Server("pw", Encoding.ASCII.GetBytes("0123456789abcdef"), 4096);
+            var server = new ScramSha256Server(PgScramVerifier.Derive("pw", Encoding.ASCII.GetBytes("0123456789abcdef"), 4096));
 
             // Act + Assert: a GS2 header with no r= field is a protocol violation.
             var act = () => server.HandleClientFirst("n,,n=user");
@@ -58,7 +58,7 @@ namespace BifrostQL.Server.Test.Pgwire
         {
             // Arrange: build a valid final message, then corrupt the echoed nonce.
             const string password = "pw";
-            var server = new ScramSha256Server(password, Encoding.ASCII.GetBytes("0123456789abcdef"), 4096);
+            var server = new ScramSha256Server(PgScramVerifier.Derive(password, Encoding.ASCII.GetBytes("0123456789abcdef"), 4096));
             var client = new ScramTestClient();
             var serverFirst = server.HandleClientFirst(client.ClientFirstMessage());
             var clientFinal = client.ClientFinalMessage(serverFirst, password, out _);

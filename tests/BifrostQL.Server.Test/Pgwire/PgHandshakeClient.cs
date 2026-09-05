@@ -564,14 +564,15 @@ namespace BifrostQL.Server.Test.Pgwire
         public bool HasError => ErrorSqlState is not null;
     }
 
-    /// <summary>A test credential store: an in-memory username → (secret, principal) map.</summary>
+    /// <summary>A test credential store: an in-memory username → (verifier, principal) map.</summary>
     internal sealed class FakePgCredentialStore : IPgCredentialStore
     {
         private readonly Dictionary<string, PgLogin> _logins = new(StringComparer.Ordinal);
 
+        /// <summary>Provisions the login the way production stores must: verifier-only, no plaintext.</summary>
         public FakePgCredentialStore Add(string username, string secret, ClaimsPrincipal principal)
         {
-            _logins[username] = new PgLogin(secret, principal);
+            _logins[username] = new PgLogin(PgScramVerifier.Derive(secret), principal);
             return this;
         }
 

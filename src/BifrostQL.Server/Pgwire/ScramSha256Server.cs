@@ -6,9 +6,9 @@ namespace BifrostQL.Server.Pgwire
     /// <summary>
     /// Server side of one SCRAM-SHA-256 (RFC 5802 / RFC 7677) SASL exchange, as the
     /// PostgreSQL <c>AuthenticationSASL</c> flow uses it. The server proves nothing is
-    /// sent in the clear: it holds the shared secret (the credential store's password),
-    /// derives the salted password with PBKDF2, and verifies the client's proof against
-    /// a freshly generated per-exchange nonce and salt.
+    /// sent in the clear: it holds only the credential store's <see cref="PgScramVerifier"/>
+    /// (salt, iterations, StoredKey, ServerKey — never the password) and verifies the
+    /// client's proof against the StoredKey with a freshly generated per-exchange nonce.
     ///
     /// <para>State machine: construct, then <see cref="HandleClientFirst"/> →
     /// server-first, then <see cref="HandleClientFinal"/> → server-final (or throw on a
@@ -16,36 +16,26 @@ namespace BifrostQL.Server.Pgwire
     /// reusable and not thread-safe.</para>
     ///
     /// <para>SASLprep (RFC 4013) normalization of the password is intentionally omitted:
-    /// the credential store owns the canonical secret form, and the handshake compares
-    /// against that exact secret on both the cleartext and SCRAM paths, so no drift
+    /// the credential store owns the canonical secret form, deriving the verifier from that
+    /// exact secret, and the cleartext path verifies against the same verifier, so no drift
     /// arises between them. ASCII secrets — the common API-key/client-secret shape —
     /// are unaffected either way.</para>
     /// </summary>
     internal sealed class ScramSha256Server
     {
-        private const int KeyLength = 32; // SHA-256 output / SaltedPassword length
-        private static readonly byte[] ClientKeyLabel = Encoding.ASCII.GetBytes("Client Key");
-        private static readonly byte[] ServerKeyLabel = Encoding.ASCII.GetBytes("Server Key");
-
-        private readonly byte[] _password;
-        private readonly byte[] _salt;
-        private readonly int _iterations;
+        private readonly PgScramVerifier _verifier;
 
         private string? _clientFirstBare;
         private string? _serverFirstMessage;
         private string? _combinedNonce;
 
-        public ScramSha256Server(string password, byte[] salt, int iterations)
+        public ScramSha256Server(PgScramVerifier verifier)
         {
-            if (iterations <= 0) throw new ArgumentOutOfRangeException(nameof(iterations));
-            _password = Encoding.UTF8.GetBytes(password ?? throw new ArgumentNullException(nameof(password)));
-            _salt = salt ?? throw new ArgumentNullException(nameof(salt));
-            _iterations = iterations;
+            _verifier = verifier ?? throw new ArgumentNullException(nameof(verifier));
         }
 
-        /// <summary>Generates a random per-exchange server nonce and salt with sane defaults.</summary>
-        public static ScramSha256Server Create(string password, int iterations = 4096, int saltBytes = 16)
-            => new(password, RandomNumberGenerator.GetBytes(saltBytes), iterations);
+        /// <summary>Wraps a verifier for one exchange; the nonce is generated per round.</summary>
+        public static ScramSha256Server Create(PgScramVerifier verifier) => new(verifier);
 
         /// <summary>
         /// Consumes the client-first-message (full, gs2 header included) and returns the
@@ -69,7 +59,7 @@ namespace BifrostQL.Server.Pgwire
             var serverNonce = Base64Nonce();
             _combinedNonce = clientNonce + serverNonce;
             _serverFirstMessage =
-                $"r={_combinedNonce},s={Convert.ToBase64String(_salt)},i={_iterations}";
+                $"r={_combinedNonce},s={Convert.ToBase64String(_verifier.Salt)},i={_verifier.Iterations}";
             return _serverFirstMessage;
         }
 
@@ -99,10 +89,9 @@ namespace BifrostQL.Server.Pgwire
                 throw new PgScramProtocolException("SCRAM client-final-message malformed.");
             var clientFinalWithoutProof = clientFinalMessage[..proofMarker];
 
-            var saltedPassword = Rfc2898DeriveBytes.Pbkdf2(
-                _password, _salt, _iterations, HashAlgorithmName.SHA256, KeyLength);
-            var clientKey = Hmac(saltedPassword, ClientKeyLabel);
-            var storedKey = SHA256.HashData(clientKey);
+            // The verifier carries StoredKey = SHA-256(Client Key) directly — no PBKDF2 run
+            // on the handshake path, and no plaintext secret anywhere on the server.
+            var storedKey = _verifier.StoredKey;
 
             var authMessage = Encoding.UTF8.GetBytes(
                 $"{_clientFirstBare},{_serverFirstMessage},{clientFinalWithoutProof}");
@@ -119,7 +108,7 @@ namespace BifrostQL.Server.Pgwire
             {
                 throw new PgScramProtocolException("SCRAM client proof is not valid base64.");
             }
-            if (clientProof.Length != clientKey.Length)
+            if (clientProof.Length != storedKey.Length)
                 throw new PgScramAuthenticationException("SCRAM proof length mismatch.");
 
             var recoveredClientKey = Xor(clientProof, clientSignature);
@@ -127,8 +116,7 @@ namespace BifrostQL.Server.Pgwire
             if (!CryptographicOperations.FixedTimeEquals(recoveredStoredKey, storedKey))
                 throw new PgScramAuthenticationException("SCRAM proof verification failed.");
 
-            var serverKey = Hmac(saltedPassword, ServerKeyLabel);
-            var serverSignature = Hmac(serverKey, authMessage);
+            var serverSignature = Hmac(_verifier.ServerKey, authMessage);
             return $"v={Convert.ToBase64String(serverSignature)}";
         }
 

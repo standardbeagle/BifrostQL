@@ -224,9 +224,11 @@ namespace BifrostQL.Server.Test.Ldap
             const int budget = 4096;
             const int declared = 64 * 1024;
 
-            // SEQUENCE + long-form 4-byte length declaring 64 KiB, with only a stub of real
-            // payload behind it: a reader that pulls the declared payload before checking the
-            // cap would materialize far more than the header.
+            // SEQUENCE + long-form 4-byte length declaring 64 KiB, with the WHOLE declared
+            // payload really on the wire. A stub behind the header would make the probe vacuous:
+            // a reader with no cap at all reads to EOF, throws the same LdapProtocolException, and
+            // pulls fewer bytes than declared — indistinguishable from a cap. With the payload
+            // present, only a cap checked BEFORE ReadExactAsync keeps BytesRead under `declared`.
             var wire = new MemoryStream();
             wire.WriteByte(LdapProtocol.Sequence);
             wire.WriteByte(0x84);
@@ -234,7 +236,7 @@ namespace BifrostQL.Server.Test.Ldap
             wire.WriteByte((byte)((declared >> 16) & 0xFF));
             wire.WriteByte((byte)((declared >> 8) & 0xFF));
             wire.WriteByte((byte)(declared & 0xFF));
-            wire.Write(new byte[64]);
+            wire.Write(new byte[declared]);
             wire.Position = 0;
 
             var counting = new CountingStream(wire);

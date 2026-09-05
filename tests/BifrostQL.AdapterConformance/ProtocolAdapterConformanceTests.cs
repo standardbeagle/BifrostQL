@@ -695,6 +695,95 @@ namespace BifrostQL.AdapterConformance
                 "soft-deleted rows never surface on reads");
         }
 
+        // ---- (e) pre-auth attempt limiter (adapters with a credential handshake) --
+        //
+        // Opt-in, same shape as AdapterSupportsMutations: an adapter whose wire carries a
+        // credential-bearing handshake (LDAP bind, RESP AUTH, pgwire password) sets
+        // AdapterSupportsAuthRateLimit = true and implements AttemptAuthAsync; adapters
+        // without the surface (HTTP front doors riding Kestrel, the echo fixture) inherit
+        // the default and the fact stays silent — no skip noise, no forced stub.
+
+        /// <summary>The outcome of one credential attempt, observed through the adapter's real wire.</summary>
+        protected sealed class AuthAttemptOutcome
+        {
+            /// <summary>Whether the wire refused the attempt (wrong secret AND rate-limited both count).</summary>
+            public required bool Refused { get; init; }
+
+            /// <summary>The exact refusal text/code as it appeared on the wire; null when the attempt succeeded.</summary>
+            public string? WireText { get; init; }
+
+            /// <summary>
+            /// Whether the attempt caused the credential store to be consulted. The derivation
+            /// observes this with a counting credential store: the whole point of the limiter is
+            /// that an over-cap refusal costs NO resolution work.
+            /// </summary>
+            public required bool CredentialResolved { get; init; }
+        }
+
+        /// <summary>
+        /// Whether the adapter's credential handshake is bounded by a per-source/per-account
+        /// pre-auth attempt limiter (AGENTS.md listener posture: "credential-bearing handshake
+        /// must be rate-limited"). Default false; an adapter without the surface leaves it alone.
+        /// </summary>
+        protected virtual bool AdapterSupportsAuthRateLimit => false;
+
+        /// <summary>
+        /// The attempt budget the derivation configures BOTH limiter axes to. Required when
+        /// <see cref="AdapterSupportsAuthRateLimit"/> is true.
+        /// </summary>
+        protected virtual int AuthAttemptBudget => throw new NotSupportedException(
+            $"{GetType().Name} sets {nameof(AdapterSupportsAuthRateLimit)} but does not override {nameof(AuthAttemptBudget)}.");
+
+        /// <summary>An account that EXISTS in the derivation's credential store.</summary>
+        protected virtual string KnownAuthAccount => "conformance-known-account";
+
+        /// <summary>An account that does NOT exist in the derivation's credential store.</summary>
+        protected virtual string UnknownAuthAccount => "conformance-unknown-account";
+
+        /// <summary>
+        /// Performs one credential attempt through the adapter's real handshake with a WRONG
+        /// secret and reports what the wire answered and whether the credential store was
+        /// consulted. Required when <see cref="AdapterSupportsAuthRateLimit"/> is true. Attempts
+        /// against one fact share the derivation's limiter state (same source, same process), so
+        /// the kit can burn the budget and then observe the over-cap refusal.
+        /// </summary>
+        protected virtual Task<AuthAttemptOutcome> AttemptAuthAsync(string account, string secret)
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterSupportsAuthRateLimit)} but does not override {nameof(AttemptAuthAsync)}.");
+
+        [Fact]
+        public async Task Auth_OverCapAttempt_IsRefusedBeforeCredentialResolution_WithAccountBlindRefusal()
+        {
+            if (!AdapterSupportsAuthRateLimit) return;
+
+            const string wrongSecret = "conformance-wrong-secret";
+
+            // Burn the budget against the KNOWN account. Every IN-budget attempt must still reach
+            // the credential store — only the over-cap refusal may skip resolution, or the limiter
+            // is gating the wrong side of the handshake.
+            for (var attempt = 1; attempt <= AuthAttemptBudget; attempt++)
+            {
+                var within = await AttemptAuthAsync(KnownAuthAccount, wrongSecret);
+                within.Refused.Should().BeTrue("a wrong secret is refused even inside the budget");
+                within.CredentialResolved.Should().BeTrue(
+                    "attempt {0} is inside the budget; the credential must still be resolved", attempt);
+            }
+
+            // Past the cap the SAME attempt is refused BEFORE the credential is resolved — a
+            // sustained guessing loop must cost the front door nothing.
+            var overCapKnown = await AttemptAuthAsync(KnownAuthAccount, wrongSecret);
+            overCapKnown.Refused.Should().BeTrue("the over-cap attempt is refused");
+            overCapKnown.CredentialResolved.Should().BeFalse(
+                "past the cap the refusal precedes credential resolution — a limiter that resolves first bounds nothing");
+
+            var overCapUnknown = await AttemptAuthAsync(UnknownAuthAccount, wrongSecret);
+            overCapUnknown.Refused.Should().BeTrue("an unknown account over the cap is refused the same way");
+            overCapUnknown.CredentialResolved.Should().BeFalse(
+                "the unknown account is over the same per-source cap and must not be resolved either");
+            overCapUnknown.WireText.Should().Be(overCapKnown.WireText,
+                "a rate-limit refusal that varies with account existence is an enumeration oracle — byte equality, not Contains");
+        }
+
         /// <summary>
         /// Captures the generated SQL per table at the AfterExecute phase (the
         /// phase carrying SQL text), so the suite can assert on SQL no matter what

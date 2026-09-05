@@ -169,6 +169,82 @@ namespace BifrostQL.Server.Test.Resp
             return record;
         }
 
+        // ---- (e) pre-auth attempt limiter -----------------------------------
+        //
+        // RESP AUTH is rate-limited on two axes (RespAuthRateLimiter) before the credential is
+        // resolved. The kit burns the budget against the known account and then asserts the
+        // over-cap refusal costs no credential-store lookup and reads byte-identical for a known
+        // and an unknown account. One fixture (one connection, one handler, one limiter) serves
+        // the whole fact: RESP keeps the connection usable after a failed AUTH, and the per-source
+        // axis keys on the loopback client IP either way.
+
+        protected override bool AdapterSupportsAuthRateLimit => true;
+
+        protected override int AuthAttemptBudget => 3;
+
+        protected override string KnownAuthAccount => LoginUser;
+
+        protected override string UnknownAuthAccount => "conformance-no-such-user";
+
+        private CountingRespCredentialStore? _authStore;
+        private RespFixture? _authFixture;
+
+        protected override async Task<AuthAttemptOutcome> AttemptAuthAsync(string account, string secret)
+        {
+            _authStore ??= new CountingRespCredentialStore()
+                .Add(LoginUser, LoginSecret, TenantPrincipal("user-a", "tenant-a"));
+            if (_authFixture is null)
+            {
+                var options = new RespWireOptions
+                {
+                    RequireAuthentication = true,
+                    // Tests authenticate over a loopback socket, not TLS: explicit dev-override opt-in.
+                    AllowCleartextAuth = true,
+                    // The pre-auth deadline must not fire mid-fact and close the connection for
+                    // reasons that have nothing to do with the limiter under test.
+                    AuthenticationTimeout = TimeSpan.FromHours(1),
+                    MaxAuthAttemptsPerSource = AuthAttemptBudget,
+                    MaxAuthAttemptsPerAccount = AuthAttemptBudget,
+                };
+                _authFixture = await RespFixture.StartAsync(_authStore, RespFixture.EmptyServices(), options);
+            }
+
+            var lookupsBefore = _authStore.Lookups;
+            await _authFixture.Client.SendCommandAsync("AUTH", account, secret);
+            var reply = await _authFixture.Client.ReadReplyAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            var resolved = _authStore.Lookups > lookupsBefore;
+            return reply is RespError error
+                ? new AuthAttemptOutcome { Refused = true, WireText = error.Message, CredentialResolved = resolved }
+                : new AuthAttemptOutcome { Refused = false, WireText = null, CredentialResolved = resolved };
+        }
+
+        public override async Task DisposeAsync()
+        {
+            if (_authFixture is not null)
+                await _authFixture.DisposeAsync();
+            await base.DisposeAsync();
+        }
+
+        /// <summary>A credential store that counts resolutions, so the kit can prove an over-cap refusal never reaches it.</summary>
+        private sealed class CountingRespCredentialStore : IRespCredentialStore
+        {
+            private readonly FakeRespCredentialStore _inner = new();
+
+            public int Lookups { get; private set; }
+
+            public CountingRespCredentialStore Add(string username, string secret, ClaimsPrincipal principal)
+            {
+                _inner.Add(username, secret, principal);
+                return this;
+            }
+
+            public Task<RespLogin?> FindAsync(string username, CancellationToken cancellationToken)
+            {
+                Lookups++;
+                return _inner.FindAsync(username, cancellationToken);
+            }
+        }
+
         /// <summary>Formats a mutation request's primary key as the RESP key <c>&lt;table&gt;:&lt;pk…&gt;</c>.</summary>
         private static string BuildKey(string table, IReadOnlyList<object?>? primaryKey, IReadOnlyDictionary<string, object?> data)
         {

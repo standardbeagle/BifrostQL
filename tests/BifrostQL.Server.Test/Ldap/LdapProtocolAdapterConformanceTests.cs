@@ -222,6 +222,83 @@ namespace BifrostQL.Server.Test.Ldap
             }
         }
 
+        // ---- (e) pre-auth attempt limiter -----------------------------------
+        //
+        // The LDAP bind path is bounded by LdapBindRateLimiter (per-source + per-account) BEFORE
+        // the credential store is consulted, and every bind failure — unknown DN, wrong password,
+        // rate-limited — yields the SAME wire shape (InvalidCredentials, empty diagnostic) by
+        // construction (LdapBindResult). The kit's byte-equality assertion is therefore trivially
+        // satisfied here; the load-bearing assertion is CredentialResolved == false past the cap,
+        // observed through the counting store. The limiter lives on the authenticator, so one
+        // authenticator is shared across the fact's per-attempt connections.
+
+        protected override bool AdapterSupportsAuthRateLimit => true;
+
+        protected override int AuthAttemptBudget => 3;
+
+        protected override string KnownAuthAccount => BindDn;
+
+        protected override string UnknownAuthAccount => "cn=nobody,ou=service," + BaseDn;
+
+        private CountingLdapCredentialStore? _authStore;
+        private LdapBindAuthenticator? _authAuthenticator;
+        private LdapWireOptions? _authOptions;
+
+        protected override async Task<AuthAttemptOutcome> AttemptAuthAsync(string account, string secret)
+        {
+            _authStore ??= new CountingLdapCredentialStore(KnownAuthAccount, TenantPrincipal("user-a", "tenant-a"));
+            _authOptions ??= new LdapWireOptions
+            {
+                Endpoint = EndpointPath,
+                MaxBindAttemptsPerSource = AuthAttemptBudget,
+                MaxBindAttemptsPerAccount = AuthAttemptBudget,
+                PagedResultsCookieSecret = "conformance-cookie-secret",
+            };
+            _authAuthenticator ??= new LdapBindAuthenticator(
+                _authStore, new ConformanceHasher(), BifrostAuthContextFactory.Instance, _authOptions,
+                services: Host.Services);
+
+            // TLS: a credential-bearing bind on a cleartext connection is refused before any of
+            // the machinery under test runs (that refusal is a different fact's subject).
+            await using var fixture = await LdapFixture.StartAsync(
+                _authOptions, authenticator: _authAuthenticator, tls: true);
+
+            var lookupsBefore = _authStore.Lookups;
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: account, password: secret)));
+            var response = await fixture.Client.ReadResponseAsync().WaitAsync(Timeout)
+                ?? throw new InvalidOperationException("the LDAP front door closed without answering the bind.");
+            return new AuthAttemptOutcome
+            {
+                Refused = response.ResultCode != LdapResultCode.Success,
+                WireText = response.ResultCode?.ToString(),
+                CredentialResolved = _authStore.Lookups > lookupsBefore,
+            };
+        }
+
+        /// <summary>A credential store that counts resolutions, so the kit can prove an over-cap refusal never reaches it.</summary>
+        private sealed class CountingLdapCredentialStore : ILdapCredentialStore
+        {
+            private readonly string _knownDn;
+            private readonly ClaimsPrincipal _principal;
+
+            public CountingLdapCredentialStore(string knownDn, ClaimsPrincipal principal)
+            {
+                _knownDn = knownDn;
+                _principal = principal;
+            }
+
+            public int Lookups { get; private set; }
+
+            public Task<LdapCredentialRecord?> FindAsync(string bindDn, CancellationToken ct)
+            {
+                Lookups++;
+                return Task.FromResult<LdapCredentialRecord?>(
+                    string.Equals(bindDn, _knownDn, StringComparison.OrdinalIgnoreCase)
+                        ? new LdapCredentialRecord("hash:" + ConformanceCredentialStore.Secret, _principal, Enabled: true)
+                        : null);
+            }
+        }
+
         /// <summary>Resolves the one service DN to whichever principal the current fact is exercising.</summary>
         private sealed class ConformanceCredentialStore : ILdapCredentialStore
         {

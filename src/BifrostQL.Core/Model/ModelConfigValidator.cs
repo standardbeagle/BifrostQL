@@ -460,6 +460,21 @@ namespace BifrostQL.Core.Model
                         $"cannot combine with '{MetadataKeys.History.Columns}'; deferred reversal reuses " +
                         "HistoryMutationHook's full before-image to reconstruct the original row."));
                 }
+
+                // The reverse delta is reconstructed from the history hook's before-image,
+                // which is captured only for operations the history config records. A
+                // deferrable table whose history omits update or delete therefore throws
+                // "No before-image was captured" on EVERY update/delete at runtime — a
+                // load-time misconfiguration, so reject it here.
+                if (!history.Records(MutationType.Update) || !history.Records(MutationType.Delete))
+                {
+                    errors.Add(Problem(table, MetadataKeys.Deferred.Deferrable,
+                        table.GetMetadataValue(MetadataKeys.Deferred.Deferrable),
+                        $"requires '{MetadataKeys.History.Enabled}' to record update and delete " +
+                        $"(configured: '{table.GetMetadataValue(MetadataKeys.History.Enabled)}'); " +
+                        "the deferred undo path reconstructs reverse deltas from the history " +
+                        "before-image, which is captured only for recorded operations."));
+                }
             }
             catch (InvalidOperationException)
             {

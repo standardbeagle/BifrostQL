@@ -108,7 +108,10 @@ transformer-derived filters as the row query **before** the `GROUP BY`, so a
 count or sum can never include rows the caller cannot read. Column-level read
 guards (`IColumnReadGuard`) are enforced against both `groupBy` columns and
 `_sum`/`_avg`/`_min`/`_max` value columns — a denied column cannot be read
-through the aggregate surface.
+through the aggregate surface. Only the sub-fields the client selects under
+each op group are aggregated and guarded: `_sum { amount }` neither computes
+nor requires read access to any other numeric column, so a policy-denied
+sibling column never blocks an aggregate that does not select it.
 
 All identifiers are schema-derived and all values are parameterized; no
 user-supplied string is ever concatenated into the generated SQL. The surface

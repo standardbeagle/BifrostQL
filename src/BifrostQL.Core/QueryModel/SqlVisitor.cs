@@ -93,8 +93,13 @@ namespace BifrostQL.Core.QueryModel
         }
         protected override ValueTask VisitFloatValueAsync(GraphQLFloatValue value, ISqlContext context)
         {
-            context.Set(Convert.ToDouble(value.Value.ToString()));
-            context.AddValue(Convert.ToDouble(value.Value.ToString()));
+            // GraphQL float literals are dot-decimal on the wire regardless of the
+            // host culture. Convert.ToDouble(string) honours CurrentCulture, so under
+            // a comma-decimal culture (de-DE) "1.5" parsed as 15 — a silently wrong
+            // filter value. Parse invariant, matching the IntValue path above.
+            var parsed = double.Parse(value.Value.ToString(), System.Globalization.CultureInfo.InvariantCulture);
+            context.Set(parsed);
+            context.AddValue(parsed);
             return base.VisitFloatValueAsync(value, context);
         }
         protected override async ValueTask VisitStringValueAsync(GraphQLStringValue stringValue, ISqlContext context)

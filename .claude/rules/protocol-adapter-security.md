@@ -565,6 +565,28 @@ code, not just re-checks of pgwire.
     things. Reuse the adapter's already-funnelled exception type (invariants 1
     and 3) so the refusal reaches the wire sanitized with no new mapping.
 
+    **A refactor from THROW to a result type must map the failure arm to a
+    REFUSAL, never to the type's empty/default value.** M13 funnelled every HTTP
+    mount's identity projection through `BifrostIdentityGate.Project`, which
+    returns a `BifrostIdentityOutcome`; the wire-less helper
+    `HttpContextWorkflowExtensions.GetBifrostUserContext` mapped `Unprojectable`
+    to an EMPTY context. Pre-refactor it THREW, so an authenticated-but-
+    unidentifiable principal (unmapped OIDC issuer, subject-less principal) got
+    an accidental 500; after the refactor the workflow executor served it as
+    anonymous for reads AND writes — a fail-open introduced BY the fix, on the
+    one seam that owns no response. The empty value of an identity type is
+    always the fail-open value, so the refactor's default arm is exactly where
+    it lands. Rules: a projection seam with NO wire of its own throws a typed,
+    constant-message exception (`BifrostIdentityRejectedException` — invariant 3:
+    no issuer or claim detail) and its caller maps that to the status every other
+    seam answers for the same condition (invariant 9); only a seam that owns a
+    response may map the outcome itself. Every consumer of the outcome branches
+    on the failure arm EXPLICITLY — a consumer that ignores it and reads the
+    context gets empty, which the executor serves. The pinning fact asserts the
+    CALLER's behaviour (the sidecar answers 403), not the projector's return
+    value; a fact over the projector alone is green either way.
+    <!-- written_at: 2026-09-05T22:00:00Z  source_event: task:01M1KPC4GQQ1SYYTZDYQTVTJ9D, git:06ab8a6c, git:41140a3b -->
+
     **Flipping a shipped default is a docs sweep, not a docs sentence.** Every
     code SNIPPET that shows the old default is load-bearing, not just prose
     asserting the control: after this flip a bare

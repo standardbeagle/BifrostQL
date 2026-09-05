@@ -4,6 +4,7 @@ using BifrostQL.Core.Schema;
 using BifrostQL.Core.Workflows;
 using BifrostQL.Server;
 using GraphQL;
+using System.Diagnostics.CodeAnalysis;
 
 namespace BifrostQL.Samples.HostedSpa;
 
@@ -110,7 +111,8 @@ public static class MembershipWorkflowEndpoints
         if (request.AmountCents <= 0)
             return Results.BadRequest("Payment amount must be positive.");
 
-        var userContext = http.GetBifrostUserContext();
+        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+            return identityRefusal;
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses. dues_payments
@@ -152,7 +154,8 @@ public static class MembershipWorkflowEndpoints
         if (string.IsNullOrWhiteSpace(request.NewEndDate))
             return Results.BadRequest("A new end date is required to renew a membership.");
 
-        var userContext = http.GetBifrostUserContext();
+        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+            return identityRefusal;
 
         // Pre-flight gate: the workflow updates member_memberships, so the
         // gating action is Update.
@@ -190,7 +193,8 @@ public static class MembershipWorkflowEndpoints
         IWorkflowRunner workflows,
         PathCache<Inputs> schemaCache)
     {
-        var userContext = http.GetBifrostUserContext();
+        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+            return identityRefusal;
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses.
@@ -229,7 +233,8 @@ public static class MembershipWorkflowEndpoints
         IWorkflowRunner workflows,
         PathCache<Inputs> schemaCache)
     {
-        var userContext = http.GetBifrostUserContext();
+        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+            return identityRefusal;
 
         // Pre-flight gate: the workflow updates members, so the gating action is
         // Update. Linking an identity is a privileged operation — it must be
@@ -247,6 +252,34 @@ public static class MembershipWorkflowEndpoints
         }, userContext);
 
         return ToWorkflowResult(result);
+    }
+
+    /// <summary>
+    /// Projects the request's caller through
+    /// <see cref="HttpContextWorkflowExtensions.GetBifrostUserContext"/>,
+    /// translating a refused AUTHENTICATED identity (unmapped OIDC issuer,
+    /// subject-less principal) into the same 403 every HTTP mount answers for
+    /// that condition — an unhandled <see cref="BifrostIdentityRejectedException"/>
+    /// would escape to the host as a 500. All four endpoints gate through this
+    /// one helper so the refusal shape cannot drift between routes.
+    /// </summary>
+    private static bool TryGetUserContext(
+        HttpContext http,
+        out IDictionary<string, object?> userContext,
+        [NotNullWhen(false)] out IResult? refusal)
+    {
+        try
+        {
+            userContext = http.GetBifrostUserContext();
+            refusal = null;
+            return true;
+        }
+        catch (BifrostIdentityRejectedException)
+        {
+            userContext = new Dictionary<string, object?>();
+            refusal = Results.StatusCode(StatusCodes.Status403Forbidden);
+            return false;
+        }
     }
 
     /// <summary>

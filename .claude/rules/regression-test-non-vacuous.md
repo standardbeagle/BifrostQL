@@ -164,6 +164,18 @@ implementations produce provably different output.
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.
+- **A size cap on a wire has TWO inputs — declared and received — and the
+  fixture must make the RECEIVED one bind.** A body/frame cap is normally two
+  branches: an early refusal on the client-declared size (`Content-Length`, a
+  length prefix) and an accumulator over the bytes that actually arrive. A
+  fixture built from a buffered body (`StringContent`, a byte array) always
+  declares its length, so it exercises only the first branch, and a mutant that
+  deletes the accumulator stays GREEN. Send a CHUNKED / streamed body with no
+  declared length (or a lying one) so only the received-byte check can reject
+  it. Second instance of the same shape: the binary WebSocket reassembly cap
+  already counts received bytes rather than the client's declared total
+  (AGENTS.md, `/bifrost-ws` row), and M14's chat POST cap repeated it on HTTP.
+  <!-- written_at: 2026-09-05T03:10:00Z  source_event: task:01M1KP3S56ACGSETB02AMK4Z00, git:6f95328f -->
 - **Where TWO bounds narrow the same window, the fixture must make the OTHER
   one bind.** A surface-level cap tested with the server ceiling above it
   exercises only its own arithmetic, so a sentinel or flag that skips the

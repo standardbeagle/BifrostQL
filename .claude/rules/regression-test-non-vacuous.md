@@ -58,6 +58,24 @@ implementations produce provably different output.
   `_rawQuery`, `_dbSchema`) as separate facts, which is what proved the
   `__typename` case real rather than a no-op the visitor never collects. One
   representative kind leaves the rest free to regress independently.
+- **Narrowing a broad path needs facts for the shapes the BROAD path already
+  served.** The bullet above spans the population that must FAIL; this is its
+  complement — the population that must keep WORKING. When a fix replaces
+  "do it for everything" with "do it for what was selected/requested/matched",
+  the RED fact only proves the narrowing happened; every input the old code
+  served correctly is now un-covered, and the suite stays green while valid
+  requests break. M8 narrowed aggregate value columns from every numeric column
+  to the selected sub-fields: it went GREEN with a one-shape fixture, and review
+  found THREE valid queries the pre-fix resolver served and the fix broke —
+  `_sum { __typename amount }` (threw), `_sum { total: amount amount }` (generic
+  DB error), `s1: _sum { amount } s2: _sum { id }` (dropped columns, served
+  null). Before submitting a narrowing fix, enumerate the selector's own
+  input grammar — aliases, duplicates, siblings under different aliases,
+  fragments (named and inline), introspection fields, empty selections — and
+  pin one fact per shape. Assert the OUTPUT ARTEFACT (the generated SQL text,
+  the built predicate), not only the downstream outcome: M8's policy-outcome
+  assertion was true for all three broken shapes.
+  <!-- written_at: 2026-09-04T00:00:00Z  source_event: task:01M1KNYNEFYP8M0RC70387X4SM, git:85f2131e, git:87ea68c1 -->
 - **A one-element fixture cannot observe WHICH element a walker read.** Where
   state is attached to one node of a chain and read back by another walker
   (relationship-filter scope on the node naming the link — finding C1), a

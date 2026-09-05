@@ -65,6 +65,7 @@ app.UseBifrostChat(chat =>
 {
     chat.Path = "/_chat";            // default
     chat.HistoryLimit = 50;          // default
+    chat.MaxMessageLength = 32768;   // default; chars per message, 400 when exceeded
     chat.SystemPrompt = "You answer questions about the ACME order database.";
     // chat.GraphQlEndpoint = "/graphql"; // required only with multiple endpoints
 });
@@ -130,12 +131,13 @@ Error codes: `refusal` (with `refusalCategory` when the provider reported one), 
 
 | Status | Meaning |
 |---|---|
-| `400 invalid-request` | Malformed JSON, or missing/blank `content`. |
+| `400 invalid-request` | Malformed JSON, missing/blank `content`, or `content` longer than `MaxMessageLength`. |
 | `401 unauthenticated` | Anonymous caller — checked before anything else. |
 | `403 denied` / `403 forbidden` | Fail-closed authorization denial (e.g. authenticated caller without the tenant claim a `tenant-filter` table requires) / unmapped OIDC issuer. |
 | `404 not-found` | Conversation outside the caller's row scope. Cross-tenant and nonexistent are **indistinguishable by design**. |
 | `405 method-not-allowed` | Anything but POST. |
 | `409 stream-in-progress` | A completion is already streaming for this conversation. |
+| `413 payload-too-large` | The request body exceeded the cap (4 × `MaxMessageLength` + 1 KiB) — rejected before the body is materialized. |
 
 Once the SSE stream has started the HTTP status is committed to `200`; every later failure travels as a terminal `error` event instead.
 
@@ -208,6 +210,8 @@ One completion streams per conversation at a time; a second POST while one is st
 ### History bounding
 
 Each completion sends the conversation's **last `HistoryLimit` messages** (default 50) in chronological order, plus the configured `SystemPrompt` (never client input) first. Older messages are truncated from the oldest side — the model does not see them; they remain stored and pageable. Size the limit against your model's context window and cost budget.
+
+Each individual message is bounded by **`MaxMessageLength`** (default 32768 characters): because up to `HistoryLimit` persisted messages ride every completion, an unbounded message would be an unbounded per-completion payload. Over-cap content is a `400` before anything is written, and the request body itself is capped at 4 × `MaxMessageLength` + 1 KiB (JSON envelope and UTF-8 expansion headroom) — over that is `413 payload-too-large` before the body is read into memory.
 
 ## Security posture
 

@@ -82,7 +82,7 @@ under the same per-tenant context, so it only ever sees that tenant's expired ro
 
 ## When purges actually run
 
-Purges run by themselves. `RetentionPurgeHostedService` is registered with every BifrostQL
+Purges run by themselves. A detached-loop hosted service (`DetachedLoopHostedService`) is registered with every BifrostQL
 host, starts with the app, and drives `RetentionPurgeEngine.RunAsync` in the background.
 No feature flag turns it on — declaring `retain` or `ttl` on a table is the switch.
 

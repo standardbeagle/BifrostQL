@@ -368,11 +368,18 @@ namespace BifrostQL.Server
                 jitter: null,
                 logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>>()));
             services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
-                new CdcOutboxHostedService(
-                    sp.GetRequiredService<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>()));
+                new DetachedLoopHostedService(
+                    "cdc-outbox-dispatcher",
+                    sp.GetRequiredService<BifrostQL.Core.Modules.Cdc.OutboxDispatcher>().RunAsync,
+                    sp.GetService<ILogger<DetachedLoopHostedService>>()));
             services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
-                new DeferredOutboxReleaseHostedService(
-                    sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>()));
+                new DetachedLoopHostedService(
+                    "deferred-outbox-release",
+                    ct => DeferredOutboxReleaseLoop.RunAsync(
+                        sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>(),
+                        sp.GetService<ILogger<DetachedLoopHostedService>>(),
+                        ct),
+                    sp.GetService<ILogger<DetachedLoopHostedService>>()));
 
             // The metadata-driven retention purge is a background worker in the same shape as the
             // CDC dispatcher (Core engine + thin IHostedService wrapper), so it is registered here
@@ -401,8 +408,10 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<Core.Schema.PathCache<GraphQL.Inputs>>(),
                 logger: sp.GetService<ILogger<BifrostQL.Core.Modules.Retention.RetentionPurgeEngine>>()));
             services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
-                new RetentionPurgeHostedService(
-                    sp.GetRequiredService<BifrostQL.Core.Modules.Retention.RetentionPurgeEngine>()));
+                new DetachedLoopHostedService(
+                    "retention-purge",
+                    sp.GetRequiredService<BifrostQL.Core.Modules.Retention.RetentionPurgeEngine>().RunAsync,
+                    sp.GetService<ILogger<DetachedLoopHostedService>>()));
         }
 
         /// <summary>
@@ -569,72 +578,82 @@ namespace BifrostQL.Server
     }
 
     /// <summary>
-    /// Ties the CDC <see cref="BifrostQL.Core.Modules.Cdc.OutboxDispatcher"/>'s drain loop to
-    /// the host lifecycle without the Core engine taking a hosting dependency (mirroring
-    /// <see cref="ProtocolAdapterHostedService"/>). The dispatcher's <c>RunAsync</c> is
-    /// launched in the background on start and cancelled on graceful shutdown; the drain loop
-    /// itself is fail-safe and never throws to the host.
+    /// One generic host for every detached background loop (CDC outbox drain, deferred-outbox
+    /// release, retention purge): the loop is launched detached on start so a slow first pass
+    /// never blocks host start, cancelled on graceful shutdown, and — unlike the per-loop
+    /// wrappers it replaces — every loop fault is LOGGED and the loop task is observed at
+    /// shutdown, so a faulting loop can never die silently. A cancellation that escapes the
+    /// loop body during shutdown (e.g. from a retry delay) is a clean exit, not a fault.
     /// </summary>
-    internal sealed class CdcOutboxHostedService : Microsoft.Extensions.Hosting.IHostedService
+    internal sealed class DetachedLoopHostedService : Microsoft.Extensions.Hosting.IHostedService
     {
-        private readonly BifrostQL.Core.Modules.Cdc.OutboxDispatcher _dispatcher;
+        private readonly string _name;
+        private readonly Func<CancellationToken, Task> _loop;
+        private readonly ILogger? _logger;
         private readonly CancellationTokenSource _stopping = new();
-        private Task? _loop;
+        private Task? _loopTask;
 
-        public CdcOutboxHostedService(BifrostQL.Core.Modules.Cdc.OutboxDispatcher dispatcher)
-            => _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        public DetachedLoopHostedService(string name, Func<CancellationToken, Task> loop, ILogger? logger = null)
+        {
+            _name = name ?? throw new ArgumentNullException(nameof(name));
+            _loop = loop ?? throw new ArgumentNullException(nameof(loop));
+            _logger = logger;
+        }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            // Run the drain loop detached from startup so a slow first poll does not block
-            // host start; the loop observes _stopping for graceful shutdown.
-            _loop = _dispatcher.RunAsync(_stopping.Token);
+            _loopTask = RunObservedAsync();
             return Task.CompletedTask;
+        }
+
+        private async Task RunObservedAsync()
+        {
+            try
+            {
+                await _loop(_stopping.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+            {
+                // Graceful shutdown: a cancellation escaping the loop body (e.g. from a retry
+                // delay) is a clean exit.
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Detached loop {LoopName} faulted.", _name);
+            }
         }
 
         public async Task StopAsync(CancellationToken cancellationToken)
         {
             _stopping.Cancel();
-            if (_loop is not null)
-            {
-                // Await the loop's exit, but do not hang shutdown if it is mid-delay: give up
-                // when the host's own shutdown token trips.
-                var completed = await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
-                if (completed == _loop)
-                    await _loop; // observe any fault (RunAsync is fail-safe, so this is defensive)
-            }
+            if (_loopTask is null)
+                return;
+
+            // Await the loop's exit, but do not hang shutdown if it is mid-delay: give up when
+            // the host's own shutdown token trips. RunObservedAsync captures and logs every
+            // fault, so awaiting the completed task can never throw — the fault is observed.
+            var completed = await Task.WhenAny(_loopTask, Task.Delay(Timeout.Infinite, cancellationToken));
+            if (completed == _loopTask)
+                await _loopTask;
         }
     }
 
-    /// <summary>Periodically releases expired deferred CDC holds for the dispatcher.</summary>
-    internal sealed class DeferredOutboxReleaseHostedService : Microsoft.Extensions.Hosting.IHostedService
+    /// <summary>
+    /// The deferred-outbox release loop body: periodically releases expired deferred CDC holds.
+    /// Non-shutdown faults are logged and retried after a delay; a cancellation escaping the
+    /// retry delay during shutdown is treated as a clean exit by
+    /// <see cref="DetachedLoopHostedService"/>.
+    /// </summary>
+    internal static class DeferredOutboxReleaseLoop
     {
-        private readonly Core.Schema.PathCache<GraphQL.Inputs> _paths;
-        private readonly CancellationTokenSource _stopping = new();
-        private Task? _loop;
-
-        public DeferredOutboxReleaseHostedService(Core.Schema.PathCache<GraphQL.Inputs> paths) => _paths = paths;
-
-        public Task StartAsync(CancellationToken cancellationToken)
-        {
-            _loop = RunAsync(_stopping.Token);
-            return Task.CompletedTask;
-        }
-
-        public async Task StopAsync(CancellationToken cancellationToken)
-        {
-            _stopping.Cancel();
-            if (_loop is not null)
-                await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
-        }
-
-        private async Task RunAsync(CancellationToken cancellationToken)
+        public static async Task RunAsync(
+            Core.Schema.PathCache<GraphQL.Inputs> paths, ILogger? logger, CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    var inputs = await _paths.GetFirstValueAsync();
+                    var inputs = await paths.GetFirstValueAsync();
                     if (inputs is not null
                         && inputs.TryGetValue("model", out var modelValue) && modelValue is BifrostQL.Core.Model.IDbModel model
                         && inputs.TryGetValue("connFactory", out var factoryValue) && factoryValue is BifrostQL.Core.Model.IDbConnFactory factory)
@@ -642,43 +661,15 @@ namespace BifrostQL.Server
                             .ReleaseOnceAsync(DateTimeOffset.UtcNow, cancellationToken);
                     await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-                catch { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Ties the <see cref="BifrostQL.Core.Modules.Retention.RetentionPurgeEngine"/>'s purge loop
-    /// to the host lifecycle without the Core engine taking a hosting dependency (mirroring
-    /// <see cref="CdcOutboxHostedService"/>). The engine's <c>RunAsync</c> is launched detached on
-    /// start and cancelled on graceful shutdown; the loop is fail-safe and never throws to the host.
-    /// </summary>
-    internal sealed class RetentionPurgeHostedService : Microsoft.Extensions.Hosting.IHostedService
-    {
-        private readonly BifrostQL.Core.Modules.Retention.RetentionPurgeEngine _engine;
-        private readonly CancellationTokenSource _stopping = new();
-        private Task? _loop;
-
-        public RetentionPurgeHostedService(BifrostQL.Core.Modules.Retention.RetentionPurgeEngine engine)
-            => _engine = engine ?? throw new ArgumentNullException(nameof(engine));
-
-        public Task StartAsync(CancellationToken cancellationToken)
-        {
-            // Detached from startup so the first purge pass never blocks host start; the loop
-            // observes _stopping for graceful shutdown.
-            _loop = _engine.RunAsync(_stopping.Token);
-            return Task.CompletedTask;
-        }
-
-        public async Task StopAsync(CancellationToken cancellationToken)
-        {
-            _stopping.Cancel();
-            if (_loop is not null)
-            {
-                var completed = await Task.WhenAny(_loop, Task.Delay(Timeout.Infinite, cancellationToken));
-                if (completed == _loop)
-                    await _loop; // observe any fault (RunAsync is fail-safe, so this is defensive)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger?.LogError(ex, "Deferred outbox release pass failed; retrying.");
+                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                }
             }
         }
     }

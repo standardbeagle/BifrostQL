@@ -163,7 +163,7 @@ A table that declares `hold-events` writes its outbox rows with `state: pending_
 The CDC dispatcher only picks up rows in `pending` or with no state, so held events stay
 invisible to subscribers until the change set settles.
 
-- **Timed release.** `DeferredOutboxReleaseHostedService` polls every five seconds, flips
+- **Timed release.** A detached-loop hosted service polls every five seconds, flips
   each `held` change set whose undo window has passed to `released`, and moves its outbox
   rows from `pending_hold` to `pending`. Change sets held `until-approved` are excluded.
 - **Approved release.** `approveDeferredChangeSet` releases one change set through the same

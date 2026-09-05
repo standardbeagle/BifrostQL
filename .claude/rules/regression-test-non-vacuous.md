@@ -223,6 +223,17 @@ implementations produce provably different output.
   only the provider: the provider chooses the glyphs, the style chooses the
   grammar.
   <!-- written_at: 2026-09-05T18:10:00Z  source_event: task:01M1RX4ER8SQZW37SZABPGJRZR, git:c7837344, git:cfe1fec4, git:5f74dcf7 -->
+- **A culture-swap fixture must pick a symbol the runtime does NOT normalise.**
+  The negative-literal RED was first written with `NegativeSign = "−"`
+  (the typographic minus), and went GREEN against provably buggy code: .NET
+  number parsing accepts U+002D and U+2212 as minus under EVERY culture, so the
+  swapped culture parsed the wire's `"-5"` exactly as the invariant one did. The
+  fixture only became RED with `NegativeSign = "NEG"`. Before trusting a RED
+  built on a swapped `NumberFormatInfo` symbol (negative sign, decimal or group
+  separator, digit shapes), verify the swap actually changes the parse outcome —
+  parse the literal under both cultures and assert they differ, or pick a
+  multi-character sentinel the BCL cannot fold back to the ASCII form.
+  <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1S8E86KMBAJ13XHBDVCHGBT, git:0cbb405d -->
 - **A size cap on a wire has TWO inputs — declared and received — and the
   fixture must make the RECEIVED one bind.** A body/frame cap is normally two
   branches: an early refusal on the client-declared size (`Content-Length`, a

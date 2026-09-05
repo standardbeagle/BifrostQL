@@ -153,7 +153,8 @@ public sealed class DistinctOrderByValidationTests
     [Fact]
     public void UnboundedParent_StillNoViolation()
     {
-        // No paging → plain SELECT DISTINCT with no ORDER BY; must remain clean.
+        // No explicit limit → the parent's effective default window applies (M9):
+        // paged inner, DISTINCT outer wrap with no ORDER BY. Must remain clean.
         var model = StandardTestFixtures.UsersWithOrders();
         var sql = RestrictedSqlForPagedParent(model, "Orders", "user", offset: null, limit: null);
         AssertNoDistinctOrderByViolation(sql.Sql);

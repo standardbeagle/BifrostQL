@@ -141,13 +141,24 @@ namespace BifrostQL.Core.QueryModel
         /// it. Without this, any client could materialize an entire table (root query or
         /// nested collection) in one request — the wire-reachable unbounded read.
         ///
-        /// <para>Preserved semantics: a null limit still takes the dialect's 100-row default
-        /// (already bounded), and an explicit <c>limit: 0</c> still yields an empty result —
-        /// only unbounded or over-ceiling requests are clamped. Paged collections clamp PER
-        /// PARENT (the window is per-parent); flat collections clamp globally, matching the
-        /// shape of the limit each surface documents.</para>
+        /// <para>Preserved semantics: an explicit <c>limit: 0</c> still yields an empty
+        /// result — only unbounded or over-ceiling requests are clamped. A null limit is
+        /// resolved to <see cref="DefaultRowWindow"/> by the row-read call sites BEFORE
+        /// the clamp, so the ceiling binds an unspecified limit as well. Paged collections
+        /// clamp PER PARENT (the window is per-parent); flat collections clamp globally,
+        /// matching the shape of the limit each surface documents.</para>
         /// </summary>
         internal const int DefaultMaxQueryRows = 10_000;
+
+        /// <summary>
+        /// The row window a row read takes when the caller names no <c>limit</c> —
+        /// the same 100 rows <see cref="ISqlDialect.Pagination"/> defaults a null
+        /// limit to, stated explicitly so the window passes through
+        /// <see cref="ClampRowLimit"/> (an operator ceiling below 100 must bind an
+        /// unspecified limit too) and so the restricted join-id sub-query pages with
+        /// the SAME bound as the parent SELECT instead of spanning every parent row.
+        /// </summary>
+        public const int DefaultRowWindow = 100;
 
         /// <summary>
         /// The group window a grouped aggregate takes when the caller names no
@@ -297,7 +308,7 @@ namespace BifrostQL.Core.QueryModel
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
                 var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
-                var pagination = dialect.Pagination(sortCols, Offset, ClampRowLimit(dbModel, Limit));
+                var pagination = dialect.Pagination(sortCols, Offset, ClampRowLimit(dbModel, Limit ?? DefaultRowWindow));
 
                 var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
                     .Append(filter)
@@ -495,22 +506,18 @@ namespace BifrostQL.Core.QueryModel
                 var projection = query.Join.EmitJoinIdProjection(dialect);
                 var tableRef = dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName);
 
-                // Skip pagination when the parent is unbounded — after the max-query-rows
-                // clamp, `Limit` of null (or 0) with `Offset` of 0 (or null) means the
-                // linked sub-query already matches the parent universe.
-                var clampedLimit = ClampRowLimit(dbModel, query.FromTable.Limit);
-                var hasOffset = query.FromTable.Offset.HasValue && query.FromTable.Offset.Value > 0;
-                var hasLimit = clampedLimit.HasValue && clampedLimit.Value > 0;
-                if (!(hasOffset || hasLimit))
-                {
-                    var sqlText = $"SELECT DISTINCT {projection} FROM {tableRef}";
-                    return new ParameterizedSql(sqlText, Array.Empty<SqlParameterInfo>()).Append(filter);
-                }
-
                 // Forward the parent table's pagination into the linked sub-query so the
                 // joined rows stay aligned with the paged parent set. Page the parent rows
                 // in an inner (non-DISTINCT) query ordered by the parent's sort, then
                 // DISTINCT the join-id columns in an outer wrap.
+                //
+                // The effective page is resolved ONCE here, identically to the parent
+                // SELECT: an unspecified limit is the default row window (NOT unbounded —
+                // the parent SELECT is paged to that same window by the dialect, so a
+                // bare SELECT DISTINCT would span all N parents and run every child
+                // statement for rows the caller never receives; M9), and the clamped
+                // window keeps an operator ceiling below the default binding on both
+                // statements. `limit: 0` stays an empty-bounded window on both.
                 //
                 // The inner query must NOT be DISTINCT: `SELECT DISTINCT {join-ids} ...
                 // ORDER BY {pk}` is rejected by SQL Server because the sort (pk) columns
@@ -522,6 +529,7 @@ namespace BifrostQL.Core.QueryModel
                 var sortCols = RenderPagedSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
                 // Clamped identically to the parent SELECT so this window and the parent's
                 // window land on the same rows.
+                var clampedLimit = ClampRowLimit(dbModel, query.FromTable.Limit ?? DefaultRowWindow);
                 var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, clampedLimit);
 
                 var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())

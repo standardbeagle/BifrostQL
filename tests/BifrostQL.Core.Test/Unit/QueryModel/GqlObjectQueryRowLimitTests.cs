@@ -10,8 +10,11 @@ namespace BifrostQL.Core.Test.QueryModel;
 /// The server-side row ceiling: the no-limit sentinel (-1) and any explicit limit above the
 /// ceiling clamp to the model's max-query-rows metadata (default
 /// <see cref="GqlObjectQuery.DefaultMaxQueryRows"/>), so no client can materialize an
-/// unbounded table read. The dialect's 100-row default (null limit) and an explicit
-/// limit: 0 are preserved — only unbounded or over-ceiling requests are clamped.
+/// unbounded table read. An explicit limit: 0 is preserved — only unbounded or
+/// over-ceiling requests are clamped. A null limit is resolved to
+/// <see cref="GqlObjectQuery.DefaultRowWindow"/> at the row-read call sites before the
+/// clamp (see DefaultPageJoinAlignmentTests), so the ceiling binds an unspecified
+/// limit too.
 /// </summary>
 public sealed class GqlObjectQueryRowLimitTests
 {

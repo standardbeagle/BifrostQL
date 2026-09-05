@@ -134,6 +134,20 @@ implementations produce provably different output.
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.
+- **Where TWO bounds narrow the same window, the fixture must make the OTHER
+  one bind.** A surface-level cap tested with the server ceiling above it
+  exercises only its own arithmetic, so a sentinel or flag that skips the
+  server clamp stays invisible. M23's declarative-include test used a 200-item
+  cap over a 500-row fixture with `max-query-rows` unset, and went green
+  against code whose cap+1 sentinel bypassed `GqlObjectQuery.ClampRowLimit`:
+  a `max-query-rows` below 200 clamped the SQL window while the truncation
+  flag still waited for row 201, so a full window AT the ceiling reported
+  `Truncated=false` — silent partial data, the outcome the flag exists to
+  prevent (second occurrence; H7 is the first, and `AggregateTools` was
+  already the prior art). Add the case where the server ceiling is the
+  binding bound, and assert truncation is reported there — "the window is
+  full" is the condition, not "the surface cap was reached".
+  <!-- written_at: 2026-09-04T19:30:00Z  source_event: task:01M1KP68F2P0W005FV72CYPAXH, git:78981baa -->
 - **A guard that compares a client-supplied value to a typed column must be
   fixtured on a NON-string column.** The wire type is part of the guard's
   correctness: the file-mutation `concurrencyToken: String` argument reached

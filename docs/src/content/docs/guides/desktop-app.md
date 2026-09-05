@@ -95,13 +95,15 @@ A connection string passed straight to `bifrostui` is used verbatim, so it carri
 
 ### PostgreSQL peer authentication
 
-The "peer auth" option on the PostgreSQL connection form lists databases by running `sudo -u postgres psql`. Because the OS account is chosen by the request, the host only honours the account it is itself running as; any other account must be named in the `BIFROST_UI_PSQL_PEER_USERS` environment variable (comma-separated) before `bifrostui` starts. The form asks for `postgres`, so peer auth from the UI needs that entry unless you are logged in as `postgres`:
+The "peer auth" option on the PostgreSQL connection form lists databases by running `psql` as a chosen OS account (via `sudo -u`). Because the OS account is chosen by the request, the host only honours the account it is itself running as; any other account must be named in the `BIFROST_UI_PSQL_PEER_USERS` environment variable (comma-separated) before `bifrostui` starts.
+
+The form defaults the OS user to the account the host runs as, so peer auth works out of the box with no environment variable. To list databases as a different account — for example `postgres` — name it in the allow-list and it appears as a choice in the form:
 
 ```bash
 BIFROST_UI_PSQL_PEER_USERS=postgres bifrostui
 ```
 
-A request for an account outside the list is refused before any process is started.
+The permitted accounts are read from the host (`GET /api/databases/peer-users`), so the form only offers accounts the gate accepts. A request for an account outside the list is refused before any process is started, and the refusal names the permitted accounts.
 
 ## What it does
 

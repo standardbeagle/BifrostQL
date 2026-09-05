@@ -79,6 +79,12 @@ a failed lookup. There is deliberately no default `IPgCredentialStore` registrat
 a deployment can never come up authenticating everyone to nobody. The tenant/policy
 claims on the mapped principal are what scope every subsequent read.
 
+An unknown username still runs the full exchange against a decoy verifier with the
+same iteration count and a salt derived from the username (stable across
+connections, as RFC 5802 §5.1 requires), so it fails at the proof step with the same
+work and the same wire shape as a wrong password — no user-existence oracle by
+timing, by error, or by salt change.
+
 TLS is client-initiated per the protocol: the front door answers `SSLRequest` by
 upgrading to TLS with `ServerCertificate` (STARTTLS-style, not Kestrel HTTPS). Because
 the cert is required, credentials never cross the wire in the clear by misconfiguration.

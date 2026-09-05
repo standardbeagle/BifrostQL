@@ -201,6 +201,36 @@ describe('exportAllRows', () => {
         expect(fetchPage).not.toHaveBeenCalled();
     });
 
+    it('carries the abort signal into fetchPage so the in-flight request can be cancelled', async () => {
+        // Abort WHILE the first page request is in flight, then assert the
+        // signal fetchPage RECEIVED is the aborted one. The loop-level
+        // throwIfAborted cannot satisfy this: it only refuses the NEXT page —
+        // without a third parameter on the seam the in-flight call holds no
+        // signal at all (`received[0]` is `undefined`).
+        const controller = new AbortController();
+        const received: (AbortSignal | undefined)[] = [];
+        const all = Array.from({ length: 300 }, (_, i) => [i]);
+        const fetchPage = vi.fn(
+            async (offset: number, limit: number, signal?: AbortSignal): Promise<ExportPage> => {
+                received.push(signal);
+                if (offset === 0) controller.abort();
+                return { rows: all.slice(offset, offset + limit), total: 300 };
+            },
+        );
+        await expect(
+            exportAllRows({
+                headers: ['id'],
+                format: 'csv',
+                fetchPage,
+                pageSize: 100,
+                signal: controller.signal,
+            }),
+        ).rejects.toThrow();
+        expect(received.length).toBeGreaterThan(0);
+        expect(received[0]).toBeDefined();
+        expect(received[0]?.aborted).toBe(true);
+    });
+
     it('stops paging when cancelled mid-export (no partial file is produced)', async () => {
         const controller = new AbortController();
         const all = Array.from({ length: 300 }, (_, i) => [i]);

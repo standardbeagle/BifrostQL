@@ -107,4 +107,36 @@ public sealed class WorkflowTriggerSuppressionFlagTests
         MutationNotifier.IsWorkflowTriggerSuppressed(context).Should().BeFalse(
             "suppression must require the engine's reference-equal marker, not any bool");
     }
+
+    [Fact]
+    public void RunnerMarker_InUserContext_Suppresses()
+    {
+        var context = new Dictionary<string, object?>
+        {
+            [WorkflowTriggerHost.SuppressTriggersKey] = WorkflowTriggerSuppression.Instance,
+        };
+
+        MutationNotifier.IsWorkflowTriggerSuppressed(context).Should().BeTrue(
+            "the workflow runner's own marker is the one legitimate producer of suppression");
+    }
+
+    [Fact]
+    public void Marker_HasNoPublicWayIn()
+    {
+        // Unforgeability cannot be proven from inside the InternalsVisibleTo boundary by
+        // a runtime test alone (this assembly can mint the marker), so assert the public
+        // surface: no public constructor, factory, or settable member hands one out.
+        var markerType = typeof(WorkflowTriggerSuppression);
+
+        markerType.GetConstructors().Should().BeEmpty("a public ctor would let any caller mint the marker");
+        markerType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(m => m.ReturnType == markerType)
+            .Should().BeEmpty("a public static factory would let any caller mint the marker");
+        markerType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.FieldType == markerType)
+            .Should().BeEmpty("a public static field would hand out the engine's instance");
+        markerType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(p => p.PropertyType == markerType)
+            .Should().BeEmpty("a public static property would hand out the engine's instance");
+    }
 }

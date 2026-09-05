@@ -82,7 +82,7 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
     {
         var scopedContext = new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase)
         {
-            [SuppressTriggersKey] = true,
+            [SuppressTriggersKey] = WorkflowTriggerSuppression.Instance,
         };
         await _runner.RunAsync(workflow, inputs, scopedContext);
     }

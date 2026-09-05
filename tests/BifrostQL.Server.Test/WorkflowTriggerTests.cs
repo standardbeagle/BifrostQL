@@ -25,7 +25,8 @@ public class WorkflowTriggerTests
         runner.Runs.Should().ContainSingle();
         runner.Runs[0].Workflow.Name.Should().Be("member-activated");
         runner.Runs[0].Inputs["entityId"].Should().Be(1);
-        runner.Runs[0].UserContext[WorkflowTriggerHost.SuppressTriggersKey].Should().Be(true);
+        runner.Runs[0].UserContext[WorkflowTriggerHost.SuppressTriggersKey].Should().BeOfType<WorkflowTriggerSuppression>(
+            "the runner stamps the engine's unforgeable marker, not a forgeable bool");
     }
 
     [Fact]

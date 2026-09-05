@@ -48,6 +48,11 @@ public static class WireContextMerger
         {
             if (userContext.ContainsKey(key))
                 continue;
+            // Engine-internal keys never merge: the workflow-trigger suppression flag
+            // is privileged by the engine's unforgeable marker, and a wire entry under
+            // its key is caller-controlled data under an engine-only name.
+            if (string.Equals(key, Workflows.WorkflowTriggerHost.SuppressTriggersKey, StringComparison.OrdinalIgnoreCase))
+                continue;
             if (ownedKeys.Contains(key) || securityKeys.Contains(key) ||
                 string.Equals(key, "user", StringComparison.Ordinal))
                 continue;

@@ -122,13 +122,15 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// True when the user context carries the workflow-trigger suppression flag,
-        /// set while a workflow-triggered mutation runs so before-commit hooks and
-        /// mutation observers don't recursively re-fire workflow triggers.
+        /// True when the user context carries the workflow-trigger suppression marker,
+        /// placed by the workflow runner while a workflow-triggered mutation runs so
+        /// mutation observers don't recursively re-fire workflow triggers. The value
+        /// under the key must BE the engine's <see cref="WorkflowTriggerSuppression"/>
+        /// instance (reference equality) — a claim, wire entry, or any other scalar
+        /// under the same key is external input and never suppresses.
         /// </summary>
         public static bool IsWorkflowTriggerSuppressed(IDictionary<string, object?> userContext)
             => userContext.TryGetValue(BifrostQL.Core.Workflows.WorkflowTriggerHost.SuppressTriggersKey, out var value)
-               && value is bool suppressed
-               && suppressed;
+               && ReferenceEquals(value, BifrostQL.Core.Workflows.WorkflowTriggerSuppression.Instance);
     }
 }

@@ -1,11 +1,17 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using BifrostQL.Samples.HostedSpa;
 using FluentAssertions;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace BifrostQL.Server.Test;
@@ -348,6 +354,64 @@ public class MembershipWorkflowEndpointsTests
         audits.Should().BeEmpty("a rejected link must not write an audit row");
     }
 
+    [Theory]
+    [InlineData("/workflows/membership/record-payment")]
+    [InlineData("/workflows/membership/renew")]
+    [InlineData("/workflows/membership/check-in")]
+    [InlineData("/workflows/membership/link-identity")]
+    public async Task WorkflowRoute_SubjectlessAuthenticatedPrincipal_Answers403WithEmptyBody(string route)
+    {
+        // Arrange: a host whose default authentication scheme always succeeds
+        // with an authenticated principal carrying NO subject claim — the
+        // projection fault GetBifrostUserContext surfaces as
+        // BifrostIdentityRejectedException. The sidecar must catch it and
+        // answer 403, the status every HTTP mount answers for the condition.
+        await using var factory = new SubjectlessWorkflowFactory();
+        var client = factory.CreateClient();
+
+        // Act: every request body passes the route's own pre-context
+        // validation, so the projection is the first thing that can refuse.
+        var response = await client.PostAsJsonAsync(route, ValidBodyFor(route));
+
+        // Assert: 403, an empty body, and no exception detail on the wire.
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+    }
+
+    private static object ValidBodyFor(string route) => route switch
+    {
+        "/workflows/membership/record-payment" => new { invoiceId = 1, amountCents = 12000 },
+        "/workflows/membership/renew" => new { memberMembershipId = 1, newEndDate = "2026-01-10" },
+        "/workflows/membership/check-in" => new { eventId = 1, memberId = 1 },
+        "/workflows/membership/link-identity" => new { memberId = 2, userId = 2 },
+        _ => throw new ArgumentOutOfRangeException(nameof(route), route, null),
+    };
+
+    /// <summary>
+    /// Authentication handler that always succeeds with an AUTHENTICATED
+    /// principal carrying no subject claim (no NameIdentifier, no sub, no
+    /// Name) — the misconfigured-token shape the shared identity projection
+    /// refuses. An email claim keeps the principal non-empty so only the
+    /// missing subject can refuse it.
+    /// </summary>
+    private sealed class SubjectlessAuthHandler(
+        IOptionsMonitor<AuthenticationSchemeOptions> options,
+        ILoggerFactory logger,
+        UrlEncoder encoder)
+        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    {
+        public const string SchemeName = "Subjectless";
+
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+        {
+            var identity = new ClaimsIdentity(
+                new[] { new Claim(ClaimTypes.Email, "subjectless@example.test") },
+                authenticationType: SchemeName);
+            return Task.FromResult(AuthenticateResult.Success(
+                new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));
+        }
+    }
+
     /// <summary>
     /// Signs the client in as the seeded first-admin (app_user 1) so subsequent
     /// workflow requests carry an authenticated actor. The issued cookie is
@@ -388,10 +452,16 @@ public class MembershipWorkflowEndpointsTests
     /// Hosts the HostedSpa sample for the workflow tests, pointing it at a fresh
     /// uniquely named SQLite database so the membership seed always runs.
     /// </summary>
-    public sealed class WorkflowFactory : WebApplicationFactory<Program>
+    public class WorkflowFactory : WebApplicationFactory<Program>
     {
         private readonly string _dbPath =
             Path.Combine(Path.GetTempPath(), $"hostedspa-workflow-{Guid.NewGuid():N}.db");
+
+        /// <summary>
+        /// When true, the host's default authentication scheme always succeeds
+        /// with an authenticated principal that carries no subject claim.
+        /// </summary>
+        protected virtual bool SubjectlessPrincipal => false;
 
         protected override IHost CreateHost(IHostBuilder builder)
         {
@@ -400,6 +470,21 @@ public class MembershipWorkflowEndpointsTests
                 {
                     ["ConnectionStrings:bifrost"] = $"Data Source={_dbPath}",
                 }));
+
+            if (SubjectlessPrincipal)
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.AddAuthentication(options =>
+                        {
+                            options.DefaultScheme = SubjectlessAuthHandler.SchemeName;
+                            options.DefaultAuthenticateScheme = SubjectlessAuthHandler.SchemeName;
+                            options.DefaultChallengeScheme = SubjectlessAuthHandler.SchemeName;
+                        })
+                        .AddScheme<AuthenticationSchemeOptions, SubjectlessAuthHandler>(
+                            SubjectlessAuthHandler.SchemeName, _ => { });
+                });
+            }
 
             return base.CreateHost(builder);
         }
@@ -410,5 +495,14 @@ public class MembershipWorkflowEndpointsTests
             if (disposing && File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }
+    }
+
+    /// <summary>
+    /// A <see cref="WorkflowFactory"/> whose callers always authenticate as a
+    /// subject-less principal (see <see cref="SubjectlessAuthHandler"/>).
+    /// </summary>
+    public sealed class SubjectlessWorkflowFactory : WorkflowFactory
+    {
+        protected override bool SubjectlessPrincipal => true;
     }
 }

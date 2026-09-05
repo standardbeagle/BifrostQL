@@ -1,6 +1,6 @@
-// Hygiene guard: TableFilter.ToSqlParameterized (the single-fragment render that
-// concatenated "{joins} WHERE {where}") was deleted — splicing that fragment after a
-// hard WHERE produced "WHERE INNER JOIN ..." (finding 01M1KNYPDYXR158JAQNDQNFMFG
+// Hygiene guard: TableFilter's single-fragment render (which concatenated
+// "{joins} WHERE {where}" into one ParameterizedSql) was deleted — splicing that
+// fragment after a hard WHERE produced "WHERE INNER JOIN ..." (finding 01M1KNYPDYXR158JAQNDQNFMFG
 // item 2, fixed in 5cb28e2d). RenderParts is the only render entry point now, so a
 // filter's joins and predicates can never be re-spliced into the wrong clause. This
 // scan fails if the identifier returns to TableFilter.cs or any filter-typed call
@@ -65,7 +65,7 @@ public class TableFilterRenderHygieneTests
         Assert.True(renderPartsHits > 0,
             "Expected positive .RenderParts( hits in src/tests; the scan no longer matches real code.");
         Assert.True(offenders.Count == 0,
-            "TableFilter.ToSqlParameterized was deleted; render via RenderParts and assemble Joins/Where into their own clauses:\n"
+            "The single-fragment TableFilter render was deleted; render via RenderParts and assemble Joins/Where into their own clauses:\n"
             + string.Join("\n", offenders));
     }
 

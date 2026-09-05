@@ -41,8 +41,11 @@ public class MountAuthRequirementSourceScanTests
             "reintroducing a second copy of one security decision is the drift this task removes");
 
         // Exactly one file may DECLARE the derivation. A re-added copy under any new name
-        // still carries the derivation's shapes: a method named *AuthRequirement, or the
-        // single-endpoint fallback branch that mirrors BifrostEngine's schema resolution.
+        // still carries the derivation's shapes: a method named *AuthRequirement, the
+        // single-endpoint fallback branch that mirrors BifrostEngine's schema resolution
+        // (whatever the local is called), or — the one read NO derivation can avoid — the
+        // endpoint's DisableAuth flag. The flag may be read only by the helper and by the
+        // options file that declares it (IsUsingAuth / startup validation).
         var helperFiles = files
             .Where(f => perFile[f].Contains("static class MountAuthRequirement"))
             .ToList();
@@ -50,12 +53,22 @@ public class MountAuthRequirementSourceScanTests
             "MountAuthRequirement is the one shared derivation the binary, frontend, and " +
             "GraphQL mounts all call");
         var helperFile = helperFiles[0];
+        var helperText = perFile[helperFile];
 
         var methodShape = new Regex(@"static\s+bool\s+\w*AuthRequirement\s*\(", RegexOptions.Compiled);
-        var fallbackShape = "Endpoints.Count == 1 ? multiDb.Endpoints[0]";
+        var fallbackShape = new Regex(@"Endpoints\.Count\s*==\s*1\s*\?\s*\w+\.Endpoints\[0\]", RegexOptions.Compiled);
+        var flagRead = new Regex(@"\.DisableAuth\b", RegexOptions.Compiled);
+        fallbackShape.IsMatch(helperText).Should().BeTrue(
+            "the scan's fallback-branch anchor must match the helper itself, or it matches nothing and guards nothing");
+        flagRead.IsMatch(helperText).Should().BeTrue(
+            "the scan's DisableAuth anchor must match the helper itself, or it matches nothing and guards nothing");
+
+        var flagDeclarationFile = files.Single(f => Path.GetFileName(f) == "BifrostMultiDbOptions.cs");
         var offenders = files
             .Where(f => f != helperFile
-                     && (methodShape.IsMatch(perFile[f]) || perFile[f].Contains(fallbackShape)))
+                     && (methodShape.IsMatch(perFile[f])
+                         || fallbackShape.IsMatch(perFile[f])
+                         || (f != flagDeclarationFile && flagRead.IsMatch(perFile[f]))))
             .ToList();
         offenders.Should().BeEmpty(
             "exactly one derivation of a mount's auth requirement may exist (MountAuthRequirement); " +

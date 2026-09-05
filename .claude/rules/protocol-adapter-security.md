@@ -165,8 +165,15 @@ code, not just re-checks of pgwire.
    valid one instead of the clean parse error invariant 5 exists to produce.
    Name the grammar the wire actually has (`NumberStyles.Integer` for the
    integer family, `NumberStyles.Float` for decimal/float); the culture
-   argument alone is only half the fix.
+   argument alone is only half the fix. Three instances, all found by a
+   repo grep after the first: `FilePointerAccess.CoerceToken`, pgwire
+   `PgExtendedQueryProcessor.DecodeTextParameter` (raw Bind bytes), and the
+   inverse shape in `SqlVisitor.VisitIntValueAsync` — bare
+   `int.TryParse(text)` takes the CURRENT culture, so a wire `"-5"` fails
+   under a non-hyphen `NegativeSign` and boxes as `BigInteger`. Style AND
+   culture, both explicit, on every wire-facing `.Parse`/`.TryParse`.
    <!-- written_at: 2026-09-05T18:10:00Z  source_event: task:01M1RX4ER8SQZW37SZABPGJRZR, git:cfe1fec4, git:5f74dcf7 -->
+   <!-- amended_at: 2026-09-05T18:30:00Z  source_event: task:01M1S8E86KMBAJ13XHBDVCHGBT, git:f796021e, git:6aac6431 -->
 
 6. **A recursive wire/untrusted-input decoder must bound nesting depth
    BEFORE recursing — width/size caps are not sufficient.** The RESP

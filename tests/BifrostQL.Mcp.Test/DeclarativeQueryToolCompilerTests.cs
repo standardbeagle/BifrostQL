@@ -539,6 +539,57 @@ public sealed class DeclarativeQueryToolCompilerTests
             "a junction read cut at the cap must flag truncation, never look complete");
     }
 
+    [Fact]
+    public async Task ExecuteCollectionIncludes_ServerCeilingBelowBuiltInCap_StillFlagsTruncation()
+    {
+        // The cap+1 sentinel must pass through the SAME clamp the SQL applies
+        // (AGENTS.md read-ceiling corollary; AggregateTools is the prior art). With
+        // max-query-rows below the 200 cap, Core clamps the window to the ceiling, so
+        // a sentinel of 201 never comes back and the flag reads a full-but-cut
+        // collection as complete.
+        var model = Model(withOrders: true);
+        model.Metadata[MetadataKeys.Model.MaxQueryRows] = "100";
+        var definition = Definition() with
+        {
+            Include = [new DeclarativeToolInclude { Relation = "orders", As = "orders", Fields = ["id"] }],
+        };
+        var executor = new RowCountingExecutor(500, model);
+        var compiled = DeclarativeQueryToolCompiler.Compile(definition, model, executor);
+
+        var results = await compiled.ExecuteCollectionIncludesWithCountsAsync(Args("1"), new Dictionary<string, object?>());
+
+        results["orders"].Truncated.Should().BeTrue(
+            "a collection cut at the server ceiling is partial and must say so");
+        results["orders"].Rows.Count.Should().BeLessThan(100, "the sentinel row is not returned to the caller");
+        executor.Intents.Should().ContainSingle(i => i.Query.DbTable!.DbName == "orders")
+            .Which.Query.Limit.Should().Be(100, "the window rides on the query already clamped to the server ceiling");
+    }
+
+    [Fact]
+    public async Task Surface_FlagsTruncatedIncludesInEnvelopeAndOutputSchema()
+    {
+        // The declarative tool's own wire response, not only the row-context child
+        // summary, must carry the truncation flag; a plain array reads as complete.
+        var definition = Definition() with
+        {
+            Include = [new DeclarativeToolInclude { Relation = "orders", As = "orders", Fields = ["id"], Limit = 10 }],
+        };
+        var model = Model(withOrders: true);
+        var executor = new RowCountingExecutor(500, model);
+
+        var payload = await DeclarativeToolSurface.ExecuteAsync(
+            definition, model, executor, null, Args("1"), new Dictionary<string, object?>(), default);
+        var schema = DeclarativeToolSurface.BuildTool(definition, model).OutputSchema!.Value;
+
+        payload["data"]!["orders"]!.AsArray().Count.Should().Be(10);
+        payload["truncated"]!.AsArray().Select(node => node!.GetValue<string>())
+            .Should().Equal("orders", "the envelope names every include that was cut");
+        schema.GetProperty("properties").GetProperty("truncated").GetProperty("type").GetString()
+            .Should().Be("array", "the output schema is additionalProperties:false, so the flag must be declared");
+        schema.GetProperty("required").EnumerateArray().Select(value => value.GetString())
+            .Should().Contain("truncated");
+    }
+
     private static (string Sql, IReadOnlyList<SqlParameterInfo> Parameters) Render(GqlObjectQuery query, IDbModel model)
     {
         var sqls = new Dictionary<string, ParameterizedSql>();
@@ -757,14 +808,17 @@ public sealed class DeclarativeQueryToolCompilerTests
     /// Returns <paramref name="rowCount"/> rows per query, honoring the query's Limit
     /// as a real database would (an unset Limit returns every row — the M23 bug shape).
     /// </summary>
-    private sealed class RowCountingExecutor(int rowCount) : IQueryIntentExecutor
+    private sealed class RowCountingExecutor(int rowCount, IDbModel? model = null) : IQueryIntentExecutor
     {
         public List<QueryIntent> Intents { get; } = new();
         public Task<IDbModel> GetModelAsync(string? endpoint = null) => throw new NotSupportedException();
         public Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
         {
             Intents.Add(intent);
-            var effective = intent.Query.Limit is > 0 ? Math.Min(rowCount, intent.Query.Limit.Value) : rowCount;
+            // Core clamps the LIMIT to max-query-rows at SQL generation; mirror that
+            // when a model is supplied so a ceiling below the tool cap is observable.
+            var limit = model is null ? intent.Query.Limit : GqlObjectQuery.ClampRowLimit(model, intent.Query.Limit);
+            var effective = limit is > 0 ? Math.Min(rowCount, limit.Value) : rowCount;
             var rows = Enumerable.Range(1, effective)
                 .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
                 {

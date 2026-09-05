@@ -14,12 +14,13 @@ namespace BifrostQL.Core.QueryModel;
 /// (<see cref="GqlObjectQuery.GetRestrictedSqlParameterized"/>) must carry the SAME
 /// effective page as the parent SELECT. When the parent names no <c>limit</c>, the
 /// parent SELECT is paged to the dialect default (100) — but the restricted query
-/// treated <c>ClampRowLimit(null) == null</c> as "unbounded" and emitted a bare
+/// treated the null-passthrough clamp (<c>ClampRowLimit(null) == null</c>) as
+/// "unbounded" and emitted a bare
 /// <c>SELECT DISTINCT {join-ids} FROM parent</c> spanning ALL N parents. Every child
 /// statement then ran for parents the caller never receives, and ReaderEnum discarded
-/// the rest. The fix resolves the parent's effective page ONCE
-/// (<c>Limit ?? GqlObjectQuery.DefaultRowWindow</c>, clamped) and uses that same bound
-/// for both statements.
+/// the rest. The fix resolves the parent's effective page ONCE through
+/// <c>GqlObjectQuery.ResolveRowWindow</c> (null → DefaultRowWindow, clamped) and uses
+/// that same bound for both statements.
 /// </summary>
 public sealed class DefaultPageJoinAlignmentTests
 {

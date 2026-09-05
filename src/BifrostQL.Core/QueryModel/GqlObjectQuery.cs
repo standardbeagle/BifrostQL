@@ -143,8 +143,8 @@ namespace BifrostQL.Core.QueryModel
         ///
         /// <para>Preserved semantics: an explicit <c>limit: 0</c> still yields an empty
         /// result — only unbounded or over-ceiling requests are clamped. A null limit is
-        /// resolved to <see cref="DefaultRowWindow"/> by the row-read call sites BEFORE
-        /// the clamp, so the ceiling binds an unspecified limit as well. Paged collections
+        /// resolved to <see cref="DefaultRowWindow"/> INSIDE <see cref="ResolveRowWindow"/>,
+        /// so the ceiling binds an unspecified limit as well. Paged collections
         /// clamp PER PARENT (the window is per-parent); flat collections clamp globally,
         /// matching the shape of the limit each surface documents.</para>
         /// </summary>
@@ -154,23 +154,37 @@ namespace BifrostQL.Core.QueryModel
         /// The window a read takes when the caller names no <c>limit</c> — root rows,
         /// per-parent paged collections, the restricted join-id sub-query, and grouped
         /// aggregates alike: the same 100 rows <see cref="ISqlDialect.Pagination"/> and
-        /// <see cref="ISqlDialect.ConnectedPaging"/> default a null limit to, stated
-        /// explicitly at every row-read call site so the window passes through
-        /// <see cref="ClampRowLimit"/> (an operator ceiling below 100 must bind an
-        /// unspecified limit too) and so the restricted join-id sub-query pages with
-        /// the SAME bound as the parent SELECT instead of spanning every parent row.
-        /// One constant for rows and groups: two names for one window drift.
+        /// <see cref="ISqlDialect.ConnectedPaging"/> default a null limit to. It is
+        /// applied INSIDE <see cref="ResolveRowWindow"/>, not at the call sites, so an
+        /// unspecified limit can never bypass the ceiling (an operator ceiling below
+        /// 100 binds an unspecified limit too) and the restricted join-id sub-query
+        /// pages with the SAME bound as the parent SELECT instead of spanning every
+        /// parent row. One constant for rows and groups: two names for one window drift.
         /// </summary>
         public const int DefaultRowWindow = 100;
 
-        public static int? ClampRowLimit(IDbModel dbModel, int? limit)
+        /// <summary>
+        /// Resolves the row window for a read surface to a NON-nullable value:
+        /// <paramref name="requested"/> ?? <see cref="DefaultRowWindow"/>, clamped to
+        /// the model's max-query-rows ceiling. A bare null is therefore correct by
+        /// construction — the nullable clamp this replaced returned a null limit
+        /// unchanged, letting an unspecified limit fall through
+        /// to the dialect's own null → 100 default BELOW the ceiling, so under
+        /// <c>max-query-rows: 5</c> the read still returned 100 rows (H7, M9,
+        /// fe6f9129). No read surface takes an unbounded window: the flat-collection
+        /// path passes the explicit no-limit sentinel (-1), which clamps to the
+        /// ceiling here like any over-ceiling request. An explicit <c>limit: 0</c>
+        /// still yields an empty result.
+        /// </summary>
+        public static int ResolveRowWindow(IDbModel dbModel, int? requested)
         {
-            if (limit is null or 0)
-                return limit;
+            if (requested == 0)
+                return 0;
             var ceiling = Utils.MetadataNumber.PositiveInt(
                 dbModel.GetMetadataValue(MetadataKeys.Model.MaxQueryRows),
                 DefaultMaxQueryRows,
                 MetadataKeys.Model.MaxQueryRows);
+            var limit = requested ?? DefaultRowWindow;
             if (limit < 0 || limit > ceiling)
                 return ceiling;
             return limit;
@@ -279,10 +293,10 @@ namespace BifrostQL.Core.QueryModel
                 // construction and needs no window.
                 if (grouped.GroupColumns.Count > 0)
                 {
-                    // An unspecified limit takes the dialect's default window, stated
-                    // explicitly here so it too passes through the ceiling clamp: an
-                    // operator who caps reads at 5 rows must not receive 100 groups.
-                    var groupLimit = ClampRowLimit(dbModel, Limit ?? DefaultRowWindow);
+                    // An unspecified limit resolves to the default window INSIDE the
+                    // resolver, then clamps: an operator who caps reads at 5 rows must
+                    // not receive 100 groups.
+                    var groupLimit = ResolveRowWindow(dbModel, Limit);
                     aggSql = aggSql.Append(dialect.Pagination(grouped.OrderColumns(dialect), Offset, groupLimit));
                 }
 
@@ -304,7 +318,7 @@ namespace BifrostQL.Core.QueryModel
                 var cmdText = $"SELECT {columnSql} FROM {tableRef}";
 
                 var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
-                var pagination = dialect.Pagination(sortCols, Offset, ClampRowLimit(dbModel, Limit ?? DefaultRowWindow));
+                var pagination = dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
 
                 var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
                     .Append(filter)
@@ -465,10 +479,11 @@ namespace BifrostQL.Core.QueryModel
                 PagedKeys.RowNumber,
                 PagedKeys.Total,
                 tableJoin.ConnectedTable.Offset,
-                // The per-parent window resolves its default BEFORE the clamp, like the
-                // root SELECT: ConnectedPaging's own null -> 100 default sits below the
-                // ceiling and would hand each parent 100 children under a ceiling of 5.
-                ClampRowLimit(ctx.Model, tableJoin.ConnectedTable.Limit ?? DefaultRowWindow));
+                // The per-parent window resolves its default INSIDE the resolver, like
+                // the root SELECT: ConnectedPaging's own null -> 100 default sits below
+                // the ceiling and would hand each parent 100 children under a ceiling
+                // of 5.
+                ResolveRowWindow(ctx.Model, tableJoin.ConnectedTable.Limit));
 
             return new ParameterizedSql(pagedSql, main.Parameters.Concat(relationParams).Concat(filter.Parameters).ToList());
         }
@@ -490,7 +505,7 @@ namespace BifrostQL.Core.QueryModel
             var dialect = ctx.Dialect;
             var effectiveLimit = tableJoin.ConnectedTable.Limit ?? -1;
             var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort);
-            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, ClampRowLimit(ctx.Model, effectiveLimit));
+            var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, ResolveRowWindow(ctx.Model, effectiveLimit));
 
             return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())
                 .Append(filter)
@@ -528,7 +543,7 @@ namespace BifrostQL.Core.QueryModel
                 var sortCols = RenderPagedSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
                 // Clamped identically to the parent SELECT so this window and the parent's
                 // window land on the same rows.
-                var clampedLimit = ClampRowLimit(dbModel, query.FromTable.Limit ?? DefaultRowWindow);
+                var clampedLimit = ResolveRowWindow(dbModel, query.FromTable.Limit);
                 var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, clampedLimit);
 
                 var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())

@@ -14,7 +14,7 @@ namespace BifrostQL.Core.Test.QueryModel;
 /// Finding H7: a grouped aggregate emitted no LIMIT, so <c>groupBy: [id]</c> —
 /// one group per row — read the whole table regardless of the model's
 /// <c>max-query-rows</c> ceiling. The group window is now bounded by the SAME
-/// <see cref="GqlObjectQuery.ClampRowLimit"/> ceiling as row queries, ordered
+/// <see cref="GqlObjectQuery.ResolveRowWindow"/> ceiling as row queries, ordered
 /// deterministically by the group keys so paging is stable, and the client's
 /// <c>limit</c> can only NARROW that window — never raise it.
 /// </summary>

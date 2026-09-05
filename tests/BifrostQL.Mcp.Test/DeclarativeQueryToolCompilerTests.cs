@@ -468,8 +468,9 @@ public sealed class DeclarativeQueryToolCompilerTests
     public async Task ExecuteCollectionIncludes_NoDeclaredLimit_CapsRowsAtBuiltInCeiling()
     {
         // M23: an include with no declared limit must still be bounded by the built-in
-        // tool cap (200) — an undeclared Limit is null, and ClampRowLimit(null) emits
-        // no LIMIT at all, turning a 500-row relation into an unbounded read.
+        // tool cap (200) — the compiler's SentinelWindow supplies cap+1 explicitly, so
+        // the window is never null (a null window once emitted no LIMIT at all, turning
+        // a 500-row relation into an unbounded read).
         var model = Model(withOrders: true);
         var definition = Definition() with
         {
@@ -817,7 +818,7 @@ public sealed class DeclarativeQueryToolCompilerTests
             Intents.Add(intent);
             // Core clamps the LIMIT to max-query-rows at SQL generation; mirror that
             // when a model is supplied so a ceiling below the tool cap is observable.
-            var limit = model is null ? intent.Query.Limit : GqlObjectQuery.ClampRowLimit(model, intent.Query.Limit);
+            var limit = model is null ? intent.Query.Limit : GqlObjectQuery.ResolveRowWindow(model, intent.Query.Limit);
             var effective = limit is > 0 ? Math.Min(rowCount, limit.Value) : rowCount;
             var rows = Enumerable.Range(1, effective)
                 .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>

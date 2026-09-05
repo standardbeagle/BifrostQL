@@ -149,7 +149,7 @@ namespace BifrostQL.Mcp
             // same clamp the SQL applies decides that here — one rule, not two — so a
             // full window is recognised as truncation rather than reported as the
             // complete answer.
-            var windowLimit = GqlObjectQuery.ClampRowLimit(model, MaxGroups + 1) ?? MaxGroups + 1;
+            var windowLimit = GqlObjectQuery.ResolveRowWindow(model, MaxGroups + 1);
             query.Limit = windowLimit;
             if (GetArgument(args, "filter") is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } filterElement)
                 query.Filter = QueryToolCompiler.CompileFilter(table, filterElement, visibleColumnNames);

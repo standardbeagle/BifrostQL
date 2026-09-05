@@ -291,7 +291,7 @@ public sealed class CompiledDeclarativeQueryTool
     /// A full window is therefore always recognisable as truncation, whichever bound won.
     /// </summary>
     private int SentinelWindow(int cap) =>
-        GqlObjectQuery.ClampRowLimit(_model, cap + 1) ?? cap + 1;
+        GqlObjectQuery.ResolveRowWindow(_model, cap + 1);
 
     private async Task<DeclarativeCollectionResult> ExecuteCollectionResultAsync(
         GqlObjectQuery query, IDictionary<string, object?> userContext, int window,

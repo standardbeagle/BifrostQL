@@ -13,11 +13,12 @@ namespace BifrostQL.Core.Test.QueryModel;
 
 /// <summary>
 /// H7 follow-up (01M1MT73CNJM4B8PTMQV846P9Y), pinned alongside M9: an unspecified
-/// <c>limit</c> resolves to <see cref="GqlObjectQuery.DefaultRowWindow"/> BEFORE the
-/// <c>max-query-rows</c> clamp on every row-read surface — the root SELECT, the
-/// restricted join-id sub-query, and the per-parent paged collection window — so an
-/// operator ceiling below 100 binds the default page. Previously
-/// <c>ClampRowLimit(null)</c> returned null and the dialect's own null → 100 default
+/// <c>limit</c> resolves to <see cref="GqlObjectQuery.DefaultRowWindow"/> INSIDE
+/// <see cref="GqlObjectQuery.ResolveRowWindow"/> on every row-read surface — the root
+/// SELECT, the restricted join-id sub-query, and the per-parent paged collection
+/// window — so an operator ceiling below 100 binds the default page. Previously the
+/// null-passthrough clamp (<c>ClampRowLimit(null)</c>) returned null and the
+/// dialect's own null → 100 default
 /// (<see cref="ISqlDialect.Pagination"/> / <see cref="ISqlDialect.ConnectedPaging"/>)
 /// bypassed the ceiling: <c>max-query-rows: 5</c> still read 100 rows.
 /// </summary>

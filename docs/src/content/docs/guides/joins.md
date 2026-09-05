@@ -139,15 +139,13 @@ Prefer real database foreign keys where possible. Known application schemas such
 - Top-level table queries are paged; relationship fields return nested objects or lists.
 - Child collection fields support filters.
 - Automatic join detection uses database foreign keys and name-based conventions. Disable it with `auto-join: false` metadata.
-- Generated `_join` / `_single` containers are controlled by `dynamic-joins`; prefer direct relationship fields in application queries.
 
 ## Controlling join behavior
 
-Use metadata rules to disable automatic relationship inference or generated dynamic join containers:
+Use metadata rules to disable automatic relationship inference:
 
 ```
 "dbo.sensitive_table { auto-join: false; }"
-"dbo.audit_log { dynamic-joins: false; }"
 ```
 
-`auto-join: false` prevents BifrostQL from inferring joins based on column names. `dynamic-joins: false` removes `_join` and `_single` containers from generated table types.
+`auto-join: false` prevents BifrostQL from inferring joins based on column names.

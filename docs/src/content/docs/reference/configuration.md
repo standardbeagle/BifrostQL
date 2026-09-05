@@ -138,7 +138,6 @@ consistently.
 | `many-to-many` | `TargetTable:JunctionTable` | table | Declare a many-to-many relationship (accumulates across rules) |
 | `auto-join` | `true`/`false` | model/table | Enable automatic join inference |
 | `foreign-joins` | `true`/`false` | model | Enable FK-based join inference |
-| `dynamic-joins` | `true`/`false` | model | Emit `_join` / `_single` containers |
 | `default-limit` | number | model/table | Default page size |
 | `max-query-rows` | number | model | Server-side row ceiling for the GraphQL surface. Clamps the no-limit sentinel (`limit: -1`), any explicit limit above it, and the default 100-row window an unspecified `limit` resolves to — on the root query, on nested collections (per parent for paged collections), and on the group window of `<table>Aggregate`. Default 10000; a non-positive value fails model load |
 | `de-pluralize` | `true`/`false` | model | De-pluralize table names in schema |

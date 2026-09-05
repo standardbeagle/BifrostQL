@@ -84,6 +84,16 @@ namespace BifrostQL.UI.Web
                 }
             });
 
+            // GET /api/databases/peer-users - The OS users the peer-auth gate
+            // permits, so the connection form defaults to the current user and
+            // never offers a value the gate would refuse. Read-only, no state
+            // change — same loopback posture as its siblings.
+            app.MapGet("/api/databases/peer-users", () =>
+            {
+                var permitted = PsqlDatabaseLister.GetPermittedPsqlUsers();
+                return Results.Ok(new { current = Environment.UserName, permitted });
+            });
+
             // Legacy SQL Server test-database creation accepted password-bearing
             // connection strings over HTTP. Keep the route as an explicit tombstone so
             // older clients receive a clear migration response without sending secrets

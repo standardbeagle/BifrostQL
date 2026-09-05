@@ -42,8 +42,8 @@ namespace BifrostQL.UI.Web
                 // the desktop API is a privilege-escalation proxy.
                 if (!IsPsqlUserPermitted(psqlUser))
                     throw new InvalidOperationException(
-                        "The requested psql OS user is not permitted: only the current user " +
-                        "or an entry in BIFROST_UI_PSQL_PEER_USERS may be used for peer auth.");
+                        "The requested psql OS user is not permitted. Permitted accounts for peer auth: " +
+                        string.Join(", ", GetPermittedPsqlUsers()) + ".");
                 // Use sudo -u <user> psql for peer auth as a different OS user
                 psi.FileName = "sudo";
                 psi.ArgumentList.Add("-u");
@@ -76,6 +76,27 @@ namespace BifrostQL.UI.Web
             }
 
             return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        /// <summary>
+        /// The set of OS users the gate permits: the user the host runs as
+        /// (always permitted) plus the comma-separated BIFROST_UI_PSQL_PEER_USERS
+        /// allow-list, deduped. The connection form offers exactly this set, so
+        /// it never submits a user the gate would refuse.
+        /// </summary>
+        internal static IReadOnlyList<string> GetPermittedPsqlUsers()
+        {
+            var users = new List<string> { Environment.UserName };
+            var allowList = Environment.GetEnvironmentVariable("BIFROST_UI_PSQL_PEER_USERS");
+            if (!string.IsNullOrWhiteSpace(allowList))
+            {
+                foreach (var entry in allowList.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (!users.Contains(entry, StringComparer.Ordinal))
+                        users.Add(entry);
+                }
+            }
+            return users;
         }
 
         /// <summary>

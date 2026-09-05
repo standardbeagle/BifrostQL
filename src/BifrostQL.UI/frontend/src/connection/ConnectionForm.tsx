@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Provider,
   PROVIDERS,
@@ -70,6 +70,25 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const [sshConfig, setSshConfig] = useState<SshConfig>(DEFAULT_SSH);
   const [wpConfig, setWpConfig] = useState<WpConfig>(DEFAULT_WP);
   const [sshError, setSshError] = useState<string | null>(null);
+  // The peer-auth gate only permits the host's current OS user plus the
+  // BIFROST_UI_PSQL_PEER_USERS allow-list; the host reports that set so the
+  // form never offers (or submits) a user the gate would refuse.
+  const [peerUsers, setPeerUsers] = useState<{ current: string; permitted: string[] } | null>(null);
+  const [psqlUser, setPsqlUser] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (provider !== 'postgres') return;
+    let cancelled = false;
+    fetch('/api/databases/peer-users')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { current: string; permitted: string[] } | null) => {
+        if (cancelled || !data) return;
+        setPeerUsers(data);
+        setPsqlUser((prev) => prev ?? data.current);
+      })
+      .catch(() => { /* discovery optional — the gate message still names the permitted accounts */ });
+    return () => { cancelled = true; };
+  }, [provider]);
 
   const isDisabled = connectionState === 'connecting' || connectionState === 'testing';
 
@@ -204,11 +223,18 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
           connectionString: connString,
           provider,
           peerAuth: isPeerAuth,
-          psqlUser: isPeerAuth ? 'postgres' : null,
+          psqlUser: isPeerAuth ? psqlUser : null,
         }),
       });
       if (!response.ok) {
-        throw new Error(`Could not load databases: server returned ${response.status}.`);
+        // The host's refusal text names the permitted accounts; show it as the
+        // form-level validation message rather than a bare status code.
+        let detail = '';
+        try {
+          const errBody = await response.json();
+          detail = typeof errBody?.error === 'string' ? errBody.error : '';
+        } catch { /* non-JSON error body — fall through to the generic text */ }
+        throw new Error(detail || `Could not load databases: server returned ${response.status}.`);
       }
       const result = await response.json();
       if (!(result.databases?.length > 0)) {
@@ -235,16 +261,36 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     } finally {
       setLoadingDatabases(false);
     }
-  }, [adapter, provider, formData, updateField]);
+  }, [adapter, provider, formData, updateField, psqlUser]);
 
   const hasErrors = Object.values(errors).some(Boolean);
 
   const renderDatabaseField = () => {
     if (provider === 'sqlite') return null;
     const dbValue = (formData as { database?: string }).database || '';
+    const isPeerAuth = provider === 'postgres'
+      && (formData as PostgresFormData).authMethod === PostgresAuthMethod.Peer;
 
     return (
       <div className="conn-form__group">
+        {isPeerAuth && peerUsers && (
+          <>
+            <label htmlFor="psqlUser" className="conn-form__label">
+              OS user for peer auth
+            </label>
+            <select
+              id="psqlUser"
+              value={psqlUser ?? peerUsers.current}
+              onChange={(e) => setPsqlUser(e.target.value)}
+              disabled={isDisabled}
+              className="conn-form__select"
+            >
+              {peerUsers.permitted.map((user) => (
+                <option key={user} value={user}>{user}</option>
+              ))}
+            </select>
+          </>
+        )}
         <label htmlFor="database" className="conn-form__label">
           Database Name <span className="conn-form__required">*</span>
         </label>

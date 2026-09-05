@@ -201,7 +201,7 @@ public sealed class MyAdapterConformanceTests : ProtocolAdapterConformanceTests
 }
 ```
 
-The base class owns the whole fixture: a per-suite in-memory SQLite database, the security metadata rules (`tenant-filter`, `soft-delete`, `policy-read-deny`), the test host, and a SQL-capture observer it asserts against. Your derivation supplies only the wire translation.
+The base class owns the whole fixture: a per-suite in-memory SQLite database, the security metadata rules (`tenant-filter`, `soft-delete`, `policy-read-deny`), the test host, and a SQL-capture observer it asserts against. Your derivation supplies only the wire translation. The `documents` fixture is table-readable (`policy-actions: read`) with only its `body` column denied, so the column-guard facts reach the column guard; an adapter whose wire hides denied columns by construction (LDAP omits the attribute) declares that with a `DeniedColumnSelection` override — `Reject` is the default.
 
 **The mutation opt-out is for genuinely read-only adapters.** `AdapterSupportsMutations` defaults to `false`, which skips the mutation facts — legitimate when your adapter exposes no write surface at all. An adapter that exposes *any* write surface must return `true` and override `ExecuteMutationAsync`; opting out while shipping writes would leave the write path unproven against tenant isolation and soft-delete semantics.
 

@@ -154,9 +154,12 @@ implementations produce provably different output.
   of its first RED, and the shared conformance fixture
   (`ProtocolAdapterConformanceTests.cs:210`, `documents { policy-read-deny: body }`)
   carries the same defect into 8 derived suites — its
-  `Read_SelectingPolicyDeniedColumn_IsRejected` /
-  `Read_FilteringOnPolicyDeniedColumn_IsRejected` facts are currently
-  table-level denial tests (tracked follow-up).
+   `Read_SelectingPolicyDeniedColumn_IsRejected` /
+   `Read_FilteringOnPolicyDeniedColumn_IsRejected` facts are currently
+   table-level denial tests (fixed: the fixture now carries
+   `policy-actions: read`, the select fact is per-adapter Reject/Omit via
+   `DeniedColumnSelection`, and removing `IsColumnAllowed` from the read path
+   takes the fact RED in all 8 derived suites).
   <!-- written_at: 2026-09-04T23:10:00Z  source_event: task:01M1KPC4MXF2621FXFZZCVF7ZM, git:0c2b6d37 -->
 - **A substring assertion over composed SQL is not a fact about the fragment
   under test.** The M9 nested-collection RED asserted the restricted join-id

@@ -239,8 +239,11 @@ public sealed class CompiledDeclarativeQueryTool
         CancellationToken cancellationToken)
     {
         var query = QueryToolCompiler.BuildQuery(include.RelatedTable, include.Fields);
-        var effectiveLimit = DeclarativeQueryToolCompiler.EffectiveIncludeLimit(include.Definition.Limit);
-        query.Limit = effectiveLimit + 1; // cap+1 sentinel: one extra row proves truncation
+        // cap+1 sentinel, passed through the SAME clamp the SQL applies so a server
+        // ceiling below the tool cap still yields a window whose fullness is
+        // recognised as truncation (AggregateTools does the same; one rule, not two).
+        var window = SentinelWindow(DeclarativeQueryToolCompiler.EffectiveIncludeLimit(include.Definition.Limit));
+        query.Limit = window;
         query.IncludeResult = includeTotalCount;
         if (include.Sort is not null) query.Sort.Add(include.Sort);
 
@@ -252,14 +255,15 @@ public sealed class CompiledDeclarativeQueryTool
             var sourceValue = rootKeyByDbName[many.SourceColumn.DbName];
             var junction = QueryToolCompiler.BuildQuery(many.JunctionTable, [many.JunctionTargetColumn]);
             junction.Filter = RelationFilter(many.JunctionTable, many.JunctionSourceColumn, [sourceValue], null);
-            junction.Limit = DeclarativeQueryToolCompiler.JunctionRowLimitCap + 1; // same sentinel
+            var junctionWindow = SentinelWindow(DeclarativeQueryToolCompiler.JunctionRowLimitCap);
+            junction.Limit = junctionWindow;
             var junctionRows = await ExecuteQueryAsync(junction, userContext, cancellationToken);
-            var junctionTruncated = junctionRows.Count > DeclarativeQueryToolCompiler.JunctionRowLimitCap;
-            var targetIds = junctionRows.Take(DeclarativeQueryToolCompiler.JunctionRowLimitCap)
+            var junctionTruncated = junctionRows.Count >= junctionWindow;
+            var targetIds = junctionRows.Take(junctionWindow - 1)
                 .Select(row => row[many.JunctionTargetColumn.DbName]).ToArray();
             if (targetIds.Length == 0) return DeclarativeCollectionResult.Empty;
             query.Filter = RelationFilter(include.RelatedTable, many.TargetColumn, targetIds, include.Definition.Filter);
-            return await ExecuteCollectionResultAsync(query, userContext, effectiveLimit, junctionTruncated, cancellationToken);
+            return await ExecuteCollectionResultAsync(query, userContext, window, junctionTruncated, cancellationToken);
         }
 
         var link = include.Link!;
@@ -278,23 +282,31 @@ public sealed class CompiledDeclarativeQueryTool
             return DeclarativeCollectionResult.Empty;
 
         query.Filter = CompositeMatchFilter(include.RelatedTable, matchColumns, fromValues, include.Definition.Filter);
-        return await ExecuteCollectionResultAsync(query, userContext, effectiveLimit, upstreamTruncated: false, cancellationToken);
+        return await ExecuteCollectionResultAsync(query, userContext, window, upstreamTruncated: false, cancellationToken);
     }
 
+    /// <summary>
+    /// The LIMIT a bounded read carries: <paramref name="cap"/> + 1 as the truncation
+    /// sentinel, clamped by <c>max-query-rows</c> exactly as SQL generation clamps it.
+    /// A full window is therefore always recognisable as truncation, whichever bound won.
+    /// </summary>
+    private int SentinelWindow(int cap) =>
+        GqlObjectQuery.ClampRowLimit(_model, cap + 1) ?? cap + 1;
+
     private async Task<DeclarativeCollectionResult> ExecuteCollectionResultAsync(
-        GqlObjectQuery query, IDictionary<string, object?> userContext, int effectiveLimit,
+        GqlObjectQuery query, IDictionary<string, object?> userContext, int window,
         bool upstreamTruncated, CancellationToken cancellationToken)
     {
         var result = await _executor.ExecuteAsync(new QueryIntent
         {
             Query = query, UserContext = userContext, Endpoint = _endpoint,
         }, cancellationToken);
-        // The query asked for effectiveLimit + 1; one extra row means the collection
-        // was cut at the ceiling. Report it — a silently partial collection reads as
-        // complete, which is worse than an explicit truncation flag.
-        var truncated = upstreamTruncated || result.Rows.Count > effectiveLimit;
-        var rows = result.Rows.Count > effectiveLimit
-            ? result.Rows.Take(effectiveLimit).ToList()
+        // The query asked for a full window; receiving all of it means the collection
+        // was cut. Report it — a silently partial collection reads as complete, which
+        // is worse than an explicit truncation flag. The sentinel row is dropped.
+        var truncated = upstreamTruncated || result.Rows.Count >= window;
+        var rows = result.Rows.Count >= window
+            ? result.Rows.Take(window - 1).ToList()
             : result.Rows;
         return new DeclarativeCollectionResult(rows, result.TotalCount, truncated);
     }

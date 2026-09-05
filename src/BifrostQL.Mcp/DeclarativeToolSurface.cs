@@ -38,16 +38,24 @@ public static class DeclarativeToolSurface
         JsonNode? data = row is null
             ? null
             : JsonSerializer.SerializeToNode(row, McpJsonUtilities.DefaultOptions);
+        // Every include cut by the built-in ceiling, a narrower declared limit, or
+        // the server's max-query-rows is named here: a bare array reads as complete,
+        // and a partial collection that looks complete is worse than an explicit one.
+        var truncated = new JsonArray();
         if (data is JsonObject dataObject)
         {
-            var collections = await compiled.ExecuteCollectionIncludesAsync(arguments, userContext, cancellationToken);
-            foreach (var (name, rows) in collections)
-                dataObject[name] = JsonSerializer.SerializeToNode(rows, McpJsonUtilities.DefaultOptions);
+            var collections = await compiled.ExecuteCollectionIncludesWithCountsAsync(arguments, userContext, cancellationToken);
+            foreach (var (name, collection) in collections)
+            {
+                dataObject[name] = JsonSerializer.SerializeToNode(collection.Rows, McpJsonUtilities.DefaultOptions);
+                if (collection.Truncated) truncated.Add(name);
+            }
         }
         return new JsonObject
         {
             ["found"] = row is not null,
             ["data"] = data,
+            ["truncated"] = truncated,
         };
     }
 
@@ -144,8 +152,13 @@ public static class DeclarativeToolSurface
             {
                 ["found"] = new JsonObject { ["type"] = "boolean" },
                 ["data"] = new JsonObject { ["anyOf"] = new JsonArray(dataSchema, new JsonObject { ["type"] = "null" }) },
+                ["truncated"] = new JsonObject
+                {
+                    ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" },
+                    ["description"] = "Names of the collections that were cut at a row bound; narrow the relation's filter to see the rest.",
+                },
             },
-            ["required"] = new JsonArray("found", "data"),
+            ["required"] = new JsonArray("found", "data", "truncated"),
             ["additionalProperties"] = false,
         };
     }

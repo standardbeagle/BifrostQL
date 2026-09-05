@@ -583,7 +583,7 @@ public sealed class DeclarativeQueryToolCompilerTests
 
         payload["data"]!["orders"]!.AsArray().Count.Should().Be(10);
         payload["truncated"]!.AsArray().Select(node => node!.GetValue<string>())
-            .Should().Equal("orders", "the envelope names every include that was cut");
+            .Should().BeEquivalentTo(["orders"], "the envelope names every include that was cut");
         schema.GetProperty("properties").GetProperty("truncated").GetProperty("type").GetString()
             .Should().Be("array", "the output schema is additionalProperties:false, so the flag must be declared");
         schema.GetProperty("required").EnumerateArray().Select(value => value.GetString())

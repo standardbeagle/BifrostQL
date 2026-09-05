@@ -151,21 +151,17 @@ namespace BifrostQL.Core.QueryModel
         internal const int DefaultMaxQueryRows = 10_000;
 
         /// <summary>
-        /// The row window a row read takes when the caller names no <c>limit</c> —
-        /// the same 100 rows <see cref="ISqlDialect.Pagination"/> defaults a null
-        /// limit to, stated explicitly so the window passes through
+        /// The window a read takes when the caller names no <c>limit</c> — root rows,
+        /// per-parent paged collections, the restricted join-id sub-query, and grouped
+        /// aggregates alike: the same 100 rows <see cref="ISqlDialect.Pagination"/> and
+        /// <see cref="ISqlDialect.ConnectedPaging"/> default a null limit to, stated
+        /// explicitly at every row-read call site so the window passes through
         /// <see cref="ClampRowLimit"/> (an operator ceiling below 100 must bind an
         /// unspecified limit too) and so the restricted join-id sub-query pages with
         /// the SAME bound as the parent SELECT instead of spanning every parent row.
+        /// One constant for rows and groups: two names for one window drift.
         /// </summary>
         public const int DefaultRowWindow = 100;
-
-        /// <summary>
-        /// The group window a grouped aggregate takes when the caller names no
-        /// <c>limit</c> — the same 100 rows <see cref="ISqlDialect.Pagination"/> defaults
-        /// a row read to, stated explicitly so it is clamped by the ceiling as well.
-        /// </summary>
-        public const int DefaultGroupWindow = 100;
 
         public static int? ClampRowLimit(IDbModel dbModel, int? limit)
         {
@@ -286,7 +282,7 @@ namespace BifrostQL.Core.QueryModel
                     // An unspecified limit takes the dialect's default window, stated
                     // explicitly here so it too passes through the ceiling clamp: an
                     // operator who caps reads at 5 rows must not receive 100 groups.
-                    var groupLimit = ClampRowLimit(dbModel, Limit ?? DefaultGroupWindow);
+                    var groupLimit = ClampRowLimit(dbModel, Limit ?? DefaultRowWindow);
                     aggSql = aggSql.Append(dialect.Pagination(grouped.OrderColumns(dialect), Offset, groupLimit));
                 }
 

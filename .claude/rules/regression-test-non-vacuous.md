@@ -203,6 +203,18 @@ implementations produce provably different output.
   `.Split` shapes missed the C# 12 collection expression `.Split(['|'])`, which
   a net10 assembly can legally use, so a real offender would have passed.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MWB3HVPFH6W3VQDH20Q58N, git:a4b8fb4e -->
+  **Anchor a duplicate-detection scan on the DATA the copy must read, never on
+  identifiers a copier is free to rename.** The mount-auth scan's anchor was the
+  literal `multiDb.Endpoints.Count == 1 ? multiDb.Endpoints[0]` plus a
+  `*AuthRequirement` method-name filter, so a re-added second derivation that
+  named its local anything else passed GREEN — review reproduced it with a stub
+  `MutantCopy.Gate(opts, p)` carrying the full derivation body. A local name, a
+  method name and a variable spelling are all free for the copier to change; the
+  PROPERTY or API the derivation cannot avoid touching (`.DisableAuth`) is not.
+  Anchor on that read, allowlist the one helper and the options file that declare
+  the flag, and prove the scan with a mutant copy that renames every local — a
+  scan proven only against a verbatim copy tests the copier's laziness.
+  <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MJATQMGDT1JGAYCBEVMMA8, git:879b4cae -->
 - **Changing a DEFAULT value is a change to every branch that CONSUMES it.**
   The edit-db connection form's Postgres default moved from `postgres` to
   `Environment.UserName`, and the tests asserted only that the new value rode

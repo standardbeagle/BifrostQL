@@ -198,6 +198,24 @@ describe('ConnectionForm peer auth OS user', () => {
     expect(payload.psqlUser).toBe('alice');
   });
 
+  it('never submits the hardcoded postgres, even before the permitted set has loaded', async () => {
+    // Negative half of the revert-proof: the pre-fix form sent 'postgres' on
+    // every peer-auth load. Click Load without waiting for the OS-user select,
+    // so the payload assertion itself is what goes RED against the old code
+    // (the fact above fails earlier, on the missing select).
+    const posts = stubPeerFetch({ ok: true, json: () => Promise.resolve({ databases: ['appdb'] }) });
+    render(<ConnectionForm provider="postgres" onConnect={() => {}} onBack={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/Peer \/ Ident/i));
+    fireEvent.click(loadButton());
+
+    await waitFor(() => expect(posts.some((p) => p.url === '/api/databases')).toBe(true));
+    const payload = JSON.parse(posts.find((p) => p.url === '/api/databases')!.body);
+    expect(payload.peerAuth).toBe(true);
+    // null (discovery still in flight) and 'alice' are both gate-permitted;
+    // 'postgres' is the value the gate refuses on every host not logged in as it.
+    expect(payload.psqlUser).not.toBe('postgres');
+  });
+
   it('renders a refusal as a validation message naming the permitted accounts', async () => {
     const posts = stubPeerFetch({
       ok: false,

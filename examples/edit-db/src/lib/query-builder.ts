@@ -343,14 +343,17 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
             }
             const loVar = `${varName}_lo`;
             const hiVar = `${varName}_hi`;
-            variables[loVar] = range[0];
-            variables[hiVar] = range[1];
+            variables[loVar] = coerceForGql(range[0], gqlType);
+            variables[hiVar] = coerceForGql(range[1], gqlType);
             params.push(`$${loVar}: ${gqlType}`, `$${hiVar}: ${gqlType}`);
             filterTexts.push(`{${cf.id}: {${wire.operator}: [$${loVar}, $${hiVar}]}}`);
             continue;
         }
 
-        variables[varName] = wire.value;
+        // The value may arrive as a wire string (drill-down emits
+        // String(row[dimension])); the variable is declared as the column's
+        // scalar, so coerce it or an Int/Boolean filter ships "5" as $cf_x: Int.
+        variables[varName] = coerceForGql(wire.value, gqlType);
         params.push(`$${varName}: ${gqlType}`);
         filterTexts.push(`{${cf.id}: {${wire.operator}: $${varName}}}`);
     }

@@ -176,6 +176,16 @@ implementations produce provably different output.
   `Contains`. The implementer self-caught this one; the generalization is that a
   numeric literal in a SQL-text assertion is a prefix of every longer literal.
   <!-- written_at: 2026-09-05T04:30:00Z  source_event: task:01M1KNYNQAKE5FHC06NKF607N4, git:7ce42c98, git:063f6acb -->
+- **A source-scan / hygiene test must assert the ALLOWLISTED hit, not just zero
+  offenders.** "No offender matched" and "the pattern set matched nothing at
+  all" are the same GREEN, so a scan whose regexes drift away from real code
+  guards nothing while reading as coverage. Count the hits inside the
+  allowlisted home and fail when that count is 0 (`KeyParserHygieneTests`:
+  removing the split from `ToolJson.cs` goes RED). The pattern set must also
+  span the language's current spellings of the construct — the original four
+  `.Split` shapes missed the C# 12 collection expression `.Split(['|'])`, which
+  a net10 assembly can legally use, so a real offender would have passed.
+  <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MWB3HVPFH6W3VQDH20Q58N, git:a4b8fb4e -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

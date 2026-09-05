@@ -205,10 +205,11 @@ The base class owns the whole fixture: a per-suite in-memory SQLite database, th
 
 **The mutation opt-out is for genuinely read-only adapters.** `AdapterSupportsMutations` defaults to `false`, which skips the mutation facts — legitimate when your adapter exposes no write surface at all. An adapter that exposes *any* write surface must return `true` and override `ExecuteMutationAsync`; opting out while shipping writes would leave the write path unproven against tenant isolation and soft-delete semantics.
 
-Two further opt-in facts follow the same shape, each binding only adapters that have the surface:
+Three further opt-in facts follow the same shape, each binding only adapters that have the surface:
 
 - `AdapterSupportsAuthRateLimit` — the adapter's credential handshake (LDAP bind, RESP AUTH) is bounded by a per-source/per-account pre-auth attempt limiter. The derivation overrides `AuthAttemptBudget` and `AttemptAuthAsync` (reporting whether the credential store was consulted); the kit burns the budget, then asserts the over-cap attempt is refused *before* credential resolution and that the refusal text is byte-identical for a known and an unknown account.
 - `AdapterSupportsFrameLimit` — the adapter's decoder bounds the *total* bytes of one top-level frame. The derivation overrides `ProbeFrameLimitAsync`, driving its real decoder with an oversized declared frame through a counting stream; the kit asserts the refusal precedes pulling the payload and that the budget resets only at a top-level frame boundary.
+- `AdapterSupportsContinuationTokens` — the adapter's paged reads carry an opaque, MAC'd continuation token (LDAP paged-results cookie, OData `$skiptoken`, gRPC page token, RESP SCAN cursor). The derivation overrides `ReplayContinuationAsync`, minting a real token, applying one tamper (forged, altered, cross-context replay against a same-arity target, cross-identity replay, expired, unparseable), and replaying it against the binding the live request would re-derive; the kit asserts every tamper is refused explicitly — never restarted from the top — with byte-identical wire text.
 
 Adapters without the surface (HTTP front doors riding Kestrel's own limits, the echo fixture) leave the defaults alone and the facts stay silent — no skip noise, no forced stub.
 

@@ -556,7 +556,8 @@ public sealed class CrossDialectTest
         // An unknown operator must fail rather than silently matching the wrong
         // rows; an empty operator is the join-equality marker and maps to "=".
         var act = () => dialect.GetOperator("_unknown");
-        act.Should().Throw<ArgumentException>();
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .Which.ErrorCode.Should().Be("INVALID_FILTER_OPERATOR");
         dialect.GetOperator("").Should().Be("=");
     }
 
@@ -565,7 +566,7 @@ public sealed class CrossDialectTest
     public void GetOperator_CaseSensitive_UppercaseThrows(ISqlDialect dialect)
     {
         var act = () => dialect.GetOperator("_EQ");
-        act.Should().Throw<ArgumentException>();
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>();
     }
 
     #endregion

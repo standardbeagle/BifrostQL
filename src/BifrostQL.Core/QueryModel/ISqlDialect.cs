@@ -165,6 +165,11 @@ public interface ISqlDialect
     /// </summary>
     /// <param name="op">The Directus-style operator (e.g., "_eq", "_contains").</param>
     /// <returns>The corresponding SQL operator string.</returns>
+    /// <exception cref="Resolvers.BifrostExecutionError">
+    /// The operator is not in the supported set (thrown with
+    /// <c>ErrorCode = "INVALID_FILTER_OPERATOR"</c> so programmatic callers can
+    /// classify it; a silent fallback to <c>=</c> would match the wrong rows).
+    /// </exception>
     string GetOperator(string op);
 
     /// <summary>

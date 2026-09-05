@@ -177,11 +177,12 @@ public abstract class SqlDialectBase : ISqlDialect
         "_nin" => "NOT IN",
         "_between" => "BETWEEN",
         "_nbetween" => "NOT BETWEEN",
-        _ => throw new ArgumentException(
+        _ => throw new BifrostExecutionError(
             $"Unknown filter operator '{op}'. A silent fallback to '=' would match the " +
             $"wrong rows. Valid operators: _eq, _neq, _lt, _lte, _gt, _gte, _contains, " +
             $"_starts_with, _ends_with, _like, _ncontains, _nstarts_with, _nends_with, " +
-            $"_nlike, _in, _nin, _between, _nbetween.", nameof(op))
+            $"_nlike, _in, _nin, _between, _nbetween.")
+        { ErrorCode = "INVALID_FILTER_OPERATOR" }
     };
 
     /// <inheritdoc />

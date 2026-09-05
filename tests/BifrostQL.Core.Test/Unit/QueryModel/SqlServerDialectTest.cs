@@ -527,8 +527,11 @@ public sealed class SqlServerDialectTest
         // Act
         var act = () => _sut.GetOperator(unknownOp);
 
-        // Assert — a silent fallback to "=" would match the wrong rows.
-        act.Should().Throw<ArgumentException>();
+        // Assert — a silent fallback to "=" would match the wrong rows, and a
+        // programmatic caller must get a classified execution error with a
+        // client-shape code, not an ambient ArgumentException.
+        act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
+            .Which.ErrorCode.Should().Be("INVALID_FILTER_OPERATOR");
     }
 
     [Fact]
@@ -551,7 +554,7 @@ public sealed class SqlServerDialectTest
         // Assert — matching is case-sensitive; a wrong-case operator is unknown
         // and throws rather than silently falling back to "=".
         lower.Should().Be("=");
-        upper.Should().Throw<ArgumentException>();
+        upper.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>();
     }
 
     #endregion

@@ -254,4 +254,57 @@ public sealed class TableLookupWireSafetyTests : IAsyncLifetime
         model.TryGetTableByFullGraphQlName("widget", out var byGraphQl).Should().BeTrue();
         byGraphQl.Should().NotBeNull();
     }
+
+    // The fixture above is the test fake, so it exercises IDbModel's DEFAULT
+    // TryGet bodies. The production DbModel OVERRIDES them over its own indexes;
+    // this fact drives those overrides directly, including the one answer the
+    // defaults and the overrides must agree on — a bare name defined in two
+    // schemas is NOT a positive resolve, while the schema-qualified overload
+    // still resolves each side.
+
+    private static DbTable Table(string schema, string dbName)
+    {
+        var columns = new[]
+        {
+            new ColumnDto { ColumnName = "id", GraphQlName = "id", DataType = "int", OrdinalPosition = 1, IsPrimaryKey = true },
+        };
+        return new DbTable
+        {
+            DbName = dbName,
+            GraphQlName = schema == "dbo" ? dbName : $"{schema}_{dbName}",
+            NormalizedName = dbName.ToLowerInvariant(),
+            TableSchema = schema,
+            TableType = "BASE TABLE",
+            ColumnLookup = columns.ToDictionary(c => c.DbName, StringComparer.OrdinalIgnoreCase),
+            GraphQlLookup = columns.ToDictionary(c => c.GraphQlName, StringComparer.OrdinalIgnoreCase),
+            Metadata = new Dictionary<string, object?>(),
+        };
+    }
+
+    [Fact]
+    public void DbModel_TryGetOverrides_ResolvePositivelyAndRefuseAmbiguity()
+    {
+        var model = new DbModel
+        {
+            Tables = new[] { Table("dbo", "widget"), Table("dbo", "gadget"), Table("sales", "gadget") },
+            Metadata = new Dictionary<string, object?>(),
+        };
+
+        model.TryGetTableFromDbName(PhantomTable, out _).Should().BeFalse();
+        model.TryGetTableFromDbName("dbo", PhantomTable, out _).Should().BeFalse();
+        model.TryGetTableByFullGraphQlName(PhantomTable, out _).Should().BeFalse();
+
+        model.TryGetTableFromDbName("widget", out var bare).Should().BeTrue();
+        bare!.DbName.Should().Be("widget");
+        model.TryGetTableByFullGraphQlName("sales_gadget", out var byFull).Should().BeTrue();
+        byFull!.TableSchema.Should().Be("sales");
+        model.TryGetTableByFullGraphQlName("gadget", out var byBareGraphQl).Should().BeTrue();
+        byBareGraphQl!.TableSchema.Should().Be("dbo", "the bare GraphQL name is the dbo table's own name");
+
+        // Ambiguous bare DbName: no positive resolve, and no exception carrying the name.
+        model.TryGetTableFromDbName("gadget", out var ambiguous).Should().BeFalse();
+        ambiguous.Should().BeNull();
+        model.TryGetTableFromDbName("sales", "gadget", out var qualified).Should().BeTrue();
+        qualified!.TableSchema.Should().Be("sales");
+    }
 }

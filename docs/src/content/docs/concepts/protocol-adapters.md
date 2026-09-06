@@ -13,7 +13,7 @@ Every security promise BifrostQL makes — tenant isolation, soft-delete invisib
 
 So the design forbids the situation outright. Four decisions, made once for the whole adapter surface, enforce it.
 
-## The four decisions
+## The five decisions
 
 ### 1. Adapters own the wire and the codec — nothing else
 
@@ -33,7 +33,26 @@ Every transport gate — the HTTP GraphQL middleware, the binary WebSocket middl
 
 Adapters must not invent their own claim mapping; identity arrives on the adapter's wire and is projected through the factory.
 
-### 4. Non-HTTP hosting goes through Kestrel connection handlers, and the contract has no `HttpContext`
+### 4. The admitted-session lifecycle is shared, not re-implemented per adapter
+
+A raw-wire front door owes two guarantees on a port an unauthenticated peer can reach: an
+admission slot counted at **accept** — ahead of any read, TLS handshake or credential lookup —
+and a **pre-auth deadline** that reclaims it from a peer that never authenticates. They are one
+rule, not two: a slot taken at accept is only reclaimable by a deadline, and a silent socket
+costs the peer nothing.
+
+`ProtocolSessionHost` owns that lifecycle — acquire, arm, run, release — and
+`ProtocolPreAuthDeadline` owns the rule itself. Only a *credentialed* action retires the
+deadline; every free action (an anonymous bind, an unauthenticated ping, StartTLS, version
+negotiation, a cancel request) leaves an armed deadline exactly where it is, because none of
+them is rate limited and none proves who sent it. A deadline any of them could move is
+renewable at will, which is the same as no deadline.
+
+pgwire, RESP and LDAP each carried their own copy of this on two different clock seams, and the
+copies drifted apart three times — each drift failing open. One home, one set of semantics, and
+a source scan that fails when a second appears.
+
+### 5. Non-HTTP hosting goes through Kestrel connection handlers, and the contract has no `HttpContext`
 
 Adapters are hosted as `IHostedService` instances (one wrapper per adapter): the host starts them during startup and stops them during graceful shutdown, and a `StartAsync` failure **aborts host startup** — a bind error never produces a host that looks healthy while its front door is dead. Raw TCP protocols bind their port through Kestrel's connection middleware (`ListenAnyIP(port, l => l.UseConnectionHandler<T>())`) rather than a hand-rolled `Socket` accept loop, so Kestrel owns accept, backpressure, and shutdown draining. And the adapter contract itself never sees an `HttpContext` — the intent APIs take plain data plus a user context, which keeps the seam honest for protocols where no HTTP request exists.
 

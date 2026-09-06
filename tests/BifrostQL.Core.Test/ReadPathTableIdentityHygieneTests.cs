@@ -1,33 +1,26 @@
-// Hygiene guard for finding M11: the read path used to resolve tables by a BARE
-// DbName (`dbModel.GetTableFromDbName(TableName)` in GqlObjectQuery and TableFilter).
-// DbModel rejects an ambiguous bare name, so a model carrying `sales.orders` AND
-// `archive.orders` made every query, join, filter, aggregate and pivot on EITHER
-// table throw. Read-path table identity is now carried as `IDbTable` (TableFilter.Table,
-// GqlObjectQuery.DbTable, TableJoin.ConnectedTable.DbTable), so no schema is ever
-// re-derived from a name.
+// Hygiene guard for finding M11 (read path) and M11-w (write path): the read path
+// used to resolve tables by a BARE DbName (`dbModel.GetTableFromDbName(TableName)`
+// in GqlObjectQuery and TableFilter), and the write path did the same in
+// MutationIntentExecutor and the File*Resolvers. DbModel rejects an ambiguous bare
+// name, so a model carrying `sales.orders` AND `archive.orders` made every query,
+// join, filter, aggregate and pivot on EITHER table throw — and every intent/file
+// write to either table was refused. Read-path table identity is now carried as
+// `IDbTable` (TableFilter.Table, GqlObjectQuery.DbTable,
+// TableJoin.ConnectedTable.DbTable), and wire-facing entry points resolve a
+// client-supplied name ONCE via `TryGetTableFromClientName` (schema-qualified
+// resolves exactly; a bare name resolves only when unique).
 //
-// This scan fails if a bare-name lookup returns to the read path, and proves it is not
-// vacuous by requiring positive hits on the schema-qualified overload — zero hits
-// everywhere would also read as "zero offenders" if the pattern stopped matching real
-// code. It is anchored on the API name itself, which a copier cannot rename.
+// This scan fails if a bare-name lookup returns to ANY file under QueryModel/ or
+// Resolvers/ — no allowlist. It proves it is not vacuous by requiring positive
+// hits on the schema-qualified overload — zero hits everywhere would also read as
+// "zero offenders" if the pattern stopped matching real code. It is anchored on
+// the API name itself, which a copier cannot rename.
 using Xunit;
 
 namespace BifrostQL.Core.Test;
 
 public class ReadPathTableIdentityHygieneTests
 {
-    // Write/file entry points resolve a client-supplied table name ONCE at the wire
-    // boundary and thread the resolved IDbTable onward; they are the mutation path,
-    // not the read path M11 covers. Listed explicitly so re-adding a bare lookup to a
-    // READ file cannot hide behind a directory-wide exemption.
-    private static readonly string[] Allowlist =
-    [
-        "src/BifrostQL.Core/Resolvers/MutationIntentExecutor.cs",
-        "src/BifrostQL.Core/Resolvers/FileUploadResolver.cs",
-        "src/BifrostQL.Core/Resolvers/FileDownloadResolver.cs",
-        "src/BifrostQL.Core/Resolvers/FileDeleteResolver.cs",
-    ];
-
     [Fact]
     public void ReadPath_ResolvesNoTableByBareName_AndUsesTheSchemaQualifiedOverload()
     {
@@ -64,8 +57,6 @@ public class ReadPathTableIdentityHygieneTests
                         qualifiedHits++;
                         continue;
                     }
-                    if (Array.Exists(Allowlist, a => a == relative))
-                        continue;
                     var lineNo = code.AsSpan(0, at).Count('\n') + 1;
                     offenders.Add($"{relative}:{lineNo}: {lines[lineNo - 1].Trim()}");
                 }
@@ -76,8 +67,9 @@ public class ReadPathTableIdentityHygieneTests
             "Expected positive schema-qualified GetTableFromDbName(schema, name) hits on the read path; "
             + "the scan no longer matches real code and would pass vacuously.");
         Assert.True(offenders.Count == 0,
-            "Read-path table identity must be carried as IDbTable, never re-resolved from a bare DbName "
-            + "(ambiguous across schemas — finding M11). Thread the IDbTable, or use the schema-qualified "
+            "Table identity must be carried as IDbTable, never re-resolved from a bare DbName "
+            + "(ambiguous across schemas — findings M11/M11-w). Thread the IDbTable, resolve a "
+            + "client-supplied name via TryGetTableFromClientName, or use the schema-qualified "
             + "GetTableFromDbName(schema, name):\n" + string.Join("\n", offenders));
     }
 

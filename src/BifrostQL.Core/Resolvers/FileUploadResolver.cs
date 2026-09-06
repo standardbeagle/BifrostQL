@@ -44,11 +44,13 @@ namespace BifrostQL.Core.Resolvers
             if (fileContent == null || fileContent.Length == 0)
                 throw new BifrostExecutionError("File content is required");
 
-            // Resolve table and column. Positive resolve: the throwing lookup's
-            // message embeds the caller-supplied table name, which must never reach
-            // the wire (finding M31); the same rule drops the name from the
-            // column-miss message.
-            if (!model.TryGetTableFromDbName(tableName, out var table))
+            // Resolve table and column. Client-name rule (M11-w): schema-qualified
+            // resolves exactly, a bare name resolves only when unique across
+            // schemas; ambiguity and unknown are the same sanitized miss. Positive
+            // resolve: the throwing lookup's message embeds the caller-supplied
+            // table name, which must never reach the wire (finding M31); the same
+            // rule drops the name from the column-miss message.
+            if (!model.TryGetTableFromClientName(tableName, out var table))
                 throw BifrostErrorSink.LookupMiss(
                     "The requested table was not found.",
                     $"File upload table miss: '{tableName}'.",

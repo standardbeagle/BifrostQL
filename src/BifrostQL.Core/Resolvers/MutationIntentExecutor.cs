@@ -62,7 +62,12 @@ public sealed class MutationRestoreCapability
 /// </summary>
 public sealed class MutationIntent
 {
-    /// <summary>Database table name (e.g. <c>orders</c>); unknown tables fail fast.</summary>
+    /// <summary>
+    /// Database table name. A schema-qualified <c>schema.name</c> resolves exactly;
+    /// a bare name (e.g. <c>orders</c>) resolves only when unique across schemas —
+    /// an ambiguous or unknown name fails fast with the same sanitized error
+    /// (finding M11-w).
+    /// </summary>
     public required string Table { get; init; }
 
     public required MutationIntentAction Action { get; init; }
@@ -158,7 +163,10 @@ public sealed class MutationIntentResult
 /// </summary>
 public sealed class MutationBatchIntent
 {
-    /// <summary>Database table name (e.g. <c>orders</c>); unknown tables fail fast.</summary>
+    /// <summary>
+    /// Database table name. A schema-qualified <c>schema.name</c> resolves exactly;
+    /// a bare name resolves only when unique across schemas (finding M11-w).
+    /// </summary>
     public required string Table { get; init; }
 
     /// <summary>The actions, executed in order inside one transaction.</summary>
@@ -248,10 +256,12 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
 
         // Fail fast on a table outside the resolved endpoint's model (wrong
-        // endpoint, or a stale caller after a schema reset). Positive resolve:
-        // the throwing lookup's message embeds the caller-supplied name, which
-        // must never reach the wire (finding M31).
-        if (!model.TryGetTableFromDbName(intent.Table, out var table))
+        // endpoint, or a stale caller after a schema reset). Client-name rule
+        // (M11-w): schema-qualified resolves exactly, a bare name resolves only
+        // when unique across schemas; an ambiguous name and an unknown name are
+        // the SAME sanitized miss — the throwing lookup's message embeds the
+        // caller-supplied name, which must never reach the wire (finding M31).
+        if (!model.TryGetTableFromClientName(intent.Table, out var table))
             throw BifrostErrorSink.LookupMiss(
                 "The mutation intent names a table that is not part of the endpoint's model.",
                 $"Mutation intent table miss: '{intent.Table}' on endpoint '{intent.Endpoint}'.",
@@ -316,7 +326,7 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         var inputs = await IntentEndpointResolver.ResolveAsync(_endpoints, intent.Endpoint);
         var model = IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", intent.Endpoint);
         var connFactory = IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", intent.Endpoint);
-        if (!model.TryGetTableFromDbName(intent.Table, out var table))
+        if (!model.TryGetTableFromClientName(intent.Table, out var table))
             throw BifrostErrorSink.LookupMiss(
                 "The mutation intent names a table that is not part of the endpoint's model.",
                 $"Mutation batch intent table miss: '{intent.Table}' on endpoint '{intent.Endpoint}'.",

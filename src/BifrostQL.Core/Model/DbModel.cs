@@ -75,6 +75,24 @@ namespace BifrostQL.Core.Model
                 && string.Equals(t.TableSchema, schema, StringComparison.InvariantCultureIgnoreCase));
             return table is not null;
         }
+
+        /// <summary>
+        /// Resolves a CLIENT-SUPPLIED table name — the single rule every wire-facing
+        /// write/read entry point (mutation intents, file resolvers, protocol
+        /// adapters) applies: a schema-qualified <c>schema.name</c> resolves exactly;
+        /// a bare name resolves only when unique across schemas. An ambiguous or
+        /// unknown name returns false, and the caller maps BOTH onto the same
+        /// sanitized error via <c>BifrostErrorSink.LookupMiss</c>
+        /// (protocol-adapter-security invariant 3; finding M11-w).
+        /// </summary>
+        bool TryGetTableFromClientName(string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+        {
+            var dot = clientName.IndexOf('.');
+            if (dot > 0 && dot < clientName.Length - 1
+                && TryGetTableFromDbName(clientName[..dot], clientName[(dot + 1)..], out table))
+                return true;
+            return TryGetTableFromDbName(clientName, out table);
+        }
         IDictionary<string, object?> Metadata { get; init; }
         string? GetMetadataValue(string property);
         bool GetMetadataBool(string property, bool defaultValue);
@@ -245,6 +263,21 @@ namespace BifrostQL.Core.Model
 
         public bool TryGetTableFromDbName(string schema, string dbName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
             => _byDbName.Value.ByQualified.TryGetValue(QualifiedDbNameKey(schema, dbName), out table);
+
+        public bool TryGetTableFromClientName(string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+        {
+            var index = _byDbName.Value;
+            var dot = clientName.IndexOf('.');
+            if (dot > 0 && dot < clientName.Length - 1
+                && index.ByQualified.TryGetValue(QualifiedDbNameKey(clientName[..dot], clientName[(dot + 1)..]), out table))
+                return true;
+            if (index.Ambiguous.Contains(clientName))
+            {
+                table = null;
+                return false;
+            }
+            return index.ByBare.TryGetValue(clientName, out table);
+        }
 
         /// <summary>
         /// Collects EAV configurations from table metadata using the collector pattern.

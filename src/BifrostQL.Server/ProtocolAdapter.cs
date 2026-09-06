@@ -72,4 +72,61 @@ namespace BifrostQL.Server
 
         public Task StopAsync(CancellationToken cancellationToken) => _adapter.StopAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// The ONE fail-closed identity projection every raw-wire front door (pgwire, RESP, LDAP)
+    /// uses. A verified credential proves only that the caller holds the secret; it does not by
+    /// itself grant a Bifrost identity. The candidate principal the adapter's credential store
+    /// returned is projected through the shared <see cref="IBifrostAuthContextFactory"/> — the
+    /// same seam every HTTP and binary gate uses — and the login is refused unless that yields a
+    /// NON-EMPTY user context.
+    ///
+    /// <para>An empty user context is not a refusal: it only gates tables that DECLARE tenant
+    /// metadata, so every other table stays readable by a caller with no identity
+    /// (protocol-adapter-security invariant 12). Both failure arms — a projection that throws
+    /// (subject-less principal, unmapped OIDC issuer) and one that yields nothing — therefore
+    /// return false and an EMPTY out-parameter the caller must not use, never a degraded
+    /// anonymous session.</para>
+    ///
+    /// <para>One copy, deliberately: pgwire, RESP and LDAP each carried their own, and three
+    /// copies of one fail-closed decision is three places for it to drift OPEN.</para>
+    /// </summary>
+    internal static class AdapterIdentityProjection
+    {
+        /// <param name="adapter">Front-door name for the server-side log line only; it never
+        /// reaches a client wire.</param>
+        public static bool TryProject(
+            IBifrostAuthContextFactory authFactory,
+            IServiceProvider services,
+            System.Security.Claims.ClaimsPrincipal principal,
+            Microsoft.Extensions.Logging.ILogger logger,
+            string adapter,
+            out IDictionary<string, object?> userContext)
+        {
+            userContext = new Dictionary<string, object?>();
+            try
+            {
+                var carrier = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    RequestServices = services,
+                    User = principal,
+                };
+                var projected = authFactory.CreateUserContext(carrier);
+                if (projected.Count == 0)
+                {
+                    Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(
+                        logger, "{Adapter} login projected to an empty user context; rejecting.", adapter);
+                    return false;
+                }
+                userContext = projected;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(
+                    logger, ex, "{Adapter} identity projection failed; rejecting login.", adapter);
+                return false;
+            }
+        }
+    }
 }

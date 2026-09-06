@@ -23,6 +23,18 @@ a future regression to the old code stays green.
   the revert experiment. Do not trust a green suite or a plausible-looking
   assertion. If a CHANGED assertion is claimed as a correction, revert-prove it
   is a genuine correction and not a test weakened to fit the fix.
+- **Discovery: a finding INFERRED from a sibling's bug is a hypothesis until it
+  goes RED at the site it names.** M8's systemic observation named
+  `HistoryTableResolver` as carrying the same `SubFields` response-key trap, and
+  the slice ran as a bug fix against a defect that does not exist there —
+  GraphQL.NET merges same-response-key selections before the resolver, so loss
+  needs >=2 ALIASES *and* a reader folding by schema name (the pre-M8 aggregate's
+  `nodes[sub.Field.Name] = …`); the history resolver iterates `SubFields.Values`.
+  The tell is a task whose evidence section proves the trap at the SIBLING and
+  asserts "same trap here". Write that RED first; if it is green, refile as a
+  refactor (share the walk) and correct the over-broad sentence that produced the
+  inference, rather than shipping a refactor titled as a bug.
+  <!-- written_at: 2026-09-06T06:45:00Z  source_event: task:01M1QT7MGM129G7X6NNNMBFJNC, git:1e7b924f -->
 
 ## Why fixtures go vacuous
 

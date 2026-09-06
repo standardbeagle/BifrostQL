@@ -109,7 +109,7 @@ var query = new GqlObjectQuery
 foreach (var column in request.Columns)
     query.ScalarColumns.Add(new GqlObjectColumn(column));
 if (request.Filter is not null)
-    query.Filter = TableFilter.FromObject(request.Filter, table.DbName);
+    query.Filter = TableFilter.FromObject(request.Filter, table);
 
 var result = await _executor.ExecuteAsync(new QueryIntent
 {

@@ -162,7 +162,7 @@ public sealed class MyFilterTransformer : SingleColumnFilterTransformerBase
     
     protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
     {
-        return TableFilterFactory.Equals(table.DbName, columnName, value);
+        return TableFilterFactory.Equals(table, columnName, value);
     }
 }
 ```
@@ -455,7 +455,7 @@ public sealed class MyFilterTransformer : SingleColumnFilterTransformerBase
     protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
     {
         var value = context.UserContext.GetValueOrDefault("my_value");
-        return TableFilterFactory.Equals(table.DbName, columnName, value);
+        return TableFilterFactory.Equals(table, columnName, value);
     }
 }
 ```
@@ -582,7 +582,7 @@ new ColumnDto
 var filter = TableFilter.FromObject(new Dictionary<string, object?>
 {
     { "Status", new Dictionary<string, object?> { { "_eq", "active" } } }
-}, "MyTable");
+}, myTable);   // myTable is the IDbTable, e.g. dbModel.GetTableFromDbName(schema, "MyTable")
 ```
 
 ### Registering a Transformer

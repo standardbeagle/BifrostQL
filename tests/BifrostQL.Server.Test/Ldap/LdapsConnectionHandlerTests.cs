@@ -117,7 +117,7 @@ namespace BifrostQL.Server.Test.Ldap
             };
             var store = new RecordingStore();
             var authenticator = new LdapBindAuthenticator(store, new Hasher(), new Factory(), options);
-            var limiter = new LdapBoundedCounter(options.MaxConnections, "MaxConnections");
+            var limiter = new LdapConnectionLimiter(options.MaxConnections);
             var tls = LdapTlsProvider.Create(options)!;
             var session = new LdapConnectionHandler(options, limiter, authenticator, tls);
             var handler = new LdapsConnectionHandler(options, limiter, tls, session);

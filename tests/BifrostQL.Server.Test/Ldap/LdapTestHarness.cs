@@ -434,7 +434,7 @@ namespace BifrostQL.Server.Test.Ldap
         /// </summary>
         public static async Task<LdapFixture> StartAsync(
             LdapWireOptions? options = null,
-            LdapBoundedCounter? connectionLimiter = null,
+            LdapConnectionLimiter? connectionLimiter = null,
             LdapBindAuthenticator? authenticator = null,
             LdapConnectionHandler? handler = null,
             bool tls = false,

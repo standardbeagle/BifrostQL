@@ -147,7 +147,7 @@ namespace BifrostQL.Server.Test.Ldap
         public async Task Connection_OverTheConnectionCap_IsRefused()
         {
             // Arrange: a shared limiter already at its ceiling of 1 (one slot pre-taken elsewhere).
-            var limiter = new LdapBoundedCounter(1, "MaxConnections");
+            var limiter = new LdapConnectionLimiter(1);
             limiter.TryAcquire().Should().BeTrue();
 
             await using var fixture = await LdapFixture.StartAsync(connectionLimiter: limiter);

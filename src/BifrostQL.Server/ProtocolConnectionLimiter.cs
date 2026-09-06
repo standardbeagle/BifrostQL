@@ -1,8 +1,9 @@
 namespace BifrostQL.Server
 {
     /// <summary>
-    /// Lock-free admission counter capping the concurrent connections of one protocol-adapter
-    /// listener. A single shared instance is consulted by every connection of that front door:
+    /// Lock-free admission counter capping a protocol front door's countable resource — normally
+    /// its concurrent connections, and for LDAP also the in-flight operations of one connection.
+    /// A single shared instance is consulted by every caller contending for that resource:
     /// <see cref="TryAcquire"/> reserves a slot with an optimistic compare-and-swap (no lock in the
     /// accept hot path), and <see cref="Release"/> — always called from the connection's
     /// <c>finally</c> — returns it. Over the limit, admission fails cleanly (the caller answers its
@@ -25,12 +26,12 @@ namespace BifrostQL.Server
         private readonly int _max;
         private int _current;
 
-        protected ProtocolConnectionLimiter(int maxConnections)
+        protected ProtocolConnectionLimiter(int max)
         {
-            if (maxConnections < 1)
-                throw new ArgumentOutOfRangeException(nameof(maxConnections),
-                    "A protocol listener's MaxConnections must be at least 1.");
-            _max = maxConnections;
+            if (max < 1)
+                throw new ArgumentOutOfRangeException(nameof(max),
+                    "A protocol listener's admission cap must be at least 1.");
+            _max = max;
         }
 
         /// <summary>Current number of admitted connections (for diagnostics/tests).</summary>
@@ -74,6 +75,17 @@ namespace BifrostQL.Server
     internal sealed class LdapConnectionLimiter : ProtocolConnectionLimiter
     {
         public LdapConnectionLimiter(int maxConnections) : base(maxConnections) { }
+    }
+
+    /// <summary>
+    /// Per-connection cap on an LDAP session's simultaneously-outstanding operations
+    /// (<c>LdapWireOptions.MaxOutstandingOperations</c>) — the same admission mechanism as the
+    /// connection counter, one scope down: a fresh instance is created for each admitted session,
+    /// so one peer's pipelining cannot consume another session's budget.
+    /// </summary>
+    internal sealed class LdapOutstandingOperationLimiter : ProtocolConnectionLimiter
+    {
+        public LdapOutstandingOperationLimiter(int maxOutstandingOperations) : base(maxOutstandingOperations) { }
     }
 
     /// <summary>Admission counter for the RESP listener (<c>RespWireOptions.MaxConnections</c>).</summary>

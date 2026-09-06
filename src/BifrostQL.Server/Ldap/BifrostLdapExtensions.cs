@@ -45,7 +45,7 @@ namespace BifrostQL.Server.Ldap
 
             // One process-wide connection limiter shared across every connection — BOTH listeners, so
             // MaxConnections stays this front door's TOTAL ceiling rather than doubling per open port.
-            services.TryAddSingleton(new LdapBoundedCounter(options.MaxConnections, "MaxConnections"));
+            services.TryAddSingleton(new LdapConnectionLimiter(options.MaxConnections));
 
             // The simple-bind authenticator exists ONLY when a deployment has registered BOTH
             // required seams — an ILdapCredentialStore (resolve DN -> hash) and an ILdapPasswordHasher
@@ -83,7 +83,7 @@ namespace BifrostQL.Server.Ldap
 
                 return new LdapConnectionHandler(
                     options,
-                    sp.GetRequiredService<LdapBoundedCounter>(),
+                    sp.GetRequiredService<LdapConnectionLimiter>(),
                     authenticator,
                     sp.GetService<LdapTlsProvider>(),
                     search,
@@ -95,7 +95,7 @@ namespace BifrostQL.Server.Ldap
             if (tls is not null && options.LdapsPort is not null)
                 services.TryAddSingleton(sp => new LdapsConnectionHandler(
                     options,
-                    sp.GetRequiredService<LdapBoundedCounter>(),
+                    sp.GetRequiredService<LdapConnectionLimiter>(),
                     tls,
                     sp.GetRequiredService<LdapConnectionHandler>(),
                     sp.GetService<ILogger<LdapsConnectionHandler>>()));

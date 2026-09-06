@@ -28,14 +28,14 @@ namespace BifrostQL.Server.Ldap
     internal sealed class LdapsConnectionHandler : ConnectionHandler
     {
         private readonly LdapWireOptions _options;
-        private readonly LdapBoundedCounter _connections;
+        private readonly LdapConnectionLimiter _connections;
         private readonly LdapTlsProvider _tls;
         private readonly LdapConnectionHandler _session;
         private readonly ILogger<LdapsConnectionHandler> _logger;
 
         public LdapsConnectionHandler(
             LdapWireOptions options,
-            LdapBoundedCounter connections,
+            LdapConnectionLimiter connections,
             LdapTlsProvider tls,
             LdapConnectionHandler session,
             ILogger<LdapsConnectionHandler>? logger = null)

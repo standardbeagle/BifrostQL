@@ -38,7 +38,7 @@ namespace BifrostQL.Server.Ldap
     internal sealed class LdapConnectionHandler : ConnectionHandler
     {
         private readonly LdapWireOptions _options;
-        private readonly LdapBoundedCounter _connections;
+        private readonly LdapConnectionLimiter _connections;
         private readonly LdapBindAuthenticator? _authenticator;
         private readonly LdapTlsProvider? _tls;
         private readonly LdapSearchExecutor? _search;
@@ -47,7 +47,7 @@ namespace BifrostQL.Server.Ldap
 
         public LdapConnectionHandler(
             LdapWireOptions options,
-            LdapBoundedCounter? connectionLimiter = null,
+            LdapConnectionLimiter? connectionLimiter = null,
             LdapBindAuthenticator? authenticator = null,
             LdapTlsProvider? tls = null,
             LdapSearchExecutor? search = null,
@@ -55,7 +55,7 @@ namespace BifrostQL.Server.Ldap
             Func<DateTimeOffset>? clock = null)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
-            _connections = connectionLimiter ?? new LdapBoundedCounter(options.MaxConnections, "MaxConnections");
+            _connections = connectionLimiter ?? new LdapConnectionLimiter(options.MaxConnections);
             _authenticator = authenticator;
             _tls = tls;
             _search = search;
@@ -112,7 +112,7 @@ namespace BifrostQL.Server.Ldap
         /// </summary>
         internal async Task RunSessionAsync(Stream stream, CancellationToken ct, string source, bool tlsEstablished)
         {
-            var outstanding = new LdapBoundedCounter(_options.MaxOutstandingOperations, "MaxOutstandingOperations");
+            var outstanding = new LdapOutstandingOperationLimiter(_options.MaxOutstandingOperations);
             // Read through a buffer so the framing reader costs one socket read per burst instead of
             // one per byte — and so anything the peer PIPELINED behind the current message is visible
             // to this process rather than sitting unseen in the kernel (see LdapBufferedStream).

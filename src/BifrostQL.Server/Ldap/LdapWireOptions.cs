@@ -57,7 +57,7 @@ namespace BifrostQL.Server.Ldap
         /// Maximum number of concurrent connections across the whole front door — BOTH the cleartext
         /// and LDAPS listeners, so opening the second port does not double the ceiling. The N+1th
         /// connection is refused cleanly and closed — never left to crash or hang — enforced
-        /// lock-free by <see cref="LdapBoundedCounter"/>. Default 100, matching the pgwire and RESP
+        /// lock-free by <see cref="LdapConnectionLimiter"/>. Default 100, matching the pgwire and RESP
         /// listeners: these caps bound what an unauthenticated peer can make the host hold, so they
         /// are set per front door, not per protocol's taste.
         /// </summary>

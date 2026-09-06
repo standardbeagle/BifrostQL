@@ -140,7 +140,7 @@ namespace BifrostQL.Server.Test.Ldap
             using var provider = services.BuildServiceProvider();
 
             provider.GetService<LdapsConnectionHandler>().Should().NotBeNull();
-            services.Count(d => d.ServiceType == typeof(LdapBoundedCounter)).Should().Be(1,
+            services.Count(d => d.ServiceType == typeof(LdapConnectionLimiter)).Should().Be(1,
                 "both listeners draw on ONE counter, so opening LDAPS does not double MaxConnections");
         }
 

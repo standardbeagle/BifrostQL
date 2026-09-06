@@ -1,5 +1,6 @@
 using BifrostQL.Server.Pgwire;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Pgwire
@@ -53,12 +54,16 @@ namespace BifrostQL.Server.Test.Pgwire
         [Fact]
         public async Task StalledPreAuthConnection_IsDroppedByTheHandshakeDeadline_AndReleasesItsSlot()
         {
-            var now = DateTimeOffset.UtcNow;
+            // The deadline is driven by an injected clock, never by the host's wall clock: the
+            // timeout is far longer than the harness's 5 s wait, so only advancing the fake
+            // provider can drop the staller. A handler that fell back to the system clock would
+            // keep the slot and fail the wait below (revert-proven RED).
+            var clock = new FakeTimeProvider();
             await using var harness = new PgWireTestHarness(
                 PgWireTestHarness.UsersExecutor(NoRows(), out _),
                 maxConnections: 1,
-                handshakeTimeout: TimeSpan.FromMilliseconds(400),
-                clock: () => now);
+                handshakeTimeout: TimeSpan.FromMinutes(10),
+                timeProvider: clock);
 
             // A peer that connects and then says NOTHING. With the slot reserved at accept and no
             // deadline, this single silent socket would own the front door's only slot forever —
@@ -66,10 +71,10 @@ namespace BifrostQL.Server.Test.Pgwire
             var staller = await harness.ConnectAsync();
             await harness.WaitForConnectionCountAsync(1);
 
-            now += TimeSpan.FromSeconds(1);
-
-            // The handshake deadline drops it and the finally releases the slot.
-            await harness.WaitForConnectionCountAsync(0);
+            // The handshake deadline drops it and the finally releases the slot. The clock is
+            // advanced per poll: the slot is reserved at accept, ahead of the timer being armed.
+            await harness.WaitForConnectionCountAsync(0,
+                beforeEachPoll: () => clock.Advance(TimeSpan.FromMinutes(11)));
 
             // ...so a legitimate client can connect and reach a ready session.
             var revived = await harness.OpenSessionAsync();

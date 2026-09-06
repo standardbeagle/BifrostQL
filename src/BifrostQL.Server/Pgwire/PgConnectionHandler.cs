@@ -39,7 +39,7 @@ namespace BifrostQL.Server.Pgwire
         private readonly PgAuthRateLimiter _authRateLimiter;
         private readonly ILogger<PgConnectionHandler> _logger;
         private readonly Func<Stream, CancellationToken, Task<Stream>> _tlsUpgrade;
-        private readonly Func<DateTimeOffset> _clock;
+        private readonly TimeProvider _timeProvider;
 
         public PgConnectionHandler(
             IPgCredentialStore credentials,
@@ -51,7 +51,7 @@ namespace BifrostQL.Server.Pgwire
             ILogger<PgConnectionHandler>? logger = null,
             Func<Stream, CancellationToken, Task<Stream>>? tlsUpgrade = null,
             PgAuthRateLimiter? authRateLimiter = null,
-            Func<DateTimeOffset>? clock = null)
+            TimeProvider? timeProvider = null)
         {
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
@@ -65,7 +65,10 @@ namespace BifrostQL.Server.Pgwire
             // Test seam: wraps the real TLS upgrade so a test can observe the upgraded stream's
             // disposal. Production always uses the default SslStream upgrade.
             _tlsUpgrade = tlsUpgrade ?? UpgradeToTlsAsync;
-            _clock = clock ?? (() => DateTimeOffset.UtcNow);
+            // Drives the pre-auth deadline timer. Production uses the system clock; a test
+            // injects a fake provider and advances it, so the deadline fact never waits on
+            // (or races) the host's wall clock.
+            _timeProvider = timeProvider ?? TimeProvider.System;
             _authRateLimiter = authRateLimiter
                 ?? new PgAuthRateLimiter(options.MaxAuthAttemptsPerSource, options.AuthRateLimitWindow);
         }
@@ -115,8 +118,10 @@ namespace BifrostQL.Server.Pgwire
                 // sockets would otherwise be a complete denial of service needing no credentials
                 // and no bytes. Expiry cancels the in-flight read, which surfaces as
                 // OperationCanceledException and is absorbed by the lifecycle catch below.
-                using var handshakeDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                _ = CancelAtAsync(handshakeDeadline, _clock, _options.HandshakeTimeout);
+                // The timer is owned by its own source and disposed with the session, so a
+                // connection that ends early leaves no orphaned timer and no late fire.
+                using var handshakeTimer = new CancellationTokenSource(_options.HandshakeTimeout, _timeProvider);
+                using var handshakeDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, handshakeTimer.Token);
                 var handshakeToken = handshakeDeadline.Token;
 
                 var (stream, startup, negotiatedTls) = await NegotiateStartupAsync(rawStream, handshakeToken);
@@ -234,25 +239,6 @@ namespace BifrostQL.Server.Pgwire
                 // the session. The raw stream itself is owned by the caller and left alone.
                 if (sessionStream is not null && !ReferenceEquals(sessionStream, rawStream))
                     sessionStream.Dispose();
-            }
-        }
-
-        private static async Task CancelAtAsync(
-            CancellationTokenSource cancellation,
-            Func<DateTimeOffset> clock,
-            TimeSpan timeout)
-        {
-            var deadline = clock() + timeout;
-            while (!cancellation.IsCancellationRequested)
-            {
-                var remaining = deadline - clock();
-                if (remaining <= TimeSpan.Zero)
-                {
-                    cancellation.Cancel();
-                    return;
-                }
-
-                await Task.Delay(remaining).ConfigureAwait(false);
             }
         }
 

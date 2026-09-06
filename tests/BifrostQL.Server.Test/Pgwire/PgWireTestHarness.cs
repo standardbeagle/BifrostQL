@@ -43,7 +43,7 @@ namespace BifrostQL.Server.Test.Pgwire
             int maxPortals = 200,
             TimeSpan? handshakeTimeout = null,
             bool allowCleartextWithoutTls = true,
-            Func<DateTimeOffset>? clock = null)
+            TimeProvider? timeProvider = null)
         {
             var options = new PgWireOptions
             {
@@ -68,7 +68,7 @@ namespace BifrostQL.Server.Test.Pgwire
                 .BuildServiceProvider();
 
             _handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, services, options, Registry, Limiter,
-                clock: clock);
+                timeProvider: timeProvider);
 
             _listener = new TcpListener(IPAddress.Loopback, 0);
             _listener.Start();
@@ -112,12 +112,21 @@ namespace BifrostQL.Server.Test.Pgwire
             return handle;
         }
 
-        /// <summary>Polls the admission counter until it reaches <paramref name="expected"/> or times out.</summary>
-        public async Task WaitForConnectionCountAsync(int expected)
+        /// <summary>
+        /// Polls the admission counter until it reaches <paramref name="expected"/> or times out.
+        /// <paramref name="beforeEachPoll"/> runs ahead of every check — a deadline fact uses it to
+        /// advance its fake clock, because the slot is taken at accept BEFORE the handshake timer
+        /// is armed, so a single advance can land before the timer exists and never fire it.
+        /// </summary>
+        public async Task WaitForConnectionCountAsync(int expected, Action? beforeEachPoll = null)
         {
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            beforeEachPoll?.Invoke();
             while (Limiter.Count != expected && DateTime.UtcNow < deadline)
+            {
                 await Task.Delay(20);
+                beforeEachPoll?.Invoke();
+            }
             Limiter.Count.Should().Be(expected);
         }
 

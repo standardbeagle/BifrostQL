@@ -77,6 +77,15 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
         // Unique to one schema: a BARE name must keep resolving (the rule narrows
         // ambiguity, not bare names in general).
         await Exec(_keepAlive, "CREATE TABLE sales.labels (id INTEGER PRIMARY KEY, label TEXT NOT NULL)");
+        // Ambiguous bare name whose sales-side table is policy-locked: a qualified
+        // name reaches a table the bare name could not, and the pipeline must still
+        // be the one that says no (invariant 7 corollary: resolution is not a gate).
+        await Exec(_keepAlive, "CREATE TABLE sales.locked (id INTEGER PRIMARY KEY, label TEXT NOT NULL)");
+        await Exec(_keepAlive, "CREATE TABLE archive.locked (id INTEGER PRIMARY KEY, label TEXT NOT NULL)");
+        // A DbName that itself contains a dot: the split is on the FIRST dot, so
+        // `sales.dot.ted` resolves exactly and bare `dot.ted` (no schema `dot`)
+        // falls through to the unique bare name — never to a different table.
+        await Exec(_keepAlive, "CREATE TABLE sales.\"dot.ted\" (id INTEGER PRIMARY KEY, label TEXT NOT NULL)");
 
         _model = new DbModel
         {
@@ -87,10 +96,14 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
                 Table("sales", "docs", ("id", "INTEGER", true), ("file_data", "TEXT", false)),
                 Table("archive", "docs", ("id", "INTEGER", true), ("file_data", "TEXT", false)),
                 Table("sales", "labels", ("id", "INTEGER", true), ("label", "TEXT", false)),
+                Table("sales", "locked", ("id", "INTEGER", true), ("label", "TEXT", false)),
+                Table("archive", "locked", ("id", "INTEGER", true), ("label", "TEXT", false)),
+                Table("sales", "dot.ted", ("id", "INTEGER", true), ("label", "TEXT", false)),
             },
         };
         foreach (var table in _model.Tables.Where(t => t.DbName == "docs"))
             table.ColumnLookup["file_data"].Metadata[MetadataKeys.Storage.Config] = "provider:recording;bucket:bucket";
+        _model.GetTableFromDbName("sales", "locked").Metadata[MetadataKeys.Policy.Actions] = "read";
 
         _storage = new RecordingStorageProvider("recording");
         var providerFactory = new StorageProviderFactory();
@@ -135,7 +148,8 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
         {
             TableSchema = schema,
             DbName = name,
-            GraphQlName = $"{schema}_{name}",
+            // The loader sanitizes GraphQL names; DbName keeps the raw identifier.
+            GraphQlName = $"{schema}_{name.Replace('.', '_')}",
             NormalizedName = name,
             TableType = "BASE TABLE",
             ColumnLookup = columns.ToDictionary(c => c.DbName),
@@ -143,7 +157,7 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
         };
     }
 
-    private MutationIntentExecutor BuildExecutor()
+    private MutationIntentExecutor BuildExecutor(params IMutationTransformer[] transformers)
     {
         var pathCache = new PathCache<Inputs>();
         var model = _model;
@@ -155,7 +169,7 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
         })));
         return new MutationIntentExecutor(pathCache, new MutationTransformersWrap
         {
-            Transformers = Array.Empty<IMutationTransformer>(),
+            Transformers = transformers,
         });
     }
 
@@ -270,6 +284,29 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A dotted DbName is split on the FIRST dot only: `sales.dot.ted` resolves
+    /// exactly, and bare `dot.ted` cannot match a qualified key (no schema `dot`),
+    /// so it falls through to the unique bare name. Both land on the same table.
+    /// </summary>
+    [Theory]
+    [InlineData("sales.dot.ted", 1L)]
+    [InlineData("dot.ted", 2L)]
+    public async Task DottedDbName_QualifiedAndBare_BothReachTheSameTable(string clientName, long id)
+    {
+        var executor = BuildExecutor();
+
+        await executor.ExecuteAsync(new MutationIntent
+        {
+            Table = clientName,
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["id"] = id, ["label"] = clientName },
+            Endpoint = EndpointPath,
+        });
+
+        (await Scalar($"SELECT label FROM sales.\"dot.ted\" WHERE id = {id}")).Should().Be(clientName);
+    }
+
+    /// <summary>
     /// Invariant 3/9: an ambiguous bare name and an unknown name are the SAME
     /// client-facing condition — byte-identical sanitized wire text, and the
     /// caller-supplied name never appears in it (the detail with the name stays
@@ -296,6 +333,60 @@ public sealed class WritePathTableIdentityTests : IAsyncLifetime
         unknown.Message.Should().Be(ambiguous.Message,
             "unknown and ambiguous are one wire condition (invariant 3)");
         ambiguous.Message.Should().NotContain("orders").And.NotContain("sales").And.NotContain("archive");
+    }
+
+    /// <summary>
+    /// Invariant 7 corollary: <c>TryGetTableFromClientName</c> is a lookup, not a
+    /// visibility gate. A qualified name reaches a policy-locked table the bare
+    /// name could not, and the PIPELINE still refuses it with its own
+    /// access-denied signal and writes nothing.
+    /// </summary>
+    [Fact]
+    public async Task PolicyDeniedWrite_QualifiedName_IsRefusedByThePipeline()
+    {
+        var executor = BuildExecutor(new PolicyMutationTransformer());
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "sales.locked",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["id"] = 1L, ["label"] = "denied" },
+            Endpoint = EndpointPath,
+        });
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*Access denied by authorization policy*"))
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+        (await Scalar("SELECT COUNT(*) FROM sales.locked")).Should().Be(0L);
+    }
+
+    /// <summary>
+    /// Invariant 9 symmetry: each file op class answers an ambiguous bare name and
+    /// an unknown name with byte-identical wire text carrying no table name.
+    /// </summary>
+    [Theory]
+    [InlineData("upload")]
+    [InlineData("download")]
+    [InlineData("delete")]
+    public async Task FileResolvers_AmbiguousBareName_AndUnknownName_ProduceByteIdenticalWireError(string op)
+    {
+        var extra = new Dictionary<string, object?>
+        {
+            ["file"] = System.Text.Encoding.UTF8.GetBytes("hello"),
+            ["filename"] = "note.txt",
+            ["contentType"] = "text/plain",
+        };
+        Func<string, Task<object?>> resolve = op switch
+        {
+            "upload" => t => new FileUploadResolver(_storageService).ResolveAsync(FileContext(t, "1", extra)).AsTask(),
+            "download" => t => new FileDownloadResolver(_storageService).ResolveAsync(FileContext(t, "1")).AsTask(),
+            _ => t => new FileDeleteResolver(_storageService).ResolveAsync(FileContext(t, "1")).AsTask(),
+        };
+
+        var ambiguous = await Assert.ThrowsAsync<BifrostExecutionError>(() => resolve("docs"));
+        var unknown = await Assert.ThrowsAsync<BifrostExecutionError>(() => resolve("no_such_table"));
+
+        unknown.Message.Should().Be(ambiguous.Message);
+        ambiguous.Message.Should().NotContain("docs").And.NotContain("sales").And.NotContain("archive");
     }
 
     // ---- File*Resolvers: upload / delete ------------------------------------

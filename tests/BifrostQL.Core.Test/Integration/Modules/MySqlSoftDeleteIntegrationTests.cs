@@ -50,7 +50,7 @@ public class MySqlSoftDeleteIntegrationTests
         var table = model.GetTableFromDbName("Users");
 
         var service = CreateTransformerService(new SoftDeleteFilterTransformer());
-        var userFilter = TableFilterFactory.Equals("Users", "Name", "Alice");
+        var userFilter = TableFilterFactory.Equals(table, "Name", "Alice");
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(table)
             .WithColumns("Id", "Name")
@@ -199,7 +199,7 @@ public class MySqlSoftDeleteIntegrationTests
         var table = model.GetTableFromDbName("Users");
 
         var service = CreateTransformerService(new SoftDeleteFilterTransformer());
-        var userFilter = TableFilterFactory.Equals("Users", "Name", "Test");
+        var userFilter = TableFilterFactory.Equals(table, "Name", "Test");
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(table)
             .WithColumns("Id", "Name")

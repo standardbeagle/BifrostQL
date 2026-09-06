@@ -172,7 +172,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (!RowScopeApplies(policy, identity))
             return null;
 
-        return RowScopeCompiler.Compile(policy.RowScopeExpression, table.DbName, context.UserContext);
+        return RowScopeCompiler.Compile(policy.RowScopeExpression, table, context.UserContext);
     }
 
     private static PolicyAction ToPolicyAction(MutationType mutationType) => mutationType switch

@@ -121,10 +121,10 @@ public sealed class AutoFilterTransformer : IFilterTransformer, IModuleNamed
                     $"for column '{mapping.Column}' on table '{fullTableName}'.")
                 { ErrorCode = BifrostExecutionError.AccessDeniedCode };
             }
-            return TableFilterFactory.In(table.DbName, mapping.Column, values);
+            return TableFilterFactory.In(table, mapping.Column, values);
         }
 
-        return TableFilterFactory.Equals(table.DbName, mapping.Column, claimValue);
+        return TableFilterFactory.Equals(table, mapping.Column, claimValue);
     }
 
     private bool HasBypassRole(QueryTransformContext context)

@@ -122,7 +122,7 @@ namespace BifrostQL.Server.Test
                 query.ScalarColumns.Add(new GqlObjectColumn(column));
             if (request.Filter is not null)
                 query.Filter = TableFilter.FromObject(
-                    request.Filter.ToDictionary(kv => kv.Key, kv => kv.Value), table.DbName);
+                    request.Filter.ToDictionary(kv => kv.Key, kv => kv.Value), table);
 
             var result = await _executor.ExecuteAsync(new QueryIntent
             {

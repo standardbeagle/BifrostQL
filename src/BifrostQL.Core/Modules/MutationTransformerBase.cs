@@ -142,7 +142,7 @@ public abstract class SoftDeleteMutationTransformerBase : MetadataMutationTransf
             return PassThrough(mutationType, data);
 
         // For both UPDATE and DELETE, ensure we only affect non-deleted records
-        var softDeleteFilter = TableFilterFactory.IsNull(table.DbName, columnName);
+        var softDeleteFilter = TableFilterFactory.IsNull(table, columnName);
 
         if (mutationType == MutationType.Delete)
         {

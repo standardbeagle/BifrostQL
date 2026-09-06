@@ -382,13 +382,13 @@ namespace BifrostQL.Core.QueryModel
             var pkArg = arguments.FirstOrDefault(a => a is { Name: "_primaryKey", Value: not null });
 
             TableFilter? filterResult = filterArg != null
-                ? TableFilter.FromObject(filterArg.Value, dbTable.DbName)
+                ? TableFilter.FromObject(filterArg.Value, dbTable)
                 : null;
 
             TableFilter? pkResult = null;
             if (pkArg?.Value is IEnumerable<object?> pkValues)
             {
-                pkResult = TableFilter.FromPrimaryKey(pkValues, dbTable.KeyColumns, dbTable.DbName);
+                pkResult = TableFilter.FromPrimaryKey(pkValues, dbTable.KeyColumns, dbTable);
             }
 
             if (filterResult != null && pkResult != null)

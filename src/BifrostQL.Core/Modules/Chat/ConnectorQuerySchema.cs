@@ -233,7 +233,7 @@ namespace BifrostQL.Core.Modules.Chat
         internal static TableFilter FilterLeaf(IDbTable table, ColumnDto column, string op, JsonElement value) =>
             new()
             {
-                TableName = table.DbName,
+                Table = table,
                 ColumnName = column.GraphQlName,
                 FilterType = FilterType.Join,
                 Next = new TableFilter

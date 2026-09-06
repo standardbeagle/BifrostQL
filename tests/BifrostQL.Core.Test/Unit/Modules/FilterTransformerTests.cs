@@ -354,7 +354,7 @@ public class FilterTransformerTests
         var service = new QueryTransformerService(transformers);
 
         // Existing filter: Status = 'Active'
-        var existingFilter = TableFilterFactory.Equals("Orders", "Status", "Active");
+        var existingFilter = TableFilterFactory.Equals(model.GetTableFromDbName("Orders"), "Status", "Active");
 
         var query = new GqlObjectQuery
         {

@@ -591,7 +591,7 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
             {
                 MutationType = mutationType,
                 Data = data,
-                AdditionalFilter = TableFilterFactory.Equals(table.DbName, "tenant_id", -1),
+                AdditionalFilter = TableFilterFactory.Equals(table, "tenant_id", -1),
             });
     }
 

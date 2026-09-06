@@ -1,5 +1,7 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.QueryModel.TestFixtures;
 using FluentAssertions;
 using Xunit;
 
@@ -12,8 +14,19 @@ namespace BifrostQL.Core.Test.Unit.QueryModel;
 /// </summary>
 public sealed class TableFilterCombineTests
 {
+    // A real model-derived table so each leaf carries a genuine identity.
+    private static readonly IDbModel Model = DbModelTestFixture.Create()
+        .WithTable("Orders", t => t
+            .WithColumn("id", "int", isPrimaryKey: true)
+            .WithColumn("tenant_id", "int")
+            .WithColumn("status", "nvarchar")
+            .WithColumn("a", "int")
+            .WithColumn("b", "int")
+            .WithColumn("c", "int"))
+        .Build();
+
     private static TableFilter Leaf(string column, object value) =>
-        TableFilterFactory.Equals("Orders", column, value);
+        TableFilterFactory.Equals(Model.GetTableFromDbName("Orders"), column, value);
 
     [Fact]
     public void CombineAnd_WrapsBothFiltersInAnAndNode()

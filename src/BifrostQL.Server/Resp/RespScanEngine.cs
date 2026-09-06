@@ -55,7 +55,7 @@ namespace BifrostQL.Server.Resp
             var keyColumns = table.KeyColumns.ToList();
             var query = BuildScanQuery(table, keyColumns);
             if (afterKey is not null)
-                query.Filter = BuildKeysetFilter(keyColumns, afterKey, table.DbName);
+                query.Filter = BuildKeysetFilter(keyColumns, afterKey, table);
             // Peek one past the page so the terminal page can report cursor 0 without a trailing empty round-trip.
             query.Limit = pageSize + 1;
 
@@ -108,14 +108,14 @@ namespace BifrostQL.Server.Resp
         /// any tenant/policy data (the pipeline ANDs that in independently).
         /// </summary>
         private static TableFilter BuildKeysetFilter(
-            IReadOnlyList<ColumnDto> keyColumns, IReadOnlyList<object?> afterValues, string tableName)
+            IReadOnlyList<ColumnDto> keyColumns, IReadOnlyList<object?> afterValues, IDbTable table)
         {
             static Dictionary<string, object?> Predicate(ColumnDto column, string op, object? value) =>
                 new() { [column.GraphQlName] = new Dictionary<string, object?> { [op] = value } };
 
             if (keyColumns.Count == 1)
                 return TableFilter.FromObject(
-                    Predicate(keyColumns[0], FilterOperators.Gt, afterValues[0]), tableName);
+                    Predicate(keyColumns[0], FilterOperators.Gt, afterValues[0]), table);
 
             var orTerms = new List<object?>(keyColumns.Count);
             for (var i = 0; i < keyColumns.Count; i++)
@@ -133,7 +133,7 @@ namespace BifrostQL.Server.Resp
                 orTerms.Add(new Dictionary<string, object?> { ["and"] = andParts });
             }
 
-            return TableFilter.FromObject(new Dictionary<string, object?> { ["or"] = orTerms }, tableName);
+            return TableFilter.FromObject(new Dictionary<string, object?> { ["or"] = orTerms }, table);
         }
 
         /// <summary>Formats a resolved row's PK as the Redis key <c>&lt;prefix&gt;:&lt;pk1&gt;[:&lt;pk2&gt;…]</c>,

@@ -52,7 +52,7 @@ namespace BifrostQL.Mcp
         /// pipeline as the backstop for a denied column at execution.
         /// </param>
         public static TableFilter CompileFilter(IDbTable table, JsonElement filter, ISet<string>? visibleColumnNames = null)
-            => TableFilter.FromObject(CompileFilterObject(table, filter, visibleColumnNames), table.DbName);
+            => TableFilter.FromObject(CompileFilterObject(table, filter, visibleColumnNames), table);
 
         private static Dictionary<string, object?> CompileFilterObject(
             IDbTable table, JsonElement element, ISet<string>? visibleColumnNames = null)

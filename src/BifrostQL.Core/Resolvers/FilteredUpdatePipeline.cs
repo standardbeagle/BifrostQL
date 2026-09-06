@@ -67,7 +67,7 @@ namespace BifrostQL.Core.Resolvers
                 if (IsPrimaryKeyColumn(table, name))
                     throw new BifrostExecutionError("Filtered update cannot set a primary-key column.");
 
-            var userFilter = whereArg is null ? null : TableFilter.FromObject(whereArg, table.DbName);
+            var userFilter = whereArg is null ? null : TableFilter.FromObject(whereArg, table);
             if (userFilter is null)
                 throw new BifrostExecutionError(
                     "Filtered update requires a non-empty 'where'. A whole-table update must be written as an explicit filter.");

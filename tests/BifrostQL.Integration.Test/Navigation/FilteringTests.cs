@@ -33,7 +33,7 @@ public abstract class FilteringTestBase<TDatabase> : IClassFixture<DatabaseFixtu
 
         if (filter != null)
         {
-            query.Filter = TableFilter.FromObject(filter, tableName);
+            query.Filter = TableFilter.FromObject(filter, table);
         }
 
         return query;

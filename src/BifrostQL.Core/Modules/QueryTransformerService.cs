@@ -342,7 +342,7 @@ public sealed class QueryTransformerService : IQueryTransformerService
         recordOriginal(table, column.DbName);
         return new TableFilter
         {
-            TableName = leaf.TableName,
+            Table = table,
             ColumnName = blindIndexColumn,
             FilterType = FilterType.Join,
             ServerDerived = true,

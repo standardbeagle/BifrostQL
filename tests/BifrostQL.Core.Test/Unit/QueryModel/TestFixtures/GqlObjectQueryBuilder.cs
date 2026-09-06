@@ -111,7 +111,8 @@ public sealed class GqlObjectQueryBuilder
 
     public GqlObjectQueryBuilder WithFilter(Action<TableFilterBuilder> configure)
     {
-        var builder = new TableFilterBuilder(_tableName);
+        var builder = new TableFilterBuilder(_dbTable
+            ?? throw new InvalidOperationException("WithDbTable must be called before WithFilter(Action<TableFilterBuilder>)."));
         configure(builder);
         _filter = builder.Build();
         return this;
@@ -248,17 +249,17 @@ public sealed class TableJoinBuilder
 /// </summary>
 public sealed class TableFilterBuilder
 {
-    private readonly string _tableName;
+    private readonly IDbTable _table;
     private readonly List<(string column, string op, object? value)> _conditions = new();
     private readonly List<TableFilter> _andFilters = new();
     private readonly List<TableFilter> _orFilters = new();
 
-    public TableFilterBuilder(string tableName)
+    public TableFilterBuilder(IDbTable table)
     {
-        _tableName = tableName;
+        _table = table;
     }
 
-    public static TableFilterBuilder ForTable(string tableName) => new(tableName);
+    public static TableFilterBuilder ForTable(IDbTable table) => new(table);
 
     public TableFilterBuilder Where(string column, string op, object? value)
     {
@@ -284,7 +285,7 @@ public sealed class TableFilterBuilder
 
     public TableFilterBuilder And(Action<TableFilterBuilder> configure)
     {
-        var builder = new TableFilterBuilder(_tableName);
+        var builder = new TableFilterBuilder(_table);
         configure(builder);
         _andFilters.Add(builder.Build());
         return this;
@@ -292,7 +293,7 @@ public sealed class TableFilterBuilder
 
     public TableFilterBuilder Or(Action<TableFilterBuilder> configure)
     {
-        var builder = new TableFilterBuilder(_tableName);
+        var builder = new TableFilterBuilder(_table);
         configure(builder);
         _orFilters.Add(builder.Build());
         return this;
@@ -306,7 +307,7 @@ public sealed class TableFilterBuilder
             return TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { column, new Dictionary<string, object?> { { op, value } } }
-            }, _tableName);
+            }, _table);
         }
 
         // Build AND/OR compound filter
@@ -336,6 +337,6 @@ public sealed class TableFilterBuilder
             filterDict["or"] = orList;
         }
 
-        return TableFilter.FromObject(filterDict, _tableName);
+        return TableFilter.FromObject(filterDict, _table);
     }
 }

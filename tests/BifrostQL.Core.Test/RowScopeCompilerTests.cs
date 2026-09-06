@@ -1,4 +1,6 @@
 using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using FluentAssertions;
@@ -21,13 +23,22 @@ public class RowScopeCompilerTests
     private static readonly IDictionary<string, object?> EmptyContext =
         new Dictionary<string, object?>();
 
+    /// <summary>A real model-derived table so the compiled filter carries a genuine identity.</summary>
+    private static IDbTable TableOf(string tableName, string columnName) =>
+        DbModelTestFixture.Create()
+            .WithTable(tableName, t => t
+                .WithColumn("id", "int", isPrimaryKey: true)
+                .WithColumn(columnName, "nvarchar"))
+            .Build()
+            .GetTableFromDbName(tableName);
+
     [Fact]
     public void Compile_EqualityExpression_BuildsEqualityFilter()
     {
         var context = new Dictionary<string, object?> { ["tenant_id"] = 42 };
 
         var filter = RowScopeCompiler.Compile(
-            "tenant_id = {tenant_id}", "Orders", context);
+            "tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), context);
 
         filter.TableName.Should().Be("Orders");
         filter.ColumnName.Should().Be("tenant_id");
@@ -42,7 +53,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["org_id"] = "acme" };
 
         var filter = RowScopeCompiler.Compile(
-            "   department_id   =   { org_id }   ", "Employees", context);
+            "   department_id   =   { org_id }   ", TableOf("Employees", "department_id"), context);
 
         filter.ColumnName.Should().Be("department_id");
         filter.Next!.Value.Should().Be("acme");
@@ -52,7 +63,7 @@ public class RowScopeCompilerTests
     public void Compile_MissingContextKey_ThrowsNonLeakingError()
     {
         var ex = Assert.Throws<BifrostExecutionError>(() =>
-            RowScopeCompiler.Compile("tenant_id = {tenant_id}", "Orders", EmptyContext));
+            RowScopeCompiler.Compile("tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), EmptyContext));
 
         // Non-leaking: the message must not echo the column or table name.
         ex.Message.Should().NotContain("tenant_id");
@@ -65,7 +76,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["tenant_id"] = null };
 
         var ex = Assert.Throws<BifrostExecutionError>(() =>
-            RowScopeCompiler.Compile("tenant_id = {tenant_id}", "Orders", context));
+            RowScopeCompiler.Compile("tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), context));
 
         ex.Message.Should().NotContain("tenant_id");
         ex.Message.Should().NotContain("Orders");
@@ -85,7 +96,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["tenant_id"] = 1 };
 
         var ex = Assert.Throws<BifrostExecutionError>(() =>
-            RowScopeCompiler.Compile(expression, "Orders", context));
+            RowScopeCompiler.Compile(expression, TableOf("Orders", "tenant_id"), context));
 
         // A malformed policy must fail closed and must not leak the table name.
         ex.Message.Should().NotContain("Orders");

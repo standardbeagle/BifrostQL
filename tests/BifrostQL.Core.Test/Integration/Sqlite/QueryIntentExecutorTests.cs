@@ -244,7 +244,7 @@ public sealed class QueryIntentExecutorTests : IAsyncLifetime
                     {
                         ["body"] = new Dictionary<string, object?> { ["_eq"] = "secret body" },
                     },
-                    documents.DbName),
+                    documents),
             },
             UserContext = new Dictionary<string, object?>(),
             Endpoint = EndpointPath,

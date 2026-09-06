@@ -127,7 +127,8 @@ public class EnumColumnMapTests
     [Fact]
     public void RewriteFilterValues_TranslatesEqAndIn_RecursivelyThroughNestedAnd()
     {
-        var map = BuildMap(BuildModel());
+        var model = BuildModel();
+        var map = BuildMap(model);
 
         // { and: [ { StatusCode: { _eq: ACTIVE } },
         //          { and: [ { StatusCode: { _in: [PENDING, ON_HOLD] } } ] } ] }
@@ -153,7 +154,7 @@ public class EnumColumnMapTests
                     },
                 },
             },
-        }, "Orders");
+        }, model.GetTableFromDbName("Orders"));
 
         map.RewriteFilterValues(filter, "Orders");
 
@@ -172,13 +173,14 @@ public class EnumColumnMapTests
     [Fact]
     public void RewriteFilterValues_UnknownName_LeftUnchanged()
     {
-        var map = BuildMap(BuildModel());
+        var model = BuildModel();
+        var map = BuildMap(model);
 
         // { StatusCode: { _eq: BOGUS } } — BOGUS is not a known enum name.
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = "BOGUS" },
-        }, "Orders");
+        }, model.GetTableFromDbName("Orders"));
 
         map.RewriteFilterValues(filter, "Orders");
 
@@ -190,7 +192,8 @@ public class EnumColumnMapTests
     [Fact]
     public void RewriteFilterValues_TranslatesOperandsInsideOrBranch()
     {
-        var map = BuildMap(BuildModel());
+        var model = BuildModel();
+        var map = BuildMap(model);
 
         // { or: [ { StatusCode: { _eq: ACTIVE } },
         //         { StatusCode: { _eq: PENDING } } ] }
@@ -207,7 +210,7 @@ public class EnumColumnMapTests
                     ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = "PENDING" },
                 },
             },
-        }, "Orders");
+        }, model.GetTableFromDbName("Orders"));
 
         map.RewriteFilterValues(filter, "Orders");
 

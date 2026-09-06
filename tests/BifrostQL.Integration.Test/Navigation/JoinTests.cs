@@ -182,7 +182,7 @@ public abstract class JoinTestBase<TDatabase> : IClassFixture<DatabaseFixture<TD
         var categoriesQuery = BuildQuery("Categories");
         categoriesQuery.Filter = TableFilter.FromObject(
             new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "Electronics" } } } },
-            "Categories");
+            categoriesQuery.DbTable!);
 
         var productsLink = BuildLinkedQuery("Products");
         productsLink.GraphQlName = "products";

@@ -306,7 +306,7 @@ namespace BifrostQL.Mcp
                     {
                         ["or"] = stringColumns.Select(c => (object)Condition(c)).ToList(),
                     },
-                table.DbName);
+                table);
             return query;
         }
 

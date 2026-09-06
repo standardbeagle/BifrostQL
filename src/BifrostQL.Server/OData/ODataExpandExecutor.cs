@@ -129,7 +129,7 @@ namespace BifrostQL.Server.OData
                         [item.TargetKeyColumn.GraphQlName] =
                             new Dictionary<string, object?> { ["_in"] = keyValues.ToList() },
                     },
-                    target.DbName),
+                    target),
                 // Bound the fan-out BEFORE materializing: fetch at most one row past the cap so a
                 // breach is detectable and rejected, never an unbounded expansion.
                 Limit = maxFanout + 1,

@@ -170,7 +170,7 @@ public sealed class QueryIntentJoinFlattenTests : IAsyncLifetime
                 {
                     ["amount"] = new Dictionary<string, object?> { ["_gt"] = 150 },
                 },
-                orders.DbName),
+                orders),
         };
 
         var result = await executor.ExecuteAsync(new QueryIntent

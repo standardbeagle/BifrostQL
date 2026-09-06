@@ -118,7 +118,7 @@ public class BlindIndexQueryRoutingTests
                 ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
                 ["id"] = new Dictionary<string, object?> { ["_eq"] = 5 },
             },
-        }, "accounts");
+        }, model.GetTableFromDbName("accounts"));
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(model.GetTableFromDbName("accounts"))
             .WithColumns("id")

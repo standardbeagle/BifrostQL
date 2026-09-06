@@ -237,7 +237,7 @@ namespace BifrostQL.Core.Modules.Chat
 
             var query = SelectAllColumnsQuery(chat.MessagesTable, page);
             query.Filter = TableFilterFactory.Equals(
-                chat.MessagesTable.DbName, config.ConversationFkColumn!, conversationId);
+                chat.MessagesTable, config.ConversationFkColumn!, conversationId);
             query.Sort.Add($"{GraphQlColumnName(chat.MessagesTable, config.CreatedAtColumn!)}_asc");
             query.Sort.AddRange(chat.MessagesTable.KeyColumns.Select(c => $"{c.GraphQlName}_asc"));
 
@@ -337,7 +337,7 @@ namespace BifrostQL.Core.Modules.Chat
 
             var probe = NewQuery(conversations);
             probe.ScalarColumns.Add(new GqlObjectColumn(key.DbName, key.GraphQlName));
-            probe.Filter = TableFilterFactory.Equals(conversations.DbName, key.ColumnName, conversationId);
+            probe.Filter = TableFilterFactory.Equals(conversations, key.ColumnName, conversationId);
             probe.Limit = 1;
 
             var visible = await _reads.ExecuteAsync(new QueryIntent

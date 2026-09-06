@@ -101,7 +101,7 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         if (!RowScopeApplies(policy, identity))
             return null;
 
-        return RowScopeCompiler.Compile(policy.RowScopeExpression, table.DbName, context.UserContext);
+        return RowScopeCompiler.Compile(policy.RowScopeExpression, table, context.UserContext);
     }
 
     /// <summary>

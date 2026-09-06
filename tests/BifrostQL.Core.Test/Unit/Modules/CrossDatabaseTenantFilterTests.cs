@@ -276,7 +276,7 @@ public class CrossDatabaseTenantFilterTests
         var table = model.GetTableFromDbName("Orders");
 
         var service = CreateTransformerService(new TenantFilterTransformer());
-        var userFilter = TableFilterFactory.Equals("Orders", "Status", "Active");
+        var userFilter = TableFilterFactory.Equals(table, "Status", "Active");
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(table)
             .WithColumns("Id", "Total", "Status")

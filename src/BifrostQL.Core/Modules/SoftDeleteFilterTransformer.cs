@@ -48,8 +48,8 @@ public sealed class SoftDeleteFilterTransformer : SingleColumnFilterTransformerB
     protected override TableFilter BuildFilter(IDbTable table, string columnName, QueryTransformContext context)
     {
         return OnlyDeleted(table, context)
-            ? TableFilterFactory.IsNotNull(table.DbName, columnName)
-            : TableFilterFactory.IsNull(table.DbName, columnName);
+            ? TableFilterFactory.IsNotNull(table, columnName)
+            : TableFilterFactory.IsNull(table, columnName);
     }
 
     private static bool OnlyDeleted(IDbTable table, QueryTransformContext context) =>

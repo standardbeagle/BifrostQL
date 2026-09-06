@@ -155,7 +155,7 @@ public sealed class CompiledDeclarativeQueryTool
         var keyValues = ParseKeyValues(id);
         var query = QueryToolCompiler.BuildQuery(_table, _columns);
         query.QueryType = QueryType.Single;
-        query.Filter = TableFilter.FromPrimaryKey(keyValues, _keyColumns, _table.DbName);
+        query.Filter = TableFilter.FromPrimaryKey(keyValues, _keyColumns, _table);
         var detail = arguments.TryGetValue("detail", out var detailArgument) && detailArgument.ValueKind == JsonValueKind.String
             ? detailArgument.GetString() : _defaultDetail;
         if (detail is not ("summary" or "full"))
@@ -332,7 +332,7 @@ public sealed class CompiledDeclarativeQueryTool
         {
             var lookup = QueryToolCompiler.BuildQuery(_table, missing);
             lookup.QueryType = QueryType.Single;
-            lookup.Filter = TableFilter.FromPrimaryKey(rootKeyValues, _keyColumns, _table.DbName);
+            lookup.Filter = TableFilter.FromPrimaryKey(rootKeyValues, _keyColumns, _table);
             var rows = await ExecuteQueryAsync(lookup, userContext, cancellationToken);
             if (rows.Count == 0) return null;
             rootRow = rows[0];

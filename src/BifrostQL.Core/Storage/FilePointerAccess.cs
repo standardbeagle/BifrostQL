@@ -210,7 +210,7 @@ internal static class FilePointerAccess
     private static TableFilter KeyFilter(IDbTable table, IReadOnlyDictionary<string, object?> keyData)
     {
         var clauses = table.KeyColumns
-            .Select(c => TableFilterFactory.Equals(table.DbName, c.ColumnName, keyData[c.ColumnName]))
+            .Select(c => TableFilterFactory.Equals(table, c.ColumnName, keyData[c.ColumnName]))
             .ToList();
 
         return clauses.Count == 1

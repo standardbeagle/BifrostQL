@@ -28,7 +28,7 @@ public sealed class BifrostQueryIntentTests
     {
         var filter = TableFilter.FromObject(
             new Dictionary<string, object?> { { "Id", new Dictionary<string, object?> { { "_eq", 1 } } } },
-            "Users");
+            StandardTestFixtures.SimpleUsers().GetTableFromDbName("Users"));
 
         var nested = new BifrostQueryIntent
         {
@@ -525,7 +525,7 @@ public sealed class BifrostDispatcherRequestTests
 
         var filter = TableFilter.FromObject(
             new Dictionary<string, object?> { { "Id", new Dictionary<string, object?> { { "_eq", 42 } } } },
-            "Users");
+            model.GetTableFromDbName("Users"));
 
         var requests = new IBifrostRequest[]
         {
@@ -559,7 +559,7 @@ public sealed class BifrostDispatcherRequestTests
 
         var preBuiltFilter = TableFilter.FromObject(
             new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "Alice" } } } },
-            "Users");
+            model.GetTableFromDbName("Users"));
 
         var requests = new IBifrostRequest[]
         {

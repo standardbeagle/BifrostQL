@@ -634,7 +634,7 @@ public sealed class FileResolverPipelineTests : IAsyncLifetime
             {
                 MutationType = mutationType,
                 Data = data,
-                AdditionalFilter = TableFilterFactory.Equals(table.DbName, "id", -1),
+                AdditionalFilter = TableFilterFactory.Equals(table, "id", -1),
             });
     }
 }

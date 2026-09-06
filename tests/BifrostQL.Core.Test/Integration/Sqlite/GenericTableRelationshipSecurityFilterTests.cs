@@ -142,7 +142,7 @@ public sealed class GenericTableRelationshipSecurityFilterTests : IAsyncLifetime
                 {
                     ["region"] = new Dictionary<string, object?> { ["_eq"] = "US" },
                 },
-            }, table.DbName);
+            }, table);
     }
 
     private sealed class FakeFieldContext : IBifrostFieldContext

@@ -60,7 +60,7 @@ public class EnumFilterRewriteTests
         TableFilter.FromObject(new Dictionary<string, object?>
         {
             ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = name },
-        }, "Orders");
+        }, BuildModel().GetTableFromDbName("Orders"));
 
     private static SqlExecutionManager NewManager(IDbModel model) =>
         new(model, Substitute.For<ISchema>(), BifrostQL.Core.Modules.NullQueryTransformerService.Instance);

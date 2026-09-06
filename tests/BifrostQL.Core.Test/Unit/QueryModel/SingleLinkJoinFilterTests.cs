@@ -36,7 +36,7 @@ public sealed class SingleLinkJoinFilterTests
             Filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "Name", new Dictionary<string, object?> { { "_eq", "scoped" } } }
-            }, "Users")
+            }, usersTable)
         };
 
         var tableJoin = new TableJoin

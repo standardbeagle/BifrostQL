@@ -20,7 +20,8 @@ namespace BifrostQL.Core.QueryModel
     public sealed class TableFilter
     {
         internal TableFilter() { }
-        public string? TableName { get; init; }
+        public IDbTable? Table { get; init; }
+        public string? TableName => Table?.DbName;
         public string ColumnName { get; init; } = null!;
         public string RelationName { get; set; } = null!;
         public object? Value { get; set; }
@@ -107,8 +108,9 @@ namespace BifrostQL.Core.QueryModel
                 FilterType = FilterType.And,
             };
 
-        public static TableFilter FromPrimaryKey(IEnumerable<object?> values, IEnumerable<ColumnDto> keyColumns, string tableName)
+        public static TableFilter FromPrimaryKey(IEnumerable<object?> values, IEnumerable<ColumnDto> keyColumns, IDbTable table)
         {
+            var tableName = table.DbName;
             var keyColumnList = keyColumns.ToList();
             var valueList = values.ToList();
 
@@ -125,7 +127,7 @@ namespace BifrostQL.Core.QueryModel
                 return FromObject(new Dictionary<string, object?>
                 {
                     { keyColumnList[0].GraphQlName, new Dictionary<string, object?> { { "_eq", valueList[0] } } }
-                }, tableName);
+                }, table);
             }
 
             var andFilters = keyColumnList.Zip(valueList, (col, val) =>
@@ -134,14 +136,16 @@ namespace BifrostQL.Core.QueryModel
                     { col.GraphQlName, new Dictionary<string, object?> { { "_eq", val } } }
                 }).ToList();
 
-            return FromObject(new Dictionary<string, object?> { { "and", andFilters } }, tableName);
+            return FromObject(new Dictionary<string, object?> { { "and", andFilters } }, table);
         }
 
-        public static TableFilter FromObject(object? value, string tableName)
+        public static TableFilter FromObject(object? value, IDbTable table)
         {
+            ArgumentNullException.ThrowIfNull(table);
+            var tableName = table.DbName;
             var dictValue = value as Dictionary<string, object?> ?? throw new BifrostExecutionError($"Error filtering {tableName}, null filter value");
 
-            var filter = StackFilters(dictValue, tableName);
+            var filter = StackFilters(dictValue, table);
             // A lone table-scoped _search node has no And/Or/Next but is still a valid
             // filter (it lowers to the dialect full-text predicate), so it is exempt from
             // the empty-shape guard.
@@ -155,8 +159,9 @@ namespace BifrostQL.Core.QueryModel
             return filter;
         }
 
-        private static TableFilter StackFilters(IDictionary<string, object?> filter, string? tableName)
+        private static TableFilter StackFilters(IDictionary<string, object?> filter, IDbTable? table)
         {
+            var tableName = table?.DbName;
             if (!filter.Any()) throw new BifrostExecutionError($"Filter on {tableName} has no properties");
 
             // Sibling keys form an implicit AND: `{ status: {_eq:...}, owner_id: {_eq:...} }`
@@ -168,16 +173,17 @@ namespace BifrostQL.Core.QueryModel
             {
                 return new TableFilter
                 {
-                    And = filter.Select(kv => StackSingle(kv, tableName)).ToList(),
+                    And = filter.Select(kv => StackSingle(kv, table)).ToList(),
                     FilterType = FilterType.And,
                 };
             }
 
-            return StackSingle(filter.First(), tableName);
+            return StackSingle(filter.First(), table);
         }
 
-        private static TableFilter StackSingle(KeyValuePair<string, object?> kv, string? tableName)
+        private static TableFilter StackSingle(KeyValuePair<string, object?> kv, IDbTable? table)
         {
+            var tableName = table?.DbName;
             if (string.IsNullOrWhiteSpace(kv.Key)) throw new BifrostExecutionError($"Filter on {tableName} has empty property name");
             return kv switch
             {
@@ -188,25 +194,25 @@ namespace BifrostQL.Core.QueryModel
                 { Key: FilterOperators.Search } => new TableFilter
                 {
                     FilterType = FilterType.Search,
-                    TableName = tableName,
+                    Table = table,
                     RelationName = FilterOperators.Search,
                     Value = kv.Value,
                 },
                 { Key: "and" } => new TableFilter
                 {
-                    And = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
+                    And = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, table)).ToList(),
                     FilterType = FilterType.And,
                 },
                 { Key: "or" } => new TableFilter
                 {
-                    Or = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, tableName)).ToList(),
+                    Or = ((IEnumerable<object>)kv.Value!).Select(v => StackFilters((IDictionary<string, object?>)v, table)).ToList(),
                     FilterType = FilterType.Or,
                 },
                 { Value: IDictionary<string, object?> val } => new TableFilter
                 {
                     ColumnName = kv.Key!,
                     Next = StackFilters(val, null),
-                    TableName = tableName,
+                    Table = table,
                     FilterType = FilterType.Join,
                 },
                 { Value: null, Key: null } => throw new BifrostExecutionError($"Filter on {tableName} has null key and value."),
@@ -457,7 +463,7 @@ namespace BifrostQL.Core.QueryModel
                 throw new BifrostExecutionError("Filter object missing all required fields.");
             }
 
-            var table = ctx.Model.GetTableFromDbName(TableName ?? throw new BifrostExecutionError("TableFilter with undefined TableName"));
+            var table = Table ?? throw new BifrostExecutionError("TableFilter with undefined Table");
             // A leaf predicate is `column: { _op: value }` — `Next` is the terminal
             // operator (Relation) node. A relationship sub-filter instead has a nested
             // column (`Join`) or an implicit/explicit AND/OR wrapper as `Next`, and must
@@ -516,8 +522,7 @@ namespace BifrostQL.Core.QueryModel
         private FilterParts RenderSearchParts(SqlBuildContext ctx, string? alias)
         {
             var dialect = ctx.Dialect;
-            var table = ctx.Model.GetTableFromDbName(
-                TableName ?? throw new BifrostExecutionError("Search filter with undefined TableName"));
+            var table = Table ?? throw new BifrostExecutionError("Search filter with undefined Table");
 
             var fts = Modules.Fts.FtsConfig.FromTable(table);
             if (!fts.IsSearchable)

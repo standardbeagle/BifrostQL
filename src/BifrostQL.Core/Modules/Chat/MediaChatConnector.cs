@@ -509,7 +509,7 @@ namespace BifrostQL.Core.Modules.Chat
         private static TableFilter PrimaryKeyFilter(IDbTable table, ColumnDto key, object id) =>
             new()
             {
-                TableName = table.DbName,
+                Table = table,
                 ColumnName = key.GraphQlName,
                 FilterType = FilterType.Join,
                 Next = new TableFilter

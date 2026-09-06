@@ -153,7 +153,7 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         // model (wrong endpoint, or a stale model after a schema reset). Positive
         // resolve with no fallback — and no caller-supplied name in the error text
         // (finding M31).
-        if (!model.TryGetTableFromDbName(query.DbTable.DbName, out _))
+        if (!model.TryGetTableFromDbName(query.DbTable.TableSchema, query.DbTable.DbName, out _))
             throw BifrostErrorSink.LookupMiss(
                 "The query intent's table is not part of the endpoint's model.",
                 $"Query intent table miss: '{query.DbTable.DbName}' on endpoint '{intent.Endpoint}'.",

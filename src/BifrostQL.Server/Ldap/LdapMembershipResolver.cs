@@ -397,7 +397,7 @@ namespace BifrostQL.Server.Ldap
                         [FilterOperators.In] = keys.ToList(),
                     },
                 },
-                table.DbName);
+                table);
 
         private static List<object> DistinctValues(
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, string column)

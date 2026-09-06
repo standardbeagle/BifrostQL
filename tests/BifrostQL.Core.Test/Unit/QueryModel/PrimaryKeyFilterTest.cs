@@ -20,16 +20,18 @@ namespace BifrostQL.Core.QueryModel
             };
             var values = new object?[] { "42" };
 
-            var filter = TableFilter.FromPrimaryKey(values, keyColumns, "Users");
-
-            var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("Users").Returns(new DbTable
+            var table = new DbTable
             {
+                DbName = "Users",
                 GraphQlLookup = new Dictionary<string, ColumnDto>
                 {
                     { "Id", new ColumnDto { ColumnName = "Id", GraphQlName = "Id" } }
                 }
-            });
+            };
+            var filter = TableFilter.FromPrimaryKey(values, keyColumns, table);
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("Users").Returns(table);
             var parameters = new SqlParameterCollection();
             var sql = filter.RenderParts(dbModel, Dialect, parameters, null);
 
@@ -49,17 +51,19 @@ namespace BifrostQL.Core.QueryModel
             };
             var values = new object?[] { "100", "200" };
 
-            var filter = TableFilter.FromPrimaryKey(values, keyColumns, "TenantOrders");
-
-            var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("TenantOrders").Returns(new DbTable
+            var table = new DbTable
             {
+                DbName = "TenantOrders",
                 GraphQlLookup = new Dictionary<string, ColumnDto>
                 {
                     { "TenantId", new ColumnDto { ColumnName = "TenantId", GraphQlName = "TenantId" } },
                     { "OrderId", new ColumnDto { ColumnName = "OrderId", GraphQlName = "OrderId" } }
                 }
-            });
+            };
+            var filter = TableFilter.FromPrimaryKey(values, keyColumns, table);
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("TenantOrders").Returns(table);
             var parameters = new SqlParameterCollection();
             var sql = filter.RenderParts(dbModel, Dialect, parameters, null);
 
@@ -78,7 +82,7 @@ namespace BifrostQL.Core.QueryModel
             var keyColumns = Array.Empty<ColumnDto>();
             var values = new object?[] { "42" };
 
-            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "NoKeyTable");
+            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, new DbTable { DbName = "NoKeyTable" });
 
             action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("Table 'NoKeyTable' has no primary key columns.");
@@ -94,7 +98,7 @@ namespace BifrostQL.Core.QueryModel
             };
             var values = new object?[] { "100" };
 
-            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "TenantOrders");
+            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, new DbTable { DbName = "TenantOrders" });
 
             action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*expects 2 value(s)*received 1*");
@@ -109,7 +113,7 @@ namespace BifrostQL.Core.QueryModel
             };
             var values = new object?[] { "1", "2" };
 
-            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "Users");
+            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, new DbTable { DbName = "Users" });
 
             action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*expects 1 value(s)*received 2*");
@@ -125,7 +129,7 @@ namespace BifrostQL.Core.QueryModel
             };
             var values = new object?[] { "US" };
 
-            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, "RegionCodes");
+            var action = () => TableFilter.FromPrimaryKey(values, keyColumns, new DbTable { DbName = "RegionCodes" });
 
             action.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
                 .WithMessage("*Region, Code*");
@@ -140,16 +144,18 @@ namespace BifrostQL.Core.QueryModel
             };
             var values = new object?[] { null };
 
-            var filter = TableFilter.FromPrimaryKey(values, keyColumns, "Users");
-
-            var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("Users").Returns(new DbTable
+            var table = new DbTable
             {
+                DbName = "Users",
                 GraphQlLookup = new Dictionary<string, ColumnDto>
                 {
                     { "Id", new ColumnDto { ColumnName = "Id", GraphQlName = "Id" } }
                 }
-            });
+            };
+            var filter = TableFilter.FromPrimaryKey(values, keyColumns, table);
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("Users").Returns(table);
             var parameters = new SqlParameterCollection();
             var sql = filter.RenderParts(dbModel, Dialect, parameters, null);
 

@@ -441,7 +441,7 @@ public sealed class FileObjectSeam
     {
         var keyColumns = table.KeyColumns.ToList();
         var clauses = keyColumns
-            .Select((column, i) => TableFilterFactory.Equals(table.DbName, column.ColumnName, address.PrimaryKey[i]))
+            .Select((column, i) => TableFilterFactory.Equals(table, column.ColumnName, address.PrimaryKey[i]))
             .ToList();
 
         return clauses.Count == 1

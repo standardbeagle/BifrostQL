@@ -166,11 +166,11 @@ public static class TableFilterFactory
     /// <summary>
     /// Creates an equality filter: column = value
     /// </summary>
-    public static TableFilter Equals(string tableName, string columnName, object? value)
+    public static TableFilter Equals(IDbTable table, string columnName, object? value)
     {
         return new TableFilter
         {
-            TableName = tableName,
+            Table = table,
             ColumnName = columnName,
             FilterType = FilterType.Join,
             Next = new TableFilter
@@ -185,19 +185,19 @@ public static class TableFilterFactory
     /// <summary>
     /// Creates an IS NULL filter: column IS NULL
     /// </summary>
-    public static TableFilter IsNull(string tableName, string columnName)
+    public static TableFilter IsNull(IDbTable table, string columnName)
     {
-        return Equals(tableName, columnName, null);
+        return Equals(table, columnName, null);
     }
 
     /// <summary>
     /// Creates an IS NOT NULL filter: column IS NOT NULL
     /// </summary>
-    public static TableFilter IsNotNull(string tableName, string columnName)
+    public static TableFilter IsNotNull(IDbTable table, string columnName)
     {
         return new TableFilter
         {
-            TableName = tableName,
+            Table = table,
             ColumnName = columnName,
             FilterType = FilterType.Join,
             Next = new TableFilter
@@ -212,11 +212,11 @@ public static class TableFilterFactory
     /// <summary>
     /// Creates an IN filter: column IN (value1, value2, ...)
     /// </summary>
-    public static TableFilter In(string tableName, string columnName, IEnumerable<object?> values)
+    public static TableFilter In(IDbTable table, string columnName, IEnumerable<object?> values)
     {
         return new TableFilter
         {
-            TableName = tableName,
+            Table = table,
             ColumnName = columnName,
             FilterType = FilterType.Join,
             Next = new TableFilter

@@ -325,7 +325,7 @@ public sealed class BulkBatchPlanTests
             var value = _vary ? _n++ : 42;
             var filter = TableFilter.FromObject(
                 new Dictionary<string, object?> { ["Total"] = new Dictionary<string, object?> { ["_eq"] = value } },
-                table.DbName);
+                table);
             return ValueTask.FromResult(new MutationTransformResult
             {
                 MutationType = mutationType,

@@ -185,7 +185,7 @@ namespace BifrostQL.Server.Resp
                 foreach (var i in indices)
                 {
                     var query = BuildRowQuery(table);
-                    query.Filter = TableFilter.FromPrimaryKey(keys[i].KeyValues, keyColumns, table.DbName);
+                    query.Filter = TableFilter.FromPrimaryKey(keys[i].KeyValues, keyColumns, table);
                     query.Limit = 1;
                     var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
                     results[i] = result.Rows.Count > 0 ? result.Rows[0] : null;
@@ -274,7 +274,7 @@ namespace BifrostQL.Server.Resp
                 {
                     [pkColumn.GraphQlName] = new Dictionary<string, object?> { [FilterOperators.In] = wanted },
                 },
-                table.DbName);
+                table);
 
             var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
 
@@ -328,7 +328,7 @@ namespace BifrostQL.Server.Resp
             var query = BuildRowQuery(table);
             query.Filter = TableFilter.FromObject(
                 new Dictionary<string, object?> { ["or"] = branchByToken.Values.ToList() },
-                table.DbName);
+                table);
             var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
 
             var byToken = new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal);

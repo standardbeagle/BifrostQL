@@ -230,7 +230,7 @@ public class QueryTransformerServiceReadGuardTests
         return GqlObjectQueryBuilder.Create()
             .WithDbTable(orders)
             .WithColumns("Id", "Total")
-            .WithFilter(TableFilter.FromObject(filter, "Orders"))
+            .WithFilter(TableFilter.FromObject(filter, orders))
             .Build();
     }
 

@@ -35,7 +35,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
 
         if (filter != null)
         {
-            query.Filter = TableFilter.FromObject(filter, tableName);
+            query.Filter = TableFilter.FromObject(filter, table);
         }
 
         return query;
@@ -168,7 +168,7 @@ public abstract class CombinedTestBase<TDatabase> : IClassFixture<DatabaseFixtur
             ScalarColumns = ordersTable.Columns.Select(c => new GqlObjectColumn(c.ColumnName)).ToList(),
             Filter = TableFilter.FromObject(
                 new Dictionary<string, object?> { { "Status", new Dictionary<string, object?> { { "_eq", "Shipped" } } } },
-                "Orders"),
+                ordersTable),
         };
 
         customersQuery.Links.Add(ordersLink);

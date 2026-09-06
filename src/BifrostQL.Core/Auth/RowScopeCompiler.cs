@@ -1,4 +1,5 @@
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 
@@ -31,17 +32,16 @@ public static class RowScopeCompiler
 
     /// <summary>
     /// Compiles <paramref name="expression"/> against <paramref name="userContext"/>
-    /// into an equality <see cref="TableFilter"/> on <paramref name="tableName"/>.
+    /// into an equality <see cref="TableFilter"/> on <paramref name="table"/>.
     /// </summary>
     public static TableFilter Compile(
         string? expression,
-        string tableName,
+        IDbTable table,
         IDictionary<string, object?> userContext)
     {
         if (userContext is null)
             throw new ArgumentNullException(nameof(userContext));
-        if (string.IsNullOrWhiteSpace(tableName))
-            throw new ArgumentException("Table name is required.", nameof(tableName));
+        ArgumentNullException.ThrowIfNull(table);
 
         var (column, contextKey) = Parse(expression);
 
@@ -50,7 +50,7 @@ public static class RowScopeCompiler
         if (value is null)
             throw new BifrostExecutionError(MissingContextMessage);
 
-        return TableFilterFactory.Equals(tableName, column, value);
+        return TableFilterFactory.Equals(table, column, value);
     }
 
     /// <summary>

@@ -758,7 +758,7 @@ public sealed class DeclarativeQueryToolCompilerTests
         public int Priority => 0;
         public bool AppliesTo(IDbTable table, QueryTransformContext context) => table.DbName == "tenant_locations";
         public TableFilter? GetAdditionalFilter(IDbTable table, QueryTransformContext context) =>
-            TableFilterFactory.Equals(table.DbName, "tenant_id", 1L);
+            TableFilterFactory.Equals(table, "tenant_id", 1L);
     }
 
     private sealed class CapturingExecutor : IQueryIntentExecutor
@@ -859,7 +859,7 @@ public sealed class DeclarativeQueryToolCompilerTests
         public int Priority => 0;
         public bool AppliesTo(IDbTable table, QueryTransformContext context) => table.DbName == "orders";
         public TableFilter? GetAdditionalFilter(IDbTable table, QueryTransformContext context) =>
-            TableFilterFactory.Equals(table.DbName, "tenant_id", "tenant-a");
+            TableFilterFactory.Equals(table, "tenant_id", "tenant-a");
     }
 
     private sealed class DenyStatusFilterGuard : IFilterTransformer, IColumnFilterGuard

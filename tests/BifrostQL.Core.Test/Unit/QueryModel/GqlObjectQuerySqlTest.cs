@@ -213,7 +213,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_eq", 42 } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -248,7 +248,7 @@ public sealed class GqlObjectQuerySqlTest
                     new Dictionary<string, object?> { { "Email", new Dictionary<string, object?> { { "_contains", "@test.com" } } } }
                 }
             }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -283,7 +283,7 @@ public sealed class GqlObjectQuerySqlTest
                     new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "Jane" } } } }
                 }
             }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -334,7 +334,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_in", new object[] { 1, 2, 3, 4, 5 } } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -363,7 +363,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_between", new object[] { 10, 20 } } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -590,7 +590,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Name", new Dictionary<string, object?> { { "_contains", "test" } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -644,7 +644,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_eq", 1 } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -670,7 +670,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_eq", 1 } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -739,7 +739,7 @@ public sealed class GqlObjectQuerySqlTest
             "Total",
             "totalOrderAmount",
             AggregateOperationType.Sum);
-        aggregateColumn.LinkFilters.Add(TableFilterFactory.Equals("Orders", "Status", "active"));
+        aggregateColumn.LinkFilters.Add(TableFilterFactory.Equals(dbModel.GetTableFromDbName("Orders"), "Status", "active"));
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -782,7 +782,7 @@ public sealed class GqlObjectQuerySqlTest
         aggregateColumn.LinkFilters.Add(TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "user", new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "bob" } } } } }
-        }, "Orders"));
+        }, dbModel.GetTableFromDbName("Orders")));
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -993,7 +993,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "user", new Dictionary<string, object?> { { "Name", new Dictionary<string, object?> { { "_eq", "bob" } } } } }
-        }, "Orders");
+        }, ordersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(ordersTable)
@@ -1305,7 +1305,7 @@ public sealed class GqlObjectQuerySqlTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Name", new Dictionary<string, object?> { { "_contains", "test" } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -1352,7 +1352,7 @@ public sealed class GqlObjectQuerySqlTest
                     new Dictionary<string, object?> { { "Stock", new Dictionary<string, object?> { { "_gt", 0 } } } }
                 }
             }
-        }, "Products");
+        }, productsTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(productsTable)
@@ -1393,12 +1393,12 @@ public sealed class GqlObjectQuerySqlTest
         var filter1 = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_eq", 1 } } }
-        }, "Users");
+        }, usersTable);
 
         var filter2 = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_eq", 2 } } }
-        }, "Users");
+        }, usersTable);
 
         var query1 = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)

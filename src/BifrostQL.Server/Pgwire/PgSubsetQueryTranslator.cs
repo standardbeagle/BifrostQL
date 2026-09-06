@@ -73,7 +73,7 @@ namespace BifrostQL.Server.Pgwire
             ProjectColumns(stmt, scope, query, joinNode, joinLink, outputColumns);
 
             if (stmt.Where is not null)
-                query.Filter = TableFilter.FromObject(BuildFilter(stmt.Where, scope, binding, depth: 0), fromTable.DbName);
+                query.Filter = TableFilter.FromObject(BuildFilter(stmt.Where, scope, binding, depth: 0), fromTable);
 
             foreach (var term in stmt.OrderBy)
             {

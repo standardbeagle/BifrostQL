@@ -16,7 +16,15 @@ namespace BifrostQL.Core.QueryModel
     {
         public GqlObjectQuery() { }
         //public TableJoin? JoinFrom { get; set; }
-        public IDbTable DbTable { get; init; } = null!;
+        /// <summary>
+        /// The resolved table this node reads. Read-path identity is carried as
+        /// <see cref="IDbTable"/> and never re-derived from <see cref="TableName"/>, which
+        /// is ambiguous when two schemas define the same name (finding M11). Settable
+        /// because a link node is parsed before its target is known: <see cref="ConnectLinks"/>
+        /// resolves the relationship and stamps the identity here, alongside the
+        /// <see cref="SchemaName"/> / <see cref="TableName"/> it already sets.
+        /// </summary>
+        public IDbTable DbTable { get; set; } = null!;
         public string SchemaName { get; set; } = "";
         public string TableName { get; set; } = "";
         public string FieldName { get; set; } = "";
@@ -370,7 +378,7 @@ namespace BifrostQL.Core.QueryModel
         public static ParameterizedSql ToConnectedSqlParameterized(IDbModel dbModel, ISqlDialect dialect, SqlParameterCollection parameters, ParameterizedSql main, TableJoin tableJoin)
         {
             var ctx = new SqlBuildContext(dbModel, dialect, parameters);
-            var connectedDbTable = dbModel.GetTableFromDbName(tableJoin.ConnectedTable.TableName);
+            var connectedDbTable = tableJoin.ConnectedTable.DbTable;
             var joinColumnSql = string.Join(",",
                 tableJoin.ConnectedTable.FullColumnNames.Select(c => c.ToSelectSql(dbModel, connectedDbTable, dialect, parameters, "b", useAsKeyword: true)));
 
@@ -635,7 +643,7 @@ namespace BifrostQL.Core.QueryModel
         {
             foreach (var link in Links)
             {
-                var thisDto = dbModel.GetTableFromDbName(TableName);
+                var thisDto = DbTable;
                 // The real query path sets FieldName (normalized) via QueryField; links
                 // constructed directly carry only GraphQlName. Fall back so both resolve
                 // — matching the ManyToMany branch below, which keys on GraphQlName.
@@ -643,6 +651,7 @@ namespace BifrostQL.Core.QueryModel
                 if (thisDto.SingleLinks.TryGetValue(fieldName, out var singleLink)
                     || (singleLink = thisDto.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
+                    link.DbTable = singleLink.ParentTable;
                     link.TableName = singleLink.ParentTable.DbName;
                     link.SchemaName = singleLink.ParentTable.TableSchema;
                     Joins.Add(BuildTableJoin(
@@ -657,6 +666,7 @@ namespace BifrostQL.Core.QueryModel
                 if (thisDto.MultiLinks.TryGetValue(fieldName, out var multiLink)
                     || (multiLink = thisDto.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 {
+                    link.DbTable = multiLink.ChildTable;
                     link.TableName = multiLink.ChildTable.DbName;
                     link.SchemaName = multiLink.ChildTable.TableSchema;
                     var join = BuildTableJoin(
@@ -680,7 +690,7 @@ namespace BifrostQL.Core.QueryModel
                                 [predicate.Column.GraphQlName] =
                                     new Dictionary<string, object?> { ["_eq"] = predicate.Value }
                             },
-                            multiLink.ChildTable.DbName);
+                            multiLink.ChildTable);
                         link.Filter = link.Filter == null
                             ? constFilter
                             : new TableFilter { FilterType = FilterType.And, And = { link.Filter, constFilter } };
@@ -696,6 +706,7 @@ namespace BifrostQL.Core.QueryModel
                     // multi-link path uses partition by the source — a two-node
                     // junction->target chain would instead key by the target row
                     // and lose the source partition.
+                    link.DbTable = m2mLink.TargetTable;
                     link.TableName = m2mLink.TargetTable.DbName;
                     link.SchemaName = m2mLink.TargetTable.TableSchema;
                     Joins.Add(BuildTableJoin(

@@ -57,7 +57,7 @@ public class FtsCompositionTests
             .WithDbTable(articles)
             .WithColumns("Id", "Title")
             .WithFilter(TableFilter.FromObject(
-                new Dictionary<string, object?> { { FilterOperators.Search, "quick brown" } }, "Articles"))
+                new Dictionary<string, object?> { { FilterOperators.Search, "quick brown" } }, articles))
             .Build();
 
         Service().ApplyTransformers(node, model, new Dictionary<string, object?> { ["tenant_id"] = 7 });

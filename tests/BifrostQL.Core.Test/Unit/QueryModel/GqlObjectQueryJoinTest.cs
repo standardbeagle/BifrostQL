@@ -308,7 +308,7 @@ public sealed class GqlObjectQueryJoinTest
             Filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "Name", new Dictionary<string, object?> { { "_eq", "John" } } }
-            }, "Users")
+            }, usersTable)
         };
 
         var tableJoin = new TableJoin
@@ -358,7 +358,7 @@ public sealed class GqlObjectQueryJoinTest
             Filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "Total", new Dictionary<string, object?> { { "_gt", 100 } } }
-            }, "Orders"),
+            }, ordersTable),
             Sort = new List<string> { "Total_desc" },
             Limit = 10
         };
@@ -441,7 +441,7 @@ public sealed class GqlObjectQueryJoinTest
             Filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "Name", new Dictionary<string, object?> { { "_contains", "test" } } }
-            }, "Users")
+            }, usersTable)
         };
 
         var join = new TableJoin
@@ -727,7 +727,7 @@ public sealed class GqlObjectQueryJoinTest
             Filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "Quantity", new Dictionary<string, object?> { { "_gt", 1 } } }
-            }, "OrderItems")
+            }, orderItemsTable)
         };
 
         var query = new GqlObjectQuery
@@ -740,7 +740,7 @@ public sealed class GqlObjectQueryJoinTest
             Filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "Status", new Dictionary<string, object?> { { "_eq", "completed" } } }
-            }, "Orders"),
+            }, ordersTable),
             Links = { itemsLink }
         };
 

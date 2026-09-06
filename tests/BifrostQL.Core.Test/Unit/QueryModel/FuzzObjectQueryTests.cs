@@ -103,7 +103,7 @@ public sealed class FuzzObjectQueryTests
         if (rnd.Next(2) == 0)
         {
             var col = Pick(users.Columns.ToList(), rnd);
-            query.Filter = TableFilter.FromObject(RandomFilter(col, rnd), "Users");
+            query.Filter = TableFilter.FromObject(RandomFilter(col, rnd), users);
         }
 
         // Sometimes attach the Orders child collection.

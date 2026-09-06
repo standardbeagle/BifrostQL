@@ -460,7 +460,7 @@ namespace BifrostQL.Server.Ldap
 
             if (predicate.Count > 0)
                 query.Filter = TableFilter.FromObject(
-                    predicate.ToDictionary(kv => kv.Key, kv => kv.Value), target.Table.DbName);
+                    predicate.ToDictionary(kv => kv.Key, kv => kv.Value), target.Table);
 
             var result = await _reads.ExecuteAsync(
                 new QueryIntent

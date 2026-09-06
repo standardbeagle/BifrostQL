@@ -43,7 +43,7 @@ public class FtsSearchPredicateTests
     {
         var model = SearchableModel();
         var filter = TableFilter.FromObject(
-            new Dictionary<string, object?> { { FilterOperators.Search, search } }, "Articles");
+            new Dictionary<string, object?> { { FilterOperators.Search, search } }, model.GetTableFromDbName("Articles"));
         var parameters = new SqlParameterCollection();
         var rendered = filter.RenderParts(model, dialect, parameters, alias);
         // A search node is predicate-only. The retired single-fragment render would
@@ -197,7 +197,7 @@ public class FtsSearchPredicateTests
                 .WithMetadata(MetadataKeys.Fts.Search, "Notes"))
             .Build();
         var filter = TableFilter.FromObject(
-            new Dictionary<string, object?> { { FilterOperators.Search, "widget" } }, "Rollup");
+            new Dictionary<string, object?> { { FilterOperators.Search, "widget" } }, model.GetTableFromDbName("Rollup"));
         var parameters = new SqlParameterCollection();
 
         var act = () => filter.RenderParts(model, SqliteDialect.Instance, parameters, "Rollup");

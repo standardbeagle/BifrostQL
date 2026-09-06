@@ -51,7 +51,7 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 
-        return TableFilterFactory.Equals(table.DbName, columnName, tenantId);
+        return TableFilterFactory.Equals(table, columnName, tenantId);
     }
 
     /// <summary>

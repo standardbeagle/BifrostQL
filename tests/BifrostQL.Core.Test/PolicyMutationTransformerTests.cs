@@ -297,7 +297,7 @@ public class PolicyMutationTransformerTests
         // standing in for a tenant-scoped mutation transformer.
         var tenantLike = new StubFilterMutationTransformer(
             priority: 0,
-            TableFilterFactory.Equals("Orders", "Id", 1));
+            TableFilterFactory.Equals(model.GetTableFromDbName("Orders"), "Id", 1));
 
         var wrap = new MutationTransformersWrap
         {

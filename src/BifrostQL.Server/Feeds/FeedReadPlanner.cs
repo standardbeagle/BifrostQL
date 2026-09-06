@@ -423,7 +423,7 @@ namespace BifrostQL.Server.Feeds
             {
                 { timestampColumn.GraphQlName, new Dictionary<string, object?> { { FilterOperators.Gte, since.Value } } },
             };
-            return TableFilter.FromObject(predicate, table.DbName);
+            return TableFilter.FromObject(predicate, table);
         }
 
         private static ColumnDto ResolveColumn(IDbTable table, string name, string role)

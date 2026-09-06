@@ -78,7 +78,7 @@ namespace BifrostQL.Core.Resolvers
 
             var filterArg = context.GetArgument<Dictionary<string, object?>>("filter");
             var filter = filterArg is { Count: > 0 }
-                ? TableFilter.FromObject(filterArg, _table.DbName)
+                ? TableFilter.FromObject(filterArg, _table)
                 : null;
 
             var referenced = rowKeyColumns

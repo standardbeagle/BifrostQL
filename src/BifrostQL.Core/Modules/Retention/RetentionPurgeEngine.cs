@@ -388,7 +388,7 @@ namespace BifrostQL.Core.Modules.Retention
                     {
                         [anchorColumn] = new Dictionary<string, object?> { ["_lt"] = cutoff },
                     },
-                    table.DbName),
+                    table),
             };
             // Select and order by the key columns so the bounded batch is deterministic and the
             // next resumable pass continues over the shrunken set.

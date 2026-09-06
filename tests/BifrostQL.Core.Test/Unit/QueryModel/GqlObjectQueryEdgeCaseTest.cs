@@ -49,7 +49,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
         var dbModel = StandardTestFixtures.SimpleUsers();
 
         // Act & Assert
-        Action act = () => TableFilter.FromObject(new Dictionary<string, object?>(), "Users");
+        Action act = () => TableFilter.FromObject(new Dictionary<string, object?>(), dbModel.GetTableFromDbName("Users"));
         act.Should().Throw<BifrostExecutionError>()
             .WithMessage("*has no properties*");
     }
@@ -198,7 +198,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Name", new Dictionary<string, object?> { { "_eq", "'; DROP TABLE Users; --" } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -228,7 +228,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Name", new Dictionary<string, object?> { { "_eq", null } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -299,7 +299,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_in", Array.Empty<object>() } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -349,7 +349,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
                     }
                 }
             }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -378,7 +378,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Name", new Dictionary<string, object?> { { "_like", "%test%" } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)
@@ -444,7 +444,7 @@ public sealed class GqlObjectQueryEdgeCaseTest
         var filter = TableFilter.FromObject(new Dictionary<string, object?>
         {
             { "Id", new Dictionary<string, object?> { { "_in", values } } }
-        }, "Users");
+        }, usersTable);
 
         var query = GqlObjectQueryBuilder.Create()
             .WithDbTable(usersTable)

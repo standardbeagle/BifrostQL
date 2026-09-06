@@ -102,7 +102,7 @@ namespace BifrostQL.Core.QueryModel
             ValidateOperator(op);
             _predicates.Add(new TableFilter
             {
-                TableName = _table.DbName,
+                Table = _table,
                 ColumnName = relationship,
                 FilterType = FilterType.Join,
                 Next = new TableFilter
@@ -152,7 +152,7 @@ namespace BifrostQL.Core.QueryModel
 
         private TableFilter Leaf(string column, string op, object? value) => new()
         {
-            TableName = _table.DbName,
+            Table = _table,
             ColumnName = column,
             FilterType = FilterType.Join,
             Next = new TableFilter { RelationName = op, Value = value, FilterType = FilterType.Relation },

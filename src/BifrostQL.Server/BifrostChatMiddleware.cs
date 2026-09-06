@@ -458,7 +458,7 @@ namespace BifrostQL.Server
                     TableName = table.DbName,
                     GraphQlName = table.GraphQlName,
                     Path = table.GraphQlName,
-                    Filter = TableFilterFactory.Equals(table.DbName, key.ColumnName, rowId),
+                    Filter = TableFilterFactory.Equals(table, key.ColumnName, rowId),
                     Limit = 1,
                 };
                 query.ScalarColumns.Add(new GqlObjectColumn(mediaColumn.DbName, mediaColumn.GraphQlName));

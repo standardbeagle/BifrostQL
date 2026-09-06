@@ -43,7 +43,7 @@ namespace BifrostQL.Server.OData
 
             var ast = ODataFilterParser.Parse(filterText);
             var dict = ToDict(entity, typeMapper, ast, negate: false);
-            return TableFilter.FromObject(dict, entity.Table.DbName);
+            return TableFilter.FromObject(dict, entity.Table);
         }
 
         /// <summary>

@@ -30,7 +30,7 @@ namespace BifrostQL.Core.QueryModel
                     .WithColumn("tenant_id", "int", graphQlName: "tenantId"))
                 .Build();
 
-            var filter = TableFilterFactory.Equals("Orders", "tenant_id", 7);
+            var filter = TableFilterFactory.Equals(model.GetTableFromDbName("Orders"), "tenant_id", 7);
             var parameters = new SqlParameterCollection();
 
             var sut = filter.RenderParts(model, Dialect, parameters, "Orders");
@@ -65,7 +65,7 @@ namespace BifrostQL.Core.QueryModel
                         { "emailAddress", new Dictionary<string, object?> { { "_eq", "a@b.c" } } }
                     }
                 }
-            }, "Orders");
+            }, model.GetTableFromDbName("Orders"));
             var parameters = new SqlParameterCollection();
 
             var sut = filter.RenderParts(model, Dialect, parameters, "Orders");
@@ -86,7 +86,7 @@ namespace BifrostQL.Core.QueryModel
             {
                 var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                     { "id", 321 }
-                }, "tableName");
+                }, GetTableModel()["tableName1"]);
             };
 
             // BifrostExecutionError so the client-shape fault reaches the GraphQL error channel
@@ -98,16 +98,17 @@ namespace BifrostQL.Core.QueryModel
         [Fact]
         public void BasicFilterSuccess()
         {
+            var table = new DbTable()
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
+            };
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { "id", new Dictionary<string, object?> {
                     { "_eq", "321" }
                 } }
-            }, "tableName");
+            }, table);
             var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
-            {
-                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
-            });
+            dbModel.GetTableFromDbName("tableName").Returns(table);
 
             var parameters = new SqlParameterCollection();
             var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
@@ -122,6 +123,10 @@ namespace BifrostQL.Core.QueryModel
         [InlineData("or")]
         public void SingleAndOrFilterSuccess(string joinType)
         {
+            var table = new DbTable()
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
+            };
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { joinType,
                 new List<object?> { new Dictionary<string, object?> {
@@ -129,12 +134,9 @@ namespace BifrostQL.Core.QueryModel
                         { "_eq", "321" }
                     } } }
                 } }
-            }, "tableName");
+            }, table);
             var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
-            {
-                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } } }
-            });
+            dbModel.GetTableFromDbName("tableName").Returns(table);
 
             var parameters = new SqlParameterCollection();
             var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
@@ -151,6 +153,10 @@ namespace BifrostQL.Core.QueryModel
         [InlineData("or", "sessionId")]
         public void DoubleAndOrFilterSuccess(string joinType, string column2)
         {
+            var table = new DbTable()
+            {
+                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } }, { column2, new ColumnDto() { ColumnName = column2 + "_ha" } } }
+            };
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { joinType,
                     new List<object?> { new Dictionary<string, object?> {
@@ -162,12 +168,9 @@ namespace BifrostQL.Core.QueryModel
                             { "_gt", "321" }
                         } } },
                     } }
-            }, "tableName");
+            }, table);
             var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new DbTable()
-            {
-                GraphQlLookup = new Dictionary<string, ColumnDto>() { { "id", new ColumnDto() { ColumnName = "id" } }, { column2, new ColumnDto() { ColumnName = column2 + "_ha" } } }
-            });
+            dbModel.GetTableFromDbName("tableName").Returns(table);
 
             var parameters = new SqlParameterCollection();
             var sut = filter.RenderParts(dbModel, Dialect, parameters, "table");
@@ -186,6 +189,7 @@ namespace BifrostQL.Core.QueryModel
             // A relationship filter ANDed with a scalar predicate: the relationship
             // contributes an INNER JOIN, the scalar a WHERE. This is the supported
             // combine and must render valid SQL.
+            Dictionary<string, DbTable> tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { "and",
                     new List<object?> { new Dictionary<string, object?> {
@@ -199,9 +203,8 @@ namespace BifrostQL.Core.QueryModel
                             { "_gt", "321" }
                         } } },
                     } }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -220,6 +223,7 @@ namespace BifrostQL.Core.QueryModel
         {
             // Two relationship sub-filters at one AND level must get distinct join
             // aliases (j0, j1); a shared "[j]" was a duplicate-alias syntax error.
+            Dictionary<string, DbTable> tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { "and",
                     new List<object?> {
@@ -230,9 +234,8 @@ namespace BifrostQL.Core.QueryModel
                             { "sessions", new Dictionary<string, object?> {
                                 { "id", new Dictionary<string, object?> {{ "_eq", "322" }} } } } },
                     } }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -251,6 +254,7 @@ namespace BifrostQL.Core.QueryModel
         {
             // OR cannot be expressed by concatenating INNER JOINs; rather than
             // silently returning AND'd rows, this must fail loudly.
+            Dictionary<string, DbTable> tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { "or",
                     new List<object?> {
@@ -260,9 +264,8 @@ namespace BifrostQL.Core.QueryModel
                         new Dictionary<string, object?> {
                             { "id", new Dictionary<string, object?> {{ "_gt", "321" }} } },
                     } }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -278,14 +281,14 @@ namespace BifrostQL.Core.QueryModel
         [InlineData(null, "tableName1")]
         public void NestedFilterSuccess(string? alias, string result)
         {
+            Dictionary<string, DbTable> tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { "sessions",new Dictionary<string, object?> {
                 { "id", new Dictionary<string, object?> {
                     { "_eq", 321 }
                 } } } }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -303,15 +306,15 @@ namespace BifrostQL.Core.QueryModel
         [Fact]
         public void NestedNestedFilterSuccess()
         {
+            Dictionary<string, DbTable> tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?> {
                 { "sessions",new Dictionary<string, object?> {
                 { "workshops",new Dictionary<string, object?> {
                 { "id", new Dictionary<string, object?> {
                     { "_eq", 321 }
                 } } } } } }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            Dictionary<string, DbTable> tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -333,21 +336,22 @@ namespace BifrostQL.Core.QueryModel
             // columns. The former `filter.FirstOrDefault()` kept only the first key
             // and silently dropped every sibling, producing an over-broad WHERE
             // clause (a correctness/security hazard).
-            var filter = TableFilter.FromObject(new Dictionary<string, object?>
-            {
-                { "status", new Dictionary<string, object?> { { "_eq", "open" } } },
-                { "ownerId", new Dictionary<string, object?> { { "_eq", 7 } } },
-            }, "tableName");
-
-            var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new DbTable
+            var table = new DbTable
             {
                 GraphQlLookup = new Dictionary<string, ColumnDto>
                 {
                     { "status", new ColumnDto { ColumnName = "status" } },
                     { "ownerId", new ColumnDto { ColumnName = "owner_id" } },
                 }
-            });
+            };
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "status", new Dictionary<string, object?> { { "_eq", "open" } } },
+                { "ownerId", new Dictionary<string, object?> { { "_eq", 7 } } },
+            }, table);
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(table);
 
             var parameters = new SqlParameterCollection();
             var sut = filter.RenderParts(dbModel, Dialect, parameters, "t");
@@ -362,15 +366,7 @@ namespace BifrostQL.Core.QueryModel
         [Fact]
         public void SiblingKeys_ThreeColumns_AllRendered()
         {
-            var filter = TableFilter.FromObject(new Dictionary<string, object?>
-            {
-                { "a", new Dictionary<string, object?> { { "_eq", 1 } } },
-                { "b", new Dictionary<string, object?> { { "_eq", 2 } } },
-                { "c", new Dictionary<string, object?> { { "_eq", 3 } } },
-            }, "tableName");
-
-            var dbModel = Substitute.For<IDbModel>();
-            dbModel.GetTableFromDbName("tableName").Returns(new DbTable
+            var table = new DbTable
             {
                 GraphQlLookup = new Dictionary<string, ColumnDto>
                 {
@@ -378,7 +374,16 @@ namespace BifrostQL.Core.QueryModel
                     { "b", new ColumnDto { ColumnName = "b" } },
                     { "c", new ColumnDto { ColumnName = "c" } },
                 }
-            });
+            };
+            var filter = TableFilter.FromObject(new Dictionary<string, object?>
+            {
+                { "a", new Dictionary<string, object?> { { "_eq", 1 } } },
+                { "b", new Dictionary<string, object?> { { "_eq", 2 } } },
+                { "c", new Dictionary<string, object?> { { "_eq", 3 } } },
+            }, table);
+
+            var dbModel = Substitute.For<IDbModel>();
+            dbModel.GetTableFromDbName("tableName").Returns(table);
 
             var parameters = new SqlParameterCollection();
             var sut = filter.RenderParts(dbModel, Dialect, parameters, "t");
@@ -397,6 +402,7 @@ namespace BifrostQL.Core.QueryModel
             // BuildSqlParameterized fall-through, which once returned ("", empty)
             // and was spliced into `INNER JOIN () ...` — a syntax error surfacing as
             // an opaque 500. It must now fail loudly with the offending shape.
+            var tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "sessions", new Dictionary<string, object?> {
@@ -405,10 +411,9 @@ namespace BifrostQL.Core.QueryModel
                             new Dictionary<string, object?> { { "id", new Dictionary<string, object?> { { "_eq", 1 } } } },
                             new Dictionary<string, object?> { { "id", new Dictionary<string, object?> { { "_eq", 2 } } } },
                         } } } } } }
-            }, "tableName");
+            }, tables["tableName1"]);
 
             var dbModel = Substitute.For<IDbModel>();
-            var tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -426,6 +431,7 @@ namespace BifrostQL.Core.QueryModel
             // misrouted that wrapper into the leaf path, where the relationship name was
             // looked up as a column and threw "unknown column 'sessions'". Both nested
             // predicates must now land, ANDed, inside the single relationship subquery.
+            var tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "sessions", new Dictionary<string, object?>
@@ -434,9 +440,8 @@ namespace BifrostQL.Core.QueryModel
                         { "workshopId", new Dictionary<string, object?> { { "_eq", 2 } } },
                     }
                 }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            var tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -459,6 +464,7 @@ namespace BifrostQL.Core.QueryModel
         public void RelationshipFilter_ExplicitAndBlock_AndsPredicatesInOneSubquery()
         {
             // The explicit `and` form must behave like the implicit-AND sibling form.
+            var tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "sessions", new Dictionary<string, object?>
@@ -471,9 +477,8 @@ namespace BifrostQL.Core.QueryModel
                         },
                     }
                 }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            var tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -491,13 +496,13 @@ namespace BifrostQL.Core.QueryModel
         public void RelationshipFilter_SinglePredicate_NotDegradedByMultiPredicateSupport()
         {
             // A single-predicate relationship must still render its subquery + join.
+            var tables = GetTableModel();
             var filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "sessions", new Dictionary<string, object?> {
                     { "id", new Dictionary<string, object?> { { "_eq", 42 } } } } }
-            }, "tableName");
+            }, tables["tableName1"]);
             var dbModel = Substitute.For<IDbModel>();
-            var tables = GetTableModel();
             dbModel.GetTableFromDbName("tableName").Returns(tables["tableName1"]);
 
             var parameters = new SqlParameterCollection();
@@ -672,7 +677,7 @@ namespace BifrostQL.Core.QueryModel
             var filter = TableFilter.FromObject(new Dictionary<string, object?>
             {
                 { "id", new Dictionary<string, object?> { { "_bogus", 1 } } }
-            }, "tableName1");
+            }, GetTableModel()["tableName1"]);
             var model = Substitute.For<IDbModel>();
             model.GetTableFromDbName("tableName1").Returns(GetTableModel()["tableName1"]);
             var parameters = new SqlParameterCollection();

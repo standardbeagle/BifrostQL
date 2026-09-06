@@ -89,7 +89,7 @@ public sealed class GroupedAggregateSqlTests
     public void GroupedAggregate_WithFilter_ParametersNotInlined(ISqlDialect dialect, SqlFlavor flavor)
     {
         var model = BuildModel();
-        var filter = TableFilterFactory.Equals("Orders", "TenantId", 5);
+        var filter = TableFilterFactory.Equals(model.GetTableFromDbName("Orders"), "TenantId", 5);
         var query = BuildGroupedQuery(model, filter);
 
         var sqls = new Dictionary<string, ParameterizedSql>();

@@ -77,7 +77,7 @@ public sealed class SqlSemanticTests
         var facts = SqlFacts.Parse(GenerateUsersSql(model, q =>
             q.Filter = TableFilter.FromObject(
                 new Dictionary<string, object?> { ["Id"] = new Dictionary<string, object?> { ["_eq"] = 42 } },
-                "Users")));
+                model.GetTableFromDbName("Users"))));
 
         facts.HasWhere.Should().BeTrue();
         facts.Columns.Should().Contain("Id");

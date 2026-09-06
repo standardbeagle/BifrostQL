@@ -41,7 +41,7 @@ namespace BifrostQL.Server.Grpc
             }
 
             var query = BuildRowQuery(table);
-            query.Filter = TableFilter.FromPrimaryKey(keyValues, keyColumns, table.DbName);
+            query.Filter = TableFilter.FromPrimaryKey(keyValues, keyColumns, table);
             query.Limit = 1;
 
             var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);

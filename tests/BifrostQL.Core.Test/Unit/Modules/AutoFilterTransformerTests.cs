@@ -530,7 +530,7 @@ public class AutoFilterTransformerTests
         };
         var service = new QueryTransformerService(transformers);
 
-        var existingFilter = TableFilterFactory.Equals("Orders", "Total", 100);
+        var existingFilter = TableFilterFactory.Equals(model.GetTableFromDbName("Orders"), "Total", 100);
         var query = new GqlObjectQuery
         {
             DbTable = model.GetTableFromDbName("Orders"),

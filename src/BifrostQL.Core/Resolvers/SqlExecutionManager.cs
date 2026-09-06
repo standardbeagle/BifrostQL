@@ -300,7 +300,7 @@ namespace BifrostQL.Core.Resolvers
             // client filter, so a filter can narrow within the tracked table's rows
             // but never widen to another table's.
             var forced = TableFilterFactory.Equals(
-                target.DbName,
+                target,
                 Model.MetadataKeys.History.Column.Entity,
                 $"{trackedTable.TableSchema}.{trackedTable.DbName}");
 
@@ -328,7 +328,7 @@ namespace BifrostQL.Core.Resolvers
                     };
                 }
 
-                forced = AndFilters(forced, TableFilterFactory.Equals(target.DbName, scopeColumn, tenant));
+                forced = AndFilters(forced, TableFilterFactory.Equals(target, scopeColumn, tenant));
             }
 
             query.Filter = query.Filter is null ? forced : AndFilters(query.Filter, forced);

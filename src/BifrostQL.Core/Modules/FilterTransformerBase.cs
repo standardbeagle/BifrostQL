@@ -83,6 +83,6 @@ public abstract class ContextValueFilterTransformerBase : SingleColumnFilterTran
                 $"{ModuleName} value cannot be null for table '{fullTableName}'.");
         }
 
-        return TableFilterFactory.Equals(table.DbName, columnName, value);
+        return TableFilterFactory.Equals(table, columnName, value);
     }
 }

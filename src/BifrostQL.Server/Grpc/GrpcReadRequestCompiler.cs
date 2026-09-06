@@ -161,7 +161,7 @@ namespace BifrostQL.Server.Grpc
 
             try
             {
-                return TableFilter.FromObject(dict, table.DbName);
+                return TableFilter.FromObject(dict, table);
             }
             // Defensive: names/operators are already validated, so this should not fire — but a
             // structural surprise must still be a sanitized INVALID_ARGUMENT, never a leaked

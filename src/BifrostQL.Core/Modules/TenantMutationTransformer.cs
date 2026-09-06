@@ -100,7 +100,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 {
                     MutationType = MutationType.Update,
                     Data = pinned,
-                    AdditionalFilter = TableFilterFactory.Equals(table.DbName, columnName, tenantId),
+                    AdditionalFilter = TableFilterFactory.Equals(table, columnName, tenantId),
                 };
             }
 
@@ -109,7 +109,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 {
                     MutationType = mutationType,
                     Data = data,
-                    AdditionalFilter = TableFilterFactory.Equals(table.DbName, columnName, tenantId),
+                    AdditionalFilter = TableFilterFactory.Equals(table, columnName, tenantId),
                 };
         }
     }

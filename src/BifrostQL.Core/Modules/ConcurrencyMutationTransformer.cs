@@ -74,7 +74,7 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
         {
             MutationType = MutationType.Update,
             Data = next,
-            AdditionalFilter = TableFilterFactory.Equals(table.DbName, columnName, clientVersion),
+            AdditionalFilter = TableFilterFactory.Equals(table, columnName, clientVersion),
             ConflictOnNoRows = true,
         };
     }

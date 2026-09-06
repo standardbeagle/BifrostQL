@@ -40,6 +40,28 @@ generalized to every non-GraphQL front door built on `IProtocolAdapter`
    from the handler's existing caught base or add it to the catch filter
    before merging.
 
+   **Corollary — `NonBacktracking` and a match timeout are NOT
+   interchangeable, and a wall-clock timeout on a hot path is an availability
+   hazard.** AGENTS.md's "untrusted-input regex must be bounded:
+   `NonBacktracking` OR a match timeout" reads as a free choice; it is not.
+   Where the engine is `NonBacktracking` the bound is the ENGINE (linear in
+   input, and the input is already capped by the adapter's
+   `MaxMessageLength`), so a `MatchTimeout` on top adds no second bound and
+   only converts host CPU starvation into a client-facing error: a starved
+   match on a legitimate query answers with a syntax error, on every request.
+   `PgCatalogResponder`'s recognition scan runs on the raw client SQL of all
+   three query paths (simple, Parse, Execute) and carried a 250 ms wall clock
+   — under the parallel epic gate that produced client-visible errors for
+   routable catalog queries and for user queries merely containing catalog
+   text. So: `NonBacktracking` + `Regex.InfiniteMatchTimeout`, and the
+   timeout→adapter-exception mapping this invariant otherwise requires goes
+   with it (replace and remove — a dead catch invites the clock back). Reach
+   for a match timeout only where the engine is backtracking. Pin it with a
+   reflection fact over every static `Regex` field of the type: reading the
+   fields runs the type initializer, so a pattern `NonBacktracking` cannot
+   compile (backreference, lookaround) fails the same fact.
+   <!-- written_at: 2026-09-06T03:30:00Z  source_event: task:01M1N2VV1T7KASK90QR6JKGKAT, git:d96b4d54, git:e44483f7 -->
+
 2. **Constant-time/anti-enumeration comparisons must run unconditionally.**
    `return login is not null && CryptographicOperations.FixedTimeEquals(...)`
    short-circuits the compare on the null-check, silently defeating the
@@ -713,6 +735,23 @@ code, not just re-checks of pgwire.
     adapter handler already takes a `Func<DateTimeOffset>` clock (RESP, now
     LDAP), so a new deadline fact has no excuse to sleep.
     <!-- amended_at: 2026-09-05T00:00:00Z  source_event: task:01M1QX52E7ZCY5QRZ8JMZ2BJHY, git:baba20a5 -->
+
+    **The deadline is ONE owned timer whose lifetime is the connection's —
+    never a detached delay loop.** Adding the clock seam by spawning a
+    fire-and-forget `Task.Delay` loop that cancels a `using var` source
+    (pgwire 0062d281) breaks twice: every connection ending before the
+    timeout — every rejected peer, every short session — leaves the loop
+    parked, and on wake it calls `Cancel()` on a disposed source, throwing
+    `ObjectDisposedException` into an unobserved task; and it keeps one timer
+    plus one task alive per connection for the full timeout, unbounded by
+    `MaxConnections` because the admission slot was already released. Use
+    `new CancellationTokenSource(timeout, timeProvider)` linked to the
+    connection token: the timer is owned by its source and disposed with the
+    session, so there is no orphan and no late fire. The clock seam is
+    `TimeProvider` (the Server convention — `S3SigV4Verifier`), defaulting to
+    `TimeProvider.System`, not a `Func<DateTimeOffset>` a hand-rolled loop has
+    to poll.
+    <!-- amended_at: 2026-09-06T03:30:00Z  source_event: task:01M1N2VV1T7KASK90QR6JKGKAT, git:43c11a51 -->
 
 
 <!-- invariant 14 written_at: 2026-09-04T03:00:00Z  source_event: task:01M1KPA1WXEYM3W99A5V1RRV77, git:f91dfeee,7a00fc2a -->

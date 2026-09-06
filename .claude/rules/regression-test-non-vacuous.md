@@ -228,6 +228,22 @@ implementations produce provably different output.
   payload NEGATIVELY (`!== 'postgres'`) so only the defect can produce the
   failure.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1QNKK8C17R76EWBFW81VRJJ, git:2e8b5a67, git:c6c281b3 -->
+- **An injected clock proves nothing while the code under test can still
+  reach the real deadline.** `protocol-adapter-security.md` invariant 15
+  requires a deadline fact to advance an injected clock rather than sleep;
+  the vacuity is that advancing it is not the same as DRIVING it. pgwire's
+  fact injected a clock, advanced it, and stayed GREEN against a handler
+  that ignored it — the handler still awaited `Task.Delay(remaining)` on the
+  wall clock, and the fixture's real timeout (400 ms) was inside the
+  harness's own wait, so the wall clock satisfied the assertion either way.
+  Two requirements: set the REAL timeout far beyond the test's wait budget
+  (10 min vs 5 s) so only the fake provider can fire it, and run the mutant
+  "handler substitutes `TimeProvider.System`" — it must go RED. If any await
+  on the path still measures real time, the seam is decorative. (Advance the
+  clock per poll, not once: the admission slot is taken at accept, BEFORE the
+  timer is armed, so a single early advance can land ahead of the timer and
+  never fire it.)
+  <!-- written_at: 2026-09-06T03:30:00Z  source_event: task:01M1N2VV1T7KASK90QR6JKGKAT, git:43c11a51 -->
 - **A fixture value must be storable in the column type it exercises.** The
   edit-db BigInt test used a value above int64; it stayed green only until a
   real bound arrived. Pick extremes just inside the real limit.

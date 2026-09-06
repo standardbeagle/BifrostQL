@@ -77,9 +77,11 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Resolves a CLIENT-SUPPLIED table name — the single rule every wire-facing
-        /// write/read entry point (mutation intents, file resolvers, protocol
-        /// adapters) applies: a schema-qualified <c>schema.name</c> resolves exactly;
+        /// Resolves a CLIENT-SUPPLIED table name — the single rule Core's wire-facing
+        /// write entry points (mutation intents, and through them every protocol
+        /// adapter write; the File*Resolvers) apply: a schema-qualified
+        /// <c>schema.name</c> resolves exactly (split on the FIRST dot, so a dotted
+        /// DbName is still reachable as <c>schema.dot.ted</c>);
         /// a bare name resolves only when unique across schemas. An ambiguous or
         /// unknown name returns false, and the caller maps BOTH onto the same
         /// sanitized error via <c>BifrostErrorSink.LookupMiss</c>

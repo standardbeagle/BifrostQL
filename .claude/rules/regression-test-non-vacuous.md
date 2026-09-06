@@ -83,6 +83,14 @@ implementations produce provably different output.
   frame-cap fact was proven RED on the RESP derivation and shipped vacuous on
   the LDAP one. Run the mutant against each suite that sets the opt-in flag.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1N05460G65T9XXDAPMHGKKS, git:31990a6d -->
+  Same shape without a kit: **a wire-parity fact (`protocol-adapter-security.md`
+  invariant 9 — same condition, byte-identical response) pinned on ONE of N
+  sibling seams says nothing about the other N-1.** M11-w pinned the
+  unknown-vs-ambiguous byte-identical miss on `IMutationIntentExecutor` only,
+  while the same resolution rule ran in three `File*Resolver`s that review had
+  to fact separately. Enumerate the seams that share the contract and write one
+  fact per seam.
+  <!-- written_at: 2026-09-06T08:05:00Z  source_event: task:01M1THZTA5S39N7JKYFXJQ5YTW, git:d4cd685b -->
 - **Narrowing a broad path needs facts for the shapes the BROAD path already
   served.** The bullet above spans the population that must FAIL; this is its
   complement — the population that must keep WORKING. When a fix replaces
@@ -387,7 +395,15 @@ surfaced the expected 6× RED. Both implementer and reviewer hit it.
   mtime**, so even an explicit `dotnet build` afterwards can no-op against the
   still-mutated outputs — the suite then "fails" with the mutant's signature
   after you believe you restored. `touch` the restored file (or restore via
-  `git checkout`) before the rebuild.
+  `git checkout`) before the rebuild. **But `git checkout -- <file>` restores
+  the COMMITTED content, so it also throws away an uncommitted fix living in
+  the mutated file** — M11-w's scan mutant and the fix were both in
+  `MutationIntentExecutor.cs`, and the restore silently reverted the fix,
+  recovered only from a scratch backup. Commit the fix BEFORE the mutant run
+  (or restore from the backup and `touch` it), so `git checkout` is safe by
+  construction.
+  <!-- written_at: 2026-09-06T08:05:00Z  source_event: task:01M1THZTA5S39N7JKYFXJQ5YTW, git:d4cd685b -->
+
 - **Workspace `dist` dependencies stale the same way.** A JS package consumed
   through the workspace by its BUILT output (e.g. the HostedSpa sample
   resolving `@bifrostql/react` via its `dist`) runs the last-built bundle, not

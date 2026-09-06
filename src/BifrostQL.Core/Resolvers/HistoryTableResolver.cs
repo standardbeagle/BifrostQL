@@ -90,61 +90,45 @@ namespace BifrostQL.Core.Resolvers
         /// also carries, being an ordinary published table) are rejected with steering
         /// rather than silently returning nothing. Inline fragments and named fragment
         /// spreads are flattened.
+        ///
+        /// Walked from the raw selection set via <see cref="SelectionWalk"/>, the same
+        /// helper the aggregate resolver uses, so EVERY <c>data</c> node contributes
+        /// its own sub-selection. Reading
+        /// <see cref="IResolveFieldContext.SubFields"/> instead would make the
+        /// projection depend on the execution engine merging same-response-key
+        /// selection sets before the resolver runs — true today, and the reason the
+        /// reported column-dropping defect does not reproduce, but an assumption this
+        /// resolver has no reason to hold.
         /// </summary>
         private List<GqlObjectColumn> BuildScalarColumns(IResolveFieldContext context)
         {
             var columns = new List<GqlObjectColumn>();
-            if (context.SubFields is null)
+            if (!SelectionWalk.SelectedFieldNodes(context).TryGetValue("data", out var dataNodes))
                 return columns;
 
-            foreach (var sub in context.SubFields.Values)
-            {
-                if (sub.Field.Name.StringValue == "data")
-                    CollectDataColumns(context, sub.Field.SelectionSet, columns);
-            }
+            foreach (var dataNode in dataNodes)
+                CollectDataColumns(context, dataNode.SelectionSet, columns);
             return columns;
         }
 
         private void CollectDataColumns(
             IResolveFieldContext context, GraphQLSelectionSet? selectionSet, List<GqlObjectColumn> columns)
         {
-            if (selectionSet is null)
-                return;
-
-            foreach (var selection in selectionSet.Selections)
+            SelectionWalk.Walk(context, selectionSet, field =>
             {
-                switch (selection)
-                {
-                    case GraphQLField field:
-                        var name = field.Name.StringValue;
-                        if (name.StartsWith("__", StringComparison.Ordinal))
-                            continue;
-                        if (field.SelectionSet is { Selections.Count: > 0 })
-                            throw new BifrostExecutionError(
-                                $"'{FieldName}' returns trail rows only; nested field '{name}' is not supported " +
-                                "on the history read surface. Select the trail columns directly.");
-                        if (!_historyTable.GraphQlLookup.TryGetValue(name, out var column))
-                            throw new BifrostExecutionError(
-                                $"'{name}' is not a trail column of '{FieldName}'; the history read surface " +
-                                "supports the history table's plain columns only.");
-                        columns.Add(new GqlObjectColumn(column.DbName, field.Alias?.Name.StringValue ?? name));
-                        break;
-
-                    case GraphQLInlineFragment inline:
-                        CollectDataColumns(context, inline.SelectionSet, columns);
-                        break;
-
-                    case GraphQLFragmentSpread spread:
-                        var fragmentName = spread.FragmentName.Name.StringValue;
-                        var fragment = context.Document.Definitions
-                            .OfType<GraphQLFragmentDefinition>()
-                            .FirstOrDefault(d => d.FragmentName.Name.StringValue == fragmentName)
-                            ?? throw new BifrostExecutionError(
-                                $"Fragment '{fragmentName}' referenced under '{FieldName}' was not found in the document.");
-                        CollectDataColumns(context, fragment.SelectionSet, columns);
-                        break;
-                }
-            }
+                var name = field.Name.StringValue;
+                if (name.StartsWith("__", StringComparison.Ordinal))
+                    return;
+                if (field.SelectionSet is { Selections.Count: > 0 })
+                    throw new BifrostExecutionError(
+                        $"'{FieldName}' returns trail rows only; nested field '{name}' is not supported " +
+                        "on the history read surface. Select the trail columns directly.");
+                if (!_historyTable.GraphQlLookup.TryGetValue(name, out var column))
+                    throw new BifrostExecutionError(
+                        $"'{name}' is not a trail column of '{FieldName}'; the history read surface " +
+                        "supports the history table's plain columns only.");
+                columns.Add(new GqlObjectColumn(column.DbName, field.Alias?.Name.StringValue ?? name));
+            });
         }
     }
 }

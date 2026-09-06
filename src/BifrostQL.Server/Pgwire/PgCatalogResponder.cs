@@ -57,18 +57,6 @@ namespace BifrostQL.Server.Pgwire
         // pg_get_userbyid(relowner) as the "Owner" column of \d / \dt.
         private const string SyntheticOwnerName = "bifrost";
 
-        /// <summary>
-        /// Wall-clock ceiling on any single regex match here. These patterns run against RAW
-        /// CLIENT SQL on EVERY query, before parsing and before any catalog decision, so an
-        /// unbounded match time is a denial-of-service surface reachable by one authenticated
-        /// message. A timeout raises <see cref="RegexMatchTimeoutException"/>, which the callers
-        /// below convert into the adapter's own <see cref="PgQueryTranslationException"/> — a
-        /// clean query-phase error the connection handler already catches — never an unhandled
-        /// throw. This is a backstop: the patterns themselves are non-backtracking or
-        /// linear-scan, so it should be unreachable.
-        /// </summary>
-        private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
-
         // Structural signature of the query psql issues for \d and \dt: a pg_class ⋈
         // pg_namespace join carrying the relkind IN (...) filter and the
         // pg_table_is_visible(oid) guard, ending in the positional ORDER BY 1[,2].
@@ -94,11 +82,11 @@ namespace BifrostQL.Server.Pgwire
         private static readonly Regex DescribeRelationsPattern = new(
             @"from\s+(?:pg_catalog\.)?pg_class\b.*\bjoin\s+(?:pg_catalog\.)?pg_namespace\b.*\brelkind\s+in\s*\(([^)]*)\).*\bpg_table_is_visible\b.*\border\s+by\s+1",
             RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.NonBacktracking,
-            RegexTimeout);
+            Regex.InfiniteMatchTimeout);
 
         /// <summary>Quoted literals inside a relkind IN (…) list; the input is already bounded by <c>[^)]*</c>.</summary>
         private static readonly Regex RelkindLiteralPattern = new(
-            "'([^']*)'", RegexOptions.NonBacktracking, RegexTimeout);
+            "'([^']*)'", RegexOptions.NonBacktracking, Regex.InfiniteMatchTimeout);
 
         public async Task<PgCatalogResponse?> TryRespondAsync(
             IQueryIntentExecutor executor,
@@ -119,22 +107,7 @@ namespace BifrostQL.Server.Pgwire
             //    the relkind / pg_table_is_visible signature. Answered by an in-memory
             //    join over the identity-visible projection — the subset parser does not
             //    accept this shape and is intentionally not loosened for it.
-            Match describe;
-            try
-            {
-                describe = DescribeRelationsPattern.Match(sql);
-            }
-            catch (RegexMatchTimeoutException ex)
-            {
-                // Backstop for the recognition scan (see RegexTimeout). It must surface as the
-                // adapter's own query-phase exception — the type the connection handler and the
-                // extended processor already catch — never as a bare RegexMatchTimeoutException,
-                // which matches neither filter and would drop the connection unhandled
-                // (protocol-adapter-security invariant 1).
-                throw new PgQueryTranslationException(
-                    "pgwire: catalog query recognition timed out; simplify the statement.",
-                    PgWireProtocol.SqlStateSyntaxError, ex);
-            }
+            var describe = DescribeRelationsPattern.Match(sql);
             if (describe.Success)
             {
                 var describeModel = await executor.GetModelAsync(endpoint);

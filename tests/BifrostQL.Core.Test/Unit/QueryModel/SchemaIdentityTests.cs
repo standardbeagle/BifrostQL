@@ -65,6 +65,71 @@ public sealed class SchemaIdentityTests
         sql.Sql.Should().Contain("[sales].[orders]").And.NotContain("[archive].[orders]");
     }
 
+    /// <summary>
+    /// ConnectLinks resolves each link from the node's OWN resolved table and stamps the
+    /// target's identity on the link node; a bare-name re-resolve of the ambiguous root
+    /// (`orders`) threw before the fix, and a branch that forgets to stamp DbTable leaves
+    /// the join path dereferencing null. All three link kinds are spanned, plus a nested
+    /// link on a child back to the ambiguous name, so the recursion runs on the stamped
+    /// identity rather than a name.
+    /// </summary>
+    [Fact]
+    public void ConnectLinks_StampsResolvedTableOnEveryLinkKind_AcrossSchemas()
+    {
+        var sales = Table("sales", "orders", "id", "amount", "customer_id");
+        var archive = Table("archive", "orders", "id", "archived_total");
+        var customers = Table("sales", "customers", "id", "name");
+        var lines = Table("sales", "lines", "id", "order_id");
+        var orderTags = Table("sales", "order_tags", "order_id", "tag_id");
+        var tags = Table("sales", "tags", "id", "label");
+        sales.SingleLinks.Add("customers", new TableLinkDto
+        {
+            Name = "customers", ChildTable = sales, ParentTable = customers,
+            ChildId = sales.ColumnLookup["customer_id"], ParentId = customers.ColumnLookup["id"],
+        });
+        var ordersToLines = new TableLinkDto
+        {
+            Name = "lines", ParentTable = sales, ChildTable = lines,
+            ParentId = sales.ColumnLookup["id"], ChildId = lines.ColumnLookup["order_id"],
+        };
+        sales.MultiLinks.Add("lines", ordersToLines);
+        lines.SingleLinks.Add("orders", ordersToLines);
+        sales.ManyToManyLinks.Add("tags", new ManyToManyLink
+        {
+            Name = "tags", SourceTable = sales, JunctionTable = orderTags, TargetTable = tags,
+            SourceColumn = sales.ColumnLookup["id"], TargetColumn = tags.ColumnLookup["id"],
+            JunctionSourceColumn = orderTags.ColumnLookup["order_id"],
+            JunctionTargetColumn = orderTags.ColumnLookup["tag_id"],
+        });
+        var model = new DbModel { Tables = new IDbTable[] { archive, sales, customers, lines, orderTags, tags } };
+
+        static GqlObjectQuery Link(string name) => new()
+        {
+            GraphQlName = name, ScalarColumns = { new GqlObjectColumn("id") },
+        };
+        var query = Query(sales);
+        var customerLink = Link("customers");
+        var linesLink = Link("lines");
+        var backLink = Link("orders");
+        linesLink.Links.Add(backLink);
+        var tagsLink = Link("tags");
+        query.Links.AddRange(new[] { customerLink, linesLink, tagsLink });
+
+        query.ConnectLinks(model);
+
+        customerLink.DbTable.Should().BeSameAs(customers);
+        linesLink.DbTable.Should().BeSameAs(lines);
+        backLink.DbTable.Should().BeSameAs(sales);
+        tagsLink.DbTable.Should().BeSameAs(tags);
+
+        var sqls = new Dictionary<string, ParameterizedSql>();
+        query.AddSqlParameterized(model, SqlServerDialect.Instance, sqls, new());
+        sqls["orders->customers"].Sql.Should().Contain("[sales].[customers]");
+        sqls["orders->lines"].Sql.Should().Contain("[sales].[lines]");
+        sqls["orders->lines->orders"].Sql.Should().Contain("[sales].[orders]").And.NotContain("[archive].[orders]");
+        sqls["orders->tags"].Sql.Should().Contain("[sales].[tags]").And.Contain("[sales].[order_tags]");
+    }
+
     [Fact]
     public void GroupedAggregateFilter_PreservesResolvedSchema()
     {

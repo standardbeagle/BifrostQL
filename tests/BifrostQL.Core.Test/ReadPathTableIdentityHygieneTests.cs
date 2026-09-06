@@ -46,25 +46,28 @@ public class ReadPathTableIdentityHygieneTests
                 if (relative.Contains("/bin/") || relative.Contains("/obj/"))
                     continue;
 
+                // Scan the WHOLE file, not line by line: a call whose argument list wraps
+                // onto the next line (`GetTableFromDbName(\n    name)`) is still a bare
+                // lookup, and a per-line scan cannot see its arity. Comment lines are
+                // blanked (not removed) so reported line numbers stay real.
                 var lines = File.ReadAllLines(file);
-                for (var i = 0; i < lines.Length; i++)
+                var code = string.Join("\n", lines.Select(l =>
                 {
-                    var line = lines[i];
-                    var trimmed = line.TrimStart();
-                    if (trimmed.StartsWith("//") || trimmed.StartsWith("*"))
-                        continue;
+                    var trimmed = l.TrimStart();
+                    return trimmed.StartsWith("//") || trimmed.StartsWith("*") ? "" : l;
+                }));
 
-                    foreach (var argCount in LookupArity(line))
+                foreach (var (argCount, at) in LookupArity(code))
+                {
+                    if (argCount >= 2)
                     {
-                        if (argCount >= 2)
-                        {
-                            qualifiedHits++;
-                            continue;
-                        }
-                        if (Array.Exists(Allowlist, a => a == relative))
-                            continue;
-                        offenders.Add($"{relative}:{i + 1}: {line.Trim()}");
+                        qualifiedHits++;
+                        continue;
                     }
+                    if (Array.Exists(Allowlist, a => a == relative))
+                        continue;
+                    var lineNo = code.AsSpan(0, at).Count('\n') + 1;
+                    offenders.Add($"{relative}:{lineNo}: {lines[lineNo - 1].Trim()}");
                 }
             }
         }
@@ -79,34 +82,36 @@ public class ReadPathTableIdentityHygieneTests
     }
 
     /// <summary>
-    /// Yields, for every <c>GetTableFromDbName</c> / <c>TryGetTableFromDbName</c> call on
-    /// the line, the count of its INPUT arguments — commas are split at paren/bracket
-    /// depth one so a nested call is not mistaken for a second argument, and an
-    /// <c>out</c> argument is not counted (the Try* overloads carry one, so counting it
-    /// would make a bare-name `Try(name, out t)` look schema-qualified).
+    /// Yields, for every <c>GetTableFromDbName</c> / <c>TryGetTableFromDbName</c> call in
+    /// the text, the count of its INPUT arguments and the offset of the call — commas are
+    /// split at paren/bracket depth one so a nested call is not mistaken for a second
+    /// argument, an <c>out</c> argument is not counted (the Try* overloads carry one, so
+    /// counting it would make a bare-name `Try(name, out t)` look schema-qualified), and
+    /// the argument list may span lines. An argument list the file never closes is
+    /// reported as a bare call rather than silently trusted.
     /// </summary>
-    private static IEnumerable<int> LookupArity(string line)
+    private static IEnumerable<(int Inputs, int At)> LookupArity(string code)
     {
         const string name = "GetTableFromDbName";
         var from = 0;
         while (true)
         {
-            var at = line.IndexOf(name, from, StringComparison.Ordinal);
+            var at = code.IndexOf(name, from, StringComparison.Ordinal);
             if (at < 0) yield break;
             from = at + name.Length;
 
             var open = from;
-            while (open < line.Length && char.IsWhiteSpace(line[open])) open++;
-            if (open >= line.Length || line[open] != '(') continue;
+            while (open < code.Length && char.IsWhiteSpace(code[open])) open++;
+            if (open >= code.Length || code[open] != '(') continue;
 
             var depth = 0;
             var closed = false;
             var args = new List<string>();
             var start = open + 1;
-            var end = line.Length;
-            for (var i = open; i < line.Length; i++)
+            var end = code.Length;
+            for (var i = open; i < code.Length; i++)
             {
-                var c = line[i];
+                var c = code[i];
                 if (c is '(' or '[') depth++;
                 else if (c is ')' or ']')
                 {
@@ -115,20 +120,18 @@ public class ReadPathTableIdentityHygieneTests
                 }
                 else if (c == ',' && depth == 1)
                 {
-                    args.Add(line[start..i]);
+                    args.Add(code[start..i]);
                     start = i + 1;
                 }
             }
-            args.Add(line[start..end]);
+            args.Add(code[start..end]);
 
             // A declaration/reference with an empty parameter list is not a call site.
             if (args.Count == 1 && string.IsNullOrWhiteSpace(args[0])) continue;
-            // An unclosed paren means the call wraps onto following lines, so its later
-            // arguments are not visible here; do not report it as a single-arg offender.
-            if (!closed) { yield return 2; continue; }
+            if (!closed) { yield return (0, at); continue; }
 
             var inputs = args.Count(a => !a.TrimStart().StartsWith("out ", StringComparison.Ordinal));
-            yield return inputs;
+            yield return (inputs, at);
         }
     }
 

@@ -3,6 +3,7 @@ using System.Text;
 using BifrostQL.Server;
 using BifrostQL.Server.Ldap;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.AspNetCore.Http;
 using Xunit;
 
@@ -211,15 +212,6 @@ namespace BifrostQL.Server.Test.Ldap
                 .Should().BeNull("an anonymous session expires at its deadline; it must not hold a slot forever");
         }
 
-        /// <summary>A manually advanced clock, so a deadline fact is driven by the TEST, not by
-        /// the wall clock of a box running the parallel epic gate.</summary>
-        private sealed class SettableClock
-        {
-            private DateTimeOffset _now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-            public DateTimeOffset Now => _now;
-            public void Advance(TimeSpan by) => _now += by;
-        }
-
         [Fact]
         public async Task AnonymousRebinds_DoNotExtendTheSessionDeadline()
         {
@@ -236,7 +228,10 @@ namespace BifrostQL.Server.Test.Ldap
             // PREVIOUS bind, inside any per-bind sliding window, while the cumulative 1600 ms is
             // past the accept-time 600 ms deadline: a sliding deadline answers all four binds and
             // stays open (RED), the fixed deadline closes the connection.
-            var clock = new SettableClock();
+            // A manually advanced TimeProvider, so a deadline fact is driven by the TEST, not by
+            // the wall clock of a box running the parallel epic gate. TimeProvider is the seam the
+            // shared session host takes (invariant 15), so the fake drives the real timer here.
+            var clock = new FakeTimeProvider();
             var options = new LdapWireOptions
             {
                 AnonymousBindEnabled = true,
@@ -244,7 +239,7 @@ namespace BifrostQL.Server.Test.Ldap
                 IdleTimeout = TimeSpan.FromSeconds(30),
             };
             await using var fixture = await LdapFixture.StartAsync(
-                options, authenticator: Authenticator(options), tls: true, clock: () => clock.Now);
+                options, authenticator: Authenticator(options), tls: true, timeProvider: clock);
 
             LdapResponse? response = null;
             for (var messageId = 1; messageId <= 4; messageId++)

@@ -35,7 +35,7 @@ namespace BifrostQL.Server.Pgwire
         private readonly IServiceProvider _services;
         private readonly PgWireOptions _options;
         private readonly PgCancellationRegistry _cancelRegistry;
-        private readonly PgwireConnectionLimiter _connectionLimiter;
+        private readonly PgwireSessionHost _sessions;
         private readonly PgAuthRateLimiter _authRateLimiter;
         private readonly ILogger<PgConnectionHandler> _logger;
         private readonly Func<Stream, CancellationToken, Task<Stream>> _tlsUpgrade;
@@ -51,7 +51,8 @@ namespace BifrostQL.Server.Pgwire
             ILogger<PgConnectionHandler>? logger = null,
             Func<Stream, CancellationToken, Task<Stream>>? tlsUpgrade = null,
             PgAuthRateLimiter? authRateLimiter = null,
-            TimeProvider? timeProvider = null)
+            TimeProvider? timeProvider = null,
+            PgwireSessionHost? sessionHost = null)
         {
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
@@ -60,7 +61,6 @@ namespace BifrostQL.Server.Pgwire
             // A single handler instance is shared across all connections (Kestrel resolves it
             // once), so these shared coordination objects live for the front door's lifetime.
             _cancelRegistry = cancelRegistry ?? new PgCancellationRegistry();
-            _connectionLimiter = connectionLimiter ?? new PgwireConnectionLimiter(options.MaxConnections);
             _logger = logger ?? NullLogger<PgConnectionHandler>.Instance;
             // Test seam: wraps the real TLS upgrade so a test can observe the upgraded stream's
             // disposal. Production always uses the default SslStream upgrade.
@@ -69,6 +69,8 @@ namespace BifrostQL.Server.Pgwire
             // injects a fake provider and advances it, so the deadline fact never waits on
             // (or races) the host's wall clock.
             _timeProvider = timeProvider ?? TimeProvider.System;
+            // Admission + pre-auth deadline, shared with every other raw-wire front door.
+            _sessions = sessionHost ?? new PgwireSessionHost(options, connectionLimiter, _timeProvider);
             _authRateLimiter = authRateLimiter
                 ?? new PgAuthRateLimiter(options.MaxAuthAttemptsPerSource, options.AuthRateLimitWindow);
         }
@@ -88,10 +90,9 @@ namespace BifrostQL.Server.Pgwire
         /// via <see cref="ProtocolSourceKey"/>, never "ip:port" (an ephemeral port would make
         /// the cap per-connection); a null/empty source shares one bucket ("unknown").
         /// </summary>
-        internal async Task HandleConnectionAsync(Stream rawStream, CancellationToken ct, string? source = null)
-        {
-            // ---- Connection-limit admission, BEFORE any work ----
-            // Reserve the slot at accept — ahead of the pre-startup negotiation, the TLS
+        internal Task HandleConnectionAsync(Stream rawStream, CancellationToken ct, string? source = null)
+            // ---- Admission + pre-auth deadline, BEFORE any work ----
+            // The slot is reserved at accept — ahead of the pre-startup negotiation, the TLS
             // handshake, the credential lookup and the SCRAM exchange. Admission used to happen
             // only after NegotiateStartupAsync returned, which meant MaxConnections bounded
             // ADMITTED sessions but not the work an UNADMITTED peer could force: an unlimited
@@ -99,30 +100,29 @@ namespace BifrostQL.Server.Pgwire
             // an unbounded SSLRequest/GSSENCRequest ping-pong, all outside the cap. A cap that
             // only counts the connections that got through is not a cap on the resource.
             // Over the limit: a clean 53300 too_many_connections on the raw socket, then close.
-            if (!_connectionLimiter.TryAcquire())
-            {
-                await RejectAsync(rawStream, PgWireProtocol.SqlStateTooManyConnections,
-                    PgWireProtocol.TooManyConnectionsMessage, ct);
-                return;
-            }
+            // The shared host owns both halves, so this front door cannot drift from the other two.
+            => _sessions.RunAsync(
+                ct,
+                deadline => RunSessionAsync(rawStream, deadline, ct, source),
+                () => RejectAsync(rawStream, PgWireProtocol.SqlStateTooManyConnections,
+                    PgWireProtocol.TooManyConnectionsMessage, ct));
 
-            var admitted = true;
+        /// <summary>
+        /// Drives ONE admitted connection to completion. The caller owns the admission slot and
+        /// the pre-auth deadline: everything up to ReadyForQuery runs under
+        /// <see cref="ProtocolPreAuthDeadline.Token"/>, so a peer that opens a socket and then
+        /// says nothing cannot hold the slot it was already given. Expiry cancels the in-flight
+        /// read, which surfaces as OperationCanceledException and is absorbed by the lifecycle
+        /// catch below.
+        /// </summary>
+        private async Task RunSessionAsync(
+            Stream rawStream, ProtocolPreAuthDeadline deadline, CancellationToken ct, string? source)
+        {
             PgCancellationRegistration? cancellation = null;
             Stream? sessionStream = null;
             try
             {
-                // ---- Pre-auth deadline ----
-                // Everything up to ReadyForQuery runs under a deadline linked to the connection
-                // token. Without it a peer that opens a socket and then says nothing holds its
-                // slot forever — and now that the slot is reserved at accept, a handful of silent
-                // sockets would otherwise be a complete denial of service needing no credentials
-                // and no bytes. Expiry cancels the in-flight read, which surfaces as
-                // OperationCanceledException and is absorbed by the lifecycle catch below.
-                // The timer is owned by its own source and disposed with the session, so a
-                // connection that ends early leaves no orphaned timer and no late fire.
-                using var handshakeTimer = new CancellationTokenSource(_options.HandshakeTimeout, _timeProvider);
-                using var handshakeDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, handshakeTimer.Token);
-                var handshakeToken = handshakeDeadline.Token;
+                var handshakeToken = deadline.Token;
 
                 var (stream, startup, negotiatedTls) = await NegotiateStartupAsync(rawStream, handshakeToken);
                 sessionStream = stream;
@@ -214,7 +214,10 @@ namespace BifrostQL.Server.Pgwire
 
                 // Past ReadyForQuery the session is authenticated, so the pre-auth deadline no
                 // longer applies: an idle AUTHENTICATED session is a normal pooled connection,
-                // not an unauthenticated squatter. The loop below runs on the connection token.
+                // not an unauthenticated squatter. Completing the password/SCRAM exchange is the
+                // credentialed action that retires it — nothing a peer can reach for free does.
+                // The loop below runs on the connection token.
+                deadline.RetireOnCredentialedAction();
 
                 // ---- QUERY LOOP ----
                 // The session is authenticated and ReadyForQuery has been sent. The loop drives
@@ -234,7 +237,6 @@ namespace BifrostQL.Server.Pgwire
             finally
             {
                 if (cancellation is not null) _cancelRegistry.Unregister(cancellation);
-                if (admitted) _connectionLimiter.Release();
                 // Dispose the TLS-upgraded stream when negotiation wrapped the raw socket: an
                 // undisposed SslStream never sends close_notify and leaks the inner socket past
                 // the session. The raw stream itself is owned by the caller and left alone.

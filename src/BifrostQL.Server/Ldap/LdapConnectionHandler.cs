@@ -39,11 +39,11 @@ namespace BifrostQL.Server.Ldap
     {
         private readonly LdapWireOptions _options;
         private readonly LdapConnectionLimiter _connections;
+        private readonly LdapSessionHost _sessions;
         private readonly LdapBindAuthenticator? _authenticator;
         private readonly LdapTlsProvider? _tls;
         private readonly LdapSearchExecutor? _search;
         private readonly ILogger<LdapConnectionHandler> _logger;
-        private readonly Func<DateTimeOffset> _clock;
 
         public LdapConnectionHandler(
             LdapWireOptions options,
@@ -52,15 +52,19 @@ namespace BifrostQL.Server.Ldap
             LdapTlsProvider? tls = null,
             LdapSearchExecutor? search = null,
             ILogger<LdapConnectionHandler>? logger = null,
-            Func<DateTimeOffset>? clock = null)
+            TimeProvider? timeProvider = null,
+            LdapSessionHost? sessionHost = null)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _connections = connectionLimiter ?? new LdapConnectionLimiter(options.MaxConnections);
+            // Admission and the pre-auth deadline both belong to the shared host: they are one
+            // rule (a slot taken at accept is only reclaimable by a deadline), and three private
+            // copies of it drifted three times, each drift failing open.
+            _sessions = sessionHost ?? new LdapSessionHost(options, _connections, timeProvider);
             _authenticator = authenticator;
             _tls = tls;
             _search = search;
             _logger = logger ?? NullLogger<LdapConnectionHandler>.Instance;
-            _clock = clock ?? (() => DateTimeOffset.UtcNow);
         }
 
         /// <summary>The per-source bind rate-limit key; see <see cref="ProtocolSourceKey"/>.</summary>
@@ -87,22 +91,27 @@ namespace BifrostQL.Server.Ldap
         internal async Task HandleConnectionAsync(
             Stream stream, CancellationToken ct, string source = "unknown", bool tlsEstablished = false)
         {
-            if (!_connections.TryAcquire())
-            {
-                _logger.LogWarning("ldap connection refused: at the {Max}-connection cap.", _options.MaxConnections);
-                await TrySendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
-                    LdapResultCode.UnavailableCriticalExtension, "server connection limit reached"), ct);
-                return;
-            }
-            try
-            {
-                await RunSessionAsync(stream, ct, source, tlsEstablished);
-            }
-            finally
-            {
-                _connections.Release();
-            }
+            await _sessions.RunAsync(
+                ct,
+                deadline => RunSessionAsync(stream, deadline, ct, source, tlsEstablished),
+                async () =>
+                {
+                    _logger.LogWarning("ldap connection refused: at the {Max}-connection cap.", _sessions.MaxConnections);
+                    await TrySendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
+                        LdapResultCode.UnavailableCriticalExtension, "server connection limit reached"), ct);
+                });
         }
+
+        /// <summary>
+        /// Runs the message loop of ONE connection whose slot the CALLER took at accept — the
+        /// LDAPS listener, which admits before the TLS handshake, earlier than this type could.
+        /// The shared host still arms the pre-auth deadline, so exactly those connections (the
+        /// ones that reached a TLS state machine) are bounded rather than exempt.
+        /// </summary>
+        internal Task RunAdmittedSessionAsync(
+            Stream stream, CancellationToken ct, string source, bool tlsEstablished)
+            => _sessions.RunAdmittedAsync(
+                ct, deadline => RunSessionAsync(stream, deadline, ct, source, tlsEstablished));
 
         /// <summary>
         /// Runs the message loop of ONE admitted connection: read a message, answer it, repeat, until
@@ -110,7 +119,8 @@ namespace BifrostQL.Server.Ldap
         /// listener takes its slot before the TLS handshake, which is earlier than this method could —
         /// and owns the transport's lifetime.
         /// </summary>
-        internal async Task RunSessionAsync(Stream stream, CancellationToken ct, string source, bool tlsEstablished)
+        private async Task RunSessionAsync(
+            Stream stream, ProtocolPreAuthDeadline deadline, CancellationToken ct, string source, bool tlsEstablished)
         {
             var outstanding = new LdapOutstandingOperationLimiter(_options.MaxOutstandingOperations);
             // Read through a buffer so the framing reader costs one socket read per burst instead of
@@ -121,34 +131,28 @@ namespace BifrostQL.Server.Ldap
             // Session state for THIS connection: whether a bind has authenticated it, and whether that
             // bind was anonymous (an anonymous session is limited to the RootDSE/subschema — criterion 4).
             var session = new LdapSessionState { TlsEstablished = tlsEstablished };
-            // Session deadline: the admission slot was taken at accept, so a peer that never
-            // authenticates must not be able to hold it past AuthenticationTimeout even while
-            // sending traffic (failing binds keep the connection non-idle, so the idle timeout
-            // alone does not reclaim the slot). The deadline is FIXED at accept and never slides
-            // with traffic: only a CREDENTIALED bind retires it (an authenticated session is a
-            // legitimate pooled client, bounded by the idle timeout). An anonymous bind leaves it
-            // where it is — anonymous binds are not rate limited, so a deadline re-armed per bind
-            // would let a credential-less peer hold the slot forever by re-binding — and a
-            // credential-less peer therefore holds a slot no longer than one that never bound.
-            // The clock is injectable so the fixed-at-accept fact is proven deterministically,
-            // not against a wall clock under load.
-            DateTimeOffset? sessionDeadline = _clock() + _options.AuthenticationTimeout;
+            // Session deadline: the caller (the shared host) armed it at accept, so a peer that
+            // never authenticates cannot hold its slot past the configured pre-auth timeout even
+            // while sending traffic — failing binds keep the connection non-idle, so the idle
+            // timeout alone does not reclaim the slot. It never slides with traffic: only a
+            // CREDENTIALED bind retires it, and an anonymous bind leaves it exactly where it is
+            // (anonymous binds are not rate limited, so a deadline re-armed per bind would let a
+            // credential-less peer hold the slot forever by re-binding).
             try
             {
                 while (true)
                 {
-                    var readTimeout = _options.IdleTimeout;
-                    if (sessionDeadline is { } deadline)
+                    // LDAP bounds an unauthenticated read by the SHORTER of the remaining pre-auth
+                    // budget and the idle timeout, so a silent peer is dropped even under a
+                    // configuration whose pre-auth window outlives it.
+                    var budget = deadline.ReadBudget(
+                        pastHandshake: !deadline.IsArmed, _options.IdleTimeout, clampToIdleWhileArmed: true);
+                    if (budget is not { } readTimeout)
+                        readTimeout = Timeout.InfiniteTimeSpan;
+                    else if (readTimeout <= TimeSpan.Zero)
                     {
-                        var remaining = deadline - _clock();
-                        if (remaining <= TimeSpan.Zero)
-                        {
-                            _logger.LogDebug("ldap connection reached its {Timeout} session deadline; closing.",
-                                _options.AuthenticationTimeout);
-                            return;
-                        }
-                        if (remaining < readTimeout)
-                            readTimeout = remaining;
+                        _logger.LogDebug("ldap connection reached its session deadline; closing.");
+                        return;
                     }
 
                     LdapRequest? request;
@@ -186,15 +190,16 @@ namespace BifrostQL.Server.Ldap
                         if (request.Operation is LdapBindRequest)
                         {
                             if (session.Authenticated && !session.IsAnonymous)
-                                // A credentialed bind retires the deadline.
-                                sessionDeadline = null;
+                                // A credentialed bind is the one action that retires the deadline.
+                                deadline.RetireOnCredentialedAction();
                             else
                                 // Anonymous or failed: an armed deadline is NEVER moved (a failed
                                 // bind, or an anonymous re-bind, must not slide it or the peer holds
-                                // the slot forever). Only a session that WAS credentialed — a failed
-                                // re-bind reset it to anonymous (RFC 4511 §4.2.1), or it re-bound
-                                // anonymously — gets one fresh window armed here.
-                                sessionDeadline ??= _clock() + _options.AuthenticationTimeout;
+                                // the slot forever) — the host's re-arm is a no-op while armed. Only
+                                // a session that WAS credentialed — a failed re-bind reset it to
+                                // anonymous (RFC 4511 §4.2.1), or it re-bound anonymously — gets one
+                                // fresh window armed here.
+                                deadline.ReArmOnReturnToAnonymous();
                         }
                         if (!dispatch.KeepOpen)
                             return; // Unbind / fatal op: close the connection

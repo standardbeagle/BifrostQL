@@ -439,7 +439,7 @@ namespace BifrostQL.Server.Test.Ldap
             LdapConnectionHandler? handler = null,
             bool tls = false,
             LdapSearchExecutor? search = null,
-            Func<DateTimeOffset>? clock = null)
+            TimeProvider? timeProvider = null)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -456,7 +456,7 @@ namespace BifrostQL.Server.Test.Ldap
             var connectionHandler = handler
                 ?? new LdapConnectionHandler(
                     options, connectionLimiter, authenticator, LdapTlsProvider.Create(options), search,
-                    clock: clock);
+                    timeProvider: timeProvider);
             var client = new LdapTestClient(clientSocket.GetStream());
             var cancellation = new CancellationTokenSource();
 

@@ -78,16 +78,17 @@ namespace BifrostQL.Server.Test.Resp
         public static Task<RespFixture> StartAsync(
             IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
             params IRespCommandHandler[] dataHandlers)
-            => StartAsync(store, services, options, clock: null, dataHandlers);
+            => StartAsync(store, services, options, timeProvider: null, dataHandlers);
 
         /// <summary>
-        /// As above, with an injected clock so a test can drive the connection loop's deadlines
-        /// through virtual time instead of waiting out a real 30-second budget.
+        /// As above, with an injected <see cref="TimeProvider"/> so a test can drive the connection
+        /// loop's deadlines through virtual time instead of waiting out a real 30-second budget.
+        /// The provider drives the read timers too, so no await on the path measures real time.
         /// </summary>
         public static async Task<RespFixture> StartAsync(
             IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
-            Func<DateTimeOffset>? clock, params IRespCommandHandler[] dataHandlers)
-            => await StartAsync(store, services, options, clock, passwordHasher: null, dataHandlers);
+            TimeProvider? timeProvider, params IRespCommandHandler[] dataHandlers)
+            => await StartAsync(store, services, options, timeProvider, passwordHasher: null, dataHandlers);
 
         /// <summary>
         /// As above, with an injected password hasher so a test can count verifications and
@@ -95,7 +96,7 @@ namespace BifrostQL.Server.Test.Resp
         /// </summary>
         public static async Task<RespFixture> StartAsync(
             IRespCredentialStore store, IServiceProvider services, RespWireOptions options,
-            Func<DateTimeOffset>? clock, IPasswordHasher<string>? passwordHasher,
+            TimeProvider? timeProvider, IPasswordHasher<string>? passwordHasher,
             params IRespCommandHandler[] dataHandlers)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -109,7 +110,7 @@ namespace BifrostQL.Server.Test.Resp
 
             var handler = new RespConnectionHandler(
                 store, BifrostAuthContextFactory.Instance, services, options,
-                dataHandlers.Length > 0 ? dataHandlers : null, logger: null, connectionLimiter: null, clock: clock,
+                dataHandlers.Length > 0 ? dataHandlers : null, logger: null, connectionLimiter: null, timeProvider: timeProvider,
                 passwordHasher: passwordHasher);
             // Close the server socket when the handler returns (QUIT / protocol-error / EOF), exactly
             // as Kestrel closes the connection when OnConnectedAsync returns — so a client blocked on a

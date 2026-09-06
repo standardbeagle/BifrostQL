@@ -1,5 +1,6 @@
 using BifrostQL.Server.Resp;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Resp
@@ -21,7 +22,10 @@ namespace BifrostQL.Server.Test.Resp
         [Fact]
         public async Task An_anonymous_session_survives_past_the_authentication_timeout()
         {
-            var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            // TimeProvider is the seam the shared session host takes (invariant 15), so this fake
+            // drives the real deadline AND every read timer on the path — nothing here falls back
+            // to wall-clock time.
+            var clock = new FakeTimeProvider();
             var options = new RespWireOptions
             {
                 RequireAuthentication = false,
@@ -30,7 +34,7 @@ namespace BifrostQL.Server.Test.Resp
             };
 
             await using var fixture = await RespFixture.StartAsync(
-                new FakeRespCredentialStore(), RespFixture.EmptyServices(), options, clock: () => now);
+                new FakeRespCredentialStore(), RespFixture.EmptyServices(), options, timeProvider: clock);
 
             await fixture.Client.SendCommandAsync("PING");
             (await ReplyAsync(fixture)).Should().BeOfType<RespSimpleString>()
@@ -38,7 +42,7 @@ namespace BifrostQL.Server.Test.Resp
 
             // Well past the 30-second pre-auth budget, but only 35 seconds into a 10-minute idle
             // window: a client that is actively issuing commands must stay connected.
-            now += TimeSpan.FromSeconds(35);
+            clock.Advance(TimeSpan.FromSeconds(35));
 
             await fixture.Client.SendCommandAsync("PING");
             (await ReplyAsync(fixture)).Should().BeOfType<RespSimpleString>();

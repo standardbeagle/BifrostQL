@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using BifrostQL.Server.Resp;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Resp
@@ -22,8 +23,8 @@ namespace BifrostQL.Server.Test.Resp
         [Fact]
         public async Task Repeated_failures_from_one_source_are_refused_once_the_cap_is_reached()
         {
-            var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-            await using var fixture = await StartAsync(() => now, attemptsPerSource: 3);
+            var clock = new FakeTimeProvider();
+            await using var fixture = await StartAsync(clock, attemptsPerSource: 3);
 
             for (var attempt = 1; attempt <= 3; attempt++)
             {
@@ -42,7 +43,7 @@ namespace BifrostQL.Server.Test.Resp
             Message(await ReplyAsync(fixture)).Should().Be(RespProtocol.AuthRateLimitedError);
 
             // A rolled-over window admits attempts again.
-            now += Window + TimeSpan.FromSeconds(1);
+            clock.Advance(Window + TimeSpan.FromSeconds(1));
             await fixture.Client.SendCommandAsync("AUTH", "alice", "s3cret");
             (await ReplyAsync(fixture)).Should().BeOfType<RespSimpleString>()
                 .Which.Value.Should().Be(RespProtocol.Ok);
@@ -51,8 +52,8 @@ namespace BifrostQL.Server.Test.Resp
         [Fact]
         public async Task The_refusal_is_identical_for_a_known_and_an_unknown_account()
         {
-            var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-            await using var fixture = await StartAsync(() => now, attemptsPerSource: 1);
+            var clock = new FakeTimeProvider();
+            await using var fixture = await StartAsync(clock, attemptsPerSource: 1);
 
             await fixture.Client.SendCommandAsync("AUTH", "alice", "wrong");
             Message(await ReplyAsync(fixture)).Should().Be(RespProtocol.WrongPassError);
@@ -92,7 +93,7 @@ namespace BifrostQL.Server.Test.Resp
 
         // ---- fixtures --------------------------------------------------------
 
-        private static Task<RespFixture> StartAsync(Func<DateTimeOffset> clock, int attemptsPerSource)
+        private static Task<RespFixture> StartAsync(TimeProvider clock, int attemptsPerSource)
         {
             var store = new FakeRespCredentialStore().Add(
                 "alice", "s3cret",

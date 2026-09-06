@@ -75,7 +75,7 @@ namespace BifrostQL.Server.Test.Resp
             await using var fixture = await RespFixture.StartAsync(
                 store, RespFixture.EmptyServices(),
                 new RespWireOptions { AllowCleartextAuth = true },
-                clock: null, passwordHasher: hasher);
+                timeProvider: null, passwordHasher: hasher);
 
             // Act: one AUTH for an unknown user, one for a wrong password on a known user.
             await fixture.Client.SendCommandAsync("AUTH", "mallory", "whatever");

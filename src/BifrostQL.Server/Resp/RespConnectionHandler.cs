@@ -35,7 +35,8 @@ namespace BifrostQL.Server.Resp
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly IServiceProvider _services;
         private readonly RespWireOptions _options;
-        private readonly Func<DateTimeOffset> _clock;
+        private readonly TimeProvider _timeProvider;
+        private readonly RespSessionHost _sessions;
         private readonly IReadOnlyDictionary<string, IRespCommandHandler> _dataHandlers;
         private readonly RespConnectionLimiter _connectionLimiter;
         private readonly RespAuthRateLimiter _authRateLimiter;
@@ -66,21 +67,30 @@ namespace BifrostQL.Server.Resp
             IEnumerable<IRespCommandHandler>? dataHandlers = null,
             ILogger<RespConnectionHandler>? logger = null,
             RespConnectionLimiter? connectionLimiter = null,
-            Func<DateTimeOffset>? clock = null,
+            TimeProvider? timeProvider = null,
             RespAuthRateLimiter? authRateLimiter = null,
-            IPasswordHasher<string>? passwordHasher = null)
+            IPasswordHasher<string>? passwordHasher = null,
+            RespSessionHost? sessionHost = null)
         {
-            _clock = clock ?? (() => DateTimeOffset.UtcNow);
+            // Drives the pre-auth deadline and every read timer on this connection. Production
+            // uses the system clock; a test injects a fake provider and advances it, so a deadline
+            // fact never waits on (or races) the host's wall clock — and so no await on the path
+            // still measures real time, which would make the seam decorative.
+            _timeProvider = timeProvider ?? TimeProvider.System;
             // One handler instance serves every connection (Kestrel resolves it once), so the
-            // admission counter lives for the front door's lifetime, as in pgwire.
+            // admission counter and the session host live for the front door's lifetime, as in
+            // pgwire. Admission and the pre-auth deadline are the shared host's, not this
+            // adapter's: three private copies of that one rule drifted three times, always open.
             _connectionLimiter = connectionLimiter ?? new RespConnectionLimiter(options?.MaxConnections ?? 100);
+            _sessions = sessionHost ?? new RespSessionHost(
+                options ?? throw new ArgumentNullException(nameof(options)), _connectionLimiter, _timeProvider);
             // Shared across every connection of this front door, like the admission counter: a
             // per-connection limiter would bound nothing, since reconnecting is free.
             _authRateLimiter = authRateLimiter ?? new RespAuthRateLimiter(
                 options?.MaxAuthAttemptsPerSource ?? 100,
                 options?.MaxAuthAttemptsPerAccount ?? 10,
                 options?.AuthRateLimitWindow ?? TimeSpan.FromMinutes(1),
-                _clock);
+                () => _timeProvider.GetUtcNow());
             _credentials = credentials ?? throw new ArgumentNullException(nameof(credentials));
             _passwordHasher = passwordHasher ?? new PasswordHasher<string>();
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
@@ -129,45 +139,20 @@ namespace BifrostQL.Server.Resp
             // direct stream, a non-Kestrel host) still acquires here, so no path is uncapped.
             if (alreadyAdmitted)
             {
-                await RunConnectionAsync(stream, ct, confidentialTransport, source);
+                await _sessions.RunAdmittedAsync(
+                    ct, deadline => RunConnectionAsync(stream, deadline, ct, confidentialTransport, source));
                 return;
             }
 
-            if (!_connectionLimiter.TryAcquire())
-            {
-                await RespWriter.WriteAsync(stream, RespValue.Err(RespProtocol.TooManyConnectionsError), ct);
-                return;
-            }
-
-            try
-            {
-                await RunConnectionAsync(stream, ct, confidentialTransport, source);
-            }
-            finally
-            {
-                _connectionLimiter.Release();
-            }
-        }
-
-        /// <summary>
-        /// The read-deadline budget for one loop iteration. Null = no deadline (infinite).
-        /// A non-positive result means the one cumulative pre-auth budget is already spent and
-        /// the caller must drop the connection. Authenticated reads get a fresh idle timeout each
-        /// call (a pooled client legitimately idles); unauthenticated reads get the SHRINKING
-        /// remainder of the single pre-auth budget, so a chatty peer cannot reset it.
-        /// </summary>
-        internal static TimeSpan? ComputeReadDeadline(
-            bool authenticated, DateTimeOffset now, DateTimeOffset? preAuthDeadlineAt, TimeSpan idleTimeout)
-        {
-            if (authenticated)
-                return idleTimeout == Timeout.InfiniteTimeSpan ? null : idleTimeout;
-            if (preAuthDeadlineAt is null)
-                return null; // pre-auth timeout disabled
-            return preAuthDeadlineAt.Value - now;
+            await _sessions.RunAsync(
+                ct,
+                deadline => RunConnectionAsync(stream, deadline, ct, confidentialTransport, source),
+                () => RespWriter.WriteAsync(stream, RespValue.Err(RespProtocol.TooManyConnectionsError), ct));
         }
 
         private async Task RunConnectionAsync(
-            Stream stream, CancellationToken ct, bool confidentialTransport, string? source = null)
+            Stream stream, ProtocolPreAuthDeadline deadline, CancellationToken ct,
+            bool confidentialTransport, string? source = null)
         {
             var id = Interlocked.Increment(ref _connectionCounter);
             var session = new RespSession(id)
@@ -184,11 +169,8 @@ namespace BifrostQL.Server.Resp
             // The pre-auth phase gets ONE cumulative deadline from connection start — not a fresh
             // AuthenticationTimeout per read. Otherwise a peer that sends any cheap frame (a failed
             // AUTH, a PING that answers NOAUTH) just before each read resets the timer forever and
-            // holds an admission slot it never earned. Absolute deadline, captured once; null when
-            // the timeout is infinite. pgwire bounds its whole pre-auth phase the same way.
-            DateTimeOffset? preAuthDeadlineAt = _options.AuthenticationTimeout == Timeout.InfiniteTimeSpan
-                ? null
-                : _clock() + _options.AuthenticationTimeout;
+            // holds an admission slot it never earned. The caller armed it; this loop only ever
+            // reads the SHRINKING remainder, and a successful AUTH retires it below.
             try
             {
                 while (true)
@@ -206,14 +188,27 @@ namespace BifrostQL.Server.Resp
                     // alone dropped every anonymous connection 30 seconds after connect. Such a
                     // session is treated as past the handshake and lives under the idle timeout,
                     // which an active client resets on every command.
+                    if (session.IsAuthenticated)
+                        // A successful AUTH is the one credentialed action that retires the
+                        // deadline. Nothing a peer reaches for free (PING, a failed AUTH, HELLO)
+                        // touches it.
+                        deadline.RetireOnCredentialedAction();
+                    // A front door requiring no authentication never authenticates anyone, so its
+                    // sessions would keep the pre-auth budget forever and be dropped one timeout
+                    // after connect (H11). There is no pre-auth phase to bound there: such a
+                    // session lives under the idle timeout from the start, WITHOUT retiring a
+                    // deadline no credential paid for.
                     var pastHandshake = session.IsAuthenticated || !_options.RequireAuthentication;
-                    var deadline = ComputeReadDeadline(
-                        pastHandshake, _clock(), preAuthDeadlineAt, _options.IdleTimeout);
-                    if (deadline is { } exhausted && exhausted <= TimeSpan.Zero)
+                    // RESP leaves an unauthenticated read bounded by the pre-auth budget ALONE:
+                    // an infinite AuthenticationTimeout there means no deadline, not an idle one.
+                    var budget = deadline.ReadBudget(
+                        pastHandshake, _options.IdleTimeout, clampToIdleWhileArmed: false);
+                    if (budget is { } exhausted && exhausted <= TimeSpan.Zero)
                         return; // pre-auth budget spent without authenticating — drop the slot
-                    using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    if (deadline is { } budget)
-                        readDeadline.CancelAfter(budget);
+                    using var readTimer = budget is { } window
+                        ? new CancellationTokenSource(window, _timeProvider)
+                        : new CancellationTokenSource();
+                    using var readDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, readTimer.Token);
                     var readToken = readDeadline.Token;
 
                     try

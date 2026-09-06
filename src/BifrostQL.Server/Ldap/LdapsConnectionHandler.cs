@@ -78,7 +78,10 @@ namespace BifrostQL.Server.Ldap
                 }
 
                 await using (ssl)
-                    await _session.RunSessionAsync(ssl, connection.ConnectionClosed, source, tlsEstablished: true);
+                    // The slot is already held (taken above, before the handshake); the shared
+                    // session host still arms this connection's pre-auth deadline.
+                    await _session.RunAdmittedSessionAsync(
+                        ssl, connection.ConnectionClosed, source, tlsEstablished: true);
             }
             finally
             {

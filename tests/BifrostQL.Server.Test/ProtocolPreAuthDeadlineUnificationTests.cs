@@ -58,8 +58,11 @@ public class ProtocolPreAuthDeadlineUnificationTests
         files.Should().NotBeEmpty("the scan must match source files to guard anything");
 
         // Whole-file text, not lines: `_options\n    .AuthenticationTimeout` is one read that a
-        // per-line scan sees as two unrelated fragments.
-        var perFile = files.ToDictionary(f => f, File.ReadAllText);
+        // per-line scan sees as two unrelated fragments. COMMENTS are stripped first: the home's
+        // own prose names `RespWireOptions.AuthenticationTimeout`, which satisfied the positive-hit
+        // assertion on its own — a mutant that made the host take a hardcoded 30s literal instead
+        // of reading the options stayed GREEN, so the non-vacuity half was itself vacuous.
+        var perFile = files.ToDictionary(f => f, f => StripComments(File.ReadAllText(f)));
 
         var home = files.SingleOrDefault(f => Path.GetFileName(f) == "ProtocolSessionHost.cs");
         home.Should().NotBeNull(
@@ -92,6 +95,54 @@ public class ProtocolPreAuthDeadlineUnificationTests
             + "semantics for invariant 15's one rule, and every historical drift between the copies "
             + "failed OPEN. Offenders: "
             + string.Join(", ", offenders.Select(Path.GetFileName)));
+    }
+
+    /// <summary>
+    /// Removes <c>//</c> and <c>/* */</c> comments so the scan reads CODE. String and character
+    /// literals are walked (not just skipped) so a <c>"//"</c> inside one cannot open a comment
+    /// and swallow the rest of the file — which would hide every read that follows it.
+    /// </summary>
+    private static string StripComments(string source)
+    {
+        var output = new System.Text.StringBuilder(source.Length);
+        for (var i = 0; i < source.Length; i++)
+        {
+            var c = source[i];
+            if (c == '/' && i + 1 < source.Length && source[i + 1] == '/')
+            {
+                while (i < source.Length && source[i] != '\n') i++;
+                output.Append('\n');
+            }
+            else if (c == '/' && i + 1 < source.Length && source[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < source.Length && !(source[i] == '*' && source[i + 1] == '/')) i++;
+                i++;
+                output.Append(' ');
+            }
+            else if (c == '"' || c == '\'')
+            {
+                var quote = c;
+                output.Append(c);
+                i++;
+                while (i < source.Length && source[i] != quote)
+                {
+                    if (source[i] == '\\' && i + 1 < source.Length)
+                    {
+                        output.Append(source[i]);
+                        i++;
+                    }
+                    output.Append(source[i]);
+                    i++;
+                }
+                if (i < source.Length) output.Append(source[i]);
+            }
+            else
+            {
+                output.Append(c);
+            }
+        }
+        return output.ToString();
     }
 
     private static string? LocateServerSourceRoot([CallerFilePath] string callerFilePath = "")

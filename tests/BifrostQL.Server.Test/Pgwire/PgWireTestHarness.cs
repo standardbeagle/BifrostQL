@@ -42,7 +42,8 @@ namespace BifrostQL.Server.Test.Pgwire
             int maxPreparedStatements = 200,
             int maxPortals = 200,
             TimeSpan? handshakeTimeout = null,
-            bool allowCleartextWithoutTls = true)
+            bool allowCleartextWithoutTls = true,
+            Func<DateTimeOffset>? clock = null)
         {
             var options = new PgWireOptions
             {
@@ -66,7 +67,8 @@ namespace BifrostQL.Server.Test.Pgwire
                 .AddSingleton<IPgCatalogResponder, PgCatalogResponder>()
                 .BuildServiceProvider();
 
-            _handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, services, options, Registry, Limiter);
+            _handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, services, options, Registry, Limiter,
+                clock: clock);
 
             _listener = new TcpListener(IPAddress.Loopback, 0);
             _listener.Start();

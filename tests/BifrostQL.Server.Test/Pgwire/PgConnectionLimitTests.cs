@@ -53,16 +53,20 @@ namespace BifrostQL.Server.Test.Pgwire
         [Fact]
         public async Task StalledPreAuthConnection_IsDroppedByTheHandshakeDeadline_AndReleasesItsSlot()
         {
+            var now = DateTimeOffset.UtcNow;
             await using var harness = new PgWireTestHarness(
                 PgWireTestHarness.UsersExecutor(NoRows(), out _),
                 maxConnections: 1,
-                handshakeTimeout: TimeSpan.FromMilliseconds(400));
+                handshakeTimeout: TimeSpan.FromMilliseconds(400),
+                clock: () => now);
 
             // A peer that connects and then says NOTHING. With the slot reserved at accept and no
             // deadline, this single silent socket would own the front door's only slot forever —
             // the cheapest possible denial of service, needing no credentials and no bytes.
             var staller = await harness.ConnectAsync();
             await harness.WaitForConnectionCountAsync(1);
+
+            now += TimeSpan.FromSeconds(1);
 
             // The handshake deadline drops it and the finally releases the slot.
             await harness.WaitForConnectionCountAsync(0);

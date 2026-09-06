@@ -65,6 +65,17 @@ namespace BifrostQL.Server
         public PgwireConnectionLimiter(int maxConnections) : base(maxConnections) { }
     }
 
+    /// <summary>
+    /// Admission counter for the LDAP front door (<c>LdapWireOptions.MaxConnections</c>). ONE
+    /// instance serves both the cleartext listener and the LDAPS listener, because MaxConnections
+    /// bounds this front door's total concurrent connections — opening a second port must not
+    /// double the ceiling.
+    /// </summary>
+    internal sealed class LdapConnectionLimiter : ProtocolConnectionLimiter
+    {
+        public LdapConnectionLimiter(int maxConnections) : base(maxConnections) { }
+    }
+
     /// <summary>Admission counter for the RESP listener (<c>RespWireOptions.MaxConnections</c>).</summary>
     internal sealed class RespConnectionLimiter : ProtocolConnectionLimiter
     {

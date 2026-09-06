@@ -6,11 +6,13 @@ namespace BifrostQL.Core.Resolvers
     /// <summary>
     /// The one selection-set walk every resolver that derives SQL work from the
     /// request's selection uses. <see cref="IResolveFieldContext.SubFields"/> is keyed
-    /// by RESPONSE KEY and holds exactly one node per key, so a schema field selected
-    /// twice under the same key (once flat and once through a fragment spread, or
-    /// twice flat) loses every node but one — and the dropped node's sub-selection
-    /// never reaches the query builder, so its columns serialise as null. Walking the
-    /// raw AST here keeps ALL nodes for a schema name.
+    /// by RESPONSE KEY and holds exactly one node per key. The execution engine merges
+    /// same-key selections (flat + fragment spread) into that one node before any
+    /// resolver runs, so the loss is with DISTINCT keys: a schema field selected under
+    /// two aliases is two entries, and a reader that folds entries onto the schema name
+    /// keeps only the last — the dropped node's sub-selection never reaches the query
+    /// builder, so its columns serialise as null (M8). Walking the raw AST here keeps
+    /// ALL nodes for a schema name and does not lean on the engine's merge either.
     /// </summary>
     internal static class SelectionWalk
     {

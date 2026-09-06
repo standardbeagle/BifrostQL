@@ -86,10 +86,12 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Collects the trail columns selected under <c>data</c>. Every selection must
         /// be a plain column of the history table: the trail read surface exposes trail
-        /// rows only, so relationship/join/aggregate fields (which the target's row type
-        /// also carries, being an ordinary published table) are rejected with steering
-        /// rather than silently returning nothing. Inline fragments and named fragment
-        /// spreads are flattened.
+        /// rows only, so a nested selection or a non-column name is rejected with
+        /// steering rather than silently returning nothing. Both rejections are
+        /// defensive: <c>DbModel.UnlinkHistoryTargets</c> strips every link from a
+        /// history target, so its row type publishes plain columns only and document
+        /// validation refuses either shape before this resolver runs. Inline fragments
+        /// and named fragment spreads are flattened.
         ///
         /// Walked from the raw selection set via <see cref="SelectionWalk"/>, the same
         /// helper the aggregate resolver uses, so EVERY <c>data</c> node contributes

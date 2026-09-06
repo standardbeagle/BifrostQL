@@ -89,10 +89,14 @@ public class ProtocolAdmissionUnificationTests
         // truncated call and reads a real offender as a miss.
         var perFile = files.ToDictionary(f => f, File.ReadAllText);
 
-        // Anchored on what a copy cannot avoid WRITING — the compare-and-swap that reserves a slot
-        // — not on an identifier the copier is free to rename.
+        // Anchored on what a copy cannot avoid WRITING — the compare-and-swap call itself — not
+        // on an identifier the copier is free to rename, and not on the `observed + 1` operand
+        // shape either: hoisting the increment into a local (`var next = seen + 1;`) is a
+        // mechanical rewrite that a copier makes without thinking, and the shipped anchor read
+        // that copy as a miss (review mutant, this task). Every CAS site in the Server assembly
+        // is therefore either the shared limiter or an explicitly allowlisted non-admission use.
         var casShape = new Regex(
-            @"Interlocked\s*\.\s*CompareExchange\s*\(\s*ref\s+\w+\s*,\s*\w+\s*\+\s*1\s*,",
+            @"Interlocked\s*\.\s*CompareExchange\s*\(\s*ref\s+",
             RegexOptions.Compiled | RegexOptions.Singleline);
 
         var home = files.Single(f => Path.GetFileName(f) == "ProtocolConnectionLimiter.cs");
@@ -100,7 +104,16 @@ public class ProtocolAdmissionUnificationTests
             "the scan's anchor must match the allowlisted home, or the pattern has drifted away "
             + "from real code and this fact guards nothing");
 
-        var offenders = files.Where(f => f != home && casShape.IsMatch(perFile[f])).ToList();
+        // CAS sites that are not admission counters. Each entry names WHY; a new entry is a
+        // review decision, not a way past this fact.
+        var nonAdmissionCas = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "ChunkBuffer.cs", // eviction-timestamp claim (one sweep per second), not a slot cap
+        };
+
+        var offenders = files
+            .Where(f => f != home && !nonAdmissionCas.Contains(Path.GetFileName(f)) && casShape.IsMatch(perFile[f]))
+            .ToList();
         offenders.Should().BeEmpty(
             "one admission implementation, shared: a private copy of the CAS loop is a second set "
             + "of semantics that drifts. Offenders: "

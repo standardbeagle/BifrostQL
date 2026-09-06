@@ -170,6 +170,27 @@ namespace BifrostQL.Server.Test.Resp
             return record;
         }
 
+        // ---- (a2) malformed pre-auth wire input ------------------------------
+        //
+        // The kit's corpus is fed to the REAL connection loop over a scripted wire (bytes in,
+        // EOF, replies captured). RESP's own history is the reason: ParseCommand once sat
+        // OUTSIDE the decode try, so four well-formed-but-not-a-command bytes from an
+        // unauthenticated peer tore the connection down unhandled (invariant 1).
+
+        protected override bool AdapterSupportsMalformedFrameProbe => true;
+
+        protected override async Task<MalformedFrameOutcome> ProbeMalformedFrameAsync(byte[] frame)
+        {
+            var handler = new RespConnectionHandler(
+                new FakeRespCredentialStore().Add(LoginUser, LoginSecret, NoTenantPrincipal()),
+                BifrostAuthContextFactory.Instance,
+                new ServiceCollection().BuildServiceProvider(),
+                new RespWireOptions { RequireAuthentication = true, AllowCleartextAuth = true },
+                logger: NullLogger<RespConnectionHandler>.Instance);
+
+            return await ProbeAsync(frame, (wire, ct) => handler.HandleConnectionAsync(wire, ct));
+        }
+
         // ---- (e) pre-auth attempt limiter -----------------------------------
         //
         // RESP AUTH is rate-limited on two axes (RespAuthRateLimiter) before the credential is

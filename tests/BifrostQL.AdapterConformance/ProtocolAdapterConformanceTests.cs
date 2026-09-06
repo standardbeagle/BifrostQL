@@ -1,3 +1,4 @@
+using System.Text;
 using System.Security.Claims;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
@@ -756,6 +757,182 @@ namespace BifrostQL.AdapterConformance
             // Fail-closed on both halves, not merely "the two answers match".
             (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE name = 'cross-op-parity'"))
                 .Should().Be(0L, "nothing may be written without a tenant identity");
+        }
+
+        // ---- (a2) malformed pre-auth wire input never escapes the handler ----
+        //
+        // Opt-in, same shape as the other adapter-surface flags. An adapter whose front door
+        // decodes frames from an UNAUTHENTICATED peer sets AdapterSupportsMalformedFrameProbe
+        // and drives its own connection handler with the bytes this fact supplies.
+
+        /// <summary>What one malformed-input connection did, observed at the handler boundary.</summary>
+        protected sealed class MalformedFrameOutcome
+        {
+            /// <summary>Whether the handler returned without letting an exception escape to the host.</summary>
+            public required bool HandlerReturnedCleanly { get; init; }
+
+            /// <summary>The escaped exception's type name, for the failure message; null when none escaped.</summary>
+            public string? EscapedExceptionType { get; init; }
+
+            /// <summary>Whether the handler finished the connection (answered and/or closed) rather than hanging.</summary>
+            public required bool ConnectionCompleted { get; init; }
+        }
+
+        /// <summary>
+        /// Whether this adapter owns a connection handler that decodes an unauthenticated peer's
+        /// bytes and can be driven directly with a stream. Default false: HTTP-mounted front doors
+        /// ride Kestrel's own framing and have no such surface.
+        /// </summary>
+        protected virtual bool AdapterSupportsMalformedFrameProbe => false;
+
+        /// <summary>
+        /// Runs ONE connection whose entire wire is <paramref name="frame"/> — arbitrary bytes from
+        /// an unauthenticated peer, delivered before any credential — through the adapter's real
+        /// connection handler, and reports what happened at the handler boundary.
+        /// </summary>
+        protected virtual Task<MalformedFrameOutcome> ProbeMalformedFrameAsync(byte[] frame)
+            => throw new NotSupportedException(
+                "Set AdapterSupportsMalformedFrameProbe = true and implement ProbeMalformedFrameAsync.");
+
+        /// <summary>
+        /// One connection's wire, scripted: reads deliver <c>frame</c> and then EOF, writes are
+        /// captured. Deterministic by construction — no socket, no timing — so the corpus below
+        /// replays identically on every host.
+        /// </summary>
+        protected sealed class ScriptedWireStream : Stream
+        {
+            private readonly byte[] _inbound;
+            private int _position;
+            private readonly MemoryStream _outbound = new();
+
+            public ScriptedWireStream(byte[] inbound) => _inbound = inbound;
+
+            /// <summary>Bytes the handler wrote back before closing.</summary>
+            public byte[] Written => _outbound.ToArray();
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => _inbound.Length;
+            public override long Position { get => _position; set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var available = Math.Min(count, _inbound.Length - _position);
+                if (available <= 0) return 0;
+                Array.Copy(_inbound, _position, buffer, offset, available);
+                _position += available;
+                return available;
+            }
+
+            public override void Write(byte[] buffer, int offset, int count)
+                => _outbound.Write(buffer, offset, count);
+        }
+
+        /// <summary>
+        /// Drives one scripted connection through <paramref name="run"/> — the adapter's real
+        /// connection-handler entry point — and reports what happened at that boundary. The
+        /// timeout is the "never hang" half of the fact: a handler that neither answers nor
+        /// closes holds an admission slot for free.
+        /// </summary>
+        protected static async Task<MalformedFrameOutcome> ProbeAsync(
+            byte[] frame, Func<Stream, CancellationToken, Task> run)
+        {
+            using var wire = new ScriptedWireStream(frame);
+            using var cts = new CancellationTokenSource();
+            string? escaped = null;
+            var completed = false;
+            try
+            {
+                await run(wire, cts.Token).WaitAsync(TimeSpan.FromSeconds(30));
+                completed = true;
+            }
+            catch (TimeoutException)
+            {
+                cts.Cancel();
+            }
+            catch (Exception ex)
+            {
+                escaped = ex.GetType().FullName;
+            }
+
+            return new MalformedFrameOutcome
+            {
+                HandlerReturnedCleanly = escaped is null,
+                EscapedExceptionType = escaped,
+                ConnectionCompleted = completed,
+            };
+        }
+
+        /// <summary>
+        /// Deterministic malformed-input corpus. Pinned seeds and fixed shapes, never a live RNG:
+        /// a fuzz fact that cannot be replayed byte-for-byte reports a failure nobody can reproduce.
+        /// </summary>
+        private static IEnumerable<(string Name, byte[] Bytes)> MalformedFrames()
+        {
+            yield return ("empty", Array.Empty<byte>());
+            yield return ("nul", new byte[] { 0 });
+            yield return ("truncated-length-prefix", new byte[] { 0xFF, 0xFF, 0xFF, 0xFF });
+            yield return ("high-bytes", Enumerable.Repeat((byte)0x80, 64).ToArray());
+            yield return ("printable-garbage", Encoding.ASCII.GetBytes(new string('A', 512)));
+            // Deeply nested-looking prefixes: the shape that turns a recursive decoder without a
+            // depth cap into an uncatchable StackOverflowException (invariant 6).
+            yield return ("repeated-aggregate-header",
+                Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("*1\r\n", 4096))));
+            yield return ("repeated-ber-sequence-header",
+                Enumerable.Range(0, 4096).SelectMany(_ => new byte[] { 0x30, 0x84, 0x7F, 0xFF }).ToArray());
+
+            foreach (var seed in new[] { 1, 7, 13, 42, 1337 })
+            {
+                var rng = new Random(seed);
+                var bytes = new byte[256];
+                rng.NextBytes(bytes);
+                yield return ($"seed-{seed}", bytes);
+            }
+        }
+
+        /// <summary>
+        /// Malformed bytes from an unauthenticated peer close the connection; they never escape
+        /// the handler and never hang the caller.
+        ///
+        /// <para>protocol-adapter-security invariant 1: an exception that does not match the
+        /// connection handler's catch filter reaches the host (Kestrel) unhandled on
+        /// adversary-controlled input. Invariant 5 is the same failure one level down — a decode
+        /// built on a <c>.Parse</c>-family call that catches only <c>FormatException</c> lets an
+        /// <c>OverflowException</c> out on a boundary value, tearing the connection down with no
+        /// wire reply. Both shipped, on pgwire, twice.</para>
+        ///
+        /// <para>The corpus is fixed and its seeds are pinned, so a failure is replayable
+        /// byte-for-byte; the fact names the frame that escaped rather than reporting an
+        /// anonymous fuzz failure.</para>
+        /// </summary>
+        [Fact]
+        public async Task MalformedPreAuthFrames_NeverEscapeTheHandler()
+        {
+            if (!AdapterSupportsMalformedFrameProbe) return;
+
+            var escaped = new List<string>();
+            var hung = new List<string>();
+            foreach (var (name, bytes) in MalformedFrames())
+            {
+                var outcome = await ProbeMalformedFrameAsync(bytes);
+                if (!outcome.HandlerReturnedCleanly)
+                    escaped.Add($"{name} -> {outcome.EscapedExceptionType ?? "unknown"}");
+                if (!outcome.ConnectionCompleted)
+                    hung.Add(name);
+            }
+
+            escaped.Should().BeEmpty(
+                "an unauthenticated peer's bytes must never produce an exception the connection "
+                + "handler's catch filter misses (invariant 1); escaping frames: "
+                + string.Join(", ", escaped));
+            hung.Should().BeEmpty(
+                "every malformed frame is answered and/or closed — a peer that neither gets a "
+                + "reply nor a close holds an admission slot for free; hanging frames: "
+                + string.Join(", ", hung));
         }
 
         // ---- (e) pre-auth attempt limiter (adapters with a credential handshake) --

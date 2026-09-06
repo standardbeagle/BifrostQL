@@ -58,6 +58,26 @@ namespace BifrostQL.Server.Test.Pgwire
         // reason to 42501 (ExpectedRejectionFragment above).
         protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
 
+        // ---- (a2) malformed pre-auth wire input ------------------------------
+        //
+        // pgwire is where invariant 1 and invariant 5 were both first found: a protocol exception
+        // outside the handler's catch filter, then an OverflowException out of a Bind-parameter
+        // decode on a boundary value. Both reached Kestrel unhandled on one adversary-controlled
+        // message. The kit's corpus goes through the REAL connection loop.
+
+        protected override bool AdapterSupportsMalformedFrameProbe => true;
+
+        protected override async Task<MalformedFrameOutcome> ProbeMalformedFrameAsync(byte[] frame)
+        {
+            var handler = new PgConnectionHandler(
+                new FakePgCredentialStore(),
+                BifrostAuthContextFactory.Instance,
+                new ServiceCollection().BuildServiceProvider(),
+                new PgWireOptions());
+
+            return await ProbeAsync(frame, (wire, ct) => handler.HandleConnectionAsync(wire, ct));
+        }
+
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)
         {

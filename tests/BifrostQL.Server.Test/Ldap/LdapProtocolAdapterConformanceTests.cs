@@ -217,6 +217,21 @@ namespace BifrostQL.Server.Test.Ldap
         // 64 KiB body under a 4 KiB cap through a counting stream, then decodes two in-budget
         // messages on one stream to show the per-message budget is independent per frame.
 
+        // ---- (a2) malformed pre-auth wire input ------------------------------
+        //
+        // BER is a recursive, length-prefixed codec on an unauthenticated wire — the shape
+        // invariant 6 is about (a depth cap must refuse before recursing; a StackOverflowException
+        // is uncatchable and takes every front door in the process down with it). The kit's corpus
+        // includes a deep nested-SEQUENCE-header prefix for exactly that reason.
+
+        protected override bool AdapterSupportsMalformedFrameProbe => true;
+
+        protected override async Task<MalformedFrameOutcome> ProbeMalformedFrameAsync(byte[] frame)
+        {
+            var handler = new LdapConnectionHandler(new LdapWireOptions());
+            return await ProbeAsync(frame, (wire, ct) => handler.HandleConnectionAsync(wire, ct));
+        }
+
         protected override bool AdapterSupportsFrameLimit => true;
 
         protected override async Task<FrameLimitProbe> ProbeFrameLimitAsync()

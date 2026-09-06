@@ -695,6 +695,69 @@ namespace BifrostQL.AdapterConformance
                 "soft-deleted rows never surface on reads");
         }
 
+        /// <summary>
+        /// Cross-op-class WIRE PARITY for one condition: a caller with no tenant identity is
+        /// refused with the SAME wire shape whether it reads or writes.
+        ///
+        /// <para>protocol-adapter-security invariant 10 is that a single error funnel is
+        /// NECESSARY but not SUFFICIENT — the funnel maps by a CONDITION SIGNAL, so parity also
+        /// needs every op class's upstream throw site to tag the same condition with the same
+        /// signal. gRPC routed reads and writes through one GrpcStatusMapper and still answered
+        /// PERMISSION_DENIED on read and a generic INTERNAL on write, because the read-side
+        /// TenantFilterTransformer tagged its throw with AccessDeniedCode and the write-side
+        /// TenantMutationTransformer threw a codeless error. That divergence is an oracle: the
+        /// same denied caller learns something from the difference between the two answers.</para>
+        ///
+        /// <para>The divergence was invisible to every per-slice review and to every per-adapter
+        /// suite, and the parity fact that caught it was written for gRPC ALONE — a wire-parity
+        /// fact pinned on ONE of N sibling seams says nothing about the other N-1
+        /// (regression-test-non-vacuous.md). This is that fact promoted to the shared kit, so
+        /// every write-capable derivation carries it.</para>
+        ///
+        /// <para>The ASSERT is on the ACTUAL text both wires produced, not on the suite's own
+        /// declarations: <see cref="ExpectedWriteRejectionFragment"/> exists so a sanitizing
+        /// adapter need not leak its internal reason, NOT so a genuine cross-op divergence can be
+        /// declared away — an adapter that overrides it to something other than its read fragment
+        /// fails here, which is the review the override otherwise escapes.</para>
+        /// </summary>
+        [Fact]
+        public async Task MissingTenantIdentity_ReadAndWrite_SurfaceTheSameWireRejection()
+        {
+            if (!AdapterSupportsMutations) return;
+
+            const string condition = "Tenant context required";
+            var readFragment = ExpectedRejectionFragment(condition);
+
+            ExpectedWriteRejectionFragment(condition).Should().Be(readFragment,
+                "one condition may not carry two declared wire shapes; the write-fragment hook "
+                + "adapts a SANITIZING adapter's text, it does not license a cross-op divergence");
+
+            var readError = await Assert.ThrowsAnyAsync<Exception>(
+                () => ExecuteReadAsync(OrdersRequest(principal: null)));
+            var writeError = await Assert.ThrowsAnyAsync<Exception>(
+                () => ExecuteMutationAsync(new ConformanceMutationRequest
+                {
+                    // UPDATE, not INSERT: every write-capable adapter has an update verb, while
+                    // a key-addressed wire (RESP, S3) has no row-creating one — gating this fact
+                    // on AdapterSupportsInserts would silently exempt exactly those adapters.
+                    Table = "orders",
+                    Action = ConformanceMutationAction.Update,
+                    Data = new Dictionary<string, object?> { ["name"] = "cross-op-parity" },
+                    PrimaryKey = new object?[] { 1 },
+                    Principal = null,
+                    Endpoint = EndpointPath,
+                }));
+
+            FlattenMessages(readError).Should().Contain(readFragment);
+            FlattenMessages(writeError).Should().Contain(readFragment,
+                "the same condition must reach the wire as the same rejection on every op class; "
+                + "a read/write difference is an oracle for a caller the deployment already denied");
+
+            // Fail-closed on both halves, not merely "the two answers match".
+            (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE name = 'cross-op-parity'"))
+                .Should().Be(0L, "nothing may be written without a tenant identity");
+        }
+
         // ---- (e) pre-auth attempt limiter (adapters with a credential handshake) --
         //
         // Opt-in, same shape as AdapterSupportsMutations: an adapter whose wire carries a

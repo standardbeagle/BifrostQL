@@ -3,6 +3,10 @@ using System.Text;
 using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Ldap;
+using BifrostQL.Server.Test;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server.Test.Ldap
@@ -406,6 +410,55 @@ namespace BifrostQL.Server.Test.Ldap
         // wire refusal for any invalid cookie is the single UnavailableCriticalExtension result
         // with an empty diagnostic from LdapSearchExecutor, so all six tampers surface
         // byte-identically.
+
+        // ---- kit fact (b): admission before the TLS handshake ----------------
+        //
+        // LDAPS is the implicit-TLS listener: the handshake precedes the first LDAP byte, so the
+        // slot must be taken ahead of it. Both LDAP listeners share ONE counter (MaxConnections is
+        // this front door's total), so a cap of one is filled by whichever port the peer reaches.
+
+        protected override bool AdapterSupportsTlsAdmissionProbe => true;
+
+        protected override async Task<TlsAdmissionProbe> ProbeTlsAdmissionAsync()
+        {
+            var (slots, closed, handshook) = await ProtocolTlsAdmissionHarness.ProbeAsync(
+                async (port, certificate) =>
+                {
+                    var cleartextPort = ProtocolTlsAdmissionHarness.FreePort();
+                    var host = await new HostBuilder().ConfigureWebHost(web =>
+                    {
+                        web.UseKestrel();
+                        web.UseUrls();
+                        web.ConfigureServices(services =>
+                        {
+                            services.AddSingleton<ILdapCredentialStore, LdapTestIdentity.Store>();
+                            services.AddSingleton<ILdapPasswordHasher, LdapTestIdentity.Hasher>();
+                            services.AddSingleton<IBifrostAuthContextFactory, LdapTestIdentity.Factory>();
+                            services.AddBifrostLdap(o =>
+                            {
+                                o.Port = cleartextPort;
+                                // The probe connects here: the implicit-TLS port.
+                                o.LdapsPort = port;
+                                o.MaxConnections = 1;
+                                o.ServerCertificate = certificate;
+                                o.PagedResultsCookieSecret = "conformance-tls-admission-secret";
+                            });
+                        });
+                        web.Configure(_ => { });
+                    }).StartAsync();
+
+                    return ((IAsyncDisposable)new ProtocolTlsAdmissionHarness.HostStopper(host),
+                        () => host.Services.GetRequiredService<LdapConnectionLimiter>().Count);
+                },
+                ProtocolTlsAdmissionHarness.TryImplicitTlsHandshakeAsync);
+
+            return new TlsAdmissionProbe
+            {
+                SlotsHeldBySilentPeer = slots,
+                OverCapPeerClosed = closed,
+                OverCapPeerCompletedTlsHandshake = handshook,
+            };
+        }
 
         protected override bool AdapterSupportsContinuationTokens => true;
 

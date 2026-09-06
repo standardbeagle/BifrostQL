@@ -3,6 +3,10 @@ using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Auth;
 using BifrostQL.Server.Pgwire;
+using BifrostQL.Server.Test;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server.Test.Pgwire
@@ -76,6 +80,101 @@ namespace BifrostQL.Server.Test.Pgwire
                 new PgWireOptions());
 
             return await ProbeAsync(frame, (wire, ct) => handler.HandleConnectionAsync(wire, ct));
+        }
+
+        // ---- kit fact (b): admission before the TLS handshake ----------------
+        //
+        // pgwire negotiates TLS IN BAND: the peer sends SSLRequest and the server answers 'S'
+        // before any handshake. The slot must be taken ahead of that exchange, not after it — the
+        // SSLRequest/GSSENCRequest ping-pong and the handshake it leads to are exactly the work an
+        // unadmitted peer would otherwise force for free.
+
+        protected override bool AdapterSupportsTlsAdmissionProbe => true;
+
+        protected override async Task<TlsAdmissionProbe> ProbeTlsAdmissionAsync()
+        {
+            var (slots, closed, handshook) = await ProtocolTlsAdmissionHarness.ProbeAsync(
+                async (port, certificate) =>
+                {
+                    var host = await new HostBuilder().ConfigureWebHost(web =>
+                    {
+                        web.UseKestrel();
+                        web.UseUrls();
+                        web.ConfigureServices(services =>
+                        {
+                            services.AddSingleton<IPgCredentialStore>(new PgConformanceCredentialStore());
+                            services.AddSingleton<IBifrostAuthContextFactory>(BifrostAuthContextFactory.Instance);
+                            services.AddBifrostPgwire(o =>
+                            {
+                                o.Port = port;
+                                o.MaxConnections = 1;
+                                o.ServerCertificate = certificate;
+                            });
+                        });
+                        web.Configure(_ => { });
+                    }).StartAsync();
+
+                    return ((IAsyncDisposable)new ProtocolTlsAdmissionHarness.HostStopper(host),
+                        () => host.Services.GetRequiredService<PgwireConnectionLimiter>().Count);
+                },
+                TryNegotiateSslRequestAsync);
+
+            return new TlsAdmissionProbe
+            {
+                SlotsHeldBySilentPeer = slots,
+                OverCapPeerClosed = closed,
+                OverCapPeerCompletedTlsHandshake = handshook,
+            };
+        }
+
+        /// <summary>
+        /// pgwire's in-band upgrade, driven as a client: SSLRequest, then the handshake if the
+        /// server answered 'S'. Reports completion rather than throwing — an over-cap peer is
+        /// answered with a 53300 ErrorResponse ('E') and closed, which is a refusal, not an error.
+        /// </summary>
+        private static async Task<bool> TryNegotiateSslRequestAsync(System.Net.Sockets.TcpClient client)
+        {
+            try
+            {
+                var stream = client.GetStream();
+                var packet = new byte[8];
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(0, 4), 8);
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(
+                    packet.AsSpan(4, 4), PgWireProtocol.SslRequestCode);
+                await stream.WriteAsync(packet);
+                await stream.FlushAsync();
+
+                var response = new byte[1];
+                await stream.ReadExactlyAsync(response).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                if (response[0] != (byte)'S')
+                    return false; // 'E' (refused at the door) or 'N' (TLS declined): no handshake
+
+                var ssl = new System.Net.Security.SslStream(stream, leaveInnerStreamOpen: true);
+                await ssl.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions
+                {
+                    TargetHost = "localhost",
+                    RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                }).WaitAsync(TimeSpan.FromSeconds(5));
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or System.Security.Authentication.AuthenticationException
+                                          or OperationCanceledException or TimeoutException
+                                          or EndOfStreamException or ObjectDisposedException
+                                          or InvalidOperationException or System.Net.Sockets.SocketException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// A credential store the probe never reaches: the fact ends at admission, before any
+        /// StartupMessage. Registering one is only what makes the listener start (the registration
+        /// is fail-closed without it).
+        /// </summary>
+        private sealed class PgConformanceCredentialStore : IPgCredentialStore
+        {
+            public Task<PgLogin?> FindAsync(string username, CancellationToken ct)
+                => Task.FromResult<PgLogin?>(null);
         }
 
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(

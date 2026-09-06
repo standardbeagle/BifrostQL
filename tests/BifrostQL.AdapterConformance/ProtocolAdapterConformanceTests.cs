@@ -1077,6 +1077,69 @@ namespace BifrostQL.AdapterConformance
                 "the byte budget resets only at a top-level frame boundary; consecutive in-budget frames must both decode");
         }
 
+        // ---- (b) admission slot is held BEFORE the TLS handshake -------------
+        //
+        // Opt-in, same shape as AdapterSupportsMutations: an adapter that terminates TLS on its
+        // own listener (implicit TLS, or an in-band upgrade it negotiates itself) sets
+        // AdapterSupportsTlsAdmissionProbe = true and implements ProbeTlsAdmissionAsync. HTTP
+        // front doors riding the host's Kestrel do not own the accept and inherit the default.
+
+        /// <summary>What the derivation observed when probing admission against a TLS front door.</summary>
+        protected sealed class TlsAdmissionProbe
+        {
+            /// <summary>
+            /// Slots the adapter counted as held after a peer connected and sent NOTHING — no
+            /// ClientHello, no negotiation packet, not one byte.
+            /// </summary>
+            public required int SlotsHeldBySilentPeer { get; init; }
+
+            /// <summary>Whether a SECOND peer, arriving with the only slot held, was closed.</summary>
+            public required bool OverCapPeerClosed { get; init; }
+
+            /// <summary>
+            /// Whether that second peer nonetheless completed a TLS handshake with the listener.
+            /// </summary>
+            public required bool OverCapPeerCompletedTlsHandshake { get; init; }
+        }
+
+        /// <summary>
+        /// Whether this adapter terminates TLS on its own listener, so the ORDER of admission and
+        /// handshake is its own to get right. Default false.
+        /// </summary>
+        protected virtual bool AdapterSupportsTlsAdmissionProbe => false;
+
+        /// <summary>
+        /// Drives a REAL listener of this adapter, configured with a cap of one connection, and
+        /// reports (1) whether a silent peer that never starts the handshake holds a slot and
+        /// (2) whether the next peer is turned away without one. Required when
+        /// <see cref="AdapterSupportsTlsAdmissionProbe"/> is true. The ordering under test is the
+        /// listener's own middleware registration order, which no in-process stream harness can
+        /// observe — the probe must bind a port.
+        /// </summary>
+        protected virtual Task<TlsAdmissionProbe> ProbeTlsAdmissionAsync()
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterSupportsTlsAdmissionProbe)} but does not override {nameof(ProbeTlsAdmissionAsync)}.");
+
+        [Fact]
+        public async Task AdmissionSlot_IsHeldBeforeTheTlsHandshake()
+        {
+            if (!AdapterSupportsTlsAdmissionProbe) return;
+
+            var probe = await ProbeTlsAdmissionAsync();
+
+            probe.SlotsHeldBySilentPeer.Should().Be(1,
+                "the slot is reserved at ACCEPT. A cap applied after the handshake counts only the "
+                + "sessions that got that far, while an unauthenticated peer forces an unbounded "
+                + "number of concurrent handshakes — an asymmetric private-key operation each — "
+                + "outside the cap. A silent socket is the cheapest attack on a TLS front door, and "
+                + "it must cost a slot");
+            probe.OverCapPeerClosed.Should().BeTrue(
+                "with the only slot held, the next peer must be turned away at the door");
+            probe.OverCapPeerCompletedTlsHandshake.Should().BeFalse(
+                "the refusal must precede the handshake: a peer that completes one has already "
+                + "spent the resource the cap exists to bound, whatever the listener answers after");
+        }
+
         // ---- (g) continuation-token integrity (adapters with a paged read) -----
         //
         // Opt-in, same shape as AdapterSupportsMutations: an adapter whose wire paginates a

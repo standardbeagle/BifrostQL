@@ -5,6 +5,9 @@ using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
 using BifrostQL.Server.Auth;
 using BifrostQL.Server.Resp;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -321,6 +324,49 @@ namespace BifrostQL.Server.Test.Resp
         // request (table, MATCH pattern, identity fingerprint); the wire refusal for any invalid
         // cursor is the single "ERR invalid cursor" line from the SCAN command handler, so all
         // six tampers surface byte-identically.
+
+        // ---- kit fact (b): admission before the TLS handshake ----------------
+        //
+        // A REAL Kestrel listener with a real certificate: the ordering under test is the
+        // connection-middleware registration order, which no in-process harness can observe.
+
+        protected override bool AdapterSupportsTlsAdmissionProbe => true;
+
+        protected override async Task<TlsAdmissionProbe> ProbeTlsAdmissionAsync()
+        {
+            var (slots, closed, handshook) = await ProtocolTlsAdmissionHarness.ProbeAsync(
+                async (port, certificate) =>
+                {
+                    var host = await new HostBuilder().ConfigureWebHost(web =>
+                    {
+                        web.UseKestrel();
+                        web.UseUrls();
+                        web.ConfigureServices(services =>
+                        {
+                            services.AddSingleton<IRespCredentialStore>(new FakeRespCredentialStore());
+                            services.AddSingleton<IBifrostAuthContextFactory>(BifrostAuthContextFactory.Instance);
+                            services.AddBifrostResp(o =>
+                            {
+                                o.Port = port;
+                                o.MaxConnections = 1;
+                                o.ServerCertificate = certificate;
+                            });
+                        });
+                        web.Configure(_ => { });
+                    }).StartAsync();
+
+                    return ((IAsyncDisposable)new ProtocolTlsAdmissionHarness.HostStopper(host),
+                        () => host.Services.GetRequiredService<RespConnectionLimiter>().Count);
+                },
+                ProtocolTlsAdmissionHarness.TryImplicitTlsHandshakeAsync);
+
+            return new TlsAdmissionProbe
+            {
+                SlotsHeldBySilentPeer = slots,
+                OverCapPeerClosed = closed,
+                OverCapPeerCompletedTlsHandshake = handshook,
+            };
+        }
 
         protected override bool AdapterSupportsContinuationTokens => true;
 

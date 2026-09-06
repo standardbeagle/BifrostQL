@@ -298,11 +298,14 @@ namespace BifrostQL.Server.Test
 
             // Non-HTTP protocol adapters project their own carrier (LDAP bind, RESP AUTH, S3
             // SigV4, ...), not an HttpContext mount, and keep their own per-adapter funnels.
+            // The three raw-wire front doors (pgwire, RESP, LDAP) no longer appear here: they
+            // share ProtocolAdapter.cs's AdapterIdentityProjection, so this allowlist is one
+            // entry shorter than the number of adapters that project.
             var adapterHomes = new HashSet<string>(StringComparer.Ordinal)
             {
-                "LdapBindAuthenticator.cs", "FeedAuthenticator.cs", "RespConnectionHandler.cs",
+                "ProtocolAdapter.cs", "FeedAuthenticator.cs",
                 "PrometheusScrapeScopeResolver.cs", "ODataAuthenticator.cs", "GrpcIdentityGate.cs",
-                "S3SigV4Verifier.cs", "PgConnectionHandler.cs",
+                "S3SigV4Verifier.cs",
             };
 
             var gateFile = files.SingleOrDefault(f => Path.GetFileName(f) == "BifrostIdentityGate.cs");

@@ -199,7 +199,8 @@ namespace BifrostQL.Server.Pgwire
                 // the connection unless it yields a real (non-empty) user context. Any
                 // projection failure (subject-less principal, unmapped OIDC issuer) is a
                 // rejection, never a fall-through to an anonymous session.
-                if (!TryProjectIdentity(login, out var _userContext))
+                if (!AdapterIdentityProjection.TryProject(
+                        _authFactory, _services, login.Principal, _logger, "pgwire", out var _userContext))
                 {
                     await RejectAsync(stream, PgWireProtocol.SqlStateInvalidAuthorization,
                         "authenticated login does not map to an authorized identity.", ct);
@@ -416,36 +417,6 @@ namespace BifrostQL.Server.Pgwire
             catch (PgScramAuthenticationException)
             {
                 return false; // wrong secret — reject as invalid_password
-            }
-        }
-
-        /// <summary>
-        /// Projects the credential store's candidate principal through the shared auth
-        /// seam. Returns false (fail closed) when projection throws or yields no identity.
-        /// </summary>
-        private bool TryProjectIdentity(PgLogin login, out IDictionary<string, object?> userContext)
-        {
-            userContext = new Dictionary<string, object?>();
-            try
-            {
-                var carrier = new DefaultHttpContext { RequestServices = _services, User = login.Principal };
-                var projected = _authFactory.CreateUserContext(carrier);
-                if (projected.Count == 0)
-                {
-                    // An unauthenticated / claim-less principal projects to nothing. A
-                    // successful pg login must map to a real identity — never anonymous.
-                    _logger.LogWarning("pgwire login projected to an empty user context; rejecting.");
-                    return false;
-                }
-                userContext = projected;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                // Subject-less principal, unmapped OIDC issuer, or any projection fault:
-                // reject. Fail closed on every path — do not degrade to anonymous.
-                _logger.LogWarning(ex, "pgwire identity projection failed; rejecting login.");
-                return false;
             }
         }
 

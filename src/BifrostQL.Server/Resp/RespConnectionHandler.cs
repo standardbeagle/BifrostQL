@@ -572,38 +572,12 @@ namespace BifrostQL.Server.Resp
             // The password proved the caller holds the secret; it does NOT by itself grant a
             // Bifrost identity. Project the candidate principal through the shared auth seam and
             // refuse unless it yields a real (non-empty) user context — fail closed, never anonymous.
-            if (!TryProjectIdentity(login, out var userContext))
+            if (!AdapterIdentityProjection.TryProject(
+                    _authFactory, _services, login.Principal, _logger, "resp", out var userContext))
                 return false;
 
             session.Authenticate(userContext);
             return true;
-        }
-
-        /// <summary>
-        /// Projects the credential store's candidate principal through the shared auth seam —
-        /// the same one every HTTP/binary gate uses. Returns false (fail closed) when
-        /// projection throws (subject-less principal, unmapped OIDC issuer) or yields no identity.
-        /// </summary>
-        private bool TryProjectIdentity(RespLogin login, out IDictionary<string, object?> userContext)
-        {
-            userContext = new Dictionary<string, object?>();
-            try
-            {
-                var carrier = new DefaultHttpContext { RequestServices = _services, User = login.Principal };
-                var projected = _authFactory.CreateUserContext(carrier);
-                if (projected.Count == 0)
-                {
-                    _logger.LogWarning("resp login projected to an empty user context; rejecting.");
-                    return false;
-                }
-                userContext = projected;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "resp identity projection failed; rejecting login.");
-                return false;
-            }
         }
 
         // ---- data-command seam + auth gate -----------------------------------

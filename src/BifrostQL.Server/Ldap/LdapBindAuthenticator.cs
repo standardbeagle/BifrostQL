@@ -116,7 +116,8 @@ namespace BifrostQL.Server.Ldap
                 // projects to an empty context (rejected); an unmapped issuer throws (rejected). Both
                 // are failure classes 4 & 5 and return the same uniform invalidCredentials — never a
                 // degraded anonymous identity.
-                if (!TryProjectIdentity(record!.Principal, out var userContext))
+                if (!AdapterIdentityProjection.TryProject(
+                        _authFactory, _services!, record!.Principal, _logger, "ldap", out var userContext))
                     return Fail(LdapBindOutcome.InvalidCredentials, account, source);
 
                 Audit(LdapBindOutcome.Success, account, source);
@@ -157,31 +158,5 @@ namespace BifrostQL.Server.Ldap
             }
         }
 
-        /// <summary>
-        /// Projects the candidate principal through the shared auth seam. Returns false (fail closed)
-        /// when projection throws (unmapped issuer) or yields no identity (subject-less) — never a
-        /// degraded anonymous context.
-        /// </summary>
-        private bool TryProjectIdentity(System.Security.Claims.ClaimsPrincipal principal, out IDictionary<string, object?> userContext)
-        {
-            userContext = new Dictionary<string, object?>();
-            try
-            {
-                var carrier = new DefaultHttpContext { RequestServices = _services!, User = principal };
-                var projected = _authFactory.CreateUserContext(carrier);
-                if (projected.Count == 0)
-                {
-                    _logger.LogWarning("ldap bind projected to an empty user context; rejecting.");
-                    return false;
-                }
-                userContext = projected;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "ldap identity projection failed; rejecting bind.");
-                return false;
-            }
-        }
     }
 }

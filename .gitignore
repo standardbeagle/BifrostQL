@@ -399,8 +399,12 @@ src/BifrostQL.UI/wwwroot/assets/
 src/BifrostQL.UI/wwwroot/fonts/
 src/BifrostQL.UI/wwwroot/index.html
 
-# worktrack runtime artifacts (per-clone, contains lease holder + git email)
-.worktrack/
+# worktrack runtime artifacts (per-clone, contains lease holder + git email).
+# The workflow manifest is the one committed file: the daemon reconciles the
+# workspace templates from it, so the implementer prompt and model routing
+# are reviewed diffs rather than DB rows.
+.worktrack/*
+!.worktrack/templates.json
 
 # TypeScript incremental build state
 *.tsbuildinfo

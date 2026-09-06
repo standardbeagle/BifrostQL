@@ -58,6 +58,13 @@ implementations produce provably different output.
   `_rawQuery`, `_dbSchema`) as separate facts, which is what proved the
   `__typename` case real rather than a no-op the visitor never collects. One
   representative kind leaves the rest free to regress independently.
+  Same shape where one walker STAMPS state that another walker READS back:
+  M11's `ConnectLinks` stamps the resolved `IDbTable` onto each link node, and
+  the link kinds are a closed set (single, multi, many-to-many, and a nested
+  link on a child) — a fixture covering one kind leaves a missing stamp on the
+  others GREEN, because nothing else re-derives the identity. One fact per
+  kind, asserting the stamped value by reference AND the SQL it produces.
+  <!-- written_at: 2026-09-06T05:45:00Z  source_event: task:01M1KNYP1FA26W4H3R9GT4DKCB, git:e690aaa0 -->
 - **A shared conformance-kit fact must be revert-proven in EVERY opt-in
   derivation, not in one.** The kit's test body is shared, but each derived
   suite supplies its own hook/fixture, and the vacuity lives in the hook. The
@@ -203,6 +210,18 @@ implementations produce provably different output.
   `.Split` shapes missed the C# 12 collection expression `.Split(['|'])`, which
   a net10 assembly can legally use, so a real offender would have passed.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MWB3HVPFH6W3VQDH20Q58N, git:a4b8fb4e -->
+  **A source scan reads the FILE, not the LINE, and an unparseable call is an
+  offender.** C# call arguments wrap freely, so a per-line scan sees a
+  truncated argument list: M11's read-path scan counted
+  `GetTableFromDbName(\n    TableName)` as schema-qualified because the line
+  had an unclosed paren, so the restored bare lookup passed AND inflated the
+  positive-hit count that proves the scan non-vacuous — the two halves of the
+  guard failed together. Join the file (blank comment lines rather than
+  removing them, so reported line numbers stay real), match at token boundaries
+  across newlines, and treat an argument list that never closes as a hit, never
+  as a trusted one. Prove it with a LINE-WRAPPED mutant, not only a one-line
+  one; a mutant formatted the way the fixed code is formatted tests nothing.
+  <!-- written_at: 2026-09-06T05:45:00Z  source_event: task:01M1KNYP1FA26W4H3R9GT4DKCB, git:e690aaa0 -->
   **Anchor a duplicate-detection scan on the DATA the copy must read, never on
   identifiers a copier is free to rename.** The mount-auth scan's anchor was the
   literal `multiDb.Endpoints.Count == 1 ? multiDb.Endpoints[0]` plus a

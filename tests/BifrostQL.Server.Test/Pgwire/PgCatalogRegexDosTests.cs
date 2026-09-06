@@ -70,5 +70,36 @@ namespace BifrostQL.Server.Test.Pgwire
             PgCatalogResponder.Like(null, "%").Should().BeFalse();
             PgCatalogResponder.Like("x", null).Should().BeFalse();
         }
+
+        [Fact]
+        public void RecognitionPatterns_AreBoundedByTheEngine_NotByAWallClock()
+        {
+            // The recognition scan runs DescribeRelationsPattern against RAW CLIENT SQL on EVERY
+            // query, before parsing. Its patterns are NonBacktracking, so the linear bound is a
+            // property of the ENGINE — protocol-adapter-security invariant 1 is satisfied by
+            // NonBacktracking alone. A wall-clock match timeout on top of that is not a safety
+            // bound but a false-positive generator: a host under load (the parallel epic gate)
+            // deschedules the matching thread past the timeout, RegexMatchTimeoutException becomes
+            // a client-facing syntax error, and a perfectly routable query fails — the full-suite
+            // flakes of PreparedCatalogQuery_RoutesThroughCatalogResponder_OverExtendedPath and
+            // UserQuery_WithCatalogTextInStringLiteral_ExecutesAndIsNotMisrouted (worktrack
+            // 01M1N2VV1T7KASK90QR6JKGKAT). Every static Regex the responder runs on client SQL must
+            // therefore be NonBacktracking AND carry no wall-clock timeout.
+            var regexFields = typeof(PgCatalogResponder)
+                .GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)
+                .Where(f => f.FieldType == typeof(System.Text.RegularExpressions.Regex))
+                .ToList();
+
+            regexFields.Should().NotBeEmpty("the recognition patterns must exist for this fact to guard them");
+
+            foreach (var field in regexFields)
+            {
+                var regex = (System.Text.RegularExpressions.Regex)field.GetValue(null)!;
+                regex.Options.Should().HaveFlag(System.Text.RegularExpressions.RegexOptions.NonBacktracking,
+                    $"{field.Name} runs on raw client SQL; its DoS bound must be the linear engine (invariant 1)");
+                regex.MatchTimeout.Should().Be(System.Threading.Timeout.InfiniteTimeSpan,
+                    $"{field.Name} is engine-bounded; a wall-clock timeout turns host load into spurious client syntax errors");
+            }
+        }
     }
 }

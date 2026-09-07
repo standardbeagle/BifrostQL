@@ -43,6 +43,7 @@ namespace BifrostQL.Server.Ldap
         private readonly LdapBindAuthenticator? _authenticator;
         private readonly LdapTlsProvider? _tls;
         private readonly LdapSearchExecutor? _search;
+        private readonly TimeProvider _timeProvider;
         private readonly ILogger<LdapConnectionHandler> _logger;
 
         public LdapConnectionHandler(
@@ -61,6 +62,12 @@ namespace BifrostQL.Server.Ldap
             // rule (a slot taken at accept is only reclaimable by a deadline), and three private
             // copies of it drifted three times, each drift failing open.
             _sessions = sessionHost ?? new LdapSessionHost(options, _connections, timeProvider);
+            // The SAME provider the host arms its deadline with. The per-read timer below is on
+            // this clock too: the budget arithmetic and the await that enforces it must measure
+            // the same time, or a faked clock computes a deterministic budget that a wall-clock
+            // timer then ignores (invariant 15 — an injected clock that no await consults is
+            // decorative).
+            _timeProvider = timeProvider ?? TimeProvider.System;
             _authenticator = authenticator;
             _tls = tls;
             _search = search;
@@ -522,8 +529,14 @@ namespace BifrostQL.Server.Ldap
         private async Task<LdapRequest?> ReadWithDeadlineAsync(
             LdapMessageReader reader, Stream stream, TimeSpan deadline, CancellationToken ct)
         {
-            using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            idle.CancelAfter(deadline);
+            // Own the timer rather than calling CancelAfter on the linked source: a
+            // CancellationTokenSource constructed with a TimeProvider fires on the injected clock,
+            // which is what makes a silent-peer deadline testable without sleeping real time — and
+            // what keeps the shared host's clock seam load-bearing rather than decorative.
+            using var timer = deadline == Timeout.InfiniteTimeSpan
+                ? new CancellationTokenSource()
+                : new CancellationTokenSource(deadline, _timeProvider);
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct, timer.Token);
             try
             {
                 return await reader.ReadRequestAsync(stream, idle.Token);

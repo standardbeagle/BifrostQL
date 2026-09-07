@@ -26,6 +26,8 @@ export default defineConfig({
       external: [
         'react',
         'react-dom',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
         '@tanstack/react-query',
         '@bifrostql/react',
       ],

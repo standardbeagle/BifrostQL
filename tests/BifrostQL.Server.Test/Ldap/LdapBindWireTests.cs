@@ -185,6 +185,42 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task SilentPeer_IsClosed_ByTheInjectedClock_NotTheWallClock()
+        {
+            // A peer that connects and sends NOTHING holds an admission slot taken at accept, so
+            // the per-read pre-auth timer is the only thing that reclaims it. That timer must be
+            // driven by the injected TimeProvider: armed with a wall-clock CancelAfter instead,
+            // the seam this front door advertises is decorative, and every silent-peer fact has
+            // to sleep real time (the flake invariant 15 records biting LDAP M17 twice).
+            //
+            // The REAL timeout is ten minutes — far beyond this test's own few-second wait budget —
+            // so nothing but the fake provider can fire it. A wall-clock timer therefore HANGS here
+            // rather than closing late, which is the RED signature.
+            var clock = new FakeTimeProvider();
+            var options = new LdapWireOptions
+            {
+                AuthenticationTimeout = TimeSpan.FromMinutes(10),
+                IdleTimeout = TimeSpan.FromMinutes(30),
+            };
+            await using var fixture = await LdapFixture.StartAsync(
+                options, authenticator: Authenticator(options), tls: true, timeProvider: clock);
+
+            var closed = fixture.Client.ReadResponseAsync();
+
+            // Advance PER POLL, not once. The admission slot is taken at accept, BEFORE the read
+            // timer is armed, so a single early advance can land ahead of the timer and never fire
+            // it — the connection would then sit on a timer that is already in the past.
+            for (var tick = 0; tick < 40 && !closed.IsCompleted; tick++)
+            {
+                clock.Advance(TimeSpan.FromMinutes(1));
+                await Task.Delay(50);
+            }
+
+            (await closed.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Should().BeNull("a silent peer's read deadline must be driven by the injected clock");
+        }
+
+        [Fact]
         public async Task AnonymousSession_IsClosed_AtItsSessionDeadline()
         {
             // An admitted anonymous bind sets Authenticated = true, which used to retire the

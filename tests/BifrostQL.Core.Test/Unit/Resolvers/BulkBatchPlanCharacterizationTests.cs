@@ -172,13 +172,15 @@ public sealed class BulkBatchPlanCharacterizationTests
 
     /// <summary>
     /// <para>A client that scopes a delete with an extra predicate column
-    /// (<c>Status: "archived"</c> alongside the key) gets that column WRITTEN into every
-    /// matched row on the bulk path: <see cref="BulkBatchPlanBuilder"/>'s soft-delete
-    /// branch splits by <c>IsPrimaryKeyColumn</c> alone, so every non-key column — the
-    /// client's predicate included — falls into the SET list. The per-row seam routes the
-    /// same payload through <c>SelectPredicateColumns</c> and puts <c>Status</c> in the
-    /// WHERE; both rules are run here and the divergence is asserted directly. This is the
-    /// hazard the comment at <c>TableMutationPipeline.SelectPredicateColumns</c> names.</para>
+    /// (<c>Status: "archived"</c> alongside the key) has that column SCOPE the soft-delete
+    /// rewrite instead of being written into every matched row: the branch routes the
+    /// payload through <c>TableMutationPipeline.SelectPredicateColumns</c>, so the client's
+    /// predicate lands in the WHERE and only the chain's own stamps (<c>deleted_at</c>,
+    /// <c>updated_at</c>) reach the SET list. The per-row rule is run over the SAME staged
+    /// row and the two key sets compared directly, so the agreement cannot be two
+    /// hand-written expectations that happen to coincide. Writing a client predicate column
+    /// into the row is the hazard the comment at
+    /// <c>TableMutationPipeline.SelectPredicateColumns</c> names.</para>
     /// </summary>
     [Fact]
     public async Task Bulk_SoftDelete_ClientPredicateColumn_InWhere_NotInSet()
@@ -194,7 +196,8 @@ public sealed class BulkBatchPlanCharacterizationTests
         group.SetColumns.Should().NotContain("Status");
         group.KeyColumns.Should().Contain("Status");
         group.KeyColumns.Should().BeEquivalentTo(new[] { "NoteId", "Region", "Status" });
-        group.SetColumns.Should().Contain("deleted_at").And.Contain("updated_at");
+        group.SetColumns.Should().BeEquivalentTo(new[] { "deleted_at", "updated_at" },
+            "only the chain's own stamps are written; nothing the client supplied is");
 
         // ---- the per-row rule, over the same staged row ------------------
         var clientColumns = new HashSet<string>(
@@ -208,11 +211,14 @@ public sealed class BulkBatchPlanCharacterizationTests
     }
 
     /// <summary>
-    /// <para>The bulk HARD delete predicates on EVERY transformed column, so the
-    /// <c>updated_at</c> that <see cref="AuditMutationTransformer"/> stamps on a Delete
-    /// becomes a join column: <c>updated_at = &lt;now&gt;</c> matches no stored row
-    /// (protocol-adapter-security invariant 8(c)). The per-row seam excludes it, as the
-    /// comparison below shows.</para>
+    /// <para>The bulk HARD delete predicates on the PRE-chain client columns plus the
+    /// complete primary key, so the <c>updated_at</c> that
+    /// <see cref="AuditMutationTransformer"/> stamps on a Delete stays OUT of the join —
+    /// <c>updated_at = &lt;now&gt;</c> would match no stored row
+    /// (protocol-adapter-security invariant 8(c)). The stamped value is asserted present on
+    /// the staged row, so the exclusion is not green merely because nothing stamps, and the
+    /// per-row seam's own predicate is computed over the SAME row and compared rather than
+    /// restated.</para>
     /// </summary>
     [Fact]
     public async Task Bulk_HardDelete_AuditStamp_NotInKeyColumns()
@@ -263,11 +269,11 @@ public sealed class BulkBatchPlanCharacterizationTests
     }
 
     /// <summary>
-    /// <para><see cref="BulkBatchPlanBuilder"/> hardcodes <c>ConflictOnNoRows: false</c> on
-    /// BOTH delete branches, so a transformer that raises the flag (a concurrency token, a
-    /// guard that must not silently match nothing) is obeyed on an update and dropped on a
-    /// delete. The update arm is the control: it proves the flag reaches staging at all, so
-    /// the delete arms cannot be green because the plumbing is absent.</para>
+    /// <para>Both delete branches carry the chain's <c>ConflictOnNoRows</c> into staging, so
+    /// a transformer that raises the flag (a concurrency token, a guard that must not
+    /// silently match nothing) is obeyed on a delete exactly as it is on an update. The
+    /// update arm is the control: it proves the flag reaches staging at all, so the delete
+    /// arms cannot be green because the plumbing is absent.</para>
     /// </summary>
     [Fact]
     public async Task Bulk_Delete_ConflictOnNoRows_FollowsChainResult()
@@ -296,22 +302,77 @@ public sealed class BulkBatchPlanCharacterizationTests
         softRow.ConflictOnNoRows.Should().BeTrue();
     }
 
+    /// <summary>
+    /// <para>The client speaks GraphQL field names; the plan speaks database column names.
+    /// The fixture gives the column an explicit <c>graphQlName</c> so <c>status_code</c> and
+    /// <c>status-code</c> are genuinely DIFFERENT names — without it
+    /// <see cref="DbModelTestFixture"/> defaults <c>GraphQlName</c> to the DB name, the two
+    /// spellings coincide, and the absence assertions below are about a string nothing in
+    /// the run ever produces (<c>.claude/rules/regression-test-non-vacuous.md</c>, the
+    /// name-space bullet). The submission therefore uses the GraphQL name the wire carries,
+    /// and the POSITIVE assertion — the DB name IS the predicate column — is the
+    /// load-bearing half.</para>
+    /// </summary>
     [Fact]
-    public async Task Bulk_Delete_RenamedClientPredicate_UsesDbColumnName()
+    public async Task Bulk_SoftDelete_RenamedClientPredicate_UsesDbColumnName()
     {
         var model = DbModelTestFixture.Create().WithTable("Renamed", t => t
             .WithSchema("dbo").WithPrimaryKey("Id")
-            .WithColumn("status-code", "nvarchar")
+            .WithColumn("status-code", "nvarchar", graphQlName: "status_code")
             .WithColumn("deleted_at", "datetime2", isNullable: true)
             .WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")
             .WithMetadata(MetadataKeys.Batch.BulkThreshold, "1")).Build();
         var ctx = BuildContext(model);
-        var built = await BuildAsync(ctx, "Renamed", Delete(("Id", 0), ("status-code", "archived")));
+        var table = ctx.Model.GetTableFromDbName("Renamed");
+        table.GraphQlLookup["status_code"].DbName.Should().Be("status-code",
+            "the two names must actually differ, or every assertion below is vacuous");
+
+        // The client submits the GraphQL name, exactly as the wire does.
+        var built = await BuildAsync(ctx, "Renamed", Delete(("Id", 0), ("status_code", "archived")));
         var (group, _) = Single(built);
-        group.KeyColumns.Should().Contain("status-code");
-        group.SetColumns.Should().NotContain("status-code");
-        group.KeyColumns.Should().NotContain("status_code");
+
+        group.Op.Should().Be(BulkOpCode.Update, "a soft delete is staged as an UPDATE");
+        group.KeyColumns.Should().Contain("status-code",
+            "the client predicate is rekeyed to the DB column name before the predicate split");
+        group.KeyColumns.Should().BeEquivalentTo(new[] { "Id", "status-code" });
+        group.SetColumns.Should().BeEquivalentTo(new[] { "deleted_at" });
+        group.KeyColumns.Should().NotContain("status_code", "the GraphQL name never reaches SQL");
         group.SetColumns.Should().NotContain("status_code");
+    }
+
+    /// <summary>
+    /// The hard-delete twin of the fact above: no soft-delete column, so the DELETE branch
+    /// derives the predicate, and an <c>updated_at</c> stamp so the invariant 8(c) exclusion
+    /// is observable on the renamed shape too. The two branches derive their key columns
+    /// separately, so a fact on one says nothing about the other.
+    /// </summary>
+    [Fact]
+    public async Task Bulk_HardDelete_RenamedClientPredicate_UsesDbColumnName()
+    {
+        var model = DbModelTestFixture.Create().WithTable("Renamed", t => t
+            .WithSchema("dbo").WithPrimaryKey("Id")
+            .WithColumn("status-code", "nvarchar", graphQlName: "status_code")
+            .WithColumn("updated_at", "datetime2", isNullable: true)
+            .WithColumnMetadata("updated_at", MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.UpdatedOn)
+            .WithMetadata(MetadataKeys.Batch.BulkThreshold, "1")).Build();
+        var ctx = BuildContext(model);
+        var table = ctx.Model.GetTableFromDbName("Renamed");
+        table.GraphQlLookup["status_code"].DbName.Should().Be("status-code",
+            "the two names must actually differ, or every assertion below is vacuous");
+
+        var built = await BuildAsync(ctx, "Renamed", Delete(("Id", 0), ("status_code", "archived")));
+        var (group, row) = Single(built);
+
+        group.Op.Should().Be(BulkOpCode.Delete);
+        group.SetColumns.Should().BeEmpty("a hard delete has no SET list");
+        group.KeyColumns.Should().Contain("status-code",
+            "the client predicate is rekeyed to the DB column name before the predicate split");
+        group.KeyColumns.Should().BeEquivalentTo(new[] { "Id", "status-code" });
+        group.KeyColumns.Should().NotContain("status_code", "the GraphQL name never reaches SQL");
+        group.KeyColumns.Should().NotContain("updated_at",
+            "a chain-stamped value in the join predicate would match no row (invariant 8(c))");
+        row.Values.Should().ContainKey("updated_at").WhoseValue.Should().NotBeNull(
+            "and the stamp really is applied, so the exclusion above is not vacuous");
     }
 
     [Fact]

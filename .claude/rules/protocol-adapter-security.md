@@ -732,9 +732,13 @@ code, not just re-checks of pgwire.
     (`regression-test-non-vacuous.md`). The loop must advance an INJECTED
     clock, not sleep real time — a wall-clock margin under a few hundred ms
     flakes under the parallel epic gate (LDAP M17's fact, twice), and every
-    adapter handler already takes a `Func<DateTimeOffset>` clock (RESP, now
-    LDAP), so a new deadline fact has no excuse to sleep.
+    adapter handler already takes a `TimeProvider` (pgwire, RESP, LDAP — see
+    the amendment below), so a new deadline fact has no excuse to sleep. The
+    provider has to reach the AWAIT, not only the arithmetic: LDAP computed its
+    budget from the injected clock and then armed the read with a wall-clock
+    `CancelAfter`, so no fact could drive the silent-peer arm at all.
     <!-- amended_at: 2026-09-05T00:00:00Z  source_event: task:01M1QX52E7ZCY5QRZ8JMZ2BJHY, git:baba20a5 -->
+    <!-- amended_at: 2026-09-06T00:00:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:3a4c63e1, git:dfaa0bb4 -->
 
     **The deadline is ONE owned timer whose lifetime is the connection's —
     never a detached delay loop.** Adding the clock seam by spawning a

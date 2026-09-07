@@ -13,6 +13,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 ### Fixed
 
 - Bulk batch deletes now match the per-row predicate/SET split: audit stamps no longer enter hard-delete predicates, and client soft-delete predicates no longer get written into rows. Bulk delete plans also honor `ConflictOnNoRows`.
+- Bulk batch deletes now rekey client predicate fields before planning, so renamed database columns remain in the delete predicate and separate predicate shapes cannot share a statement.
 
 ### Breaking — read-path filter builders take `IDbTable`, not a bare table name
 

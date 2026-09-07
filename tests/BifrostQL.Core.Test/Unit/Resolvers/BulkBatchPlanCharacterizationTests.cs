@@ -306,7 +306,7 @@ public sealed class BulkBatchPlanCharacterizationTests
             .WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")
             .WithMetadata(MetadataKeys.Batch.BulkThreshold, "1")).Build();
         var ctx = BuildContext(model);
-        var built = await BuildAsync(ctx, "Renamed", Delete(("Id", 0), ("status_code", "archived")));
+        var built = await BuildAsync(ctx, "Renamed", Delete(("Id", 0), ("status-code", "archived")));
         var (group, _) = Single(built);
         group.KeyColumns.Should().Contain("status-code");
         group.SetColumns.Should().NotContain("status-code");

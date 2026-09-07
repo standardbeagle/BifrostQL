@@ -503,7 +503,7 @@ namespace BifrostQL.Core.QueryModel
                 throw new BifrostExecutionError(
                     $"Filter references unknown single-link relationship '{ColumnName}' on table '{TableName}'.{hint}");
             }
-            var (joinSql, joinParams) = BuildSqlParameterized(Next, link, ctx, aliases, TraversedTableFilter, includeValue: false);
+            var (joinSql, joinParams) = BuildSqlParameterized(this, Next, link, ctx, aliases, includeValue: false);
             var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";
             return new FilterParts(fullJoin, "", joinParams.ToList());
@@ -638,16 +638,16 @@ namespace BifrostQL.Core.QueryModel
                 : traversedFilter.RenderParts(ctx, link.ParentTable.DbName, aliases);
 
         private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
+            TableFilter scopeOwner,
             TableFilter filter,
             TableLinkDto link,
             SqlBuildContext ctx,
             JoinAliasAllocator aliases,
-            TableFilter? traversedTableFilter,
             bool includeValue = false)
         {
             var dialect = ctx.Dialect;
             var parameters = ctx.Parameters;
-            var scope = RenderTraversedTableFilter(traversedTableFilter, link, ctx, aliases);
+            var scope = RenderTraversedTableFilter(scopeOwner.TraversedTableFilter, link, ctx, aliases);
             if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
             {
                 var ej = dialect.EscapeIdentifier("j");
@@ -684,7 +684,7 @@ namespace BifrostQL.Core.QueryModel
                             // (null on a leaf predicate), so every hop past the first ran
                             // unscoped: finding C1.
                             var (nextSql, nextParams) = BuildSqlParameterized(
-                                filter.Next!, nextLink, ctx, aliases, filter.TraversedTableFilter);
+                                filter, filter.Next!, nextLink, ctx, aliases);
                             var innerJoin = $"INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
                             var sql = RelationshipSubquery(
                                 link, dialect, $"{innerJoin}{scope.Joins}", new[] { scope.Where },

@@ -178,6 +178,11 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
     /// suffix. <c>updated_at</c> IS stamped by the chain on a Delete, so a predicate
     /// built from POST-chain data would AND a never-matching term into the WHERE and
     /// silently remove nothing; the negative half is what makes this fact non-vacuous.
+    /// That the chain really stamps <c>updated_at</c> on a Delete is proven by the paired
+    /// control <c>KeyedWriteCharacterizationTests.AuditChain_StampsUpdatedAt_OnDelete_*</c>
+    /// (CHAR-1) and, on the same chain, by
+    /// <c>BulkBatchPlanCharacterizationTests.Current_Bulk_HardDelete_AuditStamp_LandsInKeyColumns</c>,
+    /// which asserts the stamped value positively.
     /// </summary>
     [Fact]
     public async Task TreeSync_InferredHardDelete_Where_IsClientColumnsUnionPk()

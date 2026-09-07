@@ -105,7 +105,7 @@ namespace BifrostQL.Core.Resolvers
 
             var maxAffected = FilteredUpdateConfig.MaxAffected(table);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var countSql = $"SELECT COUNT(*) FROM {tableRef} WHERE {parts.Where};";
+            var countSql = MutationCommandExecutor.BuildFilteredCountSql(tableRef, parts.Where);
             var updateSql = MutationCommandExecutor.BuildFilteredUpdateSql(dialect, table, tableRef, dbData.Keys, parts.Where);
 
             var affected = 0;

@@ -206,7 +206,7 @@ public sealed class TreeSyncExecutor
                         opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
                         break;
                     case MutationType.Delete:
-                        var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
+                        var deleteData = MutationArgumentBinder.SelectDeletePredicate(data, clientColumns, op.Table);
                         if (deleteData.Count == 0)
                             throw new BifrostExecutionError(
                                 "A delete requires a primary key or at least one predicate column to scope the affected rows.");
@@ -312,17 +312,13 @@ public sealed class TreeSyncExecutor
     private async Task<int> ExecuteUpdateAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
         (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
     {
-        var keyData = data.Where(kv => IsKey(table, kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
-        var setData = data.Where(kv => !IsKey(table, kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
+        var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, data);
         if (keyData.Count == 0 || setData.Count == 0)
             return 0;
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
-        var setClause = string.Join(",", setData.Select(kv => SetAssignment(_dialect, table, kv.Key)));
-        var whereClause = string.Join(" AND ", keyData.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+        cmd.CommandText = MutationCommandExecutor.BuildUpdateSql(_dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
         return await cmd.ExecuteNonQueryAsync();
@@ -335,10 +331,8 @@ public sealed class TreeSyncExecutor
             return 0;
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
-        var whereClause = string.Join(" AND ", data.Select(kv => $"{_dialect.EscapeIdentifier(kv.Key)}=@{SqlParameterNames.Sanitize(kv.Key)}"));
-
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DELETE FROM {tableRef} WHERE {whereClause}{additionalFilter.WhereSuffix};";
+        cmd.CommandText = MutationCommandExecutor.BuildDeleteSql(_dialect, tableRef, data.Keys, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
         return await cmd.ExecuteNonQueryAsync();
@@ -353,6 +347,4 @@ public sealed class TreeSyncExecutor
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static bool IsKey(IDbTable table, string column)
-        => table.ColumnLookup.TryGetValue(column, out var col) && col.IsPrimaryKey;
 }

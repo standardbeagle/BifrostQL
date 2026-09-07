@@ -393,11 +393,7 @@ namespace BifrostQL.Core.Resolvers
             // key columns may arrive under their GraphQL field names, so map them.
             // standardData only gates the "is there anything to SET?" check; the real
             // SET list is re-derived from the chain's (DB-named) output below.
-            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
-                keyData[ToDbColumnName(table, d.Key)] = d.Value;
-            var standardData = caseData.Where(d => !IsPrimaryKeyColumn(table, d.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
+            var (keyData, standardData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
 
             if (!keyData.Any() || !standardData.Any()) return null;
 
@@ -519,7 +515,7 @@ namespace BifrostQL.Core.Resolvers
             // client-supplied predicate columns (plus primary key) with their transformed
             // values, so enum-name → DB-value mapping on a predicate column still reaches
             // the WHERE; transformer-stamped columns land only in SET, never the predicate.
-            var predicateData = TableMutationPipeline.SelectPredicateColumns(dbData, clientColumns, table);
+            var predicateData = MutationArgumentBinder.SelectDeletePredicate(dbData, clientColumns, table);
 
             if (transformResult.MutationType == MutationType.Update)
             {
@@ -588,9 +584,7 @@ namespace BifrostQL.Core.Resolvers
             // concurrent writer (a lost insert race fails the INSERT, a lost
             // update race affects 0 rows).
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
-                keyData[ToDbColumnName(table, d.Key)] = d.Value;
+            var (keyData, _) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
 
             // An upsert's identity IS a primary key, so it must be whole before it is
             // used to decide insert-or-update: a partial key probes — and then updates
@@ -610,9 +604,9 @@ namespace BifrostQL.Core.Resolvers
         private static async Task<bool> RowExistsAsync(BatchExecutionContext ctx, Dictionary<string, object?> keyData)
         {
             var tableRef = ctx.Dialect.TableReference(ctx.Table.TableSchema, ctx.Table.DbName);
-            var whereClause = MutationCommandExecutor.BuildKeyPredicate(ctx.Dialect, keyData.Keys);
+            var sql = MutationCommandExecutor.BuildExistsSql(ctx.Dialect, tableRef, keyData.Keys);
             await using var cmd = ctx.Conn.CreateCommand();
-            cmd.CommandText = $"SELECT 1 FROM {tableRef} WHERE {whereClause};";
+            cmd.CommandText = sql;
             cmd.Transaction = ctx.Transaction;
             AddParameters(cmd, keyData);
             var result = await cmd.ExecuteScalarAsync(ctx.Ct);

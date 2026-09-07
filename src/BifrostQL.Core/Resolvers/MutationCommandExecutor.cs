@@ -125,6 +125,12 @@ namespace BifrostQL.Core.Resolvers
             IEnumerable<string> whereColumns, string whereSuffix)
             => $"DELETE FROM {tableRef} WHERE {BuildKeyPredicate(dialect, whereColumns)}{whereSuffix};";
 
+        public static string BuildExistsSql(ISqlDialect dialect, string tableRef, IEnumerable<string> keyColumns)
+            => $"SELECT 1 FROM {tableRef} WHERE {BuildKeyPredicate(dialect, keyColumns)};";
+
+        public static string BuildFilteredCountSql(string tableRef, string whereSql)
+            => $"SELECT COUNT(*) FROM {tableRef} WHERE {whereSql};";
+
         public static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data, CancellationToken cancellationToken = default)
         {
             await using var cmd = conn.CreateCommand();

@@ -242,10 +242,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
         {
             if (data.Count == 0) return null;
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var d in caseData.Where(d => IsPrimaryKeyColumn(table, d.Key)))
-                keyData[ToDbColumnName(table, d.Key)] = d.Value;
-            if (keyData.Count == 0 || caseData.Count == keyData.Count) return null;
+            var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
+            if (keyData.Count == 0 || setData.Count == 0) return null;
 
             // Same rule as the per-row pipelines: a partial composite key joins the
             // staging table on part of the key, so ONE statement rewrites every row

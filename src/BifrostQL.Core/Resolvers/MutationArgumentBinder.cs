@@ -57,6 +57,28 @@ namespace BifrostQL.Core.Resolvers
             return (allData, keyData, standardData);
         }
 
+        public static (Dictionary<string, object?> keyData, Dictionary<string, object?> setData)
+            SplitKeyAndSet(IDbTable table, IReadOnlyDictionary<string, object?> dbData)
+        {
+            var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in dbData.Where(d => DbParameterBinder.IsPrimaryKeyColumn(table, d.Key)))
+                keyData[DbParameterBinder.ToDbColumnName(table, d.Key)] = d.Value;
+            var setData = dbData
+                .Where(d => !DbParameterBinder.IsPrimaryKeyColumn(table, d.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+            return (keyData, setData);
+        }
+
+        public static Dictionary<string, object?> SelectDeletePredicate(
+            Dictionary<string, object?> dbData, HashSet<string> clientColumns, IDbTable table)
+        {
+            var predicateData = dbData
+                .Where(kv => clientColumns.Contains(kv.Key) || DbParameterBinder.IsPrimaryKeyColumn(table, kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+            RequireCompleteKey(table, predicateData.Keys, "Delete");
+            return predicateData;
+        }
+
         /// <summary>
         /// Zips a positional <c>_primaryKey</c> argument against the table's key
         /// columns (in declared order), producing a DB-column-name-keyed dictionary.

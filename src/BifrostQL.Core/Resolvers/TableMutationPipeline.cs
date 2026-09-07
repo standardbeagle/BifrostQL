@@ -389,18 +389,6 @@ namespace BifrostQL.Core.Resolvers
         /// hard, single-row soft, batch) gets it from one place: a predicate carrying
         /// SOME of a composite key spans every row sharing those columns.
         /// </summary>
-        internal static Dictionary<string, object?> SelectPredicateColumns(
-            Dictionary<string, object?> dbData, HashSet<string> clientColumns, IDbTable table)
-        {
-            var predicateData = dbData
-                .Where(kv => clientColumns.Contains(kv.Key) || IsPrimaryKeyColumn(table, kv.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-
-            MutationArgumentBinder.RequireCompleteKey(table, predicateData.Keys, "Delete");
-
-            return predicateData;
-        }
-
         // Soft-delete: the delete was transformed to UPDATE. The SET list carries ONLY
         // the columns a transformer stamped (soft-delete deleted_at/deleted_by, audit
         // updated_at/updated_by) — never a client-supplied column, or a delete predicate
@@ -413,7 +401,7 @@ namespace BifrostQL.Core.Resolvers
             HashSet<string> clientColumns,
             (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
         {
-            var keyData = SelectPredicateColumns(dbData, clientColumns, table);
+            var keyData = MutationArgumentBinder.SelectDeletePredicate(dbData, clientColumns, table);
             var setData = dbData
                 .Where(kv => !keyData.ContainsKey(kv.Key))
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
@@ -455,7 +443,7 @@ namespace BifrostQL.Core.Resolvers
             HashSet<string> clientColumns,
             (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
         {
-            var deleteData = SelectPredicateColumns(dbData, clientColumns, table);
+            var deleteData = MutationArgumentBinder.SelectDeletePredicate(dbData, clientColumns, table);
 
             if (deleteData.Count == 0)
                 throw new BifrostExecutionError(

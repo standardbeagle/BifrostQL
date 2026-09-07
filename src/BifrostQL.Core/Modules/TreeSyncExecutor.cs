@@ -206,7 +206,7 @@ public sealed class TreeSyncExecutor
                         opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
                         break;
                     case MutationType.Delete:
-                        var deleteData = MutationArgumentBinder.SelectDeletePredicate(data, clientColumns, op.Table);
+                        var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
                         if (deleteData.Count == 0)
                             throw new BifrostExecutionError(
                                 "A delete requires a primary key or at least one predicate column to scope the affected rows.");

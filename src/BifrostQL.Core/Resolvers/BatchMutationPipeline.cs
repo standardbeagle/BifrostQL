@@ -515,7 +515,7 @@ namespace BifrostQL.Core.Resolvers
             // client-supplied predicate columns (plus primary key) with their transformed
             // values, so enum-name → DB-value mapping on a predicate column still reaches
             // the WHERE; transformer-stamped columns land only in SET, never the predicate.
-            var predicateData = MutationArgumentBinder.SelectDeletePredicate(dbData, clientColumns, table);
+            var predicateData = TableMutationPipeline.SelectPredicateColumns(dbData, clientColumns, table);
 
             if (transformResult.MutationType == MutationType.Update)
             {

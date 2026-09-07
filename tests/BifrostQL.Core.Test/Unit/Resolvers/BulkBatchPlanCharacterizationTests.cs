@@ -186,7 +186,7 @@ public sealed class BulkBatchPlanCharacterizationTests
     /// hazard the comment at <c>TableMutationPipeline.SelectPredicateColumns</c> names.</para>
     /// </summary>
     [Fact]
-    public async Task Current_Bulk_SoftDelete_ClientPredicateColumn_LandsInSetColumns()
+    public async Task Bulk_SoftDelete_ClientPredicateColumn_InWhere_NotInSet()
     {
         var ctx = BuildContext(BuildModel());
         var table = ctx.Model.GetTableFromDbName("Notes");
@@ -197,12 +197,10 @@ public sealed class BulkBatchPlanCharacterizationTests
 
         group.Op.Should().Be(BulkOpCode.Update, "a soft delete is staged as an UPDATE");
         // POSITIVE assertion of the divergent behaviour: the predicate column is WRITTEN.
-        group.SetColumns.Should().Contain("Status",
-            "TODAY the bulk soft-delete branch writes the client's predicate column into the row");
-        group.KeyColumns.Should().NotContain("Status",
-            "TODAY it does not scope on it");
-        group.KeyColumns.Should().BeEquivalentTo(new[] { "NoteId", "Region" });
-        group.SetColumns.Should().BeEquivalentTo(new[] { "Status", "updated_at", "deleted_at" });
+        group.SetColumns.Should().NotContain("Status");
+        group.KeyColumns.Should().Contain("Status");
+        group.KeyColumns.Should().BeEquivalentTo(new[] { "NoteId", "Region", "Status" });
+        group.SetColumns.Should().BeEquivalentTo(new[] { "updated_at", "deleted_at" });
 
         // ---- the per-row rule, over the same staged row ------------------
         var clientColumns = new HashSet<string>(
@@ -212,8 +210,7 @@ public sealed class BulkBatchPlanCharacterizationTests
             clientColumns, table);
         perRowPredicate.Keys.Should().Contain("Status",
             "the per-row seam matches on the client's predicate column");
-        group.KeyColumns.Should().NotBeEquivalentTo(perRowPredicate.Keys,
-            "the two seams disagree TODAY; CHAR-4 makes them agree and turns this fact red");
+        group.KeyColumns.Should().BeEquivalentTo(perRowPredicate.Keys);
     }
 
     /// <summary>
@@ -226,7 +223,7 @@ public sealed class BulkBatchPlanCharacterizationTests
     /// comparison below shows.</para>
     /// </summary>
     [Fact]
-    public async Task Current_Bulk_HardDelete_AuditStamp_LandsInKeyColumns()
+    public async Task Bulk_HardDelete_AuditStamp_NotInKeyColumns()
     {
         var ctx = BuildContext(BuildModel());
         var table = ctx.Model.GetTableFromDbName("Orders");
@@ -238,9 +235,8 @@ public sealed class BulkBatchPlanCharacterizationTests
         group.Op.Should().Be(BulkOpCode.Delete);
         group.SetColumns.Should().BeEmpty("a hard delete has no SET list");
         // POSITIVE assertion of the divergent behaviour.
-        group.KeyColumns.Should().Contain("updated_at",
-            "TODAY the chain-stamped audit column is part of the bulk delete's join predicate");
-        group.KeyColumns.Should().BeEquivalentTo(new[] { "OrderId", "LineNo", "Status", "updated_at" });
+        group.KeyColumns.Should().NotContain("updated_at");
+        group.KeyColumns.Should().BeEquivalentTo(new[] { "OrderId", "LineNo", "Status" });
         row.Values.Should().ContainKey("updated_at").WhoseValue.Should().NotBeNull(
             "and the stamped value is a fresh timestamp, so it cannot match a stored row");
         group.FilterSql.Should().StartWith(" AND (").And.Contain("tenant_id");
@@ -253,8 +249,7 @@ public sealed class BulkBatchPlanCharacterizationTests
             clientColumns, table);
         perRowPredicate.Keys.Should().NotContain("updated_at",
             "the per-row seam builds its predicate from the PRE-chain client columns");
-        group.KeyColumns.Should().NotBeEquivalentTo(perRowPredicate.Keys,
-            "the two seams disagree TODAY; CHAR-4 makes them agree and turns this fact red");
+        group.KeyColumns.Should().BeEquivalentTo(perRowPredicate.Keys);
     }
 
     /// <summary>A transformer that asks for zero rows to be a conflict, and nothing else.</summary>
@@ -286,7 +281,7 @@ public sealed class BulkBatchPlanCharacterizationTests
     /// the delete arms cannot be green because the plumbing is absent.</para>
     /// </summary>
     [Fact]
-    public async Task Current_Bulk_Delete_ConflictOnNoRows_AlwaysFalse()
+    public async Task Bulk_Delete_ConflictOnNoRows_FollowsChainResult()
     {
         var transformers = Chain().Concat(new IMutationTransformer[] { new ConflictOnNoRowsTransformer() }).ToArray();
 
@@ -302,16 +297,14 @@ public sealed class BulkBatchPlanCharacterizationTests
         var (_, hardRow) = Single(await BuildAsync(hardCtx, "Orders",
             Delete(("OrderId", 2), ("LineNo", 1))));
         hardRow.Op.Should().Be(BulkOpCode.Delete);
-        hardRow.ConflictOnNoRows.Should().BeFalse(
-            "TODAY the hard-delete branch hardcodes the flag to false");
+        hardRow.ConflictOnNoRows.Should().BeTrue();
 
         // Soft delete (the rewritten UPDATE): the flag is dropped there too.
         var softCtx = BuildContext(BuildModel(), transformers);
         var (softGroup, softRow) = Single(await BuildAsync(softCtx, "Notes",
             Delete(("NoteId", 1), ("Region", "west"))));
         softGroup.Op.Should().Be(BulkOpCode.Update);
-        softRow.ConflictOnNoRows.Should().BeFalse(
-            "TODAY the soft-delete branch hardcodes the flag to false as well");
+        softRow.ConflictOnNoRows.Should().BeTrue();
     }
 
     // ---- the guard that must survive the convergence ---------------------

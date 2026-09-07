@@ -40,6 +40,22 @@ different surface, none of them security work:
   Check the accessibility of every symbol a migration note names; where nothing
   public replaces it, say the removal is deliberate and name the seam.
   <!-- written_at: 2026-09-05T14:30:00Z  source_event: task:01M1RX501DZFH39JDV61V0G231, git:1598160f -->
+- **A UNIFICATION writes its end state into the docs before every consumer is on
+  it.** The retirement case above is prose left describing the old mechanism;
+  this is prose describing the NEW one too early. Folding three pre-auth
+  deadlines into one session host shipped an AGENTS.md sentence saying the read
+  timer runs on `TimeProvider` "or the injected clock is decorative" — true of
+  RESP, false of LDAP, whose handler no longer held a `TimeProvider` and still
+  armed `idle.CancelAfter(deadline)` on the wall clock. Every existing fact
+  stayed green, because they all exercised the arm/retire ARITHMETIC, never the
+  await. Before writing a coverage sentence about a unified control, grep the
+  path for the retired mechanism (`CancelAfter`, `Task.Delay`,
+  `CancellationTokenSource(`) and pair each hit with the new seam. **And when
+  review finds such a sentence false, check the repair direction first**: both
+  the sentence and the annotation described what the code SHOULD have done, so
+  fixing the code made them true and no prose changed — cheaper and safer than
+  weakening a security claim to match a defect.
+  <!-- written_at: 2026-09-07T02:30:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:3b549156, git:dfaa0bb4, git:19c911a6 -->
 
 <!-- written_at: 2026-09-04T02:00:00Z  source_event: task:01M1KP68KCJPYTWCAY3A7A5TZ0, git:534cadcc; recurrence: H8, H9, H13 -->
 

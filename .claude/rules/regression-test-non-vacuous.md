@@ -35,6 +35,17 @@ a future regression to the old code stays green.
   refactor (share the walk) and correct the over-broad sentence that produced the
   inference, rather than shipping a refactor titled as a bug.
   <!-- written_at: 2026-09-06T06:45:00Z  source_event: task:01M1QT7MGM129G7X6NNNMBFJNC, git:1e7b924f -->
+  **Mirror image: a REFUSAL to do the work is also a hypothesis until a fact
+  goes RED.** The ProtocolSessionHost slice deferred the deadline half of its
+  criteria because unifying "would change wire behaviour on two adapters" —
+  argued, never tested. The rework wrote the extraction and ran the existing
+  H11/M15/M17 deadline facts: all green, so the claim was simply false, and the
+  one real difference survived as a named parameter (`clampToIdleWhileArmed`).
+  On a REFACTOR-tagged task behaviour preservation is a SUITE RESULT, never an
+  inference; "unifying would change behaviour" must name the existing fact that
+  goes RED. The tell is a self-report that narrows the acceptance criteria and
+  defends the narrowing with an assertion — acceptance criteria are not a menu.
+  <!-- written_at: 2026-09-07T02:30:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:3a4c63e1 -->
 
 ## Why fixtures go vacuous
 
@@ -83,6 +94,18 @@ implementations produce provably different output.
   frame-cap fact was proven RED on the RESP derivation and shipped vacuous on
   the LDAP one. Run the mutant against each suite that sets the opt-in flag.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1N05460G65T9XXDAPMHGKKS, git:31990a6d -->
+  Two things that rule depends on. **Enumerate the derivations by `git grep` of
+  the flag, not from memory** — review attempt 1 asked for proofs across "8
+  mutation-capable derivations" and there are 5. And **one mutant need not take
+  every derivation RED.** The cross-op-class parity fact needs two: code-mapped
+  wires (gRPC, RESP, MCP) diverge when a throw loses its `ErrorCode`,
+  message-forwarding wires (Echo, BinaryTransport) only when the text itself
+  changes. Record which facts each mutant is EXPECTED to leave green, and why,
+  or the next reviewer reads a partial RED set as vacuity. Same for a positive
+  CONTROL in a deadline suite: it stays green under the clock mutant by
+  construction, so validate it with a second mutant on the decision it actually
+  guards (skipping `RetireOnCredentialedAction` took it RED alone).
+  <!-- written_at: 2026-09-07T02:30:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:b2377b75, git:2e40df44 -->
   Same shape without a kit: **a wire-parity fact (`protocol-adapter-security.md`
   invariant 9 — same condition, byte-identical response) pinned on ONE of N
   sibling seams says nothing about the other N-1.** M11-w pinned the
@@ -254,6 +277,22 @@ implementations produce provably different output.
   the flag, and prove the scan with a mutant copy that renames every local — a
   scan proven only against a verbatim copy tests the copier's laziness.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MJATQMGDT1JGAYCBEVMMA8, git:879b4cae -->
+  **The positive-hit half needs its OWN mutant, and PROSE in the home can
+  satisfy it.** The offender half is proven by a copy; nothing proves the count,
+  so it is where a scan rots silently. The pre-auth deadline scan anchored on
+  the configured-option READ and counted matches in raw file text —
+  `ProtocolSessionHost.cs` names `AuthenticationTimeout` in its own XML doc
+  comments, so the count was met by prose and the anchor-drift mutant (the home
+  hardcodes a 30 s literal instead of reading each adapter's options) stayed
+  GREEN. Run that mutant, and strip comments before matching whenever the anchor
+  is a name a doc comment would naturally write — the two prior scans in this
+  repo are accidentally safe only because prose rarely writes
+  `Interlocked.CompareExchange(ref `. Strip by walking string and character
+  literals, not skipping them: a `"//"` inside a literal otherwise opens a
+  comment that swallows every read after it. Corollary from the same slice: an
+  anchor on an OPERAND shape (`CompareExchange(ref x, y + 1,`) is defeated by
+  hoisting the expression into a local — anchor on the CALL.
+  <!-- written_at: 2026-09-07T02:30:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:39b419b0, git:130f70e0 -->
 - **Changing a DEFAULT value is a change to every branch that CONSUMES it.**
   The edit-db connection form's Postgres default moved from `postgres` to
   `Environment.UserName`, and the tests asserted only that the new value rode

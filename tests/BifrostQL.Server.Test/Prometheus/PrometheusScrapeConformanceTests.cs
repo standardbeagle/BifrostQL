@@ -102,8 +102,15 @@ namespace BifrostQL.Server.Test.Prometheus
             SampleValue(body, "orders_total", "open").Should().Be(TenantAOpenCount,
                 "the aggregate runs under the configured service identity, so it reports that " +
                 "partition only — not the {0}-row global total", GlobalOpenCount);
-            body.Should().NotContain("999", "tenant-b's amounts must never reach the scrape wire");
-            body.Should().NotContain("888");
+            // Assert over the exposition SAMPLES only. The exporter publishes its own
+            // bifrostql_prometheus_last_success_timestamp_seconds meta metric, whose Unix timestamp
+            // is unrelated wall-clock data: a bare substring check against the whole body fails for
+            // hours at a stretch whenever the clock happens to contain one of these digit runs
+            // (observed 2026-09-07: 1788805778 contains "888"). The claim under test is that
+            // tenant-b's AMOUNTS never reach the wire, not that these digits appear nowhere.
+            var samples = SampleLines(body);
+            samples.Should().NotContain("999", "tenant-b's amounts must never reach the scrape wire");
+            samples.Should().NotContain("888", "tenant-b's amounts must never reach the scrape wire");
         }
 
         [Fact]
@@ -239,6 +246,21 @@ namespace BifrostQL.Server.Test.Prometheus
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential);
             return request;
         }
+
+        /// <summary>
+        /// The exposition sample lines only — no <c>#</c> comment lines and none of the exporter's
+        /// own <c>bifrostql_prometheus_*</c> meta metrics. One of those carries a Unix timestamp,
+        /// so a substring assertion about tenant data must not see it.
+        /// </summary>
+        private static string SampleLines(string body) =>
+            string.Join(
+                "\n",
+                body.Split('\n')
+                    .Select(line => line.Trim())
+                    .Where(line =>
+                        line.Length > 0
+                        && !line.StartsWith("#", StringComparison.Ordinal)
+                        && !line.StartsWith("bifrostql_prometheus_", StringComparison.Ordinal)));
 
         /// <summary>The value of one exposition sample, e.g. <c>orders_total{status="open"} 2</c>.</summary>
         private static double SampleValue(string body, string metric, string statusLabel)

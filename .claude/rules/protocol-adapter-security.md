@@ -757,6 +757,34 @@ code, not just re-checks of pgwire.
     to poll.
     <!-- amended_at: 2026-09-06T03:30:00Z  source_event: task:01M1N2VV1T7KASK90QR6JKGKAT, git:43c11a51 -->
 
+16. **Where a security property depends on HOST WIRING ORDER, the deliverable is
+    a fact pinning FAIL-CLOSED-NESS — a startup diagnostic only if it has NO
+    false positive on a valid host.** The binary WebSocket mount reads the
+    principal `UseAuthentication` populates, so mounting it ahead of
+    `UseBifrostQL()`/`UseBifrostEndpoints()` makes every caller anonymous
+    (AGENTS.md states this as load-bearing). A middleware cannot see what runs
+    after it, and the signals that come closest each fire on a legitimate host:
+    `app.Properties["__AuthenticationMiddlewareSet"]` is absent when
+    `WebApplication` auto-inserts `UseAuthentication`, and `IAuthenticationFeature`
+    is absent for a host that lands `context.User` from its own middleware. A
+    detector built on either would break correct deployments to catch a
+    misconfiguration that already fails closed. So pin the outcome: same
+    authenticated caller, two pipeline orders, parameterized on the order —
+    the correct order serves a frame, the misorder closes the socket
+    (`PolicyViolation`, no frame). Assert the CLOSED connection, never an empty
+    user context (invariant 12), and keep the served counterpart as the
+    non-vacuity partner.
+
+    **A justification in a commit body is a claim, and review checks it like any
+    other.** This commit's "nothing in the pipeline is inspectable from inside a
+    middleware" is overbroad and now immutable in history: the signals exist, and
+    review found them by looking rather than by weighing plausibility. The
+    decision survived; the premise did not. Where a task offers "detect and
+    throw" against "pin fail-closed", enumerate the concrete valid hosts a
+    detector would break — that enumeration is the argument, and an assertion
+    that no signal exists is not a substitute for it.
+    <!-- written_at: 2026-09-07T20:30:00Z  source_event: task:01M1ME387E51SXPMKZC3H6EV65, git:b177220d -->
+
 
 <!-- invariant 14 written_at: 2026-09-04T03:00:00Z  source_event: task:01M1KPA1WXEYM3W99A5V1RRV77, git:f91dfeee,7a00fc2a -->
 <!-- invariant 14 amended_at: 2026-09-04T19:30:00Z  source_event: task:01M1KPA1ZWG8TQGCXCXWDNN7RB, git:9b43f138,13c8fa8c -->

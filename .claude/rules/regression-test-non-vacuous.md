@@ -46,6 +46,24 @@ a future regression to the old code stays green.
   goes RED. The tell is a self-report that narrows the acceptance criteria and
   defends the narrowing with an assertion — acceptance criteria are not a menu.
   <!-- written_at: 2026-09-07T02:30:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:3a4c63e1 -->
+  **Third sibling: a FLAKE ticket's cause paragraph is a hypothesis, and the
+  cheapest disproof is MECHANICAL, not statistical.** The RESP TLS admission
+  watch filed "listen-backlog saturation under parallel load"; implementing it
+  would have raised the backlog or serialised the probe and fixed nothing. Two
+  reads killed it before a line was written: the failing stack frame named the
+  OVER-CAP peer's connect, so the first connect had already succeeded and the
+  accept queue was never full; and on Linux an overflowing backlog DROPS the SYN
+  (`tcp_abort_on_overflow=0`), it does not reset it, so the filed mechanism
+  cannot produce `ECONNRESET` at connect at all. The real cause was the refusal
+  itself — RESP's `RefuseAsync` writes nothing and calls
+  `ConnectionContext.Abort()`, and on loopback that RST races the client's own
+  connect completion and is reported AS the connect result (a 30-line probe
+  measured 1885/2000 on an idle box; the reviewer independently got 1903/2000).
+  The tell is a "Shape:" paragraph written without a debugger. Reproduce, then
+  ask which candidate mechanisms CANNOT produce the observed signature: an
+  outright disproof costs one stack frame and one man-page, and it is cheaper
+  and stronger than any amount of measuring.
+  <!-- written_at: 2026-09-07T20:30:00Z  source_event: task:01M1SPWQNS77Q40C3VPB3HWZJ5, git:5a3c2939 -->
 
 ## Why fixtures go vacuous
 
@@ -511,6 +529,32 @@ caller's choice.
   is how much of the misuse was removed. Claim both precisely — a commit message
   asserting a guarantee is load-bearing in the way a `docs/` sentence is.
 <!-- written_at: 2026-09-07T19:30:00Z  source_event: task:01M1M4E723M060X8K9SNCNNV9M, git:8e38e47e, git:9f13aa2f -->
+
+## De-flaking by absorbing an error is vacuity by another name
+
+A test that stops noticing failures is indistinguishable, from the outside, from
+a test that stops flaking — so a determinism fix that makes a probe TOLERATE an
+error is the highest-risk shape there is, and owes three things at review:
+
+- The absorption is scoped to ONE call and ONE error code, both named. The RESP
+  admission probe folds in `SocketError.ConnectionReset` on the over-cap peer's
+  connect only; `ConnectionRefused` (nothing listening) and every other socket
+  error still fail it.
+- The STRICT half is left strict, and it is the half the fact is about. The
+  silent peer's connect — the one the security fact actually observes — was not
+  touched.
+- The security mutant is replayed in EVERY opt-in derivation afterwards, so the
+  fact is shown to still bite through the widened observation (RESP kit fact,
+  RESP standalone, LDAPS, pgwire, each after a forced rebuild).
+
+The legitimate case is one deterministic server action with TWO observable
+encodings: covering the whole outcome space removes the race. A retry, a longer
+timeout, or an assertion loosened to accept either result only re-rolls it —
+`.tman` will go green and the fact will have stopped guarding. Fix the observing
+side, not the server: bending production behaviour so a harness can watch it
+(here, making `RefuseAsync` close gracefully instead of RST-ing) trades a real
+posture for test convenience.
+<!-- written_at: 2026-09-07T20:30:00Z  source_event: task:01M1SPWQNS77Q40C3VPB3HWZJ5, git:5a3c2939 -->
 
 ## An unforgeability claim cannot be proven from inside the trust boundary
 

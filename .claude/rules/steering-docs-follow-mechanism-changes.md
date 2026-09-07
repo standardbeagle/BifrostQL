@@ -91,4 +91,16 @@ implement or emit the mechanism. M10 was scoped to the emitter and missed four
 carriers; M25 was scoped to the SDL and missed the reader. The emitter is where
 the change starts, never where it ends.
 
+A MOVE or rename is a removal of the old name, and the grep has one more
+reader: a characterization or pinning test that binds the symbol. CHAR-3's
+flow step ordered `TableMutationPipeline.SelectPredicateColumns` into
+`MutationArgumentBinder` while its DONE-CONDITION required zero diff to the
+CHAR-1/CHAR-2 files, and `BulkBatchPlanCharacterizationTests.cs` binds that
+symbol at two sites; the move was un-performable by construction and cost an
+implement attempt (CS0117 x2) before review dropped it. A plan that moves a
+symbol names who binds it, and a pinned test binding it means the move waits
+for the slice that owns re-baselining that test, never a "follow the symbol"
+edit to the pinning file.
+
 <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1KNYNX5NA7CEVRJ4R7BFC7V, git:60fc44b6, git:962cd1e9, git:cf6d48bd; recurrence: M10, M25 -->
+<!-- amended_at: 2026-09-07T23:30:00Z  source_event: task:01M1W0HB3ZB4BC85BAP20R37DK, git:6f57646d, git:7bc1f56d; recurrence: M10, M25, CHAR-3 -->

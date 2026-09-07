@@ -33,6 +33,16 @@ a future regression to the old code stays green.
   implementer that can satisfy a criterion without doing the work owes the
   report, not the green tick.
   <!-- written_at: 2026-09-07T22:00:00Z  source_event: task:01M1W0HB2F9JF919W3N4HKAKJE, git:1568e087 -->
+  Mirror image, one slice later: a criterion can also be impossibly FALSE.
+  CHAR-3's review appended `grep 'IsPrimaryKeyColumn(table, d.Key)' == 1` in
+  `MutationArgumentBinder.cs`; the shared function's own positive and negative
+  branches make the honest post-fix count 2, so the count was reachable only by
+  rewriting the function the criterion existed to protect. Written from the
+  diff, never run against the intended end state. A numeric check in a
+  criterion is run on the tree it will be judged on before it is written, with
+  the allowlisted home's own hits subtracted; an implementer that observes a
+  different count reports the count and why, never contorts the code to it.
+  <!-- written_at: 2026-09-07T23:30:00Z  source_event: task:01M1W0HB3ZB4BC85BAP20R37DK, git:e55e3d99; recurrence: CHAR-1 (vacuously true), CHAR-3 (impossibly false) -->
 - **Discovery: a finding INFERRED from a sibling's bug is a hypothesis until it
   goes RED at the site it names.** M8's systemic observation named
   `HistoryTableResolver` as carrying the same `SubFields` response-key trap, and

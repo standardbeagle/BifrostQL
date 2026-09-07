@@ -57,6 +57,23 @@ namespace BifrostQL.Server.Test.Ldap
         private static LdapBindAuthenticator Authenticator(LdapWireOptions? options = null) =>
             new(new Store(), new Hasher(), new Factory(), options ?? new LdapWireOptions());
 
+        /// <summary>
+        /// Waits for the server to close a connection whose deadline the TEST drives, advancing
+        /// <paramref name="clock"/> PER POLL. One advance is not enough: the read timer is armed
+        /// after the slot is taken, so an advance that lands ahead of it never fires it.
+        /// </summary>
+        private static async Task<LdapResponse?> CloseAfterDeadlineAsync(
+            LdapFixture fixture, FakeTimeProvider clock)
+        {
+            var closed = fixture.Client.ReadResponseAsync();
+            for (var tick = 0; tick < 40 && !closed.IsCompleted; tick++)
+            {
+                clock.Advance(TimeSpan.FromMinutes(1));
+                await Task.Delay(50);
+            }
+            return await closed.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         private static async Task<LdapResponse> ReadAsync(LdapFixture fixture)
         {
             var response = await fixture.Client.ReadResponseAsync().WaitAsync(Timeout);
@@ -169,18 +186,26 @@ namespace BifrostQL.Server.Test.Ldap
         {
             // A peer holds an admission slot from ACCEPT. Failing binds is traffic, so the idle
             // timeout never fires — without a pre-auth deadline such a peer keeps its slot for the
-            // whole idle window (30 s here) while never authenticating.
+            // whole idle window while never authenticating.
+            //
+            // Driven by an injected clock, not a real sleep: the timeouts here are minutes, far
+            // outside this test's own wait budget, so only the fake provider can fire them
+            // (invariant 15 — a deadline fact under the parallel gate has no excuse to sleep).
+            var clock = new FakeTimeProvider();
             var options = new LdapWireOptions
             {
-                AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
-                IdleTimeout = TimeSpan.FromSeconds(30),
+                AuthenticationTimeout = TimeSpan.FromMinutes(10),
+                // Far above the pre-auth timeout AND above everything the poll loop advances, so
+                // the PRE-AUTH deadline is the only thing that can close this connection.
+                IdleTimeout = TimeSpan.FromHours(4),
             };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+            await using var fixture = await LdapFixture.StartAsync(
+                options, authenticator: Authenticator(options), tls: true, timeProvider: clock);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "wrong")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.InvalidCredentials);
 
-            (await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5)))
+            (await CloseAfterDeadlineAsync(fixture, clock))
                 .Should().BeNull("a connection that has not authenticated is closed at the pre-auth deadline");
         }
 
@@ -200,23 +225,14 @@ namespace BifrostQL.Server.Test.Ldap
             var options = new LdapWireOptions
             {
                 AuthenticationTimeout = TimeSpan.FromMinutes(10),
-                IdleTimeout = TimeSpan.FromMinutes(30),
+                // Far above the pre-auth timeout AND above everything the poll loop advances, so
+                // the PRE-AUTH deadline is the only thing that can close this connection.
+                IdleTimeout = TimeSpan.FromHours(4),
             };
             await using var fixture = await LdapFixture.StartAsync(
                 options, authenticator: Authenticator(options), tls: true, timeProvider: clock);
 
-            var closed = fixture.Client.ReadResponseAsync();
-
-            // Advance PER POLL, not once. The admission slot is taken at accept, BEFORE the read
-            // timer is armed, so a single early advance can land ahead of the timer and never fire
-            // it — the connection would then sit on a timer that is already in the past.
-            for (var tick = 0; tick < 40 && !closed.IsCompleted; tick++)
-            {
-                clock.Advance(TimeSpan.FromMinutes(1));
-                await Task.Delay(50);
-            }
-
-            (await closed.WaitAsync(TimeSpan.FromSeconds(5)))
+            (await CloseAfterDeadlineAsync(fixture, clock))
                 .Should().BeNull("a silent peer's read deadline must be driven by the injected clock");
         }
 
@@ -228,23 +244,29 @@ namespace BifrostQL.Server.Test.Ldap
             // forever by sending an occasional RootDSE probe (traffic defeats the idle timeout).
             // An anonymous session gets a short lifetime instead — the same AuthenticationTimeout,
             // measured from the bind — after which the server closes the connection.
+            var clock = new FakeTimeProvider();
             var options = new LdapWireOptions
             {
                 AnonymousBindEnabled = true,
-                AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
-                IdleTimeout = TimeSpan.FromSeconds(30),
+                AuthenticationTimeout = TimeSpan.FromMinutes(10),
+                // Far above the pre-auth timeout AND above everything the poll loop advances, so
+                // the PRE-AUTH deadline is the only thing that can close this connection.
+                IdleTimeout = TimeSpan.FromHours(4),
             };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+            await using var fixture = await LdapFixture.StartAsync(
+                options, authenticator: Authenticator(options), tls: true, timeProvider: clock);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
 
-            // Within the lifetime the session answers normally (the RootDSE is the anonymous surface).
+            // Within the lifetime the session answers normally (the RootDSE is the anonymous
+            // surface). Asserted BEFORE the clock moves, so "in window" is a fact about the
+            // deadline rather than about how fast this box runs.
             await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "")));
             (await ReadAsync(fixture)).MessageId.Should().Be(2);
 
             // Past it, the server closes: the client observes EOF, not a hang.
-            (await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5)))
+            (await CloseAfterDeadlineAsync(fixture, clock))
                 .Should().BeNull("an anonymous session expires at its deadline; it must not hold a slot forever");
         }
 
@@ -305,17 +327,23 @@ namespace BifrostQL.Server.Test.Ldap
         {
             // The deadline reclaims slots from UNAUTHENTICATED peers only; an authenticated session is
             // a legitimate client session, bounded thereafter by the idle timeout.
+            // The clock is injected here too, so "past the deadline" is an advance rather than a
+            // sleep. The idle timeout is left well beyond the advance: after a credentialed bind
+            // the read is bounded by the IDLE window, and moving the clock past that instead
+            // would close the connection for the wrong reason and make the fact meaningless.
+            var clock = new FakeTimeProvider();
             var options = new LdapWireOptions
             {
-                AuthenticationTimeout = TimeSpan.FromMilliseconds(300),
-                IdleTimeout = TimeSpan.FromSeconds(30),
+                AuthenticationTimeout = TimeSpan.FromMinutes(10),
+                IdleTimeout = TimeSpan.FromHours(4),
             };
-            await using var fixture = await LdapFixture.StartAsync(options, authenticator: Authenticator(options), tls: true);
+            await using var fixture = await LdapFixture.StartAsync(
+                options, authenticator: Authenticator(options), tls: true, timeProvider: clock);
 
             await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "uid=alice", password: "s3cret")));
             (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
 
-            await Task.Delay(TimeSpan.FromMilliseconds(900));
+            clock.Advance(TimeSpan.FromMinutes(30));
 
             await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.SearchRequest(baseObject: "dc=example,dc=com")));
             (await ReadAsync(fixture)).MessageId.Should().Be(2, "an authenticated session outlives the pre-auth deadline");

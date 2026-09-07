@@ -23,6 +23,16 @@ a future regression to the old code stays green.
   the revert experiment. Do not trust a green suite or a plausible-looking
   assertion. If a CHANGED assertion is claimed as a correction, revert-prove it
   is a genuine correction and not a test weakened to fit the fix.
+- **A check written into a task's DONE-CONDITIONS is an assertion, and goes
+  vacuous the same way.** CHAR-1's spec required `git diff --stat main -- src/`
+  to be empty to prove the characterization touched no production code; the loop
+  commits ON main, so that command compares HEAD to itself and is empty whatever
+  was changed. The implementer reported the criterion as vacuous and verified
+  against a named pre-work baseline sha instead; the reviewer did the same. Any
+  criterion that diffs against a BRANCH must name the baseline commit, and an
+  implementer that can satisfy a criterion without doing the work owes the
+  report, not the green tick.
+  <!-- written_at: 2026-09-07T22:00:00Z  source_event: task:01M1W0HB2F9JF919W3N4HKAKJE, git:1568e087 -->
 - **Discovery: a finding INFERRED from a sibling's bug is a hypothesis until it
   goes RED at the site it names.** M8's systemic observation named
   `HistoryTableResolver` as carrying the same `SubFields` response-key trap, and
@@ -132,6 +142,16 @@ implementations produce provably different output.
   to fact separately. Enumerate the seams that share the contract and write one
   fact per seam.
   <!-- written_at: 2026-09-06T08:05:00Z  source_event: task:01M1THZTA5S39N7JKYFXJQ5YTW, git:d4cd685b -->
+  **And a fact that N seams AGREE is written by driving both seams inside ONE
+  fact and comparing their emitted artefacts — never by writing N expectations.**
+  Two hand-written expectations that happen to match prove nothing about each
+  other, and a later change edits both or drifts them apart unseen. CHAR-1's
+  batch-vs-per-row facts capture `batched.Sql` and `perRow.Sql` in the same test
+  and compare the strings, so a shared-builder change keeps parity green while
+  the separate shape facts go red — which is the signal the converging slices
+  want. (Compare only what is semantic: bound parameter ORDER differs between
+  those seams and ADO binds by name, so that half is asserted unordered.)
+  <!-- amended_at: 2026-09-07T22:00:00Z  source_event: task:01M1W0HB2F9JF919W3N4HKAKJE, git:1568e087 -->
 - **Narrowing a broad path needs facts for the shapes the BROAD path already
   served.** The bullet above spans the population that must FAIL; this is its
   complement — the population that must keep WORKING. When a fix replaces
@@ -498,6 +518,30 @@ surfaced the expected 6× RED. Both implementer and reviewer hit it.
   row of the tenant that IS reported, leaving the counts untouched), and check the
   failure message names the assertion you changed.
   <!-- written_at: 2026-09-07T19:30:00Z  source_event: task:01M1M4E723M060X8K9SNCNNV9M, git:c4580a61 -->
+
+- **A CHARACTERIZATION baseline has no fix to revert, so its mutant must be
+  invented from the MECHANISM the facts describe — and perturbing an expectation
+  is the weaker proof.** Perturbing an expectation (assert the audit stamp IS in
+  the delete WHERE) shows the assertion is wired to something real; it says
+  nothing about whether the fact would notice the behaviour change it exists to
+  catch. CHAR-1's reviewer mutated the production mechanism instead —
+  `TableMutationPipeline.SelectPredicateColumns` rebuilt from POST-chain data,
+  the invariant 8(c) defect — and took 4 of 16 facts RED with that defect's own
+  signature. For a baseline pinned ahead of a refactor, that is the proof that
+  matters: name the mechanism each fact describes, mutate IT, and record which
+  facts went red. A baseline nobody has mutated is a set of expectations, not a
+  guard. Pair it with the reach check above: verify each RED fails AT the line
+  the fact is about.
+- **An ABSENCE assertion needs a paired control proving the absent thing is
+  otherwise produced.** "X is not in the WHERE" and "nothing ever produces X"
+  are the same green. CHAR-1 carries a unit control
+  (`AuditChain_StampsUpdatedAt_OnDelete_*`) whose only job is to prove the chain
+  really stamps `updated_at` on a Delete, so the integration fact is about the
+  seam's predicate CHOICE. Same shape as the source-scan rule below (assert the
+  allowlisted positive hit, not only zero offenders), applied to behavioural
+  facts; cross-reference the two halves in each other's doc comment so a later
+  refactor cannot delete one without seeing the link.
+  <!-- written_at: 2026-09-07T22:00:00Z  source_event: task:01M1W0HB2F9JF919W3N4HKAKJE, git:1568e087 -->
 
 ## Making a value unrepresentable is proven by a COMPILE error, not a green suite
 

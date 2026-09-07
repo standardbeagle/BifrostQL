@@ -285,30 +285,25 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             transformResult.ThrowIfDenied();
             var filter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
             var dbData = transformResult.Data;
-
-            // Checked once, before the soft-delete rewrite and the hard delete part
-            // ways: both derive their key columns from this same data, so a partial
-            // composite key would widen either statement to every row sharing the
-            // supplied key columns. Guarding both branches from one place keeps them
-            // from drifting apart the way sibling op classes do.
-            MutationArgumentBinder.RequireCompleteKey(table, dbData.Keys, "Delete");
+            var clientColumns = data.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             if (transformResult.MutationType == MutationType.Update)
             {
-                // Soft-delete rewrite: key columns scope the WHERE; the transformer-stamped
-                // deleted_at/deleted_by columns become the SET. Mirrors the per-row branch.
-                var keyColumns = dbData.Keys.Where(k => IsPrimaryKeyColumn(table, k)).ToList();
-                var setColumns = dbData.Keys.Where(k => !IsPrimaryKeyColumn(table, k)).ToList();
+                // Soft-delete rewrite: client predicates scope WHERE; stamps become SET.
+                var keyData = TableMutationPipeline.SelectPredicateColumns(dbData, clientColumns, table);
+                var keyColumns = keyData.Keys.ToList();
+                var setColumns = dbData.Keys.Where(k => !keyData.ContainsKey(k)).ToList();
                 if (keyColumns.Count == 0 || setColumns.Count == 0) return null;
                 return new StagedRowParts(
                     BulkOpCode.Update, setColumns, keyColumns, dbData,
-                    filter, ConflictOnNoRows: false, MutationType.Update, transformResult.Data);
+                    filter, transformResult.ConflictOnNoRows, MutationType.Update, transformResult.Data);
             }
 
-            // Hard delete: EVERY data column is a WHERE predicate, matching BuildDeleteSql.
+            // Hard delete: client predicates and the complete primary key form WHERE.
+            var keyDataForDelete = TableMutationPipeline.SelectPredicateColumns(dbData, clientColumns, table);
             return new StagedRowParts(
-                BulkOpCode.Delete, Array.Empty<string>(), dbData.Keys.ToList(), dbData,
-                filter, ConflictOnNoRows: false, MutationType.Delete, dbData);
+                BulkOpCode.Delete, Array.Empty<string>(), keyDataForDelete.Keys.ToList(), dbData,
+                filter, transformResult.ConflictOnNoRows, MutationType.Delete, dbData);
         }
     }
 }

@@ -232,6 +232,18 @@ implementations produce provably different output.
   `Contains`. The implementer self-caught this one; the generalization is that a
   numeric literal in a SQL-text assertion is a prefix of every longer literal.
   <!-- written_at: 2026-09-05T04:30:00Z  source_event: task:01M1KNYNQAKE5FHC06NKF607N4, git:7ce42c98, git:063f6acb -->
+  **Same shape on a RESPONSE BODY, where the noise is wall-clock rather than a
+  longer literal.** `PrometheusScrapeConformanceTests` asserted the whole scrape
+  body contained no "888" — the other tenant's amount — but the body also carries
+  the exporter's own `bifrostql_prometheus_last_success_timestamp_seconds`, a Unix
+  timestamp, so the fact failed for hours at a stretch on a scrape that leaked
+  nothing (observed at 1788805778). Latent from the day it was written, and it
+  fires on a clock, not on the code under test. Assert over the region that can
+  structurally carry the value — the exposition sample lines, not the comments and
+  self-metrics — and say what the claim is: tenant-b's AMOUNTS never reach the
+  wire, not that those digits appear nowhere. Any bare numeric substring over a
+  composed payload is matching data the test does not own.
+  <!-- written_at: 2026-09-07T19:30:00Z  source_event: task:01M1M4E723M060X8K9SNCNNV9M, git:c4580a61 -->
 - **Splitting a composed artefact into PARTS un-covers every part an assertion
   stops reading.** The inverse of the bullet above: where the old fact asserted
   on the combined text, a migration to the parts (`TableFilter.RenderParts`'s
@@ -458,6 +470,47 @@ surfaced the expected 6× RED. Both implementer and reviewer hit it.
   reject, so the proof is vacuous a second way. Revert-prove such a branch
   against the specific UNSAFE FALL-THROUGH it prevents (e.g. a raw predicate on
   a column the backstop does not cover), not against merely disabling it.
+
+- **A mutant must be shown to REACH the assertion it claims to prove.** The first
+  revert-proof of the corrected Prometheus assertion scoped the service identity
+  to the other tenant — which trips an EARLIER count assertion in the same test
+  and short-circuits before the changed lines run. The test went RED, so the proof
+  read as valid while saying nothing about the lines under test. Choose a mutant
+  that leaves every prior assertion satisfied (here: put the sentinel amount on a
+  row of the tenant that IS reported, leaving the counts untouched), and check the
+  failure message names the assertion you changed.
+  <!-- written_at: 2026-09-07T19:30:00Z  source_event: task:01M1M4E723M060X8K9SNCNNV9M, git:c4580a61 -->
+
+## Making a value unrepresentable is proven by a COMPILE error, not a green suite
+
+Where a task's goal is that a wrong value can no longer be passed — a footgun
+removed rather than documented — a passing suite is not evidence and neither is a
+RED test. Attempt 1 of the `TraversedTableFilter` scope-ownership refactor renamed
+the parameter `traversedTableFilter` to `scopeOwner` and kept it alongside
+`filter`; the commit claimed the nested node was now "unavailable for selecting
+TraversedTableFilter", and review disproved it with a one-token edit at the
+recursive call site that compiled clean and took 3 multi-hop facts RED with a
+cross-tenant row leak. A rename documents a convention; it does not remove the
+caller's choice.
+
+- **The acceptance evidence is the mutant failing to build.** Apply the wrong-node
+  edit, force-rebuild, capture the compiler error code, revert — cheap, and it is
+  the only proof that distinguishes "enforced" from "conventional". The shipped
+  fix took the mutant to 4× CS1503.
+- **Where two parameters of the same type stand in a fixed relation at EVERY call
+  site, the redundant one IS the footgun.** Here `filter == scopeOwner.Next`
+  always held, so the callee could derive it. Collapse to the node the others
+  derive from and re-derive the second role ONCE at the top of the body — the
+  intermediate attempt kept one parameter but left the body treating it as the
+  other role, so every reference was off by one hop and 4 of 5 facts failed.
+- **State the property that actually survives, not "the parameter is gone".** One
+  wrong-node edit still compiles after the fix, but scope and nested node now
+  derive from the same node, so a wrong node changes the PREDICATE along with the
+  scope: it fails loudly (3/4 RED, one returning empty) instead of silently
+  dropping a tenant filter. Loud-on-misuse is the security property; unrepresentable
+  is how much of the misuse was removed. Claim both precisely — a commit message
+  asserting a guarantee is load-bearing in the way a `docs/` sentence is.
+<!-- written_at: 2026-09-07T19:30:00Z  source_event: task:01M1M4E723M060X8K9SNCNNV9M, git:8e38e47e, git:9f13aa2f -->
 
 ## An unforgeability claim cannot be proven from inside the trust boundary
 

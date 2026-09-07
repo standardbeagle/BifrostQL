@@ -41,14 +41,10 @@ namespace BifrostQL.Core.Resolvers
             }
             else
             {
-                keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var d in data.Where(d => DbParameterBinder.IsPrimaryKeyColumn(table, d.Key)))
-                    keyData[DbParameterBinder.ToDbColumnName(table, d.Key)] = d.Value;
+                (keyData, _) = SplitKeyAndSet(table, data);
             }
 
-            var standardData = data
-                .Where(d => !DbParameterBinder.IsPrimaryKeyColumn(table, d.Key))
-                .ToDictionary(kv => kv.Key, kv => kv.Value);
+            var standardData = SplitKeyAndSet(table, data).setData;
 
             var allData = new Dictionary<string, object?>(standardData, StringComparer.OrdinalIgnoreCase);
             foreach (var kv in keyData)

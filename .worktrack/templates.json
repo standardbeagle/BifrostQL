@@ -257,6 +257,51 @@
     ]
   },
   {
+    "name": "epic-default",
+    "description": "Default epic (attach on tag 'epic'). DECOMPOSE RUNS FIRST: an epic whose children are written straight from an audit or a request produces bundled slices, and a bundled slice is the shape that put 14 of 19 implementer turns past 80k tokens — the size where every review had to intervene. The planning step exists to cut them: one finding per slice, at most 3 scope paths, no fork left for the implementer to decide. Then gate on the slices, review the epic as a whole, and harvest.",
+    "autoAttachOnTags": [
+      "epic"
+    ],
+    "steps": [
+      {
+        "kind": "subagent",
+        "name": "decompose",
+        "specJson": "{\"subagent_type\": \"worktrack-loop:worktrack-loop:planning-context\"}",
+        "required": true,
+        "allowSkip": false,
+        "outcomeSchemaRef": "builtin:reviewer_verdict_v1",
+        "maxAttempts": 3
+      },
+      {
+        "kind": "subtask_gate",
+        "name": "slices-done",
+        "specJson": "{\"match\": {\"tag\": \"slice\"}, \"require\": {\"minCount\": 1, \"status\": [\"done\"]}}",
+        "required": true,
+        "allowSkip": false,
+        "outcomeSchemaRef": "builtin:subtask_gate_eval_v1",
+        "maxAttempts": 3
+      },
+      {
+        "kind": "subagent",
+        "name": "epic-review",
+        "specJson": "{\"subagent_type\": \"worktrack-loop:worktrack-loop:review-context\"}",
+        "required": true,
+        "allowSkip": false,
+        "outcomeSchemaRef": "builtin:reviewer_verdict_v1",
+        "maxAttempts": 3
+      },
+      {
+        "kind": "subagent",
+        "name": "harvest",
+        "specJson": "{\"subagent_type\": \"worktrack-loop:worktrack-loop:learning-context\"}",
+        "required": true,
+        "allowSkip": false,
+        "outcomeSchemaRef": "builtin:reviewer_verdict_v1",
+        "maxAttempts": 3
+      }
+    ]
+  },
+  {
     "name": "grpc-slice",
     "description": "gRPC HTTP/2 adapter slice: scope → targeted build (Server.Test) → targeted test → correctness review Implementation by opencode over ACP (kimi-k3).",
     "autoAttachOnTags": [

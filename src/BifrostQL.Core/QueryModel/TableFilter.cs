@@ -59,15 +59,18 @@ namespace BifrostQL.Core.QueryModel
         /// query's own filter, and consumed by <see cref="BuildSqlParameterized"/>. Null
         /// when no transformer applies to the traversed table.
         ///
-        /// OWNERSHIP CONVENTION — the scope for a hop lives on the node whose
+        /// OWNERSHIP — the scope for a hop lives on the node whose
         /// <see cref="ColumnName"/> NAMES that hop's link, never on the nested node the
         /// hop leads to. In <c>{ posts: { authors: { name: … } } }</c> the <c>posts</c>
         /// node holds the posts table's scope and the <c>authors</c> node holds the
-        /// authors table's; the leaf <c>name</c> predicate holds none. Producer and
-        /// consumer must read the same node: <c>ScopeFilterTraversals</c> assigns while
-        /// walking <c>filter -&gt; filter.Next</c>, so a renderer that reads a hop's scope
-        /// off the NESTED node is off by one hop and silently drops that table's
-        /// tenant/soft-delete/policy filter rather than failing (finding C1).
+        /// authors table's; the leaf <c>name</c> predicate holds none.
+        /// <c>ScopeFilterTraversals</c> assigns while walking <c>filter -&gt; filter.Next</c>,
+        /// and <see cref="BuildSqlParameterized"/> ENFORCES the same reading rather than
+        /// trusting it: it takes the naming node as its ONLY filter argument, reads that
+        /// node's scope, and derives the nested node itself. A caller therefore cannot
+        /// hand it the nested node's scope, so the off-by-one hop that silently dropped a
+        /// traversed table's tenant/soft-delete/policy filter (finding C1) is no longer
+        /// expressible.
         /// </summary>
         internal TableFilter? TraversedTableFilter { get; set; }
 
@@ -503,7 +506,7 @@ namespace BifrostQL.Core.QueryModel
                 throw new BifrostExecutionError(
                     $"Filter references unknown single-link relationship '{ColumnName}' on table '{TableName}'.{hint}");
             }
-            var (joinSql, joinParams) = BuildSqlParameterized(this, Next, link, ctx, aliases, includeValue: false);
+            var (joinSql, joinParams) = BuildSqlParameterized(this, link, ctx, aliases, includeValue: false);
             var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";
             return new FilterParts(fullJoin, "", joinParams.ToList());
@@ -637,9 +640,17 @@ namespace BifrostQL.Core.QueryModel
                 ? new FilterParts("", "", new List<SqlParameterInfo>())
                 : traversedFilter.RenderParts(ctx, link.ParentTable.DbName, aliases);
 
+        /// <summary>
+        /// Renders one relationship hop as a sub-query. <paramref name="hop"/> is the node
+        /// whose <see cref="ColumnName"/> NAMES <paramref name="link"/>; it is the SINGLE
+        /// filter argument by design, so the scope rendered here is always that hop's own
+        /// (<see cref="TraversedTableFilter"/>) and the nested predicate node is always
+        /// derived here as <c>hop.Next</c>. There is no second node parameter a caller
+        /// could pair with the wrong scope — see the ownership note on
+        /// <see cref="TraversedTableFilter"/>.
+        /// </summary>
         private static (string sql, List<SqlParameterInfo> parameters) BuildSqlParameterized(
-            TableFilter scopeOwner,
-            TableFilter filter,
+            TableFilter hop,
             TableLinkDto link,
             SqlBuildContext ctx,
             JoinAliasAllocator aliases,
@@ -647,7 +658,10 @@ namespace BifrostQL.Core.QueryModel
         {
             var dialect = ctx.Dialect;
             var parameters = ctx.Parameters;
-            var scope = RenderTraversedTableFilter(scopeOwner.TraversedTableFilter, link, ctx, aliases);
+            var scope = RenderTraversedTableFilter(hop.TraversedTableFilter, link, ctx, aliases);
+            var filter = hop.Next ?? throw new BifrostExecutionError(
+                $"Relationship filter on '{link.ChildTable.DbName}' via link '{link.Name}' " +
+                "has no nested predicate and cannot be rendered.");
             if (filter is { Next: { } } || (filter.Next == null && filter.And.Count > 0) || (filter.Next == null && filter.Or.Count > 0))
             {
                 var ej = dialect.EscapeIdentifier("j");
@@ -677,14 +691,13 @@ namespace BifrostQL.Core.QueryModel
                     case FilterType.Join
                         when link.ParentTable.SingleLinks.TryGetValue(filter.ColumnName, out var nextLink):
                         {
-                            // Each hop carries its OWN traversed table's scope, and that
-                            // scope lives on the node NAMING the link — `filter` names
-                            // `nextLink`, so `nextLink`'s scope is `filter`'s. Reading
-                            // `filter.Next`'s instead took the hop-after-next's scope
-                            // (null on a leaf predicate), so every hop past the first ran
-                            // unscoped: finding C1.
+                            // `filter` NAMES `nextLink`, so it is the next hop — pass it
+                            // and nothing else. The callee reads its scope and derives its
+                            // nested node, so the hop and the scope cannot be paired
+                            // wrongly: the off-by-one that ran every hop past the first
+                            // unscoped (finding C1) is unrepresentable, not merely avoided.
                             var (nextSql, nextParams) = BuildSqlParameterized(
-                                filter, filter.Next!, nextLink, ctx, aliases);
+                                filter, nextLink, ctx, aliases);
                             var innerJoin = $"INNER JOIN ({nextSql}) {ej} ON {ej}.{ejoinid} = {dialect.EscapeIdentifier(link.ParentTable.DbName)}.{dialect.EscapeIdentifier(nextLink.ChildId.ColumnName)}";
                             var sql = RelationshipSubquery(
                                 link, dialect, $"{innerJoin}{scope.Joins}", new[] { scope.Where },

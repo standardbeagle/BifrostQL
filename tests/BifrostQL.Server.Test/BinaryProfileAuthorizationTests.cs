@@ -239,7 +239,8 @@ namespace BifrostQL.Server.Test
         private const string SecuredSocketPath = "/bifrost-ws-secured";
         private const string OpenSocketPath = "/bifrost-ws-open";
 
-        private static async Task<IHost> BuildWebSocketHostAsync(string dbPath)
+        private static async Task<IHost> BuildWebSocketHostAsync(
+            string dbPath, bool mountBinaryBeforeAuthentication = false)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
@@ -289,7 +290,7 @@ namespace BifrostQL.Server.Test
                 {
                     // Stands in for the deployment's authentication middleware: lands a
                     // principal on the upgrade request when the test asks for one.
-                    app.Use(async (context, next) =>
+                    void UseAuthenticationStandIn() => app.Use(async (context, next) =>
                     {
                         if (context.Request.Headers["X-Test-User"].ToString() is { Length: > 0 } name)
                         {
@@ -300,10 +301,28 @@ namespace BifrostQL.Server.Test
                         }
                         await next(context);
                     });
+
+                    void UseBinaryMounts()
+                    {
+                        app.UseBifrostBinary(SecuredSocketPath, graphqlPath: SecuredGraphQlPath);
+                        app.UseBifrostBinary(OpenSocketPath, graphqlPath: OpenGraphQlPath);
+                    }
+
                     app.UseWebSockets();
-                    app.UseBifrostEndpoints();
-                    app.UseBifrostBinary(SecuredSocketPath, graphqlPath: SecuredGraphQlPath);
-                    app.UseBifrostBinary(OpenSocketPath, graphqlPath: OpenGraphQlPath);
+                    if (mountBinaryBeforeAuthentication)
+                    {
+                        // The MISORDERED pipeline the H8 doc example showed: the binary mount
+                        // sits ahead of the middleware that populates the principal.
+                        UseBinaryMounts();
+                        UseAuthenticationStandIn();
+                        app.UseBifrostEndpoints();
+                    }
+                    else
+                    {
+                        UseAuthenticationStandIn();
+                        app.UseBifrostEndpoints();
+                        UseBinaryMounts();
+                    }
                 });
             });
 
@@ -433,6 +452,48 @@ namespace BifrostQL.Server.Test
                     "an authenticated caller passes the binary mount's identity gate");
                 frame.Should().NotBeNull("the authenticated query executes");
                 frame!.Type.Should().Be(BifrostMessageType.Result);
+            }
+            finally
+            {
+                SqliteConnection.ClearAllPools();
+                if (File.Exists(dbPath)) File.Delete(dbPath);
+            }
+        }
+
+        [Fact]
+        public async Task BinaryMountedBeforeAuthentication_AuthenticatedCaller_IsClosed_NeverServedAsAnonymous()
+        {
+            // Mount order is a load-bearing security fact (AGENTS.md, "Listener Exposure
+            // Posture"): the mount's identity gate reads the principal that the
+            // authentication middleware populates, and UseBifrostEndpoints()/UseBifrostQL()
+            // is what adds that middleware. Mounted FIRST — the shape the H8 review found in
+            // a docs example (fixed in 295cdb33) — the gate sees every caller as anonymous.
+            //
+            // Nothing detects that misordering, and deliberately so: a middleware cannot
+            // distinguish "authentication runs later in this pipeline" from "this host runs
+            // no authentication middleware at all", which is a legitimate anonymous-only
+            // deployment (and from a branch-scoped UseAuthentication on another Map branch).
+            // A startup or first-request diagnostic would therefore fire on valid
+            // configurations. What CAN be pinned, and is what actually matters, is that the
+            // misordering fails CLOSED: the caller is refused, never served as anonymous.
+            //
+            // Note the alias trap this guards against (protocol-adapter-security invariant 12):
+            // an EMPTY user context is not a refusal, so "the context was empty" is not the
+            // assertion — the connection being CLOSED with no answer frame is.
+            var dbPath = Path.Combine(Path.GetTempPath(), $"binary-authgate-{Guid.NewGuid():N}.db");
+            using var host = await BuildWebSocketHostAsync(dbPath, mountBinaryBeforeAuthentication: true);
+            try
+            {
+                // Same caller that is SERVED by the correctly ordered pipeline
+                // (AuthenticatedWebSocket_OnAuthRequiredEndpoint_PassesTheGate), which is
+                // what makes this fact about the ORDER rather than about the credential.
+                var (closeStatus, frame) = await QueryOverSocketAsync(host, SecuredSocketPath, user: "alice");
+
+                frame.Should().BeNull(
+                    "a mount placed ahead of the authentication middleware sees no principal, and must " +
+                    "refuse rather than serve the caller anonymously — no answer frame may come back");
+                closeStatus.Should().Be(WebSocketCloseStatus.PolicyViolation,
+                    "the misordered mount closes on its auth requirement, exactly as it does for a genuinely anonymous caller");
             }
             finally
             {

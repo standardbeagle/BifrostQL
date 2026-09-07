@@ -67,7 +67,13 @@ namespace BifrostQL.Server.Test
             // …and with the only slot held, the next peer must be turned away at the door rather
             // than being handed a TLS state machine.
             using var overCap = new TcpClient();
-            await overCap.ConnectAsync(IPAddress.Loopback, port);
+            if (!await ConnectAllowingRefusalAtConnectAsync(overCap, port))
+            {
+                // Refused before the client's connect even completed. No handshake was offered,
+                // which is precisely what both remaining assertions ask.
+                return (slotsHeld, OverCapPeerClosed: true, OverCapPeerCompletedTlsHandshake: false);
+            }
+
             var handshakeCompleted = await startHandshake(overCap);
             var closed = handshakeCompleted || await ReadUntilClosedAsync(overCap);
 
@@ -93,6 +99,46 @@ namespace BifrostQL.Server.Test
                 {
                     // Another listener claimed the probed port; try a different one.
                 }
+            }
+        }
+
+        /// <summary>
+        /// Connects a peer the listener is expected to turn away, reporting false when the refusal
+        /// arrived as a reset ON the connect rather than after it.
+        ///
+        /// <para>Refusing ahead of the handshake is <c>ConnectionContext.Abort()</c>, which puts a
+        /// RST on the wire without writing a byte. That RST RACES the client's own connect
+        /// completion: on loopback the kernel finishes the three-way handshake and queues the
+        /// connection the instant <c>connect()</c> is called, so the client is already connected as
+        /// far as the wire is concerned — but the completion still has to be dequeued onto a thread
+        /// pool thread. When the server's accept-and-abort lands first, the socket's pending error
+        /// is reported AS the connect result and <c>ConnectAsync</c> throws. A standalone probe
+        /// measured 1885 of 2000 connects to an accept-then-reset loopback listener failing that
+        /// way on an IDLE box, so "connect succeeds, then the close is read" is the lucky ordering,
+        /// not the normal one; a loaded box merely stops being lucky.</para>
+        ///
+        /// <para>Both orderings are the SAME server action observed at two different instants, so
+        /// the probe classifies the reset as what it is — turned away without a handshake — instead
+        /// of retrying the connect until the race lands the other way. That distinction matters:
+        /// a retry (or a longer timeout) would leave the fact passing because the race was re-rolled,
+        /// whereas this removes the race by covering the whole outcome space of one deterministic
+        /// refusal. It cannot mask the defect the fact exists to catch, because a listener that
+        /// admits after the handshake never aborts this peer at all — it offers it a handshake, so
+        /// the reset branch is unreachable and the handshake assertion still bites.</para>
+        ///
+        /// <para>Only <see cref="SocketError.ConnectionReset"/> is folded in. <c>ConnectionRefused</c>
+        /// (nothing listening at all) and every other socket error still fail the probe.</para>
+        /// </summary>
+        public static async Task<bool> ConnectAllowingRefusalAtConnectAsync(TcpClient client, int port)
+        {
+            try
+            {
+                await client.ConnectAsync(IPAddress.Loopback, port);
+                return true;
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
+            {
+                return false;
             }
         }
 

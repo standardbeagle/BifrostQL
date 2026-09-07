@@ -49,9 +49,15 @@ namespace BifrostQL.Server.Test.Resp
 
             // …and with the only slot held, the next peer is turned away at the door rather than
             // being handed a TLS handshake.
+            // The refusal is ConnectionContext.Abort() — a RST with no byte written — and that RST
+            // races this client's own connect completion, so the drop is observable either ON the
+            // connect or on the following read. Both are the same server action seen at different
+            // instants; the shared helper classifies the early one rather than retrying the connect
+            // until the race lands the other way. See ProtocolTlsAdmissionHarness for the detail.
             using var second = new TcpClient();
-            await second.ConnectAsync(IPAddress.Loopback, port);
-            var closed = await ReadUntilClosedAsync(second);
+            var closed =
+                !await ProtocolTlsAdmissionHarness.ConnectAllowingRefusalAtConnectAsync(second, port)
+                || await ReadUntilClosedAsync(second);
             closed.Should().BeTrue("the over-cap connection must be dropped without a handshake");
         }
 

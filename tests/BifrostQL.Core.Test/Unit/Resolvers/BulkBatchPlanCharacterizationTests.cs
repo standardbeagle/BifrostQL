@@ -19,11 +19,8 @@ namespace BifrostQL.Core.Test.Unit.Resolvers;
 /// facts assert nothing about what the plan OUGHT to contain; they pin what it DOES
 /// contain at this commit. No production file changes with them.
 ///
-/// <para>Three of them are named <c>Current_*</c>: they pin behaviour that DIVERGES
-/// from the per-row contract and that CHAR-4 will re-baseline. They assert the
-/// divergence POSITIVELY — the client predicate column IS in SetColumns, the audit
-/// stamp IS in KeyColumns, the conflict flag IS dropped — so a slice that unifies the
-/// seams cannot land without turning them red.</para>
+/// <para>Three facts pin bulk delete parity with the per-row contract: client predicates
+/// are WHERE-only, audit stamps are not delete keys, and conflict flags survive staging.</para>
 ///
 /// <para>SQLite exposes no bulk executor and the SQL Server one needs a server, so the
 /// observable artefact here is the PLAN — <see cref="BulkOpGroup.KeyColumns"/> /
@@ -171,11 +168,9 @@ public sealed class BulkBatchPlanCharacterizationTests
         perRowKeys["OrderId"].Should().Be(0, "and the falsy key value survives into staging");
     }
 
-    // ---- delete: the three divergences ----------------------------------
+    // ---- delete: predicate/SET parity ------------------------------------
 
     /// <summary>
-    /// CURRENT, DIVERGENT — re-baselined by CHAR-4.
-    ///
     /// <para>A client that scopes a delete with an extra predicate column
     /// (<c>Status: "archived"</c> alongside the key) gets that column WRITTEN into every
     /// matched row on the bulk path: <see cref="BulkBatchPlanBuilder"/>'s soft-delete
@@ -196,11 +191,10 @@ public sealed class BulkBatchPlanCharacterizationTests
         var (group, row) = Single(built);
 
         group.Op.Should().Be(BulkOpCode.Update, "a soft delete is staged as an UPDATE");
-        // POSITIVE assertion of the divergent behaviour: the predicate column is WRITTEN.
         group.SetColumns.Should().NotContain("Status");
         group.KeyColumns.Should().Contain("Status");
         group.KeyColumns.Should().BeEquivalentTo(new[] { "NoteId", "Region", "Status" });
-        group.SetColumns.Should().BeEquivalentTo(new[] { "updated_at", "deleted_at" });
+        group.SetColumns.Should().Contain("deleted_at").And.Contain("updated_at");
 
         // ---- the per-row rule, over the same staged row ------------------
         var clientColumns = new HashSet<string>(
@@ -214,8 +208,6 @@ public sealed class BulkBatchPlanCharacterizationTests
     }
 
     /// <summary>
-    /// CURRENT, DIVERGENT — re-baselined by CHAR-4.
-    ///
     /// <para>The bulk HARD delete predicates on EVERY transformed column, so the
     /// <c>updated_at</c> that <see cref="AuditMutationTransformer"/> stamps on a Delete
     /// becomes a join column: <c>updated_at = &lt;now&gt;</c> matches no stored row
@@ -234,7 +226,6 @@ public sealed class BulkBatchPlanCharacterizationTests
 
         group.Op.Should().Be(BulkOpCode.Delete);
         group.SetColumns.Should().BeEmpty("a hard delete has no SET list");
-        // POSITIVE assertion of the divergent behaviour.
         group.KeyColumns.Should().NotContain("updated_at");
         group.KeyColumns.Should().BeEquivalentTo(new[] { "OrderId", "LineNo", "Status" });
         row.Values.Should().ContainKey("updated_at").WhoseValue.Should().NotBeNull(
@@ -272,8 +263,6 @@ public sealed class BulkBatchPlanCharacterizationTests
     }
 
     /// <summary>
-    /// CURRENT, DIVERGENT — re-baselined by CHAR-4.
-    ///
     /// <para><see cref="BulkBatchPlanBuilder"/> hardcodes <c>ConflictOnNoRows: false</c> on
     /// BOTH delete branches, so a transformer that raises the flag (a concurrency token, a
     /// guard that must not silently match nothing) is obeyed on an update and dropped on a
@@ -292,19 +281,49 @@ public sealed class BulkBatchPlanCharacterizationTests
         updateRow.ConflictOnNoRows.Should().BeTrue(
             "the update branch carries the transformer's flag into staging");
 
-        // Hard delete: the flag is dropped.
+        // Hard delete: the flag survives.
         var hardCtx = BuildContext(BuildModel(), transformers);
         var (_, hardRow) = Single(await BuildAsync(hardCtx, "Orders",
             Delete(("OrderId", 2), ("LineNo", 1))));
         hardRow.Op.Should().Be(BulkOpCode.Delete);
         hardRow.ConflictOnNoRows.Should().BeTrue();
 
-        // Soft delete (the rewritten UPDATE): the flag is dropped there too.
+        // Soft delete (the rewritten UPDATE): the flag survives there too.
         var softCtx = BuildContext(BuildModel(), transformers);
         var (softGroup, softRow) = Single(await BuildAsync(softCtx, "Notes",
             Delete(("NoteId", 1), ("Region", "west"))));
         softGroup.Op.Should().Be(BulkOpCode.Update);
         softRow.ConflictOnNoRows.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Bulk_Delete_RenamedClientPredicate_UsesDbColumnName()
+    {
+        var model = DbModelTestFixture.Create().WithTable("Renamed", t => t
+            .WithSchema("dbo").WithPrimaryKey("Id")
+            .WithColumn("status-code", "nvarchar")
+            .WithColumn("deleted_at", "datetime2", isNullable: true)
+            .WithMetadata(MetadataKeys.SoftDelete.Column, "deleted_at")
+            .WithMetadata(MetadataKeys.Batch.BulkThreshold, "1")).Build();
+        var ctx = BuildContext(model);
+        var built = await BuildAsync(ctx, "Renamed", Delete(("Id", 0), ("status_code", "archived")));
+        var (group, _) = Single(built);
+        group.KeyColumns.Should().Contain("status-code");
+        group.SetColumns.Should().NotContain("status-code");
+        group.KeyColumns.Should().NotContain("status_code");
+        group.SetColumns.Should().NotContain("status_code");
+    }
+
+    [Fact]
+    public async Task Bulk_Delete_DifferentPredicateColumns_UseDifferentGroups()
+    {
+        var ctx = BuildContext(BuildModel());
+        var built = await BuildAsync(ctx, "Orders",
+            Delete(("OrderId", 0), ("LineNo", 1), ("Status", "a")),
+            Delete(("OrderId", 0), ("LineNo", 2), ("Total", 3m)));
+        built!.Plan.Rows.Select(r => r.Group).Distinct().Should().HaveCount(2);
+        built.Plan.Groups.Select(g => g.KeyColumns).Should().ContainEquivalentOf(new[] { "Status", "OrderId", "LineNo" });
+        built.Plan.Groups.Select(g => g.KeyColumns).Should().ContainEquivalentOf(new[] { "Total", "OrderId", "LineNo" });
     }
 
     // ---- the guard that must survive the convergence ---------------------

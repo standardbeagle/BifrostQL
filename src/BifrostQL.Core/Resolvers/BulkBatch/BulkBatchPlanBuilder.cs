@@ -281,12 +281,13 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                     ModuleArguments = ctx.ModuleArguments,
                 };
 
+            var clientColumns = data.Keys
+                .Select(k => DbParameterBinder.ToDbColumnName(table, k))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             transformResult.ThrowIfDenied();
             var filter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
             var dbData = transformResult.Data;
-            var clientColumns = data.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
             if (transformResult.MutationType == MutationType.Update)
             {
                 // Soft-delete rewrite: client predicates scope WHERE; stamps become SET.

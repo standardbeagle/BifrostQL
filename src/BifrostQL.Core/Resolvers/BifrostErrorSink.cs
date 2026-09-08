@@ -14,13 +14,23 @@ namespace BifrostQL.Core.Resolvers
     /// callers are constructed with no service access at all: <c>QueryField</c>
     /// resolves tables inside the shared parse task, and the file/generic resolvers
     /// are built by <c>BifrostDispatcher</c> at schema-construction time. The hosts
-    /// that do have logging wire <see cref="Logger"/> with <c>??=</c> (the HTTP
-    /// middleware and both intent executors), so the semantics are
+    /// that do have logging wire <see cref="Logger"/> through <see cref="Attach"/>
+    /// (the HTTP middleware and both intent executors), so the semantics are
     /// <b>first writer wins for the life of the process</b>: a second host built in
     /// the same process (multi-host tests, multi-tenant hosting) logs through the
     /// first host's logger and category, and that logger is held after its host is
     /// disposed. Set the property directly to override. Left null, the detail is
     /// dropped exactly as before the seam existed rather than ever reaching the wire.
+    ///
+    /// <para><see cref="Attach"/> exists because "first writer wins" spelled as
+    /// <c>Logger ??= …</c> was a non-atomic read-then-write, and the overwhelmingly
+    /// common caller builds an executor with NO services — so the candidate is null
+    /// and the store writes null. Two such constructors racing a real attach could
+    /// therefore null out an already-attached logger between its read and its write.
+    /// <see cref="Attach"/> closes both halves: a null candidate never writes at all,
+    /// and a real one is published with <see cref="Interlocked.CompareExchange{T}"/>
+    /// against null, so only the genuine first writer wins and no later caller can
+    /// clobber it.</para>
     /// </remarks>
     public static class BifrostErrorSink
     {

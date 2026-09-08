@@ -128,9 +128,10 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                     {
                         await ExecuteTextAsync(connection, dialect.RollbackTransactionSql, CancellationToken.None);
                         // Same condition, same signal as the per-row path.
-                        throw new BifrostExecutionError(
-                            $"Update of '{plan.TableSchema}.{plan.TableDbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
-                        { ErrorCode = "CONFLICT" };
+                        throw BifrostErrorSink.LookupMiss(
+                            "The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.",
+                            $"Lost update on '{plan.TableSchema}.{plan.TableDbName}'; concurrency token no longer matches.",
+                            nameof(StagedBulkBatchExecutorBase), "CONFLICT");
                     }
                 }
 

@@ -83,9 +83,8 @@ namespace BifrostQL.Core.Resolvers
         /// 8(c). Otherwise the caller supplied the predicate, so zero rows is a legitimate
         /// no-op (an out-of-scope tenant/policy write) and only raises CONFLICT when
         /// <paramref name="conflictOnNoRows"/> says a concurrency token guarded the write.
-        /// <paramref name="tableName"/> is model-derived (<c>schema.table</c>), never
-        /// caller-supplied, and only reaches the CONFLICT text, whose wording is the
-        /// shipped one every seam raised before this function existed.
+        /// <paramref name="tableName"/> is model-derived (<c>schema.table</c>) and is
+        /// retained only in the server-side diagnostic; it never reaches the wire.
         /// </summary>
         public static void EnsureAffectedRows(int affected, bool conflictOnNoRows, bool inferredTarget, string tableName)
         {
@@ -95,9 +94,12 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(
                     "A tree-sync delete affected no rows; the operation did not apply.");
             if (conflictOnNoRows)
-                throw new BifrostExecutionError(
-                    $"Update of '{tableName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
-                { ErrorCode = "CONFLICT" };
+            {
+                throw BifrostErrorSink.LookupMiss(
+                    "The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.",
+                    $"Lost update on '{tableName}'; concurrency token no longer matches.",
+                    nameof(EnsureAffectedRows), "CONFLICT");
+            }
         }
 
         /// <summary>

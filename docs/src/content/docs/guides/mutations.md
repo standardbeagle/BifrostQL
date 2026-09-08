@@ -200,7 +200,7 @@ If nobody else has written the row, the token still matches, the row updates, an
 
 A stale-token write does not silently no-op and does not surface a generic error. It fails with a stable, branchable shape: a `BifrostExecutionError` whose **`ErrorCode` is `CONFLICT`**. Detect it and prompt the user to reload and retry:
 
-> Update of 'dbo.orders' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.
+> The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.
 
 The message is deliberately generic: it discloses no current column values, so a losing writer learns only *that* it lost, never *what* the winning value was.
 

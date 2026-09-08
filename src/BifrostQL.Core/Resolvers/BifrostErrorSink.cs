@@ -90,12 +90,12 @@ namespace BifrostQL.Core.Resolvers
         /// <see cref="BifrostExecutionError"/>. <paramref name="site"/> names the
         /// surfacing site so the log record points at the code path, not just the miss.
         /// </summary>
-        public static BifrostExecutionError LookupMiss(string wireMessage, string detail, string site)
+        public static BifrostExecutionError LookupMiss(string wireMessage, string detail, string site, string? errorCode = null)
         {
             Logger?.LogDebug(
                 "Client-visible lookup miss at {Site}; sanitized off the wire. Detail: {Detail}",
                 site, detail);
-            return new BifrostExecutionError(wireMessage);
+            return new BifrostExecutionError(wireMessage) { ErrorCode = errorCode };
         }
     }
 }

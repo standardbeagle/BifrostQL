@@ -268,7 +268,7 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
     /// <c>deleted_at</c> still NULL — so making the two arms agree turns this red.</para>
     /// </summary>
     [Fact]
-    public async Task Current_TreeSync_InferredSoftDelete_ScopedAway_ReturnsSilently_RowSurvives()
+    public async Task TreeSync_InferredSoftDelete_ScopedAway_Throws_AndRollsBack()
     {
         await SeedAsync();
         var captured = new List<CapturedSql>();
@@ -285,7 +285,8 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
             },
         }));
 
-        thrown.Should().BeNull("TODAY a scoped-away inferred SOFT delete is not an error");
+        thrown.Should().NotBeNull("an inferred soft delete that affects no rows must abort the sync");
+        thrown!.Message.Should().Contain("affected no rows");
 
         var softDelete = Single(captured, "UPDATE", "attachments");
         softDelete.KeyColumns.Should().Equal("order_id", "att_no");
@@ -294,13 +295,12 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
             "the tenant scope and the soft-delete guard compose as one ANDed suffix, and the "
             + "tenant half is what excludes the row");
 
-        // Transaction outcome — the divergence, stated three ways.
-        (await ScalarAsync("SELECT title FROM orders WHERE order_id = 1")).Should().Be("Acme Renamed",
-            "TODAY the transaction COMMITS: the sibling root update stands");
+        // Transaction outcome — the whole tree rolls back, including the sibling root update.
+        (await ScalarAsync("SELECT title FROM orders WHERE order_id = 1")).Should().Be("Acme");
         (await ScalarAsync("SELECT COUNT(*) FROM attachments WHERE order_id = 1 AND att_no = 5"))
-            .Should().Be("1", "TODAY the orphan row survives");
+            .Should().Be("1", "the inferred target remains present");
         (await ScalarAsync("SELECT COUNT(*) FROM attachments WHERE deleted_at IS NOT NULL"))
-            .Should().Be("0", "TODAY nothing was soft-deleted, and the caller was told nothing");
+            .Should().Be("0", "the target remains undeleted after rollback");
     }
 
     // ---- degenerate update -------------------------------------------------

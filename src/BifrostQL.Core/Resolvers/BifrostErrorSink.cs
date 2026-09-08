@@ -98,6 +98,13 @@ namespace BifrostQL.Core.Resolvers
             return new BifrostExecutionError(wireMessage);
         }
 
+        /// <summary>
+        /// Same log/sanitize pair as <see cref="LookupMiss"/> for a condition that is
+        /// not a lookup miss and carries a machine-readable <paramref name="errorCode"/>
+        /// (the lost-update <c>CONFLICT</c> raised by every keyed-write seam). The
+        /// model-derived <c>schema.table</c> stays in <paramref name="detail"/>; only
+        /// <paramref name="wireMessage"/> and the code reach the client.
+        /// </summary>
         public static BifrostExecutionError Sanitized(string wireMessage, string detail, string site, string errorCode)
         {
             Logger?.LogDebug(

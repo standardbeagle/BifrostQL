@@ -454,10 +454,7 @@ namespace BifrostQL.Core.Resolvers
                 // silent no-op — see DbTableMutateResolver.UpdateObject. Throwing rolls back
                 // the whole batch transaction, so a stale row aborts the batch. Raised
                 // before the after-write hooks so no event records a rejected write.
-                if (transformResult.ConflictOnNoRows && rows == 0)
-                    throw new BifrostExecutionError(
-                        $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
-                    { ErrorCode = "CONFLICT" };
+                MutationCommandExecutor.EnsureAffectedRows(rows, transformResult.ConflictOnNoRows, inferredTarget: false);
 
                 return rows;
             });

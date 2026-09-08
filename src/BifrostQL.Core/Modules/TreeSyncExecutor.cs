@@ -114,6 +114,8 @@ public sealed class TreeSyncExecutor
                 ResolveForeignKeys(op, idsByTable, idsByInstance);
 
                 var mutationType = MapMutationType(op.OperationType);
+                var inferredTarget = op.OperationType == TreeSyncOperationType.Delete;
+                var conflictOnNoRows = false;
                 var logicalMutationType = mutationType;
                 var data = op.Data;
                 // The columns this operation actually carried, snapshotted (in DB-name
@@ -144,6 +146,7 @@ public sealed class TreeSyncExecutor
                     // the rewritten data (audit-populate / enum mapping), and the
                     // transformer's row-scope / IS-NULL guard filter.
                     mutationType = result.MutationType;
+                    conflictOnNoRows = result.ConflictOnNoRows;
                     data = result.Data;
                     additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
                 }
@@ -204,6 +207,8 @@ public sealed class TreeSyncExecutor
                         break;
                     case MutationType.Update:
                         opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
+                        MutationCommandExecutor.EnsureAffectedRows(
+                            (int)opResult, conflictOnNoRows, inferredTarget);
                         break;
                     case MutationType.Delete:
                         var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
@@ -211,13 +216,7 @@ public sealed class TreeSyncExecutor
                             throw new BifrostExecutionError(
                                 "A delete requires a primary key or at least one predicate column to scope the affected rows.");
                         var deleted = await ExecuteDeleteAsync(conn, op.Table, deleteData, additionalFilter);
-                        // The affected-row count is checked, never assumed: a delete this tree
-                        // inferred targets a row the sync just read, so zero rows means the
-                        // statement silently did nothing and the row survives. Reporting that
-                        // as success is the orphan-persists failure; abort the transaction.
-                        if (deleted == 0)
-                            throw new BifrostExecutionError(
-                                "A tree-sync delete affected no rows; the operation did not apply.");
+                        MutationCommandExecutor.EnsureAffectedRows(deleted, conflictOnNoRows, inferredTarget);
                         opResult = deleted;
                         break;
                     default:

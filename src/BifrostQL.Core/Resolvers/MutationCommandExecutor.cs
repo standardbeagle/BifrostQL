@@ -74,6 +74,19 @@ namespace BifrostQL.Core.Resolvers
         public static string BuildKeyPredicate(ISqlDialect dialect, IEnumerable<string> columns)
             => string.Join(" AND ", columns.Select(c => $"{dialect.EscapeIdentifier(c)}=@{SqlParameterNames.Sanitize(c)}"));
 
+        public static void EnsureAffectedRows(int affected, bool conflictOnNoRows, bool inferredTarget)
+        {
+            if (affected != 0)
+                return;
+            if (inferredTarget)
+                throw new BifrostExecutionError(
+                    "A tree-sync delete affected no rows; the operation did not apply.");
+            if (conflictOnNoRows)
+                throw new BifrostExecutionError(
+                    "The mutation was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
+                { ErrorCode = "CONFLICT" };
+        }
+
         /// <summary>
         /// Builds the <c>INSERT INTO tableRef(cols) VALUES(placeholders)</c> prefix
         /// shared by the single-row and batch inserts (callers append their own

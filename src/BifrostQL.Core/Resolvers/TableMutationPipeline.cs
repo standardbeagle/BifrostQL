@@ -295,10 +295,7 @@ namespace BifrostQL.Core.Resolvers
                 // rather than returning a silent no-op the way an out-of-scope
                 // tenant/policy update does. Gated by the transformer's flag so those
                 // legitimately-zero-row cases stay silent.
-                if (transformResult.ConflictOnNoRows && result == 0)
-                    throw new BifrostExecutionError(
-                        $"Update of '{table.TableSchema}.{table.DbName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
-                    { ErrorCode = "CONFLICT" };
+                MutationCommandExecutor.EnsureAffectedRows(result, transformResult.ConflictOnNoRows, inferredTarget: false);
 
                 // After the write and the conflict check: emit the event only if a row
                 // actually changed (the hook skips zero-row updates via the count result),

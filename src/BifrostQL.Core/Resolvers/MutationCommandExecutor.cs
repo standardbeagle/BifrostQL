@@ -74,7 +74,20 @@ namespace BifrostQL.Core.Resolvers
         public static string BuildKeyPredicate(ISqlDialect dialect, IEnumerable<string> columns)
             => string.Join(" AND ", columns.Select(c => $"{dialect.EscapeIdentifier(c)}=@{SqlParameterNames.Sanitize(c)}"));
 
-        public static void EnsureAffectedRows(int affected, bool conflictOnNoRows, bool inferredTarget)
+        /// <summary>
+        /// The one zero-row policy for every keyed write. Two inputs decide it:
+        /// <paramref name="inferredTarget"/> means the SEAM derived the row itself (a
+        /// tree-sync reconcile delete of an orphan it just read), so the row is known to
+        /// exist and any zero-row result means the statement silently did nothing — that
+        /// throws and aborts the transaction, per protocol-adapter-security.md invariant
+        /// 8(c). Otherwise the caller supplied the predicate, so zero rows is a legitimate
+        /// no-op (an out-of-scope tenant/policy write) and only raises CONFLICT when
+        /// <paramref name="conflictOnNoRows"/> says a concurrency token guarded the write.
+        /// <paramref name="tableName"/> is model-derived (<c>schema.table</c>), never
+        /// caller-supplied, and only reaches the CONFLICT text, whose wording is the
+        /// shipped one every seam raised before this function existed.
+        /// </summary>
+        public static void EnsureAffectedRows(int affected, bool conflictOnNoRows, bool inferredTarget, string tableName)
         {
             if (affected != 0)
                 return;
@@ -83,7 +96,7 @@ namespace BifrostQL.Core.Resolvers
                     "A tree-sync delete affected no rows; the operation did not apply.");
             if (conflictOnNoRows)
                 throw new BifrostExecutionError(
-                    "The mutation was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
+                    $"Update of '{tableName}' was rejected: the concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")
                 { ErrorCode = "CONFLICT" };
         }
 

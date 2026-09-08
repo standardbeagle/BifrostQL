@@ -454,7 +454,9 @@ namespace BifrostQL.Core.Resolvers
                 // silent no-op — see DbTableMutateResolver.UpdateObject. Throwing rolls back
                 // the whole batch transaction, so a stale row aborts the batch. Raised
                 // before the after-write hooks so no event records a rejected write.
-                MutationCommandExecutor.EnsureAffectedRows(rows, transformResult.ConflictOnNoRows, inferredTarget: false);
+                MutationCommandExecutor.EnsureAffectedRows(
+                    rows, transformResult.ConflictOnNoRows, inferredTarget: false,
+                    $"{table.TableSchema}.{table.DbName}");
 
                 return rows;
             });

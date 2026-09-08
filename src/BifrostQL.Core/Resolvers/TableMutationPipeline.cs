@@ -295,7 +295,9 @@ namespace BifrostQL.Core.Resolvers
                 // rather than returning a silent no-op the way an out-of-scope
                 // tenant/policy update does. Gated by the transformer's flag so those
                 // legitimately-zero-row cases stay silent.
-                MutationCommandExecutor.EnsureAffectedRows(result, transformResult.ConflictOnNoRows, inferredTarget: false);
+                MutationCommandExecutor.EnsureAffectedRows(
+                    result, transformResult.ConflictOnNoRows, inferredTarget: false,
+                    $"{table.TableSchema}.{table.DbName}");
 
                 // After the write and the conflict check: emit the event only if a row
                 // actually changed (the hook skips zero-row updates via the count result),

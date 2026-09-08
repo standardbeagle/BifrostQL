@@ -30,6 +30,9 @@ public sealed class TreeSyncOperation
     /// </summary>
     public required TreeSyncOperationType OperationType { get; init; }
 
+    /// <summary>Whether the operation was inferred while reconciling an existing tree.</summary>
+    public bool Inferred { get; init; }
+
     /// <summary>
     /// The data dictionary for the operation. For inserts and updates, contains column values.
     /// For deletes, contains primary key values only.
@@ -326,6 +329,7 @@ public sealed class TreeSyncEngine
             {
                 Table = table,
                 OperationType = TreeSyncOperationType.Delete,
+                Inferred = true,
                 Data = keyData,
                 Depth = depth,
             });

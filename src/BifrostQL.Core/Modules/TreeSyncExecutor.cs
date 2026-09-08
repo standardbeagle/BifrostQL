@@ -114,7 +114,7 @@ public sealed class TreeSyncExecutor
                 ResolveForeignKeys(op, idsByTable, idsByInstance);
 
                 var mutationType = MapMutationType(op.OperationType);
-                var inferredTarget = op.OperationType == TreeSyncOperationType.Delete;
+                var inferredTarget = op.Inferred;
                 var conflictOnNoRows = false;
                 var logicalMutationType = mutationType;
                 var data = op.Data;
@@ -208,7 +208,8 @@ public sealed class TreeSyncExecutor
                     case MutationType.Update:
                         opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
                         MutationCommandExecutor.EnsureAffectedRows(
-                            (int)opResult, conflictOnNoRows, inferredTarget);
+                            (int)opResult, conflictOnNoRows, inferredTarget,
+                            $"{op.Table.TableSchema}.{op.Table.DbName}");
                         break;
                     case MutationType.Delete:
                         var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
@@ -216,7 +217,9 @@ public sealed class TreeSyncExecutor
                             throw new BifrostExecutionError(
                                 "A delete requires a primary key or at least one predicate column to scope the affected rows.");
                         var deleted = await ExecuteDeleteAsync(conn, op.Table, deleteData, additionalFilter);
-                        MutationCommandExecutor.EnsureAffectedRows(deleted, conflictOnNoRows, inferredTarget);
+                        MutationCommandExecutor.EnsureAffectedRows(
+                            deleted, conflictOnNoRows, inferredTarget,
+                            $"{op.Table.TableSchema}.{op.Table.DbName}");
                         opResult = deleted;
                         break;
                     default:

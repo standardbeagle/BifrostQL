@@ -33,6 +33,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 - Desktop UI 前端源在 `src/BifrostQL.UI/frontend`。
 - `src/BifrostQL.UI/wwwroot` 為該前端 Vite 產物。勿手改 bundled JS、CSS、font files、`index.html`；以 `pnpm --dir src/BifrostQL.UI/frontend build` 重建。
 - `src/**/bin`, `src/**/obj`, `node_modules`, package `dist`, coverage, Storybook output 皆 build artifacts。
+- `samples/HostedSpa/wwwroot` 亦 Vite 產物，然**有意 committed**：`tests/BifrostQL.Server.Test/HostedSpaSmokeTests` 經 `WebApplicationFactory` 直服其 `index.html`，`dotnet test` 前無 pnpm build step。故其 `vite.config.ts` 釘 asset 名（`assets/index.js`，無 content hash），no-op rebuild 不 dirty tree。勿手改 `wwwroot/`；凡改 `samples/HostedSpa/spa/src`，必 `pnpm --dir samples/HostedSpa/spa build` 並 commit 重生之 `wwwroot/`，否則 committed bundle 與 source 分離（史上 34 commits 改 spa/src，僅 11 併 wwwroot）。此 sample 無 long-lived cache header（`SpaHostingExtensions.BuildFileOptions` 唯 `FileProvider`），故固定名不成 cache trap。<!-- written_at: 2026-09-08T00:00:00Z  source_event: task:01M1YA3MYZC2TY4H4A2HP6EXBQ, git:95d4f806 -->
 
 ## Package Manager
 

@@ -180,6 +180,19 @@ implementations produce provably different output.
   the built predicate), not only the downstream outcome: M8's policy-outcome
   assertion was true for all three broken shapes.
   <!-- written_at: 2026-09-04T00:00:00Z  source_event: task:01M1KNYNEFYP8M0RC70387X4SM, git:85f2131e, git:87ea68c1 -->
+  **And where the narrowing keys off PROVENANCE — who derived this target — the
+  key must be stamped by the producer, never read off a verb.** CHAR-5 narrowed
+  the tolerant zero-row path to client-addressed writes and derived "inferred"
+  from `OperationType == Delete`: the soft-delete transformer rewrites Delete to
+  Update after the fact, and `SaveTreeBuilder` emits that same Delete for a
+  client's explicit `_op: delete`, so an explicit save-tree delete of a
+  scoped-away row aborted the caller's whole save. A verb the chain rewrites, or
+  one the client can also spell, is not a provenance signal: carry an init-only
+  flag stamped at the ONE producer and read it BEFORE the chain. The fixture is a
+  PAIR identical but for that flag, and it needs one pair per delete arm — the
+  soft arm reaches the seam as an Update and the hard arm as a Delete, so a
+  verb-reading policy treats them differently and a single arm cannot show it.
+  <!-- written_at: 2026-09-08T05:00:00Z  source_event: task:01M1W0HB73ZXRKG1NF7RTSNJTD, git:50c73885, git:b1ae96f3 -->
 - **A one-element fixture cannot observe WHICH element a walker read.** Where
   state is attached to one node of a chain and read back by another walker
   (relationship-filter scope on the node naming the link — finding C1), a

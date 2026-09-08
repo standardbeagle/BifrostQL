@@ -532,8 +532,18 @@ code, not just re-checks of pgwire.
     signal across the read AND write paths; (c) a conformance/parity fact that
     asserts the SAME condition -> the SAME wire status across op classes — the
     gRPC divergence was invisible to every per-slice review and surfaced only
-    when the conformance kit ran read AND write facts side by side. Full
-    write-ups:
+    when the conformance kit ran read AND write facts side by side. That fact
+    owes the wire TEXT, not only the status or code: CHAR-5 folded the per-row
+    and batch zero-row throws into one `EnsureAffectedRows` and silently dropped
+    the CONFLICT message's `Update of '<schema>.<table>' was rejected:` prefix,
+    while both bulk executors and `guides/mutations.md` kept it — one batch
+    reporting two different messages for one condition depending on whether the
+    bulk fast path ran. The pinning facts asserted `ErrorCode` alone, so the
+    task's "message unchanged" criterion was vacuous. Assert the message string,
+    and spell the expectation as a literal in the test: an expectation read from
+    the production constant cannot notice that constant changing.
+    <!-- written_at: 2026-09-08T05:00:00Z  source_event: task:01M1W0HB73ZXRKG1NF7RTSNJTD, git:50c73885, git:b1ae96f3 -->
+    Full write-ups:
     `docs/solutions/bifrostql/odata-epic-close-single-funnel-error-mapping-2026-07-18.md`,
     `docs/solutions/bifrostql/grpc-epic-close-single-funnel-needs-condition-tagging-2026-07-18.md`.
 

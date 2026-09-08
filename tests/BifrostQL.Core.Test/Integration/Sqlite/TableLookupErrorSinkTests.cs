@@ -55,6 +55,9 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
             => Messages.Add(formatter(state, exception));
     }
 
+    private static IDisposable CaptureSink(CapturingLogger logger)
+        => BifrostErrorSink.OverrideForTesting(logger);
+
     private static MutationIntentExecutor BuildMutationExecutor()
     {
         var pathCache = new PathCache<Inputs>();
@@ -99,8 +102,7 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
     public async Task MutationIntent_UnknownTable_LogsRawNameServerSide()
     {
         var logger = new CapturingLogger();
-        BifrostErrorSink.Logger = logger;
-        try
+        using (CaptureSink(logger))
         {
             var executor = BuildMutationExecutor();
 
@@ -118,18 +120,13 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
             logger.Messages.Should().Contain(m => m.Contains(PhantomTable),
                 "the shared seam must log the raw caller-supplied name server-side on a miss");
         }
-        finally
-        {
-            BifrostErrorSink.Logger = null;
-        }
     }
 
     [Fact]
     public async Task QueryIntent_UnknownTable_LogsRawNameServerSide()
     {
         var logger = new CapturingLogger();
-        BifrostErrorSink.Logger = logger;
-        try
+        using (CaptureSink(logger))
         {
             var executor = BuildQueryExecutor();
             var phantom = DbModelTestFixture.Create()
@@ -158,9 +155,26 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
             logger.Messages.Should().Contain(m => m.Contains(PhantomTable),
                 "the shared seam must log the raw caller-supplied name server-side on a miss");
         }
-        finally
+    }
+
+    [Fact]
+    public async Task MutationIntent_UnknownTable_LogsRawNameWithForeignLoggerAttached()
+    {
+        using var foreign = CaptureSink(new CapturingLogger());
+        var logger = new CapturingLogger();
+        using var local = CaptureSink(logger);
+        var executor = BuildMutationExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
         {
-            BifrostErrorSink.Logger = null;
-        }
+            Table = PhantomTable,
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "x" },
+            Endpoint = EndpointPath,
+        });
+
+        var error = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
+        error.Message.Should().NotContain(PhantomTable);
+        logger.Messages.Should().Contain(m => m.Contains(PhantomTable));
     }
 }

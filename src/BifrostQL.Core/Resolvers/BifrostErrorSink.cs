@@ -38,6 +38,18 @@ namespace BifrostQL.Core.Resolvers
             set => Volatile.Write(ref _logger, value);
         }
 
+        internal static IDisposable OverrideForTesting(ILogger logger)
+        {
+            var previous = Logger;
+            Logger = logger;
+            return new LoggerScope(previous);
+        }
+
+        private sealed class LoggerScope(ILogger? previous) : IDisposable
+        {
+            public void Dispose() => Logger = previous;
+        }
+
         /// <summary>
         /// Logs <paramref name="detail"/> (which carries the caller-supplied name)
         /// server-side at Debug — the level every other identifier-bearing

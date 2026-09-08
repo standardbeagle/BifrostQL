@@ -129,6 +129,6 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
         if (data.TryGetValue(key.ColumnName, out var dbValue))
             return dbValue;
 
-        return data.TryGetValue(key.GraphQlName, out var graphQlValue) ? graphQlValue : null;
+        return null;
     }
 }

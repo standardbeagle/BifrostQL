@@ -25,12 +25,13 @@ namespace BifrostQL.Core.Resolvers
     /// <para><see cref="Attach"/> exists because "first writer wins" spelled as
     /// <c>Logger ??= …</c> was a non-atomic read-then-write, and the overwhelmingly
     /// common caller builds an executor with NO services — so the candidate is null
-    /// and the store writes null. Two such constructors racing a real attach could
-    /// therefore null out an already-attached logger between its read and its write.
+    /// and the store writes null. One such constructor racing a real attach could
+    /// therefore null out an already-attached logger between its own read and write.
     /// <see cref="Attach"/> closes both halves: a null candidate never writes at all,
     /// and a real one is published with <see cref="Interlocked.CompareExchange{T}"/>
-    /// against null, so only the genuine first writer wins and no later caller can
-    /// clobber it.</para>
+    /// against null, so only the genuine first writer wins and no later
+    /// <see cref="Attach"/> can clobber it. Only the <see cref="Logger"/> setter and
+    /// <see cref="OverrideForTesting"/> write unconditionally.</para>
     /// </remarks>
     public static class BifrostErrorSink
     {
@@ -48,12 +49,27 @@ namespace BifrostQL.Core.Resolvers
             set => Volatile.Write(ref _logger, value);
         }
 
+        /// <summary>
+        /// First-writer-wins attach for hosts that have logging. A null
+        /// <paramref name="logger"/> (executor built with no services) never writes;
+        /// a non-null one is published only if the slot is still null. Every
+        /// production attach site routes through here — never <c>Logger ??=</c>.
+        /// </summary>
         public static void Attach(ILogger? logger)
         {
             if (logger != null)
                 Interlocked.CompareExchange(ref _logger, logger, null);
         }
 
+        /// <summary>
+        /// Unconditionally installs <paramref name="logger"/> and restores the prior
+        /// value on dispose, so one fact can observe its own sink whatever a host
+        /// attached first. Unlike <see cref="Attach"/> this DOES overwrite; it is
+        /// <c>internal</c>, which is the <c>InternalsVisibleTo</c> boundary
+        /// (Server, the dialect packages, Benchmarks, Core.Test), not a test-only one.
+        /// Two scopes on parallel threads overwrite each other; only
+        /// <c>TableLookupErrorSinkTests</c> uses it today.
+        /// </summary>
         internal static IDisposable OverrideForTesting(ILogger logger)
         {
             var previous = Logger;

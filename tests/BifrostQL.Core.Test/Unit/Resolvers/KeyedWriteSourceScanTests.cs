@@ -15,11 +15,7 @@ public sealed class KeyedWriteSourceScanTests
 {
     private static readonly Regex StatementText = new(
         @"(?<![A-Za-z])(?:UPDATE\s|DELETE\s+FROM|WHERE\s|SELECT\s+1\s+FROM|SELECT\s+COUNT\()",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex StringLiteral = new(
-        "(?:@\\\"(?:\\\"\\\"|[^\\\"])*\\\"|\\\"(?:\\\\.|[^\\\"\\\\])*\\\")",
-        RegexOptions.Compiled | RegexOptions.Singleline);
+        RegexOptions.Compiled);
 
     private static readonly Regex KeySplit = new(
         @"\.Where\s*\(\s*(?:\([^)]*\)\s*=>|[A-Za-z_]\w*\s*=>)\s*!?\s*(?:DbParameterBinder\.)?IsPrimaryKeyColumn\s*\(",
@@ -49,8 +45,10 @@ public sealed class KeyedWriteSourceScanTests
         positive.Should().NotBeEmpty("a scan that matches nothing is vacuous");
 
         var executor = positive.Where(hit => hit.StartsWith("Resolvers/MutationCommandExecutor.cs:", StringComparison.Ordinal)).ToList();
-        (executor.Count >= 3).Should().BeTrue(
-            "MutationCommandExecutor must prove update, delete, and exists/count statement-text hits");
+        executor.Should().Contain(hit => hit.Contains("UPDATE", StringComparison.Ordinal));
+        executor.Should().Contain(hit => hit.Contains("DELETE FROM", StringComparison.Ordinal));
+        executor.Should().Contain(hit => hit.Contains("SELECT 1 FROM", StringComparison.Ordinal)
+                                      || hit.Contains("SELECT COUNT(", StringComparison.Ordinal));
 
         var binderPath = Path.Combine(sourceRoot!, "Resolvers", "MutationArgumentBinder.cs");
         var binderText = StripComments(File.ReadAllText(binderPath));
@@ -58,17 +56,13 @@ public sealed class KeyedWriteSourceScanTests
             .Should().BeTrue("MutationArgumentBinder must prove the shared key split exists");
 
         positive.Where(hit => !hit.StartsWith("Resolvers/MutationCommandExecutor.cs:", StringComparison.Ordinal))
-            .Where(hit => !hit.StartsWith("Resolvers/FilteredUpdatePipeline.cs:", StringComparison.Ordinal))
             .Should().BeEmpty("every other transformer-chain caller must contain no hand-built keyed SQL or key split");
     }
 
     private static IEnumerable<string> Hits(string relativePath, string text)
     {
-        foreach (Match literal in StringLiteral.Matches(text))
-        {
-            foreach (Match match in StatementText.Matches(literal.Value))
-                yield return $"{relativePath}:{Line(text, literal.Index + match.Index)}: statement text ({match.Value.Trim()})";
-        }
+        foreach (Match match in StatementText.Matches(text))
+            yield return $"{relativePath}:{Line(text, match.Index)}: statement text ({match.Value.Trim()})";
 
         foreach (Match match in KeySplit.Matches(text))
             yield return $"{relativePath}:{Line(text, match.Index)}: key split";
@@ -78,8 +72,43 @@ public sealed class KeyedWriteSourceScanTests
 
     private static string StripComments(string source)
     {
-        source = Regex.Replace(source, @"/\*.*?\*/", match => new string('\n', match.Value.Count(c => c == '\n')), RegexOptions.Singleline);
-        return Regex.Replace(source, @"//[^\r\n]*", string.Empty);
+        var output = new System.Text.StringBuilder(source.Length);
+        for (var i = 0; i < source.Length; i++)
+        {
+            var c = source[i];
+            if (c == '/' && i + 1 < source.Length && source[i + 1] == '/')
+            {
+                while (i < source.Length && source[i] != '\n') i++;
+                output.Append('\n');
+            }
+            else if (c == '/' && i + 1 < source.Length && source[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < source.Length && !(source[i] == '*' && source[i + 1] == '/'))
+                {
+                    if (source[i] == '\n') output.Append('\n');
+                    else output.Append(' ');
+                    i++;
+                }
+                i++;
+                output.Append(' ');
+            }
+            else if (c == '"' || c == '\'')
+            {
+                var quote = c;
+                output.Append(c);
+                i++;
+                while (i < source.Length && source[i] != quote)
+                {
+                    output.Append(source[i]);
+                    if (source[i] == '\\' && i + 1 < source.Length) output.Append(source[++i]);
+                    i++;
+                }
+                if (i < source.Length) output.Append(source[i]);
+            }
+            else output.Append(c);
+        }
+        return output.ToString();
     }
 
     private static string? LocateBifrostCoreSourceRoot([CallerFilePath] string callerFilePath = "")

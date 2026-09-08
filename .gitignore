@@ -404,6 +404,7 @@ src/BifrostQL.UI/wwwroot/index.html
 # workspace templates from it, so the implementer prompt and model routing
 # are reviewed diffs rather than DB rows.
 .worktrack/*
+!.worktrack/mcp.json
 !.worktrack/templates.json
 
 # TypeScript incremental build state

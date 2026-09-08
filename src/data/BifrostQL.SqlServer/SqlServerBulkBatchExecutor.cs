@@ -72,7 +72,7 @@ public sealed class SqlServerBulkBatchExecutor : IBulkBatchExecutor
             {
                 // Same condition, same signal as the per-row path: a concurrency-guarded row
                 // matched nothing, so the whole batch rolled back.
-                throw BifrostErrorSink.LookupMiss(
+                throw BifrostErrorSink.Sanitized(
                     "The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.",
                     $"Lost update on '{plan.TableSchema}.{plan.TableDbName}'; concurrency token no longer matches.",
                     nameof(SqlServerBulkBatchExecutor), "CONFLICT");

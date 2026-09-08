@@ -9,6 +9,7 @@ using FluentAssertions;
 using GraphQL;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Sqlite;
@@ -337,6 +338,49 @@ public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
         write.KeyColumns.Should().NotContain("version",
             "the token narrows through the AdditionalFilter, it is not part of the key split");
         (await ScalarAsync("SELECT body FROM vault WHERE id = 9")).Should().Be("theirs");
+    }
+
+    [Fact]
+    public async Task LostUpdate_PerRow_AndBatch_EmitIdenticalConflictMessage()
+    {
+        var perRow = await Record.ExceptionAsync(() => BuildExecutor(new List<CapturedSql>()).ExecuteAsync(
+            new MutationIntent { Table = "vault", Action = MutationIntentAction.Update,
+                Data = new Dictionary<string, object?> { ["id"] = 9, ["body"] = "x", ["version"] = 7 },
+                UserContext = Tenant(1), Endpoint = EndpointPath }));
+        var batch = await Record.ExceptionAsync(() => BuildExecutor(new List<CapturedSql>()).ExecuteBatchAsync(
+            new MutationBatchIntent { Table = "vault", Actions = new[] { new MutationBatchAction(
+                MutationIntentAction.Update, new Dictionary<string, object?> { ["id"] = 9, ["body"] = "x", ["version"] = 7 }) },
+                UserContext = Tenant(1), Endpoint = EndpointPath }));
+
+        var perRowError = perRow.Should().BeOfType<BifrostExecutionError>().Subject;
+        var batchError = batch.Should().BeOfType<BifrostExecutionError>().Subject;
+        perRowError.ErrorCode.Should().Be("CONFLICT");
+        batchError.ErrorCode.Should().Be("CONFLICT");
+        batchError.Message.Should().Be(perRowError.Message);
+    }
+
+    [Fact]
+    public async Task LostUpdate_SanitizesWire_AndLogsQualifiedTable()
+    {
+        var logger = new ConflictCapturingLogger();
+        using var scope = BifrostErrorSink.OverrideForTesting(logger);
+        var thrown = await Record.ExceptionAsync(() => BuildExecutor(new List<CapturedSql>()).ExecuteAsync(
+            new MutationIntent { Table = "vault", Action = MutationIntentAction.Update,
+                Data = new Dictionary<string, object?> { ["id"] = 9, ["body"] = "x", ["version"] = 7 },
+                UserContext = Tenant(1), Endpoint = EndpointPath }));
+
+        var error = thrown.Should().BeOfType<BifrostExecutionError>().Subject;
+        error.Message.Should().NotContain("main.vault");
+        logger.Messages.Should().Contain(m => m.Contains("main.vault", StringComparison.Ordinal));
+    }
+
+    private sealed class ConflictCapturingLogger : ILogger
+    {
+        public List<string> Messages { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 
     // ---- batch seam: BatchMutationPipeline ------------------------------

@@ -95,7 +95,7 @@ namespace BifrostQL.Core.Resolvers
                     "A tree-sync delete affected no rows; the operation did not apply.");
             if (conflictOnNoRows)
             {
-                throw BifrostErrorSink.LookupMiss(
+                throw BifrostErrorSink.Sanitized(
                     "The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.",
                     $"Lost update on '{tableName}'; concurrency token no longer matches.",
                     nameof(EnsureAffectedRows), "CONFLICT");

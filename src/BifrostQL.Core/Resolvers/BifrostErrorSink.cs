@@ -4,7 +4,7 @@ namespace BifrostQL.Core.Resolvers
 {
     /// <summary>
     /// The one shared seam for "sanitize the wire, keep the detail" (findings H6,
-    /// M31). A lookup miss whose caller-supplied name must never reach the client
+    /// M31). An identifier-bearing diagnostic that must never reach the client
     /// logs the full detail here and returns the sanitized
     /// <see cref="BifrostExecutionError"/>, so the log/sanitize pair is one call and
     /// cannot drift.
@@ -83,17 +83,25 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// Logs <paramref name="detail"/> (which carries the caller-supplied name)
+        /// Logs <paramref name="detail"/> (which may carry an identifier)
         /// server-side at Debug — the level every other identifier-bearing
         /// diagnostic in Core uses (<c>BulkBatchPlanBuilder</c>, <c>RawSqlExecutor</c>,
         /// SQL detail) — and returns the sanitized <paramref name="wireMessage"/> as a
         /// <see cref="BifrostExecutionError"/>. <paramref name="site"/> names the
         /// surfacing site so the log record points at the code path, not just the miss.
         /// </summary>
-        public static BifrostExecutionError LookupMiss(string wireMessage, string detail, string site, string? errorCode = null)
+        public static BifrostExecutionError LookupMiss(string wireMessage, string detail, string site)
         {
             Logger?.LogDebug(
                 "Client-visible lookup miss at {Site}; sanitized off the wire. Detail: {Detail}",
+                site, detail);
+            return new BifrostExecutionError(wireMessage);
+        }
+
+        public static BifrostExecutionError Sanitized(string wireMessage, string detail, string site, string errorCode)
+        {
+            Logger?.LogDebug(
+                "Client-visible error at {Site}; sanitized off the wire. Detail: {Detail}",
                 site, detail);
             return new BifrostExecutionError(wireMessage) { ErrorCode = errorCode };
         }

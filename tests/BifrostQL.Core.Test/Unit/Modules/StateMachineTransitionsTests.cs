@@ -154,4 +154,41 @@ public sealed class StateMachineTransitionsTests
 
         result.Should().BeEquivalentTo(new[] { "inactive" });
     }
+
+    [Fact]
+    public async Task Wrap_RekeysGraphQlKey_AndStateTransitionCarriesEntityId()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Members", t => t
+                .WithPrimaryKey("member-id")
+                .WithColumn("status", "varchar")
+                .WithMetadata(MetadataKeys.StateMachine.StateColumn, "status")
+                .WithMetadata(MetadataKeys.StateMachine.InitialState, "pending")
+                .WithMetadata(MetadataKeys.StateMachine.States, "pending, active")
+                .WithMetadata(MetadataKeys.StateMachine.Transitions, "pending->active"))
+            .Build();
+        var table = model.GetTableFromDbName("Members");
+        var input = new Dictionary<string, object?>
+        {
+            [table.KeyColumns!.Single().GraphQlName] = 42,
+            ["status"] = "active",
+        };
+        var context = new MutationTransformContext
+        {
+            Model = model,
+            CurrentRow = new Dictionary<string, object?> { ["status"] = "pending" },
+            UserContext = new Dictionary<string, object?>(),
+        };
+
+        var result = await new MutationTransformersWrap
+        {
+            Transformers = new[] { new StateMachineMutationTransformer() },
+        }.TransformAsync(table, MutationType.Update, input, context);
+
+        result.Errors.Should().BeEmpty();
+        result.StateTransition.Should().NotBeNull();
+        result.StateTransition!.EntityId.Should().Be(42);
+        result.Data.Should().ContainKey(table.KeyColumns.Single().ColumnName);
+        result.Data.Should().ContainKey("member-id").WhoseValue.Should().Be(42);
+    }
 }

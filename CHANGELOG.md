@@ -12,7 +12,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
-- Tree-sync soft-delete of a scoped-away inferred target now fails the sync instead of committing.
+- Tree-sync soft-delete of a scoped-away inferred target now fails the sync instead of committing. An INFERRED delete is one the reconcile diff derived itself — an orphan `TreeSyncEngine` just read — so zero affected rows means the statement silently did nothing; it now throws and rolls the whole tree back, matching the hard-delete arm. Client-addressed operations are unaffected: an explicit save-tree `_op: delete` and a tree update of an out-of-scope row still return tolerantly, exactly as the per-row seam does. Provenance is carried by `TreeSyncOperation.Inferred`, stamped only by the engine's orphan producer, so the decision no longer depends on a `MutationType` the soft-delete rewrite has already changed.
+- Tree-sync updates carrying a concurrency token now raise `CONFLICT` on zero affected rows, where the tree-sync seam previously accepted the count. This aligns it with the per-row and batch pipelines: all three now route zero-row handling through the single `MutationCommandExecutor.EnsureAffectedRows` policy and raise the same `CONFLICT` message the bulk executors already used.
 
 - Bulk batch deletes now match the per-row predicate/SET split: audit stamps no longer enter hard-delete predicates, and client soft-delete predicates no longer get written into rows. Bulk delete plans also honor `ConflictOnNoRows`.
 - Bulk batch delete predicates are rekeyed from GraphQL field names to database column names before the predicate/SET split, matching `TableMutationPipeline` and `BatchMutationPipeline`; previously a column whose GraphQL name differed from its database name dropped out of the delete predicate. (Grouping of rows by predicate shape was already correct — it is now pinned by a test, not changed.)

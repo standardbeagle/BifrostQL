@@ -38,6 +38,12 @@ namespace BifrostQL.Core.Resolvers
             set => Volatile.Write(ref _logger, value);
         }
 
+        public static void Attach(ILogger? logger)
+        {
+            if (logger != null)
+                Interlocked.CompareExchange(ref _logger, logger, null);
+        }
+
         internal static IDisposable OverrideForTesting(ILogger logger)
         {
             var previous = Logger;

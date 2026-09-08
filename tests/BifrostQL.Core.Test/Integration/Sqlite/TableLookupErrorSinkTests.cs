@@ -177,4 +177,25 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
         error.Message.Should().NotContain(PhantomTable);
         logger.Messages.Should().Contain(m => m.Contains(PhantomTable));
     }
+
+    [Fact]
+    public async Task MutationIntent_ConcurrentNoServiceExecutorCannotClobberCapturedLogger()
+    {
+        var logger = new CapturingLogger();
+        using var local = CaptureSink(logger);
+        var task = Task.Run(BuildMutationExecutor);
+        var executor = BuildMutationExecutor();
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = PhantomTable,
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "x" },
+            Endpoint = EndpointPath,
+        });
+
+        var error = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
+        await task;
+        error.Message.Should().NotContain(PhantomTable);
+        logger.Messages.Should().Contain(m => m.Contains(PhantomTable));
+    }
 }

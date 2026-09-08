@@ -31,7 +31,7 @@ namespace BifrostQL.Server
             // GraphQL path (query-model parse, generic/file resolvers) log their
             // raw detail server-side. Core construction paths have no DI, so the
             // seam is static; first host to build wins, later sets are no-ops.
-            BifrostErrorSink.Logger ??= logger;
+            BifrostErrorSink.Attach(logger);
         }
 
         public async Task InvokeAsync(HttpContext context)

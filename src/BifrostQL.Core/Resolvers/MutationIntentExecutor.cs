@@ -242,9 +242,9 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         _services = services;
         // Adapter writes never pass through the HTTP middleware, so wire the shared
         // sanitized-error sink from the host's container when it has logging.
-        BifrostErrorSink.Logger ??=
+        BifrostErrorSink.Attach(
             (_services?.GetService(typeof(Microsoft.Extensions.Logging.ILoggerFactory))
-                as Microsoft.Extensions.Logging.ILoggerFactory)?.CreateLogger(nameof(BifrostErrorSink));
+                as Microsoft.Extensions.Logging.ILoggerFactory)?.CreateLogger(nameof(BifrostErrorSink)));
     }
 
     public async Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)

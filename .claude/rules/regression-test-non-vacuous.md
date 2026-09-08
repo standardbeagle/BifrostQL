@@ -326,6 +326,24 @@ implementations produce provably different output.
   `.Split` shapes missed the C# 12 collection expression `.Split(['|'])`, which
   a net10 assembly can legally use, so a real offender would have passed.
   <!-- written_at: 2026-09-05T00:00:00Z  source_event: task:01M1MWB3HVPFH6W3VQDH20Q58N, git:a4b8fb4e -->
+  **A FALSE POSITIVE is a report that the PATTERN is wrong; an allowlist entry
+  added to silence one is a weakening, not a correction.** The allowlist names
+  the legitimate HOME of the construct — nothing else. CHAR-6's keyed-write scan
+  matched `UPDATE\s` with `RegexOptions.IgnoreCase`, so the ordinary English
+  "update " in `MutationCommandExecutor`'s error-message prose hit in 12 places,
+  and the implementer allowlisted `FilteredUpdatePipeline` out of the offender
+  assertion — which left a hand-built `DELETE FROM` in that seam invisible to
+  the scan it was written to guard. Case-sensitive matching separated SQL text
+  from prose exactly (executor 12 hits, FilteredUpdatePipeline 0) and the
+  exemption came back out. The tell is generic: an UPPERCASE keyword pattern
+  (SQL verbs, HTTP methods, log levels) matched case-insensitively will hit
+  English, and the hits will land in the one file that legitimately writes the
+  construct — which is what makes allowlisting it look reasonable. Before adding
+  any exemption, ask whether the pattern can be narrowed to exclude the hits;
+  an exemption is admissible only for a file whose REAL construct is allowed
+  there, and it must be paired with a mutant proving the file is still scanned
+  for everything else.
+  <!-- written_at: 2026-09-08T07:00:00Z  source_event: task:01M1W0HB869XFV77660P2D69DN, git:3513f044, git:a44d7ba0 -->
   **A source scan reads the FILE, not the LINE, and an unparseable call is an
   offender.** C# call arguments wrap freely, so a per-line scan sees a
   truncated argument list: M11's read-path scan counted
@@ -366,6 +384,19 @@ implementations produce provably different output.
   anchor on an OPERAND shape (`CompareExchange(ref x, y + 1,`) is defeated by
   hoisting the expression into a local — anchor on the CALL.
   <!-- written_at: 2026-09-07T02:30:00Z  source_event: task:01M1KP3SDS29TYSRR6PCR6J31A, git:39b419b0, git:130f70e0 -->
+  **The stripper has TWO hole mutants, and the anchor-line one is the worse.**
+  A literal containing `//` on the OFFENDER's line hides that offender — the
+  scan reports one seam clean. The same literal on the file's ANCHOR line drops
+  the whole file out of the scanned population, so the scan reports nothing
+  wrong at all while the offender sits in it. Both went GREEN on CHAR-6's
+  regex stripper and RED on the character-walking one; neither is distinguished
+  by any offender mutant, which is why a scan proven only against offenders
+  reads as sound. Replay both on every scan that strips comments, and name them
+  in the commit body as `f` (offender line) and `g` (anchor line). Two
+  hand-rolled walkers now exist (`ProtocolPreAuthDeadlineUnificationTests`,
+  `KeyedWriteSourceScanTests`) and neither treats a verbatim `@"..."` or raw
+  `"""` literal as opaque — latent only because no scanned file contains one.
+  <!-- written_at: 2026-09-08T07:00:00Z  source_event: task:01M1W0HB869XFV77660P2D69DN, git:a44d7ba0 -->
 - **Changing a DEFAULT value is a change to every branch that CONSUMES it.**
   The edit-db connection form's Postgres default moved from `postgres` to
   `Environment.UserName`, and the tests asserted only that the new value rode

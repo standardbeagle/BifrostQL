@@ -147,6 +147,21 @@ public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
 
+    /// <summary>
+    /// The shipped CONFLICT wire text, spelled out here rather than read from the
+    /// production constant on purpose: a fact that derives its expectation from the
+    /// code under test cannot notice that code changing. Every seam that raises a
+    /// lost-update CONFLICT — the per-row and batch pipelines through
+    /// <c>MutationCommandExecutor.EnsureAffectedRows</c>, and the bulk fast path in
+    /// <c>StagedBulkBatchExecutorBase</c> / <c>SqlServerBulkBatchExecutor</c> — must
+    /// produce this byte-for-byte, or one batch reports different text depending on
+    /// whether the bulk path ran (protocol-adapter-security.md invariant 9).
+    /// The interpolated name is model-derived <c>schema.table</c>, never caller-supplied.
+    /// </summary>
+    private static string ExpectedConflictMessage(string dbName)
+        => $"Update of 'main.{dbName}' was rejected: the concurrency token no longer matches "
+           + "— the row was modified or removed since it was read. Reload and retry.";
+
     // ---- per-row seam: TableMutationPipeline ----------------------------
 
     /// <summary>
@@ -311,8 +326,11 @@ public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
             Endpoint = EndpointPath,
         }));
 
-        thrown.Should().BeOfType<BifrostExecutionError>()
-            .Which.ErrorCode.Should().Be("CONFLICT");
+        var conflict = thrown.Should().BeOfType<BifrostExecutionError>().Subject;
+        conflict.ErrorCode.Should().Be("CONFLICT");
+        conflict.Message.Should().Be(ExpectedConflictMessage("vault"),
+            "the per-row seam's CONFLICT wire text is shipped wording other seams also raise; "
+            + "asserting only ErrorCode lets a refactor change the text unnoticed");
         var write = ParseSingleWrite(captured);
         write.KeyColumns.Should().Equal("id");
         write.SetColumns.Should().Equal("body", "version", "tenant_id");
@@ -509,9 +527,12 @@ public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
             UserContext = Tenant(1), Endpoint = EndpointPath,
         }));
 
-        thrown.Should().BeOfType<BifrostExecutionError>()
-            .Which.ErrorCode.Should().Be("CONFLICT",
-                "the same zero-row outcome under a concurrency token aborts the batch");
+        var batchConflict = thrown.Should().BeOfType<BifrostExecutionError>().Subject;
+        batchConflict.ErrorCode.Should().Be("CONFLICT",
+            "the same zero-row outcome under a concurrency token aborts the batch");
+        batchConflict.Message.Should().Be(ExpectedConflictMessage("vault"),
+            "the batch seam raises the same condition as the per-row seam, so it must "
+            + "produce byte-identical wire text (protocol-adapter-security.md invariant 9)");
         (await ScalarAsync("SELECT body FROM vault WHERE id = 9")).Should().Be("theirs");
     }
 

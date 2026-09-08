@@ -257,15 +257,22 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
     /// <summary>
     /// CURRENT, DIVERGENT — re-baselined by CHAR-5.
     ///
-    /// <para>The same scoped-away INFERRED delete on a SOFT-DELETE table takes a
-    /// different arm: the chain rewrites Delete → Update, so the executor's zero-row
-    /// check (which only guards <c>case MutationType.Delete</c>) never runs. The UPDATE
-    /// matches no row, the executor accepts the count, the transaction COMMITS, and the
-    /// row survives un-deleted while the caller is told the sync succeeded — the
-    /// orphan-persists outcome the hard-delete arm above exists to prevent.</para>
+    /// <para>The same scoped-away INFERRED delete on a SOFT-DELETE table reaches the
+    /// executor as an Update, because the chain rewrites Delete → Update. The policy
+    /// does not read that rewritten verb: <c>inferredTarget</c> is taken from
+    /// <c>TreeSyncOperation.Inferred</c>, stamped by the engine's orphan producer BEFORE
+    /// the chain runs, so both arms reach the same
+    /// <c>MutationCommandExecutor.EnsureAffectedRows</c> and both abort. The row was
+    /// just read during the diff, so zero affected rows means the statement silently did
+    /// nothing (protocol-adapter-security.md invariant 8(c)).</para>
     ///
-    /// <para>Asserted positively — no throw, root update committed, row present with
-    /// <c>deleted_at</c> still NULL — so making the two arms agree turns this red.</para>
+    /// <para>Asserted as a throw AND a rollback — the sibling root update is undone and
+    /// the target is still present with <c>deleted_at</c> NULL. A fact that only checked
+    /// the throw could not tell an abort from a partial commit, which is the outcome
+    /// this policy exists to prevent. The tolerant counterpart, an EXPLICIT save-tree
+    /// delete of the same row, is pinned by
+    /// <see cref="TreeSync_ExplicitSoftDelete_ScopedAway_ReturnsTolerantly"/>: together
+    /// they prove the policy turns on provenance, not on the verb.</para>
     /// </summary>
     [Fact]
     public async Task TreeSync_InferredSoftDelete_ScopedAway_Throws_AndRollsBack()
@@ -301,6 +308,133 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
             .Should().Be("1", "the inferred target remains present");
         (await ScalarAsync("SELECT COUNT(*) FROM attachments WHERE deleted_at IS NOT NULL"))
             .Should().Be("0", "the target remains undeleted after rollback");
+    }
+
+    // ---- client-addressed operations stay tolerant -------------------------
+
+    /// <summary>
+    /// The complement of the inferred facts above, and the half that keeps this slice
+    /// from being a narrowing that breaks working callers
+    /// (<c>.claude/rules/regression-test-non-vacuous.md</c>): an EXPLICIT save-tree
+    /// <c>_op: delete</c> is client-ADDRESSED, so a scoped-away target is an ordinary
+    /// no-op — the same tolerance the per-row delete seam gives
+    /// (<c>PerRow_Update_ScopedAway_ReturnsAffectedRowsZero_NoThrow</c>).
+    ///
+    /// <para>The row (1,5) belongs to tenant 2, so the tenant suffix excludes it and the
+    /// soft-delete UPDATE affects zero rows — byte-identical circumstances to the
+    /// inferred fact above. The ONLY difference is provenance:
+    /// <c>TreeSyncOperation.Inferred</c> is false, because only
+    /// <c>TreeSyncEngine</c>'s orphan producer stamps it. So this fact is what makes
+    /// deriving <c>inferredTarget</c> from the OP KIND (<c>OperationType == Delete</c>)
+    /// red: that derivation cannot tell these two apart and would abort a legitimate
+    /// client save.</para>
+    /// </summary>
+    [Fact]
+    public async Task TreeSync_ExplicitSoftDelete_ScopedAway_ReturnsTolerantly()
+    {
+        await SeedAsync();
+        var captured = new List<CapturedSql>();
+        var model = BuildModel();
+
+        var thrown = await Record.ExceptionAsync(() => ExecuteOpsAsync(captured, model, new[]
+        {
+            RootTitleUpdate(model),
+            // Client-addressed delete of the other tenant's attachment: Inferred stays
+            // false, so this is a save the client asked for, not an orphan the diff found.
+            new TreeSyncOperation
+            {
+                Table = model.GetTableFromDbName("attachments"),
+                OperationType = TreeSyncOperationType.Delete,
+                Data = new Dictionary<string, object?> { ["order_id"] = 1L, ["att_no"] = 5L },
+                Depth = 1,
+            },
+        }));
+
+        thrown.Should().BeNull("a client-addressed delete of a scoped-away row is a no-op, not a failure");
+
+        // The soft-delete rewrite still ran and still matched nothing...
+        var softDelete = Single(captured, "UPDATE", "attachments");
+        softDelete.KeyColumns.Should().Equal("order_id", "att_no");
+        softDelete.Suffix.Should().Be(" AND ((\"tenant_id\" = @p0) AND (\"deleted_at\" IS NULL))");
+
+        // ...and because nothing threw, the transaction COMMITTED: the sibling root
+        // update is durable and the out-of-tenant row is untouched.
+        (await ScalarAsync("SELECT title FROM orders WHERE order_id = 1")).Should().Be("Acme Renamed");
+        (await ScalarAsync("SELECT COUNT(*) FROM attachments WHERE deleted_at IS NOT NULL"))
+            .Should().Be("0", "the other tenant's row was never in scope to soft-delete");
+    }
+
+    /// <summary>
+    /// Same provenance question on the HARD-delete table, pinning the decision: an
+    /// EXPLICIT save-tree delete of a scoped-away row is TOLERANT, exactly like its
+    /// soft-delete sibling above and unlike
+    /// <see cref="TreeSync_InferredHardDelete_ScopedAway_Throws_AndRollsBack"/>.
+    ///
+    /// <para>Both delete tables are covered on purpose. The soft-delete arm reaches the
+    /// executor as an Update and the hard-delete arm as a Delete, so a policy that read
+    /// the (post-chain) verb rather than the provenance flag would treat them
+    /// differently; one fact could not show that.</para>
+    /// </summary>
+    [Fact]
+    public async Task TreeSync_ExplicitHardDelete_ScopedAway_ReturnsTolerantly()
+    {
+        await SeedAsync();
+        var captured = new List<CapturedSql>();
+        var model = BuildModel();
+
+        var thrown = await Record.ExceptionAsync(() => ExecuteOpsAsync(captured, model, new[]
+        {
+            RootTitleUpdate(model),
+            new TreeSyncOperation
+            {
+                Table = model.GetTableFromDbName("lines"),
+                OperationType = TreeSyncOperationType.Delete,
+                Data = new Dictionary<string, object?> { ["order_id"] = 1L, ["line_no"] = 2L },
+                Depth = 1,
+            },
+        }));
+
+        thrown.Should().BeNull("a client-addressed hard delete of a scoped-away row is a no-op");
+        Single(captured, "DELETE", "lines").KeyColumns.Should().Equal("order_id", "line_no");
+
+        (await ScalarAsync("SELECT title FROM orders WHERE order_id = 1")).Should().Be("Acme Renamed");
+        (await ScalarAsync("SELECT COUNT(*) FROM lines WHERE order_id = 1 AND line_no = 2"))
+            .Should().Be("1", "the other tenant's row survives; it was never in scope");
+    }
+
+    /// <summary>
+    /// The third client-addressed shape, and the one the task's own Risk section names:
+    /// a tree UPDATE of an out-of-tenant row carrying NO concurrency token stays
+    /// tolerant. Nothing about this slice may turn a scoped-away client update into a
+    /// hard failure — <c>conflictOnNoRows</c> is false here, and with
+    /// <c>inferredTarget</c> false too, zero rows must fall through both arms of the
+    /// shared policy and simply return.
+    /// </summary>
+    [Fact]
+    public async Task TreeSync_ClientAddressedUpdate_ScopedAway_ReturnsTolerantly()
+    {
+        await SeedAsync();
+        var captured = new List<CapturedSql>();
+        var model = BuildModel();
+
+        var thrown = await Record.ExceptionAsync(() => ExecuteOpsAsync(captured, model, new[]
+        {
+            new TreeSyncOperation
+            {
+                Table = model.GetTableFromDbName("lines"),
+                OperationType = TreeSyncOperationType.Update,
+                Data = new Dictionary<string, object?>
+                {
+                    ["order_id"] = 1L, ["line_no"] = 2L, ["note"] = "hijacked",
+                },
+                Depth = 1,
+            },
+        }));
+
+        thrown.Should().BeNull("a scoped-away client update returns zero rows silently");
+        Single(captured, "UPDATE", "lines").Suffix.Should().Be(" AND (\"tenant_id\" = @p0)");
+        (await ScalarAsync("SELECT note FROM lines WHERE order_id = 1 AND line_no = 2"))
+            .Should().Be("other-tenant", "the write matched no row and committed nothing");
     }
 
     // ---- degenerate update -------------------------------------------------
@@ -366,6 +500,33 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
         return await new TreeSyncExecutor(_raw.Dialect).ExecuteAsync(
             ops, factory, Transformers(), model, UserContext());
     }
+
+    /// <summary>
+    /// Drives the executor over ops the test supplies directly, bypassing
+    /// <see cref="TreeSyncEngine"/>. That is the point: the engine is the only thing
+    /// that stamps <c>Inferred</c>, so ops built here carry the false default and stand
+    /// for the EXPLICIT save-tree shape <c>SaveTreeBuilder</c> produces from
+    /// <c>_op: delete</c>. Everything downstream — transformer chain, connection
+    /// factory, user context — is identical to <see cref="SyncAsync"/>, so a fact pair
+    /// differing only in provenance differs only in <c>Inferred</c>.
+    /// </summary>
+    private Task<object?> ExecuteOpsAsync(
+        List<CapturedSql> captured, IDbModel model, IReadOnlyList<TreeSyncOperation> ops)
+        => new TreeSyncExecutor(_raw.Dialect).ExecuteAsync(
+            ops, Logging(captured), Transformers(), model, UserContext());
+
+    /// <summary>
+    /// The in-scope sibling write every tolerance fact needs: if the run commits, this
+    /// root update is durable, and if it aborts, the rollback is what erases it. Without
+    /// a second write in the tree, "committed" and "rolled back" look the same.
+    /// </summary>
+    private static TreeSyncOperation RootTitleUpdate(IDbModel model) => new()
+    {
+        Table = model.GetTableFromDbName("orders"),
+        OperationType = TreeSyncOperationType.Update,
+        Data = new Dictionary<string, object?> { ["order_id"] = 1L, ["title"] = "Acme Renamed" },
+        Depth = 0,
+    };
 
     private SqlLoggingConnFactory Logging(List<CapturedSql> captured)
         => new(_raw, new List<string>(), captured);

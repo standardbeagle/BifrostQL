@@ -15,7 +15,8 @@ endpoint, so there is no CORS configuration to manage.
 
 ## Running it
 
-The SPA is committed pre-built under `wwwroot/`, so the sample runs as-is:
+The SPA is committed pre-built under `wwwroot/`, so the sample runs as-is. Its
+asset names are stable, so rebuilding without source changes leaves the tree clean:
 
 ```bash
 dotnet run --project samples/HostedSpa

@@ -59,7 +59,7 @@ Fuzz tests 標 `[Trait("Category", "Fuzz")]`；新 fuzz-style tests 必同標，
 
 非 GraphQL 前門（protocol adapters）：adapter 僅擁 wire + codec。讀經 `IQueryIntentExecutor`（內delegate `SqlExecutionManager.ExecuteIntentAsync`），寫經 `IMutationIntentExecutor`（內 delegate `TableMutationPipeline`）；transformers 於彼二處套，adapter 無 API 可繞。identity 必經 `IBifrostAuthContextFactory`（諸 transport gates 共享，fail-closed）。非 HTTP 宿 Kestrel `ConnectionHandler` + `IHostedService`；contract 無 `HttpContext`。詳 docs concepts/protocol-adapters、guides/protocol-adapters。
 
-**Keyed-write seams（五處，各自 re-derive key split）**：`TableMutationPipeline`、`BatchMutationPipeline`、`BulkBatchPlanBuilder`（set-based fast path，繞前二者）、`FilteredUpdatePipeline`、`Storage/FilePointerAccess`；`MutationIntentExecutor` 為其入口。凡涉 row-addressing／key-predicate 之 finding 或 fix，scope 必含全五處——修其一不及其餘（M3 partial-composite-key 即如是：per-row 修畢，bulk fast path 仍漏）。此重複為已知 root cause，REFACTOR task `01M1KP14XGKWY2C01TN8FDG3X7` 承之；並見 `.claude/rules/protocol-adapter-security.md` invariant 8。
+**Keyed-write contract**：`MutationArgumentBinder` 唯一持有 key/SET split、delete predicate 與 whole-key rule；`MutationCommandExecutor` 唯一持有 statement text 與 `EnsureAffectedRows` zero-row policy。四 keyed callers 為 per-row、batch、bulk plan、tree-sync；`FilteredUpdatePipeline` 是非 keyed 的 `TableFilter`-composed seam。`Storage/FilePointerAccess` 只是 per-row pipeline 的 caller，自身不建 keyed SQL（premise note 01M1MREARTJ84B5JGS8G46ANY8）。`KeyedWriteSourceScanTests` 以 transformer-chain caller 全檔掃描守此契約；並見 `.claude/rules/protocol-adapter-security.md` invariant 8。
 
 ### Listener Exposure Posture
 

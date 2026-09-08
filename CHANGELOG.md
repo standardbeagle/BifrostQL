@@ -12,6 +12,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Tree-sync soft-delete of a scoped-away inferred target now fails the sync instead of committing.
+
 - Bulk batch deletes now match the per-row predicate/SET split: audit stamps no longer enter hard-delete predicates, and client soft-delete predicates no longer get written into rows. Bulk delete plans also honor `ConflictOnNoRows`.
 - Bulk batch delete predicates are rekeyed from GraphQL field names to database column names before the predicate/SET split, matching `TableMutationPipeline` and `BatchMutationPipeline`; previously a column whose GraphQL name differed from its database name dropped out of the delete predicate. (Grouping of rows by predicate shape was already correct — it is now pinned by a test, not changed.)
 

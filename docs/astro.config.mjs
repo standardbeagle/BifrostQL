@@ -24,6 +24,14 @@ export default defineConfig({
 			// preview image is missing.
 			head: [
 				{
+					tag: 'script',
+					attrs: {
+						type: 'module',
+						src: 'https://static.cloudflareinsights.com/beacon.min.js',
+						'data-cf-beacon': '{"token": "e77d64f1f6f24ed9b18d06d0320e7d1a"}',
+					},
+				},
+				{
 					tag: 'meta',
 					attrs: { property: 'og:image', content: `${SITE}${BASE}/og-image.png` },
 				},

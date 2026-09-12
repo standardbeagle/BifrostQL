@@ -110,8 +110,8 @@ namespace BifrostQL.Server
                 // <paramref name="services"/> here is commonly the ROOT provider. Project
                 // inside a dedicated scope: the per-request IGrantResolver (S2) is scoped,
                 // and resolving it from the root throws under scope validation (turning
-                // every login into an empty-permissions context via the fail-closed catch)
-                // or, with validation off, makes the resolver root-captive. A null provider
+                // every login (TryProject false). With validation off, it makes the resolver
+                // root-captive. A null provider
                 // (handler wiring that omits it) keeps the null carrier as before.
                 using var scope = services is null
                     ? null

@@ -222,8 +222,8 @@ namespace BifrostQL.Mcp
                 // <paramref name="services"/> is the adapter's captured ROOT provider (the
                 // stdio transport has no per-request scope). Project inside a dedicated
                 // scope so the scoped per-request IGrantResolver (S2) resolves: from the
-                // root it would throw under scope validation — surfaced as empty
-                // permissions by the factory's fail-closed catch — or go root-captive.
+                // root it would throw under scope validation, faulting the call — or, with
+                // validation off, go root-captive.
                 using var scope = services.CreateScope();
                 var carrier = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
 

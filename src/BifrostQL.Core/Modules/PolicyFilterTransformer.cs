@@ -175,7 +175,7 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
     }
 
     // Identity projection is shared with every other policy-gated surface via
-    // PolicyIdentity so the same user id + roles are resolved everywhere; a local
+    // PolicyIdentity so the same user id, roles, and permissions are resolved everywhere; a local
     // reimplementation could drift into a weaker (fail-open) check.
     private static AppIdentity BuildIdentity(QueryTransformContext context)
         => PolicyIdentity.FromUserContext(context.UserContext);

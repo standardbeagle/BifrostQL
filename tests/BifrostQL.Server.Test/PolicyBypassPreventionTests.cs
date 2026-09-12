@@ -320,10 +320,11 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
         response.Errors[0].Should().Be("Access denied by authorization policy.");
     }
 
-    // ---- Admin allow: passes all four scenarios through the entry point ----
+    // ---- Admin: grant requirements are bypassed, but an action the
+    //      allow-list omits is refused for admins too (D7). ----
 
     [Fact]
-    public async Task DirectRequests_AdminRole_PassAllFourScenarios()
+    public async Task DirectRequests_AdminRole_PassesGrantGatedScenarios()
     {
         // 1. Table deny — admin reads the read-denied table.
         var tableResponse = await ExecuteAsync("query { documents { data { id title } } }", role: "admin", tenantId: 1);
@@ -337,11 +338,19 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
         var rowScopeResponse = await ExecuteAsync("query { orders { data { id total } } }", role: "admin", tenantId: 1);
         rowScopeResponse.Errors.Should().BeEmpty();
         rowScopeResponse.OrderCount("orders").Should().Be(2, "an admin is not narrowed by the row-scope filter");
+    }
 
-        // 4. Action deny — admin performs the denied delete.
+    [Fact]
+    public async Task DirectMutation_AdminRole_ActionNotInAllowList_IsRejected()
+    {
+        // D7: Orders lists read,update only — delete is refused for the admin
+        // too, with the same generic policy refusal a non-admin receives.
         var mutationResponse = await ExecuteAsync(
             "mutation { orders(delete: { id: 1 }) }", role: "admin", tenantId: 1);
-        mutationResponse.Errors.Should().BeEmpty("an admin bypasses mutation action-deny");
+        mutationResponse.Errors.Should().ContainSingle();
+        mutationResponse.Errors[0].Should().Be("Access denied by authorization policy.");
+        (await ScalarAsync("SELECT COUNT(*) FROM Orders")).Should().Be(2L,
+            "the refused delete left every row unchanged");
     }
 
     /// <summary>

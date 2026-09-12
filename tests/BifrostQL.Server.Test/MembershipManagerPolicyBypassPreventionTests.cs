@@ -464,10 +464,11 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
         response.Errors[0].Should().Be("Access denied by authorization policy.");
     }
 
-    // ---- Admin bypass: every Membership Manager scenario passes for an admin ----
+    // ---- Admin: grant requirements and row scope are bypassed; an action the
+    //      allow-list omits is refused for admins too (D7). ----
 
     [Fact]
-    public async Task AdminDirectRequests_PassEveryMembershipManagerScenario()
+    public async Task AdminDirectRequests_PassEveryGrantGatedMembershipManagerScenario()
     {
         // 1. Row scope — admin sees every member, not just their own row.
         var membersResponse = await ExecuteAsync(
@@ -493,12 +494,19 @@ public sealed class MembershipManagerPolicyBypassPreventionTests : IAsyncLifetim
             "query { membership_plans { data { plan_id price_cents } } }",
             role: "admin", userId: 1, tenantId: 1);
         planResponse.Errors.Should().BeEmpty();
+    }
 
-        // 4. Read-only table — admin writes the read-only audit_log.
+    [Fact]
+    public async Task AdminDirectMutation_ActionNotInAllowList_IsRejected()
+    {
+        // D7: audit_log lists read only — a write is refused for the admin too.
+        // The allow-list is a product surface: the admin bypass no longer
+        // resurrects an action the policy does not name.
         var auditResponse = await ExecuteAsync(
             "mutation { audit_log(insert: { tenant_id: 1, action: \"admin-entry\" }) }",
             role: "admin", userId: 1, tenantId: 1);
-        auditResponse.Errors.Should().BeEmpty("an admin bypasses the read-only table grant");
+        auditResponse.Errors.Should().ContainSingle();
+        auditResponse.Errors[0].Should().Be("Access denied by authorization policy.");
     }
 
     /// <summary>

@@ -123,15 +123,18 @@ public class PolicyFilterTransformerTests
     }
 
     [Fact]
-    public void GetAdditionalFilter_AdminRole_BypassesTableReadDeny()
+    public void GetAdditionalFilter_AdminRole_DeniedWhenReadNotInAllowList()
     {
+        // D7: the admin bypass covers grants only — it no longer resurrects an
+        // action the allow-list omits. The allow-list is a product surface.
         var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "update"));
         var transformer = new PolicyFilterTransformer();
         var context = Context(model, UserWithRoles("admin"));
 
-        // Admin bypass: no throw, and no row-scope filter to add.
-        transformer.GetAdditionalFilter(model.GetTableFromDbName("Orders"), context)
-            .Should().BeNull();
+        var ex = Assert.Throws<BifrostExecutionError>(() =>
+            transformer.GetAdditionalFilter(model.GetTableFromDbName("Orders"), context));
+
+        ex.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
     }
 
     // ---- Row-scope ----

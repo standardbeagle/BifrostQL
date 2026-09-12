@@ -55,7 +55,8 @@ public class PolicyMutationTransformerTests
                     .WithPrimaryKey("Id")
                     .WithColumn("tenant_id", "int")
                     .WithColumn("ssn", "varchar")
-                    .WithColumn("Total", "decimal");
+                    .WithColumn("Total", "decimal")
+                    .WithColumn("deleted_at", "datetime");
                 foreach (var (key, value) in metadata)
                     t.WithMetadata(key, value);
             });
@@ -147,8 +148,11 @@ public class PolicyMutationTransformerTests
     }
 
     [Fact]
-    public async Task Transform_AdminRole_BypassesActionDeny()
+    public async Task Transform_AdminRole_ActionNotListed_IsDenied()
     {
+        // D7: the admin bypass covers the GRANT requirement only. A policy that
+        // lists actions is a product surface — an action it does not list is
+        // denied for admins too, with the same generic ACCESS_DENIED refusal.
         var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "read"));
         var transformer = new PolicyMutationTransformer();
         var data = new Dictionary<string, object?> { ["Total"] = 10m };
@@ -156,7 +160,119 @@ public class PolicyMutationTransformerTests
         var result = await transformer.TransformAsync(
             Orders(model), MutationType.Delete, data, Context(model, UserWithRoles("admin")));
 
+        result.Errors.Should().ContainSingle();
+        result.Errors[0].Should().Be("Access denied by authorization policy.");
+        result.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+    }
+
+    [Fact]
+    public async Task Transform_AdminRole_BypassesBracketGrantRequirement()
+    {
+        // D7 grant half: admin holds no grants yet passes a bracketed action.
+        var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "read,delete[projects.manage]"));
+        var transformer = new PolicyMutationTransformer();
+        var data = new Dictionary<string, object?> { ["Id"] = 1 };
+
+        var result = await transformer.TransformAsync(
+            Orders(model), MutationType.Delete, data, Context(model, UserWithRoles("admin")));
+
         result.Errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Transform_BracketGrant_CallerWithoutGrant_IsDenied()
+    {
+        var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "read,delete[projects.manage]"));
+        var transformer = new PolicyMutationTransformer();
+        var data = new Dictionary<string, object?> { ["Id"] = 1 };
+
+        var result = await transformer.TransformAsync(
+            Orders(model), MutationType.Delete, data, Context(model, UserWithRoles("member")));
+
+        result.Errors.Should().ContainSingle();
+        result.Errors[0].Should().Be("Access denied by authorization policy.");
+        result.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+    }
+
+    [Fact]
+    public async Task Transform_BracketGrant_CallerWithGrant_IsAllowed()
+    {
+        var model = ModelWithPolicy((MetadataKeys.Policy.Actions, "read,delete[projects.manage]"));
+        var transformer = new PolicyMutationTransformer();
+        var data = new Dictionary<string, object?> { ["Id"] = 1 };
+
+        var result = await transformer.TransformAsync(
+            Orders(model), MutationType.Delete, data,
+            Context(model, UserWithRoles("member", "projects.manage")));
+
+        result.Errors.Should().BeEmpty();
+    }
+
+    // ---- E13 / E6: policy runs before the soft-delete rewrite, so the soft
+    //      form and the _hardDelete: true form meet the SAME decision. ----
+
+    [Fact]
+    public async Task Transform_PolicySeesOriginalDelete_BeforeSoftDeleteRewrite()
+    {
+        // E13: policy runs at priority 1, before soft-delete's DELETE→UPDATE
+        // rewrite (priority 100). Granting update but not delete must still deny
+        // a delete — if policy ran after the rewrite it would see Update and
+        // allow. Both forms refuse with the generic ACCESS_DENIED code (E6).
+        var model = ModelWithPolicy(
+            (MetadataKeys.Policy.Actions, "read,create,update"),
+            (MetadataKeys.SoftDelete.Column, "deleted_at"),
+            (MetadataKeys.SoftDelete.HardDeleteRole, "user"));
+        var wrap = new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[]
+            {
+                new SoftDeleteMutationTransformer(),
+                new PolicyMutationTransformer(),
+            },
+        };
+        var data = new Dictionary<string, object?> { ["Id"] = 1 };
+
+        var soft = await wrap.TransformAsync(
+            Orders(model), MutationType.Delete, new(data), Context(model, UserWithRoles("user")));
+
+        soft.Errors.Should().ContainSingle();
+        soft.Errors[0].Should().Be("Access denied by authorization policy.");
+        soft.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+    }
+
+    [Fact]
+    public async Task Transform_HardDeleteForm_MeetsTheSameRefusalAsTheSoftForm()
+    {
+        // E6, hard half: the _hardDelete: true form is refused by the SAME policy
+        // decision (delete is not listed) with the SAME generic ACCESS_DENIED.
+        var model = ModelWithPolicy(
+            (MetadataKeys.Policy.Actions, "read,create,update"),
+            (MetadataKeys.SoftDelete.Column, "deleted_at"),
+            (MetadataKeys.SoftDelete.HardDeleteRole, "user"));
+        var wrap = new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[]
+            {
+                new SoftDeleteMutationTransformer(),
+                new PolicyMutationTransformer(),
+            },
+        };
+        var context = new MutationTransformContext
+        {
+            Model = model,
+            UserContext = UserWithRoles("user"),
+            ModuleArguments = new Dictionary<string, object?>
+            {
+                [SoftDeleteModuleApi.HardDeleteKey] = true,
+            },
+        };
+
+        var hard = await wrap.TransformAsync(
+            Orders(model), MutationType.Delete, new Dictionary<string, object?> { ["Id"] = 1 }, context);
+
+        hard.Errors.Should().ContainSingle();
+        hard.Errors[0].Should().Be("Access denied by authorization policy.");
+        hard.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
     }
 
     // ---- Column write-deny ----

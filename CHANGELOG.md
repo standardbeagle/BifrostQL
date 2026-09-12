@@ -17,6 +17,15 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   table detail is logged server-side. Breaking for a caller that string-matched the
   old `Update of '<schema>.<table>' was rejected: …` text: branch on
   `ErrorCode == "CONFLICT"` instead; the code is unchanged.
+- The `ConcurrencyMutationTransformer` pre-write rejects (missing token, and a token
+  whose type is unsupported or whose numeric value cannot be advanced) no longer expose
+  the database schema-qualified table name. The two conditions remain distinguishable on
+  the wire by their message text — `The update must include the concurrency token column
+  '<col>' …` versus `The concurrency token '<col>' …` — and carry no `ErrorCode` (as before,
+  they surface as a generic fault); the model-derived `schema.table` is logged server-side
+  through `BifrostErrorSink`. Breaking for a caller that string-matched the old
+  `Update of '<schema>.<table>' must include …` / `Concurrency token '<col>' on
+  '<schema>.<table>' …` text — match the token-column name and condition wording instead.
 - Tree-sync soft-delete of a scoped-away inferred target now fails the sync instead of committing. An INFERRED delete is one the reconcile diff derived itself — an orphan `TreeSyncEngine` just read — so zero affected rows means the statement silently did nothing; it now throws and rolls the whole tree back, matching the hard-delete arm. Client-addressed operations are unaffected: an explicit save-tree `_op: delete` and a tree update of an out-of-scope row still return tolerantly, exactly as the per-row seam does. Provenance is carried by `TreeSyncOperation.Inferred`, stamped only by the engine's orphan producer, so the decision no longer depends on a `MutationType` the soft-delete rewrite has already changed.
 - Tree-sync updates carrying a concurrency token now raise `CONFLICT` on zero affected rows, where the tree-sync seam previously accepted the count. This aligns it with the per-row and batch pipelines: all three now route zero-row handling through the single `MutationCommandExecutor.EnsureAffectedRows` policy and raise the same `CONFLICT` message the bulk executors already used.
 

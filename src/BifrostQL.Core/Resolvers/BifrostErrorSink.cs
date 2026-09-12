@@ -100,12 +100,15 @@ namespace BifrostQL.Core.Resolvers
 
         /// <summary>
         /// Same log/sanitize pair as <see cref="LookupMiss"/> for a condition that is
-        /// not a lookup miss and carries a machine-readable <paramref name="errorCode"/>
-        /// (the lost-update <c>CONFLICT</c> raised by every keyed-write seam). The
+        /// not a lookup miss (the lost-update <c>CONFLICT</c> raised by every keyed-write
+        /// seam, and the transformer's pre-write missing/unbumpable-token rejects). The
         /// model-derived <c>schema.table</c> stays in <paramref name="detail"/>; only
         /// <paramref name="wireMessage"/> and the code reach the client.
+        /// <paramref name="errorCode"/> is optional: pass the machine-readable condition
+        /// when one exists (<c>CONFLICT</c>), omit it when the surface has never carried
+        /// one and a generic fault is the shipped contract — do not invent a code here.
         /// </summary>
-        public static BifrostExecutionError Sanitized(string wireMessage, string detail, string site, string errorCode)
+        public static BifrostExecutionError Sanitized(string wireMessage, string detail, string site, string? errorCode = null)
         {
             Logger?.LogDebug(
                 "Client-visible error at {Site}; sanitized off the wire. Detail: {Detail}",

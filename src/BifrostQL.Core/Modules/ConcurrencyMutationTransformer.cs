@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules;
 
@@ -62,11 +63,17 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
             string.Equals(k, columnName, StringComparison.OrdinalIgnoreCase));
 
         if (tokenKey == null || data[tokenKey] == null)
-            return Error($"Update of '{table.TableSchema}.{table.DbName}' must include the concurrency token column '{column.GraphQlName}' (the version the row was read at).", mutationType, data);
+            return Rejected(
+                $"The update must include the concurrency token column '{column.GraphQlName}' (the version the row was read at).",
+                $"Missing concurrency token '{columnName}' on table '{table.TableSchema}.{table.DbName}'.",
+                mutationType, data);
 
         var clientVersion = data[tokenKey]!;
         if (!TryBump(context.Model.TypeMapper.GetGraphQlType(column.EffectiveDataType), clientVersion, out var bumped, out var reason))
-            return Error($"Concurrency token '{column.GraphQlName}' on '{table.TableSchema}.{table.DbName}' {reason}.", mutationType, data);
+            return Rejected(
+                $"The concurrency token '{column.GraphQlName}' {reason}.",
+                $"Unbumpable concurrency token '{columnName}' on table '{table.TableSchema}.{table.DbName}': {reason}.",
+                mutationType, data);
 
         // SET the bumped token; WHERE guards on the client's value (bound as a param).
         var next = new Dictionary<string, object?>(data) { [tokenKey] = bumped };
@@ -118,4 +125,20 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
 
     private static MutationTransformResult Error(string message, MutationType mutationType, Dictionary<string, object?> data)
         => new() { MutationType = mutationType, Data = data, Errors = new[] { message } };
+
+    /// <summary>
+    /// Aborts the update with the identifier-free <paramref name="wireMessage"/> while
+    /// recording the model-derived <paramref name="detail"/> (<c>schema.table</c>)
+    /// server-side through the shared <see cref="BifrostErrorSink"/> seam — the same
+    /// treatment the lost-update <c>CONFLICT</c> receives. The abort surfaces as a plain
+    /// <see cref="MutationTransformResult.Errors"/> string through
+    /// <c>MutationTransformersWrap</c>, which stamps no <c>ErrorCode</c> for these two
+    /// pre-write conditions (they stay a generic fault), so none is invented here; the
+    /// sink's sanitized exception is unused and kept only for its log/sanitize pair.
+    /// </summary>
+    private static MutationTransformResult Rejected(string wireMessage, string detail, MutationType mutationType, Dictionary<string, object?> data)
+    {
+        _ = BifrostErrorSink.Sanitized(wireMessage, detail, nameof(TransformCore));
+        return Error(wireMessage, mutationType, data);
+    }
 }

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using GraphQL;
 using System.Data.Common;
@@ -16,8 +17,23 @@ namespace BifrostQL.Core.Resolvers
 
     }
 
+    /// <summary>
+    /// Resolves <c>_dbSchema</c> PER CALLER: the model is projected through
+    /// <see cref="SchemaReadVisibility.Project"/> (a table or column the caller may not
+    /// read is absent — the same answer every other catalog gives), each table carries
+    /// <c>allowedActions</c> resolved via <see cref="PolicyEvaluator.CanAct"/>, and each
+    /// column carries <c>readable</c>/<c>writable</c> via
+    /// <see cref="PolicyEvaluator.IsColumnAllowed"/>. The raw metadata bag (which contains
+    /// the <c>policy-*</c> rules) is served to admin callers only. <c>isEditable</c> is
+    /// retained for compatibility and means exactly "the table has a key" — it is NOT an
+    /// authorization answer; clients must read <c>allowedActions</c> for that.
+    /// </summary>
     public class MetaSchemaResolver : IDbSchemaResolver
     {
+        private static readonly PolicyEvaluator Evaluator = new();
+        private static readonly IDictionary<string, object?> EmptyMetadata =
+            new Dictionary<string, object?>();
+
         private readonly IDbModel _dbModel;
         public MetaSchemaResolver(IDbModel dbModel)
         {
@@ -27,11 +43,30 @@ namespace BifrostQL.Core.Resolvers
         public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
         {
             var tableName = context.GetArgument<string?>("graphQlName");
+            var identity = PolicyIdentity.FromUserContext(context.UserContext);
+            var isAdmin = identity.Grants.Contains(MetadataKeys.Policy.DefaultAdminRole);
+            var visible = SchemaReadVisibility.Project(_dbModel, context.UserContext);
             return ValueTask.FromResult<object?>(
-                _dbModel.Tables
-                    .Where(t => tableName == null || t.GraphQlName == tableName)
-                    .Select(t =>
+                visible
+                    .Select(v => (v, t: v.Table))
+                    .Where(x => tableName == null || x.t.GraphQlName == tableName)
+                    .Select(x =>
                     {
+                        var (v, t) = x;
+                        var policy = PolicyConfigCollector.FromTable(t);
+                        // Table actions, in the client's canonical order. D7 semantics:
+                        // an unlisted action is denied to everyone when the policy lists
+                        // any actions at all; the admin bypass covers grant requirements.
+                        var allowedActions = new[]
+                            {
+                                (PolicyAction.Read, "read"),
+                                (PolicyAction.Create, "create"),
+                                (PolicyAction.Update, "update"),
+                                (PolicyAction.Delete, "delete"),
+                            }
+                            .Where(a => Evaluator.CanAct(policy, a.Item1, identity).Allowed)
+                            .Select(a => a.Item2)
+                            .ToArray();
                         var labelColumnName = t.GetMetadataValue(MetadataKeys.Ui.Label);
                         var labelColumn = t.Columns.FirstOrDefault(c => Equal(c.DbName, labelColumnName));
                         if (labelColumn == null && t.KeyColumns.Any())
@@ -40,19 +75,36 @@ namespace BifrostQL.Core.Resolvers
                             labelColumn = t.Columns.FirstOrDefault(c => Equal(c.ColumnName, detected));
                         }
                         labelColumn ??= t.Columns.First();
+                        // A label column the caller may not read must not be named back
+                        // to them — fall back to the first visible column.
+                        if (!v.HasColumn(labelColumn.DbName))
+                            labelColumn = v.Columns.First();
                         return new
                         {
                             Schema = t.TableSchema,
                             t.DbName,
                             t.GraphQlName,
                             labelColumn = labelColumn.GraphQlName,
-                            primaryKeys = t.Columns.Where(c => c.IsPrimaryKey == true).Select(pk => pk.GraphQlName),
+                            primaryKeys = t.Columns
+                                .Where(c => c.IsPrimaryKey == true && v.HasColumn(c.DbName))
+                                .Select(pk => pk.GraphQlName),
                             isEditable = t.Columns.Any(c => c.IsPrimaryKey == true),
-                            metadata = t.Metadata,
-                            columns = t.Columns
+                            allowedActions,
+                            metadata = isAdmin ? t.Metadata : EmptyMetadata,
+                            columns = v.Columns
                                 .Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
                                 .Select(c =>
                             {
+                                // S4a/S4b semantics. `readable` is false for a MASKED
+                                // column too: the selection still succeeds with the value
+                                // nulled, so the column stays listed and selectable, but
+                                // the caller never sees its values. A refuse-denied column
+                                // is absent from the projection entirely.
+                                var readable =
+                                    Evaluator.IsColumnAllowed(policy, c.DbName, PolicyDirection.Read, identity).Allowed
+                                    && Evaluator.GetReadDisposition(policy, c.DbName, identity) == ReadColumnDisposition.Allow;
+                                var writable =
+                                    Evaluator.IsColumnAllowed(policy, c.DbName, PolicyDirection.Write, identity).Allowed;
                                 // Effective declarative validation rules — same derivation the
                                 // server-side validator uses, so clients can mirror enforcement.
                                 var rules = Modules.Validation.ValidationRules.ForColumn(c);
@@ -86,6 +138,8 @@ namespace BifrostQL.Core.Resolvers
                                 {
                                     dbName = c.DbName,
                                     graphQlName = c.GraphQlName,
+                                    readable,
+                                    writable,
                                     paramType = SchemaGenerator.GetGraphQlTypeName(c.EffectiveDataType, c.IsNullable, _dbModel.TypeMapper),
                                     dbType = c.DataType,
                                     isNullable = c.IsNullable,
@@ -120,7 +174,7 @@ namespace BifrostQL.Core.Resolvers
                                     defaultValue = c.GetMetadataValue(MetadataKeys.DataType.Default),
                                     enumValues,
                                     enumLabels,
-                                    metadata = c.Metadata
+                                    metadata = isAdmin ? c.Metadata : EmptyMetadata
                                 };
                             }),
                             // Index columns are translated to GraphQL names so clients
@@ -137,12 +191,19 @@ namespace BifrostQL.Core.Resolvers
                                     isClustered = ix.IsClustered,
                                     isPrimaryKey = ix.IsPrimaryKey,
                                     columns = ix.ColumnNames
-                                        .Select(n => t.Columns.FirstOrDefault(c => Equal(c.DbName, n))?.GraphQlName)
+                                        .Select(n => v.HasColumn(n)
+                                            ? t.Columns.FirstOrDefault(c => Equal(c.DbName, n))?.GraphQlName
+                                            : null)
                                         .ToArray(),
                                 })
                                 .Where(ix => ix.columns.All(c => c != null))
                                 .Select(ix => new { ix.name, ix.isUnique, ix.isClustered, ix.isPrimaryKey, columns = ix.columns.Cast<string>().ToArray() }),
-                            multiJoins = t.MultiLinks.Values.Select(j => new
+                            // An edge naming a table or column the caller cannot see
+                            // re-discloses it — publish only edges whose BOTH ends are
+                            // visible (same rule as every other catalog).
+                            multiJoins = t.MultiLinks.Values
+                                .Where(j => SchemaReadVisibility.IsLinkVisible(j, visible))
+                                .Select(j => new
                             {
                                 name = j.Name,
                                 // fieldName is the GraphQL selection field on the source table;
@@ -158,7 +219,9 @@ namespace BifrostQL.Core.Resolvers
                                 polymorphicTypeColumn = j.TypePredicate?.Column.GraphQlName,
                                 polymorphicTypeValue = j.TypePredicate?.Value?.ToString(),
                             }),
-                            singleJoins = t.SingleLinks.Values.Select(j => new
+                            singleJoins = t.SingleLinks.Values
+                                .Where(j => SchemaReadVisibility.IsLinkVisible(j, visible))
+                                .Select(j => new
                             {
                                 name = j.Name,
                                 // fieldName is the GraphQL selection field on the source table;
@@ -180,7 +243,10 @@ namespace BifrostQL.Core.Resolvers
                             // junctionTargetField is the selection on the junction type that
                             // resolves the target row; hasPayload marks junctions carrying
                             // extra columns the UI can reveal.
-                            manyToManyJoins = t.ManyToManyLinks.Values.Select(m => new
+                            manyToManyJoins = t.ManyToManyLinks.Values
+                                .Where(m => SchemaReadVisibility.Find(visible, m.JunctionTable) != null
+                                    && SchemaReadVisibility.Find(visible, m.TargetTable) != null)
+                                .Select(m => new
                             {
                                 name = m.JunctionTable.GraphQlName,
                                 targetTable = m.TargetTable.GraphQlName,
@@ -214,5 +280,46 @@ namespace BifrostQL.Core.Resolvers
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown table-link relationship kind."),
         };
 
+    }
+
+    /// <summary>
+    /// <c>_grants: [String!]!</c> — the caller's own grant set: the union of roles and
+    /// permissions projected by <see cref="PolicyIdentity.FromUserContext"/> (S1), sorted.
+    /// The answer a client reads to decide what ITS user may do; it carries no other
+    /// caller's grants and no model data.
+    /// </summary>
+    public sealed class CallerGrantsResolver : IBifrostResolver, IFieldResolver
+    {
+        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+        {
+            var grants = PolicyIdentity.FromUserContext(context.UserContext).Grants
+                .OrderBy(g => g, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return ValueTask.FromResult<object?>(grants);
+        }
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+            => ResolveAsync(new BifrostFieldContextAdapter(context));
+    }
+
+    /// <summary>
+    /// <c>_policyGrants: [String!]!</c> — the catalogue of every grant name the model's
+    /// policy metadata references (E18), sorted and de-duplicated. This is what an app's
+    /// profile editor lists; it names grants, never which caller holds them.
+    /// </summary>
+    public sealed class PolicyGrantCatalogueResolver : IBifrostResolver, IFieldResolver
+    {
+        private readonly IDbModel _model;
+
+        public PolicyGrantCatalogueResolver(IDbModel model)
+        {
+            _model = model ?? throw new ArgumentNullException(nameof(model));
+        }
+
+        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+            => ValueTask.FromResult<object?>(PolicyConfigCollector.ReferencedGrants(_model));
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+            => ResolveAsync(new BifrostFieldContextAdapter(context));
     }
 }

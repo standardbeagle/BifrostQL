@@ -50,6 +50,8 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine(generator.GetFieldDefinition());
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
+            builder.AppendLine("_grants: [String!]!");
+            builder.AppendLine("_policyGrants: [String!]!");
             if (IsRawSqlEnabled(model))
             {
                 builder.AppendLine("_rawQuery(sql: String!, params: JSON, timeout: Int): [JSON]!");

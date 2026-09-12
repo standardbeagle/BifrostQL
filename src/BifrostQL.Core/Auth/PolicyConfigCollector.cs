@@ -147,6 +147,48 @@ public static class PolicyConfigCollector
         return result;
     }
 
+    /// <summary>
+    /// Every grant name referenced anywhere in the model's policy metadata (E18):
+    /// action brackets, read/write deny roles, row-scope roles and exemptions, and
+    /// per-column read/write-requires. Sorted (ordinal-ignore-case) and de-duplicated —
+    /// the catalogue an app's profile editor lists. A table whose policy cannot be
+    /// parsed contributes nothing: the load-time validator already refuses such a
+    /// model, so the catalogue never throws.
+    /// </summary>
+    public static IReadOnlyList<string> ReferencedGrants(IDbModel model)
+    {
+        if (model is null) throw new ArgumentNullException(nameof(model));
+
+        var grants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in model.Tables)
+        {
+            TablePolicy policy;
+            try
+            {
+                policy = FromTable(table);
+            }
+            catch
+            {
+                continue;
+            }
+
+            void AddAll(IEnumerable<string> names)
+            {
+                foreach (var name in names)
+                    grants.Add(name);
+            }
+
+            foreach (var set in policy.AllowedActions.Values) AddAll(set);
+            AddAll(policy.ReadDenyRoles);
+            AddAll(policy.WriteDenyRoles);
+            AddAll(policy.RowScopeRoles);
+            AddAll(policy.RowScopeExemptGrants);
+            foreach (var set in policy.ReadRequires.Values) AddAll(set);
+            foreach (var set in policy.WriteRequires.Values) AddAll(set);
+        }
+        return grants.OrderBy(g => g, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     private static Dictionary<PolicyAction, IEnumerable<string>> ParseActions(string? raw)
     {
         var result = new Dictionary<PolicyAction, IEnumerable<string>>();

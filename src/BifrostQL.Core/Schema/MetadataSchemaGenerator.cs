@@ -21,7 +21,10 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("\tprimaryKeys: [String!]");
         sb.AppendLine("\tlabelColumn: String!");
         sb.AppendLine("\tisEditable: Boolean!");
-        sb.AppendLine("\tmetadata: [dbMetadataSchema!]!");
+        // Per-caller actions resolved via PolicyEvaluator.CanAct (S3). isEditable only
+        // means "the table has a key" — authorization lives here.
+        sb.AppendLine("\t\"Actions the caller may perform on this table, resolved per caller from its policy.\"\n\tallowedActions: [String!]!");
+        sb.AppendLine("\t\"Raw metadata pairs — served to admin callers only; empty for everyone else.\"\n\tmetadata: [dbMetadataSchema!]!");
         sb.AppendLine("\tmultiJoins: [dbJoinSchema!]!");
         sb.AppendLine("\tsingleJoins: [dbJoinSchema!]!");
         sb.AppendLine("\tmanyToManyJoins: [dbManyToManyJoinSchema!]!");
@@ -73,6 +76,8 @@ public static class MetadataSchemaGenerator
         sb.AppendLine("type dbColumnSchema {");
         sb.AppendLine("\tdbName: String!");
         sb.AppendLine("\tgraphQlName: String!");
+        sb.AppendLine("\t\"False when the caller may not read this column's values. A masked column is readable:false yet stays selectable — the selection succeeds with the value nulled.\"\n\treadable: Boolean!");
+        sb.AppendLine("\t\"False when the caller may not write this column (write-requires or write-deny).\"\n\twritable: Boolean!");
         sb.AppendLine("\tparamType: String!");
         sb.AppendLine("\tdbType: String!");
         sb.AppendLine("\tisNullable: Boolean!");

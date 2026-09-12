@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -78,7 +79,7 @@ public sealed class DbSchemaProjectionTests
         var members = Table(Resolve(Model(), Ctx("u1", MemberRoles)), "members");
 
         members.GetProperty("allowedActions").EnumerateArray().Select(a => a.GetString())
-            .Should().Equal("read", "create",
+            .Should().Equal(new[] { "read", "create" },
                 "update/delete sit behind the manager grant the member does not hold");
 
         var costRate = Column(members, "costRate");
@@ -124,28 +125,28 @@ public sealed class DbSchemaProjectionTests
     {
         var members = Table(
             Resolve(Model(), Ctx("root", new[] { MetadataKeys.Policy.DefaultAdminRole })), "members");
-        members.GetProperty("metadata").EnumerateArray()
-            .Select(kv => kv.GetProperty("key").GetString())
+        // The wire shape is [dbMetadataSchema!]!; raw JSON serialization of the
+        // dictionary projects it as an object — the keys are what matters here.
+        members.GetProperty("metadata").EnumerateObject()
+            .Select(kv => kv.Name)
             .Should().Contain("policy-actions", "admin keeps the raw metadata bag");
     }
 
     [Fact]
-    public void Grants_returns_the_union_of_roles_and_permissions()
+    public async Task Grants_returns_the_union_of_roles_and_permissions()
     {
-        var grants = new CallerGrantsResolver()
-            .ResolveAsync(new StubContext(Ctx("u1", MemberRoles, new[] { "perm.a" })))
-            .AsTask().GetAwaiter().GetResult();
+        var grants = await new CallerGrantsResolver()
+            .ResolveAsync(new StubContext(Ctx("u1", MemberRoles, new[] { "perm.a" })));
 
         grants.Should().BeAssignableTo<IEnumerable<string>>()
             .Subject.Should().BeEquivalentTo(new[] { "member", "perm.a" });
     }
 
     [Fact]
-    public void PolicyGrants_returns_the_referenced_grant_catalogue_sorted_and_deduped()
+    public async Task PolicyGrants_returns_the_referenced_grant_catalogue_sorted_and_deduped()
     {
-        var grants = new PolicyGrantCatalogueResolver(Model())
-            .ResolveAsync(new StubContext(Ctx("u1", MemberRoles)))
-            .AsTask().GetAwaiter().GetResult();
+        var grants = await new PolicyGrantCatalogueResolver(Model())
+            .ResolveAsync(new StubContext(Ctx("u1", MemberRoles)));
 
         grants.Should().BeAssignableTo<IEnumerable<string>>()
             .Subject.Should().Equal("boss", "manager", "rates.view_cost");

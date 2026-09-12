@@ -15,6 +15,12 @@ touch. Authorization reads the identity; it never establishes one.
 The engine is opt-in. A table with no `policy-*` metadata is unrestricted, so adding
 policy to one table changes nothing about the rest of the model.
 
+## Grants
+
+**Grants** are the case-insensitive union of the caller's roles and permissions.
+Every `-roles` policy key accepts any grant, so a permission can satisfy these
+keys exactly like a role.
+
 ## Declare a policy
 
 ```text
@@ -28,10 +34,10 @@ main.documents { policy-read-deny: body }
 |---|---|
 | `policy-actions` | Comma list of `read`, `create`, `update`, `delete`. Anything absent is denied. |
 | `policy-read-deny` | Columns this table never returns. |
-| `policy-read-deny-roles` | Roles the read-deny applies to. Omit it to deny every non-admin. |
+| `policy-read-deny-roles` | Grants the read-deny applies to. Omit it to deny every non-admin. |
 | `policy-write-deny` | Columns no mutation may write. |
 | `policy-row-scope` | A predicate binding a column to a context value. |
-| `policy-row-scope-roles` | Roles the row scope applies to. Omit it to scope every non-admin. |
+| `policy-row-scope-roles` | Grants the row scope applies to. Omit it to scope every non-admin. |
 
 Two consequences follow from the shape of `policy-actions`:
 

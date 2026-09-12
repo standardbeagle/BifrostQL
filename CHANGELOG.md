@@ -1,5 +1,7 @@
 # Changelog
 
+- Add `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.
+
 All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-builder extraction plan from Membership Manager build`).
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.

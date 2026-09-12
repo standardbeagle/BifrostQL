@@ -50,6 +50,7 @@ main.documents { policy-read-deny: body }
 | `policy-write-deny-roles` | Grants the write-deny applies to. Omit it to deny every non-admin. |
 | `policy-row-scope` | A predicate binding a column to a context value. |
 | `policy-row-scope-roles` | Grants the row scope applies to. Omit it to scope every non-admin. |
+| `policy-row-scope-exempt` | Grants that remove the row scope for holders; tenant filtering remains. |
 
 A grant bracket lists the grants that unlock that action; a caller holding ANY listed
 grant passes, and a bracketless token is unconditional:
@@ -87,6 +88,17 @@ main.members { policy-row-scope: user_id = {user_id} }
 main.members { policy-row-scope-roles: member }
 main.households { policy-row-scope: household_id = {household_id} }
 ```
+
+For example, time entries can be self-scoped while allowing holders of
+`time.edit_others` to edit colleagues' entries:
+
+```text
+main.time_entries { policy-row-scope: user_id = {user_id}, policy-row-scope-exempt: time.edit_others }
+```
+
+The exemption wins over `policy-row-scope-roles`, applies to reads, updates, and
+deletes, and is skipped for inserts. It removes only the row predicate; tenant
+filtering remains.
 
 The compiler turns that into a filter the pipeline ANDs alongside the tenant filter, so
 the predicate is parameterized and composes with every other transformer. Equality is the

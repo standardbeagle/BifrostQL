@@ -546,21 +546,50 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     [Fact]
     public async Task GraphQlApprove_ReplaysPermissionOnlyRequesterScope()
     {
+        // scoped_orders carries a GRANT-QUALIFIED row scope (policy-row-scope-roles: member)
+        // and NO tenant-filter, so the requester's `member` grant is the only thing that
+        // narrows an approved update to their own tenant. The requester holds that grant as a
+        // PERMISSION and carries no roles at all, so a replay identity projected from roles
+        // alone is grant-less, RowScopeApplies is false, and the update runs unscoped across
+        // both tenants' rows. An INSERT cannot manifest this: BuildRowScopeFilter returns null
+        // for a create, which is what made the previous version of this fact vacuous.
+        await Exec("INSERT INTO scoped_orders(id, tenant_id, name) VALUES (1, 1, 'mine'), (2, 2, 'theirs')");
+
         var executor = BuildExecutor();
         var requester = TenantContext(1);
         requester["user_id"] = "alice";
         requester["permissions"] = new[] { "member" };
-        Func<Task> enqueue = () => executor.ExecuteAsync(new MutationIntent
+
+        Func<Task> enqueueCrossTenant = () => executor.ExecuteAsync(new MutationIntent
         {
-            Table = "scoped_orders", Action = MutationIntentAction.Insert,
-            Data = new Dictionary<string, object?> { ["name"] = "permission-scoped", ["tenant_id"] = 1 },
+            Table = "scoped_orders", Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?> { ["name"] = "cross-tenant" },
+            PrimaryKey = new object?[] { 2 },
             UserContext = requester, Endpoint = EndpointPath,
         });
-        await enqueue.Should().ThrowAsync<BifrostExecutionError>();
+        await enqueueCrossTenant.Should().ThrowAsync<BifrostExecutionError>();
 
-        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
-        result.Errors.Should().BeNullOrEmpty();
-        (await CountAsync("scoped_orders", "name = 'permission-scoped' AND tenant_id = 1")).Should().Be(1);
+        Func<Task> enqueueOwnTenant = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "scoped_orders", Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?> { ["name"] = "in-scope" },
+            PrimaryKey = new object?[] { 1 },
+            UserContext = requester, Endpoint = EndpointPath,
+        });
+        await enqueueOwnTenant.Should().ThrowAsync<BifrostExecutionError>();
+
+        var approver = ApproverContext("bob", "manager");
+        (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", approver))
+            .Errors.Should().BeNullOrEmpty();
+        (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"2\") }", approver))
+            .Errors.Should().BeNullOrEmpty();
+
+        (await CountAsync("scoped_orders", "id = 2 AND name = 'theirs'")).Should().Be(1,
+            "the replay runs under the requester's PERMISSION-borne row scope, so tenant 2's row is unreachable");
+        (await CountAsync("scoped_orders", "name = 'cross-tenant'")).Should().Be(0,
+            "no row outside the requester's tenant may be rewritten by the approved replay");
+        (await CountAsync("scoped_orders", "id = 1 AND name = 'in-scope'")).Should().Be(1,
+            "the requester's own row stays in scope, so the projection narrows the replay rather than blocking it");
     }
 
     [Fact]

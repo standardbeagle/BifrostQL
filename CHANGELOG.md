@@ -6,6 +6,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Added — write-side column grants (`write-requires`, `policy-write-deny-roles`)
+
+- The policy engine's write side gains a grant dimension. Column-selector rules like `public.users.cost_rate { write-requires: team.manage }` (or `public.*.cost_rate { … }`) gate writing that column to callers holding any listed grant. The gate is presence-keyed: an update that omits the column is unaffected, and sending the currently stored value still counts as a write. It never applies to deletes. Table-level `policy-write-deny-roles` now qualifies `policy-write-deny` exactly as `policy-read-deny-roles` qualifies the read deny. Schema consequence: a column write-denied for every caller (unconditional `policy-write-deny`, no roles) leaves the table's insert/update input types, so a NOT NULL server-maintained column no longer makes the table un-insertable; a grant-conditional column stays in the shared input type but becomes optional.
+
 ### Added — per-request grant resolver (`IGrantResolver`)
 
 - Applications may register `AddBifrostGrantResolver<T>()` (scoped) or a delegate overload to load a user's capability set from the database on every request (a JWT lives for weeks; a permission change now takes effect when made). The resolver runs once per request at the single user-context assembly point shared by every transport, and its grants are unioned into the owned `permissions` context key before any security module reads it. Fail closed: a throwing resolver empties the permission set and logs a warning; a null result is treated as empty. Nothing changes when no resolver is registered.

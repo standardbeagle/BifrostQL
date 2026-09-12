@@ -40,6 +40,7 @@ main.documents { policy-read-deny: body }
 | `policy-read-deny` | Columns this table never returns. |
 | `policy-read-deny-roles` | Grants the read-deny applies to. Omit it to deny every non-admin. |
 | `policy-write-deny` | Columns no mutation may write. |
+| `policy-write-deny-roles` | Grants the write-deny applies to. Omit it to deny every non-admin. |
 | `policy-row-scope` | A predicate binding a column to a context value. |
 | `policy-row-scope-roles` | Grants the row scope applies to. Omit it to scope every non-admin. |
 
@@ -81,17 +82,42 @@ so the scope is skipped there — constrain inserts with `policy-actions` instea
 
 ## Deny columns
 
-`policy-read-deny` removes a column from results. `policy-write-deny` refuses a mutation
-that writes it. Both reject the request rather than silently stripping the field, so a
-client learns its query was wrong instead of quietly receiving less than it asked for.
+Column gating has two directions and two flavours. The deny lists refuse the
+request rather than silently stripping the field, so a client learns its query
+was wrong instead of quietly receiving less than it asked for. Both deny lists
+are qualified by a `-roles` key that narrows the denial to the grants listed;
+omitting it denies every non-admin caller.
 
-Adding `policy-read-deny-roles` narrows the denial to the roles listed. This is how you
-hide a salary column from `member` and `read_only` while leaving it readable for finance:
+| Direction | Deny | Qualifier | Grant gate |
+|---|---|---|---|
+| Read | `policy-read-deny` | `policy-read-deny-roles` | — |
+| Write | `policy-write-deny` | `policy-write-deny-roles` | `write-requires` (column selector) |
+
+`write-requires` is the write side's grant dimension: a column-selector rule
+naming the grants, any one of which the caller must hold to write the column.
+The gate is **presence-keyed** — sending the column at all is a write, even
+sending the value already stored; an update that does not touch the column is
+unaffected. It never applies to a delete (a delete carries no writable columns;
+`policy-actions` is the delete tool). A two-row example:
 
 ```text
 main.dues_invoices { policy-read-deny: amount_cents }
 main.dues_invoices { policy-read-deny-roles: officer,event_manager,member,read_only }
+main.users.cost_rate { write-requires: team.manage }
 ```
+
+Here `amount_cents` is hidden from the listed roles but readable by finance,
+while `cost_rate` is writable only by a `team.manage` holder and readable by
+everyone.
+
+Two schema consequences follow from the write side:
+
+- A column write-denied for **every** caller (unconditional `policy-write-deny`,
+  no roles) leaves the table's insert/update input types entirely, so a NOT NULL
+  server-maintained column does not make the table un-insertable.
+- A grant-conditional column (a role-qualified deny, or `write-requires`) stays
+  in the shared input type but becomes optional there, so a caller without the
+  grant can omit it. The mutation pipeline remains the enforcement backstop.
 
 ## What the caller sees
 

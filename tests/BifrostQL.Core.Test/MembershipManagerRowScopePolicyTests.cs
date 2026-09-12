@@ -286,7 +286,20 @@ public class MembershipManagerRowScopePolicyTests
             ["tenant_id"] = 1,
         });
 
-        new PolicyFilterTransformer().GetAdditionalFilter(table, context).Should().BeNull();
+        var transformers = new FilterTransformersWrap
+        {
+            Transformers = new IFilterTransformer[]
+            {
+                new TenantFilterTransformer(),
+                new PolicyFilterTransformer(),
+            },
+        };
+
+        var filter = transformers.GetCombinedFilter(table, context);
+
+        filter.Should().NotBeNull();
+        filter!.ColumnName.Should().Be("tenant_id");
+        filter.And.Should().BeEmpty();
     }
 
     [Fact]
@@ -296,6 +309,23 @@ public class MembershipManagerRowScopePolicyTests
         var result = await new PolicyMutationTransformer().TransformAsync(
             model.GetTableFromDbName("members"), MutationType.Update,
             new Dictionary<string, object?> { ["first_name"] = "Renamed" },
+            MutationContext(model, new Dictionary<string, object?>
+            {
+                ["user_id"] = "42",
+                [MetadataKeys.Auth.DefaultPermissionsContextKey] = new[] { RowScopeExemptGrant },
+            }));
+
+        result.Errors.Should().BeNullOrEmpty();
+        result.AdditionalFilter.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GrantHolder_Delete_IsNotRowScoped()
+    {
+        var model = MembershipManagerModel();
+        var result = await new PolicyMutationTransformer().TransformAsync(
+            model.GetTableFromDbName("members"), MutationType.Delete,
+            new Dictionary<string, object?>(),
             MutationContext(model, new Dictionary<string, object?>
             {
                 ["user_id"] = "42",

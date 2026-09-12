@@ -213,6 +213,30 @@ For additional row-level filters, map columns to claims with `auto-filter`:
 "dbo.orders { auto-filter: organization_id:org_id,region_id:region; }"
 ```
 
+## Loading grants per request (`IGrantResolver`)
+
+Claims baked into a token live as long as the token does — a JWT issued for weeks still carries the permissions the user had at sign-in. When your capability set lives in the database and a permission change must take effect *when made*, register a grant resolver. It runs **once per request**, for authenticated principals, at the single point every transport assembles the user context (GraphQL, the binary WebSocket, and every protocol adapter share it), and its result is **unioned** into the `permissions` context key before any policy, tenant, or filter module reads the context.
+
+```csharp
+builder.Services.AddBifrostGrantResolver(async (identity, sp, ct) =>
+{
+    // Track shape: the user's profile row carries a text[] of capabilities.
+    await using var conn = sp.GetRequiredService<NpgsqlDataSource>().CreateConnection();
+    return await conn.QuerySingleAsync<string[]>(
+        "SELECT capabilities FROM permission_profiles WHERE user_id = @id",
+        new { id = identity.Id }) ?? Array.Empty<string>();
+});
+```
+
+Or as a scoped service: `builder.Services.AddBifrostGrantResolver<MyGrantResolver>()` where `MyGrantResolver : IGrantResolver`.
+
+Contract:
+
+- **A per-request DB read is the expected shape.** Caching (and its revocation policy) is the application's business — if you cache, you decide how stale a grant may be.
+- The result is a *union* with the identity's mapped permissions, never a replacement. A `null` result is treated as empty: the identity's own permissions remain.
+- **Fail closed.** A resolver that throws empties the permission set for that request — the identity's pre-resolver permissions are wiped too — and logs a `Warning` naming the identity id. The exception never reaches the caller; where a policy needs the missing grant the answer is a policy deny, not a server error.
+- `permissions` is an identity-owned context key: a client-supplied (wire) context value can never add to it. The resolver is the only way grants enter beyond the authenticated identity itself.
+
 ## Disabling authentication
 
 For development and testing, set `DisableAuth` to `true`:

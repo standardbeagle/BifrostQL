@@ -6,6 +6,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Added — per-request grant resolver (`IGrantResolver`)
+
+- Applications may register `AddBifrostGrantResolver<T>()` (scoped) or a delegate overload to load a user's capability set from the database on every request (a JWT lives for weeks; a permission change now takes effect when made). The resolver runs once per request at the single user-context assembly point shared by every transport, and its grants are unioned into the owned `permissions` context key before any security module reads it. Fail closed: a throwing resolver empties the permission set and logs a warning; a null result is treated as empty. Nothing changes when no resolver is registered.
+
 ### Added — deny-by-default authorization
 
 - Models may set `policy-default: deny`; tables without a policy are denied and hidden from schema surfaces.

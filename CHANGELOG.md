@@ -199,6 +199,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased
 
+### Fixed
+
+- Preserve permission-only policy grants when replaying approved mutations.
+
 ### Added — state-machine + workflow
 
 - New `Auth/StateMachineConfigCollector`, `StateMachineDefinition`, `StateTransitionInfo`, and `StateTransitionAuditObserver` wire a metadata-driven state machine into the mutation pipeline.

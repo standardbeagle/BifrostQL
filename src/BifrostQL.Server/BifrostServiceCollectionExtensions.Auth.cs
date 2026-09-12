@@ -77,5 +77,56 @@ namespace BifrostQL.Server
             services.AddSingleton(new BifrostQL.Server.Auth.OidcClaimMapperRegistry(builder.Build()));
             return services;
         }
+
+        /// <summary>
+        /// Registers a per-request grant resolver (scoped). The resolver runs once per
+        /// request, for authenticated principals, at the single point every transport
+        /// (GraphQL, binary WebSocket, and every protocol adapter) assembles the user
+        /// context; its grants are unioned into the <c>permissions</c> context key
+        /// before any security module reads it. A database read per request is the
+        /// expected shape (a permission change takes effect on the next request, not
+        /// at token expiry); caching is the application's business. Fail closed: a
+        /// throwing resolver empties the permission set for that request and logs a
+        /// Warning; a null result is treated as empty.
+        /// </summary>
+        public static IServiceCollection AddBifrostGrantResolver<T>(this IServiceCollection services)
+            where T : class, Core.Auth.IGrantResolver
+        {
+            services.AddScoped<Core.Auth.IGrantResolver, T>();
+            return services;
+        }
+
+        /// <summary>
+        /// Delegate overload of <see cref="AddBifrostGrantResolver{T}"/>. The delegate
+        /// receives the request's identity, the request's <see cref="IServiceProvider"/>
+        /// (resolve scoped services such as a DbContext from it), and the request's
+        /// cancellation token.
+        /// </summary>
+        public static IServiceCollection AddBifrostGrantResolver(
+            this IServiceCollection services,
+            Func<Core.Auth.AppIdentity, IServiceProvider, CancellationToken, ValueTask<IReadOnlyCollection<string>>> resolve)
+        {
+            if (resolve == null)
+                throw new ArgumentNullException(nameof(resolve));
+            services.AddScoped<Core.Auth.IGrantResolver>(sp => new DelegateGrantResolver(sp, resolve));
+            return services;
+        }
+
+        private sealed class DelegateGrantResolver : Core.Auth.IGrantResolver
+        {
+            private readonly IServiceProvider _services;
+            private readonly Func<Core.Auth.AppIdentity, IServiceProvider, CancellationToken, ValueTask<IReadOnlyCollection<string>>> _resolve;
+
+            public DelegateGrantResolver(
+                IServiceProvider services,
+                Func<Core.Auth.AppIdentity, IServiceProvider, CancellationToken, ValueTask<IReadOnlyCollection<string>>> resolve)
+            {
+                _services = services;
+                _resolve = resolve;
+            }
+
+            public ValueTask<IReadOnlyCollection<string>> ResolveAsync(Core.Auth.AppIdentity identity, CancellationToken ct)
+                => _resolve(identity, _services, ct);
+        }
     }
 }

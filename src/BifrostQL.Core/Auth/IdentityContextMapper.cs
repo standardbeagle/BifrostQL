@@ -125,6 +125,29 @@ public sealed class IdentityContextMapper
         return context;
     }
 
+    /// <summary>
+    /// Unions <paramref name="grants"/> into the <c>permissions</c> context key of an
+    /// already-mapped user context. This is the merge half of the per-request
+    /// <see cref="IGrantResolver"/> hook: it runs AFTER <see cref="ToUserContext"/>
+    /// and before any security module reads the context, dedupes case-insensitively,
+    /// and leaves every other context key untouched. The key stays owned
+    /// (<see cref="OwnedKeyNames"/>) — this method is the only sanctioned way grants
+    /// enter beyond the identity itself.
+    /// </summary>
+    public static void UnionPermissions(IDictionary<string, object?> context, IEnumerable<string> grants)
+    {
+        if (context is null) throw new ArgumentNullException(nameof(context));
+        if (grants is null) throw new ArgumentNullException(nameof(grants));
+
+        var merged = new HashSet<string>(PolicyIdentity.ExtractPermissions(context), StringComparer.OrdinalIgnoreCase);
+        foreach (var grant in grants)
+        {
+            if (!string.IsNullOrWhiteSpace(grant))
+                merged.Add(grant);
+        }
+        context[MetadataKeys.Auth.DefaultPermissionsContextKey] = merged.ToArray();
+    }
+
     private static string NormalizeKey(string? value, string fallback, string paramName)
     {
         if (value == null)

@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using BifrostQL.Core.Auth;
+using BifrostQL.Core.Model;
 
 namespace BifrostQL.Server
 {
@@ -55,9 +58,61 @@ namespace BifrostQL.Server
         {
             var user = context.User;
             if (user?.Identity?.IsAuthenticated == true)
-                return new BifrostContext(context);
+            {
+                var userContext = new BifrostContext(context);
+                ApplyGrantResolver(context, userContext);
+                return userContext;
+            }
 
             return new Dictionary<string, object?>();
+        }
+
+        /// <summary>
+        /// The S2 grant-loading hook: when the host registered an
+        /// <see cref="IGrantResolver"/> (<c>AddBifrostGrantResolver</c>), run it once for
+        /// this request and UNION its grants into the <c>permissions</c> context key —
+        /// after the identity mapping (which ran inside <see cref="BifrostContext"/>) and
+        /// before any transformer sees the context. Runs for authenticated principals
+        /// only; the identity handed to the resolver is the canonical
+        /// <see cref="PolicyIdentity.FromUserContext"/> projection of the just-assembled
+        /// context, so the resolver sees exactly what the security modules will see.
+        ///
+        /// Fail closed (E9): a throwing resolver leaves the request with an EMPTY
+        /// permission set — the pre-resolver permissions are wiped — and logs a Warning
+        /// naming the identity id; the exception never escapes. A null result is an
+        /// empty grant set: nothing is unioned, the identity's own permissions remain.
+        /// </summary>
+        private static void ApplyGrantResolver(HttpContext context, IDictionary<string, object?> userContext)
+        {
+            var resolver = context.RequestServices?.GetService<IGrantResolver>();
+            if (resolver is null)
+                return;
+
+            var identity = PolicyIdentity.FromUserContext(userContext);
+            IReadOnlyCollection<string>? grants;
+            try
+            {
+                // The factory contract is synchronous (every transport gate consumes it
+                // that way); the resolver runs to completion inline. A resolver is
+                // expected to do one bounded DB read per request.
+                grants = resolver.ResolveAsync(identity, context.RequestAborted)
+                    .AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                context.RequestServices?.GetService<ILoggerFactory>()
+                    ?.CreateLogger("BifrostQL.Server.BifrostAuthContextFactory")
+                    .LogWarning(ex,
+                        "Grant resolver failed for identity '{IdentityId}'; continuing with an empty permission set.",
+                        identity.Id);
+                userContext[MetadataKeys.Auth.DefaultPermissionsContextKey] = Array.Empty<string>();
+                return;
+            }
+
+            if (grants is null || grants.Count == 0)
+                return;
+
+            IdentityContextMapper.UnionPermissions(userContext, grants);
         }
 
     }

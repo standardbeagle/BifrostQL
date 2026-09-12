@@ -9,7 +9,7 @@ namespace BifrostQL.Core.Auth;
 /// checks. Extracted from <c>PolicyFilterTransformer</c> so every policy-gated
 /// surface reconstructs identity <b>identically</b>: the query-path filter
 /// transformer AND any out-of-band read gate (e.g. the pgwire catalog visibility
-/// filter) must resolve the same user id and roles from the same context keys.
+/// filter) must resolve the same user id, roles, and permissions from the same context keys.
 /// A second, drifting projection would be a weaker — potentially fail-open —
 /// authorization check, so this is the single source of the projection.
 /// </summary>
@@ -66,21 +66,22 @@ public static class PolicyIdentity
     public static IReadOnlyList<string> ExtractPermissions(IDictionary<string, object?> userContext)
     {
         if (userContext is null) throw new ArgumentNullException(nameof(userContext));
+        // Permissions are first-class grants, allowing policy checks without roles.
         return ExtractStrings(userContext, PermissionsContextKey);
     }
 
     private static IReadOnlyList<string> ExtractStrings(IDictionary<string, object?> userContext, string key)
     {
-        if (!userContext.TryGetValue(key, out var rolesValue) || rolesValue is null)
+        if (!userContext.TryGetValue(key, out var value) || value is null)
             return Array.Empty<string>();
 
-        if (rolesValue is string singleRole)
-            return new[] { singleRole };
+        if (value is string single)
+            return new[] { single };
 
-        if (rolesValue is IEnumerable<string> typedRoles)
+        if (value is IEnumerable<string> typedRoles)
             return typedRoles.ToArray();
 
-        if (rolesValue is IEnumerable sequence)
+        if (value is IEnumerable sequence)
         {
             var result = new List<string>();
             foreach (var item in sequence)

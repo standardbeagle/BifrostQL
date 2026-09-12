@@ -11,7 +11,7 @@ namespace BifrostQL.Core.Auth;
 ///
 /// Decision rules (in order):
 ///   1. Admin bypass — an identity holding the configured admin role is allowed
-///      everything. The bypass is explicit and role-name-driven.
+///      everything. The bypass is explicit and grant-driven.
 ///   2. Absent policy — <see cref="TablePolicy.None"/> (a table with no policy
 ///      metadata) imposes no restriction. This opt-in default mirrors the
 ///      tenant-filter and soft-delete modules: no metadata means no gating.

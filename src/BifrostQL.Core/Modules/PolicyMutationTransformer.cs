@@ -32,7 +32,7 @@ namespace BifrostQL.Core.Modules;
 /// action, so error output cannot be used to probe the schema. Identity is
 /// reconstructed from the per-request user context exactly as
 /// <see cref="PolicyFilterTransformer"/> does — the user id from <c>user_id</c>
-/// and roles from <c>roles</c>, the canonical claims
+/// and roles from <c>roles</c>, plus permissions from <c>permissions</c>, the canonical claims
 /// <see cref="IdentityContextMapper"/> writes. Admin-role bypass and the
 /// absent-policy ALLOW default are delegated to the stateless
 /// <see cref="PolicyEvaluator"/>.
@@ -167,7 +167,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (IsAdmin(identity))
             return null;
 
-        // Role-scoped row scope: when the policy names the roles it applies to,
+        // Grant-scoped row scope: when the policy names the grants it applies to,
         // a caller holding none of them is left unscoped (still tenant-filtered).
         if (!RowScopeApplies(policy, identity))
             return null;

@@ -161,10 +161,9 @@ public class MembershipManagerRowScopePolicyTests
         var context = QueryContext(model, PermissionsOnlyCaller("member", "42"));
         var filter = new PolicyFilterTransformer().GetAdditionalFilter(table, context);
 
-        var sql = filter!.ToSqlParameterized(new SqliteDialect());
-
-        sql.Sql.Should().Contain("\"user_id\" = @p0");
-        sql.Parameters.Should().ContainSingle().Which.Value.Should().Be("42");
+        filter!.ColumnName.Should().Be("user_id");
+        filter.Next!.RelationName.Should().Be("_eq");
+        filter.Next.Value.Should().Be("42");
     }
 
     [Fact]

@@ -124,6 +124,10 @@ namespace BifrostQL.Core.Model
             // Server-side authorization policy (security — miscased keys must be
             // flagged, not silently fail-open).
             MetadataKeys.Policy.Actions,
+            // Stamped onto every table by DbModel.FromTables when the model declares
+            // ':root { policy-default: deny }', so the per-table unknown-key gate must
+            // accept it or a deny-default model fails to load at all.
+            MetadataKeys.Policy.Default,
             MetadataKeys.Policy.ReadDeny,
             MetadataKeys.Policy.ReadDenyRoles,
             MetadataKeys.Policy.WriteDeny,

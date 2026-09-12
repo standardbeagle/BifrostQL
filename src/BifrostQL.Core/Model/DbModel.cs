@@ -429,8 +429,29 @@ namespace BifrostQL.Core.Model
                 ApplyAdditionalMetadata(tables, additionalMetadata);
             }
 
-            if (additionalMetadata?.TryGetValue(":root", out var rootPolicyMetadata) == true
-                && rootPolicyMetadata.TryGetValue(MetadataKeys.Policy.Default, out var policyDefault))
+            // The model-wide metadata has TWO sources and the deny default must reach
+            // tables from either: rule strings (":root { policy-default: deny }", the
+            // documented form) arrive through ApplyDatabaseMetadata, while the hosting
+            // API can pass the same key in additionalMetadata[":root"]. Build the
+            // unified dictionary FIRST, then stamp from it — stamping from
+            // additionalMetadata alone left every rule-string-configured model
+            // fail-open, because its consumers read the table, not the model.
+            var dbMetadata = new Dictionary<string, object?>();
+            metadataLoader.ApplyDatabaseMetadata(dbMetadata);
+
+            if (additionalMetadata != null &&
+                additionalMetadata.TryGetValue(":root", out var rootMetadata))
+            {
+                foreach (var (key, value) in rootMetadata)
+                {
+                    dbMetadata[key] = value;
+                }
+            }
+
+            // Only 'deny' is stamped: 'allow' is the absent-policy behaviour already, so
+            // stamping it would add a no-op key to every table's metadata.
+            if (dbMetadata.TryGetValue(MetadataKeys.Policy.Default, out var policyDefault)
+                && string.Equals(policyDefault?.ToString(), "deny", StringComparison.OrdinalIgnoreCase))
             {
                 foreach (var table in tables)
                     table.Metadata[MetadataKeys.Policy.Default] = policyDefault;
@@ -449,18 +470,6 @@ namespace BifrostQL.Core.Model
                 foreach (var column in table.Columns)
                     if (blindIndexTargets.Contains(column.ColumnName))
                         column.Metadata[MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden;
-            }
-
-            var dbMetadata = new Dictionary<string, object?>();
-            metadataLoader.ApplyDatabaseMetadata(dbMetadata);
-
-            if (additionalMetadata != null &&
-                additionalMetadata.TryGetValue(":root", out var rootMetadata))
-            {
-                foreach (var (key, value) in rootMetadata)
-                {
-                    dbMetadata[key] = value;
-                }
             }
 
             var schemaPrefixOptions = SchemaPrefixOptions.FromMetadata(dbMetadata);

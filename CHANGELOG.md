@@ -6,6 +6,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Added — deny-by-default authorization
+
+- Models may set `policy-default: deny`; tables without a policy are denied and hidden from schema surfaces.
+
 ### Fixed — policy grants
 
 - Authorization policies now evaluate grants, the case-insensitive union of roles

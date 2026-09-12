@@ -12,8 +12,12 @@ Authentication and authorization are separate jobs here.
 projects it into a user context. This guide covers what that identity is then allowed to
 touch. Authorization reads the identity; it never establishes one.
 
-The engine is opt-in. A table with no `policy-*` metadata is unrestricted, so adding
-policy to one table changes nothing about the rest of the model.
+The default is `allow`: a table with no `policy-*` metadata is unrestricted. For production,
+prefer `:root { policy-default: deny }`; undeclared tables then deny all actions and disappear
+from schema descriptions. An administrator still bypasses policy; set `policy-admin-role` to a
+role nobody holds when no escape is wanted. Selector rules count as declarations, so a rule such
+as `public.*|has(account_id) { policy-actions: read,create,update,delete }` can establish the
+common default and individual tables can narrow it.
 
 ## Grants
 

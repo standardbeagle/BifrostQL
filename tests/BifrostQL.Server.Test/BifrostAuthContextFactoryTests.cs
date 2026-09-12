@@ -101,6 +101,131 @@ namespace BifrostQL.Server.Test
                 .Should().BeSameAs(BifrostAuthContextFactory.Instance);
         }
 
+        // ---- IGrantResolver hook (S2) ----
+
+        [Fact]
+        public void CreateUserContext_GrantResolverRegistered_UnionsGrantsIntoPermissions()
+        {
+            // Arrange: a local-auth principal plus a resolver granting "x".
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                        new ValueTask<IReadOnlyCollection<string>>(new[] { "x" }))
+                    .BuildServiceProvider(),
+            };
+
+            // Act
+            var userContext = Factory.CreateUserContext(context);
+
+            // Assert: the resolver's grant is unioned into the owned permissions key.
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext)
+                .Should().Contain("x");
+        }
+
+        [Fact]
+        public void CreateUserContext_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
+        {
+            // Arrange: an OIDC identity whose mapper grants permission "x" — the
+            // pre-resolver set is NON-empty, so the fail-closed wipe is observable.
+            var loggerFactory = new ListLoggerFactory();
+            var context = new DefaultHttpContext
+            {
+                User = OidcPrincipalWithPermissions(),
+                RequestServices = new ServiceCollection()
+                    .AddSingleton(new OidcClaimMapperRegistry(new[]
+                    {
+                        new KeyValuePair<string, IOidcClaimMapper>("https://idp.test", new PermissionMapper()),
+                    }))
+                    .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory>(loggerFactory)
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                        throw new InvalidOperationException("grant store down"))
+                    .BuildServiceProvider(),
+            };
+
+            // Act
+            var userContext = Factory.CreateUserContext(context);
+
+            // Assert: the pre-resolver permission "x" is gone — a throwing resolver
+            // never yields the pre-resolver set — and a Warning names the identity id.
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext).Should().BeEmpty();
+            loggerFactory.Entries.Should().Contain(e =>
+                e.Level == Microsoft.Extensions.Logging.LogLevel.Warning &&
+                e.Message.Contains("user-1"));
+        }
+
+        [Fact]
+        public void CreateUserContext_ResolverReturnsNull_TreatedAsEmpty_NoWarning()
+        {
+            // Arrange
+            var loggerFactory = new ListLoggerFactory();
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory>(loggerFactory)
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                        new ValueTask<IReadOnlyCollection<string>>((IReadOnlyCollection<string>)null!))
+                    .BuildServiceProvider(),
+            };
+
+            // Act
+            var userContext = Factory.CreateUserContext(context);
+
+            // Assert: null is an empty grant set — the identity's own (empty) permissions
+            // remain and nothing is logged.
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext).Should().BeEmpty();
+            loggerFactory.Entries.Should().BeEmpty();
+        }
+
+        [Fact]
+        public void CreateUserContext_NoResolver_PermissionsComeFromIdentityOnly()
+        {
+            // Arrange: no resolver registered — behaviour unchanged.
+            var context = new DefaultHttpContext { User = AuthenticatedLocalPrincipal() };
+
+            // Act
+            var userContext = Factory.CreateUserContext(context);
+
+            // Assert
+            BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext).Should().BeEmpty();
+        }
+
+        private static ClaimsPrincipal OidcPrincipalWithPermissions() => new(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "user-1"),
+            new Claim("iss", "https://idp.test"),
+        }, authenticationType: "oidc"));
+
+        private sealed class PermissionMapper : IOidcClaimMapper
+        {
+            public string Provider => "oidc:test";
+            public BifrostQL.Core.Auth.AppIdentity Map(ClaimsPrincipal principal) =>
+                new("user-1", Provider, permissions: new[] { "x" });
+        }
+
+        private sealed class ListLoggerFactory : Microsoft.Extensions.Logging.ILoggerFactory
+        {
+            public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = new();
+            public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+            public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new ListLogger(Entries);
+            public void Dispose() { }
+
+            private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger
+            {
+                private readonly List<(Microsoft.Extensions.Logging.LogLevel, string)> _entries;
+                public ListLogger(List<(Microsoft.Extensions.Logging.LogLevel, string)> entries) => _entries = entries;
+                public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+                public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+                public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+                    TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                {
+                    lock (_entries) _entries.Add((logLevel, formatter(state, exception)));
+                }
+            }
+        }
+
         private static ClaimsPrincipal AuthenticatedLocalPrincipal() => new(new ClaimsIdentity(new[]
         {
             new Claim(ClaimTypes.NameIdentifier, "user-1"),

@@ -147,6 +147,46 @@ public sealed class ColumnWriteGrantTests
         decision.Allowed.Should().BeTrue();
     }
 
+    [Fact]
+    public void Evaluator_WriteRequiresGrant_DoesNotOverrideWriteDeny()
+    {
+        // Requires/deny precedence (spec order): a held write-requires grant
+        // falls THROUGH to the deny list — a column both write-required and
+        // unconditionally write-denied is writable by nobody but admin.
+        var evaluator = new PolicyEvaluator();
+        var policy = new TablePolicy(
+            allowedActions: new[] { PolicyAction.Update },
+            writeDenyColumns: new[] { "cost_rate" },
+            writeRequires: new Dictionary<string, IEnumerable<string>>
+            {
+                ["cost_rate"] = new[] { "team.manage" },
+            });
+
+        evaluator.IsColumnAllowed(policy, "cost_rate", PolicyDirection.Write, Identity("team.manage"))
+            .Allowed.Should().BeFalse("a held write-requires grant does not override the write-deny list");
+        evaluator.IsColumnAllowed(policy, "cost_rate", PolicyDirection.Write, Identity("admin"))
+            .Allowed.Should().BeTrue("admin bypass");
+    }
+
+    [Fact]
+    public void Evaluator_WriteRequiresGrant_DoesNotOverrideRoleQualifiedWriteDeny()
+    {
+        var evaluator = new PolicyEvaluator();
+        var policy = new TablePolicy(
+            allowedActions: new[] { PolicyAction.Update },
+            writeDenyColumns: new[] { "cost_rate" },
+            writeDenyRoles: new[] { "member" },
+            writeRequires: new Dictionary<string, IEnumerable<string>>
+            {
+                ["cost_rate"] = new[] { "team.manage" },
+            });
+
+        evaluator.IsColumnAllowed(policy, "cost_rate", PolicyDirection.Write, Identity("member", "team.manage"))
+            .Allowed.Should().BeFalse("the grant holder still carries a denied role");
+        evaluator.IsColumnAllowed(policy, "cost_rate", PolicyDirection.Write, Identity("accounting", "team.manage"))
+            .Allowed.Should().BeTrue("grant held, no denied role");
+    }
+
     // ---- PolicyEvaluator: policy-write-deny-roles ----
 
     [Fact]

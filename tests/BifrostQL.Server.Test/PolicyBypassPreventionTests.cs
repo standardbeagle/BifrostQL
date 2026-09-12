@@ -59,15 +59,22 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
     private const string ProfileName = "policy";
 
     // Documents is read-denied entirely; Orders permits read + update, denies
-    // the "secret" column for read and write, and scopes non-admin rows by
-    // tenant. The row-scope expression (carrying '{placeholder}' braces) is
-    // applied directly to the loaded table's metadata to keep setup explicit.
+    // the "secret" column for read and write (unconditionally — E19 drops it
+    // from the insert/update input types), and scopes non-admin rows by
+    // tenant. Accounts carries a GRANT-CONDITIONAL write deny: balance stays
+    // in the input type (the type is shared across callers) and the policy
+    // transformer refuses only callers holding the member role. The row-scope
+    // expression (carrying '{placeholder}' braces) is applied directly to the
+    // loaded table's metadata to keep setup explicit.
     private static readonly string[] PolicyMetadata =
     {
         "main.Documents { policy-read-deny: body }",
         "main.Orders { policy-actions: read,update }",
         "main.Orders { policy-read-deny: secret }",
         "main.Orders { policy-write-deny: secret }",
+        "main.Accounts { policy-actions: read,update }",
+        "main.Accounts { policy-write-deny: balance }",
+        "main.Accounts { policy-write-deny-roles: member }",
     };
 
     public async Task InitializeAsync()
@@ -92,12 +99,18 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     body TEXT NOT NULL
+                );
+                CREATE TABLE Accounts (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id INTEGER NOT NULL,
+                    balance REAL NOT NULL
                 );", conn);
             await ddl.ExecuteNonQueryAsync();
 
             var seed = new SqliteCommand(
                 @"INSERT INTO Orders (tenant_id, total, secret) VALUES (1, 10.0, 'a'), (2, 20.0, 'b');
-                  INSERT INTO Documents (title, body) VALUES ('public', 'classified');", conn);
+                  INSERT INTO Documents (title, body) VALUES ('public', 'classified');
+                  INSERT INTO Accounts (tenant_id, balance) VALUES (1, 100.0);", conn);
             await seed.ExecuteNonQueryAsync();
         }
 
@@ -242,15 +255,59 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
     // ---- Mutation is enforced through the same entry point ----
 
     [Fact]
-    public async Task DirectMutation_WriteDeniedColumn_RejectedWithGenericError()
+    public async Task DirectMutation_WriteDeniedColumn_AbsentFromInputType_RowUnchanged()
     {
+        // E19: an unconditionally write-denied column left the update input
+        // type, so GraphQL argument validation — not the policy transformer —
+        // rejects it. The validation error names no table.
         var response = await ExecuteAsync(
             "mutation { orders(update: { id: 1, tenant_id: 1, total: 10.0, secret: \"leak\" }) }",
             role: "user", tenantId: 1);
 
         response.Errors.Should().ContainSingle();
+        response.Errors[0].Should().Contain("Unknown field");
+        response.Errors[0].Should().NotContainAny("Orders", "orders");
+        (await ScalarAsync("SELECT secret FROM Orders WHERE Id = 1"))
+            .Should().Be("a", "the rejected write left the stored value unchanged");
+    }
+
+    [Fact]
+    public async Task DirectMutation_GrantConditionalWriteDeniedColumn_RejectedWithGenericError()
+    {
+        // A role-qualified write deny keeps the column in the (shared) input
+        // type, so the write reaches the policy transformer and gets the
+        // generic policy refusal — same wire shape as every policy denial.
+        var response = await ExecuteAsync(
+            "mutation { accounts(update: { id: 1, tenant_id: 1, balance: 5.0 }) }",
+            role: "member", tenantId: 1);
+
+        response.Errors.Should().ContainSingle();
         response.Errors[0].Should()
             .Be("The mutation writes a field that is not permitted by authorization policy.");
+        (await ScalarAsync("SELECT balance FROM Accounts WHERE Id = 1"))
+            .Should().Be(100.0, "the refused write left the row unchanged");
+    }
+
+    [Fact]
+    public async Task DirectMutation_GrantConditionalWriteDeniedColumn_NonDeniedRoleAllowed()
+    {
+        // The same column in the same input type: a caller holding none of the
+        // deny roles writes it (admin bypass covered below).
+        var response = await ExecuteAsync(
+            "mutation { accounts(update: { id: 1, tenant_id: 1, balance: 5.0 }) }",
+            role: "accounting", tenantId: 1);
+
+        response.Errors.Should().BeEmpty();
+        (await ScalarAsync("SELECT balance FROM Accounts WHERE Id = 1")).Should().Be(5.0);
+    }
+
+    /// <summary>Reads one scalar straight from the database, bypassing the API.</summary>
+    private async Task<object?> ScalarAsync(string sql)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new SqliteCommand(sql, conn);
+        return await cmd.ExecuteScalarAsync();
     }
 
     [Fact]

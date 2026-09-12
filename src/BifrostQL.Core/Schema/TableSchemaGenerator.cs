@@ -141,6 +141,48 @@ namespace BifrostQL.Core.Schema
         private bool IsBlindIndexTarget(ColumnDto column) =>
             BlindIndexTargets.Count > 0 && BlindIndexTargets.Contains(column.DbName);
 
+        private Auth.TablePolicy? _writePolicy;
+
+        /// <summary>
+        /// The table's authorization policy, parsed once per generation. Drives
+        /// the E19 input-type shape: a column write-denied for EVERY caller
+        /// (unconditional <c>policy-write-deny</c>, no roles) leaves the
+        /// insert/update input types entirely — a NOT NULL server-computed column
+        /// must not make the table un-insertable. A grant-conditional column
+        /// (role-qualified deny, or <c>write-requires</c>) stays in the shared
+        /// input type but is emitted optional, since a caller without the grant
+        /// must be able to omit it. The mutation pipeline remains the backstop;
+        /// this only shapes the schema.
+        /// </summary>
+        private Auth.TablePolicy WritePolicy =>
+            _writePolicy ??= ParseWritePolicy();
+
+        private Auth.TablePolicy ParseWritePolicy()
+        {
+            try
+            {
+                return Auth.PolicyConfigCollector.FromTable(_table);
+            }
+            catch (InvalidOperationException)
+            {
+                // Invalid policy config (e.g. an unrecognized policy-actions
+                // token) must not break schema emission: ModelConfigValidator
+                // fails the model load fast in production, and the mutation
+                // pipeline re-parses at write time and fails CLOSED there.
+                // The schema simply applies no input-type shaping.
+                return Auth.TablePolicy.None;
+            }
+        }
+
+        private bool IsUnconditionallyWriteDenied(ColumnDto column) =>
+            WritePolicy.WriteDenyColumns.Contains(column.DbName)
+            && WritePolicy.WriteDenyRoles.Count == 0;
+
+        private bool IsGrantConditionalWrite(ColumnDto column) =>
+            (WritePolicy.WriteDenyColumns.Contains(column.DbName)
+             && WritePolicy.WriteDenyRoles.Count > 0)
+            || WritePolicy.WriteRequires.ContainsKey(column.DbName);
+
         public string GetTableFieldDefinition()
         {
             var moduleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(_table);
@@ -347,9 +389,18 @@ namespace BifrostQL.Core.Schema
                     continue;
                 if (IsBlindIndexTarget(column))
                     continue;
+                // E19: a column no caller may write leaves the insert/update
+                // input types; a delete input keeps every column (keys).
+                if (!isDelete && IsUnconditionallyWriteDenied(column))
+                    continue;
 
                 var isNullable = column.IsNullable;
                 if (IsAutoPopulated(column) || IsTenantPinned(column))
+                    isNullable = true;
+                // Grant-conditional write (role-qualified deny or
+                // write-requires): the shared input type must let a caller
+                // without the grant omit the column.
+                if (!isDelete && IsGrantConditionalWrite(column))
                     isNullable = true;
                 if (column.IsIdentity)
                     isNullable = identityType switch

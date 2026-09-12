@@ -111,13 +111,17 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             };
         }
 
-        // Column write-deny — any written column on the deny list aborts.
+        // Column write-deny — any written column on the deny list aborts. The
+        // write-requires grant gate is exempted for deletes (E5: a delete
+        // carries no writable columns); the deny list still applies, matching
+        // the pre-existing delete-data semantics.
+        var isDelete = mutationType == MutationType.Delete;
         foreach (var column in data.Keys)
         {
             if (string.IsNullOrWhiteSpace(column))
                 continue;
 
-            if (!_evaluator.IsColumnAllowed(policy, column, PolicyDirection.Write, identity).Allowed)
+            if (!_evaluator.IsColumnAllowed(policy, column, PolicyDirection.Write, identity, forDelete: isDelete).Allowed)
             {
                 return new MutationTransformResult
                 {

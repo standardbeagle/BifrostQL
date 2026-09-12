@@ -44,13 +44,16 @@ public static class PolicyConfigCollector
         var readDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.ReadDeny);
         var readDenyRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.ReadDenyRoles);
         var writeDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.WriteDeny);
+        var writeDenyRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.WriteDenyRoles);
         var rowScopeRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScope);
         var rowScopeRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeRoles);
+        var writeRequires = CollectWriteRequires(table);
 
         var hasAny =
             !string.IsNullOrWhiteSpace(actionsRaw) ||
             !string.IsNullOrWhiteSpace(readDenyRaw) ||
             !string.IsNullOrWhiteSpace(writeDenyRaw) ||
+            writeRequires.Count > 0 ||
             !string.IsNullOrWhiteSpace(rowScopeRaw);
 
         if (!hasAny)
@@ -62,7 +65,29 @@ public static class PolicyConfigCollector
             writeDenyColumns: SplitList(writeDenyRaw),
             rowScopeExpression: rowScopeRaw,
             rowScopeRoles: SplitList(rowScopeRolesRaw),
-            readDenyRoles: SplitList(readDenyRolesRaw));
+            readDenyRoles: SplitList(readDenyRolesRaw),
+            writeDenyRoles: SplitList(writeDenyRolesRaw),
+            writeRequires: writeRequires.Count > 0 ? writeRequires : null);
+    }
+
+    /// <summary>
+    /// Collects the column-selector <c>write-requires</c> grants
+    /// (<c>public.users.cost_rate { write-requires: team.manage }</c>) into a
+    /// column → grants map keyed by the column's DB name. A column whose
+    /// selector value parses to no grants is kept with an EMPTY set — fail
+    /// closed: no caller can satisfy it.
+    /// </summary>
+    private static Dictionary<string, IEnumerable<string>> CollectWriteRequires(IDbTable table)
+    {
+        var result = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in table.Columns)
+        {
+            var raw = column.GetMetadataValue(MetadataKeys.Policy.WriteRequires);
+            if (raw is null)
+                continue;
+            result[column.DbName] = SplitList(raw).ToArray();
+        }
+        return result;
     }
 
     private static IEnumerable<PolicyAction> ParseActions(string? raw)

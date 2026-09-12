@@ -70,9 +70,25 @@ public sealed class PolicyEvaluator
     /// Answers whether <paramref name="identity"/> may access
     /// <paramref name="column"/> in the given <paramref name="direction"/> on a
     /// table governed by <paramref name="policy"/>.
+    ///
+    /// Write direction, in order:
+    ///   1. <see cref="TablePolicy.WriteRequires"/> — a column gated by
+    ///      <c>write-requires</c> is allowed when the caller holds ANY listed
+    ///      grant, denied otherwise (an empty grant list denies every non-admin
+    ///      caller). The check is presence-keyed: sending the column at all —
+    ///      even with the currently stored value — is a write (E4).
+    ///   2. <see cref="TablePolicy.WriteDenyColumns"/> — an unconditional deny
+    ///      blocks every non-admin caller; a deny qualified by
+    ///      <see cref="TablePolicy.WriteDenyRoles"/> blocks only callers holding
+    ///      one of those roles.
+    /// <paramref name="forDelete"/> exempts the write-requires gate only (E5):
+    /// a delete carries no writable columns; action brackets gate the delete
+    /// itself. The deny list still applies, preserving the pre-existing
+    /// delete-data semantics.
     /// </summary>
     public PolicyDecision IsColumnAllowed(
-        TablePolicy policy, string column, PolicyDirection direction, AppIdentity identity)
+        TablePolicy policy, string column, PolicyDirection direction, AppIdentity identity,
+        bool forDelete = false)
     {
         if (policy is null) throw new ArgumentNullException(nameof(policy));
         if (identity is null) throw new ArgumentNullException(nameof(identity));
@@ -86,19 +102,40 @@ public sealed class PolicyEvaluator
         if (!policy.HasPolicy)
             return PolicyDecision.Allow;
 
-        var denyList = direction == PolicyDirection.Read
-            ? policy.ReadDenyColumns
-            : policy.WriteDenyColumns;
+        if (direction == PolicyDirection.Write)
+        {
+            if (!forDelete && policy.WriteRequires.TryGetValue(column, out var requiredGrants))
+            {
+                return identity.Grants.Any(requiredGrants.Contains)
+                    ? PolicyDecision.Allow
+                    : PolicyDecision.Deny;
+            }
 
-        if (!denyList.Contains(column))
+            if (!policy.WriteDenyColumns.Contains(column))
+                return PolicyDecision.Allow;
+
+            // Role-qualified write deny, mirroring the read side: when the
+            // policy names the roles its write-deny columns apply to, a caller
+            // holding none of them may still write the column.
+            if (policy.WriteDenyRoles.Count > 0)
+            {
+                return identity.Grants.Any(policy.WriteDenyRoles.Contains)
+                    ? PolicyDecision.Deny
+                    : PolicyDecision.Allow;
+            }
+
+            return PolicyDecision.Deny;
+        }
+
+        if (!policy.ReadDenyColumns.Contains(column))
             return PolicyDecision.Allow;
 
         // Role-qualified read deny: when the policy names the roles its
         // read-deny columns apply to, a caller holding none of them may still
         // read the column (e.g. finance_manager reads a finance field that is
-        // hidden from officer/member). An unqualified deny — or any write
-        // deny — blocks every non-admin caller.
-        if (direction == PolicyDirection.Read && policy.ReadDenyRoles.Count > 0)
+        // hidden from officer/member). An unqualified deny blocks every
+        // non-admin caller.
+        if (policy.ReadDenyRoles.Count > 0)
         {
             return identity.Grants.Any(policy.ReadDenyRoles.Contains)
                 ? PolicyDecision.Deny

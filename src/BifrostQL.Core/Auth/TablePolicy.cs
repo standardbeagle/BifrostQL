@@ -85,6 +85,24 @@ public sealed record TablePolicy
     public IReadOnlySet<string> WriteDenyColumns { get; }
 
     /// <summary>
+    /// Optional set of role names the <see cref="WriteDenyColumns"/> list applies
+    /// to (case-insensitive match). When empty, the write-deny columns are blocked
+    /// for every non-admin caller. When non-empty, only a caller holding one of
+    /// these roles is blocked — other non-admin callers may write them. Mirrors
+    /// <see cref="ReadDenyRoles"/>.
+    /// </summary>
+    public IReadOnlySet<string> WriteDenyRoles { get; }
+
+    /// <summary>
+    /// Per-column write grants (column name case-insensitive → grant names,
+    /// case-insensitive). A column present here may be written only by a caller
+    /// holding ANY of the listed grants; a caller holding none is denied.
+    /// Collected from column-selector <c>write-requires</c> metadata. Never
+    /// applies to DELETE — a delete carries no writable columns.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> WriteRequires { get; }
+
+    /// <summary>
     /// Optional row-scope policy expression, stored verbatim. Compilation of this
     /// expression into a query filter is sub-task 2's responsibility; sub-task 1
     /// only parses and carries it.
@@ -118,6 +136,8 @@ public sealed record TablePolicy
         string? rowScopeExpression = null,
         IEnumerable<string>? rowScopeRoles = null,
         IEnumerable<string>? readDenyRoles = null,
+        IEnumerable<string>? writeDenyRoles = null,
+        IReadOnlyDictionary<string, IEnumerable<string>>? writeRequires = null,
         bool forceHasPolicy = false)
     {
         AllowedActions = new HashSet<PolicyAction>(
@@ -128,6 +148,9 @@ public sealed record TablePolicy
             readDenyRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         WriteDenyColumns = new HashSet<string>(
             writeDenyColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        WriteDenyRoles = new HashSet<string>(
+            writeDenyRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        WriteRequires = NormalizeWriteRequires(writeRequires);
         RowScopeExpression = string.IsNullOrWhiteSpace(rowScopeExpression)
             ? null
             : rowScopeExpression.Trim();
@@ -138,6 +161,25 @@ public sealed record TablePolicy
             AllowedActions.Count > 0 ||
             ReadDenyColumns.Count > 0 ||
             WriteDenyColumns.Count > 0 ||
+            WriteRequires.Count > 0 ||
             RowScopeExpression is not null || forceHasPolicy;
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>> NormalizeWriteRequires(
+        IReadOnlyDictionary<string, IEnumerable<string>>? writeRequires)
+    {
+        var result = new Dictionary<string, IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
+        if (writeRequires is null)
+            return result;
+        foreach (var (column, grants) in writeRequires)
+        {
+            if (string.IsNullOrWhiteSpace(column))
+                continue;
+            // An empty grant list gates the column for EVERY non-admin caller
+            // (fail closed): no grant can satisfy it.
+            result[column.Trim()] = new HashSet<string>(
+                grants ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        }
+        return result;
     }
 }

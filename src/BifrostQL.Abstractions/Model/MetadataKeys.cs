@@ -369,6 +369,29 @@ namespace BifrostQL.Core.Model
             public const string WriteDeny = "policy-write-deny";
 
             /// <summary>
+            /// Optional table-level comma-separated list of role names the
+            /// <see cref="WriteDeny"/> column list applies to. When present, the
+            /// write-deny columns are blocked only for a caller holding one of
+            /// these roles; every other non-admin caller may write them. When
+            /// absent, the write-deny columns are blocked for every non-admin
+            /// caller. Mirrors <see cref="ReadDenyRoles"/>.
+            /// </summary>
+            public const string WriteDenyRoles = "policy-write-deny-roles";
+
+            /// <summary>
+            /// Column-level comma-separated list of grants, any one of which a
+            /// caller must hold to write the column. Configured via column
+            /// selectors, mirroring the audit <c>populate</c> rules:
+            ///   "public.users.cost_rate { write-requires: team.manage }"
+            ///   "public.*.cost_rate { write-requires: team.manage }"
+            /// Presence-keyed: an update that does not send the column is
+            /// unaffected; sending it — even with the currently stored value —
+            /// is a write. Never applies to DELETE (a delete carries no
+            /// writable columns).
+            /// </summary>
+            public const string WriteRequires = "write-requires";
+
+            /// <summary>
             /// Table-level row-scope policy expression, stored verbatim. Its
             /// compilation into a query filter is handled by a later sub-task.
             /// </summary>

@@ -147,6 +147,71 @@ public sealed class PolicyEvaluator
         return PolicyDecision.Deny;
     }
 
+    /// <summary>
+    /// Answers how a READ of <paramref name="column"/> resolves for
+    /// <paramref name="identity"/>: <see cref="ReadColumnDisposition.Allow"/>,
+    /// <see cref="ReadColumnDisposition.Mask"/> (the selection succeeds with the
+    /// value nulled), or <see cref="ReadColumnDisposition.Refuse"/> (the query
+    /// is rejected). Read denial has two sources:
+    ///   1. <see cref="TablePolicy.ReadRequires"/> — a column gated by
+    ///      <c>read-requires</c> is denied when the caller holds none of the
+    ///      listed grants (an empty grant list denies every non-admin caller).
+    ///   2. <see cref="TablePolicy.ReadDenyColumns"/> — an unconditional deny
+    ///      blocks every non-admin caller; a deny qualified by
+    ///      <see cref="TablePolicy.ReadDenyRoles"/> blocks only callers holding
+    ///      one of those roles.
+    /// The deny MODE resolves column <c>deny-mode</c> first, then the table
+    /// <c>deny-mode</c>, then the source default: <c>refuse</c> for the deny
+    /// list (shipped behaviour), <c>null</c> (mask) for <c>read-requires</c>.
+    /// </summary>
+    public ReadColumnDisposition GetReadDisposition(
+        TablePolicy policy, string column, AppIdentity identity)
+    {
+        if (policy is null) throw new ArgumentNullException(nameof(policy));
+        if (identity is null) throw new ArgumentNullException(nameof(identity));
+        if (string.IsNullOrWhiteSpace(column))
+            throw new ArgumentException("Column name is required.", nameof(column));
+
+        if (IsAdmin(identity))
+            return ReadColumnDisposition.Allow;
+
+        // Opt-in default: a table with no policy metadata is unrestricted.
+        if (!policy.HasPolicy)
+            return ReadColumnDisposition.Allow;
+
+        bool denied;
+        var defaultRefuse = false;
+        if (policy.ReadRequires.ContainsKey(column))
+        {
+            var requiredGrants = policy.ReadRequires[column];
+            denied = !identity.Grants.Any(requiredGrants.Contains);
+        }
+        else if (policy.ReadDenyColumns.Contains(column))
+        {
+            defaultRefuse = true;
+            // Role-qualified read deny: when the policy names the roles its
+            // read-deny columns apply to, a caller holding none of them may
+            // still read the column.
+            denied = policy.ReadDenyRoles.Count == 0
+                || identity.Grants.Any(policy.ReadDenyRoles.Contains);
+        }
+        else
+        {
+            return ReadColumnDisposition.Allow;
+        }
+
+        if (!denied)
+            return ReadColumnDisposition.Allow;
+
+        var mode = policy.ColumnDenyModes.TryGetValue(column, out var columnMode)
+            ? columnMode
+            : policy.TableDenyMode;
+        var refuse = mode is null
+            ? defaultRefuse
+            : string.Equals(mode, "refuse", StringComparison.OrdinalIgnoreCase);
+        return refuse ? ReadColumnDisposition.Refuse : ReadColumnDisposition.Mask;
+    }
+
     private bool IsAdmin(AppIdentity identity) =>
         identity.Grants.Contains(_adminRole);
 }

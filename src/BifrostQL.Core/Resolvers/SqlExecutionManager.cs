@@ -779,7 +779,9 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var (column, ordinal) in tableData.index)
                 {
                     if (ordinal < row.Length)
-                        map[column] = cryptoRead.Project(query.DbTable.DbName, column, ReaderEnum.DbConvert(row[ordinal]));
+                        map[column] = IsMaskedColumn(query, query.DbTable, column)
+                            ? null
+                            : cryptoRead.Project(query.DbTable.DbName, column, ReaderEnum.DbConvert(row[ordinal]));
                 }
                 rows.Add(map);
             }
@@ -854,10 +856,33 @@ namespace BifrostQL.Core.Resolvers
                     {
                         if (idx >= jr.Length) continue;
                         map[$"{connectedTable}.{colName}"] =
-                            cryptoRead.Project(connectedTable, colName, ReaderEnum.DbConvert(jr[idx]));
+                            IsMaskedColumn(join.ConnectedTable, join.ConnectedTable.DbTable, colName)
+                                ? null
+                                : cryptoRead.Project(connectedTable, colName, ReaderEnum.DbConvert(jr[idx]));
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// True when <paramref name="columnName"/> was masked for this caller on
+        /// this query node (S4b: <c>read-requires</c> / <c>deny-mode: null</c>).
+        /// The mask set recorded by the transformer pass is keyed by DB column
+        /// name; result-set column labels may be GraphQL names, so both name
+        /// spaces resolve before the lookup.
+        /// </summary>
+        private static bool IsMaskedColumn(GqlObjectQuery node, IDbTable table, string columnName)
+        {
+            var masked = ColumnMaskRegistry.For(node, table);
+            if (masked is null || masked.Count == 0)
+                return false;
+            if (masked.Contains(columnName))
+                return true;
+            if (table.GraphQlLookup.TryGetValue(columnName, out var byGraphQl) && masked.Contains(byGraphQl.DbName))
+                return true;
+            if (table.ColumnLookup.TryGetValue(columnName, out var byDb) && masked.Contains(byDb.DbName))
+                return true;
+            return false;
         }
 
         /// <summary>

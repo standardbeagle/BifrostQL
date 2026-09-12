@@ -56,9 +56,32 @@ namespace BifrostQL.Core.Resolvers
             if (found)
             {
                 var raw = DbConvert(table.data[row][index]);
-                return ValueTask.FromResult(MapEnumValueOrRaw(_tableSql.DbTable.DbName, name, raw));
+                return ValueTask.FromResult(ApplyColumnMask(_tableSql, name, MapEnumValueOrRaw(_tableSql.DbTable.DbName, name, raw)));
             }
             return GetDataForMissingColumn(context, table, row);
+        }
+
+        /// <summary>
+        /// Nulls a value whose column the transformer pass masked for this
+        /// caller (S4b: <c>read-requires</c> / <c>deny-mode: null</c>). The mask
+        /// set is per query node and keyed by DB column name; the GraphQL field
+        /// name resolves through the table's name lookups. Masking is
+        /// selection-only — predicate use was refused upstream.
+        /// </summary>
+        internal static object? ApplyColumnMask(GqlObjectQuery level, string? fieldName, object? value)
+        {
+            if (value is null || fieldName is null)
+                return value;
+            var masked = ColumnMaskRegistry.For(level, level.DbTable);
+            if (masked is null || masked.Count == 0)
+                return value;
+            if (masked.Contains(fieldName))
+                return null;
+            if (level.DbTable.GraphQlLookup.TryGetValue(fieldName, out var byGraphQl) && masked.Contains(byGraphQl.DbName))
+                return null;
+            if (level.DbTable.ColumnLookup.TryGetValue(fieldName, out var byDb) && masked.Contains(byDb.DbName))
+                return null;
+            return value;
         }
 
         /// <summary>
@@ -407,7 +430,7 @@ namespace BifrostQL.Core.Resolvers
             }
 
             var raw = ReaderEnum.DbConvert(_data[row][index]);
-            return ValueTask.FromResult(_root.MapEnumValueOrRaw(_level.DbTable.DbName, column, raw));
+            return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, column, _root.MapEnumValueOrRaw(_level.DbTable.DbName, column, raw)));
         }
 
 
@@ -460,9 +483,9 @@ namespace BifrostQL.Core.Resolvers
             var name = context.FieldName;
             var alias = context.FieldAlias;
             if (_index.TryGetValue(alias ?? name, out var index))
-                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index])));
+                return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, name, _root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index]))));
             if (_index.TryGetValue(name, out var index2))
-                return ValueTask.FromResult(_root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index2])));
+                return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, name, _root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index2]))));
 
             _data ??= new List<object?[]> { _row };
 

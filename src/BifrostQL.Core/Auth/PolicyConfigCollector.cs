@@ -48,12 +48,16 @@ public static class PolicyConfigCollector
         var rowScopeRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScope);
         var rowScopeRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeRoles);
         var writeRequires = CollectWriteRequires(table);
+        var readRequires = CollectReadRequires(table);
+        var columnDenyModes = CollectColumnDenyModes(table);
+        var tableDenyModeRaw = table.GetMetadataValue(MetadataKeys.Policy.DenyMode);
 
         var hasAny =
             !string.IsNullOrWhiteSpace(actionsRaw) ||
             !string.IsNullOrWhiteSpace(readDenyRaw) ||
             !string.IsNullOrWhiteSpace(writeDenyRaw) ||
             writeRequires.Count > 0 ||
+            readRequires.Count > 0 ||
             !string.IsNullOrWhiteSpace(rowScopeRaw);
 
         if (!hasAny)
@@ -67,7 +71,66 @@ public static class PolicyConfigCollector
             rowScopeRoles: SplitList(rowScopeRolesRaw),
             readDenyRoles: SplitList(readDenyRolesRaw),
             writeDenyRoles: SplitList(writeDenyRolesRaw),
-            writeRequires: writeRequires.Count > 0 ? writeRequires : null);
+            writeRequires: writeRequires.Count > 0 ? writeRequires : null,
+            readRequires: readRequires.Count > 0 ? readRequires : null,
+            columnDenyModes: columnDenyModes.Count > 0 ? columnDenyModes : null,
+            tableDenyMode: string.IsNullOrWhiteSpace(tableDenyModeRaw)
+                ? null
+                : NormalizeDenyMode(tableDenyModeRaw));
+    }
+
+    /// <summary>
+    /// Collects the column-selector <c>read-requires</c> grants
+    /// (<c>public.members.cost_rate { read-requires: rates.view_cost }</c>) into a
+    /// column → grants map keyed by the column's DB name. A column whose
+    /// selector value parses to no grants is kept with an EMPTY set — fail
+    /// closed: no caller can satisfy it.
+    /// </summary>
+    private static Dictionary<string, IEnumerable<string>> CollectReadRequires(IDbTable table)
+    {
+        var result = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in table.Columns)
+        {
+            var raw = column.GetMetadataValue(MetadataKeys.Policy.ReadRequires);
+            if (raw is null)
+                continue;
+            result[column.DbName] = SplitList(raw).ToArray();
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Collects per-column <c>deny-mode</c> overrides (normalized lowercase).
+    /// The closed grammar (null|refuse) is enforced at model load by
+    /// <c>ModelConfigValidator</c>; an unrecognized value that somehow reaches
+    /// the collector is treated as <c>refuse</c> — fail closed.
+    /// </summary>
+    private static Dictionary<string, string> CollectColumnDenyModes(IDbTable table)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in table.Columns)
+        {
+            var raw = column.GetMetadataValue(MetadataKeys.Policy.DenyMode);
+            if (raw is null)
+                continue;
+            result[column.DbName] = NormalizeDenyMode(raw);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Normalizes a <c>deny-mode</c> value. Shared by the collector and the
+    /// load-time validator so both parse with the SAME rule. Throws on any
+    /// value outside the closed grammar — a typo must fail load, never read as
+    /// a mode.
+    /// </summary>
+    public static string NormalizeDenyMode(string raw)
+    {
+        var mode = raw.Trim().ToLowerInvariant();
+        if (mode is "null" or "refuse")
+            return mode;
+        throw new InvalidOperationException(
+            $"Unknown deny-mode '{raw}'. Valid modes: null, refuse.");
     }
 
     /// <summary>

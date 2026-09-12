@@ -68,6 +68,7 @@ public sealed class TableReadChain
     private readonly CryptoReadProjector _crypto;
     private readonly ReadProjection _projection;
     private IReadOnlyList<ColumnDto>? _readableColumns;
+    private IReadOnlySet<string>? _maskedColumns;
 
     private TableReadChain(
         IDbTable table,
@@ -186,6 +187,13 @@ public sealed class TableReadChain
         if (names.Length == 0)
             return;
 
+        // A masked column is selection-only: as a predicate it is a value
+        // oracle, so it is refused exactly like a read deny.
+        if (names.Any(MaskedColumns.Contains))
+            throw new BifrostExecutionError(
+                "The query references a field that is not permitted by authorization policy.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+
         foreach (var guard in _filterTransformers.OfType<IColumnReadGuard>())
             guard.AssertColumnsReadable(Table, names, _transformContext);
         foreach (var guard in _filterTransformers.OfType<IColumnFilterGuard>())
@@ -193,11 +201,36 @@ public sealed class TableReadChain
     }
 
     /// <summary>
+    /// The columns (DB names) the caller may SELECT but not READ on this table
+    /// — the union of the registered <see cref="IColumnReadGuard.MaskedColumns"/>
+    /// answers over the table's columns. The materialiser writes null for them.
+    /// </summary>
+    public IReadOnlySet<string> MaskedColumns => _maskedColumns ??= ComputeMaskedColumns();
+
+    private IReadOnlySet<string> ComputeMaskedColumns()
+    {
+        if (_filterTransformers is null || _transformContext is null)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var all = Table.Columns.Select(c => c.DbName).ToArray();
+        var masked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var guard in _filterTransformers.OfType<IColumnReadGuard>())
+            foreach (var name in guard.MaskedColumns(Table, all, _transformContext))
+                masked.Add(name);
+        return masked;
+    }
+
+    /// <summary>
     /// Projects one column value: decrypt/mask for an encrypted column per this
     /// chain's <see cref="ReadProjection"/>, pass-through otherwise.
     /// </summary>
+    /// <summary>
+    /// Projects one column value: null when the column is masked for this
+    /// caller, decrypt/mask for an encrypted column per this chain's
+    /// <see cref="ReadProjection"/>, pass-through otherwise.
+    /// </summary>
     public object? ProjectValue(string columnDbName, object? raw) =>
-        _crypto.Project(Table.DbName, columnDbName, raw);
+        MaskedColumns.Contains(columnDbName) ? null : _crypto.Project(Table.DbName, columnDbName, raw);
 
     /// <summary>
     /// Projects every value of a materialized row in place and returns it.

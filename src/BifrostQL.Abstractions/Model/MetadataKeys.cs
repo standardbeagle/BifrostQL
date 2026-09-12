@@ -392,6 +392,28 @@ namespace BifrostQL.Core.Model
             public const string WriteRequires = "write-requires";
 
             /// <summary>
+            /// Column-level comma-separated list of grants, any one of which a
+            /// caller must hold to READ the column. Configured via column
+            /// selectors, mirroring <see cref="WriteRequires"/>:
+            ///   "public.members.cost_rate { read-requires: rates.view_cost }"
+            /// A caller holding none of the listed grants gets the column MASKED
+            /// to null in selections (the default deny mode); the column is still
+            /// refused as a filter, sort, or aggregate input.
+            /// </summary>
+            public const string ReadRequires = "read-requires";
+
+            /// <summary>
+            /// How a read-denied column is enforced: <c>null</c> (mask the value
+            /// to null in selections) or <c>refuse</c> (reject the query). Valid
+            /// on a column selector or on the table (the column value wins).
+            /// Default: <c>null</c> for <see cref="ReadRequires"/>-gated columns,
+            /// <c>refuse</c> for <see cref="ReadDeny"/> columns (shipped
+            /// behaviour). Masked columns are refused as filter/sort/aggregate
+            /// inputs under either mode.
+            /// </summary>
+            public const string DenyMode = "deny-mode";
+
+            /// <summary>
             /// Table-level row-scope policy expression, stored verbatim. Its
             /// compilation into a query filter is handled by a later sub-task.
             /// </summary>

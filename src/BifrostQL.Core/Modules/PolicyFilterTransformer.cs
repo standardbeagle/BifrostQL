@@ -105,10 +105,15 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
     }
 
     /// <summary>
-    /// Column-read-deny enforcement seam. Throws <see cref="BifrostExecutionError"/>
-    /// when <paramref name="requestedColumns"/> includes any column the caller may
-    /// not read under <paramref name="table"/>'s policy. The error message is
-    /// generic and never names the column or table.
+    /// Column-read-deny enforcement seam, refuse half. Throws
+    /// <see cref="BifrostExecutionError"/> when <paramref name="requestedColumns"/>
+    /// includes any column whose read disposition for this caller is
+    /// <see cref="ReadColumnDisposition.Refuse"/>. Columns whose disposition is
+    /// <see cref="ReadColumnDisposition.Mask"/> do NOT throw here — they are
+    /// answered by <see cref="MaskedColumns"/> and nulled by the row
+    /// materialiser; <see cref="QueryTransformerService"/> still rejects them
+    /// in filter/sort/aggregate positions. The error message is generic and
+    /// never names the column or table.
     /// </summary>
     public void AssertColumnsReadable(
         IDbTable table,
@@ -127,10 +132,45 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
             if (string.IsNullOrWhiteSpace(column))
                 continue;
 
-            if (!_evaluator.IsColumnAllowed(policy, column, PolicyDirection.Read, identity).Allowed)
+            if (_evaluator.GetReadDisposition(policy, column, identity) == ReadColumnDisposition.Refuse)
                 throw new BifrostExecutionError(ColumnReadDeniedMessage)
                 { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
+    }
+
+    /// <summary>
+    /// Masking half of column-read-deny: the subset of
+    /// <paramref name="requestedColumns"/> whose read disposition for this
+    /// caller is <see cref="ReadColumnDisposition.Mask"/> — a column gated by
+    /// <c>read-requires</c> the caller does not hold (default), or a
+    /// <c>policy-read-deny</c> column carrying <c>deny-mode: null</c>. The
+    /// caller selects the column and receives null; filter/sort/aggregate use
+    /// stays refused. Returned names are DB column names.
+    /// </summary>
+    public IReadOnlySet<string> MaskedColumns(
+        IDbTable table,
+        IEnumerable<string> requestedColumns,
+        QueryTransformContext context)
+    {
+        if (table is null) throw new ArgumentNullException(nameof(table));
+        if (requestedColumns is null) throw new ArgumentNullException(nameof(requestedColumns));
+        if (context is null) throw new ArgumentNullException(nameof(context));
+
+        var policy = PolicyConfigCollector.FromTable(table);
+        if (!policy.HasPolicy)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identity = BuildIdentity(context);
+
+        var masked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in requestedColumns)
+        {
+            if (string.IsNullOrWhiteSpace(column))
+                continue;
+
+            if (_evaluator.GetReadDisposition(policy, column, identity) == ReadColumnDisposition.Mask)
+                masked.Add(column);
+        }
+        return masked;
     }
 
     // Identity projection is shared with every other policy-gated surface via

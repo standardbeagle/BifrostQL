@@ -250,7 +250,7 @@ public sealed class ColumnMaskLeakTests : IAsyncLifetime
     public async Task Member_UpdatePersists_ReadBackShowsMask()
     {
         var mutation = await MutateAsync(
-            "mutation { members(update: { id: 1, display_name: \"zed\" }) }", "member");
+            "mutation { members(update: { id: 1, display_name: \"zed\", cost_rate: 250.5, hourly_rate: 120.0 }) }", "member");
         mutation.Errors.Should().BeNullOrEmpty();
 
         // The write persisted (read straight from SQLite, no projection involved).

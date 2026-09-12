@@ -55,6 +55,22 @@ public interface IColumnReadGuard
         IDbTable table,
         IEnumerable<string> requestedColumns,
         QueryTransformContext context);
+
+    /// <summary>
+    /// The masking answer companion to <see cref="AssertColumnsReadable"/>: the
+    /// subset of <paramref name="requestedColumns"/> the caller may not read but
+    /// may SELECT — the row materialiser writes null for them instead of the
+    /// guard rejecting the query. Masked columns are STILL refused as filter,
+    /// sort, and aggregate inputs by the caller (<see cref="QueryTransformerService"/>);
+    /// masking is for selection only. Default: nothing is masked (a guard that
+    /// predates masking keeps pure reject semantics). Returned names are DB
+    /// column names.
+    /// </summary>
+    IReadOnlySet<string> MaskedColumns(
+        IDbTable table,
+        IEnumerable<string> requestedColumns,
+        QueryTransformContext context) =>
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>

@@ -459,6 +459,7 @@ public sealed class QueryTransformerService : IQueryTransformerService
             foreach (var (table, column) in extraReadColumns)
                 AddRead(table, column);
 
+        var maskedByTable = new Dictionary<IDbTable, IReadOnlySet<string>>();
         foreach (var (table, columns) in columnsByTable)
         {
             if (columns.Count == 0)
@@ -467,7 +468,57 @@ public sealed class QueryTransformerService : IQueryTransformerService
             var names = columns.ToArray();
             foreach (var guard in guards)
                 guard.AssertColumnsReadable(table, names, context);
+
+            // Masking half of the read guard: columns the caller may SELECT but
+            // not READ. Union of every guard's answer; recorded for the row
+            // materialiser below.
+            var masked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var guard in guards)
+                foreach (var name in guard.MaskedColumns(table, names, context))
+                    masked.Add(name);
+            if (masked.Count > 0)
+                maskedByTable[table] = masked;
         }
+
+        // A masked column is selection-only: as a filter/sort/aggregate input
+        // it is a value oracle (the boolean result set or the ordering reveals
+        // the denied value), so it is refused exactly like a read deny.
+        const string maskedPredicateMessage =
+            "The query references a field that is not permitted by authorization policy.";
+        foreach (var (table, columns) in filteredByTable)
+        {
+            if (columns.Count == 0)
+                continue;
+            if (maskedByTable.TryGetValue(table, out var masked) && columns.Overlaps(masked))
+                throw new BifrostExecutionError(maskedPredicateMessage)
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+        }
+
+        // Computed columns: a computed column whose declared inputs include a
+        // masked column is itself masked; one whose inputs cannot be named (no
+        // declared dependencies) is refused outright whenever its table masks
+        // anything — projecting it could evaluate over the denied value.
+        if (query.DbTable is not null
+            && maskedByTable.TryGetValue(query.DbTable, out var tableMask)
+            && tableMask.Count > 0)
+        {
+            var expanded = new HashSet<string>(tableMask, StringComparer.OrdinalIgnoreCase);
+            foreach (var column in query.ScalarColumns)
+            {
+                if (column.ComputedColumn is null)
+                    continue;
+                if (column.ComputedColumn.Dependencies.Count == 0)
+                    throw new BifrostExecutionError(maskedPredicateMessage)
+                    { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+                var inputs = column.ComputedColumn.Dependencies
+                    .Select(d => ComputedColumnDefinition.ResolveDependencyColumn(query.DbTable, d));
+                if (inputs.Any(expanded.Contains))
+                    expanded.Add(column.DbDbName);
+            }
+            maskedByTable[query.DbTable] = expanded;
+        }
+
+        ColumnMaskRegistry.Set(query, maskedByTable);
 
         foreach (var (table, columns) in filteredByTable)
         {

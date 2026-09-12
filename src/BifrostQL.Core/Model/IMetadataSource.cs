@@ -130,6 +130,9 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Policy.WriteDenyRoles,
             MetadataKeys.Policy.RowScope,
             MetadataKeys.Policy.RowScopeRoles,
+            // deny-mode is valid at table level (default for all denied columns)
+            // and at column level (per-column override).
+            MetadataKeys.Policy.DenyMode,
             // EAV configuration (table-level).
             MetadataKeys.Eav.Parent,
             MetadataKeys.Eav.ForeignKey,
@@ -283,6 +286,11 @@ namespace BifrostQL.Core.Model
             // miscased key must be flagged, not silently leave a column
             // writable).
             MetadataKeys.Policy.WriteRequires,
+            // Read-side column grants and per-column deny-mode override
+            // (security — a miscased key must be flagged, not silently leave a
+            // column readable).
+            MetadataKeys.Policy.ReadRequires,
+            MetadataKeys.Policy.DenyMode,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

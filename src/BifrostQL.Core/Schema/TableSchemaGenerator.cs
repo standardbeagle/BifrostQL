@@ -119,6 +119,32 @@ namespace BifrostQL.Core.Schema
                && MetadataKeys.AutoPopulate.KnownPopulators.Contains(value);
 
         /// <summary>
+        /// True when some caller may see this column MASKED to null on read
+        /// (S4b): the column carries <c>read-requires</c> (default mode masks)
+        /// or is named in <c>policy-read-deny</c> with an effective
+        /// <c>deny-mode: null</c>. A <c>deny-mode: refuse</c> override (column,
+        /// then table) keeps the throw, and the column keeps its declared
+        /// nullability.
+        /// </summary>
+        private bool MayBeMasked(ColumnDto column)
+        {
+            var mode = column.GetMetadataValue(MetadataKeys.Policy.DenyMode)
+                ?? _table.GetMetadataValue(MetadataKeys.Policy.DenyMode);
+            var refuse = string.Equals(mode?.Trim(), "refuse", StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Policy.ReadRequires)))
+                return !refuse;
+
+            var readDeny = _table.GetMetadataValue(MetadataKeys.Policy.ReadDeny);
+            if (string.IsNullOrWhiteSpace(readDeny) || refuse)
+                return false;
+            var denied = readDeny
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Contains(column.DbName, StringComparer.OrdinalIgnoreCase);
+            return denied
+                && string.Equals(mode?.Trim(), "null", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// True when <paramref name="column"/> is the table's tenant-filter column.
         /// TenantMutationTransformer pins its value server-side on every INSERT/UPDATE,
         /// so input types must not require the client to supply it.
@@ -292,7 +318,12 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine($"type {_table.GraphQlName} {{");
             foreach (var column in VisibleColumns)
             {
-                var fieldType = ResolveFieldType(column, column.IsNullable, FieldTypeKind.Type);
+                // A mask-able column (read-requires / policy-read-deny with
+                // deny-mode: null) is emitted NULLABLE even when the underlying
+                // column is NOT NULL: a caller without the grant receives null
+                // for it, and a non-null GraphQL type would turn that mask into
+                // an execution error.
+                var fieldType = ResolveFieldType(column, column.IsNullable || MayBeMasked(column), FieldTypeKind.Type);
                 builder.AppendLine($"\t{column.GraphQlName} : {fieldType}");
             }
 

@@ -22,6 +22,25 @@ public enum PolicyDirection
 }
 
 /// <summary>
+/// How a read of one column resolves for one caller.
+/// </summary>
+public enum ReadColumnDisposition
+{
+    /// <summary>The caller may read the value.</summary>
+    Allow,
+
+    /// <summary>
+    /// The caller may NOT read the value; the selection succeeds with the
+    /// column masked to null. Masked columns are still refused as filter,
+    /// sort, and aggregate inputs (an ORDER BY oracle is still an oracle).
+    /// </summary>
+    Mask,
+
+    /// <summary>The caller may NOT read the value; the query is rejected.</summary>
+    Refuse,
+}
+
+/// <summary>
 /// Result of a policy check. Carries the allow/deny verdict plus a
 /// non-leaking human-readable reason when denied. The reason is deliberately
 /// generic — it never names the table, column, or action involved, so it is
@@ -103,6 +122,29 @@ public sealed record TablePolicy
     public IReadOnlyDictionary<string, IReadOnlySet<string>> WriteRequires { get; }
 
     /// <summary>
+    /// Per-column read grants (column name case-insensitive → grant names,
+    /// case-insensitive). A column present here may be read only by a caller
+    /// holding ANY of the listed grants; a caller holding none is denied —
+    /// MASKED to null by default, REFUSED when <c>deny-mode: refuse</c> applies.
+    /// Collected from column-selector <c>read-requires</c> metadata.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> ReadRequires { get; }
+
+    /// <summary>
+    /// Per-column <c>deny-mode</c> overrides (column name case-insensitive →
+    /// normalized "null" or "refuse"). Collected from column-selector
+    /// <c>deny-mode</c> metadata; wins over <see cref="TableDenyMode"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ColumnDenyModes { get; }
+
+    /// <summary>
+    /// Table-level <c>deny-mode</c> default ("null" or "refuse"), or null when
+    /// unset. Applies to every read-denied column without a
+    /// <see cref="ColumnDenyModes"/> entry.
+    /// </summary>
+    public string? TableDenyMode { get; }
+
+    /// <summary>
     /// Optional row-scope policy expression, stored verbatim. Compilation of this
     /// expression into a query filter is sub-task 2's responsibility; sub-task 1
     /// only parses and carries it.
@@ -138,6 +180,9 @@ public sealed record TablePolicy
         IEnumerable<string>? readDenyRoles = null,
         IEnumerable<string>? writeDenyRoles = null,
         IReadOnlyDictionary<string, IEnumerable<string>>? writeRequires = null,
+        IReadOnlyDictionary<string, IEnumerable<string>>? readRequires = null,
+        IReadOnlyDictionary<string, string>? columnDenyModes = null,
+        string? tableDenyMode = null,
         bool forceHasPolicy = false)
     {
         AllowedActions = new HashSet<PolicyAction>(
@@ -151,6 +196,11 @@ public sealed record TablePolicy
         WriteDenyRoles = new HashSet<string>(
             writeDenyRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         WriteRequires = NormalizeWriteRequires(writeRequires);
+        ReadRequires = NormalizeWriteRequires(readRequires);
+        ColumnDenyModes = NormalizeDenyModes(columnDenyModes);
+        TableDenyMode = string.IsNullOrWhiteSpace(tableDenyMode)
+            ? null
+            : tableDenyMode.Trim().ToLowerInvariant();
         RowScopeExpression = string.IsNullOrWhiteSpace(rowScopeExpression)
             ? null
             : rowScopeExpression.Trim();
@@ -162,7 +212,23 @@ public sealed record TablePolicy
             ReadDenyColumns.Count > 0 ||
             WriteDenyColumns.Count > 0 ||
             WriteRequires.Count > 0 ||
+            ReadRequires.Count > 0 ||
             RowScopeExpression is not null || forceHasPolicy;
+    }
+
+    private static IReadOnlyDictionary<string, string> NormalizeDenyModes(
+        IReadOnlyDictionary<string, string>? columnDenyModes)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (columnDenyModes is null)
+            return result;
+        foreach (var (column, mode) in columnDenyModes)
+        {
+            if (string.IsNullOrWhiteSpace(column) || string.IsNullOrWhiteSpace(mode))
+                continue;
+            result[column.Trim()] = mode.Trim().ToLowerInvariant();
+        }
+        return result;
     }
 
     private static IReadOnlyDictionary<string, IReadOnlySet<string>> NormalizeWriteRequires(

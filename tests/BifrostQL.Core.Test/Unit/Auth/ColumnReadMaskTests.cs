@@ -87,7 +87,7 @@ public sealed class ColumnReadMaskTests
     {
         var model = ModelWithMembers(
             columnDenyMode: "refuse",
-            (MetadataKeys.Policy.DenyMode, "null"));
+            tableMetadata: (MetadataKeys.Policy.DenyMode, "null"));
 
         var policy = PolicyConfigCollector.FromTable(Members(model));
 
@@ -164,7 +164,7 @@ public sealed class ColumnReadMaskTests
         // Shipped behaviour: policy-read-deny throws unless deny-mode: null is set.
         var model = ModelWithMembers(
             readRequires: null,
-            (MetadataKeys.Policy.ReadDeny, "cost_rate"));
+            tableMetadata: (MetadataKeys.Policy.ReadDeny, "cost_rate"));
         var policy = PolicyConfigCollector.FromTable(Members(model));
 
         new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("member"))
@@ -177,7 +177,7 @@ public sealed class ColumnReadMaskTests
         var model = ModelWithMembers(
             readRequires: null,
             columnDenyMode: "null",
-            (MetadataKeys.Policy.ReadDeny, "cost_rate"));
+            tableMetadata: (MetadataKeys.Policy.ReadDeny, "cost_rate"));
         var policy = PolicyConfigCollector.FromTable(Members(model));
 
         new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("member"))
@@ -189,8 +189,11 @@ public sealed class ColumnReadMaskTests
     {
         var model = ModelWithMembers(
             readRequires: null,
-            (MetadataKeys.Policy.ReadDeny, "cost_rate"),
-            (MetadataKeys.Policy.DenyMode, "null"));
+            tableMetadata: new[]
+            {
+                (MetadataKeys.Policy.ReadDeny, "cost_rate"),
+                (MetadataKeys.Policy.DenyMode, "null"),
+            });
         var policy = PolicyConfigCollector.FromTable(Members(model));
 
         new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("member"))

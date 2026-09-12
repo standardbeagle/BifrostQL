@@ -106,9 +106,20 @@ namespace BifrostQL.Server
             userContext = new Dictionary<string, object?>();
             try
             {
+                // The connection-oriented handlers (pgwire, RESP, LDAP) are singletons, so
+                // <paramref name="services"/> here is commonly the ROOT provider. Project
+                // inside a dedicated scope: the per-request IGrantResolver (S2) is scoped,
+                // and resolving it from the root throws under scope validation (turning
+                // every login into an empty-permissions context via the fail-closed catch)
+                // or, with validation off, makes the resolver root-captive. A null provider
+                // (handler wiring that omits it) keeps the null carrier as before.
+                using var scope = services is null
+                    ? null
+                    : Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                        .CreateScope(services);
                 var carrier = new Microsoft.AspNetCore.Http.DefaultHttpContext
                 {
-                    RequestServices = services,
+                    RequestServices = scope?.ServiceProvider ?? services!,
                     User = principal,
                 };
                 var projected = authFactory.CreateUserContext(carrier);

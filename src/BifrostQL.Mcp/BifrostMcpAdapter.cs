@@ -3,6 +3,7 @@ using System.Security.Claims;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Server;
@@ -218,7 +219,13 @@ namespace BifrostQL.Mcp
             IBifrostAuthContextFactory authContextFactory, IServiceProvider services, McpAuthOptions authOptions)
             => () =>
             {
-                var carrier = new DefaultHttpContext { RequestServices = services };
+                // <paramref name="services"/> is the adapter's captured ROOT provider (the
+                // stdio transport has no per-request scope). Project inside a dedicated
+                // scope so the scoped per-request IGrantResolver (S2) resolves: from the
+                // root it would throw under scope validation — surfaced as empty
+                // permissions by the factory's fail-closed catch — or go root-captive.
+                using var scope = services.CreateScope();
+                var carrier = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
 
                 // Bearer mode: validate the presented token BEFORE any identity is minted. Only a
                 // valid token attaches a principal.
@@ -316,7 +323,12 @@ namespace BifrostQL.Mcp
         internal static Func<IDictionary<string, object?>> CreateProjectionProvider(
             IBifrostAuthContextFactory authContextFactory, IServiceProvider services, ClaimsPrincipal? principal)
         {
-            var carrier = new DefaultHttpContext { RequestServices = services };
+            // Project inside a dedicated child scope: <paramref name="services"/> is the
+            // session-initiating request's scope, but a child scope keeps the scoped
+            // IGrantResolver (S2) resolution correct regardless of which provider the
+            // caller hands in, and the snapshot below outlives both.
+            using var scope = services.CreateScope();
+            var carrier = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
             if (principal is not null)
                 carrier.User = principal;
 

@@ -170,9 +170,20 @@ public static class PolicyConfigCollector
                     $"Valid actions: {string.Join(", ", Enum.GetNames<PolicyAction>())}.");
             }
 
-            result[action] = bracket is null
-                ? Array.Empty<string>()
-                : SplitList(bracket).ToArray();
+            if (bracket is null)
+            {
+                result[action] = Array.Empty<string>();
+                continue;
+            }
+
+            var grants = SplitList(bracket).ToArray();
+            if (grants.Length == 0)
+            {
+                // A present-but-empty bracket (`delete[]`) must not degrade to
+                // UNCONDITIONAL (an empty grant set) — that is a fail-open typo.
+                throw MalformedBracket(token);
+            }
+            result[action] = grants;
         }
         return result;
     }

@@ -82,16 +82,51 @@ so the scope is skipped there — constrain inserts with `policy-actions` instea
 
 ## Deny columns
 
-Column gating has two directions and two flavours. The deny lists refuse the
-request rather than silently stripping the field, so a client learns its query
-was wrong instead of quietly receiving less than it asked for. Both deny lists
-are qualified by a `-roles` key that narrows the denial to the grants listed;
-omitting it denies every non-admin caller.
+Column gating has two directions and two flavours. A denied column is enforced
+in one of two **deny modes** (see [Mask or refuse](#mask-or-refuse)): `refuse`
+rejects the request, `null` masks the value to null in the selection. Under
+either mode a denied column is **always refused as a filter, sort, or
+aggregate input** — masking is for selection only, and an ORDER BY over a
+masked column is still a value oracle. Both deny lists are qualified by a
+`-roles` key that narrows the denial to the grants listed; omitting it denies
+every non-admin caller.
 
 | Direction | Deny | Qualifier | Grant gate |
 |---|---|---|---|
-| Read | `policy-read-deny` | `policy-read-deny-roles` | — |
+| Read | `policy-read-deny` | `policy-read-deny-roles` | `read-requires` (column selector) |
 | Write | `policy-write-deny` | `policy-write-deny-roles` | `write-requires` (column selector) |
+
+## Mask or refuse
+
+The read side picks its enforcement per column with `deny-mode: null | refuse`,
+set on the column selector or on the table (the column value wins):
+
+- `null` (mask) — the caller selects the column and gets `null` for it; the
+  rest of the row is unaffected. One query serves every caller with
+  per-caller nulls.
+- `refuse` — the query is rejected with a generic `ACCESS_DENIED` error that
+  never names the column or table.
+
+The default depends on the gate's source: `read-requires` masks by default;
+`policy-read-deny` refuses by default, so configurations shipped before
+`deny-mode` existed behave exactly as they did. Set `deny-mode: null` on a
+read-deny column to convert its throw into a mask.
+
+```text
+main.members { policy-actions: read,update }
+main.members.cost_rate { read-requires: rates.view_cost }
+main.members.hourly_rate { read-requires: rates.view_cost; deny-mode: refuse }
+main.secrets { policy-actions: read; policy-read-deny: token; deny-mode: null }
+```
+
+A member selecting `cost_rate` receives `200` with `cost_rate: null`; a holder
+of `rates.view_cost` receives the value. The same member filtering, sorting, or
+aggregating on `cost_rate` (`_agg`, grouped `<table>Aggregate`) is refused —
+and so is selecting `hourly_rate`, which opted back into `refuse`. The mask
+rides the shared read seams, so the GraphQL door and every protocol adapter
+(pgwire, OData, gRPC, MCP) return the same per-caller nulls. Mask-able columns
+are emitted nullable in the GraphQL type even when the database column is
+`NOT NULL`; otherwise the mask would surface as a non-null execution error.
 
 `write-requires` is the write side's grant dimension: a column-selector rule
 naming the grants, any one of which the caller must hold to write the column.

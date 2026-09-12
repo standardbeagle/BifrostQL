@@ -18,18 +18,19 @@ namespace BifrostQL.Core.Modules;
 ///     compiled by <see cref="RowScopeCompiler"/> and returned as an additional
 ///     filter, so <see cref="FilterTransformersWrap"/> ANDs it alongside the
 ///     tenant filter rather than replacing it.
-///   - <b>Column read deny.</b> Enforced by <see cref="AssertColumnsReadable"/>.
-///     <i>Chosen mechanism:</i> reject — a query that references a read-denied
-///     column fails with a clear, non-leaking error rather than silently
-///     stripping the column. Rejecting is consistent with the table-deny path
-///     above (both fail closed) and avoids returning a partial result the caller
-///     did not ask for. <see cref="IFilterTransformer"/> only sees the table, not
-///     the selected columns, so this is a public seam the column-selection path
-///     (sub-task 4) calls; the policy logic itself lives here. The deny may be
-///     role-qualified via <c>policy-read-deny-roles</c> (sub-task 3): when that
-///     metadata is present the deny applies only to callers holding one of the
-///     named roles, so a finance field stays readable by finance_manager while
-///     being hidden from officer/member.
+///   - <b>Column read deny.</b> Enforced by <see cref="AssertColumnsReadable"/>
+///     (refuse half) and <see cref="MaskedColumns"/> (mask half). The mode is
+///     per column: <c>deny-mode: refuse</c> rejects a query that references a
+///     read-denied column with a clear, non-leaking error; <c>deny-mode:
+///     null</c> answers the column in the mask set and the row materialiser
+///     writes null for it. <c>read-requires</c>-gated columns mask by default;
+///     <c>policy-read-deny</c> columns refuse by default (shipped behaviour).
+///     Masked columns are still refused as filter/sort/aggregate inputs by
+///     <see cref="QueryTransformerService"/> — masking is for selection only.
+///     The deny may be role-qualified via <c>policy-read-deny-roles</c>: when
+///     that metadata is present the deny applies only to callers holding one
+///     of the named roles, so a finance field stays readable by
+///     finance_manager while being hidden from officer/member.
 ///
 /// Priority 1 — within the 0-99 security range, immediately after
 /// <see cref="TenantFilterTransformer"/> at priority 0, matching

@@ -26,8 +26,8 @@ namespace BifrostQL.Core.Modules.Approval
     /// re-runs the mutation pipeline under the REQUESTER's scope, and the write-path consumers
     /// of the user context read exactly four things:
     /// the policy subject (<c>user_id</c>, read by <see cref="PolicyIdentity"/>,
-    /// <c>PolicyMutationTransformer</c>, <c>SoftDeleteMutationTransformer</c>), the policy roles
-    /// (<c>roles</c>), the tenant claim under the model's configured tenant-context key (read by
+     /// <c>PolicyMutationTransformer</c>, <c>SoftDeleteMutationTransformer</c>), the policy grants
+     /// (<c>roles</c> and <c>permissions</c>), the tenant claim under the model's configured tenant-context key (read by
     /// <c>TenantMutationTransformer</c> and the history/outbox/deferred hooks), and the claim
     /// named by the model's <c>user-audit-key</c> (the requester's audit actor). Everything else
     /// — claim arrays, email and other claim PII, opaque objects — is DROPPED, so the store holds
@@ -58,6 +58,10 @@ namespace BifrostQL.Core.Modules.Approval
             var roles = PolicyIdentity.ExtractRoles(userContext);
             if (roles.Count > 0)
                 projection[MetadataKeys.Auth.DefaultRolesContextKey] = roles.ToArray();
+
+            var permissions = PolicyIdentity.ExtractPermissions(userContext);
+            if (permissions.Count > 0)
+                projection[MetadataKeys.Auth.DefaultPermissionsContextKey] = permissions.ToArray();
 
             CopyPlain(userContext, projection, TenantFilterTransformer.ResolveTenantContextKey(model));
 

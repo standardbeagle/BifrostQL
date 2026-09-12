@@ -20,7 +20,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Added — deny-by-default authorization
 
-- Models may set `policy-default: deny`; tables without a policy are denied and hidden from schema surfaces.
+- Models may set `:root { policy-default: deny }`; every table without its own policy then denies all actions and disappears from schema surfaces. The default is stamped onto tables from the model's unified metadata, so it applies whether it arrives as a rule string or through the hosting API's root metadata. The admin role still bypasses it.
 
 ### Fixed — policy grants
 

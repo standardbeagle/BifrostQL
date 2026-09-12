@@ -14,10 +14,16 @@ touch. Authorization reads the identity; it never establishes one.
 
 The default is `allow`: a table with no `policy-*` metadata is unrestricted. For production,
 prefer `:root { policy-default: deny }`; undeclared tables then deny all actions and disappear
-from schema descriptions. An administrator still bypasses policy; set `policy-admin-role` to a
-role nobody holds when no escape is wanted. Selector rules count as declarations, so a rule such
+from schema descriptions. Selector rules count as declarations, so a rule such
 as `public.*|has(account_id) { policy-actions: read,create,update,delete }` can establish the
 common default and individual tables can narrow it.
+
+An administrator still bypasses policy. The admin role is not metadata — it is a constructor
+argument, `PolicyEvaluator(string? adminRole)`, carried by the transformers that enforce policy
+(`PolicyFilterTransformer` on reads, `PolicyMutationTransformer` on writes).
+`BifrostServiceCollectionExtensions.Transformers.cs` registers both with no argument, so the
+role is `admin` unless your application registers its own instances. To leave no escape hatch,
+register them with a role nobody holds.
 
 ## Grants
 

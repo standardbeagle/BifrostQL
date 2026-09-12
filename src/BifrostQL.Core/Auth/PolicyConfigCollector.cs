@@ -56,7 +56,7 @@ public static class PolicyConfigCollector
             return denyByDefault ? new TablePolicy(forceHasPolicy: true) : TablePolicy.None;
 
         return new TablePolicy(
-            allowedActions: ParseActions(actionsRaw),
+            actionGrants: ParseActions(actionsRaw),
             readDenyColumns: SplitList(readDenyRaw),
             writeDenyColumns: SplitList(writeDenyRaw),
             rowScopeExpression: rowScopeRaw,
@@ -145,26 +145,40 @@ public static class PolicyConfigCollector
         return result;
     }
 
-    private static IEnumerable<PolicyAction> ParseActions(string? raw)
+    private static Dictionary<PolicyAction, IEnumerable<string>> ParseActions(string? raw)
     {
-        foreach (var token in SplitList(raw))
+        var result = new Dictionary<PolicyAction, IEnumerable<string>>();
+        if (string.IsNullOrWhiteSpace(raw))
+            return result;
+
+        // Bracket-aware top-level split: commas inside a grant bracket
+        // (delete[projects.manage,invoices.manage]) do not split the token.
+        foreach (var token in BracketGrammar.SplitTopLevel(raw, ',', () => MalformedBracket(raw)))
         {
-            if (Enum.TryParse<PolicyAction>(token, ignoreCase: true, out var action))
+            var (name, bracket) = BracketGrammar.SplitOptionalBracket(token, () => MalformedBracket(token));
+            if (!Enum.TryParse<PolicyAction>(name, ignoreCase: true, out var action))
             {
-                yield return action;
-                continue;
+                // Fail fast on an unrecognized action token. Silently dropping it is a
+                // fail-OPEN hazard: if `policy-actions` is the only policy metadata on a
+                // table and every token is a typo, the resulting empty allow-list makes
+                // TablePolicy.HasPolicy false, which the evaluator treats as "no policy
+                // = unrestricted" — the intended lockdown silently becomes allow-all.
+                throw new InvalidOperationException(
+                    $"Unknown policy action '{name}' in 'policy-actions'. " +
+                    $"Valid actions: {string.Join(", ", Enum.GetNames<PolicyAction>())}.");
             }
 
-            // Fail fast on an unrecognized action token. Silently dropping it is a
-            // fail-OPEN hazard: if `policy-actions` is the only policy metadata on a
-            // table and every token is a typo, the resulting empty allow-list makes
-            // TablePolicy.HasPolicy false, which the evaluator treats as "no policy
-            // = unrestricted" — the intended lockdown silently becomes allow-all.
-            throw new InvalidOperationException(
-                $"Unknown policy action '{token}' in 'policy-actions'. " +
-                $"Valid actions: {string.Join(", ", Enum.GetNames<PolicyAction>())}.");
+            result[action] = bracket is null
+                ? Array.Empty<string>()
+                : SplitList(bracket).ToArray();
         }
+        return result;
     }
+
+    private static InvalidOperationException MalformedBracket(string token) => new(
+        $"Malformed bracket in 'policy-actions' token '{token}'. " +
+        $"Valid actions: {string.Join(", ", Enum.GetNames<PolicyAction>())}, " +
+        "each optionally followed by one [grant,list] bracket.");
 
     private static IEnumerable<string> SplitList(string? raw)
     {

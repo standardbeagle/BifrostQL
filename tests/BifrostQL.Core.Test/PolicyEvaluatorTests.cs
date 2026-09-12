@@ -44,10 +44,13 @@ public class PolicyEvaluatorTests
         var policy = PolicyConfigCollector.FromTable(table);
 
         policy.HasPolicy.Should().BeTrue();
-        policy.AllowedActions.Should().BeEquivalentTo(new[]
+        // Existing strings without brackets parse to EMPTY grant sets —
+        // the action is unconditional.
+        policy.AllowedActions.Keys.Should().BeEquivalentTo(new[]
         {
             PolicyAction.Read, PolicyAction.Update
         });
+        policy.AllowedActions.Values.Should().OnlyContain(g => g.Count == 0);
     }
 
     [Fact]

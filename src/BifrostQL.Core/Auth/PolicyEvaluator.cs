@@ -10,12 +10,16 @@ namespace BifrostQL.Core.Auth;
 /// No I/O, no mutable state — safe to share as a singleton.
 ///
 /// Decision rules (in order):
-///   1. Admin bypass — an identity holding the configured admin role is allowed
-///      everything. The bypass is explicit and grant-driven.
-///   2. Absent policy — <see cref="TablePolicy.None"/> (a table with no policy
+///   1. Absent policy — <see cref="TablePolicy.None"/> (a table with no policy
 ///      metadata) imposes no restriction. This opt-in default mirrors the
 ///      tenant-filter and soft-delete modules: no metadata means no gating.
-///   3. Otherwise the table's explicit allow-list / deny-lists apply.
+///   2. An action the allow-list omits is denied for everyone — admins
+///      included — when the policy lists any actions at all (D7).
+///   3. Admin bypass — an identity holding the configured admin role passes
+///      any listed action's GRANT requirement (and every check of an
+///      empty-actions policy). The bypass is explicit and grant-driven.
+///   4. Otherwise the action's grant set applies: empty = unconditional,
+///      non-empty = the caller must hold ANY listed grant.
 ///
 /// Deny results carry only the generic <see cref="PolicyDecision.Deny"/> message,
 /// which never names the table, column, or action — error output cannot be used
@@ -40,20 +44,40 @@ public sealed class PolicyEvaluator
     /// <summary>
     /// Answers whether <paramref name="identity"/> may perform
     /// <paramref name="action"/> on a table governed by <paramref name="policy"/>.
+    ///
+    /// D7: the admin bypass covers the GRANT requirement only, never an absent
+    /// action. A policy that lists any actions refuses an unlisted action to
+    /// admins too — the allow-list is a product surface. An empty-actions
+    /// policy (deny columns only, or <c>policy-default: deny</c>) keeps the
+    /// historical admin behavior so the mutation transformer's admin probe
+    /// keeps working. For a listed action, an admin always passes; a non-admin
+    /// passes when the action's grant set is empty (unconditional) or the
+    /// caller holds ANY listed grant.
     /// </summary>
     public PolicyDecision CanAct(TablePolicy policy, PolicyAction action, AppIdentity identity)
     {
         if (policy is null) throw new ArgumentNullException(nameof(policy));
         if (identity is null) throw new ArgumentNullException(nameof(identity));
 
-        if (IsAdmin(identity))
-            return PolicyDecision.Allow;
-
         // Opt-in default: a table with no policy metadata is unrestricted.
         if (!policy.HasPolicy)
             return PolicyDecision.Allow;
 
-        return policy.AllowedActions.Contains(action)
+        var isAdmin = IsAdmin(identity);
+        if (!policy.AllowedActions.TryGetValue(action, out var requiredGrants))
+        {
+            // An unlisted action is denied for everyone when the policy lists
+            // any actions at all (D7); only the empty-actions policy keeps the
+            // admin bypass.
+            return isAdmin && policy.AllowedActions.Count == 0
+                ? PolicyDecision.Allow
+                : PolicyDecision.Deny;
+        }
+
+        if (isAdmin)
+            return PolicyDecision.Allow;
+
+        return requiredGrants.Count == 0 || identity.Grants.Any(requiredGrants.Contains)
             ? PolicyDecision.Allow
             : PolicyDecision.Deny;
     }

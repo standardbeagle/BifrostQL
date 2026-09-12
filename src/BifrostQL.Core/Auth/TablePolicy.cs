@@ -83,8 +83,15 @@ public sealed record TablePolicy
     /// </summary>
     public static readonly TablePolicy None = new();
 
-    /// <summary>Actions explicitly permitted by this policy.</summary>
-    public IReadOnlySet<PolicyAction> AllowedActions { get; }
+    /// <summary>
+    /// Actions explicitly permitted by this policy, mapped to the grants the
+    /// caller must hold for that action. An EMPTY grant set means the action is
+    /// unconditional (no <c>[...]</c> brackets in <c>policy-actions</c>) — any
+    /// caller who passes the rest of the policy may perform it. A non-empty set
+    /// requires the caller to hold ANY listed grant (the admin bypass covers
+    /// this grant requirement only, never an absent action — D7).
+    /// </summary>
+    public IReadOnlyDictionary<PolicyAction, IReadOnlySet<string>> AllowedActions { get; }
 
     /// <summary>Columns that may not be read (case-insensitive match).</summary>
     public IReadOnlySet<string> ReadDenyColumns { get; }
@@ -168,11 +175,15 @@ public sealed record TablePolicy
     public bool HasPolicy { get; }
 
     /// <summary>
-    /// Creates a table policy. All collection arguments are normalized to
-    /// non-null sets; column matching is case-insensitive.
+    /// Creates a table policy. <paramref name="allowedActions"/> names
+    /// unconditional actions (empty grant sets); <paramref name="actionGrants"/>
+    /// carries the bracketed grant lists — the two are merged into one map.
+    /// All collection arguments are normalized to non-null sets; column
+    /// matching is case-insensitive.
     /// </summary>
     public TablePolicy(
         IEnumerable<PolicyAction>? allowedActions = null,
+        IReadOnlyDictionary<PolicyAction, IEnumerable<string>>? actionGrants = null,
         IEnumerable<string>? readDenyColumns = null,
         IEnumerable<string>? writeDenyColumns = null,
         string? rowScopeExpression = null,
@@ -185,8 +196,7 @@ public sealed record TablePolicy
         string? tableDenyMode = null,
         bool forceHasPolicy = false)
     {
-        AllowedActions = new HashSet<PolicyAction>(
-            allowedActions ?? Enumerable.Empty<PolicyAction>());
+        AllowedActions = NormalizeAllowedActions(allowedActions, actionGrants);
         ReadDenyColumns = new HashSet<string>(
             readDenyColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         ReadDenyRoles = new HashSet<string>(
@@ -214,6 +224,27 @@ public sealed record TablePolicy
             WriteRequires.Count > 0 ||
             ReadRequires.Count > 0 ||
             RowScopeExpression is not null || forceHasPolicy;
+    }
+
+    private static IReadOnlyDictionary<PolicyAction, IReadOnlySet<string>> NormalizeAllowedActions(
+        IEnumerable<PolicyAction>? allowedActions,
+        IReadOnlyDictionary<PolicyAction, IEnumerable<string>>? actionGrants)
+    {
+        var result = new Dictionary<PolicyAction, IReadOnlySet<string>>();
+        if (allowedActions is not null)
+        {
+            foreach (var action in allowedActions)
+                result[action] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        if (actionGrants is not null)
+        {
+            foreach (var (action, grants) in actionGrants)
+            {
+                result[action] = new HashSet<string>(
+                    grants ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            }
+        }
+        return result;
     }
 
     private static IReadOnlyDictionary<string, string> NormalizeDenyModes(

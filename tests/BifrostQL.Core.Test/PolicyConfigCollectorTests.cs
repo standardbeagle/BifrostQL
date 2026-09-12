@@ -120,7 +120,7 @@ public class PolicyConfigCollectorTests
 
             var policy = PolicyConfigCollector.FromTable(table);
 
-            policy.AllowedActions.Should().Contain(PolicyAction.Read,
+            policy.AllowedActions.Keys.Should().Contain(PolicyAction.Read,
                 "read_only must be able to read '{0}'", tableName);
         }
     }
@@ -137,7 +137,7 @@ public class PolicyConfigCollectorTests
 
             var policy = PolicyConfigCollector.FromTable(table);
 
-            policy.AllowedActions.Should().BeEquivalentTo(new[]
+            policy.AllowedActions.Keys.Should().BeEquivalentTo(new[]
             {
                 PolicyAction.Read, PolicyAction.Create, PolicyAction.Update,
             }, "finance table '{0}' allows correction but not deletion", tableName);
@@ -152,7 +152,7 @@ public class PolicyConfigCollectorTests
 
         var policy = PolicyConfigCollector.FromTable(table);
 
-        policy.AllowedActions.Should().BeEquivalentTo(new[] { PolicyAction.Read });
+        policy.AllowedActions.Keys.Should().BeEquivalentTo(new[] { PolicyAction.Read });
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public class PolicyConfigCollectorTests
 
             var policy = PolicyConfigCollector.FromTable(table);
 
-            policy.AllowedActions.Should().BeEquivalentTo(new[] { PolicyAction.Read },
+            policy.AllowedActions.Keys.Should().BeEquivalentTo(new[] { PolicyAction.Read },
                 "global lookup table '{0}' is read-only through CRUD", tableName);
         }
     }

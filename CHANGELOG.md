@@ -6,6 +6,14 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Added — per-action grants in `policy-actions`
+
+- `policy-actions` tokens accept one grant bracket each: `main.projects { policy-actions: read, create, update[projects.manage], delete[projects.manage,invoices.manage] }`. A bracketed action passes when the caller holds ANY listed grant; a bracketless token is unconditional. The bracket grammar is the same tokenizer the state-machine `transitions` key uses. Unknown tokens and malformed brackets fail model load naming the valid actions.
+
+### Changed — admin bypass no longer resurrects an unlisted action (BREAKING, D7)
+
+- `PolicyEvaluator.CanAct`'s admin bypass now covers the *grant* requirement only. When a policy lists any actions at all, an action it omits is refused to admins too — the allow-list is a product surface, and an admin silently passing `delete` on a table whose policy lists only `read,create,update` made the lockdown unauditable. Empty-actions policies (column denies only, or `policy-default: deny` with no further metadata) keep the previous admin behavior, so administrative reads on deny-default models are unchanged. Migration: where an admin must perform the action, name it — e.g. `delete[projects.manage,admin]`.
+
 ### Added — read-side column grants with masking (`read-requires`, `deny-mode`)
 
 - The policy engine's read side gains the grant dimension and a choice of enforcement. Column-selector rules like `main.members.cost_rate { read-requires: rates.view_cost }` gate reading that column to callers holding any listed grant; a caller holding none gets the column **masked to null** in selections — one query, per-caller nulls, instead of the request being refused. The new `deny-mode: null | refuse` key (column selector or table; column wins) picks the enforcement: `refuse` keeps the existing throw, `null` masks. Defaults preserve shipped behaviour — `policy-read-deny` still refuses unless `deny-mode: null` is set; `read-requires` masks unless `deny-mode: refuse` is set. Masking is selection-only: a masked column is still refused as a filter, sort, or aggregate input (`_agg`, grouped `<table>Aggregate`), so it cannot be used as a value oracle. The mask rides `IQueryIntentExecutor`, so pgwire/OData/gRPC/MCP inherit it; mask-able columns are emitted nullable in the GraphQL type even when the column is `NOT NULL`. A typo'd `deny-mode` value fails model load.

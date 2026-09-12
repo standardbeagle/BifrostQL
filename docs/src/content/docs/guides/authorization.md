@@ -18,7 +18,8 @@ from schema descriptions. Selector rules count as declarations, so a rule such
 as `public.*|has(account_id) { policy-actions: read,create,update,delete }` can establish the
 common default and individual tables can narrow it.
 
-An administrator still bypasses policy. The admin role is not metadata — it is a constructor
+An administrator bypasses policy *grants* — never an absent allow-list entry (see "The
+allow-list is a product surface" below). The admin role is not metadata — it is a constructor
 argument, `PolicyEvaluator(string? adminRole)`, carried by the transformers that enforce policy
 (`PolicyFilterTransformer` on reads, `PolicyMutationTransformer` on writes).
 `BifrostServiceCollectionExtensions.Transformers.cs` registers both with no argument, so the
@@ -42,7 +43,7 @@ main.documents { policy-read-deny: body }
 
 | Key | Meaning |
 |---|---|
-| `policy-actions` | Comma list of `read`, `create`, `update`, `delete`. Anything absent is denied. |
+| `policy-actions` | Comma list of `read`, `create`, `update`, `delete`, each optionally followed by one grant bracket: `update[projects.manage]`. Anything absent is denied. |
 | `policy-read-deny` | Columns this table never returns. |
 | `policy-read-deny-roles` | Grants the read-deny applies to. Omit it to deny every non-admin. |
 | `policy-write-deny` | Columns no mutation may write. |
@@ -50,16 +51,31 @@ main.documents { policy-read-deny: body }
 | `policy-row-scope` | A predicate binding a column to a context value. |
 | `policy-row-scope-roles` | Grants the row scope applies to. Omit it to scope every non-admin. |
 
+A grant bracket lists the grants that unlock that action; a caller holding ANY listed
+grant passes, and a bracketless token is unconditional:
+
+```text
+main.projects { policy-actions: read, create, update[projects.manage], delete[projects.manage,invoices.manage] }
+```
+
 Two consequences follow from the shape of `policy-actions`:
 
 - It is an allow-list. `main.documents` above declares column denials with no
   `policy-actions`, so **every read of it is denied** — the grant is missing.
-- An unknown token fails model load with the valid action names in the message. Dropping a
-  typo silently would leave an empty allow-list, which reads as "no policy" and grants
-  everything.
+- An unknown token or a malformed bracket fails model load with the valid action names
+  in the message. Dropping a typo silently would leave an empty allow-list, which reads
+  as "no policy" and grants everything.
 
-The `admin` role bypasses every check. Name a different role when you register the
-evaluator if `admin` means something else in your model.
+**The allow-list is a product surface.** The admin bypass covers the *grant*
+requirement only — a bracketed action, a `-roles` list, a row scope. It does not cover
+an absent action: when a policy lists any actions at all, an action it omits is refused
+to admins too, with the same generic denial. If admins should delete from
+`main.projects` above, write `delete[projects.manage,invoices.manage,admin]` or declare
+the action; do not rely on the bypass. The one carve-out is an empty-actions policy
+(column denies only, or `policy-default: deny` with no further metadata): there the
+historical admin bypass is unchanged, so the internal admin probes keep working. Name a
+different role when you register the evaluator if `admin` means something else in your
+model.
 
 ## Scope rows to the caller
 

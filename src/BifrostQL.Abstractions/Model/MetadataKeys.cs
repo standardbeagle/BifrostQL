@@ -429,6 +429,9 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string RowScopeRoles = "policy-row-scope-roles";
 
+            /// <summary>Optional grants that bypass the row-scope expression.</summary>
+            public const string RowScopeExempt = "policy-row-scope-exempt";
+
             /// <summary>Default role name that bypasses all policy checks.</summary>
             public const string DefaultAdminRole = "admin";
         }

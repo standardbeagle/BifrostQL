@@ -167,6 +167,9 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (IsAdmin(identity))
             return null;
 
+        if (identity.Grants.Any(policy.RowScopeExemptGrants.Contains))
+            return null;
+
         // Grant-scoped row scope: when the policy names the grants it applies to,
         // a caller holding none of them is left unscoped (still tenant-filtered).
         if (!RowScopeApplies(policy, identity))

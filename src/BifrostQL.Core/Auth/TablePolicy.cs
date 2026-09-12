@@ -168,6 +168,9 @@ public sealed record TablePolicy
     /// </summary>
     public IReadOnlySet<string> RowScopeRoles { get; }
 
+    /// <summary>Grants that exempt a caller from row scope.</summary>
+    public IReadOnlySet<string> RowScopeExemptGrants { get; }
+
     /// <summary>
     /// True when this policy carries any configured restriction. False only for
     /// <see cref="None"/>.
@@ -188,6 +191,7 @@ public sealed record TablePolicy
         IEnumerable<string>? writeDenyColumns = null,
         string? rowScopeExpression = null,
         IEnumerable<string>? rowScopeRoles = null,
+        IEnumerable<string>? rowScopeExemptGrants = null,
         IEnumerable<string>? readDenyRoles = null,
         IEnumerable<string>? writeDenyRoles = null,
         IReadOnlyDictionary<string, IEnumerable<string>>? writeRequires = null,
@@ -216,6 +220,8 @@ public sealed record TablePolicy
             : rowScopeExpression.Trim();
         RowScopeRoles = new HashSet<string>(
             rowScopeRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        RowScopeExemptGrants = new HashSet<string>(
+            rowScopeExemptGrants ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
         HasPolicy =
             AllowedActions.Count > 0 ||

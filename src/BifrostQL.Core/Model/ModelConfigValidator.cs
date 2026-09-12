@@ -615,6 +615,12 @@ namespace BifrostQL.Core.Model
             if (rowScopeColumn != null && !DbColumnExists(table, rowScopeColumn))
                 errors.Add(Problem(table, MetadataKeys.Policy.RowScope, rowScopeColumn,
                     "policy-row-scope references a column that does not exist on the table"));
+
+            if (table.GetMetadataValue(MetadataKeys.Policy.RowScopeExempt) is { } raw &&
+                raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Any(string.IsNullOrWhiteSpace))
+                errors.Add(Problem(table, MetadataKeys.Policy.RowScopeExempt, raw,
+                    "policy-row-scope-exempt must contain comma-separated grant names"));
         }
 
         // Extracts the LHS column of a "column = {context-key}" row-scope expression

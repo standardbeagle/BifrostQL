@@ -39,6 +39,7 @@ public static class PolicyConfigCollector
         var writeDenyRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.WriteDenyRoles);
         var rowScopeRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScope);
         var rowScopeRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeRoles);
+        var rowScopeExemptRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeExempt);
         var writeRequires = CollectWriteRequires(table);
         var readRequires = CollectReadRequires(table);
         var columnDenyModes = CollectColumnDenyModes(table);
@@ -61,6 +62,7 @@ public static class PolicyConfigCollector
             writeDenyColumns: SplitList(writeDenyRaw),
             rowScopeExpression: rowScopeRaw,
             rowScopeRoles: SplitList(rowScopeRolesRaw),
+            rowScopeExemptGrants: SplitList(rowScopeExemptRaw),
             readDenyRoles: SplitList(readDenyRolesRaw),
             writeDenyRoles: SplitList(writeDenyRolesRaw),
             writeRequires: writeRequires.Count > 0 ? writeRequires : null,

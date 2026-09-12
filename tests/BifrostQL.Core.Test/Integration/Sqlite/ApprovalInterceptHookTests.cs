@@ -49,6 +49,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     {
         ":root { user-audit-key: user_id }",
         "main.orders { approval: enabled; approver-role: manager; self-approve: false; tenant-filter: tenant_id; soft-delete: deleted_at }",
+        "main.scoped_orders { approval: enabled; approver-role: manager; policy-actions: read,create,update,delete; policy-row-scope: tenant_id = {tenant_id}; policy-row-scope-roles: member }",
         "main.orders.secret { encrypt: aes-256-gcm; key-ref: config:approval; blind-index: secret_bidx }",
         "main.orders.created_by { populate: created-by }",
         "main.orders.updated_by { populate: updated-by }",
@@ -63,7 +64,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
 
-        foreach (var drop in new[] { "gated_posts", "ungated_blogs", "orders", "pending_changes", "posts", "blogs" })
+        foreach (var drop in new[] { "gated_posts", "ungated_blogs", "scoped_orders", "orders", "pending_changes", "posts", "blogs" })
             await Exec($"DROP TABLE IF EXISTS {drop}");
 
         await Exec(
@@ -80,6 +81,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             )
             """);
         await Exec("INSERT INTO orders(id, tenant_id, name) VALUES (10, 1, 'seed-order')");
+        await Exec("CREATE TABLE scoped_orders (id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, name TEXT NOT NULL UNIQUE)");
 
         await Exec("CREATE TABLE blogs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
         await Exec("CREATE TABLE ungated_blogs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
@@ -539,6 +541,26 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         (await CountAsync("orders", "name = 'principal-approved' AND created_by = 'bob'")).Should().Be(1,
             "the approver remains the audit actor");
         (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_ReplaysPermissionOnlyRequesterScope()
+    {
+        var executor = BuildExecutor();
+        var requester = TenantContext(1);
+        requester["user_id"] = "alice";
+        requester["permissions"] = new[] { "member" };
+        Func<Task> enqueue = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "scoped_orders", Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["name"] = "permission-scoped", ["tenant_id"] = 1 },
+            UserContext = requester, Endpoint = EndpointPath,
+        });
+        await enqueue.Should().ThrowAsync<BifrostExecutionError>();
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
+        result.Errors.Should().BeNullOrEmpty();
+        (await CountAsync("scoped_orders", "name = 'permission-scoped' AND tenant_id = 1")).Should().Be(1);
     }
 
     [Fact]

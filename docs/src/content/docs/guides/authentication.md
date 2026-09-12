@@ -215,7 +215,12 @@ For additional row-level filters, map columns to claims with `auto-filter`:
 
 ## Loading grants per request (`IGrantResolver`)
 
-Claims baked into a token live as long as the token does — a JWT issued for weeks still carries the permissions the user had at sign-in. When your capability set lives in the database and a permission change must take effect *when made*, register a grant resolver. It runs **once per request**, for authenticated principals, at the single point every transport assembles the user context (GraphQL, the binary WebSocket, and every protocol adapter share it), and its result is **unioned** into the `permissions` context key before any policy, tenant, or filter module reads the context.
+Claims baked into a token live as long as the token does — a JWT issued for weeks still carries the permissions the user had at sign-in. When your capability set lives in the database and a permission change must take effect *when made*, register a grant resolver. It runs **once per request**, for authenticated principals, at the single point every transport assembles the user context, and its result is **unioned** into the `permissions` context key before any policy, tenant, or filter module reads the context.
+
+Two transport-shape exceptions to "once per request":
+
+- **pgwire, RESP, and LDAP project identity once per connection, at login.** The resolver runs at that moment; a permission change takes effect on the client's *next connection*, not mid-session.
+- **The Prometheus scrape endpoint never runs it** — its fixed service identity is projected without a request service provider, so no scoped resolver can run there.
 
 ```csharp
 builder.Services.AddBifrostGrantResolver(async (identity, sp, ct) =>
@@ -232,9 +237,9 @@ Or as a scoped service: `builder.Services.AddBifrostGrantResolver<MyGrantResolve
 
 Contract:
 
-- **A per-request DB read is the expected shape.** Caching (and its revocation policy) is the application's business — if you cache, you decide how stale a grant may be.
+- **A per-request DB read is the expected shape.** Caching (and its revocation policy) is the application's business — if you cache, you decide how stale a grant may be. The user-context assembly contract is synchronous, so the hook's async signature is awaited inline on the request path (it blocks a pool thread for the duration of the read); keep the read bounded.
 - The result is a *union* with the identity's mapped permissions, never a replacement. A `null` result is treated as empty: the identity's own permissions remain.
-- **Fail closed.** A resolver that throws empties the permission set for that request — the identity's pre-resolver permissions are wiped too — and logs a `Warning` naming the identity id. The exception never reaches the caller; where a policy needs the missing grant the answer is a policy deny, not a server error.
+- **Fail closed.** A resolver that throws empties the permission set for that request — the identity's pre-resolver `permissions` are wiped too — and logs a `Warning` naming the identity id. The exception never reaches the caller; where a policy needs the missing grant the answer is a policy deny, not a server error. Only `permissions` is wiped: token `roles` are claims of the token itself, not resolver-sourced grants, and remain.
 - `permissions` is an identity-owned context key: a client-supplied (wire) context value can never add to it. The resolver is the only way grants enter beyond the authenticated identity itself.
 
 ## Disabling authentication

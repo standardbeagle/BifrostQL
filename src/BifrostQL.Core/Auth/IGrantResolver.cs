@@ -7,6 +7,16 @@ namespace BifrostQL.Core.Auth;
 /// <c>permissions</c> user-context key before any security module or transformer
 /// sees the context.
 ///
+/// Transport shape: HTTP mounts (GraphQL, binary WebSocket, MCP-HTTP) run it per
+/// request; the connection-oriented adapters (pgwire, RESP, LDAP) project identity
+/// once per CONNECTION at login, so there a permission change takes effect on the
+/// client's next connection; the Prometheus scrape identity never runs it (no
+/// request service provider exists for a scoped resolver).
+///
+/// Execution: the user-context assembly contract is synchronous, so the async
+/// signature is awaited INLINE on the request path — the call blocks a pool
+/// thread for the duration of the read. Keep the read bounded.
+///
 /// The hook exists for deployments whose capability sets live in the database and
 /// must take effect immediately: a token (JWT, cookie) can live for weeks, but a
 /// permission change applies on the very next request because the grants are read
@@ -26,10 +36,12 @@ namespace BifrostQL.Core.Auth;
 ///     permissions remain, nothing is added.
 ///   </description></item>
 ///   <item><description>
-///     Throwing fails CLOSED (E9): the request runs with an EMPTY permission set
-///     — the identity's pre-resolver permissions are wiped — and a Warning naming
-///     the identity id is logged. The exception never reaches the wire and never
-///     leaves the caller with broader access than a grant-less caller.
+    ///     Throwing fails CLOSED (E9): the request runs with an EMPTY permission set
+    ///     — the identity's pre-resolver permissions are wiped — and a Warning naming
+    ///     the identity id is logged. The exception never reaches the wire and never
+    ///     leaves the caller with broader access than a grant-less caller. Only the
+    ///     <c>permissions</c> key is wiped: token <c>roles</c> are claims of the token
+    ///     itself, not resolver-sourced grants, and remain.
 ///   </description></item>
 /// </list>
 ///
@@ -41,7 +53,8 @@ public interface IGrantResolver
 {
     /// <summary>
     /// Resolves the additional grant names for <paramref name="identity"/>. Called
-    /// once per request, for authenticated principals only.
+    /// once per user-context assembly, for authenticated principals only — per
+    /// request on HTTP mounts, per connection login on pgwire/RESP/LDAP.
     /// </summary>
     ValueTask<IReadOnlyCollection<string>> ResolveAsync(AppIdentity identity, CancellationToken ct);
 }

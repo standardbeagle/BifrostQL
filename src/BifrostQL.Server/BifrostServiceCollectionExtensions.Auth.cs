@@ -80,14 +80,18 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Registers a per-request grant resolver (scoped). The resolver runs once per
-        /// request, for authenticated principals, at the single point every transport
-        /// (GraphQL, binary WebSocket, and every protocol adapter) assembles the user
-        /// context; its grants are unioned into the <c>permissions</c> context key
-        /// before any security module reads it. A database read per request is the
-        /// expected shape (a permission change takes effect on the next request, not
-        /// at token expiry); caching is the application's business. Fail closed: a
-        /// throwing resolver empties the permission set for that request and logs a
-        /// Warning; a null result is treated as empty.
+        /// user-context assembly, for authenticated principals, at the single point
+        /// every transport builds that context; its grants are unioned into the
+        /// <c>permissions</c> context key before any security module reads it. A
+        /// database read per assembly is the expected shape (a permission change
+        /// takes effect on the next request, not at token expiry); caching is the
+        /// application's business. Two transport-shape exceptions: pgwire, RESP and
+        /// LDAP assemble identity once per CONNECTION at login (a permission change
+        /// takes effect on the next connection), and the Prometheus scrape identity
+        /// never runs the resolver. The assembly contract is synchronous — the
+        /// resolver is awaited inline on the request path. Fail closed: a throwing
+        /// resolver empties the permission set for that request and logs a Warning;
+        /// a null result is treated as empty.
         /// </summary>
         public static IServiceCollection AddBifrostGrantResolver<T>(this IServiceCollection services)
             where T : class, Core.Auth.IGrantResolver

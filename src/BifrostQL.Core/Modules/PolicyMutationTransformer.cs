@@ -167,11 +167,6 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (IsAdmin(identity))
             return null;
 
-        if (identity.Grants.Any(policy.RowScopeExemptGrants.Contains))
-            return null;
-
-        // Grant-scoped row scope: when the policy names the grants it applies to,
-        // a caller holding none of them is left unscoped (still tenant-filtered).
         if (!RowScopeApplies(policy, identity))
             return null;
 
@@ -209,9 +204,9 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
     // a role-qualified policy applies only to a caller holding one of its roles.
     private static bool RowScopeApplies(TablePolicy policy, AppIdentity identity)
     {
-        if (policy.RowScopeRoles.Count == 0)
-            return true;
+        if (identity.Grants.Any(policy.RowScopeExemptGrants.Contains))
+            return false;
 
-        return identity.Grants.Any(policy.RowScopeRoles.Contains);
+        return policy.RowScopeRoles.Count == 0 || identity.Grants.Any(policy.RowScopeRoles.Contains);
     }
 }

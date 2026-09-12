@@ -617,8 +617,8 @@ namespace BifrostQL.Core.Model
                     "policy-row-scope references a column that does not exist on the table"));
 
             if (table.GetMetadataValue(MetadataKeys.Policy.RowScopeExempt) is { } raw &&
-                raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Any(string.IsNullOrWhiteSpace))
+                raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is var grants &&
+                grants.Length == 0)
                 errors.Add(Problem(table, MetadataKeys.Policy.RowScopeExempt, raw,
                     "policy-row-scope-exempt must contain comma-separated grant names"));
         }

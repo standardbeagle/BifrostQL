@@ -61,7 +61,7 @@ public static class StateMachineConfigCollector
         foreach (var token in raw.Split(new[] { ';', '|' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var (transitionPart, onEvent) = SplitOptionalSuffix(token, '@');
-            var (routePart, rolesPart) = SplitOptionalBracket(transitionPart);
+            var (routePart, rolesPart) = BracketGrammar.SplitOptionalBracket(transitionPart, InvalidMetadata);
             var route = routePart.Split("->", StringSplitOptions.TrimEntries);
 
             if (route.Length != 2 ||
@@ -92,24 +92,6 @@ public static class StateMachineConfigCollector
             throw InvalidMetadata();
 
         return (value[..index].Trim(), suffix);
-    }
-
-    private static (string Value, string? BracketValue) SplitOptionalBracket(string value)
-    {
-        var start = value.IndexOf('[');
-        if (start < 0)
-        {
-            if (value.Contains(']'))
-                throw InvalidMetadata();
-
-            return (value.Trim(), null);
-        }
-
-        var end = value.IndexOf(']', start + 1);
-        if (end < 0 || end != value.Length - 1 || value.IndexOf('[', start + 1) >= 0)
-            throw InvalidMetadata();
-
-        return (value[..start].Trim(), value[(start + 1)..end]);
     }
 
     private static IEnumerable<string> SplitList(string? raw)

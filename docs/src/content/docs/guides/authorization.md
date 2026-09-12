@@ -108,7 +108,9 @@ main.users.cost_rate { write-requires: team.manage }
 
 Here `amount_cents` is hidden from the listed roles but readable by finance,
 while `cost_rate` is writable only by a `team.manage` holder and readable by
-everyone.
+everyone. When both gates name the same column, precedence is requires first,
+then deny: holding the grant lets the caller past `write-requires`, but a
+matching `policy-write-deny` entry still refuses the write.
 
 Two schema consequences follow from the write side:
 

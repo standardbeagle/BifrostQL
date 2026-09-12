@@ -199,6 +199,18 @@ column, or action name. A referenced-but-denied field answers
 map to the same wire status on every protocol adapter, so a caller cannot tell a denial
 from a miss by watching status codes.
 
+### Ask first
+
+A client should not discover authorization by trying and failing. Three root fields let it
+ask up front: `_dbSchema` answers per caller — each table carries `allowedActions`
+(`read, create, update, delete`, resolved through the policy evaluator) and each column
+carries `readable`/`writable`; `_grants` returns the caller's own grant set (the union of
+its roles and permissions); and `_policyGrants` returns the sorted catalogue of every
+grant name the model's policy metadata references, which is what a profile editor lists
+when assigning capabilities. The compatibility field `isEditable` only means "the table
+has a key" — it is not an authorization answer. See
+[`_dbSchema` introspection](../../reference/db-schema/).
+
 ## The schema surface hides denied tables
 
 Every introspection surface projects the model through the same evaluator before

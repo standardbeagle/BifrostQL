@@ -177,6 +177,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						{ label: 'Configuration', slug: 'reference/configuration' },
+						{ label: '_dbSchema Introspection', slug: 'reference/db-schema' },
 						{ label: 'SQL Dialects', slug: 'reference/dialects' },
 						{ label: 'Bulk Batch Performance', slug: 'reference/bulk-batch-performance' },
 						{ label: 'Declarative MCP Tool Document', slug: 'reference/mcp-declarative-tools' },

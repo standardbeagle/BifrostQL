@@ -8,6 +8,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## Unreleased — 2026-08-22
 
+### Changed — `_dbSchema` is caller-projected; raw metadata is admin-only (BREAKING, S8)
+
+- `_dbSchema` now resolves **per caller**: the model is projected through the same policy evaluator every other catalog uses, so a table or column the caller may not read is absent, and each table carries `allowedActions: [String!]!` (subset of `read, create, update, delete` the caller may perform) while each column carries `readable: Boolean!` / `writable: Boolean!` (a masked column is `readable: false` yet stays selectable — the value is nulled). The raw `metadata` bag — which contains the `policy-*` rules themselves — is now served to **admin callers only**; non-admin consumers that read table or column `metadata` must migrate to the typed fields. `isEditable` is retained and means exactly "the table has a key". New root fields: `_grants: [String!]!` (the caller's roles+permissions union) and `_policyGrants: [String!]!` (every grant name referenced in the model's policy metadata, sorted and de-duplicated — the catalogue a profile editor lists). `bifrost-codegen` is unaffected: it reads the `.proto` type schema, not `_dbSchema` data.
+
 ### Added — per-action grants in `policy-actions`
 
 - `policy-actions` tokens accept one grant bracket each: `main.projects { policy-actions: read, create, update[projects.manage], delete[projects.manage,invoices.manage] }`. A bracketed action passes when the caller holds ANY listed grant; a bracketless token is unconditional. The bracket grammar is the same tokenizer the state-machine `transitions` key uses. Unknown tokens and malformed brackets fail model load naming the valid actions.

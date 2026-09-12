@@ -104,12 +104,14 @@ public sealed class PolicyEvaluator
 
         if (direction == PolicyDirection.Write)
         {
-            if (!forDelete && policy.WriteRequires.TryGetValue(column, out var requiredGrants))
+            if (!forDelete && policy.WriteRequires.TryGetValue(column, out var requiredGrants)
+                && !identity.Grants.Any(requiredGrants.Contains))
             {
-                return identity.Grants.Any(requiredGrants.Contains)
-                    ? PolicyDecision.Allow
-                    : PolicyDecision.Deny;
+                return PolicyDecision.Deny;
             }
+
+            // A held write-requires grant does NOT override the deny list:
+            // spec order is requires (allow if any held) THEN deny.
 
             if (!policy.WriteDenyColumns.Contains(column))
                 return PolicyDecision.Allow;

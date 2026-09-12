@@ -9,6 +9,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Modules.Fts;
 using BifrostQL.Core.QueryModel;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Schema
 {
@@ -163,13 +164,20 @@ namespace BifrostQL.Core.Schema
             {
                 return Auth.PolicyConfigCollector.FromTable(_table);
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
                 // Invalid policy config (e.g. an unrecognized policy-actions
                 // token) must not break schema emission: ModelConfigValidator
                 // fails the model load fast in production, and the mutation
                 // pipeline re-parses at write time and fails CLOSED there.
-                // The schema simply applies no input-type shaping.
+                // The schema simply applies no input-type shaping — but a
+                // silent fallback in a security-adjacent path is not
+                // acceptable, so the detail is logged at Warning.
+                Resolvers.BifrostErrorSink.Logger?.LogWarning(
+                    ex,
+                    "Write policy parse failed for {Schema}.{Table}; emitting schema with no input-type shaping.",
+                    _table.TableSchema,
+                    _table.DbName);
                 return Auth.TablePolicy.None;
             }
         }

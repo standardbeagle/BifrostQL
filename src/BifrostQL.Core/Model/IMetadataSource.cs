@@ -127,6 +127,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Policy.ReadDeny,
             MetadataKeys.Policy.ReadDenyRoles,
             MetadataKeys.Policy.WriteDeny,
+            MetadataKeys.Policy.WriteDenyRoles,
             MetadataKeys.Policy.RowScope,
             MetadataKeys.Policy.RowScopeRoles,
             // EAV configuration (table-level).
@@ -278,6 +279,10 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Crypto.Mask,
             MetadataKeys.Crypto.UnmaskRole,
             MetadataKeys.Crypto.BlindIndex,
+            // Write-side column grants (column-selector key, security — a
+            // miscased key must be flagged, not silently leave a column
+            // writable).
+            MetadataKeys.Policy.WriteRequires,
         };
 
         // Internal for the same reason as KnownTableKeys above (case-casing

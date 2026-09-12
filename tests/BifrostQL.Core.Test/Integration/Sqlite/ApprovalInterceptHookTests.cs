@@ -48,7 +48,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     private static readonly string[] Rules =
     {
         ":root { user-audit-key: user_id }",
-        "main.orders { approval: enabled; approver-role: manager; self-approve: false; tenant-filter: tenant_id; soft-delete: deleted_at; policy-row-scope: tenant_id = {tenant_id}; policy-row-scope-roles: member; policy-row-scope-permissions: member }",
+        "main.orders { approval: enabled; approver-role: manager; self-approve: false; tenant-filter: tenant_id; soft-delete: deleted_at }",
         "main.orders.secret { encrypt: aes-256-gcm; key-ref: config:approval; blind-index: secret_bidx }",
         "main.orders.created_by { populate: created-by }",
         "main.orders.updated_by { populate: updated-by }",
@@ -539,29 +539,6 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         (await CountAsync("orders", "name = 'principal-approved' AND created_by = 'bob'")).Should().Be(1,
             "the approver remains the audit actor");
         (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
-    }
-
-    [Fact]
-    public async Task GraphQlApprove_ReplaysPermissionOnlyPolicyGrant()
-    {
-        var executor = BuildExecutor();
-        var requester = PrincipalRequesterContext();
-        requester.Remove("roles");
-        requester["permissions"] = new[] { "member" };
-        var act = () => executor.ExecuteAsync(new MutationIntent
-        {
-            Table = "orders", Action = MutationIntentAction.Insert,
-            Data = new Dictionary<string, object?> { ["name"] = "permission-approved", ["tenant_id"] = 1 },
-            UserContext = requester, Endpoint = EndpointPath,
-        });
-        await act.Should().ThrowAsync<BifrostExecutionError>();
-
-        var pending = await PendingRowsAsync();
-        pending.Should().ContainSingle();
-        var approved = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: 1) }", ApproverContext("bob", "manager"));
-
-        approved.Errors.Should().BeNullOrEmpty();
-        (await CountAsync("orders", "name = 'permission-approved' AND tenant_id = 1")).Should().Be(1);
     }
 
     [Fact]

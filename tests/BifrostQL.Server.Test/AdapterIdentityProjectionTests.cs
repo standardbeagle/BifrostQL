@@ -101,6 +101,35 @@ public class AdapterIdentityProjectionTests
             + string.Join(", ", offenders.Select(Path.GetFileName)));
     }
 
+    [Fact]
+    public void Project_FromRootProviderCarrier_ScopedGrantResolverStillRuns()
+    {
+        // The raw-wire handlers (pgwire/RESP/LDAP) are singletons holding the ROOT
+        // provider, and the carrier they build carries it as RequestServices. A scoped
+        // IGrantResolver resolved from the root throws under scope validation — which
+        // the factory's fail-closed catch would turn into EMPTY permissions on every
+        // login (S2 review, attempt 1 blocker). The projection must run the resolver
+        // inside its own scope so connection-oriented carriers get grants too.
+        var services = new ServiceCollection();
+        services.AddBifrostGrantResolver((identity, sp, ct) =>
+            new ValueTask<IReadOnlyCollection<string>>(new[] { "grant-x" }));
+        var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateScopes = true });
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, "user-1") }, "test"));
+
+        var projected = AdapterIdentityProjection.TryProject(
+            BifrostAuthContextFactory.Instance, provider, principal,
+            NullLogger.Instance, "test", out var userContext);
+
+        projected.Should().BeTrue();
+        userContext[BifrostQL.Core.Model.MetadataKeys.Auth.DefaultPermissionsContextKey]
+            .Should().BeAssignableTo<IEnumerable<string>>()
+            .Which.Should().Contain("grant-x",
+                "the scoped resolver must run even when the carrier holds the root provider");
+    }
+
     private sealed class ThrowingAuthContextFactory : IBifrostAuthContextFactory
     {
         public IDictionary<string, object?> CreateUserContext(HttpContext context)

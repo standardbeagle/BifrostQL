@@ -75,6 +75,14 @@ public class MembershipManagerRowScopePolicyTests
         return context;
     }
 
+    private static IDictionary<string, object?> PermissionsOnlyCaller(
+        string grant, string userId)
+        => new Dictionary<string, object?>
+        {
+            ["user_id"] = userId,
+            [MetadataKeys.Auth.DefaultPermissionsContextKey] = new[] { grant },
+        };
+
     // Builds a model whose members and households tables carry exactly the
     // membership-manager seed-sample policy metadata.
     private static IDbModel MembershipManagerModel() =>
@@ -143,6 +151,20 @@ public class MembershipManagerRowScopePolicyTests
         filter!.ColumnName.Should().Be("user_id");
         filter.Next!.RelationName.Should().Be("_eq");
         filter.Next.Value.Should().Be("42");
+    }
+
+    [Fact]
+    public void PermissionsOnlyMemberQuery_UsesCompiledRowScopeInGeneratedSql()
+    {
+        var model = MembershipManagerModel();
+        var table = model.GetTableFromDbName("members");
+        var context = QueryContext(model, PermissionsOnlyCaller("member", "42"));
+        var filter = new PolicyFilterTransformer().GetAdditionalFilter(table, context);
+
+        var sql = filter!.ToSqlParameterized(new SqliteDialect());
+
+        sql.Sql.Should().Contain("\"user_id\" = @p0");
+        sql.Parameters.Should().ContainSingle().Which.Value.Should().Be("42");
     }
 
     [Fact]
@@ -229,6 +251,22 @@ public class MembershipManagerRowScopePolicyTests
             context);
 
         result.Errors.Should().BeNullOrEmpty();
+        result.AdditionalFilter.Should().NotBeNull();
+        result.AdditionalFilter!.ColumnName.Should().Be("user_id");
+        result.AdditionalFilter.Next!.RelationName.Should().Be("_eq");
+        result.AdditionalFilter.Next.Value.Should().Be("42");
+    }
+
+    [Fact]
+    public async Task PermissionsOnlyMemberUpdate_UsesCompiledRowScopeAsAdditionalFilter()
+    {
+        var model = MembershipManagerModel();
+        var table = model.GetTableFromDbName("members");
+        var result = await new PolicyMutationTransformer().TransformAsync(
+            table, MutationType.Update,
+            new Dictionary<string, object?> { ["first_name"] = "Renamed" },
+            MutationContext(model, PermissionsOnlyCaller("member", "42")));
+
         result.AdditionalFilter.Should().NotBeNull();
         result.AdditionalFilter!.ColumnName.Should().Be("user_id");
         result.AdditionalFilter.Next!.RelationName.Should().Be("_eq");

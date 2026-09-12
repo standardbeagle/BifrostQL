@@ -108,7 +108,7 @@ refused when the store table is absent, so a half-configured deployment fails cl
 rather than writing unreviewed rows.
 
 `requester_context` holds a projection of the requester's identity, not their request
-    context: the policy subject (`user_id`), the policy grants (roles and permissions), the tenant claim under the
+context: the policy subject (`user_id`), the policy grants (roles and permissions), the tenant claim under the
 model's tenant-context key, and the claim named by `user-audit-key`. These are the
 fields the replay re-runs the mutation pipeline with. Other claims, and the raw
 authentication principal, are never stored.

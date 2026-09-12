@@ -14,7 +14,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed — admin bypass no longer resurrects an unlisted action (BREAKING, D7)
 
-- `PolicyEvaluator.CanAct`'s admin bypass now covers the *grant* requirement only. When a policy lists any actions at all, an action it omits is refused to admins too — the allow-list is a product surface, and an admin silently passing `delete` on a table whose policy lists only `read,create,update` made the lockdown unauditable. Empty-actions policies (column denies only, or `policy-default: deny` with no further metadata) keep the previous admin behavior, so administrative reads on deny-default models are unchanged. Migration: where an admin must perform the action, name it — e.g. `delete[projects.manage,admin]`.
+- `PolicyEvaluator.CanAct`'s admin bypass now covers the *grant* requirement only. When a policy lists any actions at all, an action it omits is refused to admins too — the allow-list is a product surface, and an admin silently passing `delete` on a table whose policy lists only `read,create,update` made the lockdown unauditable. Empty-actions policies (column denies only, or `policy-default: deny` with no further metadata) keep the previous admin behavior, so administrative reads on deny-default models are unchanged. Migration: where an admin must perform the action, declare it — e.g. `delete[projects.manage,invoices.manage]`; the admin bypass covers the bracket once the action is listed.
 
 ### Added — read-side column grants with masking (`read-requires`, `deny-mode`)
 

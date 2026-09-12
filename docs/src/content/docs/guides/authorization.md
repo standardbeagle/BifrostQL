@@ -71,8 +71,8 @@ Two consequences follow from the shape of `policy-actions`:
 requirement only — a bracketed action, a `-roles` list, a row scope. It does not cover
 an absent action: when a policy lists any actions at all, an action it omits is refused
 to admins too, with the same generic denial. If admins should delete from
-`main.projects` above, write `delete[projects.manage,invoices.manage,admin]` or declare
-the action; do not rely on the bypass. The one carve-out is an empty-actions policy
+`main.projects` above, declare the action: `delete[projects.manage,invoices.manage]` —
+the admin bypass then covers the bracket; do not rely on it for an unlisted action. The one carve-out is an empty-actions policy
 (column denies only, or `policy-default: deny` with no further metadata): there the
 historical admin bypass is unchanged, so the internal admin probes keep working. Name a
 different role when you register the evaluator if `admin` means something else in your

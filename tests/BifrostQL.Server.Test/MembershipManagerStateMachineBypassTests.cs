@@ -43,7 +43,7 @@ public sealed class MembershipManagerStateMachineBypassTests : IAsyncLifetime
     private static readonly string[] Metadata =
     {
         "main.members { policy-actions: read,create,update,delete }",
-        "main.audit_log { policy-actions: read }",
+        "main.audit_log { policy-actions: read,create[admin] }",
         "main.members { state-column: status; initial-state: pending; states: pending,active,inactive,deceased; transitions: pending->active[officer,admin]@member.activated|active->inactive[officer,admin]@member.inactivated|inactive->active[admin]@member.reactivated|active->deceased[officer,admin]@member.deceased|inactive->deceased[officer,admin]@member.deceased }",
     };
 

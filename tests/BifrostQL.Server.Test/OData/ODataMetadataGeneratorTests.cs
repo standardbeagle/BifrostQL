@@ -32,13 +32,14 @@ namespace BifrostQL.Server.Test.OData
 
         private static readonly string[] Metadata =
         {
-            // Customers is create-only: a non-admin cannot READ it (nor navigate to it).
-            "main.Customers { policy-actions: create }",
+            // Customers: read requires the admin grant — a non-admin cannot READ it
+            // (nor navigate to it).
+            "main.Customers { policy-actions: read[admin],create }",
             // Orders is readable by everyone, but the secret column is read-denied to non-admins.
             "main.Orders { policy-actions: read }",
             "main.Orders { policy-read-deny: secret }",
-            // AuditLog is create-only: readable by admin only.
-            "main.AuditLog { policy-actions: create }",
+            // AuditLog: read requires the admin grant — readable by admin only.
+            "main.AuditLog { policy-actions: read[admin],create }",
         };
 
         private static Dictionary<string, object?> Ctx(string userId, params string[] roles) => new()

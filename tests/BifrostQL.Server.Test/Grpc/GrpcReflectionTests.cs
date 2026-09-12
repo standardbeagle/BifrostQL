@@ -19,7 +19,7 @@ namespace BifrostQL.Server.Test.Grpc
 
         private static readonly string[] MetadataRules =
         {
-            "*.secrets { policy-actions: create }", // no "read" → non-admin denied
+            "*.secrets { policy-actions: read[admin],create }", // read requires the admin grant → non-admin denied
         };
 
         private static readonly string[] SeedSql =

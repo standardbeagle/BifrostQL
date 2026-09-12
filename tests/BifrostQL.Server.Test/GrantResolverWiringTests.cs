@@ -33,8 +33,9 @@ namespace BifrostQL.Server.Test;
 ///   <c>docs</c>  — readable, but column <c>salary</c> is read-denied to callers holding
 ///                  grant <c>x</c> (<c>policy-read-deny-roles: x</c>): the deny only fires
 ///                  when the caller is seen as HOLDING the grant.
-///   <c>vault</c> — <c>policy-actions: create</c>: reads are denied to every non-admin, so
-///                  the grant <c>admin</c> (the evaluator's admin role) is REQUIRED to read.
+///   <c>vault</c> — <c>policy-actions: read[admin],create</c>: reads are denied to every
+///                  non-admin, so the grant <c>admin</c> (the evaluator's admin role) is
+///                  REQUIRED to read.
 ///
 /// The throwing-resolver fact proves the E9 fail-closed half: a resolver fault empties the
 /// permission set, logs a Warning naming the identity id, and the request ends in a policy
@@ -59,7 +60,7 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
         "main.docs { policy-actions: read }",
         "main.docs { policy-read-deny: salary }",
         "main.docs { policy-read-deny-roles: x }",
-        "main.vault { policy-actions: create }",
+        "main.vault { policy-actions: read[admin],create }",
     };
 
     public async Task InitializeAsync()

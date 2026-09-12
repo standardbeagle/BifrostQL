@@ -229,7 +229,20 @@ public class PolicyEvaluatorTests
         var act = () => PolicyConfigCollector.FromTable(table);
 
         act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*Valid actions*");
+            .WithMessage("*Malformed bracket*");
+    }
+
+    [Fact]
+    public void Collector_EmptyBracket_FailsLoadWithValidNames()
+    {
+        // A present-but-empty bracket (`delete[]`) must not silently degrade to
+        // UNCONDITIONAL — that is a fail-open typo. It is malformed, full stop.
+        var table = TableWithMetadata("orders", (MetadataKeys.Policy.Actions, "read,delete[]"));
+
+        var act = () => PolicyConfigCollector.FromTable(table);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*Malformed bracket*");
     }
 
     [Fact]

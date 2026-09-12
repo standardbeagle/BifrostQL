@@ -57,11 +57,11 @@ namespace BifrostQL.Server.Test
         }
 
         // members is readable but hides `salary` from every non-admin caller; ledger denies
-        // read outright (an empty action grant with a policy present = deny).
+        // read outright to non-admins (read requires the admin grant).
         private static readonly string[] Metadata =
         {
             "main.members { policy-actions: read; policy-read-deny: salary }",
-            "main.ledger { policy-actions: update }",
+            "main.ledger { policy-actions: read[admin],update }",
         };
 
         private static AppMetadataModel Overlay() => new()

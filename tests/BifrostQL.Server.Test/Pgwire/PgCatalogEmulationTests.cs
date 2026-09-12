@@ -275,9 +275,9 @@ namespace BifrostQL.Server.Test.Pgwire
                     Col("ssn", "varchar", ordinal: 3, isNullable: true),
                 });
 
-            // Read denied to non-admins (policy grants only create).
+            // Read denied to non-admins (read requires the admin grant).
             var auditLog = Table("audit_log",
-                policyActions: "create",
+                policyActions: "read[admin],create",
                 columns: new[] { Col("id", "int", ordinal: 1, isPrimaryKey: true) });
 
             // Malformed policy metadata: must be excluded for EVERYONE (fail closed).

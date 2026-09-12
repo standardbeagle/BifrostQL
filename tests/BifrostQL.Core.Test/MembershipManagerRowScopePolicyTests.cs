@@ -42,6 +42,7 @@ public class MembershipManagerRowScopePolicyTests
     private const string MembersRowScope = "user_id = {user_id}";
     private const string HouseholdsRowScope = "household_id = {household_id}";
     private const string RowScopeRole = "member";
+    private const string RowScopeExemptGrant = "time.edit_others";
 
     private static QueryTransformContext QueryContext(
         IDbModel model, IDictionary<string, object?> userContext) =>
@@ -97,7 +98,8 @@ public class MembershipManagerRowScopePolicyTests
                 .WithMetadata(MetadataKeys.Security.TenantFilter, "tenant_id")
                 .WithMetadata(MetadataKeys.Policy.Actions, "read,create,update,delete")
                 .WithMetadata(MetadataKeys.Policy.RowScope, MembersRowScope)
-                .WithMetadata(MetadataKeys.Policy.RowScopeRoles, RowScopeRole))
+                .WithMetadata(MetadataKeys.Policy.RowScopeRoles, RowScopeRole)
+                .WithMetadata(MetadataKeys.Policy.RowScopeExempt, RowScopeExemptGrant))
             .WithTable("households", t => t
                 .WithSchema("main")
                 .WithPrimaryKey("household_id")
@@ -270,6 +272,38 @@ public class MembershipManagerRowScopePolicyTests
         result.AdditionalFilter!.ColumnName.Should().Be("user_id");
         result.AdditionalFilter.Next!.RelationName.Should().Be("_eq");
         result.AdditionalFilter.Next.Value.Should().Be("42");
+    }
+
+    [Fact]
+    public void GrantHolder_Query_IsExemptFromRowScopeButNotTenantScope()
+    {
+        var model = MembershipManagerModel();
+        var table = model.GetTableFromDbName("members");
+        var context = QueryContext(model, new Dictionary<string, object?>
+        {
+            ["user_id"] = "42",
+            [MetadataKeys.Auth.DefaultPermissionsContextKey] = new[] { RowScopeExemptGrant },
+            ["tenant_id"] = 1,
+        });
+
+        new PolicyFilterTransformer().GetAdditionalFilter(table, context).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GrantHolder_Update_IsNotRowScoped()
+    {
+        var model = MembershipManagerModel();
+        var result = await new PolicyMutationTransformer().TransformAsync(
+            model.GetTableFromDbName("members"), MutationType.Update,
+            new Dictionary<string, object?> { ["first_name"] = "Renamed" },
+            MutationContext(model, new Dictionary<string, object?>
+            {
+                ["user_id"] = "42",
+                [MetadataKeys.Auth.DefaultPermissionsContextKey] = new[] { RowScopeExemptGrant },
+            }));
+
+        result.Errors.Should().BeNullOrEmpty();
+        result.AdditionalFilter.Should().BeNull();
     }
 
     [Fact]

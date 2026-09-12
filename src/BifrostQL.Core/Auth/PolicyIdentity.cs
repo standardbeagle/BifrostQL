@@ -17,6 +17,7 @@ public static class PolicyIdentity
 {
     private const string UserIdContextKey = MetadataKeys.Auth.DefaultUserIdContextKey;
     private const string RolesContextKey = MetadataKeys.Auth.DefaultRolesContextKey;
+    private const string PermissionsContextKey = MetadataKeys.Auth.DefaultPermissionsContextKey;
 
     /// <summary>
     /// Builds the identity for a policy check from <paramref name="userContext"/>.
@@ -46,7 +47,8 @@ public static class PolicyIdentity
             ? tenantValue?.ToString()
             : null;
 
-        return new AppIdentity(userId, "query-context", tenantId: tenantId, roles: ExtractRoles(userContext));
+        return new AppIdentity(userId, "query-context", tenantId: tenantId,
+            roles: ExtractRoles(userContext), permissions: ExtractPermissions(userContext));
     }
 
     /// <summary>
@@ -58,7 +60,18 @@ public static class PolicyIdentity
     {
         if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
-        if (!userContext.TryGetValue(RolesContextKey, out var rolesValue) || rolesValue is null)
+        return ExtractStrings(userContext, RolesContextKey);
+    }
+
+    public static IReadOnlyList<string> ExtractPermissions(IDictionary<string, object?> userContext)
+    {
+        if (userContext is null) throw new ArgumentNullException(nameof(userContext));
+        return ExtractStrings(userContext, PermissionsContextKey);
+    }
+
+    private static IReadOnlyList<string> ExtractStrings(IDictionary<string, object?> userContext, string key)
+    {
+        if (!userContext.TryGetValue(key, out var rolesValue) || rolesValue is null)
             return Array.Empty<string>();
 
         if (rolesValue is string singleRole)

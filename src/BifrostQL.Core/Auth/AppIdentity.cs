@@ -55,6 +55,9 @@ public sealed record AppIdentity
     /// </summary>
     public IReadOnlyList<string> Permissions { get; }
 
+    /// <summary>Roles and permissions unified for policy decisions.</summary>
+    public IReadOnlySet<string> Grants { get; }
+
     /// <summary>
     /// Additional provider claims keyed by claim name. Never null; empty when the
     /// provider supplied no extra claims. Copied verbatim into the user context.
@@ -86,5 +89,6 @@ public sealed record AppIdentity
         Roles = roles ?? Array.Empty<string>();
         Claims = claims ?? new Dictionary<string, object?>();
         Permissions = permissions ?? Array.Empty<string>();
+        Grants = new HashSet<string>(Roles.Concat(Permissions), StringComparer.OrdinalIgnoreCase);
     }
 }

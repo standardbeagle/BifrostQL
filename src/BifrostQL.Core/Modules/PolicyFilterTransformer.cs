@@ -160,6 +160,6 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         if (policy.RowScopeRoles.Count == 0)
             return true;
 
-        return identity.Roles.Any(policy.RowScopeRoles.Contains);
+        return identity.Grants.Any(policy.RowScopeRoles.Contains);
     }
 }

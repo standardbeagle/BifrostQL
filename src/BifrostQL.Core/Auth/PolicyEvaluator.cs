@@ -62,7 +62,7 @@ public sealed class PolicyEvaluator
     {
         var policyDecision = CanAct(policy, action, identity);
         if (!policyDecision.Allowed || string.IsNullOrWhiteSpace(requiredRole)) return PolicyDecision.Deny;
-        return identity.Roles.Any(role => string.Equals(role, requiredRole, StringComparison.OrdinalIgnoreCase))
+        return identity.Grants.Contains(requiredRole)
             ? PolicyDecision.Allow : PolicyDecision.Deny;
     }
 
@@ -100,7 +100,7 @@ public sealed class PolicyEvaluator
         // deny — blocks every non-admin caller.
         if (direction == PolicyDirection.Read && policy.ReadDenyRoles.Count > 0)
         {
-            return identity.Roles.Any(policy.ReadDenyRoles.Contains)
+            return identity.Grants.Any(policy.ReadDenyRoles.Contains)
                 ? PolicyDecision.Deny
                 : PolicyDecision.Allow;
         }
@@ -109,5 +109,5 @@ public sealed class PolicyEvaluator
     }
 
     private bool IsAdmin(AppIdentity identity) =>
-        identity.Roles.Any(r => string.Equals(r, _adminRole, StringComparison.OrdinalIgnoreCase));
+        identity.Grants.Contains(_adminRole);
 }

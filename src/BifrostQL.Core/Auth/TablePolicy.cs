@@ -117,7 +117,8 @@ public sealed record TablePolicy
         IEnumerable<string>? writeDenyColumns = null,
         string? rowScopeExpression = null,
         IEnumerable<string>? rowScopeRoles = null,
-        IEnumerable<string>? readDenyRoles = null)
+        IEnumerable<string>? readDenyRoles = null,
+        bool forceHasPolicy = false)
     {
         AllowedActions = new HashSet<PolicyAction>(
             allowedActions ?? Enumerable.Empty<PolicyAction>());
@@ -137,6 +138,6 @@ public sealed record TablePolicy
             AllowedActions.Count > 0 ||
             ReadDenyColumns.Count > 0 ||
             WriteDenyColumns.Count > 0 ||
-            RowScopeExpression is not null;
+            RowScopeExpression is not null || forceHasPolicy;
     }
 }

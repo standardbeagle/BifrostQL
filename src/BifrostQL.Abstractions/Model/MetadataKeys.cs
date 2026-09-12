@@ -337,6 +337,8 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static class Policy
         {
+            public const string Default = "policy-default";
+
             /// <summary>
             /// Table-level comma-separated list of permitted actions
             /// (read/create/update/delete). Unrecognized tokens are ignored.

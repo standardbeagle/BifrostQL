@@ -29,7 +29,16 @@ public static class PolicyConfigCollector
         return BuildPolicy(table);
     }
 
-    private static TablePolicy BuildPolicy(IDbTable table)
+    public static TablePolicy FromTable(IDbModel model, IDbTable table)
+    {
+        if (model is null) throw new ArgumentNullException(nameof(model));
+        if (table is null) throw new ArgumentNullException(nameof(table));
+        return BuildPolicy(table, string.Equals(model.GetMetadataValue(MetadataKeys.Policy.Default), "deny", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static TablePolicy BuildPolicy(IDbTable table) => BuildPolicy(table, false);
+
+    private static TablePolicy BuildPolicy(IDbTable table, bool denyByDefault)
     {
         var actionsRaw = table.GetMetadataValue(MetadataKeys.Policy.Actions);
         var readDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.ReadDeny);
@@ -45,7 +54,7 @@ public static class PolicyConfigCollector
             !string.IsNullOrWhiteSpace(rowScopeRaw);
 
         if (!hasAny)
-            return TablePolicy.None;
+            return denyByDefault ? new TablePolicy(forceHasPolicy: true) : TablePolicy.None;
 
         return new TablePolicy(
             allowedActions: ParseActions(actionsRaw),

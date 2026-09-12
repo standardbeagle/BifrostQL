@@ -102,7 +102,7 @@ public static class SchemaReadVisibility
         var result = new List<VisibleTable>();
         foreach (var table in model.Tables)
         {
-            if (ProjectTable(table, identity) is { } visible)
+            if (ProjectTable(model, table, identity) is { } visible)
                 result.Add(visible);
         }
         return result;
@@ -167,11 +167,14 @@ public static class SchemaReadVisibility
     }
 
     private static VisibleTable? ProjectTable(IDbTable table, AppIdentity identity)
+        => ProjectTable(null, table, identity);
+
+    private static VisibleTable? ProjectTable(IDbModel? model, IDbTable table, AppIdentity identity)
     {
         TablePolicy policy;
         try
         {
-            policy = PolicyConfigCollector.FromTable(table);
+            policy = model is null ? PolicyConfigCollector.FromTable(table) : PolicyConfigCollector.FromTable(model, table);
             if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed)
                 return null;
         }

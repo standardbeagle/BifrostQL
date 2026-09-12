@@ -16,7 +16,8 @@ public class PolicyDefaultDenyTests
             .Build();
         model.Metadata[MetadataKeys.Policy.Default] = "deny";
 
-        var policy = PolicyConfigCollector.FromTable(model, model.Tables.Single());
+        model.Tables.Single().Metadata[MetadataKeys.Policy.Default] = "deny";
+        var policy = PolicyConfigCollector.FromTable(model.Tables.Single());
 
         policy.HasPolicy.Should().BeTrue();
         new PolicyEvaluator().CanAct(policy, PolicyAction.Read, new AppIdentity("u", "test"))
@@ -33,7 +34,8 @@ public class PolicyDefaultDenyTests
             .Build();
         model.Metadata[MetadataKeys.Policy.Default] = "deny";
 
-        var policy = PolicyConfigCollector.FromTable(model, model.Tables.Single());
+        model.Tables.Single().Metadata[MetadataKeys.Policy.Default] = "deny";
+        var policy = PolicyConfigCollector.FromTable(model.Tables.Single());
 
         new PolicyEvaluator().CanAct(policy, PolicyAction.Read,
             new AppIdentity("u", "test", roles: new[] { MetadataKeys.Policy.DefaultAdminRole })).Allowed.Should().BeTrue();

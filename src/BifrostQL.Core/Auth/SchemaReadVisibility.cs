@@ -174,7 +174,7 @@ public static class SchemaReadVisibility
         TablePolicy policy;
         try
         {
-            policy = model is null ? PolicyConfigCollector.FromTable(table) : PolicyConfigCollector.FromTable(model, table);
+            policy = PolicyConfigCollector.FromTable(table);
             if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed)
                 return null;
         }

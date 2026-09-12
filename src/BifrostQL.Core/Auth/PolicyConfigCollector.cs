@@ -19,24 +19,16 @@ public static class PolicyConfigCollector
 
     /// <summary>
     /// Builds the policy for a single table. Returns <see cref="TablePolicy.None"/>
-    /// when the table carries no policy metadata (the documented opt-in default).
+    /// when the table carries no policy metadata and the model default is allow.
     /// </summary>
     public static TablePolicy FromTable(IDbTable table)
     {
         if (table is null)
             throw new ArgumentNullException(nameof(table));
 
-        return BuildPolicy(table);
+        return BuildPolicy(table, string.Equals(
+            table.GetMetadataValue(MetadataKeys.Policy.Default), "deny", StringComparison.OrdinalIgnoreCase));
     }
-
-    public static TablePolicy FromTable(IDbModel model, IDbTable table)
-    {
-        if (model is null) throw new ArgumentNullException(nameof(model));
-        if (table is null) throw new ArgumentNullException(nameof(table));
-        return BuildPolicy(table, string.Equals(model.GetMetadataValue(MetadataKeys.Policy.Default), "deny", StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static TablePolicy BuildPolicy(IDbTable table) => BuildPolicy(table, false);
 
     private static TablePolicy BuildPolicy(IDbTable table, bool denyByDefault)
     {

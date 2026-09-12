@@ -47,6 +47,10 @@ namespace BifrostQL.Core.Model
                     model.Metadata, MetadataValidator.KnownDatabaseKeys, "database", ":root", errors);
                 ValidateUnknownMetadataKeys(
                     model.Metadata, MetadataValidator.KnownDatabaseKeys, "database", ":root", errors);
+                var policyDefault = model.GetMetadataValue(MetadataKeys.Policy.Default);
+                if (policyDefault is not null && !string.Equals(policyDefault, "allow", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(policyDefault, "deny", StringComparison.OrdinalIgnoreCase))
+                    errors.Add($"  :root [{MetadataKeys.Policy.Default}]: value must be 'allow' or 'deny'");
             }
 
             foreach (var table in model.Tables)

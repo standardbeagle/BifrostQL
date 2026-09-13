@@ -8,15 +8,15 @@ export interface ProtectedRouteProps {
   /** The protected content, rendered only when access is granted. */
   children: ReactNode;
   /**
-   * Permission string(s) required to view the route. When an array, the
-   * session must hold *every* listed permission. When omitted, the route only
-   * requires an authenticated session (no specific permission).
+   * Grant name(s) the server must resolve for the caller (`_grants`) to view
+   * the route. When an array, *every* listed grant is required. When omitted,
+   * the route only requires an authenticated session. Session claims are not
+   * consulted: the answer is the server's, so it agrees with what the server
+   * enforces.
    */
-  requirePermission?: string | string[];
-  /** Server-resolved grants required to view the route. */
   requiredGrants?: string | string[];
-  /** @deprecated Use requiredGrants. */
-  requiredPermissions?: string | string[];
+  /** @deprecated Use {@link ProtectedRouteProps.requiredGrants}. */
+  requirePermission?: string | string[];
   /**
    * Invoked once when an unauthenticated user reaches the route. Apps wire this
    * to their router's navigation (e.g. `() => navigate('/login')`). The route
@@ -29,8 +29,8 @@ export interface ProtectedRouteProps {
    */
   loadingFallback?: ReactNode;
   /**
-   * Rendered when the user is authenticated but lacks a required permission
-   * (the 403 case). Defaults to a minimal `role="alert"` 403 message.
+   * Rendered when the user is authenticated but lacks a required grant (the
+   * 403 case). Defaults to a minimal `role="alert"` 403 message.
    */
   forbiddenFallback?: ReactNode;
   /**
@@ -40,37 +40,35 @@ export interface ProtectedRouteProps {
   unauthenticatedFallback?: ReactNode;
 }
 
-/** Default 403 view rendered when a permission check fails. */
+/** Default 403 view rendered when a grant check fails. */
 const defaultForbiddenFallback: ReactNode = (
   <div role="alert">403 — You do not have permission to view this page.</div>
 );
 
 /**
- * Normalize the `requirePermission` prop into a flat list of required
- * permission strings. An omitted prop yields an empty list (auth-only gate).
+ * Normalize the `requiredGrants` prop into a flat list of grant names. An
+ * omitted prop yields an empty list (auth-only gate).
  */
-function toRequiredList(
-  requirePermission: string | string[] | undefined,
-): string[] {
-  if (requirePermission === undefined) {
+function toRequiredList(required: string | string[] | undefined): string[] {
+  if (required === undefined) {
     return [];
   }
-  return Array.isArray(requirePermission)
-    ? requirePermission
-    : [requirePermission];
+  return Array.isArray(required) ? required : [required];
 }
 
 /**
  * Route guard that gates its `children` on authentication and, optionally,
- * fine-grained permissions.
+ * server-resolved grants.
  *
  * Behavior, in order:
  * 1. While the session is loading, renders {@link ProtectedRouteProps.loadingFallback}.
  * 2. When unauthenticated, fires {@link ProtectedRouteProps.onUnauthenticated}
  *    (once) and renders {@link ProtectedRouteProps.unauthenticatedFallback}.
- * 3. When authenticated but missing any required permission, renders the 403
+ * 3. When grants are required and the server's `_grants` answer is still
+ *    loading, renders {@link ProtectedRouteProps.loadingFallback}.
+ * 4. When authenticated but missing any required grant, renders the 403
  *    {@link ProtectedRouteProps.forbiddenFallback}.
- * 4. Otherwise renders `children`.
+ * 5. Otherwise renders `children`.
  *
  * The guard is deliberately router-agnostic: redirects are delegated to the
  * caller through `onUnauthenticated`, so it composes with any router (including
@@ -81,7 +79,7 @@ function toRequiredList(
  * @example
  * ```tsx
  * <ProtectedRoute
- *   requirePermission="dbo.users.read"
+ *   requiredGrants="dbo.users.read"
  *   onUnauthenticated={() => navigate('/login')}
  * >
  *   <UsersScreen />
@@ -90,9 +88,8 @@ function toRequiredList(
  */
 export function ProtectedRoute({
   children,
-  requirePermission,
   requiredGrants,
-  requiredPermissions,
+  requirePermission,
   onUnauthenticated,
   loadingFallback = null,
   forbiddenFallback = defaultForbiddenFallback,
@@ -125,11 +122,14 @@ export function ProtectedRoute({
     return <>{unauthenticatedFallback}</>;
   }
 
-  const required = toRequiredList(requiredGrants ?? requiredPermissions ?? requirePermission);
-  if (required.length > 0 && policy.isLoading) return <>{loadingFallback}</>;
-  const hasAllPermissions = required.every((grant) => policy.grants.includes(grant));
+  const required = toRequiredList(requiredGrants ?? requirePermission);
+  if (required.length > 0 && policy.isLoading) {
+    return <>{loadingFallback}</>;
+  }
+  const granted = new Set(policy.grants);
+  const hasAllGrants = required.every((grant) => granted.has(grant));
 
-  if (!hasAllPermissions) {
+  if (!hasAllGrants) {
     return <>{forbiddenFallback}</>;
   }
 

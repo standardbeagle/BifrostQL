@@ -553,6 +553,51 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
             .GetInt64().Should().Be(125);
     }
 
+    [Fact]
+    public async Task ReadRequires_RefuseAndLegacyDeny_OmitImageKey_AndKeepDiskValue()
+    {
+        var model = await LoadModelAsync(
+            "main.orders.cost_rate { read-requires: rates.view_cost; deny-mode: refuse; writable-values: 125 }",
+            "main.orders { history: enabled; policy-read-deny: status }",
+            ":root { history-table: main.audit_trail }");
+
+        (await ExecuteMutationAsync("mutation { orders(insert: { status: \"new\", cost_rate: 125 }) }", model))
+            .Errors.Should().BeNullOrEmpty();
+
+        var result = await ExecuteQueryAsync(
+            "query { ordersHistory { data { before after } } }", model,
+            new Dictionary<string, object?> { ["roles"] = Array.Empty<string>() });
+        var image = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            Rows(result, "ordersHistory").Single().GetProperty("after").GetString()!)!;
+        image.Should().NotContainKey("cost_rate");
+        image.Should().NotContainKey("status");
+        result.Errors.Should().BeNullOrEmpty();
+
+        await using var cmd = new SqliteCommand("SELECT after FROM audit_trail", _keepAlive);
+        var raw = (string)(await cmd.ExecuteScalarAsync())!;
+        raw.Should().Contain("cost_rate").And.Contain("125");
+    }
+
+    [Fact]
+    public async Task ReadRequires_AdminSeesValue_AndDeleteBeforeImageIsProjected()
+    {
+        var model = await LoadModelAsync(
+            "main.orders.cost_rate { read-requires: rates.view_cost; writable-values: 125 }",
+            "main.orders { history: enabled }",
+            ":root { history-table: main.audit_trail }");
+        (await ExecuteMutationAsync("mutation { orders(insert: { status: \"new\", cost_rate: 125 }) }", model))
+            .Errors.Should().BeNullOrEmpty();
+        (await ExecuteMutationAsync("mutation { orders(delete: { id: 1 }) }", model))
+            .Errors.Should().BeNullOrEmpty();
+
+        var result = await ExecuteQueryAsync(
+            "query { ordersHistory { data { before } } }", model,
+            new Dictionary<string, object?> { ["isAdmin"] = true });
+        var image = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            Rows(result, "ordersHistory").Last().GetProperty("before").GetString()!)!;
+        image["cost_rate"].ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
     private async Task<(IDbModel Model, string Ciphertext)> SeedEncryptedTrailAsync()
     {
         var model = await LoadModelAsync(

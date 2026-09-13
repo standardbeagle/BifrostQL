@@ -41,6 +41,7 @@ export type {
 } from './components';
 export {
   useBifrost,
+  usePolicy,
   useBifrostQuery,
   useBifrostMutation,
   useBifrostInfinite,
@@ -52,6 +53,7 @@ export {
 } from './hooks';
 export type {
   UseBifrostOptions,
+  UsePolicyResult,
   UseBifrostQueryOptions,
   UseBifrostMutationOptions,
   UseBifrostInfiniteOptions,

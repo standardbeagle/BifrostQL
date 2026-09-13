@@ -1,5 +1,7 @@
 export { useBifrost } from './use-bifrost';
 export type { UseBifrostOptions } from './use-bifrost';
+export { usePolicy } from './use-policy';
+export type { UsePolicyResult } from './use-policy';
 export { useBifrostQuery } from './use-bifrost-query';
 export type { UseBifrostQueryOptions } from './use-bifrost-query';
 export { useBifrostMutation } from './use-bifrost-mutation';

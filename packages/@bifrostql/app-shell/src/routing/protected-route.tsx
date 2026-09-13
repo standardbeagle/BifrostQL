@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useSession } from '../auth/use-session';
+import { usePolicy } from '@bifrostql/react';
 
 /** Props for {@link ProtectedRoute}. */
 export interface ProtectedRouteProps {
@@ -12,6 +13,10 @@ export interface ProtectedRouteProps {
    * requires an authenticated session (no specific permission).
    */
   requirePermission?: string | string[];
+  /** Server-resolved grants required to view the route. */
+  requiredGrants?: string | string[];
+  /** @deprecated Use requiredGrants. */
+  requiredPermissions?: string | string[];
   /**
    * Invoked once when an unauthenticated user reaches the route. Apps wire this
    * to their router's navigation (e.g. `() => navigate('/login')`). The route
@@ -86,12 +91,15 @@ function toRequiredList(
 export function ProtectedRoute({
   children,
   requirePermission,
+  requiredGrants,
+  requiredPermissions,
   onUnauthenticated,
   loadingFallback = null,
   forbiddenFallback = defaultForbiddenFallback,
   unauthenticatedFallback = null,
 }: ProtectedRouteProps) {
-  const { isLoading, isAuthenticated, permissions } = useSession();
+  const { isLoading, isAuthenticated } = useSession();
+  const policy = usePolicy();
 
   const shouldRedirect = !isLoading && !isAuthenticated;
 
@@ -117,9 +125,9 @@ export function ProtectedRoute({
     return <>{unauthenticatedFallback}</>;
   }
 
-  const required = toRequiredList(requirePermission);
-  const granted = new Set(permissions);
-  const hasAllPermissions = required.every((perm) => granted.has(perm));
+  const required = toRequiredList(requiredGrants ?? requiredPermissions ?? requirePermission);
+  if (required.length > 0 && policy.isLoading) return <>{loadingFallback}</>;
+  const hasAllPermissions = required.every((grant) => policy.grants.includes(grant));
 
   if (!hasAllPermissions) {
     return <>{forbiddenFallback}</>;

@@ -13,6 +13,9 @@ export type {
   RelationshipMetadata,
   EntityMetadata,
   AppMetadata,
+  DbSchemaProjection,
+  DbSchemaColumnProjection,
+  GrantsProjection,
 } from './metadata';
 
 export type { SavedObjectType, SavedObject } from './saved-object';

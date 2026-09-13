@@ -118,3 +118,25 @@ export interface AppMetadata {
   /** Entity-level metadata keyed by qualified table name (e.g. `dbo.users`). */
   entities?: Record<string, EntityMetadata>;
 }
+
+/** Mirrors the C# `_dbSchema` resolver projection. */
+export interface DbSchemaColumnProjection {
+  /** Whether the current identity may read this column. */
+  readable: boolean;
+  /** Whether the current identity may write this column. */
+  writable: boolean;
+}
+
+/** Mirrors the C# `_dbSchema` resolver projection. */
+export interface DbSchemaProjection {
+  /** Actions allowed for the current identity on this table. */
+  allowedActions: string[];
+  /** Columns keyed by GraphQL column name. */
+  columns: Record<string, DbSchemaColumnProjection>;
+}
+
+/** Mirrors the C# `_grants` resolver projection. */
+export interface GrantsProjection {
+  /** Effective grant names for the current identity. */
+  grants: string[];
+}

@@ -1,5 +1,7 @@
 # Changelog
 
+- Packages: app-shell controls and protected routes now consume server-resolved policy grants.
+
 All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-builder extraction plan from Membership Manager build`).
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.

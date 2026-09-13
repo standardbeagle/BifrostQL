@@ -283,3 +283,9 @@ friction:
 - [`samples/HostedSpa`](https://github.com/standardbeagle/BifrostQL/tree/main/samples/HostedSpa) — a complete runnable example.
 - [Configuration reference](/BifrostQL/reference/configuration/) — BifrostQL host configuration options.
 - [Authentication](/BifrostQL/guides/authentication/) — securing the GraphQL endpoint.
+## Server policy
+
+Use `usePolicy(qualifiedTable)` from `@bifrostql/app-shell` (or
+`@bifrostql/react`) for server-resolved affordances. Its `can`, `readable`,
+and `writable` helpers reflect `_dbSchema` and `_grants`; call `refresh()` after
+the session changes.

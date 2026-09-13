@@ -1,4 +1,5 @@
 import type { FieldMetadata } from '../metadata/app-metadata-types';
+import { usePolicy } from '@bifrostql/react';
 import {
   ScalarControl,
   DateControl,
@@ -72,6 +73,8 @@ export interface FieldControlProps {
   fkTargetEntity?: string;
   /** Overrides the label derived from `name`. */
   label?: string;
+  /** Qualified table name used to resolve server-side column policy. */
+  table?: string;
 }
 
 /**
@@ -105,10 +108,12 @@ export function FieldControl({
   fkOptions,
   fkTargetEntity,
   label,
+  table,
 }: FieldControlProps) {
   const kind = resolveFieldKind(field);
   const resolvedLabel = label ?? name;
-  const readOnly = field?.readOnly ?? false;
+  const policy = table ? usePolicy(table) : null;
+  const readOnly = (field?.readOnly ?? false) || (Boolean(table) && !policy?.writable(name));
   const helpText = field?.helpText;
 
   const shared = {

@@ -185,7 +185,7 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Registers the query transformer service and the built-in computed-column providers
-        /// (local/S3 file folders, state-machine transitions, EAV metadata).
+        /// (local/S3 file folders, state-machine transitions, row capabilities, EAV metadata).
         /// </summary>
         public static void RegisterComputedColumnServices(IServiceCollection services)
         {
@@ -193,6 +193,7 @@ namespace BifrostQL.Server
             services.AddSingleton<IComputedColumnProvider, LocalFileFolderComputedColumnProvider>();
             services.AddSingleton<IComputedColumnProvider, S3FileFolderComputedColumnProvider>();
             services.AddSingleton<IComputedColumnProvider>(_ => new StateMachineTransitionsProvider());
+            services.AddSingleton<IComputedColumnProvider>(_ => new RowCapabilityProvider());
             services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
         }

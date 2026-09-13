@@ -511,12 +511,19 @@ namespace BifrostQL.Server
             {
                 var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext
                     ?? throw new InvalidOperationException("IPolicyGate requires an active HttpContext.");
+                // One identity decision per assembly (M13): the gate runs the caller through
+                // BifrostIdentityGate like every HTTP mount does, never through a second
+                // CreateUserContext call that would drift from it. A caller the gate cannot
+                // project — anonymous, or a principal whose claims map to nothing — gets the
+                // gate that refuses everything, so the endpoint answers ACCESS_DENIED the way
+                // the GraphQL mount refuses that same caller, instead of a 500 out of DI.
+                if (BifrostIdentityGate.Project(http, out var context) != BifrostIdentityOutcome.Projected)
+                    return PolicyGate.Refused;
                 var inputs = sp.GetRequiredService<PathCache<Inputs>>().GetFirstValueAsync()
                     .GetAwaiter().GetResult()
                     ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
                 var model = (inputs["model"] as BifrostQL.Core.Model.IDbModel)
                     ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
-                var context = sp.GetRequiredService<IBifrostAuthContextFactory>().CreateUserContext(http);
                 return new PolicyGate(model, PolicyIdentity.FromUserContext(context));
             });
             // Single identity seam for every transport gate (HTTP, binary WebSocket,

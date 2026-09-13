@@ -13,6 +13,15 @@ public sealed class PolicyGate : IPolicyGate
     private readonly AppIdentity _identity;
     private readonly PolicyEvaluator _evaluator;
 
+    /// <summary>
+    /// The gate a caller gets when the host could not project an identity for them
+    /// (anonymous, or a principal whose claims map to nothing). Every question is answered
+    /// <see cref="PolicyDecision.Deny"/> and <see cref="Require"/> raises the same generic
+    /// ACCESS_DENIED the data path raises, so an app endpoint refuses such a caller with the
+    /// wire shape the GraphQL mount would give them — never a 500 out of DI.
+    /// </summary>
+    public static IPolicyGate Refused { get; } = new RefusedGate();
+
     public PolicyGate(IDbModel model, AppIdentity identity, PolicyEvaluator? evaluator = null)
     {
         _model = model ?? throw new ArgumentNullException(nameof(model));
@@ -46,6 +55,16 @@ public sealed class PolicyGate : IPolicyGate
             !_model.TryGetTableFromDbName(name[..dot], name[(dot + 1)..], out var table))
             return PolicyDecision.Deny;
         return check(PolicyConfigCollector.FromTable(table), table);
+    }
+
+    private sealed class RefusedGate : IPolicyGate
+    {
+        public PolicyDecision CanAct(string qualifiedTable, PolicyAction action) => PolicyDecision.Deny;
+        public PolicyDecision CanWriteColumn(string qualifiedTable, string column) => PolicyDecision.Deny;
+        public PolicyDecision CanReadColumn(string qualifiedTable, string column) => PolicyDecision.Deny;
+        public void Require(string qualifiedTable, PolicyAction action)
+            => throw new BifrostExecutionError(PolicyDecision.Deny.Reason)
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
     }
 
     private static string ResolveColumn(IDbTable table, string column)

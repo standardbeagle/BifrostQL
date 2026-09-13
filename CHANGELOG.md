@@ -18,6 +18,13 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Column-level `writable-values` literal allow-lists for mutation policy.
 - `policy-self-deny` to prevent callers, including administrators, changing
   protected columns on their own row.
+- HostedSpa sample: the membership-manager guards (closed baseline, role-backed
+  grants, officer-only deletion, finance-only money writes, masked reads, own-row
+  scope with officer exemption, constrained status, self-protected role) are
+  metadata lines in `appsettings.json`, with `AddBifrostGrantResolver` resolving
+  roles to permissions; the sidecar workflow endpoints ask the scoped `IPolicyGate`
+  before their first write. The authorization guide's guards-to-metadata table
+  quotes the sample's lines and `HostedSpaPolicyTests` holds the two in step.
 
 ### Fixed
 
@@ -315,7 +322,3 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `BifrostQL.Host` has no integration smoke test.
 - `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` override removable once Actions runner default flips to Node.js 24 (or upstream actions publish v5).
 - Two separate WorkTrack stores (REST container vs local MCP) for the planning workspace — drifted multiple times, needs consolidation.
-# Unreleased
-
-- Documented the HostedSpa membership-manager authorization guards as metadata-only
-  declarations, including discovery through `_dbSchema`, `_grants`, and `_can`.

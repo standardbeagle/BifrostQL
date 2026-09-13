@@ -386,12 +386,16 @@ namespace BifrostQL.Core.Resolvers
         };
 
         /// <summary>
-        /// Rewrites the selected <c>before</c>/<c>after</c> image cells in place,
-        /// projecting each encrypted tracked-table value through
-        /// <paramref name="cryptoRead"/>. Image keys are the tracked table's DB
-        /// column names (the writer's contract), so each key is matched against the
-        /// tracked table's encrypted columns; non-encrypted entries pass through
-        /// byte-for-byte. No-op when the tracked table has no encrypted column.
+        /// Rewrites the selected <c>before</c>/<c>after</c> image cells in place so a
+        /// caller sees exactly what a read of the tracked row would show them. Image
+        /// keys are the tracked table's DB column names (the writer's contract). Each
+        /// key is first projected through the tracked table's read disposition for
+        /// <paramref name="userContext"/> (mask: value becomes null; refuse: key is
+        /// dropped, the request is not refused; admin: untouched), and only a key the
+        /// policy allows is then decrypted or masked through <paramref name="cryptoRead"/>
+        /// when the column is encrypted. Other entries pass through byte-for-byte. The
+        /// on-disk image is never changed: the trail stays complete for the audit and
+        /// is projected per caller on the wire.
         /// </summary>
         private static void ProjectTrailImages(
             GqlObjectQuery query,

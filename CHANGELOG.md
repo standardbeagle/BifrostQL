@@ -2,6 +2,8 @@
 
 ## Removed
 
+- Added scoped `IPolicyGate` for custom endpoints to reuse GraphQL table and column policy decisions.
+
 - Removed the unused `schema-permissions` metadata key; it was parsed but never enforced, creating a silent fail-open permission declaration.
 
 - Add per-row `_can { update delete }` capabilities for row-scoped tables.

@@ -5,7 +5,17 @@ description: "Restrict which tables, rows, and columns a role may read or write 
 
 Authorization policies decide what an authenticated caller may do. You declare them in
 table metadata, and one evaluator enforces them on every read, every write, and every
-schema surface — GraphQL, MCP, pgwire, gRPC, OData, and S3 alike.
+ schema surface — GraphQL, MCP, pgwire, gRPC, OData, S3, and your own endpoints alike.
+
+### Where enforcement happens
+
+Your own endpoints can ask the same table policy evaluator:
+
+```csharp
+app.MapPost("/payments", (IPolicyGate policy) => { policy.Require("public.payments", PolicyAction.Create); return Results.Ok(); });
+```
+
+This checks table and column policy only; row-level answers come from the data path or `_can`.
 
 Authentication and authorization are separate jobs here.
 [Authentication](/BifrostQL/guides/authentication/) establishes *who* the caller is and

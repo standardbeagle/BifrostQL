@@ -63,6 +63,14 @@ every project in `gate:`. A test the plan names as contradicted and the diff
 leaves untouched is a major finding, even if this task's gate passed — it is
 red in a project the gate did not run. If the task has no `## Tests` section,
 grep the tree yourself for tests asserting the old behaviour before passing.
+Read `## Reach` the same way: a door, consumer or registry it lists that
+the diff does not handle is a finding. When a finding is one instance of a
+class (one write path, one caller, one registry), enumerate the whole class
+in the same verdict; a rewind that names one door per pass costs an
+implement turn per door (agency 1.5 took three). When the change alters
+what an API or schema returns, require a test that executes the real
+document or route; a resolver-level test that serialises the C# result is
+not evidence for the wire contract.
 
 **Rationalization (when the packet excuses something).** Reject synthetic or
 fallback data, narrowed or skipped tests without contract support,

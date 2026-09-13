@@ -100,15 +100,36 @@ export interface GrantResponse {
   data?: { _policyGrants?: unknown; _grants?: unknown };
 }
 
-export function emitGrants(response: GrantResponse): string {
-  const grants = [...new Set(
+/** The sorted, de-duplicated grant names a `_policyGrants` response carries. */
+export function grantCatalogue(response: GrantResponse): string[] {
+  return [...new Set(
     Array.isArray(response.data?._policyGrants)
       ? response.data._policyGrants.filter((value): value is string => typeof value === "string")
       : [],
   )].sort();
-  const literals = grants.map((grant) => `'${grant.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`);
+}
+
+/** Emits `grants.ts`: the `Grant` union and the `GRANTS` constant. */
+export function emitGrants(response: GrantResponse): string {
+  const literals = grantCatalogue(response).map(
+    (grant) => `'${grant.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`,
+  );
   return `export type Grant = ${literals.length ? literals.join(" | ") : "never"};\n` +
     `export const GRANTS: readonly Grant[] = [${literals.join(", ")}] as const;\n`;
+}
+
+export const GRANTS_FILENAME = "grants.ts";
+
+/**
+ * The barrel lines that surface `grants.ts`. An empty catalogue emits
+ * `Grant = never`, which no consumer can name, so it gets no barrel line.
+ */
+function emitGrantBarrelLines(response: GrantResponse): string[] {
+  if (grantCatalogue(response).length === 0) return [];
+  return [
+    `export type { Grant } from "./grants.js";`,
+    `export { GRANTS } from "./grants.js";`,
+  ];
 }
 
 /**
@@ -143,9 +164,11 @@ function emitMessageImports(
 /**
  * Emits a TypeScript file per message + per enum, plus a barrel `index.ts`
  * that re-exports every generated module. Each file gets the AUTO-GENERATED
- * header so consumers know not to hand-edit them.
+ * header so consumers know not to hand-edit them. When a grant catalogue is
+ * supplied, `grants.ts` lands beside the messages and the barrel re-exports
+ * `Grant` and `GRANTS` (unless the catalogue is empty).
  */
-export function emitSchema(schema: ProtoSchema): EmittedFile[] {
+export function emitSchema(schema: ProtoSchema, grants?: GrantResponse): EmittedFile[] {
   const files: EmittedFile[] = [];
   const messageNames = new Set(schema.messages.map((m) => m.name));
   const enumNames = new Set(schema.enums.map((e) => e.name));
@@ -165,9 +188,14 @@ export function emitSchema(schema: ProtoSchema): EmittedFile[] {
     });
   }
 
+  if (grants) {
+    files.push({ filename: GRANTS_FILENAME, content: FILE_HEADER + "\n" + emitGrants(grants) });
+  }
+
   const exportLines = [
     ...schema.messages.map((m) => `export type { ${m.name} } from "./${m.name}.js";`),
     ...schema.enums.map((e) => `export { ${e.name} } from "./${e.name}.js";`),
+    ...(grants ? emitGrantBarrelLines(grants) : []),
   ];
   files.push({
     filename: "index.ts",

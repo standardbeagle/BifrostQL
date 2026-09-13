@@ -175,8 +175,7 @@ public static class SchemaReadVisibility
         try
         {
             policy = PolicyConfigCollector.FromTable(table);
-            if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed
-                && !Evaluator.IsAdmin(identity))
+            if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed)
                 return null;
         }
         catch

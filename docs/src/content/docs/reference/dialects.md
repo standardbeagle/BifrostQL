@@ -66,7 +66,7 @@ SQL Server requires an `ORDER BY` clause for `OFFSET`/`FETCH` pagination. Bifros
 - `serial`, `bigserial` are treated as auto-increment
 - `uuid` maps to `String`
 - `jsonb`, `json` map to `String`
-- `text[]`, `integer[]` map to `[String]`, `[Int]`
+- `text[]` and `integer[]` are exposed as `String` inputs carrying PostgreSQL array literals (for example, `{a,b}`); their bound parameters are explicitly cast to the resolved array type.
 
 **MySQL**:
 - `tinyint(1)` maps to `Boolean` (MySqlConnector returns `bool` for this type)

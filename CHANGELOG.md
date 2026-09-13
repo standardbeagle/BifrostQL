@@ -47,6 +47,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- PostgreSQL array-column insert and update parameters now cast known array types (such as `text[]` and `integer[]`) instead of binding string literals bare. Apps that relied on this failure as an accidental guard (Track did) must gate the column (S3/S4a) before upgrading.
+
 - Lost-update `CONFLICT` errors no longer expose the database schema-qualified table
   name. The stable message remains actionable (reload and retry), while the full
   table detail is logged server-side. Breaking for a caller that string-matched the

@@ -35,7 +35,8 @@ public sealed class PolicyWriteGrantLoaderPathTests : IAsyncLifetime
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 cost_rate REAL NOT NULL,
                 rate_code TEXT NULL,
-                total REAL NOT NULL
+                total REAL NOT NULL,
+                state TEXT NOT NULL
             );", conn);
         await ddl.ExecuteNonQueryAsync();
     }
@@ -51,6 +52,7 @@ public sealed class PolicyWriteGrantLoaderPathTests : IAsyncLifetime
             "main.users { policy-write-deny-roles: member }",
             "main.users.cost_rate { write-requires: team.manage }",
             "main.*.rate_code { write-requires: profiles.manage }",
+            "main.users.state { writable-values: draft,submitted }",
         };
         var loader = new DbModelLoader(
             new SqliteDbConnFactory(_connectionString), new MetadataLoader(metadata));
@@ -65,5 +67,6 @@ public sealed class PolicyWriteGrantLoaderPathTests : IAsyncLifetime
         policy.WriteRequires["rate_code"].Should().BeEquivalentTo("profiles.manage");
         policy.WriteDenyColumns.Should().BeEquivalentTo("total");
         policy.WriteDenyRoles.Should().BeEquivalentTo("member");
+        policy.WritableValues["state"].Should().BeEquivalentTo("draft", "submitted");
     }
 }

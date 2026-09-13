@@ -53,4 +53,30 @@ public sealed class WritableValuesTests
         PolicyConfigCollector.FromTable(model.GetTableFromDbName("profiles"))
             .WritableValues["state"].Should().BeEquivalentTo("draft", "submitted");
     }
+
+    [Fact]
+    public async Task StringValues_AreCaseInsensitive_AndDoNotRequireGrant()
+    {
+        var model = DbModelTestFixture.Create().WithTable("profiles", t => t
+            .WithSchema("public").WithPrimaryKey("id").WithColumn("state", "varchar")
+            .WithColumnMetadata("state", MetadataKeys.Policy.WritableValues, "draft,submitted")
+            .WithColumnMetadata("state", MetadataKeys.Policy.WriteRequires, "profiles.manage"))
+            .Build();
+        var table = model.GetTableFromDbName("profiles");
+        var transformer = new PolicyMutationTransformer();
+        static MutationTransformContext C(IDbModel m, params string[] grants) => new()
+        {
+            Model = m, UserContext = new Dictionary<string, object?> { ["roles"] = grants }
+        };
+
+        (await transformer.TransformAsync(table, MutationType.Insert,
+            new() { ["state"] = "Draft" }, C(model, "profiles.manage"))).Errors.Should().BeEmpty();
+        (await transformer.TransformAsync(table, MutationType.Insert,
+            new() { ["state"] = "Draft" }, C(model))).Errors.Should().ContainSingle();
+        var refused = await transformer.TransformAsync(table, MutationType.Insert,
+            new() { ["state"] = "approved" }, C(model, "profiles.manage"));
+        refused.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+        refused.Errors.Should().ContainSingle()
+            .Which.Should().Be("The mutation writes a field that is not permitted by authorization policy.");
+    }
 }

@@ -1,20 +1,23 @@
 # Changelog
 
-## Removed
-
-- Added scoped `IPolicyGate` for custom endpoints to reuse GraphQL table and column policy decisions.
-
-- Removed the unused `schema-permissions` metadata key; it was parsed but never enforced, creating a silent fail-open permission declaration.
-
-- Add per-row `_can { update delete }` capabilities for row-scoped tables.
-- Add `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.
-- Add column-level `writable-values` literal allow-lists for mutation policy.
-- Add `policy-self-deny` to prevent callers, including administrators, changing
-  protected columns on their own row.
-
 All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-builder extraction plan from Membership Manager build`).
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
+
+## Unreleased — 2026-09-13 (authorization epic)
+
+### Added
+
+- Scoped `IPolicyGate` for custom endpoints to reuse GraphQL table and column policy decisions.
+- Per-row `_can { update delete }` capabilities for row-scoped and self-deny tables.
+- `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.
+- Column-level `writable-values` literal allow-lists for mutation policy.
+- `policy-self-deny` to prevent callers, including administrators, changing
+  protected columns on their own row.
+
+### Removed
+
+- The unused `schema-permissions` metadata key; it was parsed but never enforced, creating a silent fail-open permission declaration.
 
 ## Unreleased — 2026-08-22
 

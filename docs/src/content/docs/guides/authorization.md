@@ -5,7 +5,7 @@ description: "Restrict which tables, rows, and columns a role may read or write 
 
 Authorization policies decide what an authenticated caller may do. You declare them in
 table metadata, and one evaluator enforces them on every read, every write, and every
- schema surface — GraphQL, MCP, pgwire, gRPC, OData, S3, and your own endpoints alike.
+schema surface — GraphQL, MCP, pgwire, gRPC, OData, S3, and your own endpoints alike.
 
 Authentication and authorization are separate jobs here.
 [Authentication](/BifrostQL/guides/authentication/) establishes *who* the caller is and

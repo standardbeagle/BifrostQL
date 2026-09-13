@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
 import { useBifrostQuery } from './use-bifrost-query';
+import { fetchBifrostQuery } from '../server/fetch-bifrost-query';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
@@ -264,5 +265,64 @@ describe('useBifrostQuery', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(typeof result.current.invalidate).toBe('function');
+  });
+});
+
+describe('useBifrostQuery SSR hydration', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('reads data prefetched by fetchBifrostQuery without a client fetch', async () => {
+    // Arrange: the server prefetches under the key fetchBifrostQuery documents
+    // as "the same query key that useBifrost uses on the client".
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    globalThis.fetch = createFetchMock({
+      data: { users: paged([{ id: 1, name: 'Alice' }]) },
+    });
+    await fetchBifrostQuery(queryClient, {
+      endpoint: 'http://localhost:5000/graphql',
+      table: 'users',
+      fields: ['id', 'name'],
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider
+            config={{ endpoint: 'http://localhost:5000/graphql' }}
+          >
+            {children}
+          </BifrostProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    // Act: the client hook mounts against the hydrated cache.
+    const { result } = renderHook(
+      () =>
+        useBifrostQuery<{ id: number; name: string }[]>('users', {
+          fields: ['id', 'name'],
+        }),
+      { wrapper: Wrapper },
+    );
+
+    // Assert: hydrated data is there on first render and nothing refetches.
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.data).toEqual([{ id: 1, name: 'Alice' }]);
+    await waitFor(() => expect(result.current.isFetching).toBe(false));
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(1);
+    expect(queryClient.getQueryCache().getAll()[0].queryKey).toHaveLength(3);
   });
 });

@@ -161,7 +161,8 @@ set on the column selector or on the table (the column value wins):
 
 - `null` (mask) — the caller selects the column and gets `null` for it; the
   rest of the row is unaffected. One query serves every caller with per-caller nulls,
-  whether the column is selected by its database or GraphQL name.
+  whether the column is selected by its database or GraphQL name. Filter, sort, and `_agg`
+  references to the column are refused explicitly, even when selection is masked.
 - `refuse` — the query is rejected with a generic `ACCESS_DENIED` error that
   never names the column or table.
 

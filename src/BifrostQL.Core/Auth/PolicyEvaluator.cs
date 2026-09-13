@@ -205,19 +205,16 @@ public sealed class PolicyEvaluator
 
         bool denied;
         var defaultRefuse = false;
-        if (policy.ReadRequires.ContainsKey(column))
+        if (policy.ReadDenyColumns.Contains(column))
+        {
+            defaultRefuse = true;
+            denied = policy.ReadDenyRoles.Count == 0
+                || identity.Grants.Any(policy.ReadDenyRoles.Contains);
+        }
+        else if (policy.ReadRequires.ContainsKey(column))
         {
             var requiredGrants = policy.ReadRequires[column];
             denied = !identity.Grants.Any(requiredGrants.Contains);
-        }
-        else if (policy.ReadDenyColumns.Contains(column))
-        {
-            defaultRefuse = true;
-            // Role-qualified read deny: when the policy names the roles its
-            // read-deny columns apply to, a caller holding none of them may
-            // still read the column.
-            denied = policy.ReadDenyRoles.Count == 0
-                || identity.Grants.Any(policy.ReadDenyRoles.Contains);
         }
         else
         {

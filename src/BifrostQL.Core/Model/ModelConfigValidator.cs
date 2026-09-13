@@ -599,6 +599,9 @@ namespace BifrostQL.Core.Model
 
             foreach (var column in policy.ReadDenyColumns)
             {
+                if (policy.ReadRequires.ContainsKey(column))
+                    errors.Add(Problem(table, MetadataKeys.Policy.ReadDeny, column,
+                        "policy-read-deny overlaps read-requires for this column; remove one key"));
                 if (!DbColumnExists(table, column))
                     errors.Add(Problem(table, MetadataKeys.Policy.ReadDeny, column,
                         "policy-read-deny names a column that does not exist; a non-existent deny column protects nothing (the evaluator matches by name, so absent = ALLOW = fail open)"));

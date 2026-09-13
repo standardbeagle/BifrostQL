@@ -206,7 +206,8 @@ public static class SchemaReadVisibility
             bool allowed;
             try
             {
-                allowed = Evaluator.IsColumnAllowed(policy, column.DbName, PolicyDirection.Read, identity).Allowed;
+                allowed = Evaluator.GetReadDisposition(policy, column.DbName, identity)
+                    != ReadColumnDisposition.Refuse;
             }
             catch
             {

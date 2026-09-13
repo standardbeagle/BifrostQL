@@ -19,7 +19,7 @@ public sealed class RowCapabilityProviderTests
         var definition = ComputedColumnConfigCollector.FromTable(table)
             .Single(c => c.Name == RowCapabilityProvider.FieldName);
 
-        definition.GraphQlType.Should().Be("{ update: Boolean!, delete: Boolean! }");
+        definition.GraphQlType.Should().Be("RowCapabilities!");
         definition.Dependencies.Should().Equal("user_id");
         definition.ExpressionOrProvider.Should().Be(RowCapabilityProvider.ProviderName);
         ComputedColumnConfigCollector.FromTable(TestTable("policy-actions: update"))
@@ -39,10 +39,10 @@ public sealed class RowCapabilityProviderTests
         var exempt = await provider.ComputeAsync(Context(model, table, definition, "member", "colleague", "time.edit_others"));
         var missing = await provider.ComputeAsync(Context(model, table, definition, null, "colleague"));
 
-        ((bool)((IDictionary<string, object?>)own!)["update"]!).Should().BeTrue();
-        ((bool)((IDictionary<string, object?>)colleague!)["update"]!).Should().BeFalse();
-        ((bool)((IDictionary<string, object?>)exempt!)["update"]!).Should().BeTrue();
-        ((bool)((IDictionary<string, object?>)missing!)["update"]!).Should().BeFalse();
+        ((RowCapabilities)own!).Update.Should().BeTrue();
+        ((RowCapabilities)colleague!).Update.Should().BeFalse();
+        ((RowCapabilities)exempt!).Update.Should().BeTrue();
+        ((RowCapabilities)missing!).Update.Should().BeFalse();
     }
 
     private static ComputedColumnContext Context(IDbModel model, IDbTable table, ComputedColumnDefinition definition, string? userId, string rowUser, params string[] grants)

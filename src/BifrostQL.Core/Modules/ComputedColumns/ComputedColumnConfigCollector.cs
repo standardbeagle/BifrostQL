@@ -123,7 +123,19 @@ public static class ComputedColumnConfigCollector
 
     private static void AddRowCapabilities(IDbTable table, List<ComputedColumnDefinition> result)
     {
-        var policy = PolicyConfigCollector.FromTable(table);
+        // A table whose policy cannot be parsed contributes no `_can`: the data path
+        // already refuses such a table with its own "policy could not be evaluated"
+        // error, and the collector must not turn that into a raw exception during
+        // schema or selection building (ReferencedGrants makes the same choice).
+        TablePolicy policy;
+        try
+        {
+            policy = PolicyConfigCollector.FromTable(table);
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
         var expression = policy.RowScopeExpression;
         if (expression is null || !RowScopeCompiler.TryGetContextKey(expression, out _))
             return;

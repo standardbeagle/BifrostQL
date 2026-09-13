@@ -9,7 +9,11 @@ public sealed class RowCapabilityProvider : IComputedColumnProvider
 {
     public const string ProviderName = "row-capability";
     public const string FieldName = "_can";
-    public const string FieldType = "{ update: Boolean!, delete: Boolean! }";
+    /// <summary>
+    /// A named object type, declared once in <see cref="Schema.SchemaGenerator.GetGenericTableTypes"/>.
+    /// An inline `{ ... }` literal here is not GraphQL SDL and broke every row-scoped table's schema.
+    /// </summary>
+    public const string FieldType = "RowCapabilities!";
 
     private readonly PolicyEvaluator _evaluator;
 
@@ -20,14 +24,23 @@ public sealed class RowCapabilityProvider : IComputedColumnProvider
     public ValueTask<object?> ComputeAsync(ComputedColumnContext context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
-        var policy = PolicyConfigCollector.FromTable(context.Table);
+        TablePolicy policy;
+        try
+        {
+            policy = PolicyConfigCollector.FromTable(context.Table);
+        }
+        catch (InvalidOperationException)
+        {
+            // Unevaluable policy: fail closed on the answer, never throw from a row.
+            return new ValueTask<object?>(new RowCapabilities(false, false));
+        }
         if (policy.RowScopeExpression is null || !RowScopeCompiler.TryGetContextKey(policy.RowScopeExpression, out _))
-            return new ValueTask<object?>(new Dictionary<string, object?> { ["update"] = false, ["delete"] = false });
+            return new ValueTask<object?>(new RowCapabilities(false, false));
 
         var identity = PolicyIdentity.FromUserContext(context.UserContext);
         var update = CanActOnRow(context, policy, identity, PolicyAction.Update);
         var delete = CanActOnRow(context, policy, identity, PolicyAction.Delete);
-        return new ValueTask<object?>(new Dictionary<string, object?> { ["update"] = update, ["delete"] = delete });
+        return new ValueTask<object?>(new RowCapabilities(update, delete));
     }
 
     private bool CanActOnRow(ComputedColumnContext context, TablePolicy policy, AppIdentity identity, PolicyAction action)
@@ -51,3 +64,6 @@ public sealed class RowCapabilityProvider : IComputedColumnProvider
     private bool IsAdmin(AppIdentity identity)
         => _evaluator.CanAct(new TablePolicy(rowScopeExpression: "probe"), PolicyAction.Read, identity).Allowed;
 }
+
+/// <summary>Per-row answer to `_can`: resolved by property name (`update`, `delete`).</summary>
+public sealed record RowCapabilities(bool Update, bool Delete);

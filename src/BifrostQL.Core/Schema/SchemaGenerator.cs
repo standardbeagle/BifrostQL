@@ -75,6 +75,11 @@ namespace BifrostQL.Core.Schema
             // SDL declares it a single time regardless of table count.
             builder.AppendLine(PivotSurface.AggregateEnumDefinition());
 
+            // Per-row capabilities (`_can`) on row-scoped tables (RowCapabilityProvider):
+            // one named object type for every schema, so the reference resolves even when
+            // no generic-table surface is enabled.
+            builder.AppendLine("type RowCapabilities { update: Boolean! delete: Boolean! }");
+
             foreach (var generator in tableGenerators)
             {
                 builder.AppendLine(generator.GetTableTypeDefinition(model));

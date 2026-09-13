@@ -26,6 +26,7 @@ public static class ComputedColumnConfigCollector
         result.AddRange(ParseProvider(table.GetMetadataValue(MetadataKeys.Computed.Provider)));
         result.AddRange(FileFolderComputedColumnCollector.FromTable(table));
         AddStateMachineTransitions(table, result);
+        AddRowCapabilities(table, result);
         AddEavMeta(table, model, result);
         GuardRawSql(table, model, result);
         return result;
@@ -118,6 +119,23 @@ public static class ComputedColumnConfigCollector
             ComputedColumnKind.Provider,
             StateMachineTransitionsProvider.ProviderName,
             new[] { definition.StateColumn }));
+    }
+
+    private static void AddRowCapabilities(IDbTable table, List<ComputedColumnDefinition> result)
+    {
+        var policy = PolicyConfigCollector.FromTable(table);
+        var expression = policy.RowScopeExpression;
+        if (expression is null || !RowScopeCompiler.TryGetContextKey(expression, out _))
+            return;
+
+        var equals = expression.IndexOf('=');
+        var scopeColumn = expression[..equals].Trim();
+        result.Add(new ComputedColumnDefinition(
+            RowCapabilityProvider.FieldName,
+            RowCapabilityProvider.FieldType,
+            ComputedColumnKind.Provider,
+            RowCapabilityProvider.ProviderName,
+            new[] { scopeColumn }));
     }
 
     public static ComputedColumnDefinition? Find(IDbTable table, string graphQlName)

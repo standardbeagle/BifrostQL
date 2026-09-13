@@ -391,6 +391,9 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string WriteRequires = "write-requires";
 
+            /// <summary>Column-level comma-separated literal values permitted on write.</summary>
+            public const string WritableValues = "writable-values";
+
             /// <summary>
             /// Column-level comma-separated list of grants, any one of which a
             /// caller must hold to READ the column. Configured via column

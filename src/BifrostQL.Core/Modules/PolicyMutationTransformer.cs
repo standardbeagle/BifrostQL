@@ -93,6 +93,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
 
         var policy = PolicyConfigCollector.FromTable(table);
         var identity = BuildIdentity(context);
+        var isAdmin = IsAdmin(identity);
 
         // Table action deny — fail closed before inspecting the data.
         if (!_evaluator.CanAct(policy, ToPolicyAction(mutationType), identity).Allowed)
@@ -121,7 +122,16 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             if (string.IsNullOrWhiteSpace(column))
                 continue;
 
-            if (!_evaluator.IsColumnAllowed(policy, column, PolicyDirection.Write, identity, forDelete: isDelete).Allowed)
+            var columnAllowed = _evaluator.IsColumnAllowed(policy, column, PolicyDirection.Write, identity, forDelete: isDelete).Allowed;
+            var valueAllowed = true;
+            if (!isAdmin && !isDelete && table.ColumnLookup.TryGetValue(column, out var columnDto)
+                && policy.WritableValues.TryGetValue(column, out var values))
+            {
+                var supplied = data[column];
+                valueAllowed = supplied is not null && ContextValueCoercer.Coerce(table, columnDto.DbName, supplied) is { } coerced
+                    && values.Any(value => ScalarEquals(coerced, ContextValueCoercer.Coerce(table, columnDto.DbName, value)));
+            }
+            if (!columnAllowed || !valueAllowed)
             {
                 return new MutationTransformResult
                 {
@@ -143,6 +153,11 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             AdditionalFilter = BuildRowScopeFilter(policy, mutationType, table, identity, context),
         };
     }
+
+    private static bool ScalarEquals(object? left, object? right) =>
+        left is string ls && right is string rs
+            ? string.Equals(ls, rs, StringComparison.OrdinalIgnoreCase)
+            : Equals(left, right);
 
     /// <summary>
     /// Compiles the policy's row-scope expression for update/delete, or returns

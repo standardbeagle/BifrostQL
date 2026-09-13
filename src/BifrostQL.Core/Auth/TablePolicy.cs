@@ -128,6 +128,8 @@ public sealed record TablePolicy
     /// </summary>
     public IReadOnlyDictionary<string, IReadOnlySet<string>> WriteRequires { get; }
 
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> WritableValues { get; }
+
     /// <summary>
     /// Per-column read grants (column name case-insensitive → grant names,
     /// case-insensitive). A column present here may be read only by a caller
@@ -195,6 +197,7 @@ public sealed record TablePolicy
         IEnumerable<string>? readDenyRoles = null,
         IEnumerable<string>? writeDenyRoles = null,
         IReadOnlyDictionary<string, IEnumerable<string>>? writeRequires = null,
+        IReadOnlyDictionary<string, IEnumerable<string>>? writableValues = null,
         IReadOnlyDictionary<string, IEnumerable<string>>? readRequires = null,
         IReadOnlyDictionary<string, string>? columnDenyModes = null,
         string? tableDenyMode = null,
@@ -210,6 +213,7 @@ public sealed record TablePolicy
         WriteDenyRoles = new HashSet<string>(
             writeDenyRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         WriteRequires = NormalizeWriteRequires(writeRequires);
+        WritableValues = NormalizeWriteRequires(writableValues);
         ReadRequires = NormalizeWriteRequires(readRequires);
         ColumnDenyModes = NormalizeDenyModes(columnDenyModes);
         TableDenyMode = string.IsNullOrWhiteSpace(tableDenyMode)
@@ -228,6 +232,7 @@ public sealed record TablePolicy
             ReadDenyColumns.Count > 0 ||
             WriteDenyColumns.Count > 0 ||
             WriteRequires.Count > 0 ||
+            WritableValues.Count > 0 ||
             ReadRequires.Count > 0 ||
             RowScopeExpression is not null || forceHasPolicy;
     }

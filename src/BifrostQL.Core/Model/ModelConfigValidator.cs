@@ -604,6 +604,14 @@ namespace BifrostQL.Core.Model
                         "policy-read-deny names a column that does not exist; a non-existent deny column protects nothing (the evaluator matches by name, so absent = ALLOW = fail open)"));
             }
 
+            foreach (var column in table.Columns)
+            {
+                var writableRaw = column.GetMetadataValue(MetadataKeys.Policy.WritableValues);
+                if (writableRaw is not null && string.IsNullOrWhiteSpace(writableRaw))
+                    errors.Add(Problem(table, MetadataKeys.Policy.WritableValues, writableRaw,
+                        "value must contain at least one literal"));
+            }
+
             foreach (var column in policy.WriteDenyColumns)
             {
                 if (!DbColumnExists(table, column))

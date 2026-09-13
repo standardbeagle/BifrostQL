@@ -190,6 +190,19 @@ Two schema consequences follow from the write side:
   in the shared input type but becomes optional there, so a caller without the
   grant can omit it. The mutation pipeline remains the enforcement backstop.
 
+### Constrain values
+
+Use a column selector to allow only a comma-separated list of literal values:
+
+```text
+public.permission_profiles.is_builtin { writable-values: false }
+```
+
+Values are compared after scalar coercion to the column type; strings are
+case-insensitive. This is an exact allow-list only: it supports no operators,
+ranges, or presence requirement. The rule applies when the column is present in
+insert or update data, is bypassed by admins, and does not require a grant.
+
 ## What the caller sees
 
 Denials are deliberately uninformative. A denied read or write answers

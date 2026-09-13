@@ -291,6 +291,7 @@ namespace BifrostQL.Core.Model
             // miscased key must be flagged, not silently leave a column
             // writable).
             MetadataKeys.Policy.WriteRequires,
+            MetadataKeys.Policy.WritableValues,
             // Read-side column grants and per-column deny-mode override
             // (security — a miscased key must be flagged, not silently leave a
             // column readable).

@@ -41,6 +41,7 @@ public static class PolicyConfigCollector
         var rowScopeRolesRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeRoles);
         var rowScopeExemptRaw = table.GetMetadataValue(MetadataKeys.Policy.RowScopeExempt);
         var writeRequires = CollectWriteRequires(table);
+        var writableValues = CollectWritableValues(table);
         var readRequires = CollectReadRequires(table);
         var columnDenyModes = CollectColumnDenyModes(table);
         var tableDenyModeRaw = table.GetMetadataValue(MetadataKeys.Policy.DenyMode);
@@ -50,6 +51,7 @@ public static class PolicyConfigCollector
             !string.IsNullOrWhiteSpace(readDenyRaw) ||
             !string.IsNullOrWhiteSpace(writeDenyRaw) ||
             writeRequires.Count > 0 ||
+            writableValues.Count > 0 ||
             readRequires.Count > 0 ||
             !string.IsNullOrWhiteSpace(rowScopeRaw);
 
@@ -66,6 +68,7 @@ public static class PolicyConfigCollector
             readDenyRoles: SplitList(readDenyRolesRaw),
             writeDenyRoles: SplitList(writeDenyRolesRaw),
             writeRequires: writeRequires.Count > 0 ? writeRequires : null,
+            writableValues: writableValues.Count > 0 ? writableValues : null,
             readRequires: readRequires.Count > 0 ? readRequires : null,
             columnDenyModes: columnDenyModes.Count > 0 ? columnDenyModes : null,
             tableDenyMode: string.IsNullOrWhiteSpace(tableDenyModeRaw)
@@ -143,6 +146,18 @@ public static class PolicyConfigCollector
             if (raw is null)
                 continue;
             result[column.DbName] = SplitList(raw).ToArray();
+        }
+        return result;
+    }
+
+    private static Dictionary<string, IEnumerable<string>> CollectWritableValues(IDbTable table)
+    {
+        var result = new Dictionary<string, IEnumerable<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in table.Columns)
+        {
+            var raw = column.GetMetadataValue(MetadataKeys.Policy.WritableValues);
+            if (raw is not null)
+                result[column.DbName] = SplitList(raw).ToArray();
         }
         return result;
     }

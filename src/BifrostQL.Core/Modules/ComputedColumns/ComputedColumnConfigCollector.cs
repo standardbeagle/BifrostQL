@@ -136,18 +136,16 @@ public static class ComputedColumnConfigCollector
         {
             return;
         }
-        var expression = policy.RowScopeExpression;
-        if (expression is null || !RowScopeCompiler.TryGetContextKey(expression, out _))
+        var dependencies = RowCapabilityProvider.DependencyColumns(policy);
+        if (dependencies.Count == 0)
             return;
 
-        var equals = expression.IndexOf('=');
-        var scopeColumn = expression[..equals].Trim();
         result.Add(new ComputedColumnDefinition(
             RowCapabilityProvider.FieldName,
             RowCapabilityProvider.FieldType,
             ComputedColumnKind.Provider,
             RowCapabilityProvider.ProviderName,
-            new[] { scopeColumn }));
+            dependencies));
     }
 
     public static ComputedColumnDefinition? Find(IDbTable table, string graphQlName)

@@ -47,15 +47,15 @@ public static class RowScopeCompiler
             throw new ArgumentNullException(nameof(userContext));
         ArgumentNullException.ThrowIfNull(table);
 
-        var (column, contextKey) = Parse(expression);
+        var term = Parse(expression);
 
-        if (!userContext.TryGetValue(contextKey, out var value))
+        if (!userContext.TryGetValue(term.ContextKey, out var value))
             throw new BifrostExecutionError(MissingContextMessage);
         if (value is null)
             throw new BifrostExecutionError(MissingContextMessage);
 
-        return TableFilterFactory.Equals(table, column,
-            ContextValueCoercer.Coerce(table, column, value));
+        return TableFilterFactory.Equals(table, term.Column,
+            ContextValueCoercer.Coerce(table, term.Column, value));
     }
 
     /// <summary>
@@ -68,12 +68,9 @@ public static class RowScopeCompiler
     /// </summary>
     internal static bool TryGetContextKey(string? expression, out string contextKey)
     {
-        contextKey = string.Empty;
-        var parsed = TryParse(expression);
-        if (parsed is null)
-            return false;
-        contextKey = parsed.Value.ContextKey;
-        return true;
+        var parsed = TryParse(expression, out var term);
+        contextKey = term.ContextKey;
+        return parsed;
     }
 
     /// <summary>
@@ -81,36 +78,56 @@ public static class RowScopeCompiler
     /// and context key. Throws <see cref="BifrostExecutionError"/> on any
     /// deviation from the grammar.
     /// </summary>
-    private static (string Column, string ContextKey) Parse(string? expression)
-        => TryParse(expression)
-           ?? throw new BifrostExecutionError(MalformedMessage);
+    private static RowScopeTerm Parse(string? expression)
+        => TryParse(expression, out var term)
+            ? term
+            : throw new BifrostExecutionError(MalformedMessage);
 
-    private static (string Column, string ContextKey)? TryParse(string? expression)
+    /// <summary>
+    /// The non-throwing form of <see cref="Parse"/>: the single place the
+    /// <c>column = {context-key}</c> grammar is split, so the row-capability
+    /// collector and provider read the same (column, context key) pair the
+    /// filter compiles. A malformed expression yields <c>false</c> and an
+    /// empty term.
+    /// </summary>
+    internal static bool TryParse(string? expression, out RowScopeTerm term)
     {
+        term = default;
         if (string.IsNullOrWhiteSpace(expression))
-            return null;
+            return false;
 
         var equalsIndex = expression.IndexOf('=');
         if (equalsIndex <= 0 || equalsIndex >= expression.Length - 1)
-            return null;
+            return false;
 
         var column = expression[..equalsIndex].Trim();
         var rhs = expression[(equalsIndex + 1)..].Trim();
 
         // Reject a second operator character (e.g. "==").
         if (rhs.StartsWith('='))
-            return null;
+            return false;
 
         if (column.Length == 0)
-            return null;
+            return false;
 
         if (rhs.Length < 3 || !rhs.StartsWith('{') || !rhs.EndsWith('}'))
-            return null;
+            return false;
 
         var contextKey = rhs[1..^1].Trim();
         if (contextKey.Length == 0)
-            return null;
+            return false;
 
-        return (column, contextKey);
+        term = new RowScopeTerm(column, contextKey);
+        return true;
     }
+}
+
+/// <summary>
+/// A parsed <c>column = {context-key}</c> row-scope term: the table column the
+/// scope compares and the user-context key whose value it is compared with.
+/// </summary>
+internal readonly record struct RowScopeTerm(string Column, string ContextKey)
+{
+    public string Column { get; } = Column ?? string.Empty;
+    public string ContextKey { get; } = ContextKey ?? string.Empty;
 }

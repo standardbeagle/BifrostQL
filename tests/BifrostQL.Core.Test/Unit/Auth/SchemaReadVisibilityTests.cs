@@ -99,10 +99,25 @@ public class SchemaReadVisibilityTests
 
         visible.Select(v => v.Table.DbName).Should().NotContain("broken",
             "FromTable throws before the evaluator's admin bypass can run — fail closed");
-        visible.Select(v => v.Table.DbName).Should().Contain("ledger",
-            "schema admins see every parseable table regardless of the table action allow-list");
+        visible.Select(v => v.Table.DbName).Should().NotContain("ledger",
+            "an admin must not see a table whose action allow-list omits read");
         visible.Select(v => v.Table.DbName).Should().Contain(new[] { "orders", "customers" },
             "tables whose allow-list names read stay visible to the admin");
+    }
+
+    [Fact]
+    public void An_admin_sees_a_table_with_a_granted_read_action()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("ledger", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("amount", "decimal")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read[ledger.read]"))
+            .Build();
+
+        SchemaReadVisibility.Project(model, Ctx("root", MetadataKeys.Policy.DefaultAdminRole))
+            .Select(v => v.Table.DbName).Should().Contain("ledger");
     }
 
     [Fact]

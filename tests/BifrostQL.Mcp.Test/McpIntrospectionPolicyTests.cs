@@ -58,8 +58,7 @@ namespace BifrostQL.Mcp.Test
                     name TEXT NOT NULL
                 )
                 """,
-                // Table-level read denial: policy-actions names only 'create', so Read is
-                // NOT in the allow-list and every non-admin caller is denied.
+                // Table-level read grant is role-bracketed: anonymous is denied, admin is granted.
                 """
                 CREATE TABLE ledger_entries (
                     id INTEGER PRIMARY KEY,
@@ -99,7 +98,7 @@ namespace BifrostQL.Mcp.Test
                             e.Path = EndpointPath;
                             e.Metadata = new[]
                             {
-                                "*.ledger_entries { policy-actions: read, create }",
+                                 "*.ledger_entries { policy-actions: read[ledger.read], create }",
                                 "*.staff { policy-actions: read; policy-read-deny: ssn }",
                             };
                             e.DisableAuth = true;

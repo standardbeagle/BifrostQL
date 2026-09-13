@@ -394,12 +394,14 @@ namespace BifrostQL.Core.QueryModel
         /// <see cref="Modules.MutationTransformResult.AdditionalFilter"/>:
         /// a single <c>column = value</c> / <c>column IS NULL</c> equality
         /// (built by <see cref="Modules.TableFilterFactory.Equals"/> /
-        /// <see cref="Modules.TableFilterFactory.IsNull"/>) and an AND of such
-        /// filters (built by the transformer wraps when more than one
-        /// transformer contributes a filter). Any other shape — OR, joins,
-        /// non-equality operators — throws <see cref="BifrostExecutionError"/>
-        /// because no mutation transformer produces it today; widening the
-        /// grammar is intentionally out of scope.
+        /// <see cref="Modules.TableFilterFactory.IsNull"/>), a single
+        /// <c>column &lt;&gt; value</c> inequality (the policy self-deny rule's
+        /// <c>self-column _neq {user_id}</c>), and an AND of such filters (built
+        /// by the transformer wraps when more than one transformer contributes a
+        /// filter). Any other shape — OR, joins, other operators — throws
+        /// <see cref="BifrostExecutionError"/> because no mutation transformer
+        /// produces it today; widening the grammar further is intentionally out
+        /// of scope.
         /// </summary>
         public ParameterizedSql RenderForMutation(ISqlDialect dialect, SqlParameterCollection parameters)
         {
@@ -414,16 +416,17 @@ namespace BifrostQL.Core.QueryModel
                 return new ParameterizedSql(sql, rendered.SelectMany(r => r.Parameters).ToList());
             }
 
-            // Single equality: FilterType.Join with a relation Next holding the
-            // operator and value, as produced by TableFilterFactory.Equals.
+            // Single comparison: FilterType.Join with a relation Next holding the
+            // operator and value, as produced by TableFilterFactory.Equals or the
+            // self-deny rule's TableFilterBuilder.Compare(_neq).
             if (FilterType == FilterType.Join && Next is { Next: null })
             {
-                if (Next.RelationName != "_eq")
+                if (Next.RelationName is not (FilterOperators.Eq or FilterOperators.Neq))
                     throw new BifrostExecutionError(
                         "Mutation additional filter only supports equality comparisons.");
 
                 return GetSingleFilterParameterized(
-                    dialect, parameters, table: null, field: ColumnName, op: "_eq", value: Next.Value);
+                    dialect, parameters, table: null, field: ColumnName, op: Next.RelationName, value: Next.Value);
             }
 
             throw new BifrostExecutionError(

@@ -96,6 +96,21 @@ export interface EmittedFile {
   content: string;
 }
 
+export interface GrantResponse {
+  data?: { _policyGrants?: unknown; _grants?: unknown };
+}
+
+export function emitGrants(response: GrantResponse): string {
+  const grants = [...new Set(
+    Array.isArray(response.data?._policyGrants)
+      ? response.data._policyGrants.filter((value): value is string => typeof value === "string")
+      : [],
+  )].sort();
+  const literals = grants.map((grant) => `'${grant.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`);
+  return `export type Grant = ${literals.length ? literals.join(" | ") : "never"};\n` +
+    `export const GRANTS: readonly Grant[] = [${literals.join(", ")}] as const;\n`;
+}
+
 /**
  * Builds the cross-file `import` block a message file needs for the
  * message/enum types it references. Enums are emitted as runtime `enum`s (value

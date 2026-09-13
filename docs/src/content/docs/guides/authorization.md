@@ -160,10 +160,13 @@ The read side picks its enforcement per column with `deny-mode: null | refuse`,
 set on the column selector or on the table (the column value wins):
 
 - `null` (mask) — the caller selects the column and gets `null` for it; the
-  rest of the row is unaffected. One query serves every caller with
-  per-caller nulls.
+  rest of the row is unaffected. One query serves every caller with per-caller nulls,
+  whether the column is selected by its database or GraphQL name.
 - `refuse` — the query is rejected with a generic `ACCESS_DENIED` error that
   never names the column or table.
+
+  Denied columns are also refused as filter, sort, and `_agg` inputs, including
+  when masking is configured.
 
 The default depends on the gate's source: `read-requires` masks by default;
 `policy-read-deny` refuses by default, so configurations shipped before

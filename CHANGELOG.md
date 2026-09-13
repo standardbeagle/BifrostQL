@@ -17,6 +17,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `policy-self-deny` to prevent callers, including administrators, changing
   protected columns on their own row.
 
+### Fixed
+
+- Read-deny now takes precedence over `read-requires`; schema projections retain
+  masked columns and omit refused columns, and contradictory metadata fails load.
+
 ### Removed
 
 - The unused `schema-permissions` metadata key; it was parsed but never enforced, creating a silent fail-open permission declaration.

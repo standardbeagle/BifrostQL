@@ -1,5 +1,7 @@
 import { useBifrost } from './use-bifrost';
 import type { DbSchemaProjection } from '@bifrostql/types';
+import { useContext } from 'react';
+import { BifrostContext } from '../components/bifrost-provider';
 
 /** Server-resolved policy for the current identity, see {@link usePolicy}. */
 export interface UsePolicyResult {
@@ -45,9 +47,12 @@ const TABLE_POLICY_QUERY =
  *   accepts it. Omit to load grants only.
  */
 export function usePolicy(tableGraphQlName?: string): UsePolicyResult {
+  const config = useContext(BifrostContext);
+  const identity = config?.headers?.Authorization ?? '';
   const result = useBifrost<PolicyQueryData>(
     tableGraphQlName ? TABLE_POLICY_QUERY : GRANTS_QUERY,
     tableGraphQlName ? { table: tableGraphQlName } : undefined,
+    { queryKeySuffix: identity },
   );
   const table = result.data?._dbSchema?.[0];
   const column = (name: string) =>

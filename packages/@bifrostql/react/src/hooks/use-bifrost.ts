@@ -25,6 +25,8 @@ export interface UseBifrostOptions {
    * omitted, the QueryClient's own setting applies.
    */
   retryDelay?: number;
+  /** Identity partition for session-sensitive query caches. */
+  queryKeySuffix?: string;
 }
 
 /**
@@ -69,10 +71,11 @@ export function useBifrost<T = unknown>(
     gcTime,
     refetchInterval,
     refetchOnWindowFocus,
+    queryKeySuffix,
   } = options;
 
   const queryClient = useQueryClient();
-  const queryKey = ['bifrost', query, variables ?? {}];
+  const queryKey = ['bifrost', query, variables ?? {}, queryKeySuffix ?? ''];
 
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ['bifrost', query] }),

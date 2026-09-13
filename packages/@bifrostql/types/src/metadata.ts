@@ -145,3 +145,9 @@ export interface DbSchemaProjection {
   /** Policy flags for every column the caller may see. */
   columns: DbSchemaColumnProjection[];
 }
+
+/** Effective grant names for the caller. Mirrors C# `MetaGrantsResolver`. */
+export interface GrantsProjection {
+  /** Grant names resolved by the server for the current identity. */
+  grants: string[];
+}

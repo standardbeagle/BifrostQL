@@ -41,6 +41,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - Authorization policies now evaluate grants, the case-insensitive union of roles
   and permissions. Every `-roles` policy key accepts either kind of grant.
 
+### Fixed — typed tenant and row-scope claims (E8)
+
+- Tenant and policy row-scope claims are now coerced to the target column type before binding predicates or tenant insert pins. String and one-element array claims such as `"42"` bind as `bigint` 42; invalid or multi-element values fail closed with `ACCESS_DENIED` instead of reaching PostgreSQL as text.
+
 ### Fixed — write path resolves schema-qualified table names (M11-w)
 
 - `MutationIntent.Table` / `MutationBatchIntent.Table` (the `IMutationIntentExecutor` adapter write seam) and the `table` argument of `_fileUpload` / `_fileDelete` / `_fileDownload` now accept a schema-qualified `schema.name` and resolve it exactly; a bare name still resolves when it is unique across schemas. Previously every client-supplied name went through a bare-`DbName` lookup, so a table existing in two schemas (`sales.orders` + `archive.orders`) was unwritable through these surfaces — the write was refused fail-closed. An ambiguous or unknown name produces the same sanitized error (`BifrostErrorSink.LookupMiss`), byte-identical and carrying no table name. The resolution rule is the new `IDbModel.TryGetTableFromClientName`; the five keyed-write seams (`TableMutationPipeline`, `BatchMutationPipeline`, `BulkBatchPlanBuilder`, `FilteredUpdatePipeline`, `FilePointerAccess`) are unchanged — they receive the resolved `IDbTable`.

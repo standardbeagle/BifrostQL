@@ -35,6 +35,8 @@ Every authentication path (local login, OIDC, JWT) converges on the same provide
 
 `tenant_id` is the singular primary tenant; `tenant_ids` is the full membership set. The audit user key is configurable model-level metadata, not a fixed claim name — it names which claim the audit module reads.
 
+Claim values are coerced to the target column's database type when a security predicate or tenant insert pin is built. For example, a string `"42"` claim binds as `bigint` when the scoped column is `bigint`; values that cannot be coerced are refused.
+
 ## Deployment models
 
 The same tables and modules cover three deployment shapes. What differs is which metadata is applied, which claims the identity carries, and which tables are tenant-scoped.

@@ -25,7 +25,11 @@ export interface UseBifrostOptions {
    * omitted, the QueryClient's own setting applies.
    */
   retryDelay?: number;
-  /** Identity partition for session-sensitive query caches. */
+  /**
+   * Extra query-key element for session-sensitive caches (e.g. the caller's
+   * identity). Appended only when supplied, so an unsuffixed key stays the
+   * three-element key `fetchBifrostQuery` prefetches under for SSR hydration.
+   */
   queryKeySuffix?: string;
 }
 
@@ -75,7 +79,10 @@ export function useBifrost<T = unknown>(
   } = options;
 
   const queryClient = useQueryClient();
-  const queryKey = ['bifrost', query, variables ?? {}, queryKeySuffix ?? ''];
+  const queryKey =
+    queryKeySuffix === undefined
+      ? ['bifrost', query, variables ?? {}]
+      : ['bifrost', query, variables ?? {}, queryKeySuffix];
 
   const invalidate = useCallback(
     () => queryClient.invalidateQueries({ queryKey: ['bifrost', query] }),
@@ -99,9 +106,10 @@ export function useBifrost<T = unknown>(
       ),
     enabled,
     // Only forward these when the caller set them. Passing a value
-    // unconditionally would override whatever the host configured on its
-    // QueryClient — including `retry: false`, which a caller cannot otherwise
-    // turn off.
+    // unconditionally — even `undefined` — overrides whatever the host
+    // configured on its QueryClient: `retry: false`, which a caller cannot
+    // otherwise turn off, and the `staleTime` that keeps server-prefetched
+    // data from refetching on hydration.
     ...(retry !== undefined ? { retry } : {}),
     ...(retryDelay !== undefined
       ? {
@@ -109,10 +117,10 @@ export function useBifrost<T = unknown>(
             defaultRetryDelay(attempt, retryDelay),
         }
       : {}),
-    staleTime,
-    gcTime,
-    refetchInterval,
-    refetchOnWindowFocus,
+    ...(staleTime !== undefined ? { staleTime } : {}),
+    ...(gcTime !== undefined ? { gcTime } : {}),
+    ...(refetchInterval !== undefined ? { refetchInterval } : {}),
+    ...(refetchOnWindowFocus !== undefined ? { refetchOnWindowFocus } : {}),
   });
 
   return { ...result, invalidate };

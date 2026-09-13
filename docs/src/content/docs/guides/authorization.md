@@ -114,8 +114,6 @@ Both failure modes are fail-closed and answer with a generic message:
 Row scope applies to reads, updates, and deletes. An insert has no existing row to scope,
 so the scope is skipped there — constrain inserts with `policy-actions` instead.
 
-## Deny columns
-
 ## Rules the admin cannot bypass
 
 `policy-self-deny` prevents a caller from changing listed columns on their own
@@ -125,11 +123,15 @@ any row scope. The default `policy-self-column` is `user_id`, the fixed context
 key containing the caller's user id. It is not `user-audit-key`, which identifies
 the audit claim used for created-by/updated-by stamps. The admin bypass is not
 consulted for this rule because allowing an administrator to change their own
-permissions would defeat the self-protection decision.
+permissions would defeat the self-protection decision. A caller with no `user_id`
+in context is refused with the same generic message as a missing row-scope value.
+Inserts and deletes are unaffected: there is no existing row to protect.
 
 ```text
 public.users { policy-self-deny: permission_profile_id, cost_rate; policy-self-column: id }
 ```
+
+## Deny columns
 
 Column gating has two directions and two flavours. A denied column is enforced
 in one of two **deny modes** (see [Mask or refuse](#mask-or-refuse)): `refuse`

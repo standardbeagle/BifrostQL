@@ -146,15 +146,26 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             }
         }
 
+        // Self deny (D6) — an update that writes a self-deny column must not match
+        // the caller's own row. The predicate is ANDed into the statement like the
+        // row scope; the admin bypass is deliberately not consulted here. A missing
+        // user id fails closed with the same generic message the row-scope
+        // compiler uses, so the two paths are indistinguishable to a probing caller.
         TableFilter? selfFilter = null;
         if (mutationType == MutationType.Update && data.Keys.Any(policy.SelfDenyColumns.Contains))
         {
             if (!context.UserContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var userId) || userId is null)
-                throw new BifrostExecutionError("Authorization context is required.");
+            {
+                return new MutationTransformResult
+                {
+                    MutationType = mutationType,
+                    Data = data,
+                    Errors = new[] { RowScopeCompiler.MissingContextMessage },
+                    ErrorCode = BifrostExecutionError.AccessDeniedCode,
+                };
+            }
             var selfColumn = string.IsNullOrWhiteSpace(policy.SelfColumn)
                 ? MetadataKeys.Auth.DefaultUserIdContextKey : policy.SelfColumn;
-            selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
-                ContextValueCoercer.Coerce(table, selfColumn, userId)).Build();
             selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
                 ContextValueCoercer.Coerce(table, selfColumn, userId)).Build();
         }

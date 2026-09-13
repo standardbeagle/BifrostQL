@@ -57,8 +57,8 @@ public static class PolicyConfigCollector
             writeRequires.Count > 0 ||
             writableValues.Count > 0 ||
             readRequires.Count > 0 ||
-            !string.IsNullOrWhiteSpace(rowScopeRaw);
-            hasAny |= selfDenyRaw is not null;
+            !string.IsNullOrWhiteSpace(rowScopeRaw) ||
+            selfDenyRaw is not null;
 
         if (!hasAny)
             return denyByDefault ? new TablePolicy(forceHasPolicy: true) : TablePolicy.None;
@@ -76,11 +76,11 @@ public static class PolicyConfigCollector
             writableValues: writableValues.Count > 0 ? writableValues : null,
             readRequires: readRequires.Count > 0 ? readRequires : null,
             columnDenyModes: columnDenyModes.Count > 0 ? columnDenyModes : null,
-             tableDenyMode: string.IsNullOrWhiteSpace(tableDenyModeRaw)
-                 ? null
-                 : NormalizeDenyMode(tableDenyModeRaw),
-             selfDenyColumns: SplitList(selfDenyRaw),
-             selfColumn: selfColumn);
+            tableDenyMode: string.IsNullOrWhiteSpace(tableDenyModeRaw)
+                ? null
+                : NormalizeDenyMode(tableDenyModeRaw),
+            selfDenyColumns: SplitList(selfDenyRaw),
+            selfColumn: selfColumn);
     }
 
     /// <summary>

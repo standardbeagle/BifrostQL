@@ -27,7 +27,11 @@ public static class RowScopeCompiler
     private const string MalformedMessage =
         "Row-scope authorization policy is misconfigured.";
 
-    private const string MissingContextMessage =
+    /// <summary>
+    /// Generic fail-closed message for a missing context value. Shared with the
+    /// mutation transformer's self-deny rule so both refusals read the same.
+    /// </summary>
+    public const string MissingContextMessage =
         "Row-scope authorization context is required but was not provided.";
 
     /// <summary>

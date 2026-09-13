@@ -160,14 +160,10 @@ The read side picks its enforcement per column with `deny-mode: null | refuse`,
 set on the column selector or on the table (the column value wins):
 
 - `null` (mask) — the caller selects the column and gets `null` for it; the
-  rest of the row is unaffected. One query serves every caller with per-caller nulls,
-  whether the column is selected by its database or GraphQL name. Filter, sort, and `_agg`
-  references to the column are refused explicitly, even when selection is masked.
+  rest of the row is unaffected. One query serves every caller with per-caller
+  nulls, whether the column is selected by its database or GraphQL name.
 - `refuse` — the query is rejected with a generic `ACCESS_DENIED` error that
   never names the column or table.
-
-  Denied columns are also refused as filter, sort, and `_agg` inputs, including
-  when masking is configured.
 
 The default depends on the gate's source: `read-requires` masks by default;
 `policy-read-deny` refuses by default, so configurations shipped before
@@ -186,7 +182,9 @@ of `rates.view_cost` receives the value. The same member filtering, sorting, or
 aggregating on `cost_rate` (`_agg`, grouped `<table>Aggregate`) is refused —
 and so is selecting `hourly_rate`, which opted back into `refuse`. The mask
 rides the shared read seams, so the GraphQL door and every protocol adapter
-(pgwire, OData, gRPC, MCP) return the same per-caller nulls. Mask-able columns
+(pgwire, OData, gRPC, MCP) return the same per-caller nulls for both key forms
+— `read-requires` and `policy-read-deny` with `deny-mode: null` — and refuse
+the same filter, sort, and `_agg` references. Mask-able columns
 are emitted nullable in the GraphQL type even when the database column is
 `NOT NULL`; otherwise the mask would surface as a non-null execution error.
 

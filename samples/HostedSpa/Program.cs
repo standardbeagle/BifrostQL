@@ -26,10 +26,25 @@ SampleDatabase.EnsureCreated(dbPath);
 builder.Services.AddBifrostQL(options =>
     options.BindStandardConfig(builder.Configuration));
 
-// The sample's grant catalogue is the app_users.roles column; production apps can
-// replace this delegate with their role_permissions query without changing policy metadata.
+// Role-backed grants: the policy metadata in appsettings.json names PERMISSIONS
+// (members.manage, events.manage, dues.manage), and this resolver is where a role
+// turns into them. The sample has no role_permissions table, so the catalogue is
+// this dictionary; a production app replaces the delegate with its own query and
+// leaves the policy metadata untouched. A caller's grants are the union of its
+// roles (from the app_users.roles column) and the permissions resolved here —
+// `_grants` reports exactly that set.
+var rolePermissions = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+{
+    ["officer"] = new[] { "members.manage", "events.manage" },
+    ["finance"] = new[] { "dues.manage" },
+};
 builder.Services.AddBifrostGrantResolver((identity, _, _) =>
-    new ValueTask<IReadOnlyCollection<string>>(identity.Roles.ToArray()));
+    new ValueTask<IReadOnlyCollection<string>>(identity.Roles
+        .SelectMany(role => rolePermissions.TryGetValue(role, out var permissions)
+            ? permissions
+            : Array.Empty<string>())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray()));
 
 // Local DB-backed auth against the Membership Manager app_users table. The MM schema
 // names its key columns user_id/email and stores a denormalized delimited role list in

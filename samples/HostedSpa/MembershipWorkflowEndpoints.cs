@@ -1,9 +1,7 @@
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
-using BifrostQL.Core.Schema;
 using BifrostQL.Core.Workflows;
 using BifrostQL.Server;
-using GraphQL;
 using System.Diagnostics.CodeAnalysis;
 
 namespace BifrostQL.Samples.HostedSpa;
@@ -17,9 +15,10 @@ namespace BifrostQL.Samples.HostedSpa;
 /// mutations server-side through <see cref="IBifrostWorkflowExecutor"/>. Every
 /// internal write traverses the SAME GraphQL mutation pipeline as a direct
 /// <c>/graphql</c> request — <c>tenant-filter</c> and the policy engine still
-/// apply — and each endpoint also runs a pre-flight gate via the shared
-/// <see cref="PolicyEvaluator"/> so the whole operation is rejected up front
-/// rather than failing partway through. Every operation writes exactly one
+/// apply — and each endpoint also runs a pre-flight gate through the shared
+/// <see cref="IPolicyGate"/> (the same evaluator and metadata the GraphQL door
+/// runs) so the whole operation is rejected up front rather than failing
+/// partway through. Every operation writes exactly one
 /// <c>audit_log</c> row naming the action (<c>payment.recorded</c>,
 /// <c>membership.renewed</c>).
 ///
@@ -38,6 +37,13 @@ namespace BifrostQL.Samples.HostedSpa;
 /// </summary>
 public static class MembershipWorkflowEndpoints
 {
+    // IPolicyGate addresses tables by schema-qualified name; a bare table name
+    // has no policy and is denied.
+    private const string MembersTable = "main.members";
+    private const string MemberMembershipsTable = "main.member_memberships";
+    private const string DuesPaymentsTable = "main.dues_payments";
+    private const string EventAttendanceTable = "main.event_attendance";
+
     /// <summary>
     /// Request body for <c>POST /workflows/membership/record-payment</c>.
     /// <paramref name="Notes"/> has no column on <c>dues_payments</c>, so it is
@@ -106,7 +112,6 @@ public static class MembershipWorkflowEndpoints
         RecordPaymentRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> _schemaCache,
         IPolicyGate policy)
     {
         if (request.AmountCents <= 0)
@@ -117,9 +122,12 @@ public static class MembershipWorkflowEndpoints
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses. dues_payments
-        // is created, so the gating action is Create.
-        if (!policy.CanAct("dues_payments", PolicyAction.Create).Allowed)
-            return Results.Forbid();
+        // is created, so the gating action is Create — and amount_cents carries
+        // `write-requires`, so the column question is asked up front too rather
+        // than letting the insert fail partway through the orchestration.
+        if (!policy.CanAct(DuesPaymentsTable, PolicyAction.Create).Allowed
+            || !policy.CanWriteColumn(DuesPaymentsTable, "amount_cents").Allowed)
+            return PolicyRefused();
 
         var summary = $"Payment of {request.AmountCents} cents recorded against invoice {request.InvoiceId}";
         if (!string.IsNullOrWhiteSpace(request.Notes))
@@ -150,7 +158,6 @@ public static class MembershipWorkflowEndpoints
         RenewMembershipRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> _schemaCache,
         IPolicyGate policy)
     {
         if (string.IsNullOrWhiteSpace(request.NewEndDate))
@@ -161,8 +168,8 @@ public static class MembershipWorkflowEndpoints
 
         // Pre-flight gate: the workflow updates member_memberships, so the
         // gating action is Update.
-        if (!policy.CanAct("member_memberships", PolicyAction.Update).Allowed)
-            return Results.Forbid();
+        if (!policy.CanAct(MemberMembershipsTable, PolicyAction.Update).Allowed)
+            return PolicyRefused();
 
         var result = await workflows.RunAsync("renew-membership", new Dictionary<string, object?>
         {
@@ -193,7 +200,6 @@ public static class MembershipWorkflowEndpoints
         CheckInRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> _schemaCache,
         IPolicyGate policy)
     {
         if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
@@ -202,8 +208,8 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses.
         // event_attendance is created, so the gating action is Create.
-        if (!policy.CanAct("event_attendance", PolicyAction.Create).Allowed)
-            return Results.Forbid();
+        if (!policy.CanAct(EventAttendanceTable, PolicyAction.Create).Allowed)
+            return PolicyRefused();
 
         var checkedInAt = string.IsNullOrWhiteSpace(request.CheckedInAt)
             ? UtcTimestamp()
@@ -234,7 +240,6 @@ public static class MembershipWorkflowEndpoints
         LinkIdentityRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> _schemaCache,
         IPolicyGate policy)
     {
         if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
@@ -243,8 +248,8 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: the workflow updates members, so the gating action is
         // Update. Linking an identity is a privileged operation — it must be
         // policy-gated, not open to any caller.
-        if (!policy.CanAct("members", PolicyAction.Update).Allowed)
-            return Results.Forbid();
+        if (!policy.CanAct(MembersTable, PolicyAction.Update).Allowed)
+            return PolicyRefused();
 
         var result = await workflows.RunAsync("link-identity", new Dictionary<string, object?>
         {
@@ -287,38 +292,12 @@ public static class MembershipWorkflowEndpoints
     }
 
     /// <summary>
-    /// Projects the request's Bifrost user context into the <see cref="AppIdentity"/>
-    /// the <see cref="PolicyEvaluator"/> expects — the same shape
-    /// <c>PolicyMutationTransformer</c> builds for a direct GraphQL mutation.
+    /// The answer a policy refusal gets: 403 with an empty body — the same wire
+    /// shape <see cref="TryGetUserContext"/> gives a refused identity and the
+    /// GraphQL mount gives the same caller, with no policy detail on the wire.
     /// </summary>
-    private static AppIdentity BuildIdentity(IDictionary<string, object?> userContext)
-    {
-        var userId = userContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var id)
-                     && id is not null
-            ? id.ToString()!
-            : "anonymous";
-        if (string.IsNullOrWhiteSpace(userId))
-            userId = "anonymous";
-
-        var roles = userContext.TryGetValue(MetadataKeys.Auth.DefaultRolesContextKey, out var r)
-            ? ExtractStrings(r)
-            : Array.Empty<string>();
-
-        return new AppIdentity(userId, "workflow-endpoint", roles: roles);
-    }
-
-    private static string[] ExtractStrings(object? value) => value switch
-    {
-        null => Array.Empty<string>(),
-        string s => new[] { s },
-        IEnumerable<string> typed => typed.ToArray(),
-        System.Collections.IEnumerable seq => seq.Cast<object?>()
-            .Select(o => o?.ToString())
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Select(s => s!)
-            .ToArray(),
-        _ => Array.Empty<string>(),
-    };
+    private static IResult PolicyRefused() =>
+        Results.StatusCode(StatusCodes.Status403Forbidden);
 
     private static IResult ToWorkflowResult(WorkflowRunResult result)
     {

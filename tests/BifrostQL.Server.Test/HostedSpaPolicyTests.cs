@@ -38,6 +38,7 @@ namespace BifrostQL.Server.Test;
 public sealed class HostedSpaPolicyTests
 {
     private const string AccessDenied = "Access denied by authorization policy.";
+    private const string FieldWriteDenied = "The mutation writes a field that is not permitted by authorization policy.";
 
     // ---- delete[events.manage] ----
 
@@ -75,7 +76,7 @@ public sealed class HostedSpaPolicyTests
         var officer = factory.CreateClient();
         await HostedSpaLogins.SignInAsync(officer, HostedSpaLogins.Officer);
         Errors(await GraphQlAsync(officer, insertPayment))
-            .Should().ContainSingle().Which.Should().Be(AccessDenied);
+            .Should().ContainSingle().Which.Should().Be(FieldWriteDenied);
 
         var finance = factory.CreateClient();
         await HostedSpaLogins.SignInAsync(finance, HostedSpaLogins.Finance);

@@ -12,12 +12,9 @@ endpoint, so there is no CORS configuration to manage.
   fallback that does not shadow `/graphql`, `/playground`, `/api`, or `/health`.
 - A small SQLite database (`hostedspa-sample.db`) is created and seeded on first
   run, so no external database setup is required.
-- The membership-manager guard shapes are metadata, not endpoint-specific checks:
-  `policy-default: deny` establishes the closed baseline; the selector grants the
-  common tables; `delete[officer]` protects event deletion; `write-requires: finance`
-  protects payment amounts; `read-requires: officer; deny-mode: null` masks roles;
-  `policy-row-scope` and `policy-row-scope-exempt` limit members; `writable-values`
-  constrains status; and `policy-self-deny` protects a member's role.
+- The membership-manager authorization guards are metadata lines in
+  `appsettings.json`, not endpoint-specific checks — see
+  [Authorization guards as metadata](#authorization-guards-as-metadata).
 
 ## Running it
 
@@ -34,21 +31,60 @@ Then open the printed URL (for example `http://localhost:5000`):
 - `/playground` — the GraphiQL playground.
 - `/graphql` — the GraphQL endpoint (POST).
 
-## Authorization discovery
+## Authorization guards as metadata
+
+`appsettings.json` closes the application with `policy-default: deny` and then opens
+exactly one thing per line. Grants are the union of a login's roles (the
+`app_users.roles` column) and the permissions `Program.cs` resolves for them through
+`AddBifrostGrantResolver` — `officer` carries `members.manage` and `events.manage`,
+`finance` carries `dues.manage`. Production apps replace that delegate with a
+`role_permissions` query and leave the metadata alone.
+
+| Guard | Metadata line |
+|---|---|
+| Closed baseline | `:root { ... policy-default: deny; }` |
+| Operational tables open to every signed-in caller | `main.members, main.member_memberships, ... { policy-actions: read,create,update,delete }` |
+| Append-only audit trail | `main.audit_log { policy-actions: read,create }` |
+| Officer-only content deletion | `main.events { policy-actions: read,create,update,delete[events.manage] }` |
+| Finance-only money writes | `main.dues_payments.amount_cents { write-requires: dues.manage }` |
+| Masked reads (roles visible to officers, `null` for everyone else) | `main.app_users.roles { read-requires: members.manage; deny-mode: null }` |
+| Own-member rows, officers exempt | `main.members { policy-row-scope: user_id = {user_id}; policy-row-scope-exempt: members.manage }` |
+| Constrained status | `main.dues_invoices.status { writable-values: open,paid,void }` |
+| Self-protected role (admins included) | `main.app_users { ...; policy-self-deny: roles }` |
+
+The sidecar workflow endpoints share the same decisions: each asks the scoped
+`IPolicyGate` before the first write, so a caller the policy refuses gets a `403`
+with an empty body up front. The seed ships one login, the first admin
+(`admin@riverside-tennis.example` / `ChangeMe!2024`); `policy-default: deny` means
+an anonymous caller can read `widgets` and nothing else, so sign in through
+`POST /auth/login` before exercising the rest.
+
+### Discovery
 
 Each client asks the same GraphQL endpoint before rendering controls:
 
 ```graphql
 query Discovery {
-  _dbSchema { tables { name allowedActions columns { name readable writable } } }
+  _dbSchema { graphQlName allowedActions columns { graphQlName readable writable } }
   _grants
-  members { data { member_id _can { read create update delete } } }
+  members { data { member_id _can { update delete } } }
 }
 ```
 
-`_dbSchema` differs by caller, `_grants` includes database-backed role grants, and
-`_can` reports the effective row capability. The server remains authoritative when
-the client sends a mutation.
+`_dbSchema` is projected per caller, `_grants` is the caller's own grant set (roles
+plus resolved permissions), and `_can` is the effective row capability after the row
+scope. For the three roles the integration tests seed beside the admin:
+
+| Answer | member | officer | finance |
+|---|---|---|---|
+| `_grants` | `member` | `events.manage, members.manage, officer` | `dues.manage, finance` |
+| `events.allowedActions` | `read, create, update` | `read, create, update, delete` | `read, create, update` |
+| `dues_payments.amount_cents.writable` | `false` | `false` | `true` |
+| `app_users.roles.readable` | `false` | `true` | `false` |
+| `members` rows | own row only | every row | own row only |
+
+The server remains authoritative when the client sends the mutation: the projection
+shapes the controls, the policy engine decides the write.
 
 ## Identity-to-member linking
 

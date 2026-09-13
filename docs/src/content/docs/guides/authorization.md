@@ -34,21 +34,31 @@ keys exactly like a role.
 
 ## From application guards to metadata
 
-The HostedSpa membership-manager sample turns the seven guards in the Track case
-study into metadata declarations. See `docs-research/track/membership-manager.md`.
+The Track membership-manager audit (worktrack epic `01M2A1TGXQKJZJ85F7D17WT69Z`)
+counted seven guards the application hand-wrote in endpoint code. The HostedSpa
+sample (`samples/HostedSpa/appsettings.json`) carries each one as a metadata line;
+the table quotes those lines, and a test holds the two in step.
 
 | Track hand-written rule | Metadata line |
 |---|---|
-| Closed application baseline | `:root { policy-default: deny }` |
-| Role-backed grants | `main.members|main.member_memberships|main.dues_invoices|main.dues_payments|main.events|main.event_attendance { policy-actions: read,create,update,delete }` |
-| Officer-only content deletion | `main.events { delete[officer] }` |
-| Finance-only money writes | `main.dues_payments.amount_cents { write-requires: finance }` |
-| Masked salary-like reads | `main.app_users.roles { read-requires: officer; deny-mode: null }` |
-| Own-member rows, with officer exemption | `main.members { policy-row-scope: user_id = {user_id}; policy-row-scope-exempt: officer }` |
-| Constrained status and self-protected role | `main.members.status { writable-values: active,inactive }` and `main.members.roles { policy-self-deny: true }` |
+| Closed application baseline | `policy-default: deny` on `:root` |
+| Role-backed grants — roles resolve to permissions | `main.members, main.member_memberships, main.membership_plans, main.dues_invoices, main.dues_payments, main.event_attendance { policy-actions: read,create,update,delete }` |
+| Officer-only content deletion | `main.events { policy-actions: read,create,update,delete[events.manage] }` |
+| Finance-only money writes | `main.dues_payments.amount_cents { write-requires: dues.manage }` |
+| Masked salary-like reads | `main.app_users.roles { read-requires: members.manage; deny-mode: null }` |
+| Own-member rows, with officer exemption | `main.members { policy-row-scope: user_id = {user_id}; policy-row-scope-exempt: members.manage }` |
+| Constrained status and self-protected role | `main.dues_invoices.status { writable-values: open,paid,void }` and `main.app_users { policy-actions: read,update[members.manage]; policy-self-deny: roles }` |
 
-Clients discover these decisions through `_dbSchema`, `_grants`, and `_can`; they
-do not recreate the guards in UI or endpoint code.
+The permissions those lines name come from the grant resolver: `Program.cs`
+registers `AddBifrostGrantResolver` with a role-to-permission catalogue (`officer`
+resolves to `members.manage` and `events.manage`, `finance` to `dues.manage`), the
+place a production app queries its `role_permissions` table instead. Grants are the
+union of the login's roles and those permissions, and `_grants` reports that set.
+
+Clients discover these decisions through `_dbSchema`, `_grants`, and `_can`
+(see [Ask first](#ask-first)); they do not recreate the guards in UI or endpoint
+code. The sample's sidecar workflow endpoints ask the scoped `IPolicyGate`
+before their first write, so REST and GraphQL share one evaluator.
 
 ## Declare a policy
 

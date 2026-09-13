@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
+import { SessionProvider } from '../auth/session-provider';
+import { useSession } from '../auth/use-session';
+import type { AppIdentity } from '../auth/session-context';
 import { FieldControl, resolveFieldKind } from './field-control';
 import type { FieldMetadata } from '../metadata/app-metadata-types';
 
@@ -291,5 +294,71 @@ describe('FieldControl server policy', () => {
     // Assert
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(screen.getByLabelText('title')).not.toHaveAttribute('readonly');
+  });
+
+  it('re-reads the column policy when a different user signs in', async () => {
+    // Arrange: a cookie session; the server answers for whoever is signed in.
+    const ENDPOINT = 'http://localhost:5000/graphql';
+    const identity = (id: string): AppIdentity => ({
+      id,
+      provider: 'local',
+      orgIds: [],
+      roles: [],
+      permissions: [],
+      claims: {},
+    });
+    let current = { identity: identity('user-1'), writable: false };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === ENDPOINT) {
+        return policyFetchMock(current.writable)();
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () => Promise.resolve(current.identity),
+      } as Response);
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    function SignInAsOther() {
+      const { refresh } = useSession();
+      return <button onClick={refresh}>signed in as someone else</button>;
+    }
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BifrostProvider config={{ endpoint: ENDPOINT }}>
+          <SessionProvider>
+            <SignInAsOther />
+            <FieldControl
+              name="email"
+              table="users"
+              value="a@b.c"
+              onChange={vi.fn()}
+            />
+          </SessionProvider>
+        </BifrostProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+          ([input]) => String(input) === ENDPOINT,
+        ),
+      ).toHaveLength(1),
+    );
+    expect(screen.getByLabelText('email')).toHaveAttribute('readonly');
+
+    // Act: user-2, who may write the column, signs in on the same client.
+    current = { identity: identity('user-2'), writable: true };
+    fireEvent.click(screen.getByText('signed in as someone else'));
+
+    // Assert: the control follows the server's answer for the new identity.
+    await waitFor(() =>
+      expect(screen.getByLabelText('email')).not.toHaveAttribute('readonly'),
+    );
   });
 });

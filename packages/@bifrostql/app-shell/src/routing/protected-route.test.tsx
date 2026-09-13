@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
 import { SessionProvider } from '../auth/session-provider';
+import { useSession } from '../auth/use-session';
 import { ProtectedRoute } from './protected-route';
 import type { AppIdentity } from '../auth/session-context';
 
@@ -363,5 +364,66 @@ describe('ProtectedRoute', () => {
     // Assert: no extra call from the swap, and the ref now holds `fresh`.
     expect(fresh).not.toHaveBeenCalled();
     expect(stale).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the server grants when a different user signs in', async () => {
+    // Arrange: a cookie session, so nothing in the request headers names the
+    // user. The server answers /auth/session and _grants for whoever is
+    // signed in right now; the test switches that user mid-flight.
+    let current: { identity: AppIdentity; grants: string[] } = {
+      identity: { ...identityWith([]), id: 'user-1' },
+      grants: [],
+    };
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === ENDPOINT) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () => Promise.resolve({ data: { _grants: current.grants } }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () => Promise.resolve(current.identity),
+      } as Response);
+    });
+    const Wrapper = createWrapper();
+    function SignInAsOther() {
+      const { refresh } = useSession();
+      return <button onClick={refresh}>signed in as someone else</button>;
+    }
+
+    render(
+      <Wrapper>
+        <SignInAsOther />
+        <ProtectedRoute requiredGrants="dbo.users.read">
+          <div>protected content</div>
+        </ProtectedRoute>
+      </Wrapper>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent('403'),
+    );
+
+    // Act: user-2, who holds the grant, signs in on the same QueryClient.
+    current = {
+      identity: { ...identityWith([]), id: 'user-2' },
+      grants: ['dbo.users.read'],
+    };
+    fireEvent.click(screen.getByText('signed in as someone else'));
+
+    // Assert: the route asks the server again for the new identity instead
+    // of serving user-1's cached refusal.
+    await waitFor(() =>
+      expect(screen.getByText('protected content')).toBeInTheDocument(),
+    );
+    const grantCalls = (
+      globalThis.fetch as ReturnType<typeof vi.fn>
+    ).mock.calls.filter(([input]) => String(input) === ENDPOINT);
+    expect(grantCalls).toHaveLength(2);
   });
 });

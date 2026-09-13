@@ -146,24 +146,30 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             }
         }
 
+        TableFilter? selfFilter = null;
         if (mutationType == MutationType.Update && data.Keys.Any(policy.SelfDenyColumns.Contains))
         {
             if (!context.UserContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var userId) || userId is null)
                 throw new BifrostExecutionError("Authorization context is required.");
             var selfColumn = string.IsNullOrWhiteSpace(policy.SelfColumn)
                 ? MetadataKeys.Auth.DefaultUserIdContextKey : policy.SelfColumn;
-            var selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
+            selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
                 ContextValueCoercer.Coerce(table, selfColumn, userId)).Build();
-            return new MutationTransformResult { MutationType = mutationType, Data = data, AdditionalFilter = selfFilter };
+            selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
+                ContextValueCoercer.Coerce(table, selfColumn, userId)).Build();
         }
 
         return new MutationTransformResult
         {
             MutationType = mutationType,
             Data = data,
-            AdditionalFilter = BuildRowScopeFilter(policy, mutationType, table, identity, context),
+            AdditionalFilter = CombineFilters(selfFilter,
+                BuildRowScopeFilter(policy, mutationType, table, identity, context)),
         };
     }
+
+    private static TableFilter? CombineFilters(TableFilter? first, TableFilter? second) =>
+        first is null ? second : second is null ? first : TableFilter.CombineAnd(first, second);
 
     private static bool ScalarEquals(object? left, object? right) =>
         left is string ls && right is string rs

@@ -619,6 +619,17 @@ namespace BifrostQL.Core.Model
                         "policy-write-deny names a column that does not exist; a non-existent deny column protects nothing (absent = ALLOW = fail open)"));
             }
 
+            foreach (var column in policy.SelfDenyColumns)
+            {
+                if (!DbColumnExists(table, column))
+                    errors.Add(Problem(table, MetadataKeys.Policy.SelfDeny, column,
+                        "policy-self-deny names a column that does not exist on the table"));
+            }
+
+            if (policy.SelfDenyColumns.Count > 0 && !DbColumnExists(table, policy.SelfColumn))
+                errors.Add(Problem(table, MetadataKeys.Policy.SelfColumn, policy.SelfColumn,
+                    "policy-self-column names a column that does not exist on the table"));
+
             var rowScopeColumn = TryExtractRowScopeColumn(policy.RowScopeExpression);
             if (rowScopeColumn != null && !DbColumnExists(table, rowScopeColumn))
                 errors.Add(Problem(table, MetadataKeys.Policy.RowScope, rowScopeColumn,

@@ -566,6 +566,7 @@ interface TableRowsProps<T> {
   striped: boolean;
   hoverable: boolean;
   editable: boolean;
+  canDelete: boolean;
   expandable: boolean;
   childQuery: ChildQueryConfig | undefined;
   expansion: ExpansionState;
@@ -574,6 +575,7 @@ interface TableRowsProps<T> {
   renderRow:
     | ((row: T, rowIndex: number, defaultRow: ReactNode) => ReactNode)
     | undefined;
+  readable: (field: string) => boolean;
   renderCell:
     | ((value: unknown, row: T, column: ColumnConfig) => ReactNode)
     | undefined;
@@ -599,6 +601,8 @@ function TableRows<T>({
   striped,
   hoverable,
   editable,
+  canDelete,
+  readable,
   expandable,
   childQuery,
   expansion,
@@ -650,6 +654,9 @@ function TableRows<T>({
 
         const rows: ReactNode[] = [];
 
+        const rowCan = rowRecord._can as { update?: boolean; delete?: boolean } | undefined;
+        const rowEditable = rowCan?.update ?? editable;
+        const rowCanDelete = rowCan?.delete ?? canDelete;
         const defaultRowElement = (
           <tr
             key={key}
@@ -716,7 +723,7 @@ function TableRows<T>({
 
               const value = rowRecord[col.field];
               const isCellEditable =
-                editable && editing.isColumnEditable(col.field);
+                rowEditable && editing.isColumnEditable(col.field);
               const isEditing =
                 isCellEditable &&
                 editing.editingCell?.rowKey === key &&
@@ -733,7 +740,7 @@ function TableRows<T>({
                       : undefined
                   }
                 >
-                  {isEditing ? (
+                   {isEditing ? (
                     <input
                       type="text"
                       value={formatCellValue(
@@ -766,7 +773,9 @@ function TableRows<T>({
                         fontSize: 'inherit',
                       }}
                     />
-                  ) : renderCell ? (
+                   ) : !readable(col.field) ? (
+                     '—'
+                   ) : renderCell ? (
                     renderCell(value, row, col)
                   ) : (
                     formatCellValue(value)
@@ -837,7 +846,7 @@ export interface BifrostTableProps<
    * Enables inline cell editing. Requires {@link onRowUpdate} — an editable
    * table with nowhere to write to would silently discard the user's typing.
    */
-  editable?: boolean;
+  editable?: boolean | 'auto';
   /**
    * Persist each cell as it is committed. Defaults to `true`: this component
    * renders no explicit save control, so a deferred edit would sit dirty and
@@ -901,7 +910,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     themeOverrides,
     striped = false,
     hoverable = true,
-    editable = false,
+    editable = 'auto',
     autoSave = true,
     onRowUpdate,
     onSaveError,
@@ -934,7 +943,7 @@ export function BifrostTable<T = Record<string, unknown>>(
   // An editable table with no write handler renders a working-looking input
   // whose contents go nowhere — the user believes the edit saved. Refuse the
   // configuration rather than ship a UI that quietly loses input.
-  if (editable && !onRowUpdate) {
+  if (editable === true && !onRowUpdate) {
     throw new Error(
       'BifrostTable: `editable` requires `onRowUpdate` — without it, inline edits are silently discarded.',
     );
@@ -956,7 +965,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     urlSync,
     expandable,
     childQuery,
-    editable,
+    editable: editable === 'auto' ? undefined : editable,
     autoSave,
     onRowUpdate,
     onSaveError,
@@ -969,8 +978,12 @@ export function BifrostTable<T = Record<string, unknown>>(
     ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
     : columns;
 
+  const effectiveRowActions =
+    table.policy.isLoading || table.policy.isError || table.policy.can('delete')
+    ? rowActions
+    : rowActions?.filter((action) => action.label.toLowerCase() !== 'delete');
   const visibleColumns =
-    rowActions && rowActions.length > 0
+    effectiveRowActions && effectiveRowActions.length > 0
       ? [
           ...baseColumns,
           { field: '__actions', header: 'Actions' } as ColumnConfig,
@@ -1096,12 +1109,14 @@ export function BifrostTable<T = Record<string, unknown>>(
                 rowKey={rowKey}
                 striped={striped}
                 hoverable={hoverable}
-                editable={editable}
+                editable={table.editable}
+                canDelete={table.policy.can('delete')}
+                readable={table.policy.readable}
                 expandable={expandable}
                 childQuery={childQuery}
                 expansion={table.expansion}
                 onRowClick={onRowClick}
-                rowActions={rowActions}
+                rowActions={effectiveRowActions}
                 renderRow={renderRow}
                 renderCell={renderCell}
                 renderExpandedRow={renderExpandedRow}

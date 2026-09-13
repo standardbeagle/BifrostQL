@@ -91,7 +91,7 @@ export interface ColumnConfig {
   filterOptions?: Array<{ label: string; value: string | number }>;
   computed?: (row: Record<string, unknown>) => unknown;
   customSort?: CustomSortFn;
-  editable?: boolean;
+  editable?: boolean | 'auto';
   readOnly?: boolean;
   editorType?: EditorType;
   editorOptions?: Array<{ label: string; value: string | number }>;
@@ -591,6 +591,15 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   expansion: ExpansionState;
   columnManagement: ColumnManagementState;
   editing: EditingState;
+  editable: boolean;
+  policy: {
+    can: (action: string) => boolean;
+    readable: (column: string) => boolean;
+    writable: (column: string) => boolean;
+    isLoading: boolean;
+    isError: boolean;
+    error: Error | null;
+  };
   export: ExportState;
   a11y: AccessibilityState;
   responsive: ResponsiveState<T>;

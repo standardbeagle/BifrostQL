@@ -11,6 +11,7 @@ import type {
 export interface UseTableEditingOptions<T> {
   columns: ColumnConfig[];
   editable: boolean;
+  writable?: (field: string) => boolean;
   data: T[];
   rowKey: string;
   autoSave: boolean;
@@ -39,6 +40,7 @@ export interface UseTableEditingResult {
 export function useTableEditing<T = Record<string, unknown>>({
   columns,
   editable,
+  writable = () => true,
   data,
   rowKey,
   autoSave,
@@ -89,14 +91,14 @@ export function useTableEditing<T = Record<string, unknown>>({
     for (const col of columns) {
       if (col.readOnly) continue;
       if (col.computed) continue;
-      if (editable && col.editable !== false) {
+      if (editable && col.editable !== false && writable(col.field)) {
         set.add(col.field);
-      } else if (col.editable) {
+      } else if (col.editable && writable(col.field)) {
         set.add(col.field);
       }
     }
     return set;
-  }, [columns, editable]);
+  }, [columns, editable, writable]);
 
   const isColumnEditable = useCallback(
     (field: string) => editableColumnSet.has(field),

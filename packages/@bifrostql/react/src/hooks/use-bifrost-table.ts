@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { TableFilter } from '../types';
 import { useBifrostQuery } from './use-bifrost-query';
+import { usePolicy } from './use-policy';
 import {
   resolveClientSideFilterConfig,
   resolveClientSideSortConfig,
@@ -95,7 +96,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     groupBy: groupByConfig,
     expandable = false,
     childQuery,
-    editable = false,
+    editable = 'auto',
     autoSave = false,
     onRowUpdate,
     onBatchSave,
@@ -160,6 +161,12 @@ export function useBifrostTable<T = Record<string, unknown>>(
     ...bifrostOptions,
   });
 
+  const policy = usePolicy(table);
+  const tableEditable =
+    editable === 'auto'
+      ? policy.can('update') && Boolean(onRowUpdate)
+      : editable;
+
   const { dataWithComputed, computedAggregates, formattedAggregates, groups } =
     useTableData<T>({
       rawData: queryResult.data as T[] | undefined,
@@ -208,7 +215,9 @@ export function useBifrostTable<T = Record<string, unknown>>(
     cancelEditing,
   } = useTableEditing<T>({
     columns,
-    editable,
+    editable: tableEditable,
+    writable: (field) =>
+      policy.isLoading || policy.isError ? true : policy.writable(field),
     data: dataWithComputed,
     rowKey,
     autoSave,
@@ -269,6 +278,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     expansion,
     columnManagement,
     editing,
+    editable: tableEditable,
+    policy,
     export: exportState,
     a11y,
     responsive,

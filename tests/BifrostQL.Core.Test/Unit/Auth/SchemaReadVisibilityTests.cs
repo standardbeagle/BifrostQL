@@ -99,9 +99,8 @@ public class SchemaReadVisibilityTests
 
         visible.Select(v => v.Table.DbName).Should().NotContain("broken",
             "FromTable throws before the evaluator's admin bypass can run — fail closed");
-        visible.Select(v => v.Table.DbName).Should().NotContain("ledger",
-            "D7: ledger's allow-list names update only, so read is refused for the admin too — " +
-            "the admin bypass covers grants, never an absent action");
+        visible.Select(v => v.Table.DbName).Should().Contain("ledger",
+            "schema admins see every parseable table regardless of the table action allow-list");
         visible.Select(v => v.Table.DbName).Should().Contain(new[] { "orders", "customers" },
             "tables whose allow-list names read stay visible to the admin");
     }

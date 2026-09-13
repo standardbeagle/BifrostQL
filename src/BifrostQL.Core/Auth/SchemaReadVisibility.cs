@@ -175,7 +175,8 @@ public static class SchemaReadVisibility
         try
         {
             policy = PolicyConfigCollector.FromTable(table);
-            if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed)
+            if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed
+                && !Evaluator.IsAdmin(identity))
                 return null;
         }
         catch
@@ -188,6 +189,7 @@ public static class SchemaReadVisibility
 
         return new VisibleTable(table, VisibleColumns(table, policy, identity));
     }
+
 
     private static IReadOnlyList<ColumnDto> VisibleColumns(
         IDbTable table, TablePolicy policy, AppIdentity identity)

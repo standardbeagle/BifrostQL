@@ -540,4 +540,40 @@ public class ModelConfigValidatorTests
 
         act.Should().NotThrow();
     }
+
+    // ---- writable-values literal coercibility (S6a follow-up) ----
+
+    private static IDbModel WritableValuesModel(string columnType, string literals) =>
+        DbModelTestFixture.Create().WithTable("profiles", t => t
+            .WithSchema("public").WithPrimaryKey("id").WithColumn("level", columnType)
+            .WithMetadata(MetadataKeys.Policy.Actions, "create,update")
+            .WithColumnMetadata("level", MetadataKeys.Policy.WritableValues, literals))
+            .Build();
+
+    [Theory]
+    [InlineData("int", "false")]
+    [InlineData("boolean", "banana")]
+    public void Validate_WritableValuesLiteralNotCoercible_ThrowsNamingKeyColumnAndLiteral(
+        string columnType, string literal)
+    {
+        // A literal the coercer cannot convert to the column type would otherwise load
+        // fine and throw on every write; fail at load, naming what to fix.
+        var act = () => ModelConfigValidator.Validate(WritableValuesModel(columnType, literal));
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("public.profiles")
+            .And.Contain(MetadataKeys.Policy.WritableValues)
+            .And.Contain("level")
+            .And.Contain(literal);
+    }
+
+    [Theory]
+    [InlineData("int", "0, 1")]
+    [InlineData("boolean", "false")]
+    public void Validate_WritableValuesLiteralsCoercible_Passes(string columnType, string literals)
+    {
+        var act = () => ModelConfigValidator.Validate(WritableValuesModel(columnType, literals));
+
+        act.Should().NotThrow();
+    }
 }

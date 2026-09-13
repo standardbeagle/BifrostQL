@@ -83,4 +83,35 @@ public sealed class WritableValuesTests
         refused.Errors.Should().ContainSingle()
             .Which.Should().Be("The mutation writes a field that is not permitted by authorization policy.");
     }
+
+    [Fact]
+    public async Task NonCoercibleValue_RefusesWithColumnWriteMessage_AndAdminBypasses()
+    {
+        var model = DbModelTestFixture.Create().WithTable("profiles", t => t
+            .WithSchema("public").WithPrimaryKey("id").WithColumn("level", "int")
+            .WithMetadata(MetadataKeys.Policy.Actions, "create,update")
+            .WithColumnMetadata("level", MetadataKeys.Policy.WritableValues, "0,1"))
+            .Build();
+        var table = model.GetTableFromDbName("profiles");
+        var transformer = new PolicyMutationTransformer();
+        static MutationTransformContext C(IDbModel m, params string[] roles) => new()
+        {
+            Model = m, UserContext = new Dictionary<string, object?> { ["roles"] = roles }
+        };
+
+        // "maybe" cannot be coerced to int. The refusal must be the same wire shape as
+        // a disallowed value: ACCESS_DENIED with the generic column-write constant, never
+        // the coercer's tenant-context wording, and never a thrown exception.
+        var refused = await transformer.TransformAsync(table, MutationType.Insert,
+            new() { ["level"] = "maybe" }, C(model, "profiles.manage"));
+        refused.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+        refused.Errors.Should().ContainSingle()
+            .Which.Should().Be("The mutation writes a field that is not permitted by authorization policy.");
+        refused.Errors.Single().Should().NotContainEquivalentOf("tenant").And.NotContainEquivalentOf("context");
+
+        (await transformer.TransformAsync(table, MutationType.Insert,
+            new() { ["level"] = "1" }, C(model, "profiles.manage"))).Errors.Should().BeEmpty();
+        (await transformer.TransformAsync(table, MutationType.Insert,
+            new() { ["level"] = "maybe" }, C(model, "admin"))).Errors.Should().BeEmpty();
+    }
 }

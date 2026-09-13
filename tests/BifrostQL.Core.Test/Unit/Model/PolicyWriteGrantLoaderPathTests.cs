@@ -69,4 +69,22 @@ public sealed class PolicyWriteGrantLoaderPathTests : IAsyncLifetime
         policy.WriteDenyRoles.Should().BeEquivalentTo("member");
         policy.WritableValues["state"].Should().BeEquivalentTo("draft", "submitted");
     }
+
+    [Fact]
+    public async Task Loader_WritableValuesLiteralNotCoercible_FailsLoadNamingKeyColumnAndLiteral()
+    {
+        // The unit fixture bypasses DbModelLoader; this proves the load-time literal
+        // check fires on a real loaded model, where cost_rate is REAL.
+        var loader = new DbModelLoader(
+            new SqliteDbConnFactory(_connectionString),
+            new MetadataLoader(new[] { "main.users.cost_rate { writable-values: banana }" }));
+
+        var act = () => loader.LoadAsync();
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain("main.users")
+            .And.Contain("writable-values")
+            .And.Contain("cost_rate")
+            .And.Contain("banana");
+    }
 }

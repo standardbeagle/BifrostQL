@@ -24,11 +24,31 @@ internal static class ContextValueCoercer
         {
             return ConvertToClrType(value, column.DataType);
         }
-        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
+        catch (Exception ex) when (IsCoercionFailure(ex))
         {
             throw AccessDenied();
         }
     }
+
+    /// <summary>
+    /// Load-time probe: can <paramref name="value"/> be converted to a column of
+    /// <paramref name="dataType"/> by the same conversion the runtime uses?
+    /// </summary>
+    internal static bool IsCoercible(object value, string dataType)
+    {
+        try
+        {
+            ConvertToClrType(value, dataType);
+            return true;
+        }
+        catch (Exception ex) when (IsCoercionFailure(ex))
+        {
+            return false;
+        }
+    }
+
+    private static bool IsCoercionFailure(Exception ex) =>
+        ex is FormatException or InvalidCastException or OverflowException or ArgumentException;
 
     internal static object ConvertToClrType(object value, string dataType)
     {
@@ -49,6 +69,7 @@ internal static class ContextValueCoercer
             "decimal" or "numeric" => typeof(decimal),
             "float" or "real" => typeof(double),
             "uniqueidentifier" or "uuid" => typeof(Guid),
+            "bit" or "bool" or "boolean" => typeof(bool),
             _ => typeof(string)
         };
 

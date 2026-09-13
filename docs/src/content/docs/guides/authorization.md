@@ -246,6 +246,9 @@ Values are compared after scalar coercion to the column type; strings are
 case-insensitive. This is an exact allow-list only: it supports no operators,
 ranges, or presence requirement. The rule applies when the column is present in
 insert or update data, is bypassed by admins, and does not require a grant.
+Each literal is coerced to the column type at model load; a literal that
+cannot be coerced (`false` on an integer column) fails load naming the key,
+the column and the literal.
 
 ## What the caller sees
 

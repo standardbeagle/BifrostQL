@@ -615,6 +615,20 @@ namespace BifrostQL.Core.Model
                         "value must contain at least one literal"));
             }
 
+            // Every literal must coerce to its column's type now; otherwise the model
+            // loads and the allow-list throws on every write of that column.
+            foreach (var (column, literals) in policy.WritableValues)
+            {
+                if (!table.ColumnLookup.TryGetValue(column, out var columnDto))
+                    continue;
+                foreach (var literal in literals)
+                {
+                    if (!Auth.ContextValueCoercer.IsCoercible(literal, columnDto.DataType))
+                        errors.Add(Problem(table, MetadataKeys.Policy.WritableValues, literal,
+                            $"writable-values literal cannot be coerced to column '{columnDto.DbName}' ({columnDto.DataType})"));
+                }
+            }
+
             foreach (var column in policy.WriteDenyColumns)
             {
                 if (!DbColumnExists(table, column))

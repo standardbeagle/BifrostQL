@@ -21,6 +21,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- `writable-values`: a supplied value that cannot be coerced to the column type
+  is refused with the generic column-write `ACCESS_DENIED` message instead of the
+  tenant-context wording, and a non-coercible literal now fails model load
+  naming the key, column and literal.
 - History before/after images now apply tracked-table read policies, preventing
   denied and masked values from bypassing authorization in the trail.
 - Read-deny now takes precedence over `read-requires`; schema projections retain

@@ -127,8 +127,14 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             if (!isAdmin && !isDelete && table.ColumnLookup.TryGetValue(column, out var columnDto)
                 && policy.WritableValues.TryGetValue(column, out var values))
             {
+                // A value the coercer cannot convert to the column type is refused with
+                // the same generic column-write result as a disallowed value: the
+                // coercer's own ACCESS_DENIED carries tenant-context wording that must
+                // never reach a caller for this condition. Literals were proven
+                // coercible at model load (ModelConfigValidator), so only the supplied
+                // side can fail here.
                 var supplied = data[column];
-                valueAllowed = supplied is not null && ContextValueCoercer.Coerce(table, columnDto.DbName, supplied) is { } coerced
+                valueAllowed = supplied is not null && TryCoerce(table, columnDto.DbName, supplied) is { } coerced
                     && values.Any(value => ScalarEquals(coerced, ContextValueCoercer.Coerce(table, columnDto.DbName, value)));
             }
             if (!columnAllowed || !valueAllowed)
@@ -179,6 +185,18 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
 
     private static TableFilter? CombineFilters(TableFilter? first, TableFilter? second) =>
         first is null ? second : second is null ? first : TableFilter.CombineAnd(first, second);
+
+    private static object? TryCoerce(IDbTable table, string column, object value)
+    {
+        try
+        {
+            return ContextValueCoercer.Coerce(table, column, value);
+        }
+        catch (BifrostExecutionError)
+        {
+            return null;
+        }
+    }
 
     private static bool ScalarEquals(object? left, object? right) =>
         left is string ls && right is string rs

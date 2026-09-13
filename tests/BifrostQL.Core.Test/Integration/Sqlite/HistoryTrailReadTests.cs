@@ -47,7 +47,7 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
                  })
             await Exec($"DROP TABLE IF EXISTS {drop}");
 
-        await Exec("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NULL)");
+        await Exec("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT NULL, cost_rate INTEGER NULL)");
         await Exec("CREATE TABLE gadgets (id INTEGER PRIMARY KEY, name TEXT NULL)");
         await Exec("CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NULL)");
         await Exec("CREATE TABLE tenant_docs (id INTEGER PRIMARY KEY, body TEXT NULL, tenant_id INTEGER NULL)");
@@ -526,6 +526,32 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
     // ---------------------------------------------------------------------------
     // Encrypted images (decrypt/mask per caller policy)
     // ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task ReadRequires_IsAppliedInsideBeforeAndAfterImages()
+    {
+        var model = await LoadModelAsync(
+            "main.orders.cost_rate { read-requires: rates.view_cost; writable-values: 125 }",
+            "main.orders { history: enabled }",
+            ":root { history-table: main.audit_trail }");
+
+        (await ExecuteMutationAsync("mutation { orders(insert: { status: \"new\", cost_rate: 125 }) }", model))
+            .Errors.Should().BeNullOrEmpty();
+
+        var member = await ExecuteQueryAsync(
+            "query { ordersHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["roles"] = Array.Empty<string>() });
+        var memberImage = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            Rows(member, "ordersHistory").Single().GetProperty("after").GetString()!)!;
+        memberImage["cost_rate"].ValueKind.Should().Be(JsonValueKind.Null);
+
+        var holder = await ExecuteQueryAsync(
+            "query { ordersHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["permissions"] = new[] { "rates.view_cost" } });
+        JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            Rows(holder, "ordersHistory").Single().GetProperty("after").GetString()!)!["cost_rate"]
+            .GetInt64().Should().Be(125);
+    }
 
     private async Task<(IDbModel Model, string Ciphertext)> SeedEncryptedTrailAsync()
     {

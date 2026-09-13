@@ -1,5 +1,9 @@
 # Changelog
 
+## Removed
+
+- Removed the unused `schema-permissions` metadata key; it was parsed but never enforced, creating a silent fail-open permission declaration.
+
 - Add per-row `_can { update delete }` capabilities for row-scoped tables.
 - Add `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.
 - Add column-level `writable-values` literal allow-lists for mutation policy.

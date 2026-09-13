@@ -166,7 +166,6 @@ consistently.
 | `schema-display` | `flat`/`prefix`/`field` | model | Multi-schema presentation mode |
 | `schema-default` | schema name | model | Default schema for field-mode presentation |
 | `schema-excluded` | comma list | model | Schemas hidden from schema-field presentation |
-| `schema-permissions` | rules | model | Schema-field access rules |
 | `sp-include` | regex | model | Include matching stored procedures |
 | `sp-exclude` | regex | model | Exclude matching stored procedures |
 | `auto-detect-app` | `disabled`, `wordpress`, etc. | model | Control app-schema detection |

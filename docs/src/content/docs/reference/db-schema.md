@@ -24,6 +24,8 @@ query {
 
 - A table the caller may not **read** is **absent** from the result — the same answer a
   non-existent table gets, so the filter is never an existence oracle.
+- A table the caller may read but with **no readable column** is absent too: it has nothing
+  selectable, and `labelColumn` is non-null on the wire.
 - A column the caller may not read is absent from its table's `columns`. A foreign-key or
   many-to-many edge is published only when both end tables and every participating column
   are visible.
@@ -44,7 +46,7 @@ query {
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `readable` | `Boolean!` | `false` when the caller may not read this column's values. A **masked** column (`read-requires` with `deny-mode: null`) is `readable: false` yet stays **selectable** — the selection succeeds with the value nulled. A refuse-denied column is absent from the list entirely. |
+| `readable` | `Boolean!` | `false` when the caller may not read this column's values. A **masked** column (`read-requires` with `deny-mode: null`) is `readable: false` yet stays **selectable** — the selection succeeds with the value nulled. A column on the table's `policy-read-deny` list is absent from the list entirely; a `read-requires` column with `deny-mode: refuse` stays listed with `readable: false` (S4c makes deny win over `read-requires` on overlap). |
 | `writable` | `Boolean!` | `false` when the caller may not write the column (`write-requires` grant unmet, or `policy-write-deny` applies). Column-level only; the update/delete actions themselves are reported by `allowedActions`. |
 
 ## Root grant fields

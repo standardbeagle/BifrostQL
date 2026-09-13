@@ -8,7 +8,10 @@ using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Schema;
 using FluentAssertions;
+using GraphQL;
+using GraphQL.SystemTextJson;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Unit.Schema;
@@ -147,8 +150,46 @@ public sealed class DbSchemaProjectionTests
                 .WithMetadata(MetadataKeys.Policy.ReadDeny, "secret"))
             .Build();
 
-        var table = Table(Resolve(model, Ctx("u1", MemberRoles)), "empty_view");
-        table.GetProperty("columns").GetArrayLength().Should().Be(0);
+        // Nothing is selectable for the member, so the table is not advertised at all
+        // (labelColumn is String! on the wire; a listed table would null the whole result).
+        Resolve(model, Ctx("u1", MemberRoles)).EnumerateArray()
+            .Select(t => t.GetProperty("graphQlName").GetString())
+            .Should().NotContain("empty_view");
+        Table(Resolve(model, Ctx("u1", new[] { "admin" })), "empty_view")
+            .GetProperty("columns").GetArrayLength().Should().Be(1, "admin bypasses the column deny");
+    }
+
+    [Fact]
+    public async Task Wire_dbSchema_executes_without_errors_when_a_readable_table_has_no_readable_column()
+    {
+        // The resolver-level test above serialises with System.Text.Json and never meets the
+        // schema's non-null rules; this one executes the real document through the schema.
+        var model = DbModelTestFixture.Create()
+            .WithTable("empty_view", t => t
+                .WithSchema("dbo")
+                .WithColumn("secret")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read")
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "secret"))
+            .WithTable("members", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("name")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read"))
+            .Build();
+        var schema = DbSchema.FromModel(model);
+        schema.Initialize();
+
+        var execution = await new DocumentExecuter().ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = "{ _dbSchema { graphQlName labelColumn columns { graphQlName } } }";
+            options.UserContext = Ctx("u1", MemberRoles);
+            options.Extensions = new Inputs(new Dictionary<string, object?> { ["model"] = model });
+        });
+
+        execution.Errors.Should().BeNullOrEmpty("a table with nothing selectable must not null the whole _dbSchema result");
+        var json = new GraphQLSerializer().Serialize(execution);
+        json.Should().Contain("\"members\"").And.NotContain("empty_view");
     }
 
     [Fact]

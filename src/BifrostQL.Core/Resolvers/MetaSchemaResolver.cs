@@ -50,6 +50,12 @@ namespace BifrostQL.Core.Resolvers
                 visible
                     .Select(v => (v, t: v.Table))
                     .Where(x => tableName == null || x.t.GraphQlName == tableName)
+                    // A table the caller may read but with no readable column advertises
+                    // nothing: `labelColumn` is `String!` on the wire and every consumer
+                    // selects it, so listing the table would null the whole `_dbSchema`
+                    // result with a non-null violation. Omit it, as SchemaReadVisibility
+                    // omits a table the caller may not read at all.
+                    .Where(x => x.v.Columns.Count > 0)
                     .Select(x =>
                     {
                         var (v, t) = x;
@@ -102,8 +108,11 @@ namespace BifrostQL.Core.Resolvers
                                 // S4a/S4b semantics. `readable` is false for a MASKED
                                 // column too: the selection still succeeds with the value
                                 // nulled, so the column stays listed and selectable, but
-                                // the caller never sees its values. A refuse-denied column
-                                // is absent from the projection entirely.
+                                // the caller never sees its values. A column on the table's
+                                // `policy-read-deny` list is absent from the projection
+                                // entirely; a `read-requires` column with `deny-mode: refuse`
+                                // stays listed with readable:false until S4c makes deny win
+                                // over read-requires on overlap.
                                 var readable =
                                     Evaluator.IsColumnAllowed(policy, c.DbName, PolicyDirection.Read, identity).Allowed
                                     && Evaluator.GetReadDisposition(policy, c.DbName, identity) == ReadColumnDisposition.Allow;

@@ -164,12 +164,14 @@ tenant filter reads) as a plain predicate on the materialized scope column — t
 what the column exists for. A caller with no tenant claim gets **zero rows**, and
 `NULL`-scope legacy rows are invisible to scoped callers (see the backfill note above).
 
-**Encrypted images obey the read policy.** A recorded value of an
+**History images obey the tracked table's read policy.** A recorded value of an
 [encrypted column](/concepts/field-encryption) is stored in the images as ciphertext.
 The trail read field passes it through the same decrypt/mask projection as a base-table
 read: a caller holding the column's `unmask-role` (or admin) sees plaintext inside
 `before`/`after`; every other caller sees the column's configured mask; raw ciphertext
-is never returned, so the trail cannot serve as a decryption oracle.
+is never returned, so the trail cannot serve as a decryption oracle. Read-gated
+columns are masked to `null` or omitted when their effective `deny-mode` is
+`refuse`, while complete images remain stored on disk for audit and admins.
 
 **Policy row scoping is a current limitation.** A `policy-row-scope` expression has no
 materialized column on the history table to re-apply it to, so the trail read field

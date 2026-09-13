@@ -19,6 +19,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- History before/after images now apply tracked-table read policies, preventing
+  denied and masked values from bypassing authorization in the trail.
 - Read-deny now takes precedence over `read-requires`; schema projections retain
   masked columns and omit refused columns, and contradictory metadata fails load.
 

@@ -73,7 +73,13 @@ export interface FieldControlProps {
   fkTargetEntity?: string;
   /** Overrides the label derived from `name`. */
   label?: string;
-  /** Qualified table name used to resolve server-side column policy. */
+  /**
+   * GraphQL table name (as `_dbSchema(graphQlName:)` accepts it). When given,
+   * the control is read-only unless the server projects the column as
+   * writable for the current identity — while that answer is loading, and
+   * for a column or table the server does not project, it stays read-only.
+   * Requires a `BifrostProvider`. When omitted, only `field.readOnly` applies.
+   */
   table?: string;
 }
 
@@ -99,7 +105,31 @@ export interface FieldControlProps {
  * />
  * ```
  */
-export function FieldControl({
+export function FieldControl(props: FieldControlProps) {
+  if (props.table) {
+    return <PolicyBoundFieldControl {...props} table={props.table} />;
+  }
+  return (
+    <FieldControlView {...props} readOnly={props.field?.readOnly ?? false} />
+  );
+}
+
+/**
+ * Consults the server-resolved column policy for `table` and folds its
+ * `writable` answer into `readOnly`. Split out so the hook runs only when a
+ * table is named, without a conditional hook call.
+ */
+function PolicyBoundFieldControl({
+  table,
+  ...props
+}: FieldControlProps & { table: string }) {
+  const policy = usePolicy(table);
+  const readOnly =
+    (props.field?.readOnly ?? false) || !policy.writable(props.name);
+  return <FieldControlView {...props} readOnly={readOnly} />;
+}
+
+function FieldControlView({
   name,
   field,
   value,
@@ -108,12 +138,10 @@ export function FieldControl({
   fkOptions,
   fkTargetEntity,
   label,
-  table,
-}: FieldControlProps) {
+  readOnly,
+}: Omit<FieldControlProps, 'table'> & { readOnly: boolean }) {
   const kind = resolveFieldKind(field);
   const resolvedLabel = label ?? name;
-  const policy = table ? usePolicy(table) : null;
-  const readOnly = (field?.readOnly ?? false) || (Boolean(table) && !policy?.writable(name));
   const helpText = field?.helpText;
 
   const shared = {

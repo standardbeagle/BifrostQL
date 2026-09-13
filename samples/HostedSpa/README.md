@@ -12,6 +12,12 @@ endpoint, so there is no CORS configuration to manage.
   fallback that does not shadow `/graphql`, `/playground`, `/api`, or `/health`.
 - A small SQLite database (`hostedspa-sample.db`) is created and seeded on first
   run, so no external database setup is required.
+- The membership-manager guard shapes are metadata, not endpoint-specific checks:
+  `policy-default: deny` establishes the closed baseline; the selector grants the
+  common tables; `delete[officer]` protects event deletion; `write-requires: finance`
+  protects payment amounts; `read-requires: officer; deny-mode: null` masks roles;
+  `policy-row-scope` and `policy-row-scope-exempt` limit members; `writable-values`
+  constrains status; and `policy-self-deny` protects a member's role.
 
 ## Running it
 
@@ -27,6 +33,22 @@ Then open the printed URL (for example `http://localhost:5000`):
 - `/` — the SPA. Click **Load widgets from /graphql** to query the API.
 - `/playground` — the GraphiQL playground.
 - `/graphql` — the GraphQL endpoint (POST).
+
+## Authorization discovery
+
+Each client asks the same GraphQL endpoint before rendering controls:
+
+```graphql
+query Discovery {
+  _dbSchema { tables { name allowedActions columns { name readable writable } } }
+  _grants
+  members { data { member_id _can { read create update delete } } }
+}
+```
+
+`_dbSchema` differs by caller, `_grants` includes database-backed role grants, and
+`_can` reports the effective row capability. The server remains authoritative when
+the client sends a mutation.
 
 ## Identity-to-member linking
 

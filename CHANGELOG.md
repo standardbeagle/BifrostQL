@@ -309,3 +309,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `BifrostQL.Host` has no integration smoke test.
 - `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` override removable once Actions runner default flips to Node.js 24 (or upstream actions publish v5).
 - Two separate WorkTrack stores (REST container vs local MCP) for the planning workspace — drifted multiple times, needs consolidation.
+# Unreleased
+
+- Documented the HostedSpa membership-manager authorization guards as metadata-only
+  declarations, including discovery through `_dbSchema`, `_grants`, and `_can`.

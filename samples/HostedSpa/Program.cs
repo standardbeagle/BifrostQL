@@ -1,4 +1,5 @@
 using BifrostQL.Core.AppMetadata;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Workflows;
 using BifrostQL.Samples.HostedSpa;
@@ -24,6 +25,11 @@ SampleDatabase.EnsureCreated(dbPath);
 
 builder.Services.AddBifrostQL(options =>
     options.BindStandardConfig(builder.Configuration));
+
+// The sample's grant catalogue is the app_users.roles column; production apps can
+// replace this delegate with their role_permissions query without changing policy metadata.
+builder.Services.AddBifrostGrantResolver((identity, _, _) =>
+    new ValueTask<IReadOnlyCollection<string>>(identity.Roles.ToArray()));
 
 // Local DB-backed auth against the Membership Manager app_users table. The MM schema
 // names its key columns user_id/email and stores a denormalized delimited role list in

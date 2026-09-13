@@ -32,6 +32,24 @@ register them with a role nobody holds.
 Every `-roles` policy key accepts any grant, so a permission can satisfy these
 keys exactly like a role.
 
+## From application guards to metadata
+
+The HostedSpa membership-manager sample turns the seven guards in the Track case
+study into metadata declarations. See `docs-research/track/membership-manager.md`.
+
+| Track hand-written rule | Metadata line |
+|---|---|
+| Closed application baseline | `:root { policy-default: deny }` |
+| Role-backed grants | `main.members|main.member_memberships|main.dues_invoices|main.dues_payments|main.events|main.event_attendance { policy-actions: read,create,update,delete }` |
+| Officer-only content deletion | `main.events { delete[officer] }` |
+| Finance-only money writes | `main.dues_payments.amount_cents { write-requires: finance }` |
+| Masked salary-like reads | `main.app_users.roles { read-requires: officer; deny-mode: null }` |
+| Own-member rows, with officer exemption | `main.members { policy-row-scope: user_id = {user_id}; policy-row-scope-exempt: officer }` |
+| Constrained status and self-protected role | `main.members.status { writable-values: active,inactive }` and `main.members.roles { policy-self-deny: true }` |
+
+Clients discover these decisions through `_dbSchema`, `_grants`, and `_can`; they
+do not recreate the guards in UI or endpoint code.
+
 ## Declare a policy
 
 ```text

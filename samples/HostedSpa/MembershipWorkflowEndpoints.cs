@@ -106,7 +106,8 @@ public static class MembershipWorkflowEndpoints
         RecordPaymentRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> schemaCache)
+        PathCache<Inputs> _schemaCache,
+        IPolicyGate policy)
     {
         if (request.AmountCents <= 0)
             return Results.BadRequest("Payment amount must be positive.");
@@ -117,7 +118,7 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses. dues_payments
         // is created, so the gating action is Create.
-        if (!await CanActAsync(schemaCache, "dues_payments", PolicyAction.Create, userContext))
+        if (!policy.CanAct("dues_payments", PolicyAction.Create).Allowed)
             return Results.Forbid();
 
         var summary = $"Payment of {request.AmountCents} cents recorded against invoice {request.InvoiceId}";
@@ -149,7 +150,8 @@ public static class MembershipWorkflowEndpoints
         RenewMembershipRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> schemaCache)
+        PathCache<Inputs> _schemaCache,
+        IPolicyGate policy)
     {
         if (string.IsNullOrWhiteSpace(request.NewEndDate))
             return Results.BadRequest("A new end date is required to renew a membership.");
@@ -159,7 +161,7 @@ public static class MembershipWorkflowEndpoints
 
         // Pre-flight gate: the workflow updates member_memberships, so the
         // gating action is Update.
-        if (!await CanActAsync(schemaCache, "member_memberships", PolicyAction.Update, userContext))
+        if (!policy.CanAct("member_memberships", PolicyAction.Update).Allowed)
             return Results.Forbid();
 
         var result = await workflows.RunAsync("renew-membership", new Dictionary<string, object?>
@@ -191,7 +193,8 @@ public static class MembershipWorkflowEndpoints
         CheckInRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> schemaCache)
+        PathCache<Inputs> _schemaCache,
+        IPolicyGate policy)
     {
         if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
             return identityRefusal;
@@ -199,7 +202,7 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses.
         // event_attendance is created, so the gating action is Create.
-        if (!await CanActAsync(schemaCache, "event_attendance", PolicyAction.Create, userContext))
+        if (!policy.CanAct("event_attendance", PolicyAction.Create).Allowed)
             return Results.Forbid();
 
         var checkedInAt = string.IsNullOrWhiteSpace(request.CheckedInAt)
@@ -231,7 +234,8 @@ public static class MembershipWorkflowEndpoints
         LinkIdentityRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        PathCache<Inputs> schemaCache)
+        PathCache<Inputs> _schemaCache,
+        IPolicyGate policy)
     {
         if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
             return identityRefusal;
@@ -239,7 +243,7 @@ public static class MembershipWorkflowEndpoints
         // Pre-flight gate: the workflow updates members, so the gating action is
         // Update. Linking an identity is a privileged operation — it must be
         // policy-gated, not open to any caller.
-        if (!await CanActAsync(schemaCache, "members", PolicyAction.Update, userContext))
+        if (!policy.CanAct("members", PolicyAction.Update).Allowed)
             return Results.Forbid();
 
         var result = await workflows.RunAsync("link-identity", new Dictionary<string, object?>
@@ -280,26 +284,6 @@ public static class MembershipWorkflowEndpoints
             refusal = Results.StatusCode(StatusCodes.Status403Forbidden);
             return false;
         }
-    }
-
-    /// <summary>
-    /// Pre-flight policy check using the shared <see cref="PolicyEvaluator"/> and
-    /// the same <see cref="TablePolicy"/> the mutation pipeline reads. Returns
-    /// <c>true</c> when the table carries no schema yet (the gate cannot be
-    /// evaluated, so the pipeline's per-mutation policy check remains the
-    /// backstop).
-    /// </summary>
-    private static async Task<bool> CanActAsync(
-        PathCache<Inputs> schemaCache, string table, PolicyAction action,
-        IDictionary<string, object?> userContext)
-    {
-        var extensions = await schemaCache.GetFirstValueAsync();
-        if (extensions?["model"] is not IDbModel model)
-            return true;
-
-        var policy = PolicyConfigCollector.FromTable(model.GetTableFromDbName(table));
-        var identity = BuildIdentity(userContext);
-        return new PolicyEvaluator().CanAct(policy, action, identity).Allowed;
     }
 
     /// <summary>

@@ -34,6 +34,10 @@ Historically the engineers used SSMS against production with a shared password. 
 
 The key insight: **these aren't two permission levels on one surface — they're two different surfaces**, and the server decides who gets which. The raw SQL field simply rejects callers without the role, so the support build of the UI has nothing to hide.
 
+As with the membership-manager example, role checks belong in policy metadata rather
+than bespoke endpoint branches. The client may use `_dbSchema`, `_grants`, and `_can`
+to shape its controls, but the server-side policy remains the enforcement boundary.
+
 ## Walkthrough
 
 ### 1. One server, both surfaces

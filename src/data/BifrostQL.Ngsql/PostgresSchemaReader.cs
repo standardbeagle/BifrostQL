@@ -58,6 +58,7 @@ SELECT
     c.column_default,
     c.is_nullable,
     c.data_type,
+    c.udt_name,
     c.character_maximum_length,
     c.character_octet_length,
     c.numeric_precision,

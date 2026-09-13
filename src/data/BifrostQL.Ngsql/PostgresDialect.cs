@@ -68,6 +68,8 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// text parameter fine, and an unrecognised type name (e.g. a model carrying the
     /// SqlServer-style <c>nvarchar</c> for a column that is really <c>text</c> in PG) must
     /// NOT be emitted as <c>::nvarchar</c> — that raises 42704 "type does not exist".
+    /// Array casts are emitted only when the reader resolved a known scalar element type;
+    /// unresolved ARRAY and user-defined arrays remain bare because their cast target is unknown.
     /// The cast target is the normalized type, which for these entries is always valid PG
     /// syntax (e.g. <c>timestamp with time zone</c>, <c>uuid</c>, <c>jsonb</c>).
     /// </remarks>
@@ -83,7 +85,7 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// <summary>
     /// Whether a text-bound parameter must be cast to compare against / assign to a column
     /// of this (normalized) Postgres type. Restricted to real PG type names so the cast is
-    /// always valid SQL; unknown/string/user-defined/array types return false (stay bare).
+    /// always valid SQL; unknown/string/user-defined/unresolved array types stay bare.
     /// </summary>
     internal static bool NeedsParameterCast(string normalizedType) =>
         IsTemporalType(normalizedType)
@@ -92,7 +94,15 @@ public sealed class PostgresDialect : StandardConcatDialectBase
             or "boolean" or "bool"
             or "smallint" or "integer" or "int" or "int2" or "int4" or "int8" or "bigint"
             or "numeric" or "decimal" or "real" or "double precision" or "float4" or "float8"
-            or "money" or "bytea" or "inet" or "cidr" or "macaddr";
+             or "money" or "bytea" or "inet" or "cidr" or "macaddr"
+        || IsKnownArrayType(normalizedType);
+
+    private static bool IsKnownArrayType(string type) => type switch
+    {
+        "text[]" or "smallint[]" or "integer[]" or "bigint[]" or "boolean[]"
+            or "real[]" or "double precision[]" or "numeric[]" or "uuid[]" => true,
+        _ => false,
+    };
 
     /// <inheritdoc />
     /// <remarks>

@@ -108,7 +108,7 @@ namespace BifrostQL.Core.Model
                 GraphQlName = graphQlName,
                 NormalizedName = NormalizeColumn(column),
                 ColumnRef = columnRef,
-                DataType = (string)reader["DATA_TYPE"],
+                 DataType = ResolveDataType(reader),
                 // INFORMATION_SCHEMA facts the readers already select. SQL Server
                 // reports -1 for MAX types and MySQL reports lengths beyond
                 // int.MaxValue for LONGTEXT/LONGBLOB; both mean "unbounded" → null.
@@ -124,6 +124,40 @@ namespace BifrostQL.Core.Model
                 IsPrimaryKey = isPrimary,
                 IsUnique = constraints.TryGetValue(columnRef, out var uniqueCons) && uniqueCons.Any(c => c.ConstraintType == "UNIQUE"),
             };
+        }
+
+        private static string ResolveDataType(IDataReader reader)
+        {
+            var dataType = (string)reader["DATA_TYPE"];
+            if (!string.Equals(dataType, "ARRAY", StringComparison.OrdinalIgnoreCase)
+                || !HasColumn(reader, "UDT_NAME") || reader.IsDBNull(reader.GetOrdinal("UDT_NAME")))
+                return dataType;
+
+            var udtName = reader["UDT_NAME"]?.ToString();
+            if (udtName is not { Length: > 1 } || udtName[0] != '_')
+                return dataType;
+
+            return udtName[1..].ToLowerInvariant() switch
+            {
+                "text" => "text[]",
+                "int2" => "smallint[]",
+                "int4" => "integer[]",
+                "int8" => "bigint[]",
+                "bool" => "boolean[]",
+                "float4" => "real[]",
+                "float8" => "double precision[]",
+                "numeric" => "numeric[]",
+                "uuid" => "uuid[]",
+                _ => dataType,
+            };
+        }
+
+        private static bool HasColumn(IDataReader reader, string name)
+        {
+            for (var i = 0; i < reader.FieldCount; i++)
+                if (string.Equals(reader.GetName(i), name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
         }
 
         /// <summary>

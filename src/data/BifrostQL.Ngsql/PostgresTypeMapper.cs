@@ -60,6 +60,8 @@ public sealed class PostgresTypeMapper : ITypeMapper
                 or "timestamp with time zone" or "timestamp without time zone"
                 or "interval" => "String",
             "json" or "jsonb" => "JSON",
+            "text[]" => "String",
+            "smallint[]" or "integer[]" or "bigint[]" => "String",
             _ => "String",
         };
     }

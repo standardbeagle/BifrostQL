@@ -122,6 +122,23 @@ public class SchemaReadVisibilityTests
     }
 
     [Fact]
+    public void Masked_columns_are_visible_but_refused_columns_are_hidden()
+    {
+        var model = DbModelTestFixture.Create().WithTable("t", t => t
+            .WithSchema("dbo").WithPrimaryKey("id").WithColumn("masked").WithColumn("refused")
+            .WithMetadata(MetadataKeys.Policy.Actions, "read")
+            .WithMetadata(MetadataKeys.Policy.ReadDeny, "masked, refused")
+            .WithColumnMetadata("masked", MetadataKeys.Policy.DenyMode, "null")
+            .WithColumnMetadata("refused", MetadataKeys.Policy.DenyMode, "refuse"))
+            .Build();
+
+        var member = Table(SchemaReadVisibility.Project(model, Ctx("u1", "member")), "t");
+        member.Columns.Select(c => c.DbName).Should().Contain("masked").And.NotContain("refused");
+        Table(SchemaReadVisibility.Project(model, Ctx("root", MetadataKeys.Policy.DefaultAdminRole)), "t")
+            .Columns.Select(c => c.DbName).Should().Contain(new[] { "masked", "refused" });
+    }
+
+    [Fact]
     public void Key_columns_are_the_visible_subset_of_the_key()
     {
         var model = DbModelTestFixture.Create()

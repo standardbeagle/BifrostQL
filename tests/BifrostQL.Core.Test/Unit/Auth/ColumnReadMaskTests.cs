@@ -200,6 +200,19 @@ public sealed class ColumnReadMaskTests
             .Should().Be(ReadColumnDisposition.Mask);
     }
 
+    [Fact]
+    public void Disposition_OverlappingReadRequiresAndDeny_DenyWins()
+    {
+        var model = ModelWithMembers(
+            tableMetadata: (MetadataKeys.Policy.ReadDeny, "cost_rate"));
+        var policy = PolicyConfigCollector.FromTable(Members(model));
+
+        new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("member", "rates.view_cost"))
+            .Should().Be(ReadColumnDisposition.Refuse);
+        new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("admin"))
+            .Should().Be(ReadColumnDisposition.Allow);
+    }
+
     // ---- PolicyFilterTransformer ----
 
     [Fact]

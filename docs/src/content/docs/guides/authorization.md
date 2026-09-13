@@ -240,6 +240,9 @@ Tables with `policy-row-scope` also expose the per-row computed field
 `_can { update delete }`. It reports the caller's effective capability after
 both the row-scope match (or exemption/admin bypass) and `policy-actions` are
 applied; selecting `_can` automatically projects its scope column. Tables with
+`policy-self-deny` expose it too, with or without a row scope: on the caller's own
+row (self column equal to the caller's user id) `update` answers `false`, admins
+included, while `delete` is unaffected. Tables with
 both row scope and `history` are rejected at model load, so `_can` never shares
 an audit trail.
 

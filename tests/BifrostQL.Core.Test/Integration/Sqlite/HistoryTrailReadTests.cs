@@ -587,15 +587,35 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
             ":root { history-table: main.audit_trail }");
         (await ExecuteMutationAsync("mutation { orders(insert: { status: \"new\", cost_rate: 125 }) }", model))
             .Errors.Should().BeNullOrEmpty();
-        (await ExecuteMutationAsync("mutation { orders(delete: { id: 1 }) }", model))
+        // The fixture seeds orders(id 1, cost_rate NULL); the row inserted above is id 2.
+        // Deleting id 1 would capture a before-image whose cost_rate is null on disk and
+        // make every projection assertion below vacuous.
+        (await ExecuteMutationAsync("mutation { orders(delete: { id: 2 }) }", model))
             .Errors.Should().BeNullOrEmpty();
 
-        var result = await ExecuteQueryAsync(
+        await using var cmd = new SqliteCommand("SELECT before FROM audit_trail WHERE before IS NOT NULL", _keepAlive);
+        var raw = (string)(await cmd.ExecuteScalarAsync())!;
+        raw.Should().Contain("cost_rate").And.Contain("125", "the delete before-image is complete on disk");
+
+        var admin = await ExecuteQueryAsync(
             "query { ordersHistory { data { before } } }", model,
-            new Dictionary<string, object?> { ["isAdmin"] = true });
-        var image = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-            Rows(result, "ordersHistory").Last().GetProperty("before").GetString()!)!;
-        image["cost_rate"].ValueKind.Should().Be(JsonValueKind.Null);
+            new Dictionary<string, object?> { ["roles"] = new[] { MetadataKeys.Policy.DefaultAdminRole } });
+        DeleteBeforeImage(admin)["cost_rate"].GetInt64().Should().Be(125,
+            "the trail is an audit artefact and an admin bypasses the read policy inside images as on the row");
+
+        var member = await ExecuteQueryAsync(
+            "query { ordersHistory { data { before } } }", model,
+            new Dictionary<string, object?> { ["roles"] = Array.Empty<string>() });
+        DeleteBeforeImage(member)["cost_rate"].ValueKind.Should().Be(JsonValueKind.Null,
+            "the delete before-image is projected through the same disposition as the after-image");
+    }
+
+    private static Dictionary<string, JsonElement> DeleteBeforeImage(ExecutionResult result)
+    {
+        var rows = Rows(result, "ordersHistory");
+        rows.Should().HaveCount(2, "one insert row and one delete row");
+        return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            rows[1].GetProperty("before").GetString()!)!;
     }
 
     private async Task<(IDbModel Model, string Ciphertext)> SeedEncryptedTrailAsync()

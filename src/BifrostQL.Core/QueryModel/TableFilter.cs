@@ -423,7 +423,7 @@ namespace BifrostQL.Core.QueryModel
             {
                 if (Next.RelationName is not (FilterOperators.Eq or FilterOperators.Neq))
                     throw new BifrostExecutionError(
-                        "Mutation additional filter only supports equality comparisons.");
+                        "Mutation additional filter only supports equality or inequality comparisons.");
 
                 return GetSingleFilterParameterized(
                     dialect, parameters, table: null, field: ColumnName, op: Next.RelationName, value: Next.Value);

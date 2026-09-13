@@ -168,6 +168,71 @@ public sealed class BulkBatchPlanCharacterizationTests
         perRowKeys["OrderId"].Should().Be(0, "and the falsy key value survives into staging");
     }
 
+    // ---- self-deny (S6b): the predicate rides the bulk fast path ----------
+
+    private static IDbModel BuildSelfDenyModel()
+        => DbModelTestFixture.Create()
+            .WithTable("users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("permission_profile_id", "int")
+                .WithColumn("display_name", "nvarchar")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read, update")
+                .WithMetadata(MetadataKeys.Policy.SelfDeny, "permission_profile_id")
+                .WithMetadata(MetadataKeys.Policy.SelfColumn, "id")
+                .WithMetadata(MetadataKeys.Batch.BulkThreshold, "1"))
+            .Build();
+
+    private static MutationPipelineContext BuildSelfDenyContext()
+    {
+        var ctx = BuildContext(BuildSelfDenyModel(), new IMutationTransformer[] { new PolicyMutationTransformer() });
+        ctx.UserContext["user_id"] = 1;
+        ctx.UserContext["roles"] = new[] { "admin" };
+        return ctx;
+    }
+
+    /// <summary>
+    /// A bulk update that touches a self-deny column carries the `id <> {user_id}`
+    /// predicate as the group's rendered filter suffix, admin included (D6), so every
+    /// row but the caller's own is matched. The rows stay one group: the predicate is
+    /// a property of the statement, not of any row.
+    /// </summary>
+    [Fact]
+    public async Task Bulk_Update_SelfDenyColumn_ExcludesOnlyTheCallersOwnRow_AdminIncluded()
+    {
+        var ctx = BuildSelfDenyContext();
+
+        var built = await BuildAsync(ctx, "users",
+            Update(("id", 1), ("permission_profile_id", 9)),
+            Update(("id", 2), ("permission_profile_id", 9)),
+            Update(("id", 3), ("permission_profile_id", 9)));
+
+        built.Should().NotBeNull("the fixture is at the bulk threshold, so the fast path must be taken");
+        built!.Plan.Rows.Should().HaveCount(3);
+        var group = built.Plan.Groups.Should().ContainSingle().Subject;
+        group.Op.Should().Be(BulkOpCode.Update);
+        group.FilterSql.Should().StartWith(" AND (").And.Contain("id").And.Contain("!=",
+            "the self-deny rule is an inequality on the self column");
+        group.FilterParameters.Should().ContainSingle().Which.Value.Should().Be(1,
+            "the caller's own user id is the one value the predicate excludes");
+    }
+
+    /// <summary>An update that touches no self-deny column carries no self predicate.</summary>
+    [Fact]
+    public async Task Bulk_Update_UnlistedColumn_CarriesNoSelfPredicate()
+    {
+        var ctx = BuildSelfDenyContext();
+
+        var built = await BuildAsync(ctx, "users",
+            Update(("id", 1), ("display_name", "a")),
+            Update(("id", 2), ("display_name", "b")));
+
+        built.Should().NotBeNull();
+        var group = built!.Plan.Groups.Should().ContainSingle().Subject;
+        group.FilterSql.Should().BeEmpty();
+        group.FilterParameters.Should().BeEmpty();
+    }
+
     // ---- delete: predicate/SET parity ------------------------------------
 
     /// <summary>

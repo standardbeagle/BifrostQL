@@ -507,6 +507,18 @@ namespace BifrostQL.Server
             int? maxComplexity,
             IConfigurationSection? loggingConfig)
         {
+            services.AddScoped<IPolicyGate>(sp =>
+            {
+                var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext
+                    ?? throw new InvalidOperationException("IPolicyGate requires an active HttpContext.");
+                var inputs = sp.GetRequiredService<PathCache<Inputs>>().GetFirstValueAsync()
+                    .GetAwaiter().GetResult()
+                    ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
+                var model = (inputs["model"] as BifrostQL.Core.Model.IDbModel)
+                    ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
+                var context = sp.GetRequiredService<IBifrostAuthContextFactory>().CreateUserContext(http);
+                return new PolicyGate(model, PolicyIdentity.FromUserContext(context));
+            });
             // Single identity seam for every transport gate (HTTP, binary WebSocket,
             // protocol frontend, workflow endpoints). TryAdd so a host can substitute
             // its own factory before AddBifrostQL runs.

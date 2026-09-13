@@ -107,38 +107,6 @@ public class SchemaFieldConfigTests
     }
 
     [Fact]
-    public void FromMetadata_Permissions_ParsedFromSemicolonDelimited()
-    {
-        var metadata = new Dictionary<string, object?>
-        {
-            ["schema-display"] = "field",
-            ["schema-permissions"] = "sales:admin,manager;hr:admin",
-        };
-
-        var config = SchemaFieldConfig.FromMetadata(metadata);
-
-        config.Permissions.Should().HaveCount(2);
-        config.Permissions[0].SchemaName.Should().Be("sales");
-        config.Permissions[0].AllowedRoles.Should().BeEquivalentTo("admin", "manager");
-        config.Permissions[1].SchemaName.Should().Be("hr");
-        config.Permissions[1].AllowedRoles.Should().BeEquivalentTo("admin");
-    }
-
-    [Fact]
-    public void FromMetadata_EmptyPermissions_ReturnsEmptyList()
-    {
-        var metadata = new Dictionary<string, object?>
-        {
-            ["schema-display"] = "field",
-            ["schema-permissions"] = "",
-        };
-
-        var config = SchemaFieldConfig.FromMetadata(metadata);
-
-        config.Permissions.Should().BeEmpty();
-    }
-
-    [Fact]
     public void Disabled_ReturnsSameInstance()
     {
         var a = SchemaFieldConfig.Disabled;
@@ -150,14 +118,6 @@ public class SchemaFieldConfigTests
 public class SchemaPermissionTests
 {
     [Fact]
-    public void IsSchemaAllowed_NoPermissions_ReturnsTrue()
-    {
-        var config = new SchemaFieldConfig { Mode = SchemaDisplayMode.Field };
-
-        config.IsSchemaAllowed("sales", new[] { "user" }).Should().BeTrue();
-    }
-
-    [Fact]
     public void IsSchemaAllowed_ExcludedSchema_ReturnsFalse()
     {
         var config = new SchemaFieldConfig
@@ -166,7 +126,7 @@ public class SchemaPermissionTests
             ExcludedSchemas = new[] { "sys" },
         };
 
-        config.IsSchemaAllowed("sys", new[] { "admin" }).Should().BeFalse();
+        config.IsSchemaExcluded("sys").Should().BeTrue();
     }
 
     [Fact]
@@ -178,94 +138,7 @@ public class SchemaPermissionTests
             ExcludedSchemas = new[] { "SYS" },
         };
 
-        config.IsSchemaAllowed("sys", new[] { "admin" }).Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsSchemaAllowed_PermissionWithMatchingRole_ReturnsTrue()
-    {
-        var config = new SchemaFieldConfig
-        {
-            Mode = SchemaDisplayMode.Field,
-            Permissions = new[]
-            {
-                new SchemaPermission { SchemaName = "sales", AllowedRoles = new[] { "admin", "sales_user" } },
-            },
-        };
-
-        config.IsSchemaAllowed("sales", new[] { "sales_user" }).Should().BeTrue();
-    }
-
-    [Fact]
-    public void IsSchemaAllowed_PermissionWithNoMatchingRole_ReturnsFalse()
-    {
-        var config = new SchemaFieldConfig
-        {
-            Mode = SchemaDisplayMode.Field,
-            Permissions = new[]
-            {
-                new SchemaPermission { SchemaName = "hr", AllowedRoles = new[] { "hr_admin" } },
-            },
-        };
-
-        config.IsSchemaAllowed("hr", new[] { "sales_user" }).Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsSchemaAllowed_PermissionWithEmptyRoles_GrantsAccess()
-    {
-        var config = new SchemaFieldConfig
-        {
-            Mode = SchemaDisplayMode.Field,
-            Permissions = new[]
-            {
-                new SchemaPermission { SchemaName = "public", AllowedRoles = Array.Empty<string>() },
-            },
-        };
-
-        config.IsSchemaAllowed("public", new[] { "anyone" }).Should().BeTrue();
-    }
-
-    [Fact]
-    public void IsSchemaAllowed_NoRolesProvided_WithPermission_ReturnsFalse()
-    {
-        var config = new SchemaFieldConfig
-        {
-            Mode = SchemaDisplayMode.Field,
-            Permissions = new[]
-            {
-                new SchemaPermission { SchemaName = "hr", AllowedRoles = new[] { "admin" } },
-            },
-        };
-
-        config.IsSchemaAllowed("hr", null).Should().BeFalse();
-        config.IsSchemaAllowed("hr", Array.Empty<string>()).Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsSchemaAllowed_NullRoles_UnrestrictedSchema_ReturnsTrue()
-    {
-        var config = new SchemaFieldConfig
-        {
-            Mode = SchemaDisplayMode.Field,
-        };
-
-        config.IsSchemaAllowed("sales", null).Should().BeTrue();
-    }
-
-    [Fact]
-    public void IsSchemaAllowed_RoleMatchIsCaseInsensitive()
-    {
-        var config = new SchemaFieldConfig
-        {
-            Mode = SchemaDisplayMode.Field,
-            Permissions = new[]
-            {
-                new SchemaPermission { SchemaName = "sales", AllowedRoles = new[] { "Admin" } },
-            },
-        };
-
-        config.IsSchemaAllowed("sales", new[] { "admin" }).Should().BeTrue();
+        config.IsSchemaExcluded("sys").Should().BeTrue();
     }
 
     [Fact]

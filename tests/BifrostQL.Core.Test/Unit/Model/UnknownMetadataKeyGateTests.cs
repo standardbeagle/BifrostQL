@@ -68,6 +68,24 @@ public class UnknownMetadataKeyGateTests
     }
 
     [Fact]
+    public void Validate_RemovedSchemaPermissionsKey_Throws()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata("schema-permissions", "sales:admin")
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Email", "nvarchar"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("schema-permissions")
+            .And.Contain("unrecognized database metadata key");
+    }
+
+    [Fact]
     public void Validate_ConsumerExtensionKeyOnTable_PassesUntouched()
     {
         var model = DbModelTestFixture.Create()

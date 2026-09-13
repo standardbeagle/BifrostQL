@@ -24,22 +24,6 @@ namespace BifrostQL.Core.Model
     }
 
     /// <summary>
-    /// Permission rule restricting access to a database schema by role.
-    /// </summary>
-    public sealed class SchemaPermission
-    {
-        /// <summary>
-        /// The database schema this permission applies to.
-        /// </summary>
-        public string SchemaName { get; init; } = null!;
-
-        /// <summary>
-        /// Roles allowed to access this schema. Empty means all roles have access.
-        /// </summary>
-        public IReadOnlyList<string> AllowedRoles { get; init; } = Array.Empty<string>();
-    }
-
-    /// <summary>
     /// Configuration for the schema field display mode and schema-level access control.
     /// When Mode is Field, tables are grouped under schema-level query types.
     /// </summary>
@@ -61,40 +45,6 @@ namespace BifrostQL.Core.Model
         /// Schemas to exclude from the GraphQL API entirely.
         /// </summary>
         public IReadOnlyList<string> ExcludedSchemas { get; init; } = Array.Empty<string>();
-
-        /// <summary>
-        /// Per-schema permission rules. Schemas not listed are accessible by all roles.
-        /// </summary>
-        public IReadOnlyList<SchemaPermission> Permissions { get; init; } = Array.Empty<SchemaPermission>();
-
-        /// <summary>
-        /// Returns true if the given schema is accessible by any of the provided roles.
-        /// A schema is allowed if it is not excluded and either has no permission rule
-        /// or one of the provided roles matches the allowed roles.
-        /// </summary>
-        public bool IsSchemaAllowed(string schemaName, IReadOnlyList<string>? roles)
-        {
-            if (IsSchemaExcluded(schemaName))
-                return false;
-
-            var permission = FindPermission(schemaName);
-            if (permission == null || permission.AllowedRoles.Count == 0)
-                return true;
-
-            if (roles == null || roles.Count == 0)
-                return false;
-
-            for (var i = 0; i < roles.Count; i++)
-            {
-                for (var j = 0; j < permission.AllowedRoles.Count; j++)
-                {
-                    if (string.Equals(roles[i], permission.AllowedRoles[j], StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-            }
-
-            return false;
-        }
 
         /// <summary>
         /// Returns true if the schema is in the excluded list.
@@ -166,7 +116,7 @@ namespace BifrostQL.Core.Model
 
         /// <summary>
         /// Creates SchemaFieldConfig from model metadata.
-        /// Reads: schema-display (flat/prefix/field), schema-default, schema-excluded, schema-permissions.
+        /// Reads: schema-display (flat/prefix/field), schema-default, schema-excluded.
         /// </summary>
         public static SchemaFieldConfig FromMetadata(IDictionary<string, object?> metadata)
         {
@@ -188,33 +138,17 @@ namespace BifrostQL.Core.Model
                     ? excVal?.ToString()
                     : null);
 
-            var permissions = ParsePermissions(
-                metadata.TryGetValue(MetadataKeys.Schema.Permissions, out var permVal)
-                    ? permVal?.ToString()
-                    : null);
-
             return new SchemaFieldConfig
             {
                 Mode = mode,
                 DefaultSchema = defaultSchema,
                 ExcludedSchemas = excluded,
-                Permissions = permissions,
             };
         }
 
         private bool IsDefaultSchema(string schemaName)
         {
             return string.Equals(schemaName, DefaultSchema, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private SchemaPermission? FindPermission(string schemaName)
-        {
-            for (var i = 0; i < Permissions.Count; i++)
-            {
-                if (string.Equals(Permissions[i].SchemaName, schemaName, StringComparison.OrdinalIgnoreCase))
-                    return Permissions[i];
-            }
-            return null;
         }
 
         private static SchemaDisplayMode ParseMode(string? value)
@@ -239,36 +173,5 @@ namespace BifrostQL.Core.Model
             return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
 
-        /// <summary>
-        /// Parses permissions from a semicolon-delimited string.
-        /// Format: "schema1:role1,role2;schema2:role3"
-        /// </summary>
-        private static IReadOnlyList<SchemaPermission> ParsePermissions(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return Array.Empty<SchemaPermission>();
-
-            var entries = value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var result = new List<SchemaPermission>(entries.Length);
-
-            foreach (var entry in entries)
-            {
-                var parts = entry.Split(':', 2, StringSplitOptions.TrimEntries);
-                if (parts.Length < 1 || string.IsNullOrWhiteSpace(parts[0]))
-                    continue;
-
-                var roles = parts.Length > 1
-                    ? ParseStringList(parts[1])
-                    : Array.Empty<string>();
-
-                result.Add(new SchemaPermission
-                {
-                    SchemaName = parts[0],
-                    AllowedRoles = roles,
-                });
-            }
-
-            return result;
-        }
     }
 }

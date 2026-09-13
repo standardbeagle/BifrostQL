@@ -324,7 +324,6 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Schema.Display,
             MetadataKeys.Schema.Default,
             MetadataKeys.Schema.Excluded,
-            MetadataKeys.Schema.Permissions,
             MetadataKeys.StoredProcedures.Include,
             MetadataKeys.StoredProcedures.Exclude,
             MetadataKeys.StoredProcedures.Role,

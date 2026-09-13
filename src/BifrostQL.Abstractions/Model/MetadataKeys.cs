@@ -801,7 +801,6 @@ namespace BifrostQL.Core.Model
             public const string Display = "schema-display";
             public const string Default = "schema-default";
             public const string Excluded = "schema-excluded";
-            public const string Permissions = "schema-permissions";
         }
 
         /// <summary>

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Observers;
@@ -358,7 +359,7 @@ namespace BifrostQL.Core.Resolvers
             // caller sees exactly what a read of the row itself would show them
             // (plaintext for the unmask role, the column's mask otherwise) and never
             // the raw ciphertext as a decryption oracle.
-            ProjectEncryptedTrailImages(query, trackedTable, data, cryptoRead);
+            ProjectTrailImages(query, trackedTable, data, cryptoRead, context.UserContext);
 
             var total = 0;
             if (data.TryGetValue(query.KeyName + "=>count", out var countEntry)
@@ -392,21 +393,23 @@ namespace BifrostQL.Core.Resolvers
         /// tracked table's encrypted columns; non-encrypted entries pass through
         /// byte-for-byte. No-op when the tracked table has no encrypted column.
         /// </summary>
-        private static void ProjectEncryptedTrailImages(
+        private static void ProjectTrailImages(
             GqlObjectQuery query,
             IDbTable trackedTable,
             IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results,
-            Modules.Crypto.CryptoReadProjector cryptoRead)
+            Modules.Crypto.CryptoReadProjector cryptoRead,
+            IDictionary<string, object?> userContext)
         {
             var encryptedColumns = trackedTable.Columns
                 .Where(c => !string.IsNullOrWhiteSpace(c.GetMetadataValue(Model.MetadataKeys.Crypto.Encrypt)))
                 .Select(c => c.ColumnName)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (encryptedColumns.Count == 0)
-                return;
-
             if (!results.TryGetValue(query.KeyName, out var tableData))
                 return; // No row result set selected (e.g. a total-only query).
+
+            var policy = PolicyConfigCollector.FromTable(trackedTable);
+            var identity = PolicyIdentity.FromUserContext(userContext);
+            var evaluator = new PolicyEvaluator();
 
             var imageOrdinals = query.ScalarColumns
                 .Where(c => string.Equals(c.DbDbName, Model.MetadataKeys.History.Column.Before, StringComparison.OrdinalIgnoreCase)
@@ -423,7 +426,7 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var ordinal in imageOrdinals)
                 {
                     if (ordinal < row.Length)
-                        row[ordinal] = ProjectImage(trackedTable, encryptedColumns, cryptoRead, row[ordinal]);
+                        row[ordinal] = ProjectImage(trackedTable, encryptedColumns, cryptoRead, evaluator, policy, identity, row[ordinal]);
                 }
             }
         }
@@ -432,6 +435,9 @@ namespace BifrostQL.Core.Resolvers
             IDbTable trackedTable,
             IReadOnlySet<string> encryptedColumns,
             Modules.Crypto.CryptoReadProjector cryptoRead,
+            PolicyEvaluator evaluator,
+            TablePolicy policy,
+            AppIdentity identity,
             object? cell)
         {
             if (cell is null || cell is DBNull)
@@ -462,7 +468,18 @@ namespace BifrostQL.Core.Resolvers
             var changed = false;
             foreach (var (column, value) in image)
             {
-                if (encryptedColumns.Contains(column) && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                var disposition = evaluator.GetReadDisposition(policy, column, identity);
+                if (disposition == ReadColumnDisposition.Refuse)
+                {
+                    changed = true;
+                    continue;
+                }
+                if (disposition == ReadColumnDisposition.Mask)
+                {
+                    projected[column] = null;
+                    changed = true;
+                }
+                else if (encryptedColumns.Contains(column) && value.ValueKind == System.Text.Json.JsonValueKind.String)
                 {
                     projected[column] = cryptoRead.Project(trackedTable.DbName, column, value.GetString());
                     changed = true;

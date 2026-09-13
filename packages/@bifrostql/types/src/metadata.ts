@@ -146,8 +146,8 @@ export interface DbSchemaProjection {
   columns: DbSchemaColumnProjection[];
 }
 
-/** Effective grant names for the caller. Mirrors C# `MetaGrantsResolver`. */
-export interface GrantsProjection {
-  /** Grant names resolved by the server for the current identity. */
-  grants: string[];
-}
+/**
+ * Effective grant names for the caller: the `_grants: [String!]!` field
+ * (C# `CallerGrantsResolver`, declared in `SchemaGenerator`).
+ */
+export type GrantsProjection = string[];

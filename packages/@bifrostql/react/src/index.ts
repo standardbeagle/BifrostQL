@@ -53,6 +53,7 @@ export {
 } from './hooks';
 export type {
   UseBifrostOptions,
+  UsePolicyOptions,
   UsePolicyResult,
   UseBifrostQueryOptions,
   UseBifrostMutationOptions,

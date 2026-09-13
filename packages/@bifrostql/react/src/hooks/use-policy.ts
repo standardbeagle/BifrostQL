@@ -1,7 +1,18 @@
 import { useBifrost } from './use-bifrost';
-import type { DbSchemaProjection } from '@bifrostql/types';
-import { useContext } from 'react';
-import { BifrostContext } from '../components/bifrost-provider';
+import type { DbSchemaProjection, GrantsProjection } from '@bifrostql/types';
+
+/** Options for {@link usePolicy}. */
+export interface UsePolicyOptions {
+  /**
+   * Who the answer is for. The projection is cached per identity, so a
+   * signed-out to signed-in transition or a user switch in the same
+   * QueryClient fetches again instead of reading the previous identity's
+   * grants. Pass the session's stable user id; omit for an anonymous caller.
+   */
+  identity?: string;
+  /** Whether the query should execute. Defaults to `true`. */
+  enabled?: boolean;
+}
 
 /** Server-resolved policy for the current identity, see {@link usePolicy}. */
 export interface UsePolicyResult {
@@ -22,7 +33,7 @@ export interface UsePolicyResult {
 
 /** Wire shape of the policy query; mirrors the server-generated schema. */
 interface PolicyQueryData {
-  _grants: string[];
+  _grants: GrantsProjection;
   _dbSchema?: DbSchemaProjection[];
 }
 
@@ -38,21 +49,29 @@ const TABLE_POLICY_QUERY =
  *
  * Every answer is the server's. Nothing here is derived from session claims or
  * client-side rules, so an affordance built on it agrees with what the server
- * will enforce. While loading, and for a table the server does not project,
- * every `can`/`readable`/`writable` answer is `false`.
+ * will enforce. While loading, on error, and for a table the server does not
+ * project, every `can`/`readable`/`writable` answer is `false`.
+ *
+ * The answer is fetched once per identity and never goes stale on its own:
+ * a change of `options.identity` and `refresh()` are the only two ways to
+ * fetch again. `@bifrostql/app-shell` wraps this hook with the session's
+ * identity; other hosts pass their own.
  *
  * Must be used within a `BifrostProvider`.
  *
  * @param tableGraphQlName - GraphQL table name as `_dbSchema(graphQlName:)`
  *   accepts it. Omit to load grants only.
+ * @param options - The identity the answer is for, and `enabled`.
  */
-export function usePolicy(tableGraphQlName?: string): UsePolicyResult {
-  const config = useContext(BifrostContext);
-  const identity = config?.headers?.Authorization ?? '';
+export function usePolicy(
+  tableGraphQlName?: string,
+  options: UsePolicyOptions = {},
+): UsePolicyResult {
+  const { identity, enabled } = options;
   const result = useBifrost<PolicyQueryData>(
     tableGraphQlName ? TABLE_POLICY_QUERY : GRANTS_QUERY,
     tableGraphQlName ? { table: tableGraphQlName } : undefined,
-    { queryKeySuffix: identity },
+    { queryKeySuffix: identity ?? '', staleTime: Infinity, enabled },
   );
   const table = result.data?._dbSchema?.[0];
   const column = (name: string) =>

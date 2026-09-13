@@ -6,12 +6,20 @@ import { parseProto } from "./proto-parser.js";
 import {
   emitEnum,
   emitMessage,
+  emitGrants,
   emitSchema,
   emitSharedBarrelReexport,
   mapProtoType,
   SHARED_PACKAGE_GENERATED_DIR,
 } from "./ts-emitter.js";
 import { parseArgs, USAGE, writeFiles } from "./cli.js";
+
+const POLICY_GRANTS = {
+  data: {
+    _policyGrants: ["team.manage", "rates.view_cost", "team.manage"],
+    _grants: ["admin", "team.manage"],
+  },
+};
 
 const TWO_MESSAGE_SCHEMA = `
 syntax = "proto3";
@@ -134,6 +142,23 @@ describe("proto-parser", () => {
 });
 
 describe("ts-emitter", () => {
+  it("emits the sorted deduplicated grant catalogue", () => {
+    expect(emitGrants(POLICY_GRANTS)).toMatchInlineSnapshot(`
+      "export type Grant = 'rates.view_cost' | 'team.manage';
+      export const GRANTS: readonly Grant[] = ['rates.view_cost', 'team.manage'] as const;
+      "
+    `);
+  });
+
+  it("escapes grant string literals and emits empty catalogues", () => {
+    expect(emitGrants({ data: { _policyGrants: ["a'b\\c"], _grants: [] } })).toContain(
+      "'a\\'b\\\\c'",
+    );
+    expect(emitGrants({ data: { _policyGrants: [], _grants: [] } })).toBe(
+      "export type Grant = never;\nexport const GRANTS: readonly Grant[] = [] as const;\n",
+    );
+  });
+
   it("maps every BifrostQL-emitted scalar type", () => {
     expect(mapProtoType("int32")).toBe("number");
     expect(mapProtoType("uint32")).toBe("number");
@@ -260,6 +285,9 @@ describe("ts-emitter", () => {
 });
 
 describe("cli argv parsing", () => {
+  it("parses --grants", () => {
+    expect(parseArgs(["--grants", "grants.json"]).grantsFile).toBe("grants.json");
+  });
   it("parses --proto-file + --out", () => {
     const opts = parseArgs(["--proto-file", "schema.proto", "--out", "./gen"]);
     expect(opts.protoFile).toBe("schema.proto");

@@ -8,7 +8,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Added
 
-- `bifrost-codegen --grants` emits the policy grant catalogue as a typed `Grant` union and `GRANTS` constant.
+- `bifrost-codegen --grants <response.json>` (alongside `--proto-file` or `--endpoint`) emits the policy grant catalogue as a typed `Grant` union and `GRANTS` constant in `grants.ts` beside the message files, re-exported from the generated barrel so `@bifrostql/types` consumers get it.
 
 - Packages: `usePolicy` in `@bifrostql/react` and `@bifrostql/app-shell` reads the server's `_grants` and `_dbSchema` projection, cached per session identity; `ProtectedRoute` gates on `requiredGrants` and `FieldControl` on the column's `writable` flag.
 - Packages: `BifrostTable` and `useBifrostTable` derive editing from the caller's `_dbSchema` projection. `editable` defaults to `'auto'` (edits iff `allowedActions` includes `update` and a write handler is wired; explicit `true` still requires `onRowUpdate`, `false` wins), a column takes an editor only when projected `writable`, a `readable: false` column renders `—` rather than empty, and a row's `_can { update delete }` overrides the table-level answer for inline editing and for row actions that declare a `permission`. The projection is fetched once per `identity` and shared with `usePolicy`; a projection failure leaves the table read-only with the error surfaced. New hook surface: `policy`, `rowCan`, `isColumnMasked`, `identity`.

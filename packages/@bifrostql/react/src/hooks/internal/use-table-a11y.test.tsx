@@ -30,7 +30,7 @@ function renderA11y(
       activeFilterCount: 0,
       data,
       visibleColumns,
-      editableColumnSet: new Set(['name', 'email']),
+      isCellEditable: (_row, field) => field === 'name' || field === 'email',
       rowKey: 'id',
       selectedRows: [],
       expandedRows: new Set<string>(),

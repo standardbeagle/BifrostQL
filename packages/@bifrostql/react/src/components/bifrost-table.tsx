@@ -7,6 +7,7 @@ import type {
   ChildQueryConfig,
   ExpansionState,
   EditingState,
+  RowCapability,
   RowUpdateFn,
   SaveErrorFn,
   UseBifrostTableOptions,
@@ -550,6 +551,9 @@ export function ExportMenu({
   );
 }
 
+/** What a cell shows when policy withholds its value, so it never reads as null. */
+const MASKED_CELL = '\u2014';
+
 // ---------------------------------------------------------------------------
 // Main BifrostTable component
 // ---------------------------------------------------------------------------
@@ -557,6 +561,13 @@ export function ExportMenu({
 export interface RowAction<T = Record<string, unknown>> {
   label: string;
   onClick: (row: T) => void;
+  /**
+   * The capability this action needs. A gated action is rendered on a row
+   * only when the row's `_can`, or failing that the table's
+   * `allowedActions`, allows it. An ungated action is the app's business
+   * and always renders.
+   */
+  permission?: RowCapability;
 }
 
 interface TableRowsProps<T> {
@@ -565,8 +576,8 @@ interface TableRowsProps<T> {
   rowKey: string;
   striped: boolean;
   hoverable: boolean;
-  editable: boolean;
-  canDelete: boolean;
+  rowCan: (row: T, action: RowCapability) => boolean;
+  isColumnMasked: (field: string) => boolean;
   expandable: boolean;
   childQuery: ChildQueryConfig | undefined;
   expansion: ExpansionState;
@@ -575,7 +586,6 @@ interface TableRowsProps<T> {
   renderRow:
     | ((row: T, rowIndex: number, defaultRow: ReactNode) => ReactNode)
     | undefined;
-  readable: (field: string) => boolean;
   renderCell:
     | ((value: unknown, row: T, column: ColumnConfig) => ReactNode)
     | undefined;
@@ -600,9 +610,8 @@ function TableRows<T>({
   rowKey,
   striped,
   hoverable,
-  editable,
-  canDelete,
-  readable,
+  rowCan,
+  isColumnMasked,
   expandable,
   childQuery,
   expansion,
@@ -654,9 +663,10 @@ function TableRows<T>({
 
         const rows: ReactNode[] = [];
 
-        const rowCan = rowRecord._can as { update?: boolean; delete?: boolean } | undefined;
-        const rowEditable = rowCan?.update ?? editable;
-        const rowCanDelete = rowCan?.delete ?? canDelete;
+        const rowEditable = rowCan(row, 'update');
+        const rowActionsForRow = rowActions?.filter(
+          (action) => !action.permission || rowCan(row, action.permission),
+        );
         const defaultRowElement = (
           <tr
             key={key}
@@ -698,7 +708,7 @@ function TableRows<T>({
                 );
               }
 
-              if (col.field === '__actions' && rowActions) {
+              if (col.field === '__actions' && rowActionsForRow) {
                 return (
                   <td
                     key="__actions"
@@ -706,7 +716,7 @@ function TableRows<T>({
                     role="cell"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {rowActions.map((action) => (
+                    {rowActionsForRow.map((action) => (
                       <button
                         key={action.label}
                         type="button"
@@ -740,7 +750,7 @@ function TableRows<T>({
                       : undefined
                   }
                 >
-                   {isEditing ? (
+                  {isEditing ? (
                     <input
                       type="text"
                       value={formatCellValue(
@@ -773,9 +783,9 @@ function TableRows<T>({
                         fontSize: 'inherit',
                       }}
                     />
-                   ) : !readable(col.field) ? (
-                     '—'
-                   ) : renderCell ? (
+                  ) : isColumnMasked(col.field) ? (
+                    MASKED_CELL
+                  ) : renderCell ? (
                     renderCell(value, row, col)
                   ) : (
                     formatCellValue(value)
@@ -843,10 +853,16 @@ export interface BifrostTableProps<
   striped?: boolean;
   hoverable?: boolean;
   /**
-   * Enables inline cell editing. Requires {@link onRowUpdate} — an editable
-   * table with nowhere to write to would silently discard the user's typing.
+   * `'auto'` (default) takes edits iff the server's policy projection allows
+   * `update` and {@link onRowUpdate} is wired. `true` asserts editing and
+   * requires {@link onRowUpdate} — an editable table with nowhere to write to
+   * would silently discard the user's typing. `false` switches editing off.
+   * Whatever the mode, only columns the projection marks `writable` take an
+   * editor, and a row carrying `_can` follows its own answer.
    */
   editable?: boolean | 'auto';
+  /** Identity the policy answer is for; see `useBifrostTable`'s `identity`. */
+  identity?: string;
   /**
    * Persist each cell as it is committed. Defaults to `true`: this component
    * renders no explicit save control, so a deferred edit would sit dirty and
@@ -965,7 +981,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     urlSync,
     expandable,
     childQuery,
-    editable: editable === 'auto' ? undefined : editable,
+    editable,
     autoSave,
     onRowUpdate,
     onSaveError,
@@ -978,12 +994,8 @@ export function BifrostTable<T = Record<string, unknown>>(
     ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
     : columns;
 
-  const effectiveRowActions =
-    table.policy.isLoading || table.policy.isError || table.policy.can('delete')
-    ? rowActions
-    : rowActions?.filter((action) => action.label.toLowerCase() !== 'delete');
   const visibleColumns =
-    effectiveRowActions && effectiveRowActions.length > 0
+    rowActions && rowActions.length > 0
       ? [
           ...baseColumns,
           { field: '__actions', header: 'Actions' } as ColumnConfig,
@@ -1029,6 +1041,17 @@ export function BifrostTable<T = Record<string, unknown>>(
   return (
     <TableThemeContext.Provider value={{ theme }}>
       <div style={theme.container} data-testid="bifrost-table">
+        {table.policy.error && (
+          // The data arrived but the policy document did not: the table is
+          // read-only, and the user should know it is not by design.
+          <div
+            style={theme.errorContainer}
+            role="alert"
+            data-testid="policy-error"
+          >
+            Editing unavailable: {table.policy.error.message}
+          </div>
+        )}
         {renderToolbar ? (
           renderToolbar({
             export: handleExport,
@@ -1109,14 +1132,13 @@ export function BifrostTable<T = Record<string, unknown>>(
                 rowKey={rowKey}
                 striped={striped}
                 hoverable={hoverable}
-                editable={table.editable}
-                canDelete={table.policy.can('delete')}
-                readable={table.policy.readable}
+                rowCan={table.rowCan}
+                isColumnMasked={table.isColumnMasked}
                 expandable={expandable}
                 childQuery={childQuery}
                 expansion={table.expansion}
                 onRowClick={onRowClick}
-                rowActions={effectiveRowActions}
+                rowActions={rowActions}
                 renderRow={renderRow}
                 renderCell={renderCell}
                 renderExpandedRow={renderExpandedRow}

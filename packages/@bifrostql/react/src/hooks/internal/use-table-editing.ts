@@ -11,7 +11,8 @@ import type {
 export interface UseTableEditingOptions<T> {
   columns: ColumnConfig[];
   editable: boolean;
-  writable?: (field: string) => boolean;
+  /** Whether the policy projection lets this caller write the column. */
+  writable: (field: string) => boolean;
   data: T[];
   rowKey: string;
   autoSave: boolean;
@@ -40,7 +41,7 @@ export interface UseTableEditingResult {
 export function useTableEditing<T = Record<string, unknown>>({
   columns,
   editable,
-  writable = () => true,
+  writable,
   data,
   rowKey,
   autoSave,
@@ -91,9 +92,11 @@ export function useTableEditing<T = Record<string, unknown>>({
     for (const col of columns) {
       if (col.readOnly) continue;
       if (col.computed) continue;
-      if (editable && col.editable !== false && writable(col.field)) {
-        set.add(col.field);
-      } else if (col.editable && writable(col.field)) {
+      // A column config can opt in or out, but only the server can make a
+      // column writable — an editor on a column the write would refuse is
+      // an edit that looks saved and is not.
+      if (!writable(col.field)) continue;
+      if (editable ? col.editable !== false : col.editable) {
         set.add(col.field);
       }
     }

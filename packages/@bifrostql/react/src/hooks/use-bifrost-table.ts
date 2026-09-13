@@ -20,6 +20,7 @@ import { useTableResponsive } from './internal/use-table-responsive';
 import { useTableSelection } from './internal/use-table-selection';
 import { useVirtualScroll } from './internal/use-table-virtual-scroll';
 import type {
+  RowCapability,
   UseBifrostTableOptions,
   UseBifrostTableResult,
 } from './use-bifrost-table.types';
@@ -97,6 +98,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     expandable = false,
     childQuery,
     editable = 'auto',
+    identity,
     autoSave = false,
     onRowUpdate,
     onBatchSave,
@@ -161,11 +163,24 @@ export function useBifrostTable<T = Record<string, unknown>>(
     ...bifrostOptions,
   });
 
-  const policy = usePolicy(table);
-  const tableEditable =
-    editable === 'auto'
-      ? policy.can('update') && Boolean(onRowUpdate)
-      : editable;
+  // One policy document per table per identity, shared through the query
+  // cache with every other usePolicy(table, { identity }) in the tree.
+  const policy = usePolicy(table, { identity });
+  // Whether the caller wants edits at all; the server then decides where.
+  const wantsEditing =
+    editable === 'auto' ? Boolean(onRowUpdate ?? onBatchSave) : editable;
+  const tableEditable = wantsEditing && policy.can('update');
+  const rowCan = (row: T, action: RowCapability): boolean => {
+    const own = (row as { _can?: Partial<Record<RowCapability, boolean>> })
+      ._can?.[action];
+    const allowed = own ?? policy.can(action);
+    return action === 'update' ? wantsEditing && allowed : allowed;
+  };
+  // Only a projected table can withhold a column. While loading, on error,
+  // and for a table the server does not project, nothing is masked — the
+  // cells show what the data query returned, which is all the caller has.
+  const isColumnMasked = (field: string): boolean =>
+    policy.can('read') && !policy.readable(field);
 
   const { dataWithComputed, computedAggregates, formattedAggregates, groups } =
     useTableData<T>({
@@ -215,9 +230,10 @@ export function useBifrostTable<T = Record<string, unknown>>(
     cancelEditing,
   } = useTableEditing<T>({
     columns,
-    editable: tableEditable,
-    writable: (field) =>
-      policy.isLoading || policy.isError ? true : policy.writable(field),
+    // Column-level: which columns take an edit on a row that may be updated.
+    // The table/row permission is applied per row through `rowCan`.
+    editable: wantsEditing,
+    writable: policy.writable,
     data: dataWithComputed,
     rowKey,
     autoSave,
@@ -233,7 +249,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     activeFilterCount,
     data: dataWithComputed,
     visibleColumns,
-    editableColumnSet,
+    isCellEditable: (row, field) =>
+      editableColumnSet.has(field) && (!row || rowCan(row, 'update')),
     rowKey,
     selectedRows: selection.selectedRows,
     expandedRows,
@@ -280,6 +297,8 @@ export function useBifrostTable<T = Record<string, unknown>>(
     editing,
     editable: tableEditable,
     policy,
+    rowCan,
+    isColumnMasked,
     export: exportState,
     a11y,
     responsive,

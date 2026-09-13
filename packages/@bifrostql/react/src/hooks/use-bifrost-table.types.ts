@@ -1,4 +1,5 @@
 import type { UseBifrostOptions } from './use-bifrost';
+import type { UsePolicyResult } from './use-policy';
 import type {
   FieldNameOf,
   SortOption,
@@ -81,6 +82,9 @@ export type CellValidator = (
 ) => string | null | Promise<string | null>;
 
 /** Configuration for a single table column. */
+/** Per-row capability as the server projects it in `_can`. */
+export type RowCapability = 'update' | 'delete';
+
 export interface ColumnConfig {
   field: string;
   header: string;
@@ -91,7 +95,7 @@ export interface ColumnConfig {
   filterOptions?: Array<{ label: string; value: string | number }>;
   computed?: (row: Record<string, unknown>) => unknown;
   customSort?: CustomSortFn;
-  editable?: boolean | 'auto';
+  editable?: boolean;
   readOnly?: boolean;
   editorType?: EditorType;
   editorOptions?: Array<{ label: string; value: string | number }>;
@@ -564,7 +568,21 @@ export interface UseBifrostTableOptions<
   groupBy?: GroupByConfig;
   expandable?: boolean;
   childQuery?: ChildQueryConfig;
-  editable?: boolean;
+  /**
+   * `'auto'` (default) derives editability from the server's policy
+   * projection: the table takes edits iff `allowedActions` includes `update`
+   * and a write handler (`onRowUpdate` or `onBatchSave`) is wired. `true`
+   * asserts editing regardless of a handler; `false` switches it off. In
+   * every mode a column takes an edit only when the projection marks it
+   * `writable`, and a row carrying `_can` follows its own answer.
+   */
+  editable?: boolean | 'auto';
+  /**
+   * Who the policy answer is for. Forwarded to `usePolicy`, so the projection
+   * is fetched once per identity and shared with every other consumer of the
+   * same table in the QueryClient. Omit for an anonymous caller.
+   */
+  identity?: string;
   autoSave?: boolean;
   onRowUpdate?: RowUpdateFn;
   onBatchSave?: BatchSaveFn;
@@ -591,15 +609,23 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
   expansion: ExpansionState;
   columnManagement: ColumnManagementState;
   editing: EditingState;
+  /** Whether the table as a whole takes edits — see {@link UseBifrostTableOptions.editable}. */
   editable: boolean;
-  policy: {
-    can: (action: string) => boolean;
-    readable: (column: string) => boolean;
-    writable: (column: string) => boolean;
-    isLoading: boolean;
-    isError: boolean;
-    error: Error | null;
-  };
+  /** The shared policy projection this table derives its affordances from. */
+  policy: UsePolicyResult;
+  /**
+   * Whether `row` may take `action`: the row's own `_can` answer when it
+   * carries one, else the table's `allowedActions`. `update` additionally
+   * needs the table to be taking edits at all (a write handler under
+   * `'auto'`, or an explicit `true`).
+   */
+  rowCan: (row: T, action: RowCapability) => boolean;
+  /**
+   * Whether policy withholds the column's value: the table is projected and
+   * the column is `readable: false`. A masked cell reads as '—' so it is
+   * distinguishable from a genuine null.
+   */
+  isColumnMasked: (field: string) => boolean;
   export: ExportState;
   a11y: AccessibilityState;
   responsive: ResponsiveState<T>;

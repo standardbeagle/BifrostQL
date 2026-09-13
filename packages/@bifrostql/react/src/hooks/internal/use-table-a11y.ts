@@ -17,7 +17,12 @@ export interface UseTableA11yOptions<T> {
   activeFilterCount: number;
   data: T[];
   visibleColumns: string[];
-  editableColumnSet: Set<string>;
+  /**
+   * Whether the cell at (row, field) takes an edit, row permission included.
+   * `row` is undefined for a coordinate with no data behind it, where only
+   * the column-level answer exists.
+   */
+  isCellEditable: (row: T | undefined, field: string) => boolean;
   rowKey: string;
   selectedRows: T[];
   expandedRows: Set<string>;
@@ -39,7 +44,7 @@ export function useTableA11y<T = Record<string, unknown>>({
   activeFilterCount,
   data,
   visibleColumns,
-  editableColumnSet,
+  isCellEditable,
   rowKey,
   selectedRows,
   expandedRows,
@@ -186,7 +191,7 @@ export function useTableA11y<T = Record<string, unknown>>({
 
   const getCellProps = useCallback(
     (rowIndex: number, colIndex: number, field?: string): AriaCellProps => {
-      const isReadOnly = field ? !editableColumnSet.has(field) : true;
+      const isReadOnly = field ? !isCellEditable(data[rowIndex], field) : true;
       // Both coordinates must match: keying the roving tabindex on the column
       // alone gave every row's cell in that column a tabIndex of 0, turning a
       // 1000-row grid into 1000 tab stops.
@@ -202,7 +207,7 @@ export function useTableA11y<T = Record<string, unknown>>({
           registerCell(rowIndex, colIndex, element),
       };
     },
-    [editableColumnSet, focusedCell, registerCell],
+    [data, isCellEditable, focusedCell, registerCell],
   );
 
   const getHeaderCellProps = useCallback(
@@ -288,12 +293,12 @@ export function useTableA11y<T = Record<string, unknown>>({
           e.preventDefault();
           if (rowIndex >= 0 && rowIndex <= maxRow) {
             const visField = visibleColumns[colIndex];
-            if (visField && editableColumnSet.has(visField)) {
-              const row = data[rowIndex];
-              const rk = row
-                ? String((row as Record<string, unknown>)[rowKey])
-                : undefined;
-              if (rk) startEditing(rk, visField);
+            const row = data[rowIndex];
+            if (visField && row && isCellEditable(row, visField)) {
+              startEditing(
+                String((row as Record<string, unknown>)[rowKey]),
+                visField,
+              );
             }
           }
           break;
@@ -323,7 +328,7 @@ export function useTableA11y<T = Record<string, unknown>>({
       dataRowCount,
       visibleColCount,
       visibleColumns,
-      editableColumnSet,
+      isCellEditable,
       data,
       rowKey,
       startEditing,

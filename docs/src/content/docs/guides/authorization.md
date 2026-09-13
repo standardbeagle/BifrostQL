@@ -138,8 +138,15 @@ in context is refused with the same generic message as a missing row-scope value
 Inserts and deletes are unaffected: there is no existing row to protect.
 
 ```text
-public.users { policy-self-deny: permission_profile_id, cost_rate; policy-self-column: id }
+public.users {
+  policy-actions: read, update;
+  policy-self-deny: permission_profile_id, cost_rate;
+  policy-self-column: id;
+}
 ```
+
+List the table's actions alongside the rule: any policy key makes the table
+policy-bearing, and a policy with no listed actions denies every non-admin action.
 
 ## Deny columns
 

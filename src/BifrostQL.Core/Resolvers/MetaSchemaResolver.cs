@@ -74,23 +74,27 @@ namespace BifrostQL.Core.Resolvers
                             var detected = LookupTableDetector.DetectColumnRoles(t).LabelColumn;
                             labelColumn = t.Columns.FirstOrDefault(c => Equal(c.ColumnName, detected));
                         }
-                        labelColumn ??= t.Columns.First();
+                         labelColumn ??= t.Columns.FirstOrDefault();
                         // A label column the caller may not read must not be named back
                         // to them — fall back to the first visible column.
-                        if (!v.HasColumn(labelColumn.DbName))
-                            labelColumn = v.Columns.First();
+                         if (labelColumn != null && !v.HasColumn(labelColumn.DbName))
+                             labelColumn = v.Columns.FirstOrDefault();
                         return new
                         {
                             Schema = t.TableSchema,
                             t.DbName,
                             t.GraphQlName,
-                            labelColumn = labelColumn.GraphQlName,
+                             labelColumn = labelColumn?.GraphQlName,
                             primaryKeys = t.Columns
                                 .Where(c => c.IsPrimaryKey == true && v.HasColumn(c.DbName))
                                 .Select(pk => pk.GraphQlName),
                             isEditable = t.Columns.Any(c => c.IsPrimaryKey == true),
                             allowedActions,
-                            metadata = isAdmin ? t.Metadata : EmptyMetadata,
+                             metadata = isAdmin
+                                 ? t.Metadata
+                                 : t.Metadata
+                                     .Where(kv => string.Equals(kv.Key, MetadataKeys.Ui.DisplayFormat, StringComparison.OrdinalIgnoreCase))
+                                     .ToDictionary(kv => kv.Key, kv => kv.Value),
                             columns = v.Columns
                                 .Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
                                 .Select(c =>
@@ -174,7 +178,11 @@ namespace BifrostQL.Core.Resolvers
                                     defaultValue = c.GetMetadataValue(MetadataKeys.DataType.Default),
                                     enumValues,
                                     enumLabels,
-                                    metadata = isAdmin ? c.Metadata : EmptyMetadata
+                                     metadata = isAdmin
+                                         ? c.Metadata
+                                         : c.Metadata
+                                             .Where(kv => string.Equals(kv.Key, MetadataKeys.Ui.DisplayFormat, StringComparison.OrdinalIgnoreCase))
+                                             .ToDictionary(kv => kv.Key, kv => kv.Value)
                                 };
                             }),
                             // Index columns are translated to GraphQL names so clients

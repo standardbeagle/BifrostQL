@@ -119,24 +119,29 @@ export interface AppMetadata {
   entities?: Record<string, EntityMetadata>;
 }
 
-/** Mirrors the C# `_dbSchema` resolver projection. */
+/**
+ * One column of the per-caller `_dbSchema` projection (C# `MetaSchemaResolver`).
+ * Only the policy-bearing fields are mirrored here.
+ */
 export interface DbSchemaColumnProjection {
+  /** GraphQL column name; the key clients look a column up by. */
+  graphQlName: string;
   /** Whether the current identity may read this column. */
   readable: boolean;
   /** Whether the current identity may write this column. */
   writable: boolean;
 }
 
-/** Mirrors the C# `_dbSchema` resolver projection. */
+/**
+ * One table of the per-caller `_dbSchema` projection (C# `MetaSchemaResolver`).
+ * `_dbSchema(graphQlName: String)` returns a list; a table the caller may not
+ * read is absent from it.
+ */
 export interface DbSchemaProjection {
+  /** GraphQL table name, as accepted by `_dbSchema(graphQlName:)`. */
+  graphQlName: string;
   /** Actions allowed for the current identity on this table. */
   allowedActions: string[];
-  /** Columns keyed by GraphQL column name. */
-  columns: Record<string, DbSchemaColumnProjection>;
-}
-
-/** Mirrors the C# `_grants` resolver projection. */
-export interface GrantsProjection {
-  /** Effective grant names for the current identity. */
-  grants: string[];
+  /** Policy flags for every column the caller may see. */
+  columns: DbSchemaColumnProjection[];
 }

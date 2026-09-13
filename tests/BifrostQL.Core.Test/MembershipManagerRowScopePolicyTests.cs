@@ -152,7 +152,7 @@ public class MembershipManagerRowScopePolicyTests
         filter.Should().NotBeNull();
         filter!.ColumnName.Should().Be("user_id");
         filter.Next!.RelationName.Should().Be("_eq");
-        filter.Next.Value.Should().Be("42");
+        filter.Next.Value.Should().Be(42);
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public class MembershipManagerRowScopePolicyTests
 
         filter!.ColumnName.Should().Be("user_id");
         filter.Next!.RelationName.Should().Be("_eq");
-        filter.Next.Value.Should().Be("42");
+        filter.Next.Value.Should().Be(42);
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public class MembershipManagerRowScopePolicyTests
         var filter = transformer.GetAdditionalFilter(
             model.GetTableFromDbName("members"), context);
 
-        filter!.Next!.Value.Should().Be("42");
+        filter!.Next!.Value.Should().Be(42);
         filter.Next.Value.Should().NotBe("99",
             "the row scope pins the query to the caller, so another member's row is unreachable");
     }
@@ -255,7 +255,7 @@ public class MembershipManagerRowScopePolicyTests
         result.AdditionalFilter.Should().NotBeNull();
         result.AdditionalFilter!.ColumnName.Should().Be("user_id");
         result.AdditionalFilter.Next!.RelationName.Should().Be("_eq");
-        result.AdditionalFilter.Next.Value.Should().Be("42");
+        result.AdditionalFilter.Next.Value.Should().Be(42);
     }
 
     [Fact]
@@ -271,7 +271,7 @@ public class MembershipManagerRowScopePolicyTests
         result.AdditionalFilter.Should().NotBeNull();
         result.AdditionalFilter!.ColumnName.Should().Be("user_id");
         result.AdditionalFilter.Next!.RelationName.Should().Be("_eq");
-        result.AdditionalFilter.Next.Value.Should().Be("42");
+        result.AdditionalFilter.Next.Value.Should().Be(42);
     }
 
     [Fact]
@@ -352,7 +352,7 @@ public class MembershipManagerRowScopePolicyTests
         result.Errors.Should().BeNullOrEmpty();
         result.AdditionalFilter.Should().NotBeNull();
         result.AdditionalFilter!.ColumnName.Should().Be("user_id");
-        result.AdditionalFilter.Next!.Value.Should().Be("42");
+        result.AdditionalFilter.Next!.Value.Should().Be(42);
     }
 
     // ---- officer and every non-member role stay unscoped on these tables ----

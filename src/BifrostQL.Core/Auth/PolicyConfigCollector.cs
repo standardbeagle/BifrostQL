@@ -48,7 +48,6 @@ public static class PolicyConfigCollector
         var selfDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.SelfDeny);
         var selfColumn = table.GetMetadataValue(MetadataKeys.Policy.SelfColumn);
         if (string.IsNullOrWhiteSpace(selfDenyRaw)) selfDenyRaw = null;
-        if (selfDenyRaw is not null && string.IsNullOrWhiteSpace(selfColumn)) selfColumn = MetadataKeys.Auth.DefaultUserIdContextKey;
 
         var hasAny =
             !string.IsNullOrWhiteSpace(actionsRaw) ||

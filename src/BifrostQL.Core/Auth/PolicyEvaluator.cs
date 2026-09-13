@@ -236,6 +236,11 @@ public sealed class PolicyEvaluator
         return refuse ? ReadColumnDisposition.Refuse : ReadColumnDisposition.Mask;
     }
 
-    private bool IsAdmin(AppIdentity identity) =>
+    /// <summary>
+    /// True when <paramref name="identity"/> holds the configured admin role. The
+    /// one definition of "admin" every policy consumer reads — the transformers
+    /// and the row-capability provider used to probe it through a denying policy.
+    /// </summary>
+    public bool IsAdmin(AppIdentity identity) =>
         identity.Grants.Contains(_adminRole);
 }

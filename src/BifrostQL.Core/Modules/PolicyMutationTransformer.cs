@@ -93,7 +93,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
 
         var policy = PolicyConfigCollector.FromTable(table);
         var identity = BuildIdentity(context);
-        var isAdmin = IsAdmin(identity);
+        var isAdmin = _evaluator.IsAdmin(identity);
 
         // Table action deny — fail closed before inspecting the data.
         if (!_evaluator.CanAct(policy, ToPolicyAction(mutationType), identity).Allowed)
@@ -164,10 +164,8 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
                     ErrorCode = BifrostExecutionError.AccessDeniedCode,
                 };
             }
-            var selfColumn = string.IsNullOrWhiteSpace(policy.SelfColumn)
-                ? MetadataKeys.Auth.DefaultUserIdContextKey : policy.SelfColumn;
-            selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
-                ContextValueCoercer.Coerce(table, selfColumn, userId)).Build();
+            selfFilter = TableFilterBuilder.For(table).Compare(policy.SelfColumn, FilterOperators.Neq,
+                ContextValueCoercer.Coerce(table, policy.SelfColumn, userId)).Build();
         }
 
         return new MutationTransformResult
@@ -207,7 +205,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (mutationType == MutationType.Insert)
             return null;
 
-        if (IsAdmin(identity))
+        if (_evaluator.IsAdmin(identity))
             return null;
 
         if (!RowScopeApplies(policy, identity))
@@ -227,19 +225,6 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
     private static AppIdentity BuildIdentity(MutationTransformContext context)
     {
         return PolicyIdentity.FromUserContext(context.UserContext);
-    }
-
-    // A policy that has restrictions (HasPolicy is true) but permits no action.
-    // Only the evaluator's admin bypass can pass a check against it, so it is a
-    // reliable probe for "is this identity an admin".
-    private static readonly TablePolicy AdminProbePolicy =
-        new(rowScopeExpression: "probe");
-
-    private bool IsAdmin(AppIdentity identity)
-    {
-        // The evaluator's admin bypass is internal; a denying policy that the
-        // identity still passes is the observable signal of an admin.
-        return _evaluator.CanAct(AdminProbePolicy, PolicyAction.Create, identity).Allowed;
     }
 
     // True when the policy's row-scope expression should narrow this caller: an

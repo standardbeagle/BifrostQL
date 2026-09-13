@@ -1,3 +1,5 @@
+using BifrostQL.Core.Model;
+
 namespace BifrostQL.Core.Auth;
 
 /// <summary>
@@ -233,7 +235,12 @@ public sealed record TablePolicy
             rowScopeExemptGrants ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         SelfDenyColumns = new HashSet<string>(
             selfDenyColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-        SelfColumn = selfColumn ?? string.Empty;
+        // The self column defaults to the user-id context key whenever a self deny is
+        // configured, so every reader (mutation transformer, row-capability provider,
+        // validator) sees the same column without repeating the default.
+        SelfColumn = !string.IsNullOrWhiteSpace(selfColumn)
+            ? selfColumn.Trim()
+            : SelfDenyColumns.Count > 0 ? MetadataKeys.Auth.DefaultUserIdContextKey : string.Empty;
 
         HasPolicy =
             AllowedActions.Count > 0 ||

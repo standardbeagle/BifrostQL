@@ -94,7 +94,7 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
 
         // Admin bypass is consistent across the whole policy — admins are not
         // narrowed by the row-scope filter either.
-        if (IsAdmin(identity))
+        if (_evaluator.IsAdmin(identity))
             return null;
 
         if (!RowScopeApplies(policy, identity))
@@ -177,19 +177,6 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
     // reimplementation could drift into a weaker (fail-open) check.
     private static AppIdentity BuildIdentity(QueryTransformContext context)
         => PolicyIdentity.FromUserContext(context.UserContext);
-
-    // A policy that has restrictions (HasPolicy is true) but permits no action.
-    // Only the evaluator's admin bypass can pass a Read check against it, so it
-    // is a reliable probe for "is this identity an admin".
-    private static readonly TablePolicy AdminProbePolicy =
-        new(rowScopeExpression: "probe");
-
-    private bool IsAdmin(AppIdentity identity)
-    {
-        // The evaluator's admin bypass is internal; a denying policy that the
-        // identity still passes is the observable signal of an admin.
-        return _evaluator.CanAct(AdminProbePolicy, PolicyAction.Read, identity).Allowed;
-    }
 
     // True when the policy's row-scope expression should narrow this caller: an
     // unqualified policy (no RowScopeRoles) applies to every non-admin caller;

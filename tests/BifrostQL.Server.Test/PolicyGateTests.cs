@@ -193,7 +193,7 @@ public sealed class PolicyGateTests
             await Task.CompletedTask;
         }
 
-        private static void CreateDatabase(string dbPath)
+        internal static void CreateDatabase(string dbPath)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             using var conn = new SqliteConnection($"Data Source={dbPath}");
@@ -205,7 +205,7 @@ public sealed class PolicyGateTests
             cmd.ExecuteNonQuery();
         }
 
-        private static async Task ClaimsMiddleware(HttpContext context, Func<Task> next)
+        internal static async Task ClaimsMiddleware(HttpContext context, Func<Task> next)
         {
             var header = context.Request.Headers[ClaimsHeader].ToString();
             if (!string.IsNullOrEmpty(header))
@@ -438,5 +438,143 @@ public sealed class PolicyGateTests
         using var rest = await host.Client.SendAsync(RestPayment(userId: null));
         rest.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await rest.Content.ReadAsStringAsync()).Should().BeEmpty();
+    }
+
+    // ---- 7. An unknown column on a known table fails closed ----
+
+    [Fact]
+    public async Task UnknownColumnOnAPolicyBearingTable_IsDeny_ForReadAndWrite()
+    {
+        // Pre-fix: PolicyGate.ResolveColumn fell back to the raw name when it matched no
+        // column, and a name the policy never mentions is neither required nor denied, so a
+        // mistyped column answered Allow. The caller here holds EVERY grant, so a Deny can
+        // only come from the column being unknown.
+        await using var host = await GateHost.StartAsync();
+
+        (await AllowedAsync(host.Client, "/probe/can-read?table=" + Table + "&column=no_such_column", GrantedUserId))
+            .Should().BeFalse("a column the model does not have has no policy to allow it");
+        (await AllowedAsync(host.Client, "/probe/can-write?table=" + Table + "&column=no_such_column", GrantedUserId))
+            .Should().BeFalse("a column the model does not have has no policy to allow it");
+        (await AllowedAsync(host.Client, "/probe/can-read?table=" + Table + "&column=", GrantedUserId))
+            .Should().BeFalse("an empty column name is not a column");
+    }
+
+    // ---- 8. More than one registered endpoint: the gate refuses to guess, as the mount does ----
+
+    private sealed class MultiEndpointHost : IAsyncDisposable
+    {
+        public HttpClient Client { get; }
+        private readonly IHost _inner;
+        private readonly string[] _dbPaths;
+
+        private MultiEndpointHost(IHost inner, string[] dbPaths)
+        {
+            _inner = inner;
+            _dbPaths = dbPaths;
+            Client = inner.GetTestClient();
+        }
+
+        /// <summary>
+        /// An AddBifrostEndpoints host with <paramref name="endpointCount"/> GraphQL mounts, each
+        /// over its own SQLite file, plus a probe that reports whether IPolicyGate resolves for
+        /// a request whose path is none of the mounts.
+        /// </summary>
+        public static async Task<MultiEndpointHost> StartAsync(int endpointCount)
+        {
+            var dbPaths = Enumerable.Range(0, endpointCount)
+                .Select(i => Path.Combine(Path.GetTempPath(), $"s12-multi-{i}-{Guid.NewGuid():N}.db"))
+                .ToArray();
+            foreach (var dbPath in dbPaths)
+                GateHost.CreateDatabase(dbPath);
+
+            var builder = new HostBuilder().ConfigureWebHost(web =>
+            {
+                web.UseTestServer();
+                web.ConfigureServices(services =>
+                {
+                    services.AddRouting();
+                    services.AddBifrostEndpoints(o =>
+                    {
+                        for (var i = 0; i < dbPaths.Length; i++)
+                        {
+                            var dbPath = dbPaths[i];
+                            var index = i;
+                            o.AddEndpoint(e =>
+                            {
+                                e.ConnectionString = $"Data Source={dbPath}";
+                                e.Provider = "sqlite";
+                                e.Path = index == 0 ? GraphQlPath : $"{GraphQlPath}{index}";
+                                e.PlaygroundPath = $"/graphiql{index}";
+                                e.DisableAuth = true;
+                                e.Metadata = PolicyMetadata;
+                            });
+                        }
+                    });
+                });
+                web.Configure(app =>
+                {
+                    app.Use(GateHost.ClaimsMiddleware);
+                    app.UseBifrostEndpoints();
+                    app.UseRouting();
+                    app.UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapGet("/probe/resolve", (IServiceProvider sp) =>
+                        {
+                            try
+                            {
+                                var gate = sp.GetRequiredService<IPolicyGate>();
+                                return Results.Json(new
+                                {
+                                    resolved = true,
+                                    message = (string?)null,
+                                    readAllowed = gate.CanAct(Table, PolicyAction.Read).Allowed,
+                                });
+                            }
+                            catch (InvalidOperationException ex)
+                            {
+                                return Results.Json(new { resolved = false, message = ex.Message, readAllowed = false });
+                            }
+                        });
+                    });
+                });
+            });
+
+            return new MultiEndpointHost(await builder.StartAsync(), dbPaths);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Client.Dispose();
+            _inner.Dispose();
+            SqliteConnection.ClearAllPools();
+            foreach (var dbPath in _dbPaths)
+                if (File.Exists(dbPath)) File.Delete(dbPath);
+            await Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task OneRegisteredEndpoint_GateResolvesThatModel()
+    {
+        await using var host = await MultiEndpointHost.StartAsync(endpointCount: 1);
+
+        var result = await ProbeAsync(host.Client, "/probe/resolve", GrantedUserId);
+        result.GetProperty("resolved").GetBoolean().Should().BeTrue();
+        result.GetProperty("readAllowed").GetBoolean().Should().BeTrue("read is listed for payments in the one model");
+    }
+
+    [Fact]
+    public async Task TwoRegisteredEndpoints_GateRefusesToGuess_WithAClearMessage()
+    {
+        // The GraphQL mount throws UnknownBifrostEndpointException rather than serve the
+        // first database for an unmatched path when more than one endpoint is registered.
+        // Pre-fix the gate read PathCache.GetFirstValueAsync unconditionally, so an app
+        // endpoint was answered from whichever database happened to be registered first.
+        await using var host = await MultiEndpointHost.StartAsync(endpointCount: 2);
+
+        var result = await ProbeAsync(host.Client, "/probe/resolve", GrantedUserId);
+        result.GetProperty("resolved").GetBoolean().Should().BeFalse(
+            "with two registered endpoints the gate cannot know which database the caller means");
+        result.GetProperty("message").GetString().Should().Contain("more than one");
     }
 }

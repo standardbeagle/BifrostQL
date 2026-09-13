@@ -618,6 +618,53 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
             rows[1].GetProperty("before").GetString()!)!;
     }
 
+    [Fact]
+    public async Task EncryptedAndReadGatedImageValue_PolicyWins_BeforeAnyDecrypt()
+    {
+        var model = await LoadModelAsync(
+            "main.secrets.ssn { encrypt: aes-256-gcm; key-ref: config:pii; mask: last4; unmask-role: compliance; read-requires: rates.view_cost }",
+            "main.secrets { history: enabled }",
+            ":root { history-table: main.audit_trail }");
+        (await ExecuteMutationAsync($"mutation {{ secrets(insert: {{ ssn: \"{Plaintext}\" }}) }}", model))
+            .Errors.Should().BeNullOrEmpty();
+        await using var cmd = new SqliteCommand("SELECT ssn FROM secrets WHERE id = 1", _keepAlive);
+        var ciphertext = (string)(await cmd.ExecuteScalarAsync())!;
+
+        static Dictionary<string, JsonElement> Image(ExecutionResult result) =>
+            JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                Rows(result, "secretsHistory").Single().GetProperty("after").GetString()!)!;
+
+        var member = Image(await ExecuteQueryAsync(
+            "query { secretsHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["roles"] = Array.Empty<string>() }));
+        member["ssn"].ValueKind.Should().Be(JsonValueKind.Null,
+            "read-requires masks to null before the crypto mask is consulted");
+
+        var unmaskWithoutGrant = Image(await ExecuteQueryAsync(
+            "query { secretsHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["roles"] = new[] { "compliance" } }));
+        unmaskWithoutGrant["ssn"].ValueKind.Should().Be(JsonValueKind.Null,
+            "the unmask role does not stand in for the read grant");
+
+        var holder = Image(await ExecuteQueryAsync(
+            "query { secretsHistory { data { after } } }", model,
+            new Dictionary<string, object?>
+            {
+                ["roles"] = new[] { "compliance" },
+                ["permissions"] = new[] { "rates.view_cost" },
+            }));
+        holder["ssn"].GetString().Should().Be(Plaintext);
+
+        var grantWithoutUnmask = Image(await ExecuteQueryAsync(
+            "query { secretsHistory { data { after } } }", model,
+            new Dictionary<string, object?> { ["permissions"] = new[] { "rates.view_cost" } }));
+        grantWithoutUnmask["ssn"].GetString().Should().Be("••••6789",
+            "the read grant alone yields the crypto mask, never plaintext");
+
+        foreach (var image in new[] { member, unmaskWithoutGrant, holder, grantWithoutUnmask })
+            image["ssn"].ToString().Should().NotBe(ciphertext);
+    }
+
     private async Task<(IDbModel Model, string Ciphertext)> SeedEncryptedTrailAsync()
     {
         var model = await LoadModelAsync(

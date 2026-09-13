@@ -46,8 +46,14 @@ public sealed class PolicyMutationIntegrationTests : IAsyncLifetime
     // metadata selector is "main.Orders".
     private static readonly string[] PolicyMetadata =
     {
-        "main.Orders { policy-actions: read,update }",
+        // D7 (b4dba388): an admin no longer bypasses an action absent from the
+        // allow-list, so the admin-only create is declared with a bracket.
+        "main.Orders { policy-actions: read,update,create[admin] }",
+        // E19 (S4a): an unconditional write-deny drops the column from the
+        // input types, so the transformer would never see it; a role-qualified
+        // deny keeps `secret` in Orders_update and lets the policy refuse it.
         "main.Orders { policy-write-deny: secret }",
+        "main.Orders { policy-write-deny-roles: user }",
     };
 
     public async Task InitializeAsync()

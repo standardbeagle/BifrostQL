@@ -58,9 +58,14 @@ public sealed class PolicyEndToEndTests : IAsyncLifetime
     private static readonly string[] PolicyMetadata =
     {
         "main.Documents { policy-read-deny: body }",
-        "main.Orders { policy-actions: read,update }",
+        // D7 (b4dba388): the admin-only delete is declared with a bracket instead
+        // of relying on the bypass, which no longer resurrects unlisted actions.
+        "main.Orders { policy-actions: read,update,delete[admin] }",
         "main.Orders { policy-read-deny: secret }",
+        // E19 (S4a): role-qualified so `secret` stays in the input type and the
+        // transformer, not GraphQL validation, rejects the write.
         "main.Orders { policy-write-deny: secret }",
+        "main.Orders { policy-write-deny-roles: user }",
     };
 
     public async Task InitializeAsync()

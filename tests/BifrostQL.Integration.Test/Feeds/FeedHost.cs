@@ -262,8 +262,9 @@ namespace BifrostQL.Integration.Test.Feeds
             "main.bulletins { feed-timestamp: published_at }",
             "main.bulletins { feed-title: title }",
             "main.bulletins { feed-body: body }",
-            // Grants update only — a non-admin read is denied by the policy engine, an admin bypasses it.
-            "main.bulletins { policy-actions: update }",
+            // Grants update, and read to admins only (D7: the admin bypass no longer
+            // resurrects an unlisted action) — a non-admin read is denied by the policy engine.
+            "main.bulletins { policy-actions: read[admin],update }",
         };
 
         private static string Sql(string value) => value.Replace("'", "''");

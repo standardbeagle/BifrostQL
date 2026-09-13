@@ -139,9 +139,12 @@ public sealed class DbSchemaProjectionTests
                 .WithSchema("dbo")
                 .WithColumn("secret")
                 .WithMetadata(MetadataKeys.Policy.Actions, "read")
-                .WithColumnMetadata("secret", MetadataKeys.Policy.ReadRequires, "missing.grant")
-                .WithColumnMetadata("secret", MetadataKeys.Policy.DenyMode, "refuse")
-                .WithColumnMetadata("secret", MetadataKeys.Policy.ReadDeny, "secret"))
+                // `policy-read-deny` is a TABLE key naming columns; a read-denied column is
+                // absent from the projection (SchemaReadVisibility), which is what leaves
+                // the table with zero visible columns. `read-requires` is deliberately NOT
+                // combined here: a masked column stays visible with readable:false, and
+                // "deny wins over read-requires on overlap" is S4c's change, not this slice's.
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "secret"))
             .Build();
 
         var table = Table(Resolve(model, Ctx("u1", MemberRoles)), "empty_view");

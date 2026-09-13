@@ -28,7 +28,7 @@ public class RowScopeCompilerTests
         DbModelTestFixture.Create()
             .WithTable(tableName, t => t
                 .WithColumn("id", "int", isPrimaryKey: true)
-                .WithColumn(columnName, "nvarchar"))
+                .WithColumn(columnName, "int"))
             .Build()
             .GetTableFromDbName(tableName);
 

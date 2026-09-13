@@ -125,6 +125,8 @@ describe('usePolicy', () => {
     expect(result.current.writable('email')).toBe(true);
     expect(result.current.writable('id')).toBe(false);
     expect(result.current.writable('missing')).toBe(false);
+    expect(result.current.hasColumn('ssn')).toBe(true);
+    expect(result.current.hasColumn('missing')).toBe(false);
   });
 
   it('denies everything for a table the server does not project', async () => {

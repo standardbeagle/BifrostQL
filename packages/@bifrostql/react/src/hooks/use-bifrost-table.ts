@@ -176,11 +176,13 @@ export function useBifrostTable<T = Record<string, unknown>>(
     const allowed = own ?? policy.can(action);
     return action === 'update' ? wantsEditing && allowed : allowed;
   };
-  // Only a projected table can withhold a column. While loading, on error,
-  // and for a table the server does not project, nothing is masked — the
-  // cells show what the data query returned, which is all the caller has.
+  // Only a column the projection names readable:false is withheld. While
+  // loading, on error, and for a table the server does not project, nothing
+  // is masked — the cells show what the data query returned, which is all the
+  // caller has. A column the projection never names (a client computed
+  // column, an alias) is not policy's to withhold either.
   const isColumnMasked = (field: string): boolean =>
-    policy.can('read') && !policy.readable(field);
+    policy.hasColumn(field) && !policy.readable(field);
 
   const { dataWithComputed, computedAggregates, formattedAggregates, groups } =
     useTableData<T>({

@@ -18,6 +18,12 @@ export interface UsePolicyOptions {
 export interface UsePolicyResult {
   /** Whether the named table allows `action` (`read`, `create`, `update`, `delete`). */
   can: (action: string) => boolean;
+  /**
+   * Whether the projection names the column at all. A client-side computed
+   * column or an alias is not in `_dbSchema`, so `readable`/`writable`
+   * answer `false` for it without policy having said anything.
+   */
+  hasColumn: (column: string) => boolean;
   /** Whether the named column of the table may be read. */
   readable: (column: string) => boolean;
   /** Whether the named column of the table may be written. */
@@ -78,6 +84,7 @@ export function usePolicy(
     table?.columns.find((item) => item.graphQlName === name);
   return {
     can: (action) => table?.allowedActions.includes(action) ?? false,
+    hasColumn: (name) => column(name) !== undefined,
     readable: (name) => column(name)?.readable ?? false,
     writable: (name) => column(name)?.writable ?? false,
     grants: result.data?._grants ?? [],

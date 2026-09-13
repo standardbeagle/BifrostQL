@@ -621,9 +621,10 @@ export interface UseBifrostTableResult<T = Record<string, unknown>> {
    */
   rowCan: (row: T, action: RowCapability) => boolean;
   /**
-   * Whether policy withholds the column's value: the table is projected and
-   * the column is `readable: false`. A masked cell reads as '—' so it is
-   * distinguishable from a genuine null.
+   * Whether policy withholds the column's value: the projection names the
+   * column `readable: false`. A column the projection does not name (a
+   * client computed column, an alias) is never masked. A masked cell reads
+   * as '—' so it is distinguishable from a genuine null.
    */
   isColumnMasked: (field: string) => boolean;
   export: ExportState;

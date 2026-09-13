@@ -135,6 +135,8 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Policy.RowScope,
             MetadataKeys.Policy.RowScopeRoles,
             MetadataKeys.Policy.RowScopeExempt,
+            MetadataKeys.Policy.SelfDeny,
+            MetadataKeys.Policy.SelfColumn,
             // deny-mode is valid at table level (default for all denied columns)
             // and at column level (per-column override).
             MetadataKeys.Policy.DenyMode,

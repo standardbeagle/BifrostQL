@@ -45,6 +45,10 @@ public static class PolicyConfigCollector
         var readRequires = CollectReadRequires(table);
         var columnDenyModes = CollectColumnDenyModes(table);
         var tableDenyModeRaw = table.GetMetadataValue(MetadataKeys.Policy.DenyMode);
+        var selfDenyRaw = table.GetMetadataValue(MetadataKeys.Policy.SelfDeny);
+        var selfColumn = table.GetMetadataValue(MetadataKeys.Policy.SelfColumn);
+        if (string.IsNullOrWhiteSpace(selfDenyRaw)) selfDenyRaw = null;
+        if (selfDenyRaw is not null && string.IsNullOrWhiteSpace(selfColumn)) selfColumn = MetadataKeys.Auth.DefaultUserIdContextKey;
 
         var hasAny =
             !string.IsNullOrWhiteSpace(actionsRaw) ||
@@ -54,6 +58,7 @@ public static class PolicyConfigCollector
             writableValues.Count > 0 ||
             readRequires.Count > 0 ||
             !string.IsNullOrWhiteSpace(rowScopeRaw);
+            hasAny |= selfDenyRaw is not null;
 
         if (!hasAny)
             return denyByDefault ? new TablePolicy(forceHasPolicy: true) : TablePolicy.None;
@@ -71,9 +76,11 @@ public static class PolicyConfigCollector
             writableValues: writableValues.Count > 0 ? writableValues : null,
             readRequires: readRequires.Count > 0 ? readRequires : null,
             columnDenyModes: columnDenyModes.Count > 0 ? columnDenyModes : null,
-            tableDenyMode: string.IsNullOrWhiteSpace(tableDenyModeRaw)
-                ? null
-                : NormalizeDenyMode(tableDenyModeRaw));
+             tableDenyMode: string.IsNullOrWhiteSpace(tableDenyModeRaw)
+                 ? null
+                 : NormalizeDenyMode(tableDenyModeRaw),
+             selfDenyColumns: SplitList(selfDenyRaw),
+             selfColumn: selfColumn);
     }
 
     /// <summary>

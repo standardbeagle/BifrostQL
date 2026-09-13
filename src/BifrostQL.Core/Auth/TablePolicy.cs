@@ -173,6 +173,9 @@ public sealed record TablePolicy
     /// <summary>Grants that exempt a caller from row scope.</summary>
     public IReadOnlySet<string> RowScopeExemptGrants { get; }
 
+    public IReadOnlySet<string> SelfDenyColumns { get; }
+    public string SelfColumn { get; }
+
     /// <summary>
     /// True when this policy carries any configured restriction. False only for
     /// <see cref="None"/>.
@@ -201,6 +204,8 @@ public sealed record TablePolicy
         IReadOnlyDictionary<string, IEnumerable<string>>? readRequires = null,
         IReadOnlyDictionary<string, string>? columnDenyModes = null,
         string? tableDenyMode = null,
+        IEnumerable<string>? selfDenyColumns = null,
+        string? selfColumn = null,
         bool forceHasPolicy = false)
     {
         AllowedActions = NormalizeAllowedActions(allowedActions, actionGrants);
@@ -226,6 +231,9 @@ public sealed record TablePolicy
             rowScopeRoles ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         RowScopeExemptGrants = new HashSet<string>(
             rowScopeExemptGrants ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        SelfDenyColumns = new HashSet<string>(
+            selfDenyColumns ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        SelfColumn = selfColumn ?? string.Empty;
 
         HasPolicy =
             AllowedActions.Count > 0 ||
@@ -234,6 +242,7 @@ public sealed record TablePolicy
             WriteRequires.Count > 0 ||
             WritableValues.Count > 0 ||
             ReadRequires.Count > 0 ||
+            SelfDenyColumns.Count > 0 ||
             RowScopeExpression is not null || forceHasPolicy;
     }
 

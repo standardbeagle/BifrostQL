@@ -146,6 +146,17 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             }
         }
 
+        if (mutationType == MutationType.Update && data.Keys.Any(policy.SelfDenyColumns.Contains))
+        {
+            if (!context.UserContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var userId) || userId is null)
+                throw new BifrostExecutionError("Authorization context is required.");
+            var selfColumn = string.IsNullOrWhiteSpace(policy.SelfColumn)
+                ? MetadataKeys.Auth.DefaultUserIdContextKey : policy.SelfColumn;
+            var selfFilter = TableFilterBuilder.For(table).Compare(selfColumn, FilterOperators.Neq,
+                ContextValueCoercer.Coerce(table, selfColumn, userId)).Build();
+            return new MutationTransformResult { MutationType = mutationType, Data = data, AdditionalFilter = selfFilter };
+        }
+
         return new MutationTransformResult
         {
             MutationType = mutationType,

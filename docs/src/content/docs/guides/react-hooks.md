@@ -90,6 +90,29 @@ insert.mutate({ detail: { name: 'Alice', email: 'alice@example.com' } });
 
 `useBifrostTable` is a complete table engine without any markup — sorting, multi-column filtering, pagination, row selection, expandable rows, column show/hide and reorder, optional `urlSync`, client `computed` columns, and built-in `count`/`sum`/`avg`/`min`/`max` aggregates. Bring your own UI, or drop in the pre-built `BifrostTable` component (theming, inline editing, CSV export, row actions).
 
+#### Editing follows the server's policy
+
+Both `useBifrostTable` and `BifrostTable` read the table's `_dbSchema` projection for the caller (the same document `usePolicy` reads, fetched once per `identity` and shared through the query cache) and shape themselves from it:
+
+- `editable` defaults to `'auto'`: the table takes edits only when the projection's `allowedActions` includes `update` **and** a write handler is wired (`onRowUpdate` on the component; `onRowUpdate` or `onBatchSave` on the hook). Pass `true` to assert editing — the component still throws without `onRowUpdate` — or `false` to switch it off; `false` wins over any projection.
+- A column takes an editor only when the projection marks it `writable`. A column config's `editable: true` opts a column in, but cannot grant what the server withholds.
+- A column projected `readable: false` renders its cell as `—`, so a withheld value never reads as a null.
+- A row carrying `_can { update delete }` follows its own answer; a row without it inherits the table's. Row actions declare the capability they need with `permission: 'update' | 'delete'` and render only where it holds; an action without `permission` always renders.
+- If the policy document fails to load, the table renders read-only and `BifrostTable` shows the error above the rows. The hook exposes the projection as `policy`, plus `rowCan(row, action)` and `isColumnMasked(field)` for a custom UI.
+
+```tsx
+<BifrostTable
+  table="members"
+  columns={columns}
+  identity={session.userId}
+  onRowUpdate={(row, changes) => update.mutateAsync({ id: row.id, ...changes })}
+  rowActions={[
+    { label: 'Delete', permission: 'delete', onClick: remove },
+    { label: 'View', onClick: open },
+  ]}
+/>
+```
+
 ## Want a whole admin UI instead of hooks?
 
 If you don't want to assemble screens by hand, the [Embeddable Data Editor](/BifrostQL/guides/embedded-editor/) gives you a complete, schema-driven CRUD navigator as a single `<Editor>` component.

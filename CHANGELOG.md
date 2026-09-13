@@ -9,6 +9,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 ### Added
 
 - Packages: `usePolicy` in `@bifrostql/react` and `@bifrostql/app-shell` reads the server's `_grants` and `_dbSchema` projection, cached per session identity; `ProtectedRoute` gates on `requiredGrants` and `FieldControl` on the column's `writable` flag.
+- Packages: `BifrostTable` and `useBifrostTable` derive editing from the caller's `_dbSchema` projection. `editable` defaults to `'auto'` (edits iff `allowedActions` includes `update` and a write handler is wired; explicit `true` still requires `onRowUpdate`, `false` wins), a column takes an editor only when projected `writable`, a `readable: false` column renders `—` rather than empty, and a row's `_can { update delete }` overrides the table-level answer for inline editing and for row actions that declare a `permission`. The projection is fetched once per `identity` and shared with `usePolicy`; a projection failure leaves the table read-only with the error surfaced. New hook surface: `policy`, `rowCan`, `isColumnMasked`, `identity`.
 - Scoped `IPolicyGate` for custom endpoints to reuse GraphQL table and column policy decisions.
 - Per-row `_can { update delete }` capabilities for row-scoped and self-deny tables.
 - `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.

@@ -36,6 +36,7 @@ public sealed class DbSchemaProjectionTests
             .WithPrimaryKey("id")
             .WithColumn("name")
             .WithColumn("cost_rate", "decimal", graphQlName: "costRate")
+            .WithColumnMetadata("name", MetadataKeys.Ui.DisplayFormat, "text")
             .WithColumnMetadata("cost_rate", MetadataKeys.Policy.ReadRequires, "rates.view_cost")
             .WithMetadata(MetadataKeys.Policy.Actions, "read, create, update[manager], delete[manager]"))
         .WithTable("ledger", t => t
@@ -118,6 +119,32 @@ public sealed class DbSchemaProjectionTests
         var json = Resolve(Model(), Ctx("u1", MemberRoles)).GetRawText();
         json.Should().NotContain("policy-",
             "the raw metadata bag is served to admin callers only");
+    }
+
+    [Fact]
+    public void Non_admin_keeps_editor_display_metadata_but_not_policy_metadata()
+    {
+        var members = Table(Resolve(Model(), Ctx("u1", MemberRoles)), "members");
+        members.GetProperty("columns").EnumerateArray().First(c => c.GetProperty("graphQlName").GetString() == "name")
+            .GetProperty("metadata").EnumerateObject().Select(kv => kv.Name)
+            .Should().Contain(MetadataKeys.Ui.DisplayFormat);
+        members.GetRawText().Should().NotContain("policy-");
+    }
+
+    [Fact]
+    public void A_table_with_no_visible_columns_still_resolves()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("empty_view", t => t
+                .WithSchema("dbo")
+                .WithColumn("secret")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read")
+                .WithColumnMetadata("secret", MetadataKeys.Policy.ReadRequires, "missing.grant")
+                .WithColumnMetadata("secret", MetadataKeys.Policy.DenyMode, "refuse"))
+            .Build();
+
+        var table = Table(Resolve(model, Ctx("u1", MemberRoles)), "empty_view");
+        table.GetProperty("columns").GetArrayLength().Should().Be(0);
     }
 
     [Fact]

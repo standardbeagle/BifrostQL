@@ -96,7 +96,7 @@ namespace BifrostQL.Core.Resolvers
                                      .Where(kv => string.Equals(kv.Key, MetadataKeys.Ui.DisplayFormat, StringComparison.OrdinalIgnoreCase))
                                      .ToDictionary(kv => kv.Key, kv => kv.Value),
                             columns = v.Columns
-                                .Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
+                                 .Where(c => !c.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden))
                                 .Select(c =>
                             {
                                 // S4a/S4b semantics. `readable` is false for a MASKED

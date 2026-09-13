@@ -140,7 +140,8 @@ public sealed class DbSchemaProjectionTests
                 .WithColumn("secret")
                 .WithMetadata(MetadataKeys.Policy.Actions, "read")
                 .WithColumnMetadata("secret", MetadataKeys.Policy.ReadRequires, "missing.grant")
-                .WithColumnMetadata("secret", MetadataKeys.Policy.DenyMode, "refuse"))
+                .WithColumnMetadata("secret", MetadataKeys.Policy.DenyMode, "refuse")
+                .WithColumnMetadata("secret", MetadataKeys.Policy.ReadDeny, "secret"))
             .Build();
 
         var table = Table(Resolve(model, Ctx("u1", MemberRoles)), "empty_view");

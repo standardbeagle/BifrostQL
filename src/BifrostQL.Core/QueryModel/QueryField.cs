@@ -80,6 +80,7 @@ namespace BifrostQL.Core.QueryModel
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IQueryField>();
             var queryFields = (IncludeResult ? dataFields : Fields);
             var standardFields = queryFields.Where(f => f.Type != FieldType.System).ToList();
+            FieldType TypeOf(IQueryField f) => TypeOn(f, dbTable, model);
             var queryType = GetQueryType(Name);
             if (queryType == QueryType.Aggregate)
             {
@@ -100,20 +101,20 @@ namespace BifrostQL.Core.QueryModel
                 QueryType = queryType,
                 IsFragment = false,
                 IncludeResult = IncludeResult,
-                ScalarColumns = standardFields.Where(f => f.Type == FieldType.Scalar).Select(f => f.ToScalarSql(dbTable, model)).ToList(),
-                AggregateColumns = standardFields.Where(f => f.Type == FieldType.Aggregate).Select(f => f.ToAggregateSql(dbTable)).ToList(),
+                ScalarColumns = standardFields.Where(f => TypeOf(f) == FieldType.Scalar).Select(f => f.ToScalarSql(dbTable, model)).ToList(),
+                AggregateColumns = standardFields.Where(f => TypeOf(f) == FieldType.Aggregate).Select(f => f.ToAggregateSql(dbTable)).ToList(),
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
                 Filter = BuildCombinedFilter(Arguments, dbTable),
                 Links = standardFields
-                            .Where((f) => f.Type == FieldType.Link)
+                            .Where((f) => TypeOf(f) == FieldType.Link)
                             .Select(f => f.ToSqlData(model, this, path))
                             .ToList(),
             };
             result.Joins.AddRange(
                 standardFields
-                    .Where((f) => f.Type == FieldType.Join)
+                    .Where((f) => TypeOf(f) == FieldType.Join)
                     .Select(f => f.ToJoin(model, result))
                 );
             // Capture module query arguments (e.g. _includeDeleted / _onlyDeleted)
@@ -124,6 +125,24 @@ namespace BifrostQL.Core.QueryModel
             if (parent == null)
                 result.ConnectLinks(model);
             return result;
+        }
+
+        /// <summary>
+        /// <see cref="Type"/> is model-free, so a field carrying a sub-selection always
+        /// reads as a link. An object-typed provider computed column (<c>_can { update delete }</c>)
+        /// carries one too, and is a scalar of <paramref name="table"/>: its value is
+        /// produced by the provider after the read and its sub-selection is resolved by
+        /// GraphQL on that object, never by a join. Without this, the sub-selection is
+        /// taken for a linked table and the document fails with a table miss.
+        /// </summary>
+        private static FieldType TypeOn(IQueryField field, IDbTable table, IDbModel model)
+        {
+            var type = field.Type;
+            if (type != FieldType.Link)
+                return type;
+            return ComputedColumnConfigCollector.Find(table, field.Name, model) is { Kind: ComputedColumnKind.Provider }
+                ? FieldType.Scalar
+                : type;
         }
 
         /// <summary>

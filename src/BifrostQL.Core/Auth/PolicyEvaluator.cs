@@ -176,14 +176,18 @@ public sealed class PolicyEvaluator
     /// <paramref name="identity"/>: <see cref="ReadColumnDisposition.Allow"/>,
     /// <see cref="ReadColumnDisposition.Mask"/> (the selection succeeds with the
     /// value nulled), or <see cref="ReadColumnDisposition.Refuse"/> (the query
-    /// is rejected). Read denial has two sources:
-    ///   1. <see cref="TablePolicy.ReadRequires"/> — a column gated by
-    ///      <c>read-requires</c> is denied when the caller holds none of the
-    ///      listed grants (an empty grant list denies every non-admin caller).
-    ///   2. <see cref="TablePolicy.ReadDenyColumns"/> — an unconditional deny
+    /// is rejected). Read denial has two sources, evaluated deny-first:
+    ///   1. <see cref="TablePolicy.ReadDenyColumns"/> — an unconditional deny
     ///      blocks every non-admin caller; a deny qualified by
     ///      <see cref="TablePolicy.ReadDenyRoles"/> blocks only callers holding
-    ///      one of those roles.
+    ///      one of those roles, and a caller outside those roles falls through
+    ///      to the column's <c>read-requires</c> gate when one is declared.
+    ///   2. <see cref="TablePolicy.ReadRequires"/> — a column gated by
+    ///      <c>read-requires</c> is denied when the caller holds none of the
+    ///      listed grants (an empty grant list denies every non-admin caller).
+    /// <see cref="ModelConfigValidator"/> rejects a column named in both
+    /// lists at load, so the deny-first order only matters when the validator
+    /// is bypassed.
     /// The deny MODE resolves column <c>deny-mode</c> first, then the table
     /// <c>deny-mode</c>, then the source default: <c>refuse</c> for the deny
     /// list (shipped behaviour), <c>null</c> (mask) for <c>read-requires</c>.

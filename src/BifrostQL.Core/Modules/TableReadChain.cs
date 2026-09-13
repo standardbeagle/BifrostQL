@@ -220,6 +220,11 @@ public sealed class TableReadChain
         return masked;
     }
 
+    /// <summary>
+    /// Projects one column value: null when the column is masked for this
+    /// caller, decrypt/mask for an encrypted column per this chain's
+    /// <see cref="ReadProjection"/>, pass-through otherwise.
+    /// </summary>
     public object? ProjectValue(string columnDbName, object? raw) =>
         MaskedColumns.Contains(columnDbName) ? null : _crypto.Project(Table.DbName, columnDbName, raw);
 

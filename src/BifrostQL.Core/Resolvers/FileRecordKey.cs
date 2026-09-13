@@ -43,23 +43,13 @@ namespace BifrostQL.Core.Resolvers
 
             var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (var i = 0; i < keyColumns.Count; i++)
-                keyData[keyColumns[i].ColumnName] = Convert.ChangeType(parts[i], GetClrType(keyColumns[i].DataType));
+                // One SQL-type-to-CLR table for the whole engine: the same helper the
+                // security transformers use to coerce context claims, so a uuid key
+                // parses instead of throwing InvalidCastException from Convert.ChangeType.
+                keyData[keyColumns[i].ColumnName] = Auth.ContextValueCoercer.ConvertToClrType(parts[i], keyColumns[i].DataType);
 
             return keyData;
         }
 
-        private static Type GetClrType(string dataType)
-        {
-            var normalized = dataType.ToLowerInvariant();
-            return normalized switch
-            {
-                "int" or "integer" => typeof(int),
-                "bigint" => typeof(long),
-                "smallint" => typeof(short),
-                "tinyint" => typeof(byte),
-                "uniqueidentifier" or "uuid" => typeof(Guid),
-                _ => typeof(string)
-            };
-        }
     }
 }

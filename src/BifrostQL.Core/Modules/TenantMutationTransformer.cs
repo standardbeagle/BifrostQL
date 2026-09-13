@@ -62,7 +62,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 // caller. Normal inserts still pin their tenant as usual.
                 if (context.RestoreHardDeleted &&
                     (!data.TryGetValue(columnName, out var capturedTenant) ||
-                     !string.Equals(capturedTenant?.ToString(), tenantId.ToString(), StringComparison.Ordinal)))
+                     !CapturedMatchesTenant(capturedTenant, tenantId)))
                 {
                     return new MutationTransformResult
                     {
@@ -84,7 +84,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 // Pin the tenant column to the caller's tenant, overriding any
                 // client-supplied value so a caller cannot plant a row in
                 // another tenant.
-                var pinned = new Dictionary<string, object?> (data) { [columnName] = tenantId };
+                var pinned = new Dictionary<string, object?>(data) { [columnName] = tenantId };
                 return new MutationTransformResult
                 {
                     MutationType = MutationType.Insert,
@@ -146,4 +146,19 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
     // than the read path, and the fail-fast on a misconfigured key is shared.
     private static string GetTenantContextKey(IDbModel model) =>
         TenantFilterTransformer.ResolveTenantContextKey(model);
+
+    /// <summary>
+    /// The captured tenant of a deferred restore must equal the caller's coerced tenant.
+    /// A GUID tenant compares as a GUID, so the casing the client captured it in cannot
+    /// refuse a legitimate restore; anything else compares ordinally. Unparseable input
+    /// never matches (fail closed).
+    /// </summary>
+    private static bool CapturedMatchesTenant(object? captured, object tenantId)
+    {
+        if (tenantId is Guid tenantGuid)
+            return captured is Guid capturedGuid
+                ? capturedGuid == tenantGuid
+                : Guid.TryParse(captured?.ToString(), out var parsed) && parsed == tenantGuid;
+        return string.Equals(captured?.ToString(), tenantId.ToString(), StringComparison.Ordinal);
+    }
 }

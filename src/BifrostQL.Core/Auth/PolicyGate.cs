@@ -33,18 +33,17 @@ public sealed class PolicyGate : IPolicyGate
         => Evaluate(qualifiedTable, (policy, table) => _evaluator.CanAct(policy, action, _identity));
 
     public PolicyDecision CanWriteColumn(string qualifiedTable, string column)
-        => Evaluate(qualifiedTable, (policy, table) => _evaluator.IsColumnAllowed(
-            policy, ResolveColumn(table, column), PolicyDirection.Write, _identity));
+        => Evaluate(qualifiedTable, (policy, table) =>
+            ResolveColumn(table, column) is { } resolved
+                ? _evaluator.IsColumnAllowed(policy, resolved, PolicyDirection.Write, _identity)
+                : PolicyDecision.Deny);
 
     public PolicyDecision CanReadColumn(string qualifiedTable, string column)
         => Evaluate(qualifiedTable, (policy, table) =>
-        {
-            var resolved = ResolveColumn(table, column);
-            var disposition = _evaluator.GetReadDisposition(policy, resolved, _identity);
-            return disposition == ReadColumnDisposition.Allow
+            ResolveColumn(table, column) is { } resolved
+            && _evaluator.GetReadDisposition(policy, resolved, _identity) == ReadColumnDisposition.Allow
                 ? PolicyDecision.Allow
-                : PolicyDecision.Deny;
-        });
+                : PolicyDecision.Deny);
 
     public void Require(string qualifiedTable, PolicyAction action)
     {
@@ -73,11 +72,16 @@ public sealed class PolicyGate : IPolicyGate
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };
     }
 
-    private static string ResolveColumn(IDbTable table, string column)
+    /// <summary>
+    /// The column's db name, or null when the table has no such column. A name the model does
+    /// not carry has no policy to allow it, so both column questions answer Deny for null
+    /// rather than passing the raw name to the evaluator, where "unmentioned" reads as Allow.
+    /// </summary>
+    private static string? ResolveColumn(IDbTable table, string column)
     {
-        if (string.IsNullOrWhiteSpace(column)) return column;
+        if (string.IsNullOrWhiteSpace(column)) return null;
         return table.Columns.FirstOrDefault(c =>
             string.Equals(c.DbName, column, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(c.GraphQlName, column, StringComparison.OrdinalIgnoreCase))?.DbName ?? column;
+            string.Equals(c.GraphQlName, column, StringComparison.OrdinalIgnoreCase))?.DbName;
     }
 }

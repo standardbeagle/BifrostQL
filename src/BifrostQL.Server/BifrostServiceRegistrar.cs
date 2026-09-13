@@ -495,6 +495,35 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// The mount's own schema-resolution rule (BifrostHttpMiddleware.ResolveExtensionsAsync),
+        /// applied to the request an app endpoint is answering: a registered GraphQL path in
+        /// PathBase or Path picks that database; otherwise the single registered endpoint is the
+        /// answer, and with more than one the gate refuses rather than guess — the mount throws
+        /// UnknownBifrostEndpointException there, so an app endpoint must not be answered from
+        /// whichever database happened to register first.
+        /// </summary>
+        private static Inputs ResolvePolicyGateInputs(PathCache<Inputs> cache, HttpContext http)
+        {
+            var pathBase = http.Request.PathBase.Value?.ToLowerInvariant();
+            if (!string.IsNullOrEmpty(pathBase) && cache.HasPath(pathBase))
+                return cache.GetValueAsync(pathBase).GetAwaiter().GetResult();
+
+            var path = http.Request.Path.Value?.ToLowerInvariant();
+            if (!string.IsNullOrEmpty(path) && cache.HasPath(path))
+                return cache.GetValueAsync(path).GetAwaiter().GetResult();
+
+            if (cache.Count > 1)
+                throw new InvalidOperationException(
+                    "IPolicyGate could not resolve a database model: more than one GraphQL endpoint is " +
+                    $"registered and the request path '{http.Request.PathBase}{http.Request.Path}' is not one " +
+                    "of them. Mount the endpoint under a registered GraphQL path so the gate resolves that " +
+                    "endpoint's model, as the GraphQL mount does.");
+
+            return cache.GetFirstValueAsync().GetAwaiter().GetResult()
+                ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
+        }
+
+        /// <summary>
         /// Registers the GraphQL pipeline (System.Text.Json, the bounded depth/complexity
         /// analyzer, error logging) plus, when auth is enabled and JWT settings are bound, the
         /// cookie + OIDC authentication handlers. The complexity guard is applied even when
@@ -520,9 +549,7 @@ namespace BifrostQL.Server
                 // the GraphQL mount refuses that same caller, instead of a 500 out of DI.
                 if (BifrostIdentityGate.Project(http, out var context) != BifrostIdentityOutcome.Projected)
                     return PolicyGate.Refused;
-                var inputs = sp.GetRequiredService<PathCache<Inputs>>().GetFirstValueAsync()
-                    .GetAwaiter().GetResult()
-                    ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
+                var inputs = ResolvePolicyGateInputs(sp.GetRequiredService<PathCache<Inputs>>(), http);
                 var model = (inputs["model"] as BifrostQL.Core.Model.IDbModel)
                     ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
                 return new PolicyGate(model, PolicyIdentity.FromUserContext(context));

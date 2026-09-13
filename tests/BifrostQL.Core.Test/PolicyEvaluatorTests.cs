@@ -158,6 +158,7 @@ public class PolicyEvaluatorTests
 
         evaluator.CanAct(policy, PolicyAction.Delete, Identity("admin")).Allowed
             .Should().BeTrue();
+        // An action the policy does not list is denied even for the admin (D7).
     }
 
     // ---- policy-actions bracket grants (S3) ----
@@ -201,7 +202,6 @@ public class PolicyEvaluatorTests
         // Admin holds no grants, yet the bracket gate is bypassed (D7 grant half).
         evaluator.CanAct(policy, PolicyAction.Delete, Identity("admin")).Allowed
             .Should().BeTrue();
-        // An action the policy does not list is denied even for the admin (D7).
         evaluator.CanAct(policy, PolicyAction.Update, Identity("admin")).Allowed
             .Should().BeFalse();
     }

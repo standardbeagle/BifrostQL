@@ -1,5 +1,5 @@
 export { useAppMetadata } from './metadata/use-app-metadata';
-export { usePolicy } from '@bifrostql/react';
+export { usePolicy } from './auth/use-policy';
 export type { UsePolicyResult } from '@bifrostql/react';
 export type { UseAppMetadataResult } from './metadata/use-app-metadata';
 export type {

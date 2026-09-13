@@ -1,5 +1,5 @@
 import type { FieldMetadata } from '../metadata/app-metadata-types';
-import { usePolicy } from '@bifrostql/react';
+import { usePolicy } from '../auth/use-policy';
 import {
   ScalarControl,
   DateControl,

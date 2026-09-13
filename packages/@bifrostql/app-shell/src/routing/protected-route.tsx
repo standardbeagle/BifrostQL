@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useSession } from '../auth/use-session';
-import { usePolicy } from '@bifrostql/react';
+import { usePolicy } from '../auth/use-policy';
 
 /** Props for {@link ProtectedRoute}. */
 export interface ProtectedRouteProps {

@@ -7,16 +7,6 @@ Authorization policies decide what an authenticated caller may do. You declare t
 table metadata, and one evaluator enforces them on every read, every write, and every
  schema surface — GraphQL, MCP, pgwire, gRPC, OData, S3, and your own endpoints alike.
 
-### Where enforcement happens
-
-Your own endpoints can ask the same table policy evaluator:
-
-```csharp
-app.MapPost("/payments", (IPolicyGate policy) => { policy.Require("public.payments", PolicyAction.Create); return Results.Ok(); });
-```
-
-This checks table and column policy only; row-level answers come from the data path or `_can`.
-
 Authentication and authorization are separate jobs here.
 [Authentication](/BifrostQL/guides/authentication/) establishes *who* the caller is and
 projects it into a user context. This guide covers what that identity is then allowed to
@@ -304,7 +294,7 @@ bracketed roles on `submitted->approved` restrict that edge to `manager` and to 
 See [Metadata-Defined State Machines](/BifrostQL/guides/state-machines/) for the full
 transition syntax.
 
-## Where enforcement happens
+## Where enforcement happens, and your own endpoints
 
 Two transformers carry the policy, both at priority 1 — immediately after tenant isolation
 at priority 0, and ahead of every application-level module:
@@ -318,6 +308,18 @@ at priority 0, and ahead of every application-level module:
 Neither can be skipped. A protocol adapter reaches data through `IQueryIntentExecutor` or
 `IMutationIntentExecutor`, and both run the full transformer chain, so no front door has an
 API that bypasses policy.
+
+Application endpoints can ask the same evaluator:
+
+```csharp
+app.MapPost("/payments", (IPolicyGate policy) =>
+{
+    policy.Require("public.payments", PolicyAction.Create);
+    return Results.Ok();
+});
+```
+
+This checks table and column policy only; row-level answers come from the data path or `_can`.
 
 ## Related
 

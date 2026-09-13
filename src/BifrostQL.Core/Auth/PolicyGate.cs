@@ -37,8 +37,14 @@ public sealed class PolicyGate : IPolicyGate
             policy, ResolveColumn(table, column), PolicyDirection.Write, _identity));
 
     public PolicyDecision CanReadColumn(string qualifiedTable, string column)
-        => Evaluate(qualifiedTable, (policy, table) => _evaluator.IsColumnAllowed(
-            policy, ResolveColumn(table, column), PolicyDirection.Read, _identity));
+        => Evaluate(qualifiedTable, (policy, table) =>
+        {
+            var resolved = ResolveColumn(table, column);
+            var disposition = _evaluator.GetReadDisposition(policy, resolved, _identity);
+            return disposition == ReadColumnDisposition.Allow
+                ? PolicyDecision.Allow
+                : PolicyDecision.Deny;
+        });
 
     public void Require(string qualifiedTable, PolicyAction action)
     {

@@ -475,4 +475,69 @@ public class ModelConfigValidatorTests
 
         act.Should().NotThrow();
     }
+
+    // ---- policy-self-deny / policy-self-column (S6b) ----
+
+    private static DbModelTestFixture SelfDenyModel(string selfDeny, string? selfColumn, bool withUserIdColumn)
+    {
+        return DbModelTestFixture.Create().WithTable("users", t =>
+        {
+            t.WithSchema("public").WithPrimaryKey("id")
+                .WithColumn("permission_profile_id", "int")
+                .WithMetadata(MetadataKeys.Policy.Actions, "read,update")
+                .WithMetadata(MetadataKeys.Policy.SelfDeny, selfDeny);
+            if (withUserIdColumn)
+                t.WithColumn("user_id", "int");
+            if (selfColumn is not null)
+                t.WithMetadata(MetadataKeys.Policy.SelfColumn, selfColumn);
+        });
+    }
+
+    [Fact]
+    public void Validate_SelfDenyNamesMissingColumn_Throws()
+    {
+        var model = SelfDenyModel("permission_profile_id, nonexistent", "id", withUserIdColumn: false).Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("public.users").And.Contain("nonexistent")
+            .And.Contain(MetadataKeys.Policy.SelfDeny);
+    }
+
+    [Fact]
+    public void Validate_SelfColumnNamesMissingColumn_Throws()
+    {
+        var model = SelfDenyModel("permission_profile_id", "owner_id", withUserIdColumn: false).Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("public.users").And.Contain("owner_id")
+            .And.Contain(MetadataKeys.Policy.SelfColumn);
+    }
+
+    [Fact]
+    public void Validate_DefaultSelfColumnUserIdMissing_Throws()
+    {
+        // No policy-self-column: the effective self column is the user_id default,
+        // and a table without that column cannot express the rule — fail at load.
+        var model = SelfDenyModel("permission_profile_id", selfColumn: null, withUserIdColumn: false).Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain("public.users").And.Contain("user_id")
+            .And.Contain(MetadataKeys.Policy.SelfColumn);
+    }
+
+    [Fact]
+    public void Validate_SelfDenyWithExistingColumns_Passes()
+    {
+        var model = SelfDenyModel("permission_profile_id", selfColumn: null, withUserIdColumn: true).Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
 }

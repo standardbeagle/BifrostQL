@@ -1,6 +1,6 @@
 using System.Globalization;
+using BifrostQL.Core;
 using BifrostQL.Core.Model;
-using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Auth;
 
@@ -22,10 +22,7 @@ internal static class ContextValueCoercer
 
         try
         {
-            var target = GetClrType(column.DataType);
-            return target == typeof(string) && value is string
-                ? value
-                : Convert.ChangeType(value, target, CultureInfo.InvariantCulture)!;
+            return ConvertToClrType(value, column.DataType);
         }
         catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
         {
@@ -33,7 +30,16 @@ internal static class ContextValueCoercer
         }
     }
 
-    private static Type GetClrType(string dataType) =>
+    internal static object ConvertToClrType(object value, string dataType)
+    {
+        var normalized = dataType.ToLowerInvariant();
+        if (normalized is "uniqueidentifier" or "uuid")
+            return value is Guid guid ? guid : Guid.Parse(value.ToString()!);
+
+        return Convert.ChangeType(value, GetClrType(dataType), CultureInfo.InvariantCulture)!;
+    }
+
+    internal static Type GetClrType(string dataType) =>
         dataType.ToLowerInvariant() switch
         {
             "int" or "integer" => typeof(int),
@@ -46,7 +52,7 @@ internal static class ContextValueCoercer
             _ => typeof(string)
         };
 
-    private static BifrostExecutionError AccessDenied() =>
+    private static Resolvers.BifrostExecutionError AccessDenied() =>
         new("Tenant context value is invalid for the target column.")
-        { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+        { ErrorCode = Resolvers.BifrostExecutionError.AccessDeniedCode };
 }

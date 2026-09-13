@@ -83,6 +83,52 @@ public sealed class ContextValueCoercionTests
         exception.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
     }
 
+    [Fact]
+    public void GuidContextValue_CoercesToGuid()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", table => table
+                .WithPrimaryKey("id")
+                .WithColumn("id", "int")
+                .WithColumn("account_id", "uuid")
+                .WithMetadata("tenant-filter", "account_id"))
+            .Build();
+        var expected = Guid.NewGuid();
+        var context = new QueryTransformContext
+        {
+            Model = model,
+            UserContext = new Dictionary<string, object?> { ["tenant_id"] = expected.ToString() },
+            QueryType = QueryType.Standard
+        };
+
+        var filter = new TenantFilterTransformer().GetAdditionalFilter(model.GetTableFromDbName("Orders"), context);
+
+        filter!.Next!.Value.Should().BeOfType<Guid>().Which.Should().Be(expected);
+    }
+
+    [Fact]
+    public void InvalidGuidContextValue_FailsClosed()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", table => table
+                .WithPrimaryKey("id")
+                .WithColumn("id", "int")
+                .WithColumn("account_id", "uuid")
+                .WithMetadata("tenant-filter", "account_id"))
+            .Build();
+        var context = new QueryTransformContext
+        {
+            Model = model,
+            UserContext = new Dictionary<string, object?> { ["tenant_id"] = "not-a-guid" },
+            QueryType = QueryType.Standard
+        };
+
+        var exception = Assert.Throws<BifrostExecutionError>(() =>
+            new TenantFilterTransformer().GetAdditionalFilter(model.GetTableFromDbName("Orders"), context));
+
+        exception.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+    }
+
     private static IDbModel TenantModel() => DbModelTestFixture.Create()
         .WithTable("Orders", table => table
             .WithPrimaryKey("id")

@@ -903,6 +903,46 @@ describe('BifrostTable', () => {
       expect(cells[1]).toHaveTextContent('');
     });
 
+    it('renders a client computed column on a projected table while a withheld column reads as an em-dash', async () => {
+      // Arrange: the member projection withholds `email` and never names the
+      // client `computed` column `label`.
+      const masked: DbSchemaProjection = {
+        ...MEMBER,
+        columns: [
+          { graphQlName: 'id', readable: true, writable: false },
+          { graphQlName: 'name', readable: true, writable: false },
+          { graphQlName: 'email', readable: false, writable: false },
+        ],
+      };
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged([mockUsers[0]]) } },
+        true,
+        200,
+        masked,
+      );
+      renderTable({
+        columns: [
+          ...defaultColumns,
+          {
+            field: 'label',
+            header: 'Label',
+            computed: (row) => `#${row.id} ${row.name}`,
+          },
+        ],
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId('table-row-1')).toBeInTheDocument();
+      });
+
+      // Assert: the computed cell carries its value; only `email` is masked.
+      const cells = within(screen.getByTestId('table-row-1')).getAllByRole(
+        'cell',
+      );
+      await waitFor(() => expect(cells[2]).toHaveTextContent('—'));
+      expect(cells[3]).toHaveTextContent('#1 Alice');
+      expect(cells[1]).toHaveTextContent('Alice');
+    });
+
     it('a row carrying _can overrides the table-level answer; a row without it inherits', async () => {
       // Arrange: the table forbids update and delete; two rows carry their
       // own answer, the third carries none.

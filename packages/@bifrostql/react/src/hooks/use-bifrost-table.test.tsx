@@ -6348,6 +6348,30 @@ describe('useBifrostTable', () => {
         expect(unprojected.result.current.isColumnMasked('name')).toBe(false);
       });
 
+      it('isColumnMasked leaves a client computed column alone on a projected table', async () => {
+        // Arrange: a member projection withholds `email`; `fullName` is a
+        // client `computed` column the projection never names.
+        const { result } = renderAuto({
+          ...MEMBER,
+          columns: [
+            { graphQlName: 'id', readable: true, writable: false },
+            { graphQlName: 'name', readable: true, writable: false },
+            { graphQlName: 'email', readable: false, writable: false },
+            { graphQlName: 'age', readable: true, writable: false },
+          ],
+        });
+        await waitFor(() =>
+          expect(result.current.isColumnMasked('email')).toBe(true),
+        );
+
+        // Assert: only the column the projection withholds is masked; the
+        // computed value is still on the row.
+        expect(result.current.isColumnMasked('fullName')).toBe(false);
+        expect(result.current.isColumnMasked('name')).toBe(false);
+        await waitFor(() => expect(result.current.data).toHaveLength(3));
+        expect(result.current.data[0].fullName).toBe('Alice (alice@test.com)');
+      });
+
       it('fetches the projection once per identity and shares it with usePolicy', async () => {
         // Arrange: two tables and a direct usePolicy on one of them, all for
         // the same identity, in one QueryClient.

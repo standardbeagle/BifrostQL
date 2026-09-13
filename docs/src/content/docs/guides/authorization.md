@@ -116,6 +116,21 @@ so the scope is skipped there — constrain inserts with `policy-actions` instea
 
 ## Deny columns
 
+## Rules the admin cannot bypass
+
+`policy-self-deny` prevents a caller from changing listed columns on their own
+row, including callers with the administrator role. Its predicate is added to
+the mutation `WHERE` clause, not evaluated by a pre-read, and is combined with
+any row scope. The default `policy-self-column` is `user_id`, the fixed context
+key containing the caller's user id. It is not `user-audit-key`, which identifies
+the audit claim used for created-by/updated-by stamps. The admin bypass is not
+consulted for this rule because allowing an administrator to change their own
+permissions would defeat the self-protection decision.
+
+```text
+public.users { policy-self-deny: permission_profile_id, cost_rate; policy-self-column: id }
+```
+
 Column gating has two directions and two flavours. A denied column is enforced
 in one of two **deny modes** (see [Mask or refuse](#mask-or-refuse)): `refuse`
 rejects the request, `null` masks the value to null in the selection. Under

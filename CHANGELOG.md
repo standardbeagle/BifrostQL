@@ -2,6 +2,8 @@
 
 - Add `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.
 - Add column-level `writable-values` literal allow-lists for mutation policy.
+- Add `policy-self-deny` to prevent callers, including administrators, changing
+  protected columns on their own row.
 
 All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-builder extraction plan from Membership Manager build`).
 

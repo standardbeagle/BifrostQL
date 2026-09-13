@@ -1,6 +1,7 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Core.Modules;
 
@@ -83,7 +84,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 // Pin the tenant column to the caller's tenant, overriding any
                 // client-supplied value so a caller cannot plant a row in
                 // another tenant.
-                var pinned = new Dictionary<string, object?>(data) { [columnName] = tenantId };
+                var pinned = new Dictionary<string, object?> (data) { [columnName] = tenantId };
                 return new MutationTransformResult
                 {
                     MutationType = MutationType.Insert,
@@ -134,8 +135,11 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 $"Tenant ID cannot be null for table '{fullTableName}'.")
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
-        return tenantId;
+        return ContextValueCoercer.Coerce(table, GetTenantColumn(table, context), tenantId);
     }
+
+    private static string GetTenantColumn(IDbTable table, MutationTransformContext context) =>
+        table.GetMetadataValue(MetadataKey)?.ToString() ?? string.Empty;
 
     // Resolve through the SAME rule as the read side (TenantFilterTransformer): one
     // resolution point means the write path can never scope by a different tenant claim

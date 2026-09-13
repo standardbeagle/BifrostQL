@@ -1,6 +1,7 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Core.Modules;
 
@@ -51,7 +52,8 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 
-        return TableFilterFactory.Equals(table, columnName, tenantId);
+        return TableFilterFactory.Equals(table, columnName,
+            ContextValueCoercer.Coerce(table, columnName, tenantId));
     }
 
     /// <summary>

@@ -50,7 +50,8 @@ public static class RowScopeCompiler
         if (value is null)
             throw new BifrostExecutionError(MissingContextMessage);
 
-        return TableFilterFactory.Equals(table, column, value);
+        return TableFilterFactory.Equals(table, column,
+            ContextValueCoercer.Coerce(table, column, value));
     }
 
     /// <summary>

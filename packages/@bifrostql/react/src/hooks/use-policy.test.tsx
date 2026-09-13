@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import {
+  renderHook,
+  waitFor,
+  act,
+  render,
+  screen,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
@@ -20,10 +26,19 @@ const USERS_TABLE = {
   ],
 };
 
-function createPolicyFetchMock(grants: string[], tables: unknown[]) {
+/**
+ * `grants` is read on every call, so a test can change what the server would
+ * answer for the next identity or the next refresh.
+ */
+function createPolicyFetchMock(
+  grants: string[] | (() => string[]),
+  tables: unknown[],
+) {
   return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
-    const data: Record<string, unknown> = { _grants: grants };
+    const data: Record<string, unknown> = {
+      _grants: typeof grants === 'function' ? grants() : grants,
+    };
     if (body.query.includes('_dbSchema')) {
       data._dbSchema = tables;
     }
@@ -126,5 +141,116 @@ describe('usePolicy', () => {
     expect(result.current.can('read')).toBe(false);
     expect(result.current.readable('id')).toBe(false);
     expect(result.current.writable('id')).toBe(false);
+  });
+
+  it('issues one fetch for two consumers of the same table', async () => {
+    // Arrange
+    globalThis.fetch = createPolicyFetchMock(['admin'], [USERS_TABLE]);
+    const Wrapper = createWrapper();
+    function Consumer({ label }: { label: string }) {
+      const policy = usePolicy('users', { identity: 'user-1' });
+      return (
+        <span data-testid={label}>
+          {policy.isLoading ? 'loading' : String(policy.can('update'))}
+        </span>
+      );
+    }
+
+    // Act
+    render(
+      <Wrapper>
+        <Consumer label="a" />
+        <Consumer label="b" />
+      </Wrapper>,
+    );
+
+    // Assert: both read the same cached answer from a single request.
+    await waitFor(() =>
+      expect(screen.getByTestId('a')).toHaveTextContent('true'),
+    );
+    expect(screen.getByTestId('b')).toHaveTextContent('true');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches when the identity changes, so a new user never reads the old grants', async () => {
+    // Arrange: the server answers for whoever is signed in right now.
+    let serverGrants: string[] = [];
+    globalThis.fetch = createPolicyFetchMock(() => serverGrants, []);
+
+    // Act: signed out, then signed in as user-1, then switched to user-2.
+    const { result, rerender } = renderHook(
+      ({ identity }: { identity?: string }) =>
+        usePolicy(undefined, { identity }),
+      { wrapper: createWrapper(), initialProps: {} },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.grants).toEqual([]);
+
+    serverGrants = ['dbo.users.read'];
+    rerender({ identity: 'user-1' });
+    await waitFor(() =>
+      expect(result.current.grants).toEqual(['dbo.users.read']),
+    );
+
+    serverGrants = ['dbo.orders.read'];
+    rerender({ identity: 'user-2' });
+
+    // Assert: each identity got its own request and its own answer.
+    await waitFor(() =>
+      expect(result.current.grants).toEqual(['dbo.orders.read']),
+    );
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('refetches on refresh()', async () => {
+    // Arrange
+    let serverGrants = ['dbo.users.read'];
+    globalThis.fetch = createPolicyFetchMock(() => serverGrants, []);
+    const { result } = renderHook(
+      () => usePolicy(undefined, { identity: 'user-1' }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+    await waitFor(() =>
+      expect(result.current.grants).toEqual(['dbo.users.read']),
+    );
+
+    // Act
+    serverGrants = [];
+    act(() => result.current.refresh());
+
+    // Assert
+    await waitFor(() => expect(result.current.grants).toEqual([]));
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces a failed fetch as error and denies everything without throwing', async () => {
+    // Arrange
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: () => Promise.resolve({}),
+      } as Response),
+    );
+
+    // Act
+    const { result } = renderHook(
+      () => usePolicy('users', { identity: 'user-1' }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // Assert: fail closed, and the error is data on the result, not a throw.
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.grants).toEqual([]);
+    expect(result.current.can('read')).toBe(false);
+    expect(result.current.readable('email')).toBe(false);
+    expect(result.current.writable('email')).toBe(false);
   });
 });

@@ -16,6 +16,9 @@ import type {
   QueryOptions,
   UserRow,
   OrderRow,
+  DbSchemaProjection,
+  DbSchemaColumnProjection,
+  GrantsProjection,
 } from './index';
 import { Status } from './index';
 
@@ -51,6 +54,22 @@ describe('@bifrostql/types barrel', () => {
       },
     };
     expectTypeOf(meta).toMatchTypeOf<AppMetadata>();
+  });
+
+  it('re-exports the policy projection contract types', () => {
+    // `_grants: [String!]!` on the wire (SchemaGenerator.cs), so the projection
+    // is the bare list, not an envelope.
+    expectTypeOf<GrantsProjection>().toEqualTypeOf<string[]>();
+    expectTypeOf<DbSchemaProjection>().toHaveProperty('allowedActions');
+    expectTypeOf<DbSchemaProjection>().toHaveProperty('columns');
+    expectTypeOf<DbSchemaColumnProjection>().toHaveProperty('readable');
+    expectTypeOf<DbSchemaColumnProjection>().toHaveProperty('writable');
+    const column: DbSchemaColumnProjection = {
+      graphQlName: 'email',
+      readable: true,
+      writable: false,
+    };
+    expectTypeOf(column).toMatchTypeOf<DbSchemaColumnProjection>();
   });
 
   it('re-exports the filter/query contract types', () => {

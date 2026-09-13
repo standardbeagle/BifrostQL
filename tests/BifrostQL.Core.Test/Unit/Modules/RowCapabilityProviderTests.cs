@@ -130,6 +130,49 @@ public sealed class RowCapabilityProviderTests
         colleague.Should().Be(new RowCapabilities(Update: false, Delete: false));
     }
 
+    [Fact]
+    public async Task Provider_DeleteFollowsTheActionList()
+    {
+        var provider = new RowCapabilityProvider();
+
+        var listed = await Compute(provider, TestTable("policy-row-scope: user_id = {user_id}; policy-actions: update, delete"), Row(user: 1), Caller(userId: 1));
+        var unlisted = await Compute(provider, TestTable("policy-row-scope: user_id = {user_id}; policy-actions: update"), Row(user: 1), Caller(userId: 1));
+
+        listed.Delete.Should().BeTrue();
+        unlisted.Delete.Should().BeFalse("an unlisted action is refused even on the caller's own row");
+        unlisted.Update.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Provider_ActionGateComposesWithScope_UpdateUnlistedIsFalseOnOwnRow()
+    {
+        var table = TestTable("policy-row-scope: user_id = {user_id}; policy-actions: delete");
+
+        var own = await Compute(new RowCapabilityProvider(), table, Row(user: 1), Caller(userId: 1));
+
+        own.Should().Be(new RowCapabilities(Update: false, Delete: true));
+    }
+
+    [Fact]
+    public async Task Provider_AdminIsCapableOnEveryRow()
+    {
+        var table = TestTable("policy-row-scope: user_id = {user_id}; policy-actions: update, delete");
+        var provider = new RowCapabilityProvider();
+
+        var own = await Compute(provider, table, Row(user: 1), Admin(userId: 1));
+        var other = await Compute(provider, table, Row(user: 2), Admin(userId: 1));
+
+        own.Should().Be(new RowCapabilities(Update: true, Delete: true));
+        other.Should().Be(new RowCapabilities(Update: true, Delete: true));
+    }
+
+    [Fact]
+    public void Collector_EmitsNothingForATableWithoutPolicy()
+    {
+        ComputedColumnConfigCollector.FromTable(TestTable(""))
+            .Should().NotContain(c => c.Name == RowCapabilityProvider.FieldName);
+    }
+
     private static async Task<RowCapabilities> Compute(
         RowCapabilityProvider provider,
         IDbTable table,

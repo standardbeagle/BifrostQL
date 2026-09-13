@@ -99,7 +99,7 @@ namespace BifrostQL.Mcp.Test
                             e.Path = EndpointPath;
                             e.Metadata = new[]
                             {
-                                "*.ledger_entries { policy-actions: create }",
+                                "*.ledger_entries { policy-actions: read, create }",
                                 "*.staff { policy-actions: read; policy-read-deny: ssn }",
                             };
                             e.DisableAuth = true;

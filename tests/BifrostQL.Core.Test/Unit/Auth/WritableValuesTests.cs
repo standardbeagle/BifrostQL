@@ -59,6 +59,10 @@ public sealed class WritableValuesTests
     {
         var model = DbModelTestFixture.Create().WithTable("profiles", t => t
             .WithSchema("public").WithPrimaryKey("id").WithColumn("state", "varchar")
+            // A table with any policy and no listed actions denies every action (D7 /
+            // policy-default deny), so the insert must be granted before the value
+            // rule is ever consulted; this test is about the value rule.
+            .WithMetadata(MetadataKeys.Policy.Actions, "create")
             .WithColumnMetadata("state", MetadataKeys.Policy.WritableValues, "draft,submitted")
             .WithColumnMetadata("state", MetadataKeys.Policy.WriteRequires, "profiles.manage"))
             .Build();

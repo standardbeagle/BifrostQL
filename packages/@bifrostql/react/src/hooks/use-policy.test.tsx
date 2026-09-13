@@ -73,7 +73,9 @@ describe('usePolicy', () => {
     globalThis.fetch = createPolicyFetchMock(['dbo.users.read'], []);
 
     // Act
-    const { result } = renderHook(() => usePolicy(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => usePolicy(), {
+      wrapper: createWrapper(),
+    });
 
     // Assert: the grants query runs even when no table is named.
     expect(result.current.isLoading).toBe(true);

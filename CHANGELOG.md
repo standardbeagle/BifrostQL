@@ -1,5 +1,6 @@
 # Changelog
 
+- Add per-row `_can { update delete }` capabilities for row-scoped tables.
 - Add `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.
 - Add column-level `writable-values` literal allow-lists for mutation policy.
 - Add `policy-self-deny` to prevent callers, including administrators, changing

@@ -227,6 +227,13 @@ column, or action name. A referenced-but-denied field answers
 map to the same wire status on every protocol adapter, so a caller cannot tell a denial
 from a miss by watching status codes.
 
+Tables with `policy-row-scope` also expose the per-row computed field
+`_can { update delete }`. It reports the caller's effective capability after
+both the row-scope match (or exemption/admin bypass) and `policy-actions` are
+applied; selecting `_can` automatically projects its scope column. Tables with
+both row scope and `history` are rejected at model load, so `_can` never shares
+an audit trail.
+
 ### Ask first
 
 A client should not discover authorization by trying and failing. Three root fields let it

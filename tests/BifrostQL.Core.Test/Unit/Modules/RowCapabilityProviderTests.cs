@@ -2,6 +2,7 @@ using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.ComputedColumns;
+using BifrostQL.Model;
 using FluentAssertions;
 using Xunit;
 using NSubstitute;
@@ -38,10 +39,10 @@ public sealed class RowCapabilityProviderTests
         var exempt = await provider.ComputeAsync(Context(model, table, definition, "member", "colleague", "time.edit_others"));
         var missing = await provider.ComputeAsync(Context(model, table, definition, null, "colleague"));
 
-        ((bool)((IDictionary<string, object?>)own!)["update"]).Should().BeTrue();
-        ((bool)((IDictionary<string, object?>)colleague!)["update"]).Should().BeFalse();
-        ((bool)((IDictionary<string, object?>)exempt!)["update"]).Should().BeTrue();
-        ((bool)((IDictionary<string, object?>)missing!)["update"]).Should().BeFalse();
+        ((bool)((IDictionary<string, object?>)own!)["update"]!).Should().BeTrue();
+        ((bool)((IDictionary<string, object?>)colleague!)["update"]!).Should().BeFalse();
+        ((bool)((IDictionary<string, object?>)exempt!)["update"]!).Should().BeTrue();
+        ((bool)((IDictionary<string, object?>)missing!)["update"]!).Should().BeFalse();
     }
 
     private static ComputedColumnContext Context(IDbModel model, IDbTable table, ComputedColumnDefinition definition, string? userId, string rowUser, params string[] grants)
@@ -61,12 +62,10 @@ public sealed class RowCapabilityProviderTests
     private static IDbTable TestTable(string metadata)
     {
         var table = Substitute.For<IDbTable>();
-        var user = Substitute.For<IDbColumn>();
-        user.DbName.Returns("user_id");
-        user.GraphQlName.Returns("userId");
+        var user = new ColumnDto { ColumnName = "user_id", GraphQlName = "userId" };
         table.Columns.Returns(new[] { user });
-        table.ColumnLookup.Returns(new Dictionary<string, IDbColumn>(StringComparer.OrdinalIgnoreCase) { ["user_id"] = user });
-        table.GraphQlLookup.Returns(new Dictionary<string, IDbColumn>(StringComparer.OrdinalIgnoreCase) { ["userId"] = user });
+        table.ColumnLookup.Returns(new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase) { ["user_id"] = user });
+        table.GraphQlLookup.Returns(new Dictionary<string, ColumnDto>(StringComparer.OrdinalIgnoreCase) { ["userId"] = user });
         table.GetMetadataValue(Arg.Any<string>()).Returns(call => call.Arg<string>() switch
         {
             MetadataKeys.Policy.RowScope => metadata.Contains("policy-row-scope:") ? "user_id = {user_id}" : null,

@@ -210,6 +210,11 @@ public sealed class PolicyEvaluator
             defaultRefuse = true;
             denied = policy.ReadDenyRoles.Count == 0
                 || identity.Grants.Any(policy.ReadDenyRoles.Contains);
+            if (!denied && policy.ReadRequires.TryGetValue(column, out var requiredOutsideDeny))
+            {
+                denied = !identity.Grants.Any(requiredOutsideDeny.Contains);
+                defaultRefuse = false;
+            }
         }
         else if (policy.ReadRequires.ContainsKey(column))
         {

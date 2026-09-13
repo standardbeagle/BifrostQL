@@ -213,6 +213,24 @@ public sealed class ColumnReadMaskTests
             .Should().Be(ReadColumnDisposition.Allow);
     }
 
+    [Fact]
+    public void Disposition_OverlappingRoleQualifiedDeny_OutsideRoleStillHonorsRequires()
+    {
+        var model = ModelWithMembers(
+            readRequires: "rates.view_cost",
+            tableMetadata: new[]
+            {
+                (MetadataKeys.Policy.ReadDeny, "cost_rate"),
+                (MetadataKeys.Policy.ReadDenyRoles, "officer"),
+            });
+        var policy = PolicyConfigCollector.FromTable(Members(model));
+
+        new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("member"))
+            .Should().Be(ReadColumnDisposition.Mask);
+        new PolicyEvaluator().GetReadDisposition(policy, "cost_rate", Identity("officer"))
+            .Should().Be(ReadColumnDisposition.Refuse);
+    }
+
     // ---- PolicyFilterTransformer ----
 
     [Fact]

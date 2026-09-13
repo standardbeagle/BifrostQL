@@ -19,6 +19,37 @@ namespace BifrostQL.Core.Test.Model;
 /// </summary>
 public class ModelConfigValidatorSecurityTests
 {
+    [Fact]
+    public void Validate_OverlappingReadGates_ThrowsNamingBothKeysAndColumn()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t.WithSchema("dbo").WithPrimaryKey("Id")
+                .WithColumn("secret")
+                .WithColumnMetadata("secret", MetadataKeys.Policy.ReadRequires, "orders.read")
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "secret"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>().Which.Message
+            .Should().Contain(MetadataKeys.Policy.ReadDeny)
+            .And.Contain(MetadataKeys.Policy.ReadRequires)
+            .And.Contain("secret");
+    }
+
+    [Fact]
+    public void Validate_NonOverlappingReadGates_DoesNotThrow()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t.WithSchema("dbo").WithPrimaryKey("Id")
+                .WithColumn("secret").WithColumn("other")
+                .WithColumnMetadata("secret", MetadataKeys.Policy.ReadRequires, "orders.read")
+                .WithMetadata(MetadataKeys.Policy.ReadDeny, "other"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+        act.Should().NotThrow();
+    }
     // ---- Case-typo'd metadata key ----
 
     [Fact]

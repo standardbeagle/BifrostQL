@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
 import { useBifrostTable } from './use-bifrost-table';
+import { usePolicy } from './use-policy';
 import type {
   ColumnConfig,
   AggregateConfig,
@@ -13,14 +14,63 @@ import type {
   FilterPreset,
   ExportFormatter,
 } from './use-bifrost-table';
+import type { DbSchemaProjection } from '@bifrostql/types';
 
-function createFetchMock(response: unknown, ok = true, status = 200) {
-  return vi.fn().mockResolvedValue({
-    ok,
-    status,
-    statusText: ok ? 'OK' : 'Internal Server Error',
-    json: () => Promise.resolve(response),
+/** Every action allowed; the columns the editing fixtures use are writable. */
+const FULL_ACCESS: DbSchemaProjection = {
+  graphQlName: 'users',
+  allowedActions: ['read', 'create', 'update', 'delete'],
+  columns: ['id', 'name', 'email', 'age'].map((graphQlName) => ({
+    graphQlName,
+    readable: true,
+    writable: true,
+  })),
+};
+
+/**
+ * Answers the table's data query with `response` (honouring `ok`/`status`)
+ * and its `_dbSchema` policy query with `projection`. `null` leaves the table
+ * unprojected, as the server does for a table the caller may not read.
+ */
+function createFetchMock(
+  response: unknown,
+  ok = true,
+  status = 200,
+  projection: DbSchemaProjection | null = FULL_ACCESS,
+) {
+  return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.query.includes('_dbSchema')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () =>
+          Promise.resolve({
+            data: { _grants: [], _dbSchema: projection ? [projection] : [] },
+          }),
+      } as Response);
+    }
+    return Promise.resolve({
+      ok,
+      status,
+      statusText: ok ? 'OK' : 'Internal Server Error',
+      json: () => Promise.resolve(response),
+    } as Response);
   });
+}
+
+/**
+ * Body of the most recent fetch whose query selects `field` — the table's
+ * data query. The policy document goes out alongside it, so "the last fetch"
+ * is not a stable name for the data query.
+ */
+function lastQueryBodySelecting(field: string): { query: string } {
+  const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+  const bodies = calls.map((call) => JSON.parse(call[1].body));
+  const match = bodies.filter((body) => body.query.includes(field)).pop();
+  if (!match) throw new Error(`no fetch selected '${field}'`);
+  return match;
 }
 
 /** Wrap rows in the server's paged envelope (`{ total, data }`). */
@@ -3848,9 +3898,7 @@ describe('useBifrostTable', () => {
       // After debounce, the query should fire with the final filter
       await waitFor(
         () => {
-          const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
-            .calls;
-          const lastBody = JSON.parse(calls[calls.length - 1][1].body);
+          const lastBody = lastQueryBodySelecting('users');
           expect(lastBody.query).toContain('_contains');
           expect(lastBody.query).toContain('ali');
         },
@@ -4144,8 +4192,7 @@ describe('useBifrostTable', () => {
       });
 
       await waitFor(() => {
-        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-        const lastBody = JSON.parse(calls[calls.length - 1][1].body);
+        const lastBody = lastQueryBodySelecting('users');
         expect(lastBody.query).toContain('and:');
         expect(lastBody.query).not.toContain('_and');
       });
@@ -6066,7 +6113,7 @@ describe('useBifrostTable', () => {
       });
     });
 
-    describe('editable: false (default)', () => {
+    describe("editable: 'auto' (default) without a write handler", () => {
       it('exposes editing state but no columns are editable', async () => {
         globalThis.fetch = createFetchMock({
           data: { users: paged(mockUsers) },
@@ -6085,36 +6132,301 @@ describe('useBifrostTable', () => {
         await waitFor(() => expect(result.current.loading).toBe(false));
 
         expect(result.current.editing).toBeDefined();
+        expect(result.current.editable).toBe(false);
         expect(result.current.editing.isColumnEditable('name')).toBe(false);
         expect(result.current.editing.isColumnEditable('id')).toBe(false);
       });
 
-      it('allows per-column editable even when table editable is false', async () => {
-        globalThis.fetch = createFetchMock({
-          data: { users: paged(mockUsers) },
-        });
+      const perColumn: ColumnConfig[] = [
+        { field: 'id', header: 'ID' },
+        { field: 'name', header: 'Name', editable: true },
+        { field: 'email', header: 'Email' },
+      ];
 
-        const cols: ColumnConfig[] = [
-          { field: 'id', header: 'ID' },
-          { field: 'name', header: 'Name', editable: true },
-          { field: 'email', header: 'Email' },
-        ];
+      it('per-column editable is refused when the server projects nothing writable', async () => {
+        // Arrange: the table is not projected for this caller at all.
+        globalThis.fetch = createFetchMock(
+          { data: { users: paged(mockUsers) } },
+          true,
+          200,
+          null,
+        );
 
         const { result } = renderHook(
           () =>
             useBifrostTable({
               table: 'users',
-              columns: cols,
+              columns: perColumn,
               urlSync: false,
             }),
           { wrapper: createWrapper() },
         );
 
         await waitFor(() => expect(result.current.loading).toBe(false));
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
 
-        expect(result.current.editing.isColumnEditable('name')).toBe(true);
+        // Assert: a column flag cannot grant what the server withholds.
+        expect(result.current.editing.isColumnEditable('name')).toBe(false);
         expect(result.current.editing.isColumnEditable('id')).toBe(false);
         expect(result.current.editing.isColumnEditable('email')).toBe(false);
+      });
+
+      it('per-column editable holds when the projection marks the column writable', async () => {
+        globalThis.fetch = createFetchMock(
+          { data: { users: paged(mockUsers) } },
+          true,
+          200,
+          {
+            ...FULL_ACCESS,
+            columns: [
+              { graphQlName: 'id', readable: true, writable: false },
+              { graphQlName: 'name', readable: true, writable: true },
+              { graphQlName: 'email', readable: true, writable: true },
+            ],
+          },
+        );
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              table: 'users',
+              columns: perColumn,
+              urlSync: false,
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() =>
+          expect(result.current.editing.isColumnEditable('name')).toBe(true),
+        );
+        expect(result.current.editing.isColumnEditable('id')).toBe(false);
+        // Writable by policy, but the column config did not opt in.
+        expect(result.current.editing.isColumnEditable('email')).toBe(false);
+      });
+    });
+
+    describe("editable: 'auto' derived from the policy projection", () => {
+      const MEMBER: DbSchemaProjection = {
+        graphQlName: 'users',
+        allowedActions: ['read'],
+        columns: ['id', 'name', 'email', 'age'].map((graphQlName) => ({
+          graphQlName,
+          readable: true,
+          writable: false,
+        })),
+      };
+      const MANAGER: DbSchemaProjection = {
+        graphQlName: 'users',
+        allowedActions: ['read', 'update', 'delete'],
+        columns: [
+          { graphQlName: 'id', readable: true, writable: false },
+          { graphQlName: 'name', readable: true, writable: true },
+          { graphQlName: 'email', readable: true, writable: false },
+          { graphQlName: 'age', readable: true, writable: false },
+        ],
+      };
+
+      function renderAuto(
+        projection: DbSchemaProjection | null,
+        options: Partial<Parameters<typeof useBifrostTable>[0]> = {},
+      ) {
+        globalThis.fetch = createFetchMock(
+          { data: { users: paged(mockUsers) } },
+          true,
+          200,
+          projection,
+        );
+        return renderHook(
+          () =>
+            useBifrostTable({
+              table: 'users',
+              columns: editableColumns,
+              urlSync: false,
+              ...options,
+            }),
+          { wrapper: createWrapper() },
+        );
+      }
+
+      it('member projection: not editable, no editable columns', async () => {
+        const { result } = renderAuto(MEMBER, { onRowUpdate: vi.fn() });
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
+
+        expect(result.current.editable).toBe(false);
+        expect(result.current.editing.isColumnEditable('name')).toBe(false);
+        expect(result.current.editing.isColumnEditable('email')).toBe(false);
+      });
+
+      it('manager projection: editable, writable columns only', async () => {
+        const { result } = renderAuto(MANAGER, { onRowUpdate: vi.fn() });
+        await waitFor(() => expect(result.current.editable).toBe(true));
+
+        expect(result.current.editing.isColumnEditable('name')).toBe(true);
+        expect(result.current.editing.isColumnEditable('email')).toBe(false);
+        expect(result.current.editing.isColumnEditable('age')).toBe(false);
+      });
+
+      it('update allowed but no write handler: not editable', async () => {
+        // Columns carry no per-column opt-in; that path is covered above.
+        const { result } = renderAuto(MANAGER, { columns: defaultColumns });
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
+
+        expect(result.current.policy.can('update')).toBe(true);
+        expect(result.current.editable).toBe(false);
+        expect(result.current.editing.isColumnEditable('name')).toBe(false);
+      });
+
+      it('explicit editable: false wins over a manager projection', async () => {
+        const { result } = renderAuto(MANAGER, {
+          columns: defaultColumns,
+          editable: false,
+          onRowUpdate: vi.fn(),
+        });
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
+
+        expect(result.current.editable).toBe(false);
+        expect(result.current.editing.isColumnEditable('name')).toBe(false);
+      });
+
+      it('rowCan follows the row _can and falls back to the table answer', async () => {
+        const { result } = renderAuto(MEMBER, { onRowUpdate: vi.fn() });
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
+
+        const overriding = { id: 9, _can: { update: true, delete: true } };
+        const denying = { id: 8, _can: { update: false, delete: false } };
+        const silent = { id: 7 };
+
+        expect(result.current.rowCan(overriding, 'update')).toBe(true);
+        expect(result.current.rowCan(overriding, 'delete')).toBe(true);
+        expect(result.current.rowCan(denying, 'update')).toBe(false);
+        expect(result.current.rowCan(denying, 'delete')).toBe(false);
+        expect(result.current.rowCan(silent, 'update')).toBe(false);
+        expect(result.current.rowCan(silent, 'delete')).toBe(false);
+      });
+
+      it('rowCan update needs somewhere to write even when the row allows it', async () => {
+        const { result } = renderAuto(MANAGER);
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
+
+        expect(
+          result.current.rowCan({ id: 9, _can: { update: true } }, 'update'),
+        ).toBe(false);
+        expect(
+          result.current.rowCan({ id: 9, _can: { delete: true } }, 'delete'),
+        ).toBe(true);
+      });
+
+      it('isColumnMasked marks a readable:false column and nothing on an unprojected table', async () => {
+        const masked = renderAuto({
+          ...MEMBER,
+          columns: [
+            { graphQlName: 'id', readable: true, writable: false },
+            { graphQlName: 'name', readable: false, writable: false },
+          ],
+        });
+        await waitFor(() =>
+          expect(masked.result.current.isColumnMasked('name')).toBe(true),
+        );
+        expect(masked.result.current.isColumnMasked('id')).toBe(false);
+
+        const unprojected = renderAuto(null);
+        await waitFor(() =>
+          expect(unprojected.result.current.policy.isLoading).toBe(false),
+        );
+        expect(unprojected.result.current.isColumnMasked('name')).toBe(false);
+      });
+
+      it('fetches the projection once per identity and shares it with usePolicy', async () => {
+        // Arrange: two tables and a direct usePolicy on one of them, all for
+        // the same identity, in one QueryClient.
+        globalThis.fetch = createFetchMock({
+          data: { users: paged(mockUsers), orders: paged([]) },
+        });
+
+        const { result } = renderHook(
+          () => ({
+            users: useBifrostTable({
+              table: 'users',
+              columns: editableColumns,
+              urlSync: false,
+              identity: 'user-1',
+            }),
+            orders: useBifrostTable({
+              table: 'orders',
+              columns: [{ field: 'id', header: 'ID' }],
+              urlSync: false,
+              identity: 'user-1',
+            }),
+            policy: usePolicy('users', { identity: 'user-1' }),
+          }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.users.loading).toBe(false));
+        await waitFor(() =>
+          expect(result.current.policy.isLoading).toBe(false),
+        );
+
+        // Assert: one policy document per table, none for the duplicate.
+        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const policyTables = calls
+          .map((call) => JSON.parse(call[1].body))
+          .filter((body) => body.query.includes('_dbSchema'))
+          .map((body) => body.variables.table)
+          .sort();
+        expect(policyTables).toEqual(['orders', 'users']);
+        expect(result.current.users.policy.can('update')).toBe(true);
+        expect(result.current.policy.can('update')).toBe(true);
+      });
+
+      it('projection failure: read-only, error exposed on policy', async () => {
+        globalThis.fetch = vi.fn(
+          (_input: RequestInfo | URL, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body));
+            const isPolicy = body.query.includes('_dbSchema');
+            return Promise.resolve({
+              ok: !isPolicy,
+              status: isPolicy ? 500 : 200,
+              statusText: isPolicy ? 'Internal Server Error' : 'OK',
+              json: () =>
+                Promise.resolve(
+                  isPolicy ? {} : { data: { users: paged(mockUsers) } },
+                ),
+            } as Response);
+          },
+        );
+
+        const { result } = renderHook(
+          () =>
+            useBifrostTable({
+              table: 'users',
+              columns: editableColumns,
+              urlSync: false,
+              onRowUpdate: vi.fn(),
+            }),
+          { wrapper: createWrapper() },
+        );
+
+        await waitFor(() => expect(result.current.policy.isError).toBe(true));
+
+        expect(result.current.policy.error).toBeInstanceOf(Error);
+        expect(result.current.data).toHaveLength(3);
+        expect(result.current.error).toBeNull();
+        expect(result.current.editable).toBe(false);
+        expect(result.current.editing.isColumnEditable('name')).toBe(false);
+        expect(result.current.isColumnMasked('name')).toBe(false);
       });
     });
 

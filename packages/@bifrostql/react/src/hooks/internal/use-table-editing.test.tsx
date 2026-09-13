@@ -16,6 +16,7 @@ const data = [
 
 interface HarnessOverrides {
   autoSave?: boolean;
+  writable?: (field: string) => boolean;
   onRowUpdate?: (
     row: Record<string, unknown>,
     changes: Record<string, unknown>,
@@ -41,6 +42,7 @@ function renderEditing(overrides: HarnessOverrides = {}) {
     useTableEditing({
       columns,
       editable: true,
+      writable: overrides.writable ?? (() => true),
       data,
       rowKey: 'id',
       autoSave: overrides.autoSave ?? false,
@@ -51,6 +53,18 @@ function renderEditing(overrides: HarnessOverrides = {}) {
     }),
   );
 }
+
+describe('useTableEditing writable gate', () => {
+  it('a column the policy will not write is not editable, whatever the table says', () => {
+    // Arrange: the table is editable and `name` is not read-only, but the
+    // server projected it as not writable.
+    const { result } = renderEditing({ writable: (field) => field !== 'name' });
+
+    // Assert
+    expect(result.current.editing.isColumnEditable('name')).toBe(false);
+    expect(result.current.editing.isColumnEditable('email')).toBe(true);
+  });
+});
 
 describe('useTableEditing save-failure reporting', () => {
   it('surfaces an auto-save rejection instead of swallowing it', async () => {

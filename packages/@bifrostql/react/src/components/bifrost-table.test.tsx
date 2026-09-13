@@ -32,13 +32,71 @@ import {
   themeToCssVariables,
 } from './table-theme';
 import type { ThemeName, DarkThemeName } from './table-theme';
+import type { DbSchemaProjection } from '@bifrostql/types';
 
-function createFetchMock(response: unknown, ok = true, status = 200) {
-  return vi.fn().mockResolvedValue({
-    ok,
-    status,
-    statusText: ok ? 'OK' : 'Internal Server Error',
-    json: () => Promise.resolve(response),
+/** Every action allowed and every default column readable and writable. */
+const FULL_ACCESS: DbSchemaProjection = {
+  graphQlName: 'users',
+  allowedActions: ['read', 'create', 'update', 'delete'],
+  columns: ['id', 'name', 'email'].map((graphQlName) => ({
+    graphQlName,
+    readable: true,
+    writable: true,
+  })),
+};
+
+/** A reader: no writes, nothing writable. */
+const MEMBER: DbSchemaProjection = {
+  graphQlName: 'users',
+  allowedActions: ['read'],
+  columns: ['id', 'name', 'email'].map((graphQlName) => ({
+    graphQlName,
+    readable: true,
+    writable: false,
+  })),
+};
+
+/** Updates and deletes allowed, but only `name` takes a write. */
+const MANAGER: DbSchemaProjection = {
+  graphQlName: 'users',
+  allowedActions: ['read', 'update', 'delete'],
+  columns: [
+    { graphQlName: 'id', readable: true, writable: false },
+    { graphQlName: 'name', readable: true, writable: true },
+    { graphQlName: 'email', readable: true, writable: false },
+  ],
+};
+
+/**
+ * Answers the table's data query with `response` (honouring `ok`/`status`)
+ * and its `_dbSchema` policy query with `projection`. `null` leaves the table
+ * unprojected, as the server does for a table the caller may not read.
+ */
+function createFetchMock(
+  response: unknown,
+  ok = true,
+  status = 200,
+  projection: DbSchemaProjection | null = FULL_ACCESS,
+) {
+  return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.query.includes('_dbSchema')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () =>
+          Promise.resolve({
+            data: { _grants: [], _dbSchema: projection ? [projection] : [] },
+          }),
+      } as Response);
+    }
+    return Promise.resolve({
+      ok,
+      status,
+      statusText: ok ? 'OK' : 'Internal Server Error',
+      json: () => Promise.resolve(response),
+    } as Response);
   });
 }
 
@@ -721,6 +779,212 @@ describe('BifrostTable', () => {
 
       fireEvent.doubleClick(screen.getByText('Alice'));
       expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+    });
+  });
+
+  describe("editable 'auto' (policy-derived)", () => {
+    const gatedActions = [
+      { label: 'Edit', onClick: vi.fn(), permission: 'update' as const },
+      { label: 'Delete', onClick: vi.fn(), permission: 'delete' as const },
+      { label: 'View', onClick: vi.fn() },
+    ];
+
+    it('member projection: no editors and no gated row actions', async () => {
+      // Arrange: the caller may only read; the app wired a write handler anyway.
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged(mockUsers) } },
+        true,
+        200,
+        MEMBER,
+      );
+      renderTable({ onRowUpdate: vi.fn(), rowActions: gatedActions });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Act
+      fireEvent.doubleClick(screen.getByText('Alice'));
+
+      // Assert: nothing the server would refuse is offered; the ungated
+      // action stays the app's business.
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('action-edit')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('action-delete')).not.toBeInTheDocument();
+      expect(screen.getAllByTestId('action-view')).toHaveLength(3);
+    });
+
+    it('manager projection: editors on writable columns only, gated actions present', async () => {
+      // Arrange: update and delete allowed; only `name` is writable.
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged(mockUsers) } },
+        true,
+        200,
+        MANAGER,
+      );
+      renderTable({ onRowUpdate: vi.fn(), rowActions: gatedActions });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Act / Assert: the writable column takes an editor.
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      expect(screen.getByTestId('edit-input')).toBeInTheDocument();
+      fireEvent.keyDown(screen.getByTestId('edit-input'), { key: 'Escape' });
+
+      // The read-only column does not, even though the table is editable.
+      fireEvent.doubleClick(screen.getByText('alice@test.com'));
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+
+      expect(screen.getAllByTestId('action-edit')).toHaveLength(3);
+      expect(screen.getAllByTestId('action-delete')).toHaveLength(3);
+    });
+
+    it('update allowed but no onRowUpdate: read-only, and no throw', async () => {
+      // Arrange: 'auto' with nowhere to write must degrade, not refuse to
+      // render — the explicit-`true` throw is for a caller who asked.
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged(mockUsers) } },
+        true,
+        200,
+        MANAGER,
+      );
+      expect(() => renderTable()).not.toThrow();
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Act / Assert
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+    });
+
+    it('explicit editable={false} wins over a manager projection', async () => {
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged(mockUsers) } },
+        true,
+        200,
+        MANAGER,
+      );
+      renderTable({ editable: false, onRowUpdate: vi.fn() });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+    });
+
+    it('renders a withheld column as an em-dash and a null value as empty', async () => {
+      // Arrange: `email` is masked by policy; `name` is genuinely null.
+      const masked: DbSchemaProjection = {
+        ...FULL_ACCESS,
+        columns: [
+          { graphQlName: 'id', readable: true, writable: false },
+          { graphQlName: 'name', readable: true, writable: false },
+          { graphQlName: 'email', readable: false, writable: false },
+        ],
+      };
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged([{ id: 1, name: null, email: null }]) } },
+        true,
+        200,
+        masked,
+      );
+      renderTable();
+      await waitFor(() => {
+        expect(screen.getByTestId('table-row-1')).toBeInTheDocument();
+      });
+
+      // Assert: 'null' and 'withheld' read differently in the same row.
+      const cells = within(screen.getByTestId('table-row-1')).getAllByRole(
+        'cell',
+      );
+      await waitFor(() => expect(cells[2]).toHaveTextContent('—'));
+      expect(cells[1]).toHaveTextContent('');
+    });
+
+    it('a row carrying _can overrides the table-level answer; a row without it inherits', async () => {
+      // Arrange: the table forbids update and delete; two rows carry their
+      // own answer, the third carries none.
+      const rows = [
+        { ...mockUsers[0], _can: { update: false, delete: true } },
+        { ...mockUsers[1], _can: { update: true, delete: false } },
+        mockUsers[2],
+      ];
+      globalThis.fetch = createFetchMock(
+        { data: { users: paged(rows) } },
+        true,
+        200,
+        { ...MEMBER, columns: FULL_ACCESS.columns },
+      );
+      renderTable({ onRowUpdate: vi.fn(), rowActions: gatedActions });
+      await waitFor(() => {
+        expect(screen.getByText('Charlie')).toBeInTheDocument();
+      });
+
+      const alice = screen.getByTestId('table-row-1');
+      const bob = screen.getByTestId('table-row-2');
+      const charlie = screen.getByTestId('table-row-3');
+
+      // Alice: delete yes, update no.
+      expect(within(alice).getByTestId('action-delete')).toBeInTheDocument();
+      expect(
+        within(alice).queryByTestId('action-edit'),
+      ).not.toBeInTheDocument();
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+
+      // Bob: update yes, delete no.
+      expect(
+        within(bob).queryByTestId('action-delete'),
+      ).not.toBeInTheDocument();
+      expect(within(bob).getByTestId('action-edit')).toBeInTheDocument();
+      fireEvent.doubleClick(screen.getByText('Bob'));
+      expect(screen.getByTestId('edit-input')).toBeInTheDocument();
+      fireEvent.keyDown(screen.getByTestId('edit-input'), { key: 'Escape' });
+
+      // Charlie: the table-level answer, which is no to both.
+      expect(
+        within(charlie).queryByTestId('action-delete'),
+      ).not.toBeInTheDocument();
+      expect(
+        within(charlie).queryByTestId('action-edit'),
+      ).not.toBeInTheDocument();
+      fireEvent.doubleClick(screen.getByText('Charlie'));
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+    });
+
+    it('projection failure: table stays read-only and the error is surfaced', async () => {
+      // Arrange: the data document answers, the policy document does not.
+      globalThis.fetch = vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) => {
+          const body = JSON.parse(String(init?.body));
+          const isPolicy = body.query.includes('_dbSchema');
+          return Promise.resolve({
+            ok: !isPolicy,
+            status: isPolicy ? 500 : 200,
+            statusText: isPolicy ? 'Internal Server Error' : 'OK',
+            json: () =>
+              Promise.resolve(
+                isPolicy ? {} : { data: { users: paged(mockUsers) } },
+              ),
+          } as Response);
+        },
+      );
+      renderTable({ onRowUpdate: vi.fn(), rowActions: gatedActions });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+
+      // Assert: the data is shown, nothing is offered for editing, and the
+      // user can see why.
+      await waitFor(() => {
+        expect(screen.getByTestId('policy-error')).toBeInTheDocument();
+      });
+      fireEvent.doubleClick(screen.getByText('Alice'));
+      expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('action-edit')).not.toBeInTheDocument();
+      expect(screen.getAllByTestId('action-view')).toHaveLength(3);
     });
   });
 

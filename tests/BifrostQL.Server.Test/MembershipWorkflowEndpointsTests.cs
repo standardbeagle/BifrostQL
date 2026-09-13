@@ -30,6 +30,12 @@ namespace BifrostQL.Server.Test;
 /// orchestrate through <see cref="IBifrostWorkflowExecutor"/>, those reads also
 /// prove the writes traversed the same GraphQL pipeline as a direct mutation.
 ///
+/// The sample declares <c>policy-default: deny</c>, so every workflow request
+/// signs in first through the sample's local auth (<see cref="HostedSpaLogins"/>):
+/// the finance login records payments (<c>dues_payments.amount_cents</c> carries
+/// <c>write-requires: dues.manage</c>), the officer login renews, checks in and
+/// links identities. An anonymous caller answers 403 with an empty body.
+///
 /// Each run points the sample at a fresh, uniquely named SQLite file so the
 /// seed always runs and runs never collide — the same pattern as
 /// <see cref="HostedSpaSmokeTests"/>.
@@ -47,9 +53,11 @@ public class MembershipWorkflowEndpointsTests
     [Fact]
     public async Task RecordPayment_WritesPayment_MarksInvoicePaid_AndAuditsAction()
     {
-        // Arrange: a fresh host so the seeded invoice 1 is open and unpaid.
+        // Arrange: a fresh host so the seeded invoice 1 is open and unpaid; the
+        // finance login holds dues.manage, which dues_payments.amount_cents requires.
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Finance);
 
         // Act: record a collected payment against the seeded open invoice.
         var response = await client.PostAsJsonAsync(
@@ -102,6 +110,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange: a fresh host so the seeded membership 1 is expired.
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         // Act: renew the membership for a fresh term and open a renewal invoice.
         var response = await client.PostAsJsonAsync(
@@ -146,6 +155,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Finance);
 
         // Act: an invoice id that does not exist.
         var response = await client.PostAsJsonAsync(
@@ -170,6 +180,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Finance);
 
         // Act: a zero amount is not a valid payment.
         var response = await client.PostAsJsonAsync(
@@ -186,6 +197,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange: a fresh host so event 1 and member 1 are seeded and unchecked.
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         // Act: check the seeded member in to the seeded event.
         var response = await client.PostAsJsonAsync(
@@ -219,6 +231,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange: a fresh host, then a first successful check-in.
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         var first = await client.PostAsJsonAsync(
             "/workflows/membership/check-in",
@@ -251,6 +264,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         // Act: an event id that does not exist.
         var response = await client.PostAsJsonAsync(
@@ -274,11 +288,11 @@ public class MembershipWorkflowEndpointsTests
     {
         // Arrange: a fresh host. Member 2 (Dana) is seeded with a NULL user_id and
         // app_user 2 is the matching unlinked login. The caller signs in as the
-        // seeded first-admin (app_user 1) so the link is performed by an
-        // authenticated actor.
+        // officer (members.manage) so the link is performed by an authenticated
+        // actor the members policy admits.
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
-        await SignInAsFirstAdmin(client);
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         // Act: link app_user 2 to member 2.
         var response = await client.PostAsJsonAsync(
@@ -300,7 +314,7 @@ public class MembershipWorkflowEndpointsTests
             client, "{ audit_log { data { action actor_user_id entity_type entity_id } } }", "audit_log");
         var audit = audits.Should().ContainSingle().Subject;
         audit.GetProperty("action").GetString().Should().Be("member.identity-linked");
-        audit.GetProperty("actor_user_id").GetInt32().Should().Be(1);
+        audit.GetProperty("actor_user_id").GetInt64().Should().Be(HostedSpaLogins.Officer.UserId);
         audit.GetProperty("entity_type").GetString().Should().Be("member");
         audit.GetProperty("entity_id").GetString().Should().Be("2");
     }
@@ -311,7 +325,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
-        await SignInAsFirstAdmin(client);
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         // Act: a member id that does not exist.
         var response = await client.PostAsJsonAsync(
@@ -332,7 +346,7 @@ public class MembershipWorkflowEndpointsTests
         // Arrange
         await using var factory = new WorkflowFactory();
         var client = factory.CreateClient();
-        await SignInAsFirstAdmin(client);
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
 
         // Act: an app_user id that does not exist.
         var response = await client.PostAsJsonAsync(
@@ -352,6 +366,58 @@ public class MembershipWorkflowEndpointsTests
         var audits = await QueryRows(
             client, "{ audit_log { data { action } } }", "audit_log");
         audits.Should().BeEmpty("a rejected link must not write an audit row");
+    }
+
+    [Theory]
+    [InlineData("/workflows/membership/record-payment")]
+    [InlineData("/workflows/membership/renew")]
+    [InlineData("/workflows/membership/check-in")]
+    [InlineData("/workflows/membership/link-identity")]
+    public async Task WorkflowRoute_AnonymousCaller_Answers403WithEmptyBody(string route)
+    {
+        // Arrange: no login cookie. `:root { policy-default: deny }` in the sample
+        // metadata and the IPolicyGate a caller without a projectable identity
+        // receives both refuse before the handler runs — the same 403, empty
+        // body, no policy detail, whichever route is asked.
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+
+        // Act: a body that passes the route's own validation, so the policy is
+        // the first thing that can refuse.
+        var response = await client.PostAsJsonAsync(route, ValidBodyFor(route));
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RecordPayment_OfficerWithoutFinanceGrant_Answers403_AndWritesNothing()
+    {
+        // Arrange: the officer may CREATE dues_payments, but amount_cents carries
+        // `write-requires: dues.manage`, which only the finance login resolves to.
+        // The pre-flight must refuse the whole workflow up front — not let the
+        // insert fail partway through the orchestration.
+        await using var factory = new WorkflowFactory();
+        var client = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(client, HostedSpaLogins.Officer);
+
+        // Act
+        var response = await client.PostAsJsonAsync(
+            "/workflows/membership/record-payment",
+            new { invoiceId = 1, amountCents = 12000 });
+
+        // Assert: 403 with an empty body, and nothing written.
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
+
+        var payments = await QueryRows(
+            client, "{ dues_payments { data { invoice_id } } }", "dues_payments");
+        payments.Should().BeEmpty("a refused workflow must not record a payment");
+
+        var audits = await QueryRows(
+            client, "{ audit_log { data { action } } }", "audit_log");
+        audits.Should().BeEmpty("a refused workflow must not write an audit row");
     }
 
     [Theory]
@@ -413,19 +479,6 @@ public class MembershipWorkflowEndpointsTests
     }
 
     /// <summary>
-    /// Signs the client in as the seeded first-admin (app_user 1) so subsequent
-    /// workflow requests carry an authenticated actor. The issued cookie is
-    /// tracked by the client and honoured on later requests.
-    /// </summary>
-    private static async Task SignInAsFirstAdmin(HttpClient client)
-    {
-        var login = await client.PostAsJsonAsync(
-            "/auth/login",
-            new { login = SampleDatabase.FirstAdminEmail, password = SampleDatabase.FirstAdminPassword });
-        login.StatusCode.Should().Be(HttpStatusCode.NoContent);
-    }
-
-    /// <summary>
     /// Posts a GraphQL query to the same host and returns the named table's
     /// <c>data</c> array, asserting the query resolved without GraphQL errors.
     /// </summary>
@@ -465,6 +518,7 @@ public class MembershipWorkflowEndpointsTests
 
         protected override IHost CreateHost(IHostBuilder builder)
         {
+            HostedSpaLogins.Seed(_dbPath);
             builder.ConfigureHostConfiguration(config =>
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {

@@ -1,7 +1,5 @@
 # Changelog
 
-- Packages: app-shell controls and protected routes now consume server-resolved policy grants.
-
 All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-builder extraction plan from Membership Manager build`).
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
@@ -10,6 +8,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Added
 
+- Packages: `usePolicy` in `@bifrostql/react` and `@bifrostql/app-shell` reads the server's `_grants` and `_dbSchema` projection, cached per session identity; `ProtectedRoute` gates on `requiredGrants` and `FieldControl` on the column's `writable` flag.
 - Scoped `IPolicyGate` for custom endpoints to reuse GraphQL table and column policy decisions.
 - Per-row `_can { update delete }` capabilities for row-scoped and self-deny tables.
 - `policy-row-scope-exempt` grants for tenant-filtered row-scope bypass.

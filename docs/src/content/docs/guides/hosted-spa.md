@@ -285,12 +285,18 @@ friction:
 - [Authentication](/BifrostQL/guides/authentication/) — securing the GraphQL endpoint.
 ## Server policy
 
-Use `usePolicy(tableGraphQlName?)` from `@bifrostql/app-shell` (or
-`@bifrostql/react`) for server-resolved affordances. `grants` mirrors
-`_grants`; with a table named, `can`, `readable` and `writable` mirror that
-table's `_dbSchema` projection (`allowedActions` and per-column flags). While
-the answer loads, every helper returns `false`. Call `refresh()` after the
-session changes.
+Use `usePolicy(tableGraphQlName?)` from `@bifrostql/app-shell` for
+server-resolved affordances. `grants` mirrors `_grants`; with a table named,
+`can`, `readable` and `writable` mirror that table's `_dbSchema` projection
+(`allowedActions` and per-column flags). While the answer loads, and on a
+failed request, every helper returns `false`.
+
+The answer is cached per session identity (`useSession().identity.id`) and
+does not go stale on its own: signing in, signing out or switching users
+fetches it again, and `refresh()` fetches it again for the same user, for
+example after a grant is changed server-side. Hosts that do not use the app
+shell's session call `usePolicy(table, { identity })` from `@bifrostql/react`
+with their own identity.
 
 `ProtectedRoute` gates on `requiredGrants` against `_grants`, and
 `FieldControl` with a `table` prop is read-only unless the column is

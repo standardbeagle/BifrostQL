@@ -229,6 +229,84 @@ public sealed class HostedSpaPolicyTests
         }
     }
 
+    // ---- admin: the sample's only shipped login holds every grant the metadata names ----
+
+    [Fact]
+    public async Task Admin_RecordPayment_IsAllowed()
+    {
+        await using var factory = new PolicyFactory();
+        var admin = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(admin, HostedSpaLogins.Admin);
+
+        var response = await admin.PostAsJsonAsync(
+            "/workflows/membership/record-payment",
+            new { invoiceId = 1, amountCents = 12000, method = "check", paidOn = "2025-01-05" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "the admin holds dues.manage, so the record-payment pre-flight admits it");
+        Rows(await GraphQlAsync(admin, "{ dues_payments { data { amount_cents } } }"), "dues_payments")
+            .Should().ContainSingle().Which.GetProperty("amount_cents").GetInt32().Should().Be(12000);
+    }
+
+    [Fact]
+    public async Task Admin_EventDelete_IsAllowed()
+    {
+        await using var factory = new PolicyFactory();
+        var admin = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(admin, HostedSpaLogins.Admin);
+
+        Errors(await GraphQlAsync(admin, "mutation { events(delete: { event_id: 1 }) }"))
+            .Should().BeEmpty("the admin holds events.manage, which delete[events.manage] requires");
+        Rows(await GraphQlAsync(admin, "{ events { data { event_id } } }"), "events")
+            .Should().BeEmpty("the admin's delete removed the seeded event");
+    }
+
+    [Fact]
+    public async Task Admin_AppUserRolesRead_SeesValue()
+    {
+        await using var factory = new PolicyFactory();
+        var admin = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(admin, HostedSpaLogins.Admin);
+
+        var rows = Rows(await GraphQlAsync(admin, "{ app_users { data { user_id roles } } }"), "app_users");
+
+        rows.Single(r => r.GetProperty("user_id").GetInt64() == HostedSpaLogins.Admin.UserId)
+            .GetProperty("roles").GetString().Should().Be(SampleDatabase.FirstAdminRole,
+                "the admin holds members.manage, which read-requires names");
+        rows.Single(r => r.GetProperty("user_id").GetInt64() == HostedSpaLogins.Officer.UserId)
+            .GetProperty("roles").GetString().Should().Be(HostedSpaLogins.Officer.Roles);
+    }
+
+    [Fact]
+    public async Task Admin_MembersRowScope_SeesEveryRow()
+    {
+        await using var factory = new PolicyFactory();
+        var admin = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(admin, HostedSpaLogins.Admin);
+
+        var all = Rows(await GraphQlAsync(admin, "{ members { data { member_id _can { update delete } } } }"), "members");
+
+        all.Select(r => r.GetProperty("member_id").GetInt64())
+            .Should().BeEquivalentTo(new long[] { 1, 2, HostedSpaLogins.MemberProfileId },
+                "the admin holds members.manage, the row-scope-exempt grant");
+        all.Should().OnlyContain(r => r.GetProperty("_can").GetProperty("delete").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Admin_Grants_ListsTheWholeCatalogue()
+    {
+        await using var factory = new PolicyFactory();
+        var admin = factory.CreateClient();
+        await HostedSpaLogins.SignInAsync(admin, HostedSpaLogins.Admin);
+
+        var root = await GraphQlAsync(admin, "{ _grants }");
+
+        Errors(root).Should().BeEmpty();
+        root.GetProperty("data").GetProperty("_grants").EnumerateArray()
+            .Select(g => g.GetString())
+            .Should().Equal("admin", "dues.manage", "events.manage", "members.manage");
+    }
+
     // ---- helpers ----
 
     private static async Task<JsonElement> DbSchemaAsync(PolicyFactory factory, HostedSpaLogins.Login login)
@@ -337,12 +415,16 @@ public static class HostedSpaLogins
     /// <summary>The <c>members</c> row linked to <see cref="Member"/>.</summary>
     public const long MemberProfileId = 3;
 
+    /// <summary>The sample's own seeded first-admin (<see cref="SampleDatabase.SeedFirstAdmin"/>).</summary>
+    public static readonly Login Admin = new(1, SampleDatabase.FirstAdminEmail, "Club Admin", SampleDatabase.FirstAdminRole);
+
     public static readonly Login Officer = new(3, "officer@riverside-tennis.example", "Pat Officer", "officer");
     public static readonly Login Finance = new(4, "finance@riverside-tennis.example", "Sam Finance", "finance");
     public static readonly Login Member = new(5, "lee@riverside-tennis.example", "Lee Member", "member");
 
     public static Login ByRole(string role) => role switch
     {
+        "admin" => Admin,
         "officer" => Officer,
         "finance" => Finance,
         "member" => Member,
@@ -386,11 +468,13 @@ public static class HostedSpaLogins
     /// <summary>
     /// Signs the cookie-tracking client in through the sample's <c>POST /auth/login</c>,
     /// the way <see cref="HostedSpaLocalAuthTests"/> does; later requests carry the cookie.
+    /// <see cref="Admin"/> is the sample's seeded first-admin and signs in with its password.
     /// </summary>
     public static async Task SignInAsync(HttpClient client, Login login)
     {
+        var password = ReferenceEquals(login, Admin) ? SampleDatabase.FirstAdminPassword : Password;
         var response = await client.PostAsJsonAsync(
-            "/auth/login", new { login = login.Email, password = Password });
+            "/auth/login", new { login = login.Email, password });
         response.StatusCode.Should().Be(HttpStatusCode.NoContent, $"{login.Roles} must be able to sign in");
     }
 }

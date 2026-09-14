@@ -51,9 +51,12 @@ the table quotes those lines, and a test holds the two in step.
 
 The permissions those lines name come from the grant resolver: `Program.cs`
 registers `AddBifrostGrantResolver` with a role-to-permission catalogue (`officer`
-resolves to `members.manage` and `events.manage`, `finance` to `dues.manage`), the
+resolves to `members.manage` and `events.manage`, `finance` to `dues.manage`, and
+`admin` — the evaluator's admin role — to every permission the catalogue names), the
 place a production app queries its `role_permissions` table instead. Grants are the
 union of the login's roles and those permissions, and `_grants` reports that set.
+The admin mapping changes nothing the evaluator decides; it keeps `_grants` honest
+for a client that shapes its controls from the discovery query.
 
 Clients discover these decisions through `_dbSchema`, `_grants`, and `_can`
 (see [Ask first](#ask-first)); they do not recreate the guards in UI or endpoint

@@ -22,7 +22,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   grants, officer-only deletion, finance-only money writes, masked reads, own-row
   scope with officer exemption, constrained status, self-protected role) are
   metadata lines in `appsettings.json`, with `AddBifrostGrantResolver` resolving
-  roles to permissions; the sidecar workflow endpoints ask the scoped `IPolicyGate`
+  roles to permissions (the seeded admin to every permission the catalogue names,
+  so `_grants` matches what the admin bypass already allows); the sidecar workflow
+  endpoints ask the scoped `IPolicyGate`
   before their first write. The authorization guide's guards-to-metadata table
   quotes the sample's lines and `HostedSpaPolicyTests` holds the two in step.
 

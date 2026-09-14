@@ -70,3 +70,17 @@ alias "build" {
     args "build" "BifrostQL.sln"
     max-time "30m"
 }
+
+// Test inventory: every test name in the repo, both stacks, one per line on
+// stdout. The automation loop diffs a plan's declared test names against this
+// without knowing what a test framework is.
+alias "list-tests" {
+    command "./scripts/list-tests.sh"
+    max-time "30m"
+}
+
+// Run exactly the test(s) named by $1, an exact name as printed by list-tests.
+alias "test-by-name" {
+    command "./scripts/test-by-name.sh"
+    max-time "30m"
+}

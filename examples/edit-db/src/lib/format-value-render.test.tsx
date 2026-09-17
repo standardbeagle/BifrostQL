@@ -8,6 +8,36 @@ function col(partial: Partial<Column>): Column {
 }
 
 describe('formatColumnValue (render)', () => {
+    const statusColumn = (partial: Partial<Column> = {}) => col({
+        paramType: 'Int',
+        dbType: 'int',
+        enumValues: ['0', '1', '2', '3'],
+        enumLabels: ['Active', 'Audit', 'Dropped', 'Pregnant'],
+        ...partial,
+    });
+
+    it('shows the enum label for a numeric code, keeping the stored value in title', () => {
+        const { container } = render(<>{formatColumnValue(2, statusColumn())}</>);
+        const span = container.querySelector('span')!;
+        expect(span.textContent).toBe('Dropped');
+        expect(span.getAttribute('title')).toBe('2');
+    });
+
+    it('labels a code of 0, which is falsy but a real enum value', () => {
+        const { container } = render(<>{formatColumnValue(0, statusColumn())}</>);
+        expect(container.textContent).toBe('Active');
+    });
+
+    it('shows the raw value when labels do not line up with values', () => {
+        const { container } = render(<>{formatColumnValue(1, statusColumn({ enumLabels: ['Active', 'Audit'] }))}</>);
+        expect(container.textContent).toBe('1');
+    });
+
+    it('shows the raw value for a code outside the enum values', () => {
+        const { container } = render(<>{formatColumnValue(9, statusColumn())}</>);
+        expect(container.textContent).toBe('9');
+    });
+
     it('renders a SQL Server datetime2 concisely with the exact value in title', () => {
         const { container } = render(
             <>{formatColumnValue('2026-05-11T22:17:47.7636626', col({ dbType: 'datetime2' }))}</>

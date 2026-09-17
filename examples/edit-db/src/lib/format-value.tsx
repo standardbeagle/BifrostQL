@@ -108,13 +108,38 @@ export function formatRelative(date: Date, now: Date = new Date()): string {
 }
 
 /**
+ * Display labels for an enum column, or null when it has none that can be
+ * trusted. `enum-labels` are positional against `enum-values`, so a count
+ * mismatch would mislabel every value; it is treated as no labels at all.
+ */
+export function usableEnumLabels(column: Column): string[] | null {
+    const values = column.enumValues;
+    const labels = column.enumLabels;
+    if (!values?.length || !labels || labels.length !== values.length) return null;
+    return labels;
+}
+
+/** The label for one enum value, or null when the column has no usable labels or the value is not one of them. */
+export function enumLabelFor(value: unknown, column: Column): string | null {
+    const labels = usableEnumLabels(column);
+    if (!labels) return null;
+    const index = column.enumValues!.indexOf(String(value));
+    return index < 0 ? null : labels[index] || null;
+}
+
+/**
  * Format a scalar value for display, given its column. Returns a muted
- * placeholder for null/empty, a locale-formatted node for known formats (with a
- * `title` revealing the exact value), or the plain string otherwise.
+ * placeholder for null/empty, the enum label for a labelled enum value (with
+ * the stored value in `title`), a locale-formatted node for known formats (with
+ * a `title` revealing the exact value), or the plain string otherwise.
  */
 export function formatColumnValue(value: unknown, column: Column, options?: FormatOptions): ReactNode {
     if (value === null || value === undefined) return <EmptyValue kind="null" />;
     if (value === '') return <EmptyValue kind="empty" />;
+
+    // Enum columns often store codes (0, 1, 2) whose meaning lives in the labels.
+    const enumLabel = enumLabelFor(value, column);
+    if (enumLabel !== null) return <span title={String(value)}>{enumLabel}</span>;
 
     const fmt = resolveDisplayFormat(column, options?.formatKey);
     if (fmt === null || fmt === 'raw') return String(value);

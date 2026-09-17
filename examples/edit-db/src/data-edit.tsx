@@ -13,6 +13,7 @@ import { validateFieldValue } from "./lib/field-validation";
 import { isComposite } from "./lib/fk";
 import { isDateColumn, isDateTimeColumn, toDateInputValue, preserveUntouchedDateValues } from "./lib/date-input";
 import { matchesLabel } from "./lib/label-match";
+import { usableEnumLabels } from "./lib/format-value";
 import {
     Dialog,
     DialogContent,
@@ -680,12 +681,8 @@ interface EnumFieldProps {
 function EnumField({ column, form, isRequired }: EnumFieldProps) {
     const name = column.name;
     const enumValues = column.enumValues || [];
-    // Labels are positional, so a count mismatch would mislabel options. Trust
-    // them only when they line up 1:1; otherwise show the raw values.
-    const enumLabels =
-        column.enumLabels && column.enumLabels.length === enumValues.length
-            ? column.enumLabels
-            : enumValues;
+    // Same trust rule as grid cells: labels only when they line up 1:1.
+    const enumLabels = usableEnumLabels(column) ?? enumValues;
 
     const errorId = `${name}-error`;
 

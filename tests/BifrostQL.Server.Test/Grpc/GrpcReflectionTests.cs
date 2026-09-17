@@ -42,8 +42,18 @@ namespace BifrostQL.Server.Test.Grpc
         {
             var client = new ServerReflection.ServerReflectionClient(_harness.Channel);
             using var call = client.ServerReflectionInfo(identity);
-            await call.RequestStream.WriteAsync(request);
-            await call.RequestStream.CompleteAsync();
+            try
+            {
+                await call.RequestStream.WriteAsync(request);
+                await call.RequestStream.CompleteAsync();
+            }
+            catch (RpcException)
+            {
+                // A server that rejects the call up front (a credential-less caller) can end it
+                // before the client finishes sending, and under load the write then fails with
+                // Cancelled. That is the client's view of a finished call, not the server's status:
+                // the response stream below throws with the status the server actually sent.
+            }
 
             ServerReflectionResponse? last = null;
             await foreach (var response in call.ResponseStream.ReadAllAsync())

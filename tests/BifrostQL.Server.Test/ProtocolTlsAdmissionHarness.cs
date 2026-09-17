@@ -217,7 +217,12 @@ namespace BifrostQL.Server.Test
             using var generated = request.CreateSelfSigned(
                 DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
             // Re-import through PKCS#12 so the private key is usable by SslStream on every platform.
+#if NET9_0_OR_GREATER
             return X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pfx), null);
+#else
+            // X509CertificateLoader is .NET 9+; the release matrix also builds net8.0.
+            return new X509Certificate2(generated.Export(X509ContentType.Pfx), (string?)null);
+#endif
         }
     }
 }

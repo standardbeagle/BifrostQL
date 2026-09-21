@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - `defaultSort` editor prop: the sort each grid opens with, per table or `"*"` for all (e.g. newest-first); an entry naming a missing or non-orderable column falls back to the built-in default
+- `defaultSearchColumns` editor prop: the column the header quick-search starts on, per table, for tables people navigate by a business key
 - Comprehensive JSDoc comments for all public components and hooks ([DART-Y619slzDqm04])
 - SEO-optimized README with installation guide, usage examples, and API documentation ([DART-Y619slzDqm04])
 - Type documentation in `src/types/schema.ts` with inline examples ([DART-Y619slzDqm04])

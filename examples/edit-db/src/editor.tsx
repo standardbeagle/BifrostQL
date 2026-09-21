@@ -50,6 +50,12 @@ interface EditorProps {
      */
     defaultSort?: Record<string, DefaultSort>;
     /**
+     * Column the header quick-search starts on per table (`{ workshops:
+     * 'number' }`) for tables people navigate by a business key rather than
+     * the id. Ignored when that column is not searchable (string/numeric).
+     */
+    defaultSearchColumns?: Record<string, string>;
+    /**
      * Actions the host adds to every table's kebab menu in the navigation list
      * (after the built-in Download actions). Each is invoked with the schema
      * table; what it does — open a query designer, copy DDL, … — is the host's.
@@ -97,6 +103,7 @@ export function Editor({
     defaultColumns,
     trailingColumns,
     defaultSort,
+    defaultSearchColumns,
     tableActions,
     saveFile,
 }: EditorProps) {
@@ -109,8 +116,8 @@ export function Editor({
     // Memoized: the config context feeds the schema filter and every grid, so a
     // fresh object each render would re-run those consumers for nothing.
     const config = useMemo(
-        () => ({ showStats, tables, defaultColumns, trailingColumns, defaultSort, tableActions, saveFile }),
-        [showStats, tables, defaultColumns, trailingColumns, defaultSort, tableActions, saveFile],
+        () => ({ showStats, tables, defaultColumns, trailingColumns, defaultSort, defaultSearchColumns, tableActions, saveFile }),
+        [showStats, tables, defaultColumns, trailingColumns, defaultSort, defaultSearchColumns, tableActions, saveFile],
     );
 
     const queryClient = useMemo(() => new QueryClient({

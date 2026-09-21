@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
 import { useColumnNav } from './hooks/useColumnNav';
+import { useEditorConfig } from './hooks/useEditorConfig';
+import { pickDefaultSearchColumn } from './lib/search-column';
 import { useNavigate, useNavigation, useParams, useSearchParams } from './hooks/usePath';
 import { Table, Column } from './types/schema';
 import { Button } from '@/components/ui/button';
@@ -50,11 +52,15 @@ export function Header() {
             .map((c: Column) => ({ key: c.name, value: `${c.name},${c.paramType}`, label: c.label })),
         [tableSchema]
     );
-    const [column, setColumn] = useState(options?.at(0)?.value ?? "");
+    // The host can name the column a table's quick-search starts on (a business
+    // key people navigate by); otherwise the first searchable column, as before.
+    const { defaultSearchColumns } = useEditorConfig();
+    const configuredSearchColumn = tableName ? defaultSearchColumns?.[tableName] : undefined;
+    const [column, setColumn] = useState(() => pickDefaultSearchColumn(options, configuredSearchColumn));
     useEffect(() => {
         setSearchVal("");
-        setColumn(options?.at(0)?.value ?? "");
-    }, [options]);
+        setColumn(pickDefaultSearchColumn(options, configuredSearchColumn));
+    }, [options, configuredSearchColumn]);
     const filter = () => {
         if (!searchVal) return;
         const [columnName, type] = column.split(",");

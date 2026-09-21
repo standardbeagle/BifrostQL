@@ -47,6 +47,12 @@ export interface EditorConfig {
      */
     defaultSort?: Record<string, DefaultSort>;
     /**
+     * Column the header quick-search starts on, keyed by table name. Applied by
+     * the header only when the column is one it can search (string/numeric);
+     * anything else falls back to the first searchable column.
+     */
+    defaultSearchColumns?: Record<string, string>;
+    /**
      * Host-contributed actions on each table in the navigation list, rendered in
      * the table's kebab menu AFTER the built-in Download actions. The host owns
      * what an action does; edit-db just invokes it with the schema table.

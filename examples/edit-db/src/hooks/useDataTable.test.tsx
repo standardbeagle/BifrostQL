@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getMultiJoinRows, getSingleJoinRow, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl } from './useDataTable';
+import { getMultiJoinRows, getSingleJoinRow, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl, resolveConfiguredSort } from './useDataTable';
 import { serializeColumnFilters } from '../lib/query-builder';
 import { encodeRouteParts } from '../lib/row-id';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import type { Join, Table } from '../types/schema';
+import type { Column, Join, Table } from '../types/schema';
 
 describe('reconcileColumnFiltersFromUrl', () => {
     const cf = (id: string, operator: string, value: unknown): ColumnFiltersState =>
@@ -196,5 +196,51 @@ describe('getSingleJoinRow', () => {
         };
 
         expect(getSingleJoinRow({ order_id: 1 }, join)).toBeUndefined();
+    });
+});
+
+describe('resolveConfiguredSort', () => {
+    const col = (name: string, dbType = 'int'): Column => ({
+        dbName: name, graphQlName: name, name, label: name, paramType: 'Int',
+        dbType, isPrimaryKey: name === 'id', isIdentity: false, isNullable: false,
+        isReadOnly: false, metadata: {},
+    });
+    const table = (name: string, columns: Column[]): Table => ({
+        dbName: name, graphQlName: name, name, label: name, labelColumn: 'name',
+        primaryKeys: ['id'], isEditable: true, metadata: {}, columns,
+        multiJoins: [], singleJoins: [],
+    });
+    const workshops = table('workshops', [col('id'), col('created', 'datetime'), col('notes', 'varbinary')]);
+
+    it('opens every table newest-first from a "*" entry', () => {
+        expect(resolveConfiguredSort(workshops, { '*': { column: 'id', desc: true } }))
+            .toEqual([{ id: 'id', desc: true }]);
+    });
+
+    it('lets a table-specific entry win over "*"', () => {
+        expect(resolveConfiguredSort(workshops, {
+            '*': { column: 'id', desc: true },
+            workshops: { column: 'created', desc: true },
+        })).toEqual([{ id: 'created', desc: true }]);
+    });
+
+    it('defaults the direction to ascending', () => {
+        expect(resolveConfiguredSort(workshops, { workshops: { column: 'created' } }))
+            .toEqual([{ id: 'created', desc: false }]);
+    });
+
+    it('ignores an entry naming a column the table does not have', () => {
+        // A host-wide `created desc` must not error the first query of a table
+        // without that column; the hook falls back to its positional default.
+        expect(resolveConfiguredSort(workshops, { '*': { column: 'modified', desc: true } })).toEqual([]);
+    });
+
+    it('ignores a column that cannot drive an ORDER BY', () => {
+        expect(resolveConfiguredSort(workshops, { workshops: { column: 'notes' } })).toEqual([]);
+    });
+
+    it('is empty with no table or no config', () => {
+        expect(resolveConfiguredSort(null, { '*': { column: 'id' } })).toEqual([]);
+        expect(resolveConfiguredSort(workshops, undefined)).toEqual([]);
     });
 });

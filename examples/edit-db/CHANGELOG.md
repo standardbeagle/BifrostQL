@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Select menus open directly beneath their trigger (`position="popper"` default); the item-aligned mode drifted long FK lists away from their label inside the scrolling edit dialog
 
 ### Added
+- `defaultSort` editor prop: the sort each grid opens with, per table or `"*"` for all (e.g. newest-first); an entry naming a missing or non-orderable column falls back to the built-in default
 - Comprehensive JSDoc comments for all public components and hooks ([DART-Y619slzDqm04])
 - SEO-optimized README with installation guide, usage examples, and API documentation ([DART-Y619slzDqm04])
 - Type documentation in `src/types/schema.ts` with inline examples ([DART-Y619slzDqm04])

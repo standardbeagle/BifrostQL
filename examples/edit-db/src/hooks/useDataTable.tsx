@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "./usePath";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSchema } from "./useSchema";
+import { useEditorConfig, type DefaultSort } from "./useEditorConfig";
 import { Table, Column, Join, SchemaContextValue } from "../types/schema";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import { useFetcher } from "../common/fetcher";
@@ -556,6 +557,25 @@ interface UseDataTableResult {
  * @param onOpenColumn - Callback when opening a side panel column
  * @returns Data table state and control functions
  */
+/**
+ * The sort a grid opens with, from the host's `defaultSort` config: the table's
+ * own entry wins over `"*"`. Empty when nothing is configured, when the named
+ * column is not on the table, or when it cannot drive an ORDER BY (blob/JSON),
+ * so the caller falls back to its positional default instead of erroring the
+ * first query.
+ */
+export function resolveConfiguredSort(
+    table: Table | null,
+    defaultSort: Record<string, DefaultSort> | undefined,
+): SortingState {
+    if (!table || !defaultSort) return [];
+    const entry = defaultSort[table.name] ?? defaultSort['*'];
+    if (!entry) return [];
+    const column = table.columns.find((c) => c.name === entry.column);
+    if (!column || isLargeValueColumn(column) || isJsonColumn(column)) return [];
+    return [{ id: column.name, desc: entry.desc === true }];
+}
+
 export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
@@ -574,7 +594,12 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const schema = useSchema();
     const fetcher = useFetcher();
 
-    const [sorting, setSorting] = useState<SortingState>([]);
+    const { defaultSort } = useEditorConfig();
+    // The host's configured opening sort (e.g. newest-first). Seeding the
+    // sorting STATE rather than only the query keeps the column header arrow in
+    // step with what the server was actually asked for.
+    const configuredSort = useMemo(() => resolveConfiguredSort(table, defaultSort), [table, defaultSort]);
+    const [sorting, setSorting] = useState<SortingState>(configuredSort);
     const [groupingSort, setGroupingSort] = useState<GroupingSort>(DEFAULT_GROUPING_SORT);
     const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() => deserializeColumnFilters(cfParam));
     const [pageIndex, setPageIndex] = useState(0);
@@ -587,7 +612,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const tableRef = useRef(table);
     if (table && table !== tableRef.current) {
         tableRef.current = table;
-        if (sorting.length > 0) setSorting([]);
+        if (sorting !== configuredSort) setSorting(configuredSort);
         if (groupingSort !== DEFAULT_GROUPING_SORT) setGroupingSort(DEFAULT_GROUPING_SORT);
         if (pageIndex !== 0) setPageIndex(0);
     }

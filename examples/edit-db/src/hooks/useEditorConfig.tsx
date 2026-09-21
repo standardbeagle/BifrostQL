@@ -1,6 +1,12 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { TableAction } from '../lib/table-action';
 
+/** One configured grid sort: the column name and its direction (ascending unless `desc`). */
+export interface DefaultSort {
+    column: string;
+    desc?: boolean;
+}
+
 /**
  * Optional, opt-in editor features. Kept tiny and separate from the data/schema
  * contexts so feature flags don't force those providers to re-render and so
@@ -33,6 +39,13 @@ export interface EditorConfig {
      * annotate but sit in the middle of the natural column order.
      */
     trailingColumns?: string[];
+    /**
+     * Sort a grid opens with, keyed by table name; `"*"` covers every table
+     * without its own entry. Resolved by `resolveConfiguredSort` in
+     * useDataTable, which drops an entry naming a column the table lacks or
+     * cannot ORDER BY, so a host-wide `id desc` is safe on keyless tables.
+     */
+    defaultSort?: Record<string, DefaultSort>;
     /**
      * Host-contributed actions on each table in the navigation list, rendered in
      * the table's kebab menu AFTER the built-in Download actions. The host owns

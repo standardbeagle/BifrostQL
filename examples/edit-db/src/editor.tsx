@@ -4,7 +4,7 @@ import { MainFrame } from './main-frame';
 import { PathProvider } from './hooks/usePath';
 import { SchemaProvider } from './hooks/useSchema';
 import { GraphQLFetcher, HttpGraphQLFetcher, FetcherProvider } from './common/fetcher';
-import { EditorConfigProvider } from './hooks/useEditorConfig';
+import { EditorConfigProvider, type DefaultSort } from './hooks/useEditorConfig';
 import type { TableAction } from './lib/table-action';
 import { ToastProvider } from './hooks/useToast';
 import './globals.css';
@@ -41,6 +41,14 @@ interface EditorProps {
     defaultColumns?: Record<string, string[]>;
     /** Columns to move to the right end of every grid, in this order (e.g. audit stamps). */
     trailingColumns?: string[];
+    /**
+     * Sort a grid opens with, keyed by table name; `"*"` applies to every table
+     * without its own entry (`{ "*": { column: 'id', desc: true } }` opens every
+     * list newest-first). A column the table lacks, or one that cannot be
+     * ordered (blob/JSON), falls back to the editor's own default. Only the
+     * starting point — the viewer's column-header clicks take over from there.
+     */
+    defaultSort?: Record<string, DefaultSort>;
     /**
      * Actions the host adds to every table's kebab menu in the navigation list
      * (after the built-in Download actions). Each is invoked with the schema
@@ -88,6 +96,7 @@ export function Editor({
     tables,
     defaultColumns,
     trailingColumns,
+    defaultSort,
     tableActions,
     saveFile,
 }: EditorProps) {
@@ -100,8 +109,8 @@ export function Editor({
     // Memoized: the config context feeds the schema filter and every grid, so a
     // fresh object each render would re-run those consumers for nothing.
     const config = useMemo(
-        () => ({ showStats, tables, defaultColumns, trailingColumns, tableActions, saveFile }),
-        [showStats, tables, defaultColumns, trailingColumns, tableActions, saveFile],
+        () => ({ showStats, tables, defaultColumns, trailingColumns, defaultSort, tableActions, saveFile }),
+        [showStats, tables, defaultColumns, trailingColumns, defaultSort, tableActions, saveFile],
     );
 
     const queryClient = useMemo(() => new QueryClient({

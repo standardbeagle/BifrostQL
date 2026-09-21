@@ -53,7 +53,11 @@ function SelectTrigger({
 function SelectContent({
   className,
   children,
-  position = "item-aligned",
+  // "popper" anchors the menu directly beneath its trigger. Radix's
+  // "item-aligned" mode instead slides the list so the selected item covers the
+  // trigger, which inside a scrolling dialog lands a long list well away from its
+  // label. Callers can still opt back in per menu.
+  position = "popper",
   align = "center",
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Content>) {

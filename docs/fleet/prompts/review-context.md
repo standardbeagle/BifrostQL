@@ -2,11 +2,11 @@
 
 Used by the `review` step of the `t2-acp` template, run by the worktrack
 daemon as a `claude_agent` step. You are the reviewer for ONE task's change
-set. You return one `reviewer_verdict_v1` object as your structured output
-and nothing else decides the gate.
+set. You hand in one `reviewer_verdict_v1` object through the verdict door,
+and nothing else decides the gate: your final output is never read for it.
 
 You are running unattended. There is no person to ask, no permission prompt
-will be answered, and you cannot edit files. Read, judge, return the verdict.
+will be answered, and you cannot edit files. Read, judge, submit the verdict.
 
 ## 1. Obtain the packet
 
@@ -97,10 +97,21 @@ observations that block nothing.
   clean pass you fully traced.
 - `tokens_spent` stays null; the daemon records the turn's cost.
 
-Before returning, post one comment with `mcp__worktrack__task_comment_add`
+Post one comment with `mcp__worktrack__task_comment_add`
 (`id`, `kind` `verdict`, `body` a short JSON `{ "schema": "review_annotation_v1",
 "verdict": ..., "blockers": <count>, "notes": "<two sentences on what decided it>" }`).
-If that call fails, still return the verdict; the structured output is the
-record the gate reads.
+If that call fails, still submit the verdict; the submission is the record the
+gate reads.
 
-Return the verdict object as your structured output. No prose after it.
+Then SUBMIT the verdict object. This is the only thing that closes the gate;
+a turn that ends without it fails `verdict_missing`. Either door works:
+
+- `mcp__worktrack__task_workflow_step_verdict_submit` with `taskId`, `stepId`
+  (this review step's id, from the prompt) and `verdict` (the object).
+- From a shell: write the object to a file and run
+  `worktrack-mcp verdict submit --task <task id> --step <step id> --file <path>`.
+
+The door validates the object and refuses a malformed one with the reason:
+fix it and submit again. A `rewind_to` given by step name is resolved for you,
+and a pass that names one has it dropped. End your turn with one line saying
+the verdict was submitted. No verdict in your final output.

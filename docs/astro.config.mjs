@@ -24,6 +24,13 @@ export default defineConfig({
 			// preview image is missing.
 			head: [
 				{
+					tag: 'meta',
+					attrs: {
+						name: 'googlebot',
+						content: 'noindex, follow',
+					},
+				},
+				{
 					tag: 'script',
 					attrs: {
 						type: 'module',

@@ -1,5 +1,6 @@
 {
   "stack": "generic",
+  "delivery": "production-saas",
   "templates": [
     {
       "name": "backend-slice",

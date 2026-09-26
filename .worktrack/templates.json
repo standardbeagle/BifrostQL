@@ -1,9 +1,16 @@
 {
   "stack": "generic",
-  "delivery": "production-saas",
-  "deploy": {
-    "via": "tag",
-    "bump": "patch"
+  "delivery": {
+    "label": "public release",
+    "landing": "task-branch",
+    "push": "after-each-merge",
+    "gates": [
+      "test-release"
+    ],
+    "deploy": {
+      "via": "tag",
+      "bump": "patch"
+    }
   },
   "templates": [
     {

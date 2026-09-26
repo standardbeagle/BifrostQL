@@ -1,6 +1,10 @@
 {
   "stack": "generic",
   "delivery": "production-saas",
+  "deploy": {
+    "via": "tag",
+    "bump": "patch"
+  },
   "templates": [
     {
       "name": "backend-slice",

@@ -15,7 +15,7 @@
   "templates": [
     {
       "name": "backend-slice",
-      "description": "Generic backend slice (fast, no full-sln): scope → targeted build Core.Test+Server.Test → test both → correctness review. Replaces the archived full-sln slice-default. Prefer a per-area template (odata/grpc/prometheus/pgwire/resp/mcp-server/module-slice) when one exists. Implementation by opencode over ACP (kimi-k3).",
+      "description": "Generic backend slice (fast, no full-sln): scope → targeted build Core.Test+Server.Test → test both → integration → MCP → correctness review. Replaces the archived full-sln slice-default. Prefer a per-area template (odata/grpc/prometheus/pgwire/resp/mcp-server/module-slice) when one exists. Implementation by opencode over ACP (kimi-k3).",
       "autoAttachOnTags": [
         "feature",
         "backend-slice"
@@ -87,6 +87,24 @@
           "kind": "command",
           "name": "test-integration",
           "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "required": true,
+          "allowSkip": false,
+          "maxAttempts": 3,
+          "outcomeSchemaRef": "builtin:command_result_v1"
+        },
+        {
+          "kind": "command",
+          "name": "build-mcp",
+          "specJson": "{\"argv\":[\"dotnet\",\"build\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\"],\"expect_exit\":0}",
+          "required": true,
+          "allowSkip": false,
+          "maxAttempts": 3,
+          "outcomeSchemaRef": "builtin:command_result_v1"
+        },
+        {
+          "kind": "command",
+          "name": "test-mcp",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
           "required": true,
           "allowSkip": false,
           "maxAttempts": 3,
@@ -585,7 +603,7 @@
     },
     {
       "name": "module-slice",
-      "description": "Core module slice (transformers/hooks/dialects): scope → targeted build (Core.Test) → targeted test → correctness review Implementation by opencode over ACP (kimi-k3).",
+      "description": "Core module slice (transformers/hooks/dialects): scope → targeted build (Core.Test) → targeted test → integration → MCP → correctness review Implementation by opencode over ACP (kimi-k3).",
       "autoAttachOnTags": [
         "module-slice"
       ],
@@ -638,6 +656,24 @@
           "kind": "command",
           "name": "test-integration",
           "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "required": true,
+          "allowSkip": false,
+          "maxAttempts": 3,
+          "outcomeSchemaRef": "builtin:command_result_v1"
+        },
+        {
+          "kind": "command",
+          "name": "build-mcp",
+          "specJson": "{\"argv\":[\"dotnet\",\"build\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\"],\"expect_exit\":0}",
+          "required": true,
+          "allowSkip": false,
+          "maxAttempts": 3,
+          "outcomeSchemaRef": "builtin:command_result_v1"
+        },
+        {
+          "kind": "command",
+          "name": "test-mcp",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
           "required": true,
           "allowSkip": false,
           "maxAttempts": 3,

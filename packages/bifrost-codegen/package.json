@@ -41,7 +41,7 @@
   "devDependencies": {
     "@types/node": "^20.19.41",
     "@vitest/coverage-v8": "^4.1.8",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.8"
   },
   "license": "ISC",

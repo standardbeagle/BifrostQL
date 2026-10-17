@@ -156,6 +156,12 @@ namespace BifrostQL.Server
             if (!configured.Any(t => t is TenantMutationTransformer))
                 combined.Add(new TenantMutationTransformer());
 
+            // The referencing half of tenant isolation: a write may not point a foreign
+            // key at another tenant's row. A no-op for tables with no FK to a
+            // tenant-filtered parent, so always safe to auto-register.
+            if (!configured.Any(t => t is TenantForeignKeyMutationTransformer))
+                combined.Add(new TenantForeignKeyMutationTransformer());
+
             // Audit-column population (created/updated/deleted on/by). Keys off
             // per-column "populate" metadata plus the model-level user-audit-key, so
             // it is a no-op for tables without audit columns and always safe to

@@ -62,7 +62,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 // caller. Normal inserts still pin their tenant as usual.
                 if (context.RestoreHardDeleted &&
                     (!data.TryGetValue(columnName, out var capturedTenant) ||
-                     !CapturedMatchesTenant(capturedTenant, tenantId)))
+                     !TenantValueMatches(capturedTenant, tenantId)))
                 {
                     return new MutationTransformResult
                     {
@@ -115,7 +115,13 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
         }
     }
 
-    private static object ResolveTenantId(IDbTable table, MutationTransformContext context)
+    /// <summary>
+    /// The caller's tenant for <paramref name="table"/>, coerced to its tenant column's type.
+    /// Fail-closed: a missing or null claim throws an access denial. Shared with
+    /// <see cref="TenantForeignKeyMutationTransformer"/> so a referenced parent is checked
+    /// against exactly the tenant a write to that parent would be pinned to.
+    /// </summary>
+    internal static object ResolveTenantId(IDbTable table, MutationTransformContext context)
     {
         var tenantContextKey = GetTenantContextKey(context.Model);
         var fullTableName = $"{table.TableSchema}.{table.DbName}";
@@ -148,12 +154,12 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
         TenantFilterTransformer.ResolveTenantContextKey(model);
 
     /// <summary>
-    /// The captured tenant of a deferred restore must equal the caller's coerced tenant.
-    /// A GUID tenant compares as a GUID, so the casing the client captured it in cannot
-    /// refuse a legitimate restore; anything else compares ordinally. Unparseable input
-    /// never matches (fail closed).
+    /// A stored or captured tenant value (a deferred restore's captured tenant, a referenced
+    /// parent's tenant column) must equal the caller's coerced tenant. A GUID tenant compares
+    /// as a GUID, so the casing it was captured in cannot refuse a legitimate match; anything
+    /// else compares ordinally. Unparseable input never matches (fail closed).
     /// </summary>
-    private static bool CapturedMatchesTenant(object? captured, object tenantId)
+    internal static bool TenantValueMatches(object? captured, object tenantId)
     {
         if (tenantId is Guid tenantGuid)
             return captured is Guid capturedGuid

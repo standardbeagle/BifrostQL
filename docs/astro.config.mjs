@@ -101,6 +101,7 @@ export default defineConfig({
 						{ label: 'Mutations', slug: 'guides/mutations' },
 						{ label: 'Module System', slug: 'guides/modules' },
 						{ label: 'Extending BifrostQL (Hooks & Providers)', slug: 'guides/extensibility' },
+						{ label: 'Mutation Hooks: Timing & Applicability', slug: 'guides/mutation-hooks' },
 						{ label: 'Building SQL Expressions (SqlExpr)', slug: 'guides/expression-builder' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
 						{ label: 'Authorization Policies', slug: 'guides/authorization' },

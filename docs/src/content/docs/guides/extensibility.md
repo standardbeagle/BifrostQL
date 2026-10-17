@@ -84,7 +84,7 @@ public sealed class InvoiceLockTransformer : MetadataMutationTransformerBase
 }
 ```
 
-A transformer can change the operation type — that is exactly how soft-delete turns a `DELETE` into an `UPDATE`.
+A transformer can change the operation type — that is exactly how soft-delete turns a `DELETE` into an `UPDATE`. Soft-delete runs at priority 100, and every later transformer, hook and observer sees the rewritten `Update`; a transformer that must see the original `Delete` needs a priority below 100 (see [Mutation Hooks](/BifrostQL/guides/mutation-hooks/#3-soft-delete-rewrites-delete-to-update-inside-the-transformer-chain)).
 
 ### Reading inside the write transaction
 
@@ -114,31 +114,47 @@ The pipeline interface is `IMutationTransformer.TransformAsync` (previously the 
 
 ## Before-commit veto hooks
 
-Filter transformers run *before* SQL executes; mutation transformers run inside the write's transaction but before its SQL. A **before-commit hook** runs *inside the open transaction*, after the rows are staged but before the commit — the last place to enforce an invariant that depends on the database state the mutation just produced.
+Filter transformers run *before* SQL executes; mutation transformers run inside the write's transaction but before its SQL. A **before-commit hook** runs *inside the open transaction*, immediately **before** the write. It sees the transformed payload (`context.Data`, keyed by database column names) and the open `context.Connection` / `context.Transaction`, but not the write's result: `context.Result` is always `null` here.
 
 ```csharp
 public sealed class CreditLimitHook : IBeforeCommitMutationHook
 {
+    private static bool IsOrders(IDbTable table) =>
+        string.Equals(table.DbName, "orders", StringComparison.OrdinalIgnoreCase);
+
+    public bool AppliesTo(IDbTable table) => IsOrders(table);
+
     public async ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context)
     {
-        var balance = await context.ScalarAsync<decimal>(
-            "SELECT SUM(amount) FROM orders WHERE customer_id = @id",
-            ("@id", context.Row["customer_id"]));
+        if (!IsOrders(context.Table) || context.MutationType != MutationType.Insert
+            || context.Connection is null || context.Dialect is null)
+            return Array.Empty<string>();
 
-        return balance > 10_000m
+        var p = context.Dialect.ParameterPrefix;
+        await using var cmd = context.Connection.CreateCommand();
+        cmd.Transaction = context.Transaction;
+        cmd.CommandText = $"SELECT COALESCE(SUM(amount), 0) FROM orders WHERE customer_id = {p}id";
+        var id = cmd.CreateParameter();
+        id.ParameterName = $"{p}id";
+        id.Value = context.Data["customer_id"] ?? DBNull.Value;
+        cmd.Parameters.Add(id);
+
+        var existing = Convert.ToDecimal(await cmd.ExecuteScalarAsync());
+        var amount = Convert.ToDecimal(context.Data["amount"]);
+        return existing + amount > 10_000m
             ? new[] { "Order would exceed the customer credit limit." }
-            : Array.Empty<string>();   // empty = allow the commit
+            : Array.Empty<string>();   // empty = allow the write
     }
 }
 ```
 
-Return a non-empty list (or throw) and the whole transaction rolls back; an empty list lets the commit proceed. Register the hook in DI:
+Return a non-empty list (or throw) and the whole transaction rolls back before the write runs; an empty list lets the write proceed. Register the hook in DI as a singleton (the hook composite `AddBifrostQL` registers is itself a singleton):
 
 ```csharp
-builder.Services.AddScoped<IBeforeCommitMutationHook, CreditLimitHook>();
+builder.Services.AddSingleton<IBeforeCommitMutationHook, CreditLimitHook>();
 ```
 
-This is the right tool for cross-row business rules — "no two active managers per team", "stock must stay non-negative" — that can only be checked once the write is applied.
+This is the right tool for business rules checked against current database state — "stock must stay non-negative", "credit limit not exceeded". To act on the write's result inside the same transaction (the generated id of an insert), use an `IInTransactionMutationHook` instead. Both hook types apply to **every table** unless they override `AppliesTo`, which disables the bulk-batch fast path and `updateWhere` model-wide. See [Mutation Hooks: Timing, Applicability, and Soft-Delete](/BifrostQL/guides/mutation-hooks/).
 
 ## Async server validation
 
@@ -201,5 +217,6 @@ BifrostQL validates all metadata at **model build time**, not on the first reque
 ## See also
 
 - [Module System](/BifrostQL/guides/modules/) — the metadata-driven, zero-code modules
+- [Mutation Hooks](/BifrostQL/guides/mutation-hooks/) — hook timing, insert ids in the transaction, `AppliesTo`, soft-delete ordering
 - [State Machines](/BifrostQL/guides/state-machines/) — lifecycle enforcement built on the mutation pipeline
 - [Computed Columns & Validation](/BifrostQL/concepts/computed-columns-and-validation/) — virtual fields and declarative rules

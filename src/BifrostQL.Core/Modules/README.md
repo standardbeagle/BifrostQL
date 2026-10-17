@@ -32,6 +32,28 @@ Transform mutation operations before execution. Used for:
 - `MetadataMutationTransformerBase` - For metadata-driven transformations
 - `SoftDeleteMutationTransformerBase` - For soft-delete implementations
 
+**The write's transaction.** Every chain run on a write path (single-row
+insert/update/delete/upsert, the per-row batch path, the filtered set-update,
+tree-sync, and the row-scope probe ahead of a state load) happens inside the
+write's transaction, and `MutationTransformContext` carries it:
+`Connection`, `Transaction`, `Dialect`, `CancellationToken`. A guard that must
+read database state — a parent row, a reservation count — reads through these,
+so it sees the mutation's own uncommitted rows and its read commits or rolls
+back with the write; it never opens a second connection.
+`context.LoadRowForUpdateAsync(table, columns, keyColumns)` reads one row by
+column equality AND takes the dialect's update lock (`WITH (UPDLOCK)` /
+`FOR UPDATE`; SQLite serializes writers) so the row cannot change before
+commit. Its predicate is exactly the supplied columns — apply your own scope
+and answer missing and out-of-scope rows identically.
+
+Two exceptions, both documented on the members: tree-sync manages its
+transaction with SQL `BEGIN`/`COMMIT`, so `Transaction` is null there while
+`Connection` is set (commands run on the ambient transaction); and the bulk
+set-based batch fast path transforms its rows before any transaction exists,
+so `Connection` is null there. A transformer that reads through the connection
+overrides `RequiresWriteTransaction(table)` with the same predicate its body
+uses, which keeps that table on the per-row batch path.
+
 ### Query Observers (`IQueryObserver`)
 
 Lifecycle hooks for side effects. Used for:

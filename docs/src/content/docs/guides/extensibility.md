@@ -86,13 +86,35 @@ public sealed class InvoiceLockTransformer : MetadataMutationTransformerBase
 
 A transformer can change the operation type — that is exactly how soft-delete turns a `DELETE` into an `UPDATE`.
 
+### Reading inside the write transaction
+
+Every transformer chain on a write path — single-row insert, update, delete and upsert, the per-row batch path, `updateWhere`, and tree-sync — runs inside the write's own transaction, and `MutationTransformContext` hands it over: `Connection`, `Transaction`, `Dialect` and `CancellationToken`. A guard that depends on database state reads through them instead of opening its own connection, so it sees rows the same mutation already wrote and its read commits or rolls back with the write.
+
+To read a row and keep it from changing until commit, use `LoadRowForUpdateAsync`. It matches the row by column equality (database column names) and takes the dialect's update lock — `WITH (UPDLOCK)` on SQL Server, `FOR UPDATE` on PostgreSQL and MySQL, nothing on SQLite, which serializes writers:
+
+```csharp
+var evt = await context.LoadRowForUpdateAsync(
+    eventsTable, new[] { "capacity" }, new Dictionary<string, object?> { ["id"] = data["event_id"] });
+if (evt is null) // answer a missing row exactly like an out-of-scope one
+    return new MutationTransformResult
+    {
+        MutationType = mutationType,
+        Data = data,
+        Errors = new[] { "The event is not available." },
+    };
+```
+
+The predicate is exactly the columns you pass; it is not narrowed by tenant or policy scope, so apply your own and answer "missing" and "not yours" with the same response.
+
+Two paths differ. Tree-sync manages its transaction with SQL `BEGIN`/`COMMIT`, so `Transaction` is null while `Connection` is set; commands run on the connection's ambient transaction. The bulk set-based batch fast path transforms rows before its transaction exists, so `Connection` is null there. A transformer that reads through the connection overrides `RequiresWriteTransaction(table)` — using the same predicate its body uses — and the batch then stays on the per-row path for that table. `LoadRowForUpdateAsync` refuses to run without a write transaction rather than reading outside it.
+
 :::note[Async migration]
 The pipeline interface is `IMutationTransformer.TransformAsync` (previously the synchronous `Transform`). Server validation is likewise `IServerValidationProvider.ValidateAsync`. If you have older synchronous modules, port them to the `…Async` signature.
 :::
 
 ## Before-commit veto hooks
 
-Filter and mutation transformers run *before* SQL executes. A **before-commit hook** runs *inside the open transaction*, after the rows are staged but before the commit — the last place to enforce an invariant that depends on the database state the mutation just produced.
+Filter transformers run *before* SQL executes; mutation transformers run inside the write's transaction but before its SQL. A **before-commit hook** runs *inside the open transaction*, after the rows are staged but before the commit — the last place to enforce an invariant that depends on the database state the mutation just produced.
 
 ```csharp
 public sealed class CreditLimitHook : IBeforeCommitMutationHook

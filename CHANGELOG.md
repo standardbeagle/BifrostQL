@@ -4,6 +4,38 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-10-17 (write-path transactions)
+
+### Added
+
+- `MutationTransformContext` carries the write's `Connection`, `Transaction`,
+  `Dialect` and `CancellationToken`. Every transformer chain on a write path
+  (single-row insert/update/delete/upsert, per-row batch, `updateWhere`,
+  tree-sync) now runs inside the write's transaction — insert, delete and
+  `updateWhere` previously ran their chain before the transaction opened — so
+  a host guard reads state that commits with the write instead of opening its
+  own connection. `Transaction` is null on tree-sync (SQL-level `BEGIN`), and
+  the bulk set-based batch fast path still transforms before its transaction
+  exists (`Connection` null).
+- `MutationTransformContext.LoadRowForUpdateAsync(table, columns, keyColumns)`
+  reads one row in the write's transaction under the dialect's update lock.
+- `IMutationTransformer.RequiresWriteTransaction(table)` (default `false`): a
+  transformer that reads through the connection declares it per table, and
+  that table stays off the bulk batch fast path.
+
+### Fixed
+
+- State-machine transitions are race-free. The current-state read now takes
+  the dialect's update lock, and the `UPDATE` re-checks the state it was
+  validated from (`state = <loaded state>`); if the row moved between read and
+  write the update fails with `CONFLICT` and rolls back instead of silently
+  applying a transition nobody validated. Behaviour change: a concurrent
+  transition that used to "win" by overwriting now surfaces `CONFLICT` (code
+  `CONFLICT`, the existing concurrency-conflict message).
+- A transformer that throws a non-`BifrostExecutionError` exception on insert,
+  delete or `updateWhere` now surfaces as the sanitized `DATABASE_ERROR`, as it
+  already did on update, because the chain runs inside the transaction.
+
 ## Unreleased — 2026-09-13 (authorization epic)
 
 ### Added

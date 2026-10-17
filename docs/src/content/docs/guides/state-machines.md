@@ -33,6 +33,8 @@ Use `|` between transitions in metadata rule strings. The rule parser already us
 
 For inserts, BifrostQL allows the configured initial state. For updates, it reads the current row, compares the existing state to the requested state, and accepts only a configured transition. Updating other fields without changing the state is allowed.
 
+The current-state read runs inside the update's transaction and takes the dialect's update lock (`WITH (UPDLOCK)` on SQL Server, `FOR UPDATE` on PostgreSQL and MySQL; SQLite serializes writers), so a concurrent transition of the same row waits instead of validating against the same stale state. The `UPDATE` also re-checks the state it was validated from: `state = <loaded state>` is ANDed into its `WHERE`. If the row left that state (or disappeared) between the read and the write, the update affects no rows and fails with a `CONFLICT` error and rolls back, rather than applying a transition nobody validated. This holds for state-preserving updates too — writing `open` over a row that just moved to `review` would be an unvalidated `review -> open`. Reload the row and retry on `CONFLICT`.
+
 Role qualifiers in `[]` are checked against the authenticated user context. The default `admin` role bypasses policy and state-machine role checks, matching the rest of the authorization pipeline.
 
 Rejected mutations return a generic error:

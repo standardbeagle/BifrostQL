@@ -148,8 +148,8 @@ mutation {
 BifrostQL determines required fields from database nullability and column defaults:
 
 - **Insert**: A column is required only when it is NOT NULL and the database cannot fill it — no declared default. Identity / auto-increment columns are excluded, and so are computed (generated) columns on every dialect; a NOT NULL column with a default (`DEFAULT 'new'`, `DEFAULT now()`, a SQL Server `rowversion`) is optional and takes its default when omitted.
-- **Update**: Only the primary key is required, to identify the target row. Every other field is optional, and the UPDATE sets only the fields you supply — send just the columns that changed. An update that supplies only the key has nothing to set: no statement runs and the field returns `0` (not the key, and not an error).
-- **Upsert**: The primary key stays required (identity keys are optional when the database can generate them); the other fields follow the insert rule, since an upsert may insert.
+- **Update**: Only the primary key is required, to identify the target row. Every other field is optional, and the UPDATE sets only the fields you supply — send just the columns that changed. An update must set at least one non-key column: one that supplies only the key is refused with `NO_UPDATE_COLUMNS` ("An update must set at least one non-key column.") on every update path — single-row, `_batch` and the protocol-adapter write seam — and writes nothing. Columns a transformer stamps (audit `updated_at`) do not count; only the fields you send do.
+- **Upsert**: The primary key stays required (identity keys are optional when the database can generate them); the other fields follow the insert rule, since an upsert may insert. An upsert that supplies only the key of an existing row is insert-or-nothing: it changes nothing and returns `0`, without an error.
 - **Delete**: Primary-key fields are required unless `_primaryKey` supplies them.
 
 Columns the database computes are never write inputs. Do not rely on a computed column being absent from (or required in) an input type to stop writes — use `policy-write-deny`, which the policy transformer enforces on every write path.

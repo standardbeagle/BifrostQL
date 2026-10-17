@@ -96,6 +96,11 @@ namespace BifrostQL.Core.Resolvers
                 // UPDATE can actually reach it. UpdateObject answers a zero-row
                 // update with the not-found response (0), never the victim's key,
                 // so a scoped-away upsert shares that answer by construction.
+                // A key-only upsert of an existing row is insert-or-nothing: nothing
+                // to SET, so it answers that same 0 instead of reaching the update,
+                // which refuses a key-only update.
+                if (!propertyInfo.standardData.Any())
+                    return 0;
                 return await UpdateObject(context, table, mutationTransformers, model, conFactory, "upsert");
             }
 

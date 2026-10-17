@@ -45,6 +45,16 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   column being a required (or present) input as a write-deny mechanism; use
   `policy-write-deny`, which the policy transformer enforces by refusing
   write-denied keys on every write path.
+- An update that supplies only the primary key is now refused with
+  `NO_UPDATE_COLUMNS` ("An update must set at least one non-key column.")
+  instead of returning `0` with no statement run. Partial update inputs made
+  `update: { id: 3 }` pass validation, so a caller that forgot its fields saw
+  the same answer as "row not found". Applies to single-row update, `_batch`
+  (per-row and bulk paths, the whole batch rolls back) and
+  `IMutationIntentExecutor`; decided on the caller's own fields, not on
+  columns a transformer stamps. A key-only upsert of an existing row stays a
+  no-op returning `0`. **Behaviour change** for callers that relied on the
+  silent `0`.
 
 ### Fixed
 

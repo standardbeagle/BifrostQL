@@ -231,8 +231,7 @@ namespace BifrostQL.Core.Resolvers
             // reads by the same predicate.
             MutationArgumentBinder.RequireCompleteKey(table, propertyInfo.keyData.Keys, "Update");
 
-            if (!propertyInfo.standardData.Any())
-                return (0, 0);
+            MutationArgumentBinder.RequireSetColumns(propertyInfo.standardData);
 
             var dialect = ctx.ConnFactory.Dialect;
 

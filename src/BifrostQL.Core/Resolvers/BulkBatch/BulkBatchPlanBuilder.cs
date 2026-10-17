@@ -93,7 +93,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                     _ => throw new InvalidOperationException($"Unexpected bulk action '{action.Action}'."),
                 };
                 if (staged is null)
-                    continue; // the per-row path skips these rows too (empty data, missing key/set columns)
+                    continue; // the per-row path skips these rows too (empty data, missing key)
 
                 var (op, setColumns, keyColumns, values, filter, conflict, mutationType, observerData) = staged;
 
@@ -253,12 +253,13 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             if (data.Count == 0) return null;
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
-            if (keyData.Count == 0 || setData.Count == 0) return null;
+            if (keyData.Count == 0) return null;
 
             // Same rule as the per-row pipelines: a partial composite key joins the
             // staging table on part of the key, so ONE statement rewrites every row
             // sharing the supplied columns.
             MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
+            MutationArgumentBinder.RequireSetColumns(setData);
 
             // No CurrentRow: state-machine tables were gated off, and only they read it.
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, caseData, transformContext);

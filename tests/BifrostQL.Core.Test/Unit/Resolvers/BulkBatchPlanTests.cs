@@ -237,6 +237,23 @@ public sealed class BulkBatchPlanTests
     }
 
     [Fact]
+    public async Task KeyOnlyUpdate_IsRefusedWithThePerRowWireText()
+    {
+        // The per-row batch refuses a key-only update (NO_UPDATE_COLUMNS); the set-based
+        // plan must refuse it with the same code and text, never skip the row, or one
+        // batch would answer differently depending on whether the fast path ran.
+        var ctx = BuildContext(BuildModel());
+
+        var act = () => BuildAsync(ctx,
+            Update(("OrderId", 1), ("LineNo", 1), ("Status", "set")),
+            Update(("OrderId", 2), ("LineNo", 1)));
+
+        var error = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
+        error.Message.Should().Be("An update must set at least one non-key column.");
+        error.ErrorCode.Should().Be("NO_UPDATE_COLUMNS");
+    }
+
+    [Fact]
     public async Task DuplicateUpdateKeys_FallBack()
     {
         // The per-row path applies duplicate-key updates in order (last wins); a set-based

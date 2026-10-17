@@ -57,6 +57,11 @@ public sealed class PartialUpdateMutationTests : IAsyncLifetime
             )
             """);
         await Exec("INSERT INTO seats(venue, seat, holder, price) VALUES (1, 9, 'ana', 40)");
+        // Every non-key column nullable, so a key-only upsert passes validation
+        // (upsert applies the insert rule to non-key fields).
+        await Exec("DROP TABLE IF EXISTS labels");
+        await Exec("CREATE TABLE labels (id INTEGER PRIMARY KEY, note TEXT NULL)");
+        await Exec("INSERT INTO labels(id, note) VALUES (5, 'five'), (6, 'six')");
 
         var factory = new SqliteDbConnFactory(ConnString);
         _model = await new DbModelLoader(factory, new MetadataLoader(System.Array.Empty<string>())).LoadAsync();
@@ -93,22 +98,73 @@ public sealed class PartialUpdateMutationTests : IAsyncLifetime
         (await ScalarAsync("SELECT COUNT(*) FROM gadgets WHERE name = 'keyless'")).Should().Be("0");
     }
 
+    // Spelled as a literal, not read from MutationArgumentBinder.NoUpdateColumnsMessage,
+    // so a change to the production constant goes RED here.
+    private const string NoUpdateColumnsWireText = "An update must set at least one non-key column.";
+
     [Fact]
-    public async Task Update_SupplyingOnlyTheKey_IsANoOpReturningZero()
+    public async Task Update_SupplyingOnlyTheKey_IsRefusedAndWritesNothing()
     {
-        // Characterizes shipped behaviour, not a design choice made here:
-        // validation now admits a key-only update (every non-key field is
-        // optional), and TableMutationPipeline returns (0, 0) when there is
-        // nothing to SET — no statement runs, no error, the field reads 0 (not
-        // the key). The mutations guide documents this; if the pipeline starts
-        // refusing it, update both.
+        // Validation admits a key-only update (every non-key field is optional), so
+        // the pipeline refuses it: there is nothing to SET, and a silent 0 would
+        // read as "row not found" to a caller that simply forgot its fields.
         var result = await ExecuteMutationAsync("mutation { gadgets(update: { id: 3 }) }");
 
-        result.Errors.Should().BeNullOrEmpty();
-        var json = new GraphQL.SystemTextJson.GraphQLSerializer().Serialize(result);
-        json.Should().Contain("\"gadgets\":0");
+        result.Errors.Should().ContainSingle();
+        result.Errors![0].Message.Should().Be(NoUpdateColumnsWireText);
+        result.Errors[0].Message.Should().NotContain("gadgets").And.NotContain("id", "the wire text names no table or column");
         (await ScalarAsync("SELECT name || '|' || sku || '|' || status FROM gadgets WHERE id = 3"))
             .Should().Be("original|SKU-3|live");
+    }
+
+    [Fact]
+    public async Task CompositeKeyUpdate_SupplyingOnlyTheKey_IsRefused()
+    {
+        var result = await ExecuteMutationAsync("mutation { seats(update: { venue: 1, seat: 9 }) }");
+
+        result.Errors.Should().ContainSingle();
+        result.Errors![0].Message.Should().Be(NoUpdateColumnsWireText);
+        (await ScalarAsync("SELECT holder || '|' || price FROM seats WHERE venue = 1 AND seat = 9"))
+            .Should().Be("ana|40");
+    }
+
+    [Fact]
+    public async Task BatchUpdate_SupplyingOnlyTheKey_IsRefusedAndRollsBackTheBatch()
+    {
+        // Per-row batch path (SQLite has no bulk executor; the set-based plan's refusal
+        // is pinned in BulkBatchPlanTests.KeyOnlyUpdate_IsRefusedWithThePerRowWireText
+        // with this same literal). The first action addresses a different row, so the
+        // duplicate normalizer cannot merge the two, and proves the whole batch rolls
+        // back rather than skipping the key-only row.
+        var result = await ExecuteMutationAsync(
+            "mutation { labels_batch(actions: [{ update: { id: 5, note: \"batched\" } }, { update: { id: 6 } }]) }");
+
+        result.Errors.Should().ContainSingle();
+        result.Errors![0].Message.Should().Be(NoUpdateColumnsWireText);
+        (await ScalarAsync("SELECT note FROM labels WHERE id = 5")).Should().Be("five");
+    }
+
+    [Fact]
+    public async Task Upsert_SupplyingOnlyTheKeyOfAnExistingRow_StaysANoOpReturningZero()
+    {
+        // Upsert is insert-or-nothing for a key-only payload: the row exists and
+        // there is nothing to SET, so it answers 0 without an error.
+        var keyOnly = await ExecuteMutationAsync("mutation { labels(upsert: { id: 5 }) }");
+
+        keyOnly.Errors.Should().BeNullOrEmpty();
+        new GraphQL.SystemTextJson.GraphQLSerializer().Serialize(keyOnly).Should().Contain("\"labels\":0");
+        (await ScalarAsync("SELECT note FROM labels WHERE id = 5")).Should().Be("five");
+    }
+
+    [Fact]
+    public async Task BatchUpsert_SupplyingOnlyTheKeyOfAnExistingRow_IsSkippedNotRefused()
+    {
+        var result = await ExecuteMutationAsync(
+            "mutation { labels_batch(actions: [{ upsert: { id: 5 } }, { update: { id: 6, note: \"updated\" } }]) }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT note FROM labels WHERE id = 5")).Should().Be("five");
+        (await ScalarAsync("SELECT note FROM labels WHERE id = 6")).Should().Be("updated");
     }
 
     [Fact]

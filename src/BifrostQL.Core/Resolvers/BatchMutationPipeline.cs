@@ -403,13 +403,14 @@ namespace BifrostQL.Core.Resolvers
             // SET list is re-derived from the chain's (DB-named) output below.
             var (keyData, standardData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
 
-            if (!keyData.Any() || !standardData.Any()) return null;
+            if (!keyData.Any()) return null;
 
             // Same rule as the single-row update (TableMutationPipeline): a partial
             // composite key widens the WHERE from one row to every row sharing the
             // supplied key columns. Checked before the state-machine load, which reads
             // by the same predicate.
             MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
+            MutationArgumentBinder.RequireSetColumns(standardData);
 
             // Scoped by the same chain-derived row scope the UPDATE below carries, so the
             // state gate cannot read a row this caller could not write (see
@@ -579,7 +580,7 @@ namespace BifrostQL.Core.Resolvers
             // concurrent writer (a lost insert race fails the INSERT, a lost
             // update race affects 0 rows).
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
-            var (keyData, _) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
+            var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
 
             // An upsert's identity IS a primary key, so it must be whole before it is
             // used to decide insert-or-update: a partial key probes — and then updates
@@ -587,8 +588,10 @@ namespace BifrostQL.Core.Resolvers
             // never reaches the database at all.
             MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Upsert");
 
+            // A key-only upsert of an existing row is insert-or-nothing: there is
+            // nothing to SET, so it skips the update (which would refuse it).
             if (keyData.Count > 0 && await RowExistsAsync(ctx, keyData))
-                return await ExecuteUpdate(ctx, data);
+                return setData.Count == 0 ? null : await ExecuteUpdate(ctx, data);
 
             return await ExecuteInsert(ctx, data);
         }

@@ -98,6 +98,31 @@ namespace BifrostQL.Core.Resolvers
         public const string PartialPrimaryKeyCode = "PARTIAL_PRIMARY_KEY";
 
         /// <summary>
+        /// <see cref="ErrorCode"/> for an update that supplies no non-key column.
+        /// </summary>
+        public const string NoUpdateColumnsCode = "NO_UPDATE_COLUMNS";
+
+        /// <summary>Wire text for <see cref="NoUpdateColumnsCode"/>; names no table or column.</summary>
+        public const string NoUpdateColumnsMessage = "An update must set at least one non-key column.";
+
+        /// <summary>
+        /// Rejects an update whose CLIENT data carries no non-key column. Update inputs
+        /// are partial (only the key is required), so a key-only update passes schema
+        /// validation and would otherwise run no statement and report success. Decided
+        /// on the pre-chain <paramref name="clientSetData"/> (the <c>setData</c> /
+        /// <c>standardData</c> half of <see cref="SplitKeyAndSet"/>), never on the
+        /// chain's output: a column a transformer stamps (audit <c>updated_at</c>) is
+        /// not something the caller asked to change. Upsert does not call this — a
+        /// key-only upsert of an existing row is insert-or-nothing by design.
+        /// </summary>
+        public static void RequireSetColumns(IReadOnlyCollection<KeyValuePair<string, object?>> clientSetData)
+        {
+            if (clientSetData.Count > 0)
+                return;
+            throw new BifrostExecutionError(NoUpdateColumnsMessage) { ErrorCode = NoUpdateColumnsCode };
+        }
+
+        /// <summary>
         /// Rejects a PARTIAL primary key as a write predicate. A key column set that
         /// is missing any of the table's key columns does not address a row: on a
         /// composite key <c>(id, region)</c> a predicate built from <c>region</c>

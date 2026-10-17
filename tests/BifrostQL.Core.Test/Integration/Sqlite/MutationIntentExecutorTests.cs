@@ -470,6 +470,29 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
             .WithMessage("*must include the concurrency token*");
     }
 
+    [Fact]
+    public async Task Update_WithOnlyThePrimaryKey_IsRefusedWithAConstantMessage()
+    {
+        // The wire seam has no schema validation, so a key-only update arrives here
+        // directly; it is refused rather than reported as a zero-row success.
+        var executor = BuildExecutor();
+
+        var act = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "notes",
+            Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 1 },
+            UserContext = TenantContext(1),
+            Endpoint = EndpointPath,
+        });
+
+        var error = (await act.Should().ThrowAsync<BifrostExecutionError>()).Which;
+        error.Message.Should().Be("An update must set at least one non-key column.");
+        error.ErrorCode.Should().Be("NO_UPDATE_COLUMNS");
+        (await ScalarAsync("SELECT body FROM notes WHERE id = 1")).Should().Be("tenant-one-note");
+    }
+
     // ---- update/delete: tenant isolation ---------------------------------
 
     [Fact]

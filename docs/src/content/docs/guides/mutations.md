@@ -145,12 +145,14 @@ mutation {
 
 ## Required fields
 
-BifrostQL determines required fields from database nullability:
+BifrostQL determines required fields from database nullability and column defaults:
 
-- **Insert**: All non-nullable columns without defaults are required. Auto-increment columns are excluded.
-- **Update**: The primary key is required to identify the target row. Non-key fields are optional, but at least one changed field must be provided.
-- **Upsert**: Same input shape as update, with identity keys optional when the database can generate them.
+- **Insert**: A column is required only when it is NOT NULL and the database cannot fill it — no declared default. Identity / auto-increment columns are excluded, and so are computed (generated) columns on every dialect; a NOT NULL column with a default (`DEFAULT 'new'`, `DEFAULT now()`, a SQL Server `rowversion`) is optional and takes its default when omitted.
+- **Update**: Only the primary key is required, to identify the target row. Every other field is optional, and the UPDATE sets only the fields you supply — send just the columns that changed. An update that supplies only the key has nothing to set: no statement runs and the field returns `0` (not the key, and not an error).
+- **Upsert**: The primary key stays required (identity keys are optional when the database can generate them); the other fields follow the insert rule, since an upsert may insert.
 - **Delete**: Primary-key fields are required unless `_primaryKey` supplies them.
+
+Columns the database computes are never write inputs. Do not rely on a computed column being absent from (or required in) an input type to stop writes — use `policy-write-deny`, which the policy transformer enforces on every write path.
 
 ## Mutations with modules
 

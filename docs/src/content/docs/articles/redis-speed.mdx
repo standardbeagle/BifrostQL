@@ -48,7 +48,7 @@ Same seeded SQLite database, same machine, every lane over a real loopback socke
 | Update one column | **286 μs** | 1,263 μs¹ |
 | Update two fields | **272 μs** | 1,255 μs¹ |
 
-¹ The generated GraphQL update input requires every non-nullable column, so the GraphQL write carries the full row. RESP `SET`/`HSET` update only the columns you name — that is a semantic difference between the doors, not a benchmark trick.
+¹ Measured when the generated GraphQL update input still required every non-nullable column, so the GraphQL write carried the full row. Update inputs are now partial (only the primary key is required), so a GraphQL update can name just the changed columns as RESP `SET`/`HSET` do; these GraphQL figures have not been re-measured since.
 
 Two honest caveats. Absolute microseconds are hardware- and database-specific; the ratios are the durable result. And this is not a claim to beat a dedicated Redis server on raw latency — a real Redis answering from RAM is faster than any door onto SQL. The claim is different: these are your live rows. There is no second copy to load, invalidate, or watch drift out of date.
 

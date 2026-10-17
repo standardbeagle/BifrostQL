@@ -4,7 +4,7 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
-## Unreleased — 2026-10-17 (write-path transactions)
+## Unreleased — 2026-10-17 (write-path transactions, mutation input requiredness)
 
 ### Added
 
@@ -22,6 +22,29 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `IMutationTransformer.RequiresWriteTransaction(table)` (default `false`): a
   transformer that reads through the connection declares it per table, and
   that table stays off the bulk batch fast path.
+
+### Changed
+
+- Update input types are partial: only the primary key is required. An UPDATE
+  sets only the columns supplied, so `orders(update: { id: 3, status: "paid" })`
+  now passes validation on a table with other NOT NULL columns (it previously
+  failed with "field … of required type … was not provided").
+- Insert input requiredness honours column defaults: a field is required only
+  when the column is NOT NULL, has no default, and is neither identity nor
+  computed. Schema readers now report `ColumnDto.HasDefault` on all four
+  dialects (SQL Server `COLUMN_DEFAULT` or `rowversion`; Postgres
+  `column_default` or identity; MySQL `COLUMN_DEFAULT`, `auto_increment` or
+  `DEFAULT_GENERATED`; SQLite `dflt_value`). Upsert keeps its key required and
+  applies the insert rule to the other fields.
+- Computed / generated columns are now excluded from write input types on all
+  four dialects. Previously only SQLite reported `IsComputed` (7286a09c); SQL
+  Server (`COLUMNPROPERTY … 'IsComputed'`), Postgres (`is_generated = 'ALWAYS'`)
+  and MySQL (`generation_expression`) now do too, so those columns also leave
+  the insert/update/upsert inputs and are read-only in `_dbSchema`.
+- Computed columns are never write inputs. A host must not rely on a computed
+  column being a required (or present) input as a write-deny mechanism; use
+  `policy-write-deny`, which the policy transformer enforces by refusing
+  write-denied keys on every write path.
 
 ### Fixed
 
@@ -50,6 +73,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A transformer that throws a non-`BifrostExecutionError` exception on insert,
   delete or `updateWhere` now surfaces as the sanitized `DATABASE_ERROR`, as it
   already did on update, because the chain runs inside the transaction.
+- Build: pinned `System.Security.Cryptography.Pkcs` (8.0.2 on net8.0, 9.0.21
+  on net9.0/net10.0) in `BifrostQL.SqlServer`; the versions SqlClient 6.1.4
+  pulls fall inside CVE-2026-84008 and CVE-2026-70162 and failed the NuGet
+  audit.
 
 ## Unreleased — 2026-09-13 (authorization epic)
 

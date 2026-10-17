@@ -138,6 +138,12 @@ public sealed class TreeSyncExecutor
                             "A model is required when a mutation-transformer pipeline is supplied."),
                         UserContext = userContext ?? new Dictionary<string, object?>(),
                         Services = services,
+                        // The tree's own connection: its transaction is SQL-level
+                        // BEGIN/COMMIT, so commands run on the connection's ambient
+                        // transaction and there is no DbTransaction object to pass.
+                        Connection = conn,
+                        Transaction = null,
+                        Dialect = _dialect,
                     };
                     var result = await transformers.TransformAsync(op.Table, mutationType, data, ctx);
                     result.ThrowIfDenied();

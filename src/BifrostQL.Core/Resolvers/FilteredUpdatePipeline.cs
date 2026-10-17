@@ -74,45 +74,51 @@ namespace BifrostQL.Core.Resolvers
 
             AssertFilterColumnsAllowed(table, userFilter, ctx);
 
-            var transformContext = new MutationTransformContext
-            {
-                Model = ctx.Model,
-                UserContext = ctx.UserContext,
-                Services = ctx.Services,
-            };
-            var transformResult = await ctx.Transformers.TransformAsync(
-                table, MutationType.Update, new Dictionary<string, object?>(setData, StringComparer.OrdinalIgnoreCase), transformContext);
-            transformResult.ThrowIfDenied();
-            // Belt over the metadata gate above: any transformer demanding per-row semantics
-            // that slipped past the static checks still rejects the set-based write.
-            if (transformResult.ConflictOnNoRows || transformResult.StateTransition is not null)
-                throw new BifrostExecutionError(
-                    $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available: a transformer requires per-row semantics. Use the batch mutation instead.");
-
-            // Database-named on the way out of the chain (see IMutationTransformers).
-            var dbData = transformResult.Data;
-
-            var combined = transformResult.AdditionalFilter is null
-                ? userFilter
-                : TableFilter.CombineAnd(userFilter, transformResult.AdditionalFilter);
             var dialect = ctx.ConnFactory.Dialect;
-            var parameters = new SqlParameterCollection();
-            var parts = combined.RenderParts(ctx.Model, dialect, parameters, alias: null);
-            if (!string.IsNullOrWhiteSpace(parts.Joins))
-                throw new BifrostExecutionError("Filtered update does not support relationship filters in 'where'.");
-            if (string.IsNullOrWhiteSpace(parts.Where))
-                throw new BifrostExecutionError("Filtered update requires a non-empty 'where'.");
-
             var maxAffected = FilteredUpdateConfig.MaxAffected(table);
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var countSql = MutationCommandExecutor.BuildFilteredCountSql(tableRef, parts.Where);
-            var updateSql = MutationCommandExecutor.BuildFilteredUpdateSql(dialect, table, tableRef, dbData.Keys, parts.Where);
-
             var affected = 0;
+            Dictionary<string, object?> dbData = null!;
+            // The transformer chain, the COUNT precheck and the update share one
+            // transaction: the chain sees the write's connection, and the bound the
+            // precheck enforces is the bound the update sees.
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
-                // COUNT precheck inside the SAME transaction as the update, so the bound it
-                // enforces is the bound the update sees.
+                var transformContext = new MutationTransformContext
+                {
+                    Model = ctx.Model,
+                    UserContext = ctx.UserContext,
+                    Services = ctx.Services,
+                    Connection = conn,
+                    Transaction = transaction,
+                    Dialect = dialect,
+                    CancellationToken = ctx.CancellationToken,
+                };
+                var transformResult = await ctx.Transformers.TransformAsync(
+                    table, MutationType.Update, new Dictionary<string, object?>(setData, StringComparer.OrdinalIgnoreCase), transformContext);
+                transformResult.ThrowIfDenied();
+                // Belt over the metadata gate above: any transformer demanding per-row semantics
+                // that slipped past the static checks still rejects the set-based write.
+                if (transformResult.ConflictOnNoRows || transformResult.StateTransition is not null)
+                    throw new BifrostExecutionError(
+                        $"Filtered update of '{table.TableSchema}.{table.DbName}' is not available: a transformer requires per-row semantics. Use the batch mutation instead.");
+
+                // Database-named on the way out of the chain (see IMutationTransformers).
+                dbData = transformResult.Data;
+
+                var combined = transformResult.AdditionalFilter is null
+                    ? userFilter
+                    : TableFilter.CombineAnd(userFilter, transformResult.AdditionalFilter);
+                var parameters = new SqlParameterCollection();
+                var parts = combined.RenderParts(ctx.Model, dialect, parameters, alias: null);
+                if (!string.IsNullOrWhiteSpace(parts.Joins))
+                    throw new BifrostExecutionError("Filtered update does not support relationship filters in 'where'.");
+                if (string.IsNullOrWhiteSpace(parts.Where))
+                    throw new BifrostExecutionError("Filtered update requires a non-empty 'where'.");
+
+                var countSql = MutationCommandExecutor.BuildFilteredCountSql(tableRef, parts.Where);
+                var updateSql = MutationCommandExecutor.BuildFilteredUpdateSql(dialect, table, tableRef, dbData.Keys, parts.Where);
+
                 await using (var countCmd = conn.CreateCommand())
                 {
                     countCmd.CommandText = countSql;

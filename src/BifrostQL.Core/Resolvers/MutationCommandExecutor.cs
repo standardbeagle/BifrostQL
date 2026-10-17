@@ -199,6 +199,14 @@ namespace BifrostQL.Core.Resolvers
         /// not exist (.claude/rules/protocol-adapter-security.md invariant 2). This is
         /// the read counterpart of invariant 8(c): the write already scoped itself, so
         /// the read that gates it must scope itself the same way.</para>
+        ///
+        /// <para>The read takes the dialect's update lock (see
+        /// <see cref="BuildStateMachineLoadSql"/>), so a concurrent transition of the same
+        /// row waits for this transaction instead of validating against the same stale
+        /// state. The lock alone is not the whole guard — SQLite has no row lock and a
+        /// lock does not survive a dialect that ignores it — so the state-machine
+        /// transformer also ANDs <c>state = loaded state</c> into the UPDATE and flags a
+        /// zero-row result as CONFLICT.</para>
         /// </summary>
         public static async Task<IReadOnlyDictionary<string, object?>?> LoadCurrentStateMachineRow(
             DbConnection conn,
@@ -216,10 +224,7 @@ namespace BifrostQL.Core.Resolvers
 
             var scope = await RenderRowScopeAsync(table, keyData, transformers, scopeContext, dialect);
 
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var stateColumn = dialect.EscapeIdentifier(definition.StateColumn);
-            var whereClause = BuildKeyPredicate(dialect, keyData.Keys);
-            var sql = $"SELECT {stateColumn} FROM {tableRef} WHERE {whereClause}{scope.WhereSuffix};";
+            var sql = BuildStateMachineLoadSql(dialect, table, definition.StateColumn, keyData.Keys, scope.WhereSuffix);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
@@ -231,6 +236,21 @@ namespace BifrostQL.Core.Resolvers
             {
                 [definition.StateColumn] = currentState == DBNull.Value ? null : currentState,
             };
+        }
+
+        /// <summary>
+        /// Builds the locked current-state read run by <see cref="LoadCurrentStateMachineRow"/>:
+        /// the same update-lock forms as <see cref="BuildSelectRowByKeySql"/> (SQL Server's
+        /// <c>WITH (UPDLOCK)</c> after the table reference, Postgres/MySQL <c>FOR UPDATE</c>
+        /// after the WHERE, nothing on SQLite), with the caller's row scope ANDed onto the
+        /// key predicate ahead of the locking clause.
+        /// </summary>
+        public static string BuildStateMachineLoadSql(
+            ISqlDialect dialect, IDbTable table, string stateColumn, IEnumerable<string> keyColumns, string scopeWhereSuffix)
+        {
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            return $"SELECT {dialect.EscapeIdentifier(stateColumn)} FROM {tableRef}{dialect.UpdateLockTableHint} " +
+                   $"WHERE {BuildKeyPredicate(dialect, keyColumns)}{scopeWhereSuffix}{dialect.UpdateLockClause};";
         }
 
         /// <summary>

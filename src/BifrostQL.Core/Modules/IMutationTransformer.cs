@@ -1,3 +1,4 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Auth;
@@ -124,6 +125,18 @@ public interface IMutationTransformer
         MutationType mutationType,
         Dictionary<string, object?> data,
         MutationTransformContext context);
+
+    /// <summary>
+    /// True when this transformer must read through the write's own connection and
+    /// transaction (<see cref="MutationTransformContext.Connection"/>) on
+    /// <paramref name="table"/>. The bulk set-based batch fast path transforms its rows
+    /// before any write transaction exists, so a table for which any transformer answers
+    /// true is kept on the per-row batch path, where the context carries the transaction.
+    /// Must use the same predicate the transformer's own body uses to decide whether it
+    /// reads (the hook-applicability rule in AGENTS.md). Defaults to false: a transformer
+    /// that never touches <see cref="MutationTransformContext.Connection"/> needs nothing.
+    /// </summary>
+    bool RequiresWriteTransaction(IDbTable table) => false;
 }
 
 /// <summary>
@@ -135,6 +148,87 @@ public sealed class MutationTransformContext
     public required IDictionary<string, object?> UserContext { get; init; }
     public IReadOnlyDictionary<string, object?>? CurrentRow { get; init; }
     public IServiceProvider? Services { get; init; }
+
+    /// <summary>
+    /// The connection the write itself runs on. Every transformer chain run on a write
+    /// path — single-row insert/update/delete/upsert, the per-row batch path, the
+    /// filtered set-update, tree-sync, and the row-scope probe that precedes a state
+    /// load — happens INSIDE the write's transaction and receives it here, so a guard
+    /// can read (and lock) state that commits or rolls back with the write instead of
+    /// opening a second connection that can neither see uncommitted rows of the same
+    /// mutation nor hold a lock across it. Null only where no write transaction exists
+    /// yet: the bulk set-based batch fast path builds its plan before its transaction
+    /// opens (a transformer that needs the connection declares
+    /// <see cref="IMutationTransformer.RequiresWriteTransaction"/> and the table stays
+    /// on the per-row path), and a context a caller constructs by hand.
+    /// </summary>
+    public DbConnection? Connection { get; init; }
+
+    /// <summary>
+    /// The ADO.NET transaction of the write, set on every command a transformer issues on
+    /// <see cref="Connection"/>. Null on tree-sync even though <see cref="Connection"/> is
+    /// set: that path manages its transaction with SQL <c>BEGIN</c>/<c>COMMIT</c> on the
+    /// connection, so commands run on the connection's ambient transaction and there is
+    /// no <see cref="DbTransaction"/> object to pass.
+    /// </summary>
+    public DbTransaction? Transaction { get; init; }
+
+    /// <summary>The write's SQL dialect; set whenever <see cref="Connection"/> is.</summary>
+    public ISqlDialect? Dialect { get; init; }
+
+    /// <summary>The write's cancellation token, for commands a transformer issues.</summary>
+    public CancellationToken CancellationToken { get; init; }
+
+    /// <summary>
+    /// Reads the named <paramref name="columns"/> of the row of <paramref name="table"/>
+    /// matching <paramref name="keyColumns"/> (an AND of column equalities, database
+    /// column names) inside the write's transaction, taking the dialect's update lock
+    /// (<see cref="ISqlDialect.UpdateLockTableHint"/> / <see cref="ISqlDialect.UpdateLockClause"/>;
+    /// SQLite serializes writers and emits neither) so the row cannot change before the
+    /// write commits. Returns null when no row matches. The predicate is exactly the
+    /// supplied columns — it is NOT narrowed by tenant/policy scope, so a guard that
+    /// answers the caller from the result must apply its own scope (as the tenant
+    /// foreign-key check compares the tenant column) and must answer a missing row and
+    /// an out-of-scope row identically. Throws when the context carries no write
+    /// transaction (see <see cref="Connection"/>), never reads outside it.
+    /// </summary>
+    public Task<IReadOnlyDictionary<string, object?>?> LoadRowForUpdateAsync(
+        IDbTable table,
+        IReadOnlyCollection<string> columns,
+        IReadOnlyDictionary<string, object?> keyColumns)
+    {
+        if (Connection is null || Dialect is null)
+            throw new Resolvers.BifrostExecutionError(
+                "This mutation path does not run its transformers inside the write transaction.");
+        return Resolvers.MutationCommandExecutor.LoadRowByKey(
+            Connection, Transaction, Dialect, table, columns,
+            new Dictionary<string, object?>(keyColumns, StringComparer.OrdinalIgnoreCase),
+            forUpdate: true, CancellationToken);
+    }
+
+    /// <summary>
+    /// Copies this context, replacing only what is supplied. Every pipeline that derives
+    /// a per-action context (current row, module arguments, the write transaction) goes
+    /// through here so no derived context silently drops a member the base carried.
+    /// </summary>
+    internal MutationTransformContext With(
+        IReadOnlyDictionary<string, object?>? currentRow = null,
+        IReadOnlyDictionary<string, object?>? moduleArguments = null,
+        (DbConnection Connection, DbTransaction? Transaction, ISqlDialect Dialect, CancellationToken CancellationToken)? write = null)
+        => new()
+        {
+            Model = Model,
+            UserContext = UserContext,
+            CurrentRow = currentRow ?? CurrentRow,
+            Services = Services,
+            ModuleArguments = moduleArguments ?? ModuleArguments,
+            RestoreSoftDeleted = RestoreSoftDeleted,
+            RestoreHardDeleted = RestoreHardDeleted,
+            Connection = write?.Connection ?? Connection,
+            Transaction = write is { } w ? w.Transaction : Transaction,
+            Dialect = write?.Dialect ?? Dialect,
+            CancellationToken = write?.CancellationToken ?? CancellationToken,
+        };
 
     /// <summary>
     /// Module argument values captured from the GraphQL request (e.g.

@@ -75,6 +75,30 @@ namespace BifrostQL.Core.Resolvers
             };
 
         /// <summary>
+        /// The transformer context every chain run of this pipeline receives: the request's
+        /// identity, services and restore flags, plus the write's own connection and
+        /// transaction — every chain run here happens inside it.
+        /// </summary>
+        private static MutationTransformContext TransformContext(
+            MutationPipelineContext ctx, DbConnection conn, DbTransaction transaction, ISqlDialect dialect,
+            IReadOnlyDictionary<string, object?>? currentRow = null,
+            IReadOnlyDictionary<string, object?>? moduleArguments = null)
+            => new()
+            {
+                Model = ctx.Model,
+                UserContext = ctx.UserContext,
+                CurrentRow = currentRow,
+                Services = ctx.Services,
+                ModuleArguments = moduleArguments ?? ModuleApiRegistry.EmptyArguments,
+                RestoreSoftDeleted = ctx.RestoreSoftDeleted,
+                RestoreHardDeleted = ctx.RestoreHardDeleted,
+                Connection = conn,
+                Transaction = transaction,
+                Dialect = dialect,
+                CancellationToken = ctx.CancellationToken,
+            };
+
+        /// <summary>
         /// History targets take no client writes on ANY pipeline entry point —
         /// GraphQL mutation, batch, or adapter mutation intent. Their only writer is
         /// the change-history hook, which inserts trail rows via direct SQL inside
@@ -114,36 +138,32 @@ namespace BifrostQL.Core.Resolvers
             GuardNotHistoryTarget(table, ctx.Model);
             var dialect = ctx.ConnFactory.Dialect;
 
-            // Mutation transformers (e.g. the authorization policy engine) gate
-            // the insert before any SQL is built; non-empty Errors abort it.
-            var transformContext = new MutationTransformContext
-            {
-                Model = ctx.Model,
-                UserContext = ctx.UserContext,
-                Services = ctx.Services,
-                RestoreHardDeleted = ctx.RestoreHardDeleted,
-            };
-            var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
-            transformResult.ThrowIfDenied();
-
-            // Adopt the (possibly rewritten) data so transformer output — e.g.
-            // enum-name → DB-value mapping — actually reaches the SQL. It is already
-            // keyed by database column name: the chain rekeys once on the way in.
-            data = transformResult.Data;
-
-            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var insertInto = MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys);
-            var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
-            var sql = returning != null
-                ? $"{insertInto}{returning};"
-                : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
-
-            // Before-commit hooks and the insert (with its identity SELECT) run in
-            // one transaction so a hook veto or a failed write rolls back as a unit.
+            // The transformer chain, before-commit hooks and the insert (with its identity
+            // SELECT) run in one transaction: the chain sees the write's connection (a guard
+            // can read and lock state that commits with the write), and a veto or a failed
+            // write rolls back as a unit.
             object? result = null;
             string? pendingApproval = null;
             await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
+                // Mutation transformers (e.g. the authorization policy engine) gate
+                // the insert before any SQL is built; non-empty Errors abort it.
+                var transformContext = TransformContext(ctx, conn, transaction, dialect);
+                var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
+                transformResult.ThrowIfDenied();
+
+                // Adopt the (possibly rewritten) data so transformer output — e.g.
+                // enum-name → DB-value mapping — actually reaches the SQL. It is already
+                // keyed by database column name: the chain rekeys once on the way in.
+                data = transformResult.Data;
+
+                var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+                var insertInto = MutationCommandExecutor.BuildInsertInto(dialect, table, tableRef, data.Keys);
+                var returning = dialect.ReturningIdentityClauseFor(table.KeyColumns.Select(k => k.ColumnName).ToList());
+                var sql = returning != null
+                    ? $"{insertInto}{returning};"
+                    : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
+
                 var hookContext = HookContext(table, MutationType.Insert, data, ctx, conn, transaction, dialect);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
                 // The approval gate DIVERTS a gated write: it enqueued a pending_changes row
@@ -230,14 +250,7 @@ namespace BifrostQL.Core.Resolvers
                 // The state load runs under this same context minus CurrentRow — that is
                 // what it is about to produce — so the chain can report the caller's row
                 // scope and the load can narrow itself to rows this update could reach.
-                var scopeContext = new MutationTransformContext
-                {
-                    Model = ctx.Model,
-                    UserContext = ctx.UserContext,
-                    Services = ctx.Services,
-                    RestoreSoftDeleted = ctx.RestoreSoftDeleted,
-                    RestoreHardDeleted = ctx.RestoreHardDeleted,
-                };
+                var scopeContext = TransformContext(ctx, conn, transaction, dialect);
                 var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(
                     conn,
                     transaction,
@@ -247,15 +260,7 @@ namespace BifrostQL.Core.Resolvers
                     ctx.Transformers,
                     scopeContext,
                     ctx.CancellationToken);
-                var transformContext = new MutationTransformContext
-                {
-                    Model = ctx.Model,
-                    UserContext = ctx.UserContext,
-                    CurrentRow = currentRow,
-                    Services = ctx.Services,
-                    RestoreSoftDeleted = ctx.RestoreSoftDeleted,
-                    RestoreHardDeleted = ctx.RestoreHardDeleted,
-                };
+                var transformContext = TransformContext(ctx, conn, transaction, dialect, currentRow);
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
                 transformResult.ThrowIfDenied();
 
@@ -346,34 +351,49 @@ namespace BifrostQL.Core.Resolvers
                 data.Keys.Select(k => ToDbColumnName(table, k)),
                 StringComparer.OrdinalIgnoreCase);
 
-            var transformContext = new MutationTransformContext
+            // The transformer chain, before-commit hooks and the write run in one
+            // transaction, so the chain sees the write's connection and a veto rolls the
+            // whole delete back.
+            DeleteOutcome outcome = default;
+            await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
             {
-                Model = ctx.Model,
-                UserContext = ctx.UserContext,
-                Services = ctx.Services,
-                ModuleArguments = ctx.ModuleArguments,
-            };
-            var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, transformContext);
+                var transformContext = TransformContext(ctx, conn, transaction, dialect, moduleArguments: ctx.ModuleArguments);
+                var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, transformContext);
 
-            transformResult.ThrowIfDenied();
+                transformResult.ThrowIfDenied();
 
-            // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
-            // IS NULL) is ANDed onto the WHERE clause so it narrows — never
-            // replaces — the primary-key predicate.
-            var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
+                // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
+                // IS NULL) is ANDed onto the WHERE clause so it narrows — never
+                // replaces — the primary-key predicate.
+                var additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
 
-            // Database-named on the way out of the chain, so the PK split (via
-            // ColumnLookup) and the emitted WHERE/SET share one name space even when a
-            // GraphQL field name differs from its column.
-            var dbData = transformResult.Data;
+                // Database-named on the way out of the chain, so the PK split (via
+                // ColumnLookup) and the emitted WHERE/SET share one name space even when a
+                // GraphQL field name differs from its column.
+                var dbData = transformResult.Data;
 
-            // A transformer may rewrite a delete into a soft-delete UPDATE (deleted_at
-            // stamped); otherwise it stays a hard DELETE. Both scope their rows by the
-            // same client-supplied predicate columns (see SelectPredicateColumns).
-            return transformResult.MutationType == MutationType.Update
-                ? await ExecuteSoftDeleteAsync(table, dialect, ctx, dbData, clientColumns, additionalFilter)
-                : await ExecuteHardDeleteAsync(table, dialect, ctx, dbData, clientColumns, additionalFilter);
+                // A transformer may rewrite a delete into a soft-delete UPDATE (deleted_at
+                // stamped); otherwise it stays a hard DELETE. Both scope their rows by the
+                // same client-supplied predicate columns (see SelectPredicateColumns).
+                outcome = transformResult.MutationType == MutationType.Update
+                    ? await ExecuteSoftDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter)
+                    : await ExecuteHardDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter);
+            }, ctx.CancellationToken);
+            // Thrown AFTER the commit so the enqueued pending row survives.
+            if (outcome.PendingApproval is not null)
+                throw ApprovalInterceptMutationHook.PendingApprovalError(outcome.PendingApproval);
+            await MutationNotifier.NotifyMutationAsync(ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext);
+            return outcome.Affected;
         }
+
+        /// <summary>
+        /// What one in-transaction delete step produced: the affected-row count, the
+        /// approval divert message (when the gate enqueued instead of writing), and the
+        /// verb + data the post-commit notification describes (a soft delete notifies as
+        /// the UPDATE it executed).
+        /// </summary>
+        private readonly record struct DeleteOutcome(
+            int Affected, string? PendingApproval, MutationType NotifyType, Dictionary<string, object?> Data);
 
         /// <summary>
         /// The columns that scope a delete's WHERE clause: the client-supplied
@@ -406,8 +426,9 @@ namespace BifrostQL.Core.Resolvers
         // like status:"archived" would be written into the row unconditionally. The WHERE
         // carries the client-supplied predicate columns, so a client predicate narrows
         // which rows are soft-deleted. Before-commit hooks and the write commit atomically.
-        private static async Task<object?> ExecuteSoftDeleteAsync(
+        private static async Task<DeleteOutcome> ExecuteSoftDeleteAsync(
             IDbTable table, ISqlDialect dialect, MutationPipelineContext ctx,
+            DbConnection conn, DbTransaction transaction,
             Dictionary<string, object?> dbData,
             HashSet<string> clientColumns,
             (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
@@ -423,33 +444,23 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
-            var result = 0;
-            string? pendingApproval = null;
-            await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
-            {
-                var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect);
-                ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, MutationType.Delete);
-                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
-                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
-                {
-                    pendingApproval = divertMessage;
-                    return;
-                }
-                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, ctx.CancellationToken);
-                // Soft delete is modeled as an UPDATE; emit an update event (hook skips zero-row).
-                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
-            }, ctx.CancellationToken);
-            if (pendingApproval is not null)
-                throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-            await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, dbData, result, ctx.UserContext);
-            return result;
+            var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect);
+            ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, MutationType.Delete);
+            await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+            if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                return new DeleteOutcome(0, divertMessage, MutationType.Update, dbData);
+            var result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, ctx.CancellationToken);
+            // Soft delete is modeled as an UPDATE; emit an update event (hook skips zero-row).
+            await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
+            return new DeleteOutcome(result, null, MutationType.Update, dbData);
         }
 
         // Standard hard DELETE. WHERE is built from the client-supplied predicate
         // columns only (see SelectPredicateColumns). Before-commit hooks and the write
         // commit atomically.
-        private static async Task<object?> ExecuteHardDeleteAsync(
+        private static async Task<DeleteOutcome> ExecuteHardDeleteAsync(
             IDbTable table, ISqlDialect dialect, MutationPipelineContext ctx,
+            DbConnection conn, DbTransaction transaction,
             Dictionary<string, object?> dbData,
             HashSet<string> clientColumns,
             (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
@@ -462,24 +473,13 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
-            var result = 0;
-            string? pendingApproval = null;
-            await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
-            {
-                var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect);
-                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
-                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
-                {
-                    pendingApproval = divertMessage;
-                    return;
-                }
-                result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, ctx.CancellationToken);
-                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
-            }, ctx.CancellationToken);
-            if (pendingApproval is not null)
-                throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-            await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Delete, deleteData, result, ctx.UserContext);
-            return result;
+            var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect);
+            await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+            if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                return new DeleteOutcome(0, divertMessage, MutationType.Delete, deleteData);
+            var result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, ctx.CancellationToken);
+            await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
+            return new DeleteOutcome(result, null, MutationType.Delete, deleteData);
         }
     }
 }

@@ -16,7 +16,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     /// an in-transaction hook that APPLIES TO THE TABLE (approval/history/CDC need per-row
     /// before-images and identities; the built-ins are registered in every host and no-op per
     /// table, so applicability is the question, never registration), upserts (per-row existence probe), state machines (per-row current-row
-    /// load), heterogeneous transformer filters — returns null so the caller keeps the
+    /// load), a transformer that reads through the write transaction
+    /// (<see cref="IMutationTransformer.RequiresWriteTransaction"/>), heterogeneous transformer filters — returns null so the caller keeps the
     /// per-row pipeline: falling back is normal operation, never an error.
     /// </summary>
     internal static class BulkBatchPlanBuilder
@@ -190,6 +191,15 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 reason = "in-transaction mutation hooks apply to this table";
                 return false;
             }
+            // The plan's chain runs before any write transaction exists, so a transformer that
+            // reads through the write's connection (the tenant foreign-key check) cannot run
+            // here. Asked per TABLE, with the transformer's own predicate — never "is such a
+            // transformer registered?", which the built-in registration makes constant.
+            if (ctx.Transformers.Any(t => t.RequiresWriteTransaction(table)))
+            {
+                reason = "a mutation transformer reads through the write transaction on this table";
+                return false;
+            }
             reason = "";
             return true;
         }
@@ -273,13 +283,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             // path does, so the soft-delete transformer sees the same rewrite decision.
             var deleteTransformContext = ctx.ModuleArguments.Count == 0
                 ? transformContext
-                : new MutationTransformContext
-                {
-                    Model = transformContext.Model,
-                    UserContext = transformContext.UserContext,
-                    Services = transformContext.Services,
-                    ModuleArguments = ctx.ModuleArguments,
-                };
+                : transformContext.With(moduleArguments: ctx.ModuleArguments);
 
             var clientColumns = data.Keys
                 .Select(k => DbParameterBinder.ToDbColumnName(table, k))

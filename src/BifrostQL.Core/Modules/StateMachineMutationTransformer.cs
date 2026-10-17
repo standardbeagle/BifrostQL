@@ -68,8 +68,14 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
         if (string.IsNullOrWhiteSpace(currentState))
             return Denied(mutationType, data);
 
+        // From here on the update is allowed against the state it was validated on, so the
+        // UPDATE must still find the row in THAT state: a concurrent transition between the
+        // locked load and this write (or a dialect without a row lock) otherwise lets the
+        // write land on a state it was never validated against. Same-state writes carry
+        // the guard too — writing "open" over a row that just moved to "review" is a
+        // review->open transition nobody validated.
         if (string.Equals(currentState.Trim(), newState.Trim(), StringComparison.OrdinalIgnoreCase))
-            return Allowed(mutationType, data);
+            return AllowedFromState(table, mutationType, data, definition.StateColumn, currentStateValue);
 
         var transition = definition.Transitions.FirstOrDefault(t =>
             string.Equals(t.From, currentState.Trim(), StringComparison.OrdinalIgnoreCase) &&
@@ -86,6 +92,8 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
         {
             MutationType = mutationType,
             Data = data,
+            AdditionalFilter = TableFilterFactory.Equals(table, definition.StateColumn, currentStateValue),
+            ConflictOnNoRows = true,
             StateTransition = new StateTransitionInfo(
                 table.DbName,
                 ResolveEntityId(table, data),
@@ -110,6 +118,22 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
         {
             MutationType = mutationType,
             Data = data,
+        };
+
+    /// <summary>
+    /// An allowed update re-checked at write time: <c>state = the loaded state</c> is ANDed
+    /// into the UPDATE, and zero affected rows is a CONFLICT (the row left that state, or
+    /// vanished, after it was read) rather than a silent no-op.
+    /// </summary>
+    private static MutationTransformResult AllowedFromState(
+        IDbTable table, MutationType mutationType, Dictionary<string, object?> data,
+        string stateColumn, object? loadedState) =>
+        new()
+        {
+            MutationType = mutationType,
+            Data = data,
+            AdditionalFilter = TableFilterFactory.Equals(table, stateColumn, loadedState),
+            ConflictOnNoRows = true,
         };
 
     private static MutationTransformResult Denied(MutationType mutationType, Dictionary<string, object?> data) =>

@@ -87,12 +87,16 @@ namespace BifrostQL.Core.Resolvers
                 Model = ctx.Model,
                 UserContext = ctx.UserContext,
                 Services = ctx.Services,
+                CancellationToken = ct,
             };
 
             // Set-based fast path: on a provider with a bulk executor, an eligible batch is
             // transformed per row up front, staged, and applied by set-based DML inside one
             // inline SQL transaction. A null plan (or a staging-phase failure, which cannot
-            // have written anything) falls through to the per-row loop below.
+            // have written anything) falls through to the per-row loop below. The plan is
+            // built before any write transaction exists, so its chain runs on the
+            // connection-less context above; a table whose transformers need the
+            // transaction is ineligible (BulkBatchPlanBuilder.IsEligible).
             if (ctx.ConnFactory.BulkBatchExecutor is { } bulkExecutor)
             {
                 var built = await BulkBatch.BulkBatchPlanBuilder.TryBuildAsync(table, actions, ctx, transformContext);
@@ -114,9 +118,13 @@ namespace BifrostQL.Core.Resolvers
                 // All per-action executors share the same table/dialect/model,
                 // connection + transaction, and captured contexts; bundle them once
                 // so the executors take only their per-action data.
+                // Every per-row chain run of the batch sees the batch's connection and
+                // transaction, so a guard reads (and locks) state that commits with it.
+                var dialect = ctx.ConnFactory.Dialect;
                 var execContext = new BatchExecutionContext(
-                    table, ctx.Transformers, ctx.Model, ctx.ConnFactory.Dialect, conn, transaction,
-                    ctx.UserContext, transformContext, ctx.ModuleArguments, ct, ctx.ConnFactory,
+                    table, ctx.Transformers, ctx.Model, dialect, conn, transaction,
+                    ctx.UserContext, transformContext.With(write: (conn, transaction, dialect, ct)),
+                    ctx.ModuleArguments, ct, ctx.ConnFactory,
                     // One per-transaction bag for the whole batch; each action gets its own
                     // per-action bag when its hook context is built.
                     MutationObserverContext.NewMutationState());
@@ -412,13 +420,7 @@ namespace BifrostQL.Core.Resolvers
                 ctx.MutationTransformers, ctx.TransformContext, ctx.Ct);
             var updateTransformContext = currentRow is null
                 ? ctx.TransformContext
-                : new MutationTransformContext
-                {
-                    Model = ctx.TransformContext.Model,
-                    UserContext = ctx.TransformContext.UserContext,
-                    CurrentRow = currentRow,
-                    Services = ctx.TransformContext.Services,
-                };
+                : ctx.TransformContext.With(currentRow: currentRow);
 
             // Mutation transformers (e.g. the authorization policy engine) gate
             // the update before any SQL is built; non-empty Errors abort it.
@@ -487,13 +489,7 @@ namespace BifrostQL.Core.Resolvers
             // DELETE→UPDATE rewrite, mirroring the single-row resolver.
             var deleteTransformContext = ctx.ModuleArguments.Count == 0
                 ? ctx.TransformContext
-                : new MutationTransformContext
-                {
-                    Model = ctx.TransformContext.Model,
-                    UserContext = ctx.TransformContext.UserContext,
-                    Services = ctx.TransformContext.Services,
-                    ModuleArguments = ctx.ModuleArguments,
-                };
+                : ctx.TransformContext.With(moduleArguments: ctx.ModuleArguments);
 
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             transformResult.ThrowIfDenied();

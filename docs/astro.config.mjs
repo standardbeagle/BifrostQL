@@ -14,7 +14,6 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'BifrostQL',
-			tagline: 'Zero-code GraphQL API for your existing database',
 			// Site-wide fallback <meta name="description"> / og:description for any
 			// page whose frontmatter omits one. Starlight emits the tags itself.
 			description:

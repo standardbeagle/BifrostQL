@@ -63,26 +63,47 @@ Throwing from a filter transformer aborts the query — use that to fail closed 
 
 ## Mutation transformers
 
-A mutation transformer can rewrite or block a mutation before SQL is generated. The pipeline is **async** — implement `TransformAsync`:
+A mutation transformer can rewrite or block a mutation before SQL is generated. The pipeline is **async** — implement `IMutationTransformer.TransformAsync`. Return a `MutationTransformResult` carrying the (possibly rewritten) `MutationType` and `Data`; a non-empty `Errors` array aborts the mutation. `data` is keyed by database column names.
 
 ```csharp
-public sealed class InvoiceLockTransformer : MetadataMutationTransformerBase
+// Your own service; AddMutationTransformer<T>() registers T as a DI singleton,
+// so constructor dependencies are resolved for you.
+public interface IInvoiceLedger
 {
-    public InvoiceLockTransformer() : base("invoice-lock", priority: 200) { }
+    ValueTask<bool> IsPostedAsync(object? invoiceId);
+}
 
-    protected override async ValueTask<MutationTransformResult> TransformCoreAsync(
+public sealed class InvoiceLockTransformer : IMutationTransformer
+{
+    private readonly IInvoiceLedger _ledger;
+    public InvoiceLockTransformer(IInvoiceLedger ledger) => _ledger = ledger;
+
+    public int Priority => 200;
+
+    // Only tables that declare `invoice-lock` metadata, and only updates.
+    public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) =>
+        mutationType == MutationType.Update && table.Metadata.ContainsKey("invoice-lock");
+
+    public async ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
         MutationTransformContext context)
     {
-        if (mutationType == MutationType.Update && await IsPostedAsync(data, context))
-            return MutationTransformResult.Reject("Posted invoices cannot be edited.");
+        data.TryGetValue("id", out var id);
+        var posted = await _ledger.IsPostedAsync(id);
 
-        return MutationTransformResult.Unchanged(data);
+        return new MutationTransformResult
+        {
+            MutationType = mutationType,   // unchanged
+            Data = data,                   // unchanged
+            Errors = posted ? new[] { "Posted invoices cannot be edited." } : Array.Empty<string>(),
+        };
     }
 }
 ```
+
+For a synchronous transformer gated on one metadata key whose value names a column, extend `MetadataMutationTransformerBase` instead: pass the key and priority to its constructor, implement `ModuleName`, and override `TransformCore(table, mutationType, data, context, columnName)`. Its `AppliesTo` already checks the key is present.
 
 A transformer can change the operation type — that is exactly how soft-delete turns a `DELETE` into an `UPDATE`. Soft-delete runs at priority 100, and every later transformer, hook and observer sees the rewritten `Update`; a transformer that must see the original `Delete` needs a priority below 100 (see [Mutation Hooks](/BifrostQL/guides/mutation-hooks/#3-soft-delete-rewrites-delete-to-update-inside-the-transformer-chain)).
 

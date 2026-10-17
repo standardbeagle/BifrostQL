@@ -219,7 +219,7 @@ public sealed class DbModelTestFixture
         }
 
         public TableBuilder WithColumn(string name, string dataType = "nvarchar", bool isPrimaryKey = false, bool isNullable = false, string? graphQlName = null,
-            int? characterMaxLength = null, int? numericPrecision = null, int? numericScale = null)
+            int? characterMaxLength = null, int? numericPrecision = null, int? numericScale = null, bool hasDefault = false)
         {
             _columns[name] = new ColumnDto
             {
@@ -232,6 +232,7 @@ public sealed class DbModelTestFixture
                 NumericScale = numericScale,
                 IsPrimaryKey = isPrimaryKey,
                 IsNullable = isNullable,
+                HasDefault = hasDefault,
             };
             return this;
         }

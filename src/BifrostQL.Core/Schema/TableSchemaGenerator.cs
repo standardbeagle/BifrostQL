@@ -433,7 +433,18 @@ namespace BifrostQL.Core.Schema
                 if (!isDelete && IsUnconditionallyWriteDenied(column))
                     continue;
 
-                var isNullable = column.IsNullable;
+                var isNullable = action switch
+                {
+                    // An UPDATE sets only the columns it is given, so only the
+                    // row key is required.
+                    MutateActions.Update => !column.IsPrimaryKey,
+                    // Upsert keeps its key required (it addresses the row);
+                    // its other columns follow the insert rule, since it may insert.
+                    MutateActions.Upsert when column.IsPrimaryKey => column.IsNullable,
+                    // Insert: the database fills a NOT NULL column that declares
+                    // a default, so only NOT NULL without one is required.
+                    _ => column.IsNullable || column.HasDefault,
+                };
                 if (IsAutoPopulated(column) || IsTenantPinned(column))
                     isNullable = true;
                 // Grant-conditional write (role-qualified deny or
@@ -445,7 +456,8 @@ namespace BifrostQL.Core.Schema
                     isNullable = identityType switch
                     {
                         IdentityType.Optional => true,
-                        IdentityType.Required => false,
+                        // Required only as the row key (update addresses by key).
+                        IdentityType.Required => !column.IsPrimaryKey,
                         IdentityType.None => true,
                         _ => throw new ArgumentOutOfRangeException(nameof(identityType), identityType, null)
                     };

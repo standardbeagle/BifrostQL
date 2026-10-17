@@ -54,6 +54,30 @@ Or apply to all tables that have a `tenant_id` column:
 
 There is no opt-out per query. The filter is applied at the SQL level before execution. Queries physically cannot return data from another tenant.
 
+### Writes and foreign keys
+
+Writes are scoped too. An insert pins the tenant column to the caller's tenant, and an update or delete only reaches the caller's rows.
+
+A write also cannot point a foreign key at another tenant's row. When an insert or update — single-row, upsert, batch, `updateWhere`, or a nested `sync`/save tree — sets a database foreign key whose **parent** table declares `tenant-filter`, BifrostQL checks inside the write's transaction that the parent row exists and belongs to the caller's tenant. It locks that parent row until commit, so its tenant cannot change underneath the write. A parent inserted earlier in the same tree passes.
+
+- A `NULL` foreign key references nothing and is not checked.
+- A parent table without `tenant-filter` (shared lookup data such as countries) is not checked.
+- A composite foreign key is checked on all of its columns together. An update that sets only some columns of a composite foreign key is refused.
+- Name-based and polymorphic relationships are conventions, not constraints, and are not checked.
+- There is no admin bypass, matching the rest of tenant isolation. A missing tenant claim fails closed.
+
+A refused write fails with `ACCESS_DENIED` and one constant message, whether the parent does not exist or belongs to another tenant, so the answer cannot be used to discover other tenants' keys:
+
+```text
+A referenced row is not available.
+```
+
+Tables with such a foreign key always use the per-row batch path; the bulk set-based fast path cannot run the check.
+
+:::caution[Behaviour change]
+Before this check, the database's own foreign-key constraint (which knows nothing of tenants) was the only guard, so cross-tenant references were accepted. Existing rows are not re-validated, but a write that sets such a reference is now refused.
+:::
+
 ### Configuring the claim key
 
 By default, BifrostQL looks for `tenant_id` in the user context. Change the claim key with model-level metadata:

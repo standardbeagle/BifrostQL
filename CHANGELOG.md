@@ -32,6 +32,21 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   applying a transition nobody validated. Behaviour change: a concurrent
   transition that used to "win" by overwriting now surfaces `CONFLICT` (code
   `CONFLICT`, the existing concurrency-conflict message).
+- Security: a write can no longer point a foreign key at another tenant's
+  row. `TenantMutationTransformer` pinned a row's own tenant column but never
+  checked what it referenced, so a tenant-1 caller could insert or update a
+  row whose FK named tenant 2's parent. The new auto-registered
+  `TenantForeignKeyMutationTransformer` checks, inside the write transaction
+  and under the dialect's update lock, that every database FK whose parent
+  declares `tenant-filter` names an existing parent in the caller's tenant
+  (all columns of a composite FK; NULL FKs and untenanted shared parents are
+  skipped; no admin bypass). Covers single-row insert/update/upsert, batch,
+  tree-sync and `updateWhere`; tables with such an FK leave the bulk batch
+  fast path. Refusal is `ACCESS_DENIED` with one constant message, "A
+  referenced row is not available.", for a missing and a foreign parent alike.
+  **Behaviour change:** cross-tenant FK writes that used to succeed are now
+  refused, and an update that sets only part of a composite tenant-scoped FK
+  is refused. Existing rows are not re-validated.
 - A transformer that throws a non-`BifrostExecutionError` exception on insert,
   delete or `updateWhere` now surfaces as the sanitized `DATABASE_ERROR`, as it
   already did on update, because the chain runs inside the transaction.

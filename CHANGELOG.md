@@ -77,6 +77,13 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   on net9.0/net10.0) in `BifrostQL.SqlServer`; the versions SqlClient 6.1.4
   pulls fall inside CVE-2026-84008 and CVE-2026-70162 and failed the NuGet
   audit.
+- Model load kept column length, precision and scale. The per-build column
+  clone in `DbModelLoader.BuildModel` (every `LoadAsync`, every per-profile
+  build) dropped `CharacterMaxLength`, `NumericPrecision` and `NumericScale`,
+  so in production schema-derived validation never refused an over-length
+  string or an out-of-precision decimal, and `_dbSchema` advertised no length.
+  The clone and `ColumnDto.WithGraphQlName` now share one structural copy, so a
+  column property added later is carried by both.
 
 ## Unreleased — 2026-09-13 (authorization epic)
 

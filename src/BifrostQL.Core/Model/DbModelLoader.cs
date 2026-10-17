@@ -135,7 +135,7 @@ namespace BifrostQL.Model
         {
             var columns = source.ColumnLookup.ToDictionary(
                 kv => kv.Key,
-                kv => CloneColumn(kv.Value),
+                kv => kv.Value.CloneForBuild(),
                 StringComparer.OrdinalIgnoreCase);
 
             return new DbTable
@@ -150,30 +150,6 @@ namespace BifrostQL.Model
                 GraphQlLookup = columns.Values.ToDictionary(c => c.GraphQlName, c => c),
                 ColumnPrefixGroups = source.ColumnPrefixGroups,
                 Indexes = source.Indexes,
-            };
-        }
-
-        private static ColumnDto CloneColumn(ColumnDto source)
-        {
-            return new ColumnDto
-            {
-                TableCatalog = source.TableCatalog,
-                TableSchema = source.TableSchema,
-                TableName = source.TableName,
-                ColumnName = source.ColumnName,
-                GraphQlName = source.GraphQlName,
-                NormalizedName = source.NormalizedName,
-                DetectedPrefix = source.DetectedPrefix,
-                ColumnRef = source.ColumnRef,
-                DataType = source.DataType,
-                IsNullable = source.IsNullable,
-                OrdinalPosition = source.OrdinalPosition,
-                IsIdentity = source.IsIdentity,
-                IsComputed = source.IsComputed,
-                HasDefault = source.HasDefault,
-                IsPrimaryKey = source.IsPrimaryKey,
-                IsUnique = source.IsUnique,
-                Metadata = new Dictionary<string, object?>(source.Metadata),
             };
         }
     }

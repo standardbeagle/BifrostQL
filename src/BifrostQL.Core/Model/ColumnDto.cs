@@ -13,7 +13,13 @@ namespace BifrostQL.Core.Model
         public string TableName { get; init; } = null!;
         public string ColumnName { get; init; } = null!;
         public string DbName => ColumnName;
-        public string GraphQlName { get; init; } = null!;
+        // Explicit backing fields only for the two members a copy may replace, so
+        // CopyWith can clone every other member structurally (MemberwiseClone)
+        // instead of hand-listing properties that drift when one is added.
+        private string _graphQlName = null!;
+        private IDictionary<string, object?> _metadata = new Dictionary<string, object?>();
+
+        public string GraphQlName { get => _graphQlName; init => _graphQlName = value; }
         public string NormalizedName { get; init; } = null!;
         
         /// <summary>
@@ -86,7 +92,7 @@ namespace BifrostQL.Core.Model
         public bool HasDefault { get; init; } = false;
         public bool IsPrimaryKey { get; init; } = false;
         public bool IsUnique { get; init; } = false;
-        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = value; }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
         public bool GetMetadataBool(string property, bool defaultValue) => Utils.MetadataSwitch.Parse(GetMetadataValue(property), defaultValue);
         public bool CompareMetadata(string property, string value)
@@ -205,33 +211,28 @@ namespace BifrostQL.Core.Model
 
         /// <summary>
         /// Creates a copy of this ColumnDto with a new GraphQL name.
-        /// Used for deduplicating GraphQL names within a table.
+        /// Used for deduplicating GraphQL names within a table; the copy shares
+        /// this column's metadata dictionary.
         /// </summary>
-        public ColumnDto WithGraphQlName(string newGraphQlName)
+        public ColumnDto WithGraphQlName(string newGraphQlName) => CopyWith(newGraphQlName, Metadata);
+
+        /// <summary>
+        /// Copy for one model build: every member is preserved and the metadata
+        /// dictionary is a fresh copy, because <c>DbModel.FromTables</c> applies
+        /// metadata to its input in place and each build must own its state.
+        /// </summary>
+        internal ColumnDto CloneForBuild() => CopyWith(GraphQlName, new Dictionary<string, object?>(Metadata));
+
+        /// <summary>
+        /// The one column copy routine. Structural, so a member added to this
+        /// type is carried by every copy without a second property list to update.
+        /// </summary>
+        private ColumnDto CopyWith(string graphQlName, IDictionary<string, object?> metadata)
         {
-            return new ColumnDto
-            {
-                TableCatalog = TableCatalog,
-                TableSchema = TableSchema,
-                TableName = TableName,
-                ColumnName = ColumnName,
-                GraphQlName = newGraphQlName,
-                NormalizedName = NormalizedName,
-                DetectedPrefix = DetectedPrefix,
-                ColumnRef = ColumnRef,
-                DataType = DataType,
-                CharacterMaxLength = CharacterMaxLength,
-                NumericPrecision = NumericPrecision,
-                NumericScale = NumericScale,
-                IsNullable = IsNullable,
-                OrdinalPosition = OrdinalPosition,
-                IsIdentity = IsIdentity,
-                IsComputed = IsComputed,
-                HasDefault = HasDefault,
-                IsPrimaryKey = IsPrimaryKey,
-                IsUnique = IsUnique,
-                Metadata = Metadata,
-            };
+            var copy = (ColumnDto)MemberwiseClone();
+            copy._graphQlName = graphQlName;
+            copy._metadata = metadata;
+            return copy;
         }
 
         /// <summary>

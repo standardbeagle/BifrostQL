@@ -83,10 +83,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A transformer that throws a non-`BifrostExecutionError` exception on insert,
   delete or `updateWhere` now surfaces as the sanitized `DATABASE_ERROR`, as it
   already did on update, because the chain runs inside the transaction.
-- Build: pinned `System.Security.Cryptography.Pkcs` (8.0.2 on net8.0, 9.0.21
-  on net9.0/net10.0) in `BifrostQL.SqlServer`; the versions SqlClient 6.1.4
-  pulls fall inside CVE-2026-84008 and CVE-2026-70162 and failed the NuGet
-  audit.
+- Build: `BifrostQL.SqlServer` pins `System.Security.Cryptography.Pkcs` per
+  TFM (8.0.2 / 9.0.21 / 10.0.13) and moves to `Microsoft.Data.SqlClient`
+  7.0.2; the Pkcs versions SqlClient pulls fall inside CVE-2026-84008 and
+  CVE-2026-70162 and failed the NuGet audit. The `dotnet new bifrost`
+  template carries the same SqlClient and Pkcs pins, so a scaffolded SQL
+  Server project restores clean.
 - Model load kept column length, precision and scale. The per-build column
   clone in `DbModelLoader.BuildModel` (every `LoadAsync`, every per-profile
   build) dropped `CharacterMaxLength`, `NumericPrecision` and `NumericScale`,

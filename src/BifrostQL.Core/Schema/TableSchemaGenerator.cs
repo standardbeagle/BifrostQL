@@ -442,8 +442,9 @@ namespace BifrostQL.Core.Schema
                     // its other columns follow the insert rule, since it may insert.
                     MutateActions.Upsert when column.IsPrimaryKey => column.IsNullable,
                     // Insert: the database fills a NOT NULL column that declares
-                    // a default, so only NOT NULL without one is required.
-                    _ => column.IsNullable || column.HasDefault,
+                    // a default, so only NOT NULL without one is required (identity
+                    // is overridden below; computed columns never reach here).
+                    _ => !column.RequiresInsertValue,
                 };
                 if (IsAutoPopulated(column) || IsTenantPinned(column))
                     isNullable = true;

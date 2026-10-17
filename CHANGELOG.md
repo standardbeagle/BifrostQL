@@ -94,6 +94,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   string or an out-of-precision decimal, and `_dbSchema` advertised no length.
   The clone and `ColumnDto.WithGraphQlName` now share one structural copy, so a
   column property added later is carried by both.
+- The implied `required` form/meta hint (`ValidationRules.RequiredImplied`,
+  surfaced as `required` in `_dbSchema` validation rules) no longer marks a NOT
+  NULL column that has a database default; it now agrees with the insert input
+  type. Both read one predicate, `ColumnDto.RequiresInsertValue` (NOT NULL, no
+  default, not identity, not computed).
 
 ## Unreleased — 2026-09-13 (authorization epic)
 

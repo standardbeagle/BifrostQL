@@ -16,8 +16,8 @@ namespace BifrostQL.Core.Modules.Validation;
 ///   1. Validation metadata keys (<c>min</c>, <c>max</c>, <c>step</c>,
 ///      <c>minlength</c>, <c>maxlength</c>, <c>pattern</c>, <c>required</c>, …)
 ///   2. The database schema itself — varchar length becomes
-///      <see cref="MaxLength"/>; NOT NULL (excluding identity/auto-populated
-///      columns) becomes <see cref="RequiredImplied"/>.
+///      <see cref="MaxLength"/>; NOT NULL (excluding defaulted, identity,
+///      computed and auto-populated columns) becomes <see cref="RequiredImplied"/>.
 ///
 /// <see cref="Min"/>/<see cref="Max"/> are kept as raw strings because they
 /// may be numeric ("0.01") or temporal ("2020-01-01") depending on the column.
@@ -68,7 +68,9 @@ public sealed record ValidationRules
 
     /// <summary>
     /// Required because the column is NOT NULL and the value cannot come from
-    /// elsewhere (not identity, not auto-populated). Drives client UI hints;
+    /// elsewhere (no default, not identity, not computed, not auto-populated) —
+    /// <see cref="ColumnDto.RequiresInsertValue"/>, the rule the insert input
+    /// type also reads. Drives client UI hints;
     /// the database itself enforces it server-side.
     /// </summary>
     public bool RequiredImplied { get; init; }
@@ -107,9 +109,7 @@ public sealed record ValidationRules
             // `required` value is not silently treated as not-required.
             RequiredExplicit = Utils.MetadataSwitch.Parse(
                 column.GetMetadataValue(MetadataKeys.Validation.Required), defaultValue: false),
-            RequiredImplied = !column.IsNullable
-                && !column.IsIdentity
-                && !column.IsComputed
+            RequiredImplied = column.RequiresInsertValue
                 && column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) == null,
         };
     }

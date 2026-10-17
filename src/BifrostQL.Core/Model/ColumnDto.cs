@@ -90,6 +90,17 @@ namespace BifrostQL.Core.Model
         /// default is optional in the insert input type.
         /// </summary>
         public bool HasDefault { get; init; } = false;
+
+        /// <summary>
+        /// True when an INSERT must carry a client value for this column: it is NOT
+        /// NULL and the database cannot fill it (no default, not identity, not
+        /// computed). The one column-level requiredness rule, read by both the GraphQL
+        /// insert input (<c>TableSchemaGenerator.GetMutationParameterType</c>) and the
+        /// form/meta hint (<c>ValidationRules.RequiredImplied</c>) so they cannot
+        /// drift. Metadata overlays (auto-populate, tenant pinning, write grants) are
+        /// applied by each caller on top.
+        /// </summary>
+        public bool RequiresInsertValue => !IsNullable && !HasDefault && !IsIdentity && !IsComputed;
         public bool IsPrimaryKey { get; init; } = false;
         public bool IsUnique { get; init; } = false;
         public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = value; }

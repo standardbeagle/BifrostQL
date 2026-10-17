@@ -99,6 +99,47 @@ public sealed class ValidationRulesTests
             "auto-populated columns are filled server-side");
     }
 
+    [Fact]
+    public void ForColumn_RequiredImplied_NotForNotNullColumnWithADefault()
+    {
+        // Same rule as the insert input type: the database fills a NOT NULL column
+        // that declares a default, so a form must not demand it.
+        var defaulted = new ColumnDto { ColumnName = "status", GraphQlName = "status", DataType = "varchar", IsNullable = false, HasDefault = true };
+        var undefaulted = new ColumnDto { ColumnName = "sku", GraphQlName = "sku", DataType = "varchar", IsNullable = false };
+
+        ValidationRules.ForColumn(defaulted).RequiredImplied.Should().BeFalse();
+        ValidationRules.ForColumn(undefaulted).RequiredImplied.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ForColumn_RequiredImplied_MatchesTheInsertInputRequiredness()
+    {
+        // Drives both derivations over one table and compares them field by field, so
+        // the form hint and the GraphQL insert input cannot drift apart unseen.
+        var model = DbModelTestFixture.Create()
+            .WithTable("gadgets", t => t
+                .WithPrimaryKey("id")
+                .WithColumn("sku", "varchar")
+                .WithColumn("status", "varchar", hasDefault: true)
+                .WithColumn("notes", "varchar", isNullable: true)
+                .WithColumn("created_at", "datetime")
+                .WithColumnMetadata("created_at", MetadataKeys.AutoPopulate.Marker, "created-on"))
+            .Build();
+        var table = model.GetTableFromDbName("gadgets");
+        var sdl = new BifrostQL.Core.Schema.TableSchemaGenerator(table)
+            .GetMutationParameterType(MutateActions.Insert, BifrostQL.Core.Schema.IdentityType.None);
+        var insertRequired = sdl.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Contains(" : "))
+            .ToDictionary(l => l[..l.IndexOf(" : ", StringComparison.Ordinal)], l => l.EndsWith('!'));
+
+        insertRequired.Keys.Should().BeEquivalentTo(new[] { "id", "sku", "status", "notes", "created_at" });
+        insertRequired["sku"].Should().BeTrue("control: NOT NULL without a default is required on insert");
+        foreach (var column in table.Columns)
+            ValidationRules.ForColumn(column).RequiredImplied.Should().Be(insertRequired[column.GraphQlName],
+                $"{column.GraphQlName}: the form hint must match the insert input");
+    }
+
     #endregion
 
     #region Server enforcement

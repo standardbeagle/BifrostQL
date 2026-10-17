@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState, type ComponentType } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ErdPane, GET_ERD_SCHEMA, normalizeErdSchema } from './ErdPane';
-import { mapSchemaToErd } from './model';
+import { layoutErd, mapSchemaToErd } from './model';
 import type { ErdSchemaTable } from './types';
 vi.mock('@xyflow/react', async () => {
   return {
@@ -39,6 +39,14 @@ const liveSchemaFixture: ErdSchemaTable[] = [{
 }];
 
 afterEach(() => cleanup());
+
+// ELK's first layout runs its compiled code cold (~11x a warm layout), and the
+// first test to render the pane paid that inside findBy*'s 1 s window, failing
+// whenever test:js ran on a loaded host. Warm it once so each test's wait
+// covers the pane, not ELK start-up.
+beforeAll(async () => {
+  await layoutErd(mapSchemaToErd(normalizeErdSchema(liveSchemaFixture)));
+});
 
 describe('ErdPane', () => {
   it('normalizes the live _dbSchema shape before mapping relationship edges', () => {

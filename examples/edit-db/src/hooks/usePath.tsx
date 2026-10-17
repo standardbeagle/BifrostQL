@@ -17,8 +17,7 @@ interface PathData {
     query: string;
 }
 
-interface RouteContext extends PathData {
-}
+type RouteContext = PathData;
 
 interface NavigationState extends NavContext {
     navigate: (path: string) => void;

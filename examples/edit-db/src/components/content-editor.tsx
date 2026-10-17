@@ -56,7 +56,7 @@ export function ContentEditor({
         if (kind === 'json') {
             try {
                 onChange(JSON.stringify(JSON.parse(value), null, 2));
-            } catch (e) {
+            } catch {
                 setFormatError('Invalid JSON');
             }
         } else if (kind === 'xml') {
@@ -78,7 +78,7 @@ export function ContentEditor({
         if (kind === 'json') {
             try {
                 onChange(JSON.stringify(JSON.parse(value)));
-            } catch (e) {
+            } catch {
                 setFormatError('Invalid JSON');
             }
         } else if (kind === 'xml') {

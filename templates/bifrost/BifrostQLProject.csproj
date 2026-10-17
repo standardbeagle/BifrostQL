@@ -13,7 +13,9 @@
 
 	<!--#if (UseSqlServer) -->
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+		<!-- SqlClient pulls a System.Security.Cryptography.Pkcs inside CVE-2026-84008 / CVE-2026-70162; pin the patched build, as BifrostQL.SqlServer does. -->
+		<PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
 	</ItemGroup>
 	<!--#endif -->
 	<!--#if (UsePostgres) -->

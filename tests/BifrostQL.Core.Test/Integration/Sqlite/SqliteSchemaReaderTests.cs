@@ -305,6 +305,35 @@ public sealed class SqliteSchemaReaderTests : IAsyncLifetime
 
     #endregion
 
+    #region Default Detection
+
+    [Fact]
+    public async Task ReadSchema_DeclaredDefaults_SetHasDefault()
+    {
+        var schema = await _reader.ReadSchemaAsync(_connection);
+        var products = schema.Tables.First(t => t.DbName == "Products");
+
+        // PRAGMA dflt_value: a literal default and an expression default.
+        products.ColumnLookup["Stock"].HasDefault.Should().BeTrue();
+        products.ColumnLookup["IsActive"].HasDefault.Should().BeTrue();
+        products.ColumnLookup["CreatedAt"].HasDefault.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReadSchema_ColumnsWithoutDefault_DoNotSetHasDefault()
+    {
+        var schema = await _reader.ReadSchemaAsync(_connection);
+        var products = schema.Tables.First(t => t.DbName == "Products");
+
+        // Control for the fact above: NOT NULL and nullable columns with no
+        // declared default stay HasDefault=false.
+        products.ColumnLookup["Name"].HasDefault.Should().BeFalse();
+        products.ColumnLookup["Price"].HasDefault.Should().BeFalse();
+        products.ColumnLookup["Data"].HasDefault.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Data Type Preservation
 
     [Fact]

@@ -69,6 +69,8 @@ public sealed class ColumnDtoArrayTypeTests
         table.Columns.Add("IS_NULLABLE", typeof(string));
         table.Columns.Add("ORDINAL_POSITION", typeof(int));
         table.Columns.Add("IS_IDENTITY", typeof(int));
+        table.Columns.Add("IS_COMPUTED", typeof(int));
+        table.Columns.Add("HAS_DEFAULT", typeof(int));
 
         var row = table.NewRow();
         row["TABLE_CATALOG"] = "db";
@@ -83,6 +85,8 @@ public sealed class ColumnDtoArrayTypeTests
         row["IS_NULLABLE"] = "YES";
         row["ORDINAL_POSITION"] = 1;
         row["IS_IDENTITY"] = 0;
+        row["IS_COMPUTED"] = 0;
+        row["HAS_DEFAULT"] = 0;
         table.Rows.Add(row);
 
         var reader = table.CreateDataReader();

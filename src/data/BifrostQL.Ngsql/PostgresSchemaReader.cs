@@ -78,7 +78,14 @@ SELECT
         WHEN c.column_default LIKE 'nextval(%' THEN 1
         WHEN c.identity_generation IS NOT NULL THEN 1
         ELSE 0
-    END AS is_identity
+    END AS is_identity,
+    CASE WHEN c.is_generated = 'ALWAYS' THEN 1 ELSE 0 END AS is_computed,
+    -- An identity column reports a NULL column_default but the server still fills it.
+    CASE
+        WHEN c.column_default IS NOT NULL THEN 1
+        WHEN c.identity_generation IS NOT NULL THEN 1
+        ELSE 0
+    END AS has_default
 FROM information_schema.columns c
 WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY c.table_catalog, c.table_schema, c.table_name, c.ordinal_position;

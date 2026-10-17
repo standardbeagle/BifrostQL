@@ -75,7 +75,18 @@ SELECT
     NULL AS domain_catalog,
     NULL AS domain_schema,
     NULL AS domain_name,
-    CASE WHEN c.extra = 'auto_increment' THEN 1 ELSE 0 END AS is_identity
+    CASE WHEN c.extra = 'auto_increment' THEN 1 ELSE 0 END AS is_identity,
+    -- generation_expression is '' (MySQL) or NULL (MariaDB) for ordinary columns.
+    -- EXTRA is not used here: 'DEFAULT_GENERATED' (a default expression) also contains 'GENERATED'.
+    CASE WHEN c.generation_expression IS NOT NULL AND c.generation_expression <> '' THEN 1 ELSE 0 END AS is_computed,
+    -- MariaDB reports the bare word NULL for a column whose default is NULL (its
+    -- string literals come back quoted, so 'NULL' the string reads as '''NULL''').
+    CASE
+        WHEN c.column_default IS NOT NULL AND c.column_default <> 'NULL' THEN 1
+        WHEN c.extra LIKE '%auto_increment%' THEN 1
+        WHEN c.extra LIKE '%DEFAULT_GENERATED%' THEN 1
+        ELSE 0
+    END AS has_default
 FROM information_schema.columns c
 WHERE c.table_schema = DATABASE()
 ORDER BY c.table_schema, c.table_name, c.ordinal_position;

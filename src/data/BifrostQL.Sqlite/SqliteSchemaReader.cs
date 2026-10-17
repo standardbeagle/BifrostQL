@@ -44,7 +44,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
             columnsCmd.CommandText = $"PRAGMA table_xinfo({tableName})";
 
             await using var colReader = await columnsCmd.ExecuteReaderAsync();
-            var rawCols = new List<(string name, string type, bool notNull, bool isPk, bool isComputed)>();
+            var rawCols = new List<(string name, string type, bool notNull, bool isPk, bool isComputed, bool hasDefault)>();
 
             while (await colReader.ReadAsync())
             {
@@ -58,7 +58,8 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     (string)colReader["type"],
                     ((long)colReader["notnull"]) == 1,
                     ((long)colReader["pk"]) > 0,
-                    hidden is 2 or 3
+                    hidden is 2 or 3,
+                    colReader["dflt_value"] is not DBNull
                 ));
             }
 
@@ -67,7 +68,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
             var tableColumns = new List<ColumnDto>();
             var ordinal = 1;
 
-            foreach (var (columnName, dataType, notNull, isPk, isComputed) in rawCols)
+            foreach (var (columnName, dataType, notNull, isPk, isComputed, hasDefault) in rawCols)
             {
                 var isIdentity = pkCount == 1 && isPk && dataType.Equals("INTEGER", StringComparison.OrdinalIgnoreCase);
                 var columnRef = new ColumnRef("main", "main", tableName, columnName);
@@ -95,6 +96,7 @@ public sealed class SqliteSchemaReader : ISchemaReader
                     OrdinalPosition = ordinal++,
                     IsIdentity = isIdentity,
                     IsComputed = isComputed,
+                    HasDefault = hasDefault,
                     IsPrimaryKey = isPrimary,
                     IsUnique = isUnique,
                 };

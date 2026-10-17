@@ -72,7 +72,18 @@ namespace BifrostQL.Core.Model
         public bool IsNullable { get; init; }
         public int OrdinalPosition { get; init; }
         public bool IsIdentity { get; init; } = false;
+        /// <summary>
+        /// The database computes this column's value (SQL Server computed column,
+        /// Postgres/MySQL/SQLite generated column). It is never a write input.
+        /// </summary>
         public bool IsComputed { get; init; } = false;
+        /// <summary>
+        /// The database supplies a value when an INSERT omits this column: a
+        /// declared DEFAULT, a Postgres identity, a MySQL auto-increment or
+        /// DEFAULT_GENERATED, or a SQL Server rowversion. A NOT NULL column with a
+        /// default is optional in the insert input type.
+        /// </summary>
+        public bool HasDefault { get; init; } = false;
         public bool IsPrimaryKey { get; init; } = false;
         public bool IsUnique { get; init; } = false;
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
@@ -86,7 +97,7 @@ namespace BifrostQL.Core.Model
 
         public override string ToString()
         {
-            return $"[{TableSchema}].[{TableName}].[{ColumnName}]({DataType} {(IsNullable ? "NULL" : "NOT NULL")}){{{(IsIdentity ? "id " : "")}{(IsPrimaryKey ? "PK " : "")}{(IsUnique ? "UQ " : "")}{(IsComputed ? "computed " : "")}}}";
+            return $"[{TableSchema}].[{TableName}].[{ColumnName}]({DataType} {(IsNullable ? "NULL" : "NOT NULL")}){{{(IsIdentity ? "id " : "")}{(IsPrimaryKey ? "PK " : "")}{(IsUnique ? "UQ " : "")}{(IsComputed ? "computed " : "")}{(HasDefault ? "default " : "")}}}";
         }
 
         public static ColumnDto FromReader(IDataReader reader, Dictionary<ColumnRef, List<ColumnConstraintDto>> constraints)
@@ -121,6 +132,10 @@ namespace BifrostQL.Core.Model
                 IsNullable = ((string)reader["IS_NULLABLE"]) == "YES",
                 OrdinalPosition = Convert.ToInt32(reader["ORDINAL_POSITION"]),
                 IsIdentity = Convert.ToInt32(reader["IS_IDENTITY"]) == 1,
+                // Each reader derives these two flags in SQL from its own
+                // catalog (see its columns query); both columns are required.
+                IsComputed = Convert.ToInt32(reader["IS_COMPUTED"]) == 1,
+                HasDefault = Convert.ToInt32(reader["HAS_DEFAULT"]) == 1,
                 IsPrimaryKey = isPrimary,
                 IsUnique = constraints.TryGetValue(columnRef, out var uniqueCons) && uniqueCons.Any(c => c.ConstraintType == "UNIQUE"),
             };
@@ -212,6 +227,7 @@ namespace BifrostQL.Core.Model
                 OrdinalPosition = OrdinalPosition,
                 IsIdentity = IsIdentity,
                 IsComputed = IsComputed,
+                HasDefault = HasDefault,
                 IsPrimaryKey = IsPrimaryKey,
                 IsUnique = IsUnique,
                 Metadata = Metadata,

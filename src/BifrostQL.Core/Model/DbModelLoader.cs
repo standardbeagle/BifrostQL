@@ -170,6 +170,7 @@ namespace BifrostQL.Model
                 OrdinalPosition = source.OrdinalPosition,
                 IsIdentity = source.IsIdentity,
                 IsComputed = source.IsComputed,
+                HasDefault = source.HasDefault,
                 IsPrimaryKey = source.IsPrimaryKey,
                 IsUnique = source.IsUnique,
                 Metadata = new Dictionary<string, object?>(source.Metadata),

@@ -70,23 +70,23 @@
 		<!-- Core only needs the GraphQL execution engine + parser, not the
 		     ASP.NET Core server transports or GraphiQL UI (those are presentation
 		     concerns and live in BifrostQL.Server). -->
-		<PackageReference Include="GraphQL" Version="8.3.0" />
+		<PackageReference Include="GraphQL" Version="8.8.5" />
 		<!-- Official Anthropic C# SDK — the chat completion service's only LLM
 		     dependency; wrapped behind IChatCompletionService so nothing else in
 		     Core touches the wire types. -->
-		<PackageReference Include="Anthropic" Version="12.35.1" />
+		<PackageReference Include="Anthropic" Version="12.46.0" />
 		<!-- Logging / configuration / DI abstractions Core uses directly. These
 		     were previously supplied transitively through the ASP.NET Core
 		     framework reference that GraphQL.Server.All dragged in; referenced
 		     explicitly now that the server bundle lives only in BifrostQL.Server. -->
-		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
 		<!-- NATS client for the CDC NATS IEventSink. Only NatsConnectionPublisher
 		     touches these wire types (namespace NATS.Client.Core); the sink itself
 		     depends on the broker-free INatsPublisher abstraction. 2.5.x is
 		     netstandard2.0-based so it is compatible across net8/9/10. -->
-		<PackageReference Include="NATS.Net" Version="2.5.4" />
+		<PackageReference Include="NATS.Net" Version="3.2.0" />
 		<PackageReference Include="Pluralize.NET.Core" Version="1.0.0" />
 	</ItemGroup>
 	<ItemGroup>

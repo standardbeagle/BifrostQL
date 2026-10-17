@@ -69,8 +69,10 @@ SELECT [TABLE_CATALOG]
       ,[DOMAIN_NAME]
       ,COLUMNPROPERTY (OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),COLUMN_NAME ,'IsIdentity') [IS_IDENTITY]
       ,ISNULL(COLUMNPROPERTY (OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),COLUMN_NAME ,'IsComputed'), 0) [IS_COMPUTED]
-      -- rowversion (DATA_TYPE 'timestamp') is server-assigned and cannot be inserted explicitly.
-      ,CASE WHEN [COLUMN_DEFAULT] IS NOT NULL OR [DATA_TYPE] = 'timestamp' THEN 1 ELSE 0 END [HAS_DEFAULT]
+      -- Identity and rowversion (DATA_TYPE 'timestamp') are server-assigned; COLUMN_DEFAULT is NULL for both.
+      ,CASE WHEN [COLUMN_DEFAULT] IS NOT NULL OR [DATA_TYPE] = 'timestamp'
+            OR COLUMNPROPERTY (OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),COLUMN_NAME ,'IsIdentity') = 1
+            THEN 1 ELSE 0 END [HAS_DEFAULT]
   FROM [INFORMATION_SCHEMA].[COLUMNS]
   ORDER BY [TABLE_CATALOG],[TABLE_SCHEMA],[TABLE_NAME],[ORDINAL_POSITION];
 SELECT [TABLE_CATALOG]

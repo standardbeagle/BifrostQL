@@ -38,6 +38,13 @@ public sealed class QueryIntent
     /// different database.
     /// </summary>
     public string? Endpoint { get; init; }
+
+    /// <summary>
+    /// Lets the intent read one of the endpoint's <c>visibility: hidden</c> tables. Only
+    /// BifrostQL.Core's internals can produce a value — see <see cref="Resolvers.HiddenTableAccess"/>;
+    /// without it a hidden table is the same sanitized miss as an unknown one.
+    /// </summary>
+    public HiddenTableAccess? HiddenTableAccess { get; init; }
 }
 
 /// <summary>
@@ -153,7 +160,11 @@ public sealed class QueryIntentExecutor : IQueryIntentExecutor
         // model (wrong endpoint, or a stale model after a schema reset). Positive
         // resolve with no fallback — and no caller-supplied name in the error text
         // (finding M31).
-        if (!model.TryGetTableFromDbName(query.DbTable.TableSchema, query.DbTable.DbName, out _))
+        var tableFound = intent.HiddenTableAccess is null
+            ? model.TryGetTableFromDbName(query.DbTable.TableSchema, query.DbTable.DbName, out _)
+            : HiddenTableAccess.TryResolve(
+                model, $"{query.DbTable.TableSchema}.{query.DbTable.DbName}", intent.HiddenTableAccess, out _);
+        if (!tableFound)
             throw BifrostErrorSink.LookupMiss(
                 "The query intent's table is not part of the endpoint's model.",
                 $"Query intent table miss: '{query.DbTable.DbName}' on endpoint '{intent.Endpoint}'.",

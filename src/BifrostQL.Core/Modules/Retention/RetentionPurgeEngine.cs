@@ -56,6 +56,12 @@ namespace BifrostQL.Core.Modules.Retention
     /// re-reads the shrunken expired set and continues — progress is monotonic and never
     /// re-scans from zero.</para>
     ///
+    /// <para><b>Hidden tables are swept.</b> <c>visibility: hidden</c> withholds a table from
+    /// the exposed surfaces, not from its declared lifecycle, so a pass walks
+    /// <see cref="IDbModel.HiddenTables"/> as well as <see cref="IDbModel.Tables"/>. Their reads and
+    /// deletes carry <see cref="HiddenTableAccess"/>, which no wire caller can hold, so hiding stays
+    /// intact everywhere else.</para>
+    ///
     /// <para>Ownership split mirrors <see cref="Cdc.OutboxDispatcher"/> / <c>IProtocolAdapter</c>:
     /// this engine lives in Core with no hosting dependency; the host wraps
     /// <see cref="RunAsync"/> in an <see cref="Microsoft.Extensions.Hosting.IHostedService"/>.</para>
@@ -126,7 +132,7 @@ namespace BifrostQL.Core.Modules.Retention
                     var (model, connFactory) = await ResolveAsync();
                     if (model is not null && connFactory is not null)
                     {
-                        if (!model.Tables.Any(HasRetentionSafe))
+                        if (!model.Tables.Concat(model.HiddenTables).Any(HasRetentionSafe))
                         {
                             // No table opts into retain/ttl on this host: stop the loop so a
                             // non-retention host does no further work.
@@ -159,7 +165,7 @@ namespace BifrostQL.Core.Modules.Retention
         }
 
         /// <summary>
-        /// One purge pass over every retention-tracked table on the endpoint. Per table the config
+        /// One purge pass over every retention-tracked table on the endpoint, hidden tables included. Per table the config
         /// read is fail-closed (an invalid config skips ONLY that table — never aborts the sweep,
         /// never widens a purge), tenants are enumerated for scoped fan-out, and each (table, tenant)
         /// is swept for both <c>retain</c> and <c>ttl</c>.
@@ -183,7 +189,9 @@ namespace BifrostQL.Core.Modules.Retention
             int tablesSwept = 0, rowsPurged = 0, tablesSkipped = 0;
             var candidates = dryRun ? new List<RetentionCandidate>() : null;
 
-            foreach (var table in model.Tables)
+            // Hidden tables too: hiding withholds a table from the exposed surfaces, not from the
+            // server-side lifecycle its metadata declares.
+            foreach (var table in model.Tables.Concat(model.HiddenTables))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -290,13 +298,14 @@ namespace BifrostQL.Core.Modules.Retention
 
                 var result = await _writer.ExecuteAsync(new MutationIntent
                 {
-                    Table = table.DbName,
+                    Table = QualifiedName(table),
                     Action = MutationIntentAction.Delete,
                     Data = EmptyData,
                     PrimaryKey = primaryKey,
                     ModuleArguments = HardDeleteArguments,
                     UserContext = deleteContext,
                     Endpoint = endpoint,
+                    HiddenTableAccess = HiddenTableAccess.Granted,
                 }, cancellationToken);
 
                 purged += DeletedRowCount(result);
@@ -337,12 +346,13 @@ namespace BifrostQL.Core.Modules.Retention
 
                 var result = await _writer.ExecuteAsync(new MutationIntent
                 {
-                    Table = table.DbName,
+                    Table = QualifiedName(table),
                     Action = MutationIntentAction.Delete,
                     Data = EmptyData,
                     PrimaryKey = primaryKey,
                     UserContext = deleteContext,
                     Endpoint = endpoint,
+                    HiddenTableAccess = HiddenTableAccess.Granted,
                 }, cancellationToken);
 
                 purged += DeletedRowCount(result);
@@ -403,6 +413,7 @@ namespace BifrostQL.Core.Modules.Retention
                 Query = query,
                 UserContext = readContext,
                 Endpoint = endpoint,
+                HiddenTableAccess = HiddenTableAccess.Granted,
             }, cancellationToken);
 
             var keys = new List<IReadOnlyList<object?>>(result.Rows.Count);
@@ -510,6 +521,10 @@ namespace BifrostQL.Core.Modules.Retention
             var factory = inputs.TryGetValue("connFactory", out var f) ? f as IDbConnFactory : null;
             return (model, factory);
         }
+
+        // Schema-qualified, so the purge names exactly the table it read — never another schema's
+        // table of the same name, exposed or hidden.
+        private static string QualifiedName(IDbTable table) => $"{table.TableSchema}.{table.DbName}";
 
         private static readonly IReadOnlyDictionary<string, object?> EmptyData =
             new Dictionary<string, object?>();

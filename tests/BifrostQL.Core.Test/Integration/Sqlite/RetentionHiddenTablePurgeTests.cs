@@ -1,6 +1,7 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Retention;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
@@ -158,5 +159,62 @@ public sealed class RetentionHiddenTablePurgeTests : IAsyncLifetime
         typeNames.Should().Contain("notes");
         typeNames.Should().NotContain(n => n.Contains("app_sessions") || n.Contains("tenant_tokens"));
         schema.Query.Fields.Select(f => f.Name).Should().NotContain(n => n.Contains("app_sessions") || n.Contains("tenant_tokens"));
+    }
+
+    [Fact]
+    public async Task HiddenTenantTable_SweepUnderTenantA_LeavesTenantBExpiredRow()
+    {
+        // Arrange
+        var (engine, _, reader) = Build();
+        var model = await reader.GetModelAsync(EndpointPath);
+        var tokens = model.HiddenTables.Single(t => t.DbName == "tenant_tokens");
+        var config = RetentionConfig.FromTable(tokens);
+
+        // Act: tenant 1's synthesized context only.
+        var purged = await engine.SweepTableForTenantAsync(
+            model, tokens, config, "tenant_id", tenantValue: 1L, EndpointPath, Now, CancellationToken.None);
+
+        // Assert: the pipeline narrowed the purge to tenant 1, hidden or not.
+        purged.Should().Be(1);
+        (await ScalarAsync("SELECT COUNT(*) FROM tenant_tokens WHERE id = 1")).Should().Be("0");
+        (await ScalarAsync("SELECT COUNT(*) FROM tenant_tokens WHERE id = 2")).Should().Be("1", "tenant 2's expired token survives a tenant-1 sweep");
+        (await ScalarAsync("SELECT COUNT(*) FROM tenant_tokens WHERE id = 3")).Should().Be("1");
+    }
+
+    [Fact]
+    public async Task IntentWithoutHiddenTableAccess_CannotReadOrWriteHiddenTable()
+    {
+        // Arrange: a wire caller (adapter, MCP tool) builds intents without the capability.
+        var (_, writer, reader) = Build();
+        var model = await reader.GetModelAsync(EndpointPath);
+        var sessions = model.HiddenTables.Single(t => t.DbName == "app_sessions");
+
+        // Act
+        var write = () => writer.ExecuteAsync(new MutationIntent
+        {
+            Table = "app_sessions",
+            Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?>(),
+            PrimaryKey = new object?[] { 1 },
+            Endpoint = EndpointPath,
+        });
+        var read = () => reader.ExecuteAsync(new QueryIntent
+        {
+            Query = new GqlObjectQuery
+            {
+                DbTable = sessions,
+                SchemaName = sessions.TableSchema,
+                TableName = sessions.DbName,
+                GraphQlName = sessions.GraphQlName,
+                Path = sessions.GraphQlName,
+                ScalarColumns = { new GqlObjectColumn("id") },
+            },
+            Endpoint = EndpointPath,
+        });
+
+        // Assert: both are the same sanitized miss an unknown table gets, and nothing changed.
+        await write.Should().ThrowAsync<BifrostExecutionError>();
+        await read.Should().ThrowAsync<BifrostExecutionError>();
+        (await ScalarAsync("SELECT COUNT(*) FROM app_sessions")).Should().Be("2");
     }
 }

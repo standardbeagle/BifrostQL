@@ -12,6 +12,26 @@ namespace BifrostQL.Core.Model
     public interface IDbModel
     {
         IReadOnlyCollection<IDbTable> Tables { get; }
+
+        /// <summary>
+        /// This endpoint's <c>visibility: hidden</c> tables. They are withheld from
+        /// <see cref="Tables"/> and so from every exposed surface (GraphQL, REST, protocol
+        /// adapters, chat, every client-name lookup), but they are still tables of the database,
+        /// and the server-side worker that owns their lifecycle — the retention purge — has to
+        /// reach them. Only an intent carrying <see cref="Resolvers.HiddenTableAccess"/> resolves
+        /// one (<see cref="TryGetTableIncludingHidden"/>).
+        /// </summary>
+        IReadOnlyCollection<IDbTable> HiddenTables => Array.Empty<IDbTable>();
+
+        /// <summary>
+        /// The client-name rule of <see cref="TryGetTableFromClientName"/> applied over
+        /// <see cref="Tables"/> AND <see cref="HiddenTables"/> together, so a bare name defined
+        /// once exposed and once hidden is ambiguous rather than silently picking either. For
+        /// <see cref="Resolvers.HiddenTableAccess"/> holders only; every wire-reachable lookup uses
+        /// <see cref="TryGetTableFromClientName"/>.
+        /// </summary>
+        bool TryGetTableIncludingHidden(string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+            => TryGetTableFromClientName(clientName, out table);
         IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; }
         IDbTable GetTableByFullGraphQlName(string fullName);
 
@@ -133,11 +153,16 @@ namespace BifrostQL.Core.Model
         // FirstOrDefault semantics for any duplicate keys.
         private readonly Lazy<IReadOnlyDictionary<string, IDbTable>> _byGraphQlName;
         private readonly Lazy<DbNameIndex> _byDbName;
+        // Exposed + hidden tables, for HiddenTableAccess holders only. A separate index so a
+        // hidden name never enters the exposed lookups.
+        private readonly Lazy<DbNameIndex> _byDbNameIncludingHidden;
 
         public DbModel()
         {
             _byGraphQlName = new Lazy<IReadOnlyDictionary<string, IDbTable>>(BuildGraphQlNameIndex);
-            _byDbName = new Lazy<DbNameIndex>(BuildDbNameIndex);
+            _byDbName = new Lazy<DbNameIndex>(() => BuildDbNameIndex(Tables ?? Array.Empty<IDbTable>()));
+            _byDbNameIncludingHidden = new Lazy<DbNameIndex>(() =>
+                BuildDbNameIndex((Tables ?? Array.Empty<IDbTable>()).Concat(HiddenTables)));
         }
 
         /// <summary>
@@ -172,12 +197,12 @@ namespace BifrostQL.Core.Model
             return dict;
         }
 
-        private DbNameIndex BuildDbNameIndex()
+        private static DbNameIndex BuildDbNameIndex(IEnumerable<IDbTable> tables)
         {
             var byBare = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
             var byQualified = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
             var ambiguous = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
-            foreach (var t in Tables ?? Array.Empty<IDbTable>())
+            foreach (var t in tables)
             {
                 // The schema-qualified key is always unambiguous.
                 byQualified.TryAdd(QualifiedDbNameKey(t.TableSchema, t.DbName), t);
@@ -199,6 +224,7 @@ namespace BifrostQL.Core.Model
         }
 
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
+        public IReadOnlyCollection<IDbTable> HiddenTables { get; init; } = Array.Empty<IDbTable>();
         public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; init; } = Array.Empty<DbStoredProcedure>();
         // Defaults to EMPTY, not null: a model built by object initializer (tests, tools) with
         // no metadata behaves as a no-metadata model — GetMetadataValue/CompareMetadata must
@@ -267,8 +293,13 @@ namespace BifrostQL.Core.Model
             => _byDbName.Value.ByQualified.TryGetValue(QualifiedDbNameKey(schema, dbName), out table);
 
         public bool TryGetTableFromClientName(string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+            => ResolveClientName(_byDbName.Value, clientName, out table);
+
+        public bool TryGetTableIncludingHidden(string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
+            => ResolveClientName(_byDbNameIncludingHidden.Value, clientName, out table);
+
+        private static bool ResolveClientName(DbNameIndex index, string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
         {
-            var index = _byDbName.Value;
             var dot = clientName.IndexOf('.');
             if (dot > 0 && dot < clientName.Length - 1
                 && index.ByQualified.TryGetValue(QualifiedDbNameKey(clientName[..dot], clientName[(dot + 1)..]), out table))
@@ -487,6 +518,7 @@ namespace BifrostQL.Core.Model
                 new DbModel()
                 {
                     Tables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden) == false).ToList(),
+                    HiddenTables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden)).ToList(),
                     StoredProcedures = filteredProcs,
                     Metadata = dbMetadata,
                 };

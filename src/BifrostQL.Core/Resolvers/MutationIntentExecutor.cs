@@ -125,6 +125,13 @@ public sealed class MutationIntent
     /// and an unknown path fails fast.
     /// </summary>
     public string? Endpoint { get; init; }
+
+    /// <summary>
+    /// Lets the intent name one of the endpoint's <c>visibility: hidden</c> tables. Only
+    /// BifrostQL.Core's internals can produce a value — see <see cref="Resolvers.HiddenTableAccess"/>;
+    /// without it a hidden table is the same sanitized miss as an unknown one.
+    /// </summary>
+    public HiddenTableAccess? HiddenTableAccess { get; init; }
 }
 
 /// <summary>
@@ -261,7 +268,7 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
         // when unique across schemas; an ambiguous name and an unknown name are
         // the SAME sanitized miss — the throwing lookup's message embeds the
         // caller-supplied name, which must never reach the wire (finding M31).
-        if (!model.TryGetTableFromClientName(intent.Table, out var table))
+        if (!HiddenTableAccess.TryResolve(model, intent.Table, intent.HiddenTableAccess, out var table))
             throw BifrostErrorSink.LookupMiss(
                 "The mutation intent names a table that is not part of the endpoint's model.",
                 $"Mutation intent table miss: '{intent.Table}' on endpoint '{intent.Endpoint}'.",

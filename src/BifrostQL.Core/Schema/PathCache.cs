@@ -30,6 +30,13 @@ namespace BifrostQL.Core.Schema
         public int Count => _schemas.Count;
 
         /// <summary>
+        /// Every registered endpoint path, in ordinal order so a caller that walks all endpoints
+        /// (the retention purge) visits them in the same order on every pass. Does not trigger
+        /// loading.
+        /// </summary>
+        public IReadOnlyList<string> Paths => _schemas.Keys.OrderBy(p => p, StringComparer.Ordinal).ToList();
+
+        /// <summary>
         /// Returns the cached value for a path, loading it on first access.
         /// </summary>
         public Task<T> GetValueAsync(string path)

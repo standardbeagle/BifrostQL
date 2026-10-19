@@ -11,6 +11,7 @@ using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Utils;
 using GraphQL;
 using Microsoft.Extensions.Logging;
 
@@ -56,11 +57,22 @@ namespace BifrostQL.Core.Modules.Retention
     /// re-reads the shrunken expired set and continues — progress is monotonic and never
     /// re-scans from zero.</para>
     ///
-    /// <para><b>Hidden tables are swept.</b> <c>visibility: hidden</c> withholds a table from
-    /// the exposed surfaces, not from its declared lifecycle, so a pass walks
-    /// <see cref="IDbModel.HiddenTables"/> as well as <see cref="IDbModel.Tables"/>. Their reads and
-    /// deletes carry <see cref="HiddenTableAccess"/>, which no wire caller can hold, so hiding stays
-    /// intact everywhere else.</para>
+    /// <para><b>Swept per physical table, across every endpoint.</b> One host can serve several
+    /// endpoints over the same database, each with its own visibility and permissions, so
+    /// <c>visibility: hidden</c> describes an endpoint's view of a table, not the table. A pass
+    /// therefore walks every registered endpoint and every table each endpoint's model holds —
+    /// exposed (<see cref="IDbModel.Tables"/>) and hidden (<see cref="IDbModel.HiddenTables"/>)
+    /// alike — and groups the views by physical table (the database the connection reports, plus
+    /// schema and table name). Each physical table is swept at most ONCE per pass. The rule when
+    /// endpoints disagree: an endpoint that declares neither key has no opinion; every endpoint
+    /// that does declare one must declare the SAME purge — the same <c>retain</c>/<c>ttl</c>
+    /// windows and anchors, tenant column, soft-delete column and hard-delete role. When they
+    /// differ, or any endpoint's config for the table is invalid, the table is skipped this pass
+    /// and an error logged (fail-closed): neither the shorter nor the longer window wins, because
+    /// either choice purges against what one endpoint declared. An agreed table is swept through
+    /// the first declaring endpoint in ordinal path order. Hidden tables are reached through the
+    /// executors with <see cref="HiddenTableAccess"/>, which no wire caller can hold, so hiding
+    /// stays intact on every exposed surface.</para>
     ///
     /// <para>Ownership split mirrors <see cref="Cdc.OutboxDispatcher"/> / <c>IProtocolAdapter</c>:
     /// this engine lives in Core with no hosting dependency; the host wraps
@@ -91,9 +103,10 @@ namespace BifrostQL.Core.Modules.Retention
         /// soft-delete/policy transformers apply.</param>
         /// <param name="writer">Scoped write seam; every purge delete routes through it (→ the full
         /// <c>TableMutationPipeline</c>).</param>
-        /// <param name="pathCache">The endpoint cache used only by <see cref="RunAsync"/> to resolve
-        /// the model/connection each pass (mirrors <see cref="Cdc.OutboxDispatcher"/>). Optional:
-        /// tests drive <see cref="PurgeOnceAsync"/> with an explicit model/connection.</param>
+        /// <param name="pathCache">The endpoint cache <see cref="RunAsync"/> and
+        /// <see cref="PurgeEndpointsOnceAsync"/> walk each pass to reach every endpoint's
+        /// model/connection. Optional: tests drive <see cref="PurgeOnceAsync"/> with an explicit
+        /// model/connection.</param>
         /// <param name="clock">Injected wall clock (UTC) for deterministic cutoffs under test;
         /// defaults to <see cref="DateTime.UtcNow"/>.</param>
         /// <param name="pollInterval">Cadence between passes; defaults to one hour.</param>
@@ -118,9 +131,9 @@ namespace BifrostQL.Core.Modules.Retention
         }
 
         /// <summary>
-        /// The polling loop. Resolves the model/connection lazily each pass, stops entirely when
-        /// no table opts into retention (a non-retention host pays nothing), and runs one bounded
-        /// purge pass per interval. Runs until <paramref name="cancellationToken"/> is signalled;
+        /// The polling loop. Resolves every endpoint's model/connection lazily each pass, stops
+        /// entirely when no endpoint opts any table into retention (a non-retention host pays
+        /// nothing), and runs one bounded purge pass per interval. Runs until <paramref name="cancellationToken"/> is signalled;
         /// never throws to the caller.
         /// </summary>
         public async Task RunAsync(CancellationToken cancellationToken)
@@ -129,18 +142,18 @@ namespace BifrostQL.Core.Modules.Retention
             {
                 try
                 {
-                    var (model, connFactory) = await ResolveAsync();
-                    if (model is not null && connFactory is not null)
+                    if (_pathCache is { Count: > 0 })
                     {
-                        if (!model.Tables.Concat(model.HiddenTables).Any(HasRetentionSafe))
+                        var plan = PlanPhysicalTables(await LoadEndpointsAsync(_pathCache));
+                        if (!plan.Any(p => p.DeclaresRetention))
                         {
-                            // No table opts into retain/ttl on this host: stop the loop so a
-                            // non-retention host does no further work.
+                            // No endpoint opts any table into retain/ttl on this host: stop the loop
+                            // so a non-retention host does no further work.
                             _logger?.LogDebug("Retention purge idle: no table declares 'retain' or 'ttl'.");
                             return;
                         }
 
-                        await PurgeOnceAsync(model, connFactory, endpoint: null, cancellationToken);
+                        await SweepAsync(plan, cancellationToken, dryRun: false);
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -165,10 +178,12 @@ namespace BifrostQL.Core.Modules.Retention
         }
 
         /// <summary>
-        /// One purge pass over every retention-tracked table on the endpoint, hidden tables included. Per table the config
-        /// read is fail-closed (an invalid config skips ONLY that table — never aborts the sweep,
-        /// never widens a purge), tenants are enumerated for scoped fan-out, and each (table, tenant)
-        /// is swept for both <c>retain</c> and <c>ttl</c>.
+        /// One purge pass over every retention-tracked table of ONE endpoint's model, hidden tables
+        /// included. Per table the config read is fail-closed (an invalid config skips ONLY that
+        /// table — never aborts the sweep, never widens a purge), tenants are enumerated for scoped
+        /// fan-out, and each (table, tenant) is swept for both <c>retain</c> and <c>ttl</c>. A host
+        /// with several endpoints uses <see cref="PurgeEndpointsOnceAsync"/>, which sweeps each
+        /// physical table once across all of them.
         /// </summary>
         /// <param name="dryRun">
         /// When true, ENUMERATES the rows the pass would purge — via the SAME scoped
@@ -178,55 +193,64 @@ namespace BifrostQL.Core.Modules.Retention
         /// identical read a live pass then deletes, an operator can trust the dry-run report
         /// as the exact set the next live pass will remove.
         /// </param>
-        public async Task<RetentionPurgeOutcome> PurgeOnceAsync(
+        public Task<RetentionPurgeOutcome> PurgeOnceAsync(
             IDbModel model, IDbConnFactory connFactory, string? endpoint, CancellationToken cancellationToken,
             bool dryRun = false)
         {
             if (model is null) throw new ArgumentNullException(nameof(model));
             if (connFactory is null) throw new ArgumentNullException(nameof(connFactory));
 
+            var plan = PlanPhysicalTables(new[] { new EndpointModel(endpoint, model, connFactory) });
+            return SweepAsync(plan, cancellationToken, dryRun);
+        }
+
+        /// <summary>
+        /// One purge pass over every endpoint registered in the engine's
+        /// <see cref="PathCache{T}"/>: each physical table that any endpoint opts into retention is
+        /// swept at most once, under the agreement rule in the class remarks. This is the pass
+        /// <see cref="RunAsync"/> runs. <paramref name="dryRun"/> as in <see cref="PurgeOnceAsync"/>.
+        /// </summary>
+        public async Task<RetentionPurgeOutcome> PurgeEndpointsOnceAsync(
+            CancellationToken cancellationToken, bool dryRun = false)
+        {
+            if (_pathCache is null)
+                throw new InvalidOperationException(
+                    "PurgeEndpointsOnceAsync needs the endpoint PathCache; construct the engine with one.");
+
+            var plan = PlanPhysicalTables(await LoadEndpointsAsync(_pathCache));
+            return await SweepAsync(plan, cancellationToken, dryRun);
+        }
+
+        private async Task<RetentionPurgeOutcome> SweepAsync(
+            IReadOnlyList<PhysicalTablePlan> plan, CancellationToken cancellationToken, bool dryRun)
+        {
             var now = _clock();
             int tablesSwept = 0, rowsPurged = 0, tablesSkipped = 0;
             var candidates = dryRun ? new List<RetentionCandidate>() : null;
 
-            // Hidden tables too: hiding withholds a table from the exposed surfaces, not from the
-            // server-side lifecycle its metadata declares.
-            foreach (var table in model.Tables.Concat(model.HiddenTables))
+            foreach (var physical in plan)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                RetentionConfig config;
-                try
+                if (physical.Target is not { } target)
                 {
-                    config = RetentionConfig.FromTable(table);
-                }
-                catch (Exception ex)
-                {
-                    // FAIL-CLOSED: a per-table config error (e.g. an oversized window) skips THIS
-                    // table only. Never abort the whole sweep, never fall through to an unscoped
-                    // purge.
-                    _logger?.LogWarning(ex,
-                        "Retention config for '{Schema}.{Table}' is invalid; skipping it this pass.",
-                        table.TableSchema, table.DbName);
                     tablesSkipped++;
                     continue;
                 }
 
-                if (!config.HasRetention)
-                    continue;
-
                 tablesSwept++;
 
+                var table = target.Table;
                 var tenantColumn = NormalizeTenantColumn(table);
                 IReadOnlyList<object?> tenants = tenantColumn is null
                     ? new object?[] { null }                                   // no tenant boundary: one global sweep
-                    : await EnumerateTenantsAsync(table, tenantColumn, connFactory, cancellationToken);
+                    : await EnumerateTenantsAsync(table, tenantColumn, target.ConnFactory, cancellationToken);
 
                 foreach (var tenant in tenants)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     rowsPurged += await SweepTableForTenantAsync(
-                        model, table, config, tenantColumn, tenant, endpoint, now, cancellationToken,
+                        target.Model, table, target.Config, tenantColumn, tenant, target.Endpoint, now, cancellationToken,
                         dryRun, candidates);
                 }
             }
@@ -234,6 +258,110 @@ namespace BifrostQL.Core.Modules.Retention
             return new RetentionPurgeOutcome(
                 tablesSwept, rowsPurged, tablesSkipped,
                 (IReadOnlyList<RetentionCandidate>?)candidates ?? Array.Empty<RetentionCandidate>());
+        }
+
+        /// <summary>
+        /// Groups every endpoint's view of every table (exposed and hidden) by physical table and
+        /// decides, per physical table, which single view this pass sweeps — or that it is skipped
+        /// fail-closed. Order is deterministic: endpoints as given (ordinal path order from
+        /// <see cref="PathCache{T}.Paths"/>), tables in model order.
+        /// </summary>
+        private IReadOnlyList<PhysicalTablePlan> PlanPhysicalTables(IReadOnlyList<EndpointModel> endpoints)
+        {
+            var views = new Dictionary<PhysicalTableKey, List<EndpointTableView>>();
+            var order = new List<PhysicalTableKey>();
+
+            foreach (var endpoint in endpoints)
+            {
+                var database = DatabaseIdentity(endpoint.ConnFactory);
+                foreach (var table in endpoint.Model.Tables.Concat(endpoint.Model.HiddenTables))
+                {
+                    RetentionConfig? config;
+                    try
+                    {
+                        config = RetentionConfig.FromTable(table);
+                    }
+                    catch (Exception ex)
+                    {
+                        // FAIL-CLOSED: a per-table config error (e.g. an oversized window) skips THIS
+                        // physical table only. Never abort the whole sweep, never fall through to an
+                        // unscoped purge, never fall back to another endpoint's config.
+                        _logger?.LogWarning(ex,
+                            "Retention config for '{Schema}.{Table}' on endpoint '{Endpoint}' is invalid; skipping it this pass.",
+                            table.TableSchema, table.DbName, endpoint.Path);
+                        config = null;
+                    }
+
+                    // An endpoint that declares neither key has no opinion about this table.
+                    if (config is { HasRetention: false })
+                        continue;
+
+                    var key = new PhysicalTableKey(
+                        database, StringNormalizer.Normalize(table.TableSchema), StringNormalizer.Normalize(table.DbName));
+                    if (!views.TryGetValue(key, out var list))
+                    {
+                        views[key] = list = new List<EndpointTableView>();
+                        order.Add(key);
+                    }
+                    list.Add(new EndpointTableView(endpoint, table, config));
+                }
+            }
+
+            var plan = new List<PhysicalTablePlan>(order.Count);
+            foreach (var key in order)
+                plan.Add(Decide(views[key]));
+            return plan;
+        }
+
+        // The agreement rule (see the class remarks): every declaring view must be valid and
+        // describe the same purge, or the physical table is skipped this pass.
+        private PhysicalTablePlan Decide(List<EndpointTableView> views)
+        {
+            var declares = views.Any(v => v.Config is not null);
+            if (views.Any(v => v.Config is null))
+                return new PhysicalTablePlan(null, declares);
+
+            var first = views[0];
+            var shape = RetentionShape.Of(first.Table, first.Config!);
+            var disagreeing = views.FirstOrDefault(v => RetentionShape.Of(v.Table, v.Config!) != shape);
+            if (disagreeing is not null)
+            {
+                _logger?.LogError(
+                    "Endpoints '{Endpoint}' and '{OtherEndpoint}' declare different retention for '{Schema}.{Table}'; " +
+                    "skipping it until every endpoint that declares retention for the table declares the same purge.",
+                    first.Endpoint.Path, disagreeing.Endpoint.Path, first.Table.TableSchema, first.Table.DbName);
+                return new PhysicalTablePlan(null, declares);
+            }
+
+            return new PhysicalTablePlan(
+                new SweepTarget(first.Endpoint.Path, first.Endpoint.Model, first.Endpoint.ConnFactory, first.Table, first.Config!),
+                declares);
+        }
+
+        private static async Task<IReadOnlyList<EndpointModel>> LoadEndpointsAsync(PathCache<Inputs> pathCache)
+        {
+            var endpoints = new List<EndpointModel>();
+            foreach (var path in pathCache.Paths)
+            {
+                // A failed load fails the whole pass (retried after the interval): sweeping without
+                // that endpoint could miss its disagreement over a shared table.
+                var inputs = await pathCache.GetValueAsync(path);
+                endpoints.Add(new EndpointModel(
+                    path,
+                    IntentEndpointResolver.GetRequired<IDbModel>(inputs, "model", path),
+                    IntentEndpointResolver.GetRequired<IDbConnFactory>(inputs, "connFactory", path)));
+            }
+            return endpoints;
+        }
+
+        // The physical database an endpoint's connection reaches, as the connection reports it
+        // (provider, data source, database). Read from an UNOPENED connection, so it costs no I/O.
+        // Two endpoints that reach one database under different host spellings are not merged; a
+        // shared table they disagree about is then swept twice rather than skipped.
+        private static string DatabaseIdentity(IDbConnFactory connFactory)
+        {
+            using var conn = connFactory.GetConnection();
+            return $"{conn.GetType().FullName}|{conn.DataSource}|{conn.Database}";
         }
 
         /// <summary>
@@ -495,39 +623,40 @@ namespace BifrostQL.Core.Modules.Retention
         private static int DeletedRowCount(MutationIntentResult result)
             => result.Value is null ? 0 : Convert.ToInt32(result.Value, CultureInfo.InvariantCulture);
 
-        private bool HasRetentionSafe(IDbTable table)
-        {
-            try
-            {
-                return RetentionConfig.FromTable(table).HasRetention;
-            }
-            catch
-            {
-                // A broken config is fail-closed here too: it never keeps the loop alive on its own.
-                return false;
-            }
-        }
-
-        private async Task<(IDbModel? Model, IDbConnFactory? ConnFactory)> ResolveAsync()
-        {
-            if (_pathCache is null)
-                return (null, null);
-
-            var inputs = await _pathCache.GetFirstValueAsync();
-            if (inputs is null)
-                return (null, null);
-
-            var model = inputs.TryGetValue("model", out var m) ? m as IDbModel : null;
-            var factory = inputs.TryGetValue("connFactory", out var f) ? f as IDbConnFactory : null;
-            return (model, factory);
-        }
-
         // Schema-qualified, so the purge names exactly the table it read — never another schema's
         // table of the same name, exposed or hidden.
         private static string QualifiedName(IDbTable table) => $"{table.TableSchema}.{table.DbName}";
 
         private static readonly IReadOnlyDictionary<string, object?> EmptyData =
             new Dictionary<string, object?>();
+
+        private sealed record EndpointModel(string? Path, IDbModel Model, IDbConnFactory ConnFactory);
+
+        // One endpoint's view of one table. Config is null when that endpoint's config is invalid.
+        private sealed record EndpointTableView(EndpointModel Endpoint, IDbTable Table, RetentionConfig? Config);
+
+        private readonly record struct PhysicalTableKey(string Database, string Schema, string Table);
+
+        // The view a pass sweeps, or null when the physical table is skipped. DeclaresRetention keeps
+        // the loop alive for a table some endpoint validly opts in, even while it is skipped.
+        private sealed record PhysicalTablePlan(SweepTarget? Target, bool DeclaresRetention);
+
+        private sealed record SweepTarget(
+            string? Endpoint, IDbModel Model, IDbConnFactory ConnFactory, IDbTable Table, RetentionConfig Config);
+
+        // Everything that decides what a purge of a table does. Two endpoints agree on a physical
+        // table only when these are equal.
+        private readonly record struct RetentionShape(
+            TimeSpan? RetainWindow, string RetainAnchor, TimeSpan? TtlWindow, string TtlAnchor,
+            string TenantColumn, string SoftDeleteColumn, string HardDeleteRole)
+        {
+            public static RetentionShape Of(IDbTable table, RetentionConfig config) => new(
+                config.RetainWindow, StringNormalizer.Normalize(config.RetainAnchorColumn),
+                config.TtlWindow, StringNormalizer.Normalize(config.TtlAnchorColumn),
+                StringNormalizer.Normalize(NormalizeTenantColumn(table)),
+                StringNormalizer.Normalize(table.GetMetadataValue(MetadataKeys.SoftDelete.Column)),
+                table.GetMetadataValue(MetadataKeys.SoftDelete.HardDeleteRole)?.Trim() ?? "");
+        }
     }
 
     /// <summary>

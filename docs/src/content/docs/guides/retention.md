@@ -29,6 +29,35 @@ implicit default window, ever.
 "dbo.sessions { ttl: 30d after last_seen }"
 ```
 
+A table marked `visibility: hidden` is purged like any other. Hiding withholds it from
+GraphQL, REST and every protocol adapter, but the purge still sweeps its `ttl`/`retain`, so
+an internal table only the server touches (sessions, tokens) still expires:
+
+```
+"public.sessions { visibility: hidden; ttl: 1d after expires_at }"
+```
+
+### Several endpoints over one database
+
+Visibility belongs to an endpoint, not to the table: one endpoint can hide a table another
+exposes. The purge works on physical tables. Each pass walks every registered endpoint,
+groups their views of a table by the database the connection reports plus schema and table
+name, and sweeps each physical table **at most once**. Hiding and permissions on each
+endpoint's API are unchanged.
+
+When endpoints disagree, this rule applies:
+
+- An endpoint that declares neither `retain` nor `ttl` for the table has no opinion.
+- Every endpoint that does declare one must declare the **same purge**: the same windows and
+  anchors, tenant column, soft-delete column and hard-delete role. The table is then swept
+  once, through the first declaring endpoint in path order.
+- If they differ, or any endpoint's config for the table is invalid, the table is **skipped**
+  and an error is logged each pass until they agree. Neither the shorter nor the longer window
+  wins.
+
+Two endpoints that reach the same database under different host spellings (`localhost` vs
+`127.0.0.1`) count as two databases, so a shared table is swept once per spelling.
+
 Durations are a positive integer followed by `d` (days) or `h` (hours): `90d`, `12h`. A
 zero, negative, or malformed duration (e.g. `retain: 0d`) is rejected by **model
 validation**: model load fails, the purge pass fails as a whole and is retried on the

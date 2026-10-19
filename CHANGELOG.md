@@ -58,6 +58,22 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- The retention purge now sweeps `visibility: hidden` tables. `DbModel` dropped
+  hidden tables from `Tables`, and the purge only walked `Tables`, so a hidden
+  table's `ttl`/`retain` never ran: `public.sessions { visibility: hidden;
+  ttl: 1d after expires_at }` kept expired sessions forever. Hidden tables now
+  sit in `IDbModel.HiddenTables`. Query and mutation intents reach them only
+  when they carry `HiddenTableAccess`, which only Core can mint, so hidden
+  tables stay off GraphQL, REST, MCP and every protocol adapter.
+- The purge covers every endpoint, not just the first one. It ran
+  `PurgeOnceAsync` on the first registered endpoint with no endpoint path,
+  which the intent executors refuse once two endpoints exist. Each pass now
+  sweeps each physical table (connection data source + database + schema +
+  table) at most once across all endpoints (`PurgeEndpointsOnceAsync`). When
+  endpoints that declare retention for a table disagree on windows, anchors,
+  tenant column, soft-delete column or hard-delete role, the table is skipped
+  and an error logged (fail-closed). Neither window wins. Purge deletes now
+  name the table schema-qualified.
 - State-machine transitions are race-free. The current-state read now takes
   the dialect's update lock, and the `UPDATE` re-checks the state it was
   validated from (`state = <loaded state>`); if the row moved between read and

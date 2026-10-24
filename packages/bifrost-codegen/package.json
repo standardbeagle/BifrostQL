@@ -39,7 +39,7 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^20.19.41",
+    "@types/node": "^26.6.5",
     "@vitest/coverage-v8": "^4.1.8",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8"

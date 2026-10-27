@@ -59,7 +59,7 @@
         {
           "kind": "command",
           "name": "test-core",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -68,7 +68,7 @@
         {
           "kind": "command",
           "name": "test-server",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -86,7 +86,7 @@
         {
           "kind": "command",
           "name": "test-integration",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "maxAttempts": 3,
@@ -104,7 +104,7 @@
         {
           "kind": "command",
           "name": "test-mcp",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "maxAttempts": 3,
@@ -148,7 +148,7 @@
         {
           "kind": "command",
           "name": "green",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -201,7 +201,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -245,7 +245,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -372,7 +372,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -425,7 +425,7 @@
         {
           "kind": "command",
           "name": "test-host",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Host.Test/BifrostQL.Host.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Host.Test/BifrostQL.Host.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -434,7 +434,7 @@
         {
           "kind": "command",
           "name": "test-mcp",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -487,7 +487,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -540,7 +540,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -584,7 +584,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -637,7 +637,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -655,7 +655,7 @@
         {
           "kind": "command",
           "name": "test-integration",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "maxAttempts": 3,
@@ -673,7 +673,7 @@
         {
           "kind": "command",
           "name": "test-mcp",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "maxAttempts": 3,
@@ -726,7 +726,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -779,7 +779,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -823,7 +823,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -876,7 +876,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -929,7 +929,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -973,7 +973,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -1036,7 +1036,7 @@
         {
           "kind": "command",
           "name": "core-tests",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Core.Test/BifrostQL.Core.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -1045,7 +1045,7 @@
         {
           "kind": "command",
           "name": "server-tests",
-          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\"}",
+          "specJson": "{\"argv\":[\"dotnet\",\"test\",\"tests/BifrostQL.Server.Test/BifrostQL.Server.Test.csproj\",\"--no-build\"],\"expect_exit\":0,\"expect_stdout_matches\":\"Passed!\",\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -1086,7 +1086,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"pnpm\",\"--dir\",\"src/BifrostQL.UI/frontend\",\"test\"],\"expect_exit\":0}",
+          "specJson": "{\"argv\":[\"pnpm\",\"--dir\",\"src/BifrostQL.UI/frontend\",\"test\"],\"expect_exit\":0,\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -1139,7 +1139,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\":[\"pnpm\",\"--dir\",\"src/BifrostQL.UI/frontend\",\"test\"],\"expect_exit\":0}",
+          "specJson": "{\"argv\":[\"pnpm\",\"--dir\",\"src/BifrostQL.UI/frontend\",\"test\"],\"expect_exit\":0,\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",
@@ -1201,7 +1201,7 @@
         {
           "kind": "command",
           "name": "test",
-          "specJson": "{\"argv\": [\"pnpm\", \"-r\", \"--filter\", \"./packages/**\", \"--if-present\", \"test\"], \"expect_exit\": 0}",
+          "specJson": "{\"argv\": [\"pnpm\", \"-r\", \"--filter\", \"./packages/**\", \"--if-present\", \"test\"], \"expect_exit\": 0,\"test_run\":true}",
           "required": true,
           "allowSkip": false,
           "outcomeSchemaRef": "builtin:command_result_v1",

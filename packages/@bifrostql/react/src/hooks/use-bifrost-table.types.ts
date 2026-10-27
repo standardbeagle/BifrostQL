@@ -65,12 +65,7 @@ export interface GroupRow {
 
 /** The type of inline cell editor to render. */
 export type EditorType =
-  | 'text'
-  | 'number'
-  | 'select'
-  | 'date'
-  | 'checkbox'
-  | 'textarea';
+  'text' | 'number' | 'select' | 'date' | 'checkbox' | 'textarea';
 
 /**
  * Validation function for inline cell editing.

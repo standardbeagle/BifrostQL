@@ -587,8 +587,7 @@ interface TableRowsProps<T> {
     | ((row: T, rowIndex: number, defaultRow: ReactNode) => ReactNode)
     | undefined;
   renderCell:
-    | ((value: unknown, row: T, column: ColumnConfig) => ReactNode)
-    | undefined;
+    ((value: unknown, row: T, column: ColumnConfig) => ReactNode) | undefined;
   renderExpandedRow: ((row: T) => ReactNode) | undefined;
   hoveredRowIndex: number | null;
   setHoveredRowIndex: (index: number | null) => void;

@@ -9,10 +9,7 @@ import { BifrostContext } from '../components/bifrost-provider';
  * - `'error'` - Connection failed (may auto-reconnect).
  */
 export type ConnectionState =
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
-  | 'error';
+  'connecting' | 'connected' | 'disconnected' | 'error';
 
 /**
  * Transport protocol for subscriptions.

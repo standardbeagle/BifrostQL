@@ -78,9 +78,7 @@ import { useBifrost } from '@bifrostql/react';
 
 const { data, isLoading, error, invalidate } = useBifrost<MyType>(
   '{ users { id name } }',
-  {
-    /* variables */
-  },
+  {/* variables */},
   {
     enabled: true,
     staleTime: 5000,

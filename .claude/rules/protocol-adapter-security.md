@@ -24,6 +24,16 @@ source:
   - commit: 9636c60
   - review: correctness-reviewer verdict on resp slice-5 writes (clean, PASS)
 scope: project (all IProtocolAdapter implementations, not just pgwire)
+paths:
+  - "src/BifrostQL.Server/**"
+  - "src/BifrostQL.Mcp/**"
+  - "src/BifrostQL.Aws/**"
+  - "src/BifrostQL.Core/Resolvers/**"
+  - "src/BifrostQL.Core/Modules/**"
+  - "src/BifrostQL.Core/Storage/**"
+  - "tests/BifrostQL.AdapterConformance/**"
+  - "tests/BifrostQL.Server.Test/**"
+  - "tests/BifrostQL.Mcp.Test/**"
 ---
 
 Two recurring review findings from the pgwire slice-1 handshake+auth review,

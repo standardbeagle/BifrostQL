@@ -1,3 +1,12 @@
+---
+paths:
+  - "tests/**"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.spec.ts"
+  - "**/e2e/**"
+---
+
 # Every regression test added with a fix must be revert-proven RED
 
 Applies to any commit that closes a bug by adding or changing a test alongside a

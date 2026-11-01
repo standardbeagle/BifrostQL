@@ -591,13 +591,22 @@ namespace BifrostQL.Server
                 {
                     scopes.Add(scope);
                 }
+                // Bifrost's cookie/OIDC login fills in the default schemes only where the host
+                // chose none, and does it in PostConfigure, after every host Configure. Setting
+                // DefaultAuthenticateScheme outright (as this used to) overrode a host's
+                // AddAuthentication(JwtBearerDefaults.AuthenticationScheme) whichever came first,
+                // so the authentication guide's bearer setup answered every valid token with 401.
+                services.AddAuthentication();
+                services.PostConfigure<AuthenticationOptions>(options =>
+                {
+                    var hostDefault = options.DefaultScheme ?? CookieAuthenticationDefaults.AuthenticationScheme;
+                    options.DefaultAuthenticateScheme ??= hostDefault;
+                    options.DefaultChallengeScheme ??= hostDefault;
+                    // The OIDC login always signs in to the cookie, whatever the host's default.
+                    options.DefaultSignInScheme ??= CookieAuthenticationDefaults.AuthenticationScheme;
+                });
                 services
-                    .AddAuthentication(options =>
-                    {
-                        options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                        options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                        options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                    })
+                    .AddAuthentication()
                     .AddCookie()
                     .AddOpenIdConnect("oauth2", options =>
                     {

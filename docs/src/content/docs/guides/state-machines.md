@@ -26,6 +26,8 @@ The keys are:
 - `initial-state`: the only state accepted when an insert supplies the state column.
 - `states`: comma-separated allowed state names.
 - `transitions`: allowed transitions in `from->to[roles]@event` form.
+- `transition-not-by` (optional): comma-separated `from->to:column` rules. A caller whose audit
+  actor equals the row's `column` may not take that transition — "the approver is not the author".
 
 Use `|` between transitions in metadata rule strings. The rule parser already uses semicolons between properties, so pipe-separated transitions avoid ambiguity in `appsettings.json` and sample metadata files.
 
@@ -44,6 +46,30 @@ State transition is not permitted.
 ```
 
 The message intentionally omits table, state, and role details so raw GraphQL callers cannot use transition failures to discover the lifecycle configuration.
+
+### The approver is not the author
+
+```text
+main.claims {
+  state-column: status;
+  initial-state: draft;
+  states: draft,submitted,approved;
+  transitions: draft->submitted|submitted->approved[manager];
+  transition-not-by: submitted->approved:created_by
+}
+main.claims.created_by { populate: created-by }
+```
+
+On `submitted -> approved`, BifrostQL reads the row's `created_by` inside the update's transaction
+and compares it with the caller's audit actor, the claim named by `:root { user-audit-key }` (the
+same value `populate: created-by` stamps). If they are equal the transition is refused with the
+generic message above. The rule holds for the `admin` role too, since separation of duties is the
+point of it. It fails closed: a caller with no audit actor, or a row whose author column is empty,
+is refused, because separation cannot be shown. The named transition must be declared in
+`transitions` and the column must exist, or the model fails to load.
+
+`_availableTransitions` applies role checks only. It still lists a transition that
+`transition-not-by` will refuse to the row's author.
 
 ## Reading available transitions
 

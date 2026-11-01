@@ -140,7 +140,7 @@ namespace BifrostQL.Core.Modules.Approval
         /// <see cref="ApprovalDecisionService"/>), never through a mutation path: a caller who
         /// could write it could forge a change under any requester identity, or mark one
         /// approved, without the decision's tenant, self-approval, role and policy checks.
-        /// <see cref="MutationTransformersWrap"/> refuses every such write, and
+        /// <c>TableMutationPipeline.GuardNotHistoryTarget</c> refuses every such write, and
         /// <see cref="FilterTransformersWrap"/> scopes every read to the caller's tenant
         /// (<see cref="TenantScopeFilter"/>). A same-named table in a model with no approval
         /// gate is an ordinary application table and is left alone.

@@ -114,11 +114,11 @@ concurrent decisions cannot both land.
 
 ## The queue is read-only to every API
 
-Once any table is approval-gated, `pending_changes` takes no write through the mutation
-transformer chain, whatever its metadata says. Every generated write path funnels through
-that chain — GraphQL insert/update/upsert/delete/batch/sync/save and filtered update, and
-the protocol adapters and MCP through `IMutationIntentExecutor` — and each such write is
-refused as an access denial. Only the gate
+Once any table is approval-gated, `pending_changes` takes no write from any mutation
+entry point, whatever its metadata says: GraphQL insert/update/delete, batch (including
+the bulk path), nested sync and save, filtered update, file mutations, and the protocol
+adapters and MCP through `IMutationIntentExecutor`. Each is refused as an access denial,
+by the same guard that keeps change-history and deferred-effects tables read-only. Only the gate
 (which queues a change) and `approve`, `reject` and `ExpireAsync` (which decide one)
 write it. A caller who could write the queue could insert a change carrying any
 requester identity, or mark a change approved, without any of the decision checks

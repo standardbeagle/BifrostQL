@@ -106,7 +106,9 @@ namespace BifrostQL.Core.Resolvers
         /// so this guard cannot block a legitimate trail write. Without it an
         /// adapter could forge or edit trail rows through IMutationIntentExecutor.
         /// Shared with the batch resolver and the TreeSync executor so every write
-        /// seam raises the same typed access-denied error.
+        /// seam raises the same typed access-denied error. The same holds for the
+        /// other module-owned stores: the deferred-effects change sets, and the
+        /// approval queue, which only the approval gate and its decisions write.
         /// </summary>
         internal static void GuardNotHistoryTarget(IDbTable table, IDbModel model)
         {
@@ -120,6 +122,10 @@ namespace BifrostQL.Core.Resolvers
                 throw new BifrostExecutionError(
                     $"Table '{table.TableSchema}.{table.DbName}' is an internal deferred-effects table and is not writable. " +
                     "Change sets and reverse deltas are written only by the deferred-effects hook, in the tracked write's transaction.")
+                { ErrorCode = BifrostExecutionError.AccessDeniedCode };
+
+            if (Modules.Approval.PendingChangeStore.IsApprovalQueue(model, table))
+                throw new BifrostExecutionError(Modules.Approval.PendingChangeStore.DirectWriteRefusal)
                 { ErrorCode = BifrostExecutionError.AccessDeniedCode };
         }
 

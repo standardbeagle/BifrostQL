@@ -40,7 +40,7 @@ dbo.price_history  (append-only, written by a nightly job — read-only for huma
 | Constraint | BifrostQL feature |
 |------------|-------------------|
 | No schema changes | [Schema generation](/BifrostQL/concepts/schema-generation/) reads the existing database as-is |
-| Hide `sync_state`, protect `price_history` | [Metadata rules](/BifrostQL/reference/configuration/): `visibility: hidden`, `update: none` |
+| Hide `sync_state`, protect `price_history` | [Metadata rules](/BifrostQL/reference/configuration/): `visibility: hidden`, `policy-actions: read` |
 | Audit columns maintained | `populate: created-on` / `updated-on` rules |
 | Minimal new code | The [embeddable editor](/BifrostQL/guides/embedded-editor/) generates the whole UI from the schema |
 | Who-did-what | [Local-user auth](/BifrostQL/guides/authentication/) against a small new `app_users` table |
@@ -102,11 +102,11 @@ All the constraints from the brief become declarative rules in `appsettings.json
     "Metadata": [
       "dbo.sync_state { visibility: hidden; }",
 
-      "dbo.price_history.* { update: none; }",
+      "dbo.price_history { policy-actions: read; }",
 
-      "dbo.*.created_on { populate: created-on; update: none; }",
-      "dbo.*.updated_on { populate: updated-on; update: none; }",
-      "dbo.*.updated_by { populate: updated-by; update: none; }",
+      "dbo.*.created_on { populate: created-on; }",
+      "dbo.*.updated_on { populate: updated-on; }",
+      "dbo.*.updated_by { populate: updated-by; }",
 
       "dbo.customers { label: name; }",
       "dbo.products  { label: name; }",
@@ -126,8 +126,8 @@ which would leave the connection interceptable by anyone on the path.
 Reading it top to bottom:
 
 - **`sync_state` disappears** from the GraphQL schema entirely. It isn't hidden in the UI — it does not exist in the API, so no client can query it.
-- **`price_history` becomes read-only.** Every column rejects updates; the nightly job keeps writing to it directly over SQL, unaffected.
-- **Audit columns are server-populated.** When an accountant fixes a billing address, BifrostQL stamps `updated_on` (and `updated_by`, a nullable column Meridian added later once they trusted the pattern) from the authenticated identity. The client cannot supply or forge these values — `update: none` makes them read-only for callers. The desktop app's own writes are untouched; it was already setting these columns itself.
+- **`price_history` becomes read-only.** Its policy lists only `read`, so every insert, update and delete through the API is refused, for every caller; the nightly job keeps writing to it directly over SQL, unaffected.
+- **Audit columns are server-populated.** When an accountant fixes a billing address, BifrostQL stamps `updated_on` (and `updated_by`, a nullable column Meridian added later once they trusted the pattern) from the authenticated identity. The client cannot supply or forge these values — the `populate` rules overwrite a client-supplied value, and an update drops a client-supplied `created_*` value. The desktop app's own writes are untouched; it was already setting these columns itself.
 - **`label:` rules** tell generated UIs which column names a row — so a foreign-key dropdown for `customer_id` shows customer names, not integers.
 - **The `:root` rule turns off the escape hatches.** No raw SQL, no generic table access. This admin gets exactly the shaped API and nothing else.
 
@@ -174,7 +174,7 @@ The [editor](/BifrostQL/guides/embedded-editor/) introspects the schema at runti
 Because the shaping happened server-side in step 2, the editor is automatically correct:
 
 - `sync_state` never renders — it isn't in the schema.
-- `price_history` renders as a browsable grid, but its forms reject edits because every column is `update: none`.
+- `price_history` renders as a browsable grid, but its forms reject edits because the table's policy allows only `read`.
 - `created_on` / `updated_on` show as read-only values, not editable inputs.
 
 When the warehouse lead asked for company colors, that was a CSS variable block, not a fork:

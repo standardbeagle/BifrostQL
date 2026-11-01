@@ -116,13 +116,13 @@ On insert there is no existing row to filter, so the tenant column must be set e
 
    ```
    ":root { user-audit-key: user_id }"
-   "main.app_users.created_at  { populate: created-on; update: none; }"
-   "main.app_users.created_by  { populate: created-by; update: none; }"
-   "main.app_users.updated_at  { populate: updated-on; update: none; }"
-   "main.app_users.updated_by  { populate: updated-by; update: none; }"
+   "main.app_users.created_at  { populate: created-on; }"
+   "main.app_users.created_by  { populate: created-by; }"
+   "main.app_users.updated_at  { populate: updated-on; }"
+   "main.app_users.updated_by  { populate: updated-by; }"
    ```
 
-   The audit module overwrites any client-provided value for these columns, so a client cannot spoof ownership. `update: none` removes the columns from the GraphQL input types entirely, so consumers never set them by hand.
+   The audit transformer overwrites any client-provided value for the columns a write stamps, and an update drops a client-provided `created_*` value, so a client cannot spoof ownership. The columns stay optional in the GraphQL input types.
 
 The audit module's `populate` values are the fixed audit set (`created-on`/`created-by`, `updated-on`/`updated-by`, `deleted-on`/`deleted-by`) — it does not auto-populate an arbitrary `tenant_id` column. Tenant ownership on insert therefore comes from pattern 1 (client supplies `tenant_id`, validated against the caller's claim) while audit columns track *who* created or last touched the row. On updates, `tenant-filter` guarantees the caller can only reach their own tenant's rows, and the audit module refreshes `updated-by` / `updated-on` from the caller's identity.
 

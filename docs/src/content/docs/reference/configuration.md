@@ -21,8 +21,8 @@ This configuration reference covers every BifrostQL setting. BifrostQL is config
       "dbo.sys* { visibility: hidden; }",
       "dbo.*|has(tenant_id) { tenant-filter: tenant_id; }",
       "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id; delete-type: soft; }",
-      "dbo.*.createdOn { populate: created-on; update: none; }",
-      "dbo.*.updatedOn { populate: updated-on; update: none; }",
+      "dbo.*.createdOn { populate: created-on; }",
+      "dbo.*.updatedOn { populate: updated-on; }",
       ":root { raw-sql: disabled; generic-table: disabled; }"
     ]
   },

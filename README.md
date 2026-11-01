@@ -61,8 +61,8 @@ Cross-cutting concerns handled via metadata configuration. No custom code requir
 **Audit Columns** -- `created_by`, `updated_by`, `created_on`, `updated_on` populated automatically from the authenticated user context.
 
 ```
-"dbo.*.createdOn { populate: created-on; update: none; }"
-"dbo.*.updatedOn { populate: updated-on; update: none; }"
+"dbo.*.createdOn { populate: created-on; }"
+"dbo.*.updatedOn { populate: updated-on; }"
 ```
 
 **Visibility Control** -- Hide system tables, internal columns, or entire schemas from the API.

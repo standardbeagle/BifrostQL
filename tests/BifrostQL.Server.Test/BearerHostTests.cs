@@ -22,7 +22,8 @@ using Xunit;
 namespace BifrostQL.Server.Test;
 
 /// <summary>
-/// A bearer-token host with Bifrost auth enabled: the documented registration order works.
+/// A bearer-token host with Bifrost auth enabled: the documented registration order works,
+/// and the login gate's reach over the host's own routes is the host's explicit choice.
 /// </summary>
 public sealed class BearerHostTests : IAsyncLifetime
 {
@@ -56,14 +57,34 @@ public sealed class BearerHostTests : IAsyncLifetime
         // The authentication guide registers AddJwtBearer BEFORE AddBifrostQL. Before the fix
         // that order answered a valid token with 401: Bifrost pinned the authenticate scheme to
         // its cookie, overriding the host's bearer default.
-        using var host = await StartAsync(bearerFirst);
+        using var host = await StartAsync(bearerFirst, BifrostAuthGateScope.AllRoutes);
         var response = await host.GetTestClient().SendAsync(GraphQl(Token()));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         (await response.Content.ReadAsStringAsync()).Should().Contain("n1");
     }
 
-    private async Task<IHost> StartAsync(bool bearerFirst)
+    [Fact]
+    public async Task DefaultGateScope_GatesTheHostsOwnRoutes()
+    {
+        using var host = await StartAsync(bearerFirst: true, BifrostAuthGateScope.AllRoutes);
+        var response = await host.GetTestClient().SendAsync(Health());
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "the default keeps every route behind the login gate; narrowing it is the host's decision");
+    }
+
+    [Fact]
+    public async Task BifrostRoutesGateScope_LeavesHostRoutesToTheHost_AndStillGatesGraphQl()
+    {
+        using var host = await StartAsync(bearerFirst: true, BifrostAuthGateScope.BifrostRoutes);
+        var client = host.GetTestClient();
+
+        (await client.SendAsync(Health())).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await client.SendAsync(GraphQl(token: null))).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await client.SendAsync(GraphQl(Token()))).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    private async Task<IHost> StartAsync(bool bearerFirst, BifrostAuthGateScope gateScope)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -94,7 +115,7 @@ public sealed class BearerHostTests : IAsyncLifetime
             });
             web.Configure(app =>
             {
-                app.UseBifrostQL();
+                app.UseBifrostQL(gateScope);
                 app.UseRouting();
                 app.UseEndpoints(endpoints => endpoints.MapGet("/health", () => "ok"));
             });

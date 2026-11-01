@@ -29,14 +29,21 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             && StateMachineConfigCollector.FromTable(table) is not null;
     }
 
+    /// <summary>
+    /// A <c>transition-not-by</c> rule reads the row's author inside the write's transaction, so
+    /// such a table stays off the bulk batch path, where no transaction exists yet.
+    /// </summary>
+    public bool RequiresWriteTransaction(IDbTable table)
+        => StateMachineConfigCollector.FromTable(table)?.Transitions.Any(t => t.DistinctActorColumn is not null) == true;
+
     public ValueTask<MutationTransformResult> TransformAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
         MutationTransformContext context)
-        => new(TransformSync(table, mutationType, data, context));
+        => TransformCoreAsync(table, mutationType, data, context);
 
-    private MutationTransformResult TransformSync(
+    private async ValueTask<MutationTransformResult> TransformCoreAsync(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
@@ -88,6 +95,10 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
         if (!StateMachineRoleGate.CanUseTransition(transition, identity, _evaluator))
             return Denied(mutationType, data);
 
+        if (transition.DistinctActorColumn is { } authorColumn
+            && !await IsDistinctActorAsync(table, data, context, authorColumn))
+            return Denied(mutationType, data);
+
         return new MutationTransformResult
         {
             MutationType = mutationType,
@@ -102,6 +113,35 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
                 identity.Id,
                 transition.OnEvent ?? "StateTransitioned"),
         };
+    }
+
+    /// <summary>
+    /// The caller's audit actor — the same "who" the created-by column is stamped with — differs
+    /// from the row's <paramref name="authorColumn"/>. Read in the write's transaction under the
+    /// update lock. Fails closed: no actor, no key, no row, or no recorded author all deny,
+    /// because separation cannot be shown. The answer is the generic transition denial, so it
+    /// reveals nothing about the row.
+    /// </summary>
+    private static async Task<bool> IsDistinctActorAsync(
+        IDbTable table, Dictionary<string, object?> data, MutationTransformContext context, string authorColumn)
+    {
+        var actor = AuditMutationTransformer.ResolveActor(context.Model, context.UserContext)?.ToString();
+        if (string.IsNullOrWhiteSpace(actor))
+            return false;
+
+        var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in table.KeyColumns)
+        {
+            if (!data.TryGetValue(column.ColumnName, out var value) || value is null)
+                return false;
+            key[column.ColumnName] = value;
+        }
+        if (key.Count == 0)
+            return false;
+
+        var row = await context.LoadRowForUpdateAsync(table, new[] { authorColumn }, key);
+        var author = row is not null && row.TryGetValue(authorColumn, out var authorValue) ? authorValue?.ToString() : null;
+        return !string.IsNullOrWhiteSpace(author) && !string.Equals(author, actor, StringComparison.Ordinal);
     }
 
     private static bool TryGetValue(

@@ -330,6 +330,32 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Model-level keys for application-declared server operations
+        /// (<c>IBifrostOperation</c>): which ones an endpoint exposes, who may call them,
+        /// and whether a caller must carry a tenant claim.
+        ///   ":root { operations: priceLine[estimator,manager], importLines[estimator] }"
+        ///   ":root { operations-tenant: required }"
+        /// </summary>
+        public static class Operations
+        {
+            /// <summary>
+            /// Comma-separated operation names this endpoint exposes, each with an optional
+            /// <c>[grant,list]</c> bracket (the <c>policy-actions</c> grammar). A registered
+            /// operation that is not listed is not in the schema.
+            /// </summary>
+            public const string Exposed = "operations";
+
+            /// <summary>
+            /// <see cref="TenantRequired"/> or <see cref="TenantOptional"/>. Absent: required when
+            /// any table declares <c>tenant-filter</c>, optional otherwise.
+            /// </summary>
+            public const string Tenant = "operations-tenant";
+
+            public const string TenantRequired = "required";
+            public const string TenantOptional = "optional";
+        }
+
+        /// <summary>
         /// Metadata keys for the server-side authorization policy engine.
         /// Configured at the table level, mirroring the tenant-filter convention:
         ///   "dbo.orders { policy-actions: read,update }"
@@ -461,6 +487,14 @@ namespace BifrostQL.Core.Model
             /// <c>from-&gt;to[role1,role2]@event</c>. Roles and event are optional.
             /// </summary>
             public const string Transitions = "transitions";
+
+            /// <summary>
+            /// Comma-separated <c>from-&gt;to:column</c> rules: the caller whose audit actor
+            /// (<c>user-audit-key</c>) equals the row's <c>column</c> may not take that transition
+            /// — the "approver is not the author" rule. The transition must be declared in
+            /// <see cref="Transitions"/>; an unknown author or caller is refused.
+            /// </summary>
+            public const string TransitionNotBy = "transition-not-by";
         }
 
         /// <summary>

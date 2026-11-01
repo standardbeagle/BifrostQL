@@ -11,6 +11,15 @@ namespace BifrostQL.Core.Schema
     internal static class SchemaGenerator
     {
         public static string SchemaTextFromModel(IDbModel model)
+            => SchemaTextWithOperations(model, Array.Empty<Operations.ExposedOperation>());
+
+        /// <summary>
+        /// The endpoint's SDL, with the exposed server operations as fields of the root query and
+        /// mutation types and their own type definitions appended, so they are ordinary fields of
+        /// the one schema (introspection, mixed requests, one error path).
+        /// </summary>
+        // A distinct name, not an overload: tests reach SchemaTextFromModel by reflection by name.
+        public static string SchemaTextWithOperations(IDbModel model, IReadOnlyList<Operations.ExposedOperation> operations)
         {
             var builder = new StringBuilder();
             var typeMapper = model.TypeMapper;
@@ -66,6 +75,8 @@ namespace BifrostQL.Core.Schema
             }
             if (HasDeferredReviewQueue(model))
                 builder.AppendLine("deferredReviewQueue: [DeferredReviewItem!]!");
+            foreach (var operation in operations.Where(o => o.Operation.Kind == Operations.BifrostOperationKind.Query))
+                builder.AppendLine(OperationFieldDefinition(operation));
             builder.AppendLine("}");
 
             if (HasDeferredReviewQueue(model))
@@ -112,7 +123,16 @@ namespace BifrostQL.Core.Schema
                 }
             }
 
-            builder.Append(GetInputAndArgumentTypes(model, tableGenerators, mutatingSpGenerators));
+            var mutationOperations = operations
+                .Where(o => o.Operation.Kind == Operations.BifrostOperationKind.Mutation)
+                .ToList();
+            builder.Append(GetInputAndArgumentTypes(model, tableGenerators, mutatingSpGenerators, mutationOperations));
+            foreach (var operation in operations)
+            {
+                var typeDefinitions = operation.Operation.TypeDefinitions;
+                if (!string.IsNullOrWhiteSpace(typeDefinitions))
+                    builder.AppendLine(typeDefinitions);
+            }
 
             foreach (var generator in spGenerators)
             {
@@ -144,13 +164,29 @@ namespace BifrostQL.Core.Schema
 
         }
 
-        private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators, List<StoredProcedureSchemaGenerator> mutatingSpGenerators)
+        /// <summary>
+        /// One operation's root field: its name followed by its declared signature
+        /// (<c>(lineId: Int!): Float</c>). A signature that does not start with its argument list
+        /// or its return type is a registration error, reported at schema build.
+        /// </summary>
+        private static string OperationFieldDefinition(Operations.ExposedOperation exposed)
+        {
+            var signature = exposed.Operation.Signature?.Trim() ?? string.Empty;
+            if (!signature.StartsWith('(') && !signature.StartsWith(':'))
+                throw new InvalidOperationException(
+                    $"Server operation '{exposed.Operation.Name}' has signature '{signature}'; it must start with " +
+                    "its argument list '(' or its return type ':'.");
+            return exposed.Operation.Name + signature;
+        }
+
+        private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators,
+            List<StoredProcedureSchemaGenerator> mutatingSpGenerators, IReadOnlyList<Operations.ExposedOperation> mutationOperations)
         {
             var builder = new StringBuilder();
             var historyTargets = HistorySurface.ResolveTargets(model);
 
             // Only generate databaseInput type if there are mutations
-            if (tableGenerators.Count > 0 || mutatingSpGenerators.Count > 0)
+            if (tableGenerators.Count > 0 || mutatingSpGenerators.Count > 0 || mutationOperations.Count > 0)
             {
                 // One shared enum for the explicit-ops graph save's per-node verb.
                 builder.AppendLine("enum bifrost_save_op { insert update delete }");
@@ -168,6 +204,8 @@ namespace BifrostQL.Core.Schema
                 {
                     builder.AppendLine(generator.GetFieldDefinition());
                 }
+                foreach (var operation in mutationOperations)
+                    builder.AppendLine(OperationFieldDefinition(operation));
                 if (FileStorageSchemaExtensions.IsFileStorageEnabled(model))
                 {
                     builder.Append(FileStorageSchemaExtensions.GetFileStorageMutationFields());

@@ -57,10 +57,10 @@ server-side policy remains the enforcement boundary.
       "dbo.bookings  { delete-type: soft; soft-delete: deleted_at; soft-delete-by: deleted_by; }",
       "dbo.customers { delete-type: soft; soft-delete: deleted_at; soft-delete-by: deleted_by; }",
 
-      "dbo.*.created_on { populate: created-on; update: none; }",
-      "dbo.*.created_by { populate: created-by; update: none; }",
-      "dbo.*.updated_on { populate: updated-on; update: none; }",
-      "dbo.*.updated_by { populate: updated-by; update: none; }",
+      "dbo.*.created_on { populate: created-on; }",
+      "dbo.*.created_by { populate: created-by; }",
+      "dbo.*.updated_on { populate: updated-on; }",
+      "dbo.*.updated_by { populate: updated-by; }",
 
       "dbo.customers { label: full_name; }",
       "dbo.tours     { label: title; }",
@@ -91,7 +91,7 @@ The last rule is the whole ops story in one line:
 The support section is the [embeddable editor](/BifrostQL/guides/embedded-editor/) plus a handful of bespoke screens. Because the shaping is server-side, the notable behaviors come for free:
 
 - **"Delete" is soft.** When a support agent deletes a duplicate customer, the server sets `deleted_at`/`deleted_by` instead of removing the row — and every subsequent query silently excludes it. The agent doesn't know or care.
-- **Attribution can't be skipped.** `created_by`/`updated_by` are populated from the session identity and are `update: none`, so no request payload can spoof them.
+- **Attribution can't be skipped.** `created_by`/`updated_by` are populated from the session identity by the `populate` rules: an insert or update overwrites any client-supplied value, and an update drops a client-supplied `created_*` value, so no request payload can spoof them.
 - **The status quo is queryable.** A bespoke "today's refunds" screen is just a filtered query against the same endpoint:
 
 ```graphql

@@ -28,6 +28,7 @@ namespace BifrostQL.Core.Schema
         private readonly IDictionary<string, IDictionary<string, object?>>? _additionalMetadata;
         private readonly BifrostProfileRegistry? _registry;
         private readonly EnumValueLoader.LoadResult? _enumValues;
+        private readonly IReadOnlyList<Operations.IBifrostOperation> _operations;
 
         // Per-profile memo: builds are seconds-long (model clone + metadata +
         // full schema generation), so a single cache-wide lock would serialize
@@ -46,7 +47,8 @@ namespace BifrostQL.Core.Schema
             IReadOnlyList<string> baseMetadataRules,
             IDictionary<string, IDictionary<string, object?>>? additionalMetadata,
             BifrostProfileRegistry? registry,
-            EnumValueLoader.LoadResult? enumValues = null)
+            EnumValueLoader.LoadResult? enumValues = null,
+            IReadOnlyList<Operations.IBifrostOperation>? operations = null)
         {
             _loader = loader ?? throw new ArgumentNullException(nameof(loader));
             _read = read ?? throw new ArgumentNullException(nameof(read));
@@ -54,6 +56,7 @@ namespace BifrostQL.Core.Schema
             _additionalMetadata = additionalMetadata;
             _registry = registry;
             _enumValues = enumValues;
+            _operations = operations ?? Array.Empty<Operations.IBifrostOperation>();
         }
 
         /// <summary>
@@ -119,7 +122,7 @@ namespace BifrostQL.Core.Schema
             if (_enumValues != null && model is DbModel dbm)
                 dbm.EnumColumns = EnumColumnMap.Build(model, _enumValues.Values, _enumValues.ValueColumns);
 
-            var schema = DbSchema.FromModel(model, profile);
+            var schema = DbSchema.FromModel(model, profile, _operations);
             return (model, schema);
         }
     }

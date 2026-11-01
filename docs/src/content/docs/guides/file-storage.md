@@ -95,6 +95,12 @@ mutation {
 }
 ```
 
+`Upload` carries the file's bytes as a **base64-encoded string**, inline or (better) in a JSON
+variable: `{"query": "...", "variables": {"f": "iVBORw0KGgo..."}}`. The GraphQL endpoint accepts
+`application/json` bodies only; the GraphQL multipart request format (`multipart/form-data` with
+`operations`/`map`) is not supported, so a client library's file-upload mode will not work. The
+whole request, base64 included (a third larger than the file), counts against the host's request body limit (Kestrel's default is 30,000,000 bytes).
+
 `recordId` addresses one row. A composite primary key is passed as its key values joined
 by `-`, in declared key order, and the count must match exactly.
 

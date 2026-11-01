@@ -31,7 +31,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (BifrostExecutionError ex)
             {
-                throw new ExecutionError(ex.Message, ex);
+                throw BifrostGraphQlError.From(ex);
             }
         }
 

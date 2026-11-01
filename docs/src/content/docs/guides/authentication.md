@@ -185,6 +185,27 @@ await app.RunAsync();
 
 Order matters: `UseAuthentication()` must come before `UseBifrostQL()`. Otherwise, BifrostQL won't have access to the authenticated user.
 
+The `AddAuthentication` call may come before or after `AddBifrostQL`. BifrostQL registers its own
+cookie and OIDC login, but it only fills in the default schemes your host left unset, so your
+`JwtBearerDefaults.AuthenticationScheme` default stays the scheme that authenticates `/graphql`.
+
+### Which routes the login gate covers
+
+With auth enabled, `UseBifrostQL()` puts a login gate in the pipeline: an unauthenticated request
+gets `401` (API clients) or an OIDC login redirect (browsers). By default the gate covers **every
+request that reaches it**, including routes your host maps for itself, such as a health check.
+
+To gate only BifrostQL's own GraphQL endpoint and playground, pass the scope explicitly:
+
+```csharp
+app.UseBifrostQL(BifrostAuthGateScope.BifrostRoutes);
+app.MapGet("/health", () => "ok");                    // reachable anonymously
+app.MapPost("/billing", Bill).RequireAuthorization(); // your route, your authorization
+```
+
+`BifrostRoutes` widens what an anonymous caller can reach. Every route your host maps must then
+declare its own authorization. Choose it deliberately.
+
 ## User context
 
 BifrostQL builds a `BifrostContext` from the authenticated user. This context is available to all modules and transformers, and exposes a `UserContext` dictionary keyed by claim names. Modules read from this dictionary to populate filters and audit columns.

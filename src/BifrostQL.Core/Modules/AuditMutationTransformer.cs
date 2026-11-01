@@ -102,6 +102,11 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
                     if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedBy)) StampUser(column.ColumnName);
                     break;
                 case MutationType.Update:
+                    // created-on/created-by are stamped once, on insert: an update carrying
+                    // them is a client rewriting who created the row, so the value is dropped.
+                    if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.CreatedOn)
+                        || column.CompareMetadata(marker, MetadataKeys.AutoPopulate.CreatedBy))
+                        data.Remove(column.ColumnName);
                     if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedOn)) data[column.ColumnName] = dateTime;
                     if (column.CompareMetadata(marker, MetadataKeys.AutoPopulate.UpdatedBy)) StampUser(column.ColumnName);
                     break;

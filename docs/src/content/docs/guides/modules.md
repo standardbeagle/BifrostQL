@@ -188,10 +188,10 @@ The audit module auto-populates columns from the authenticated user context duri
 {
   "BifrostQL": {
     "Metadata": [
-      "dbo.*.createdOn { populate: created-on; update: none; }",
-      "dbo.*.updatedOn { populate: updated-on; update: none; }",
-      "dbo.*.createdBy { populate: created-by; update: none; }",
-      "dbo.*.updatedBy { populate: updated-by; update: none; }"
+      "dbo.*.createdOn { populate: created-on; }",
+      "dbo.*.updatedOn { populate: updated-on; }",
+      "dbo.*.createdBy { populate: created-by; }",
+      "dbo.*.updatedBy { populate: updated-by; }"
     ]
   }
 }
@@ -208,7 +208,7 @@ The audit module auto-populates columns from the authenticated user context duri
 | `deleted-on` | Current timestamp (on soft-delete) |
 | `deleted-by` | User audit key from context (on soft-delete) |
 
-The `update: none` setting removes these columns from the GraphQL input types so consumers cannot set them manually.
+Populated columns are optional in the GraphQL input types and server-owned: a write overwrites any client-supplied value for the columns it stamps (`created-*` on insert, `updated-*` on insert and update, `deleted-*` on delete), and an update drops a client-supplied `created-*` value. There is no `update: none` key; the model loader rejects it.
 
 ## Query observers
 

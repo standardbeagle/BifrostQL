@@ -169,12 +169,12 @@ With this configured, `orders(delete: ...)` becomes an UPDATE that sets `deleted
 **Audit columns** auto-populate fields like `created_by` and `updated_on` from the authenticated user context:
 
 ```
-"dbo.*.createdOn { populate: created-on; update: none; }"
-"dbo.*.updatedOn { populate: updated-on; update: none; }"
-"dbo.*.createdBy { populate: created-by; update: none; }"
+"dbo.*.createdOn { populate: created-on; }"
+"dbo.*.updatedOn { populate: updated-on; }"
+"dbo.*.createdBy { populate: created-by; }"
 ```
 
-These columns are populated automatically during insert and update. The `update: none` setting makes them read-only in the GraphQL input types.
+These columns are populated automatically during insert and update, and are optional in the GraphQL input types. A client-supplied value is overwritten, and an update drops a client-supplied `created-*` value.
 
 ## Optimistic concurrency
 

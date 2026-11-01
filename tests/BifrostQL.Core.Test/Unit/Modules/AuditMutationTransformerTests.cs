@@ -232,6 +232,28 @@ public class AuditMutationTransformerTests
     }
 
     [Fact]
+    public async Task Update_DropsClientProvidedCreatedColumns()
+    {
+        // created-on/created-by are stamped once, on insert. An update that carries them is a
+        // client rewriting who created the row and when; the transformer must not let it through.
+        var model = CreateAuditModel();
+        var transformer = new AuditMutationTransformer();
+        var table = model.GetTableFromDbName("Users");
+        var data = new Dictionary<string, object?>
+        {
+            ["Name"] = "Bob",
+            ["created_at"] = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            ["created_by_user_id"] = "spoofed-user",
+        };
+
+        await transformer.TransformAsync(table, MutationType.Update, data, Context(model, UserContextWithId("user-99")));
+
+        Assert.False(data.ContainsKey("created_at"));
+        Assert.False(data.ContainsKey("created_by_user_id"));
+        Assert.Equal("Bob", data["Name"]);
+    }
+
+    [Fact]
     public async Task Update_DoesNotSetDeletedColumns()
     {
         var model = CreateFullAuditModel();

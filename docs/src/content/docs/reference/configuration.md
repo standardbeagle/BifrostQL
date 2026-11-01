@@ -21,8 +21,8 @@ This configuration reference covers every BifrostQL setting. BifrostQL is config
       "dbo.sys* { visibility: hidden; }",
       "dbo.*|has(tenant_id) { tenant-filter: tenant_id; }",
       "dbo.orders { soft-delete: deleted_at; soft-delete-by: deleted_by_user_id; delete-type: soft; }",
-      "dbo.*.createdOn { populate: created-on; update: none; }",
-      "dbo.*.updatedOn { populate: updated-on; update: none; }",
+      "dbo.*.createdOn { populate: created-on; }",
+      "dbo.*.updatedOn { populate: updated-on; }",
       ":root { raw-sql: disabled; generic-table: disabled; }"
     ]
   },
@@ -166,8 +166,10 @@ consistently.
 | `schema-display` | `flat`/`prefix`/`field` | model | Multi-schema presentation mode |
 | `schema-default` | schema name | model | Default schema for field-mode presentation |
 | `schema-excluded` | comma list | model | Schemas hidden from schema-field presentation |
-| `sp-include` | regex | model | Include matching stored procedures |
-| `sp-exclude` | regex | model | Exclude matching stored procedures |
+| `sp-include` | regex | model | Include matching stored procedures. Accepted, but no dialect loads procedures yet, so nothing is exposed |
+| `sp-exclude` | regex | model | Exclude matching stored procedures (same caveat) |
+| `operations` | `name[grant,list]`, comma list | model | [Server operations](/BifrostQL/guides/server-operations/) this endpoint exposes, each with an optional grant list |
+| `operations-tenant` | `required`/`optional` | model | Refuse operation callers with no tenant claim (default: `required` when any table has `tenant-filter`) |
 | `auto-detect-app` | `disabled`, `wordpress`, etc. | model | Control app-schema detection |
 | `app-schema` | detector name | model | Force a specific app-schema detector |
 | `detected-app` | detector name | model | Read-only detection result metadata |

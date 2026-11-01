@@ -113,6 +113,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.StateMachine.InitialState,
             MetadataKeys.StateMachine.States,
             MetadataKeys.StateMachine.Transitions,
+            MetadataKeys.StateMachine.TransitionNotBy,
             MetadataKeys.Computed.Sql,
             MetadataKeys.Computed.Provider,
             // Structured-expression computed columns (safe successor to computed-sql).
@@ -330,6 +331,8 @@ namespace BifrostQL.Core.Model
             MetadataKeys.AppSchema.PrefixGroups,
             MetadataKeys.Security.TenantContextKey,
             MetadataKeys.Security.AutoFilterBypassRole,
+            MetadataKeys.Operations.Exposed,
+            MetadataKeys.Operations.Tenant,
             MetadataKeys.AppSchema.AutoDetect,
             MetadataKeys.AppSchema.App,
             MetadataKeys.AppSchema.Detected,

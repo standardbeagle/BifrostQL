@@ -98,12 +98,32 @@ namespace BifrostQL.Core.Model
             ValidateChatConnectors(model, errors);
             ValidatePrometheusMetrics(model, errors);
             ValidateLdap(model, errors);
+            ValidateOperations(model, errors);
 
             if (errors.Count > 0)
             {
                 throw new InvalidOperationException(
                     "Invalid BifrostQL metadata configuration:" + Environment.NewLine +
                     string.Join(Environment.NewLine, errors));
+            }
+        }
+
+        /// <summary>
+        /// The <c>operations</c> / <c>operations-tenant</c> keys, parsed by the same
+        /// <see cref="Operations.OperationExposure"/> functions schema build and the resolver use.
+        /// Whether each listed name is registered is checked at schema build, where the
+        /// registrations are known.
+        /// </summary>
+        private static void ValidateOperations(IDbModel model, List<string> errors)
+        {
+            try
+            {
+                Operations.OperationExposure.ParseExposed(model);
+                Operations.OperationExposure.IsTenantRequired(model);
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add($"  :root [{MetadataKeys.Operations.Exposed}]: {ex.Message}");
             }
         }
 
@@ -1964,6 +1984,13 @@ namespace BifrostQL.Core.Model
 
             if (!DbColumnExists(table, definition.StateColumn))
                 errors.Add(Problem(table, MetadataKeys.StateMachine.StateColumn, definition.StateColumn, "state column does not exist"));
+
+            foreach (var transition in definition.Transitions.Where(t => t.DistinctActorColumn is not null))
+            {
+                if (!DbColumnExists(table, transition.DistinctActorColumn!))
+                    errors.Add(Problem(table, MetadataKeys.StateMachine.TransitionNotBy, transition.DistinctActorColumn,
+                        "author column does not exist"));
+            }
         }
 
         /// <summary>

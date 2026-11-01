@@ -22,17 +22,42 @@ namespace BifrostQL.Server
         }
 
         public static IApplicationBuilder UseBifrostQL(this IApplicationBuilder app)
+            => app.UseBifrostQL(BifrostAuthGateScope.AllRoutes);
+
+        /// <summary>
+        /// Mounts the GraphQL endpoint and playground. With auth enabled,
+        /// <paramref name="gateScope"/> decides which requests the login gate
+        /// (<see cref="UIAuthMiddleware.UseUiAuth"/>) covers:
+        /// <see cref="BifrostAuthGateScope.AllRoutes"/> (the default) gates every request that
+        /// reaches this point in the pipeline, the host's own routes included;
+        /// <see cref="BifrostAuthGateScope.BifrostRoutes"/> gates only the GraphQL endpoint and
+        /// the playground, so the host's other routes keep whatever authorization they declare.
+        /// Choosing <c>BifrostRoutes</c> widens what an anonymous caller reaches: every host route
+        /// must then carry its own authorization.
+        /// </summary>
+        public static IApplicationBuilder UseBifrostQL(this IApplicationBuilder app, BifrostAuthGateScope gateScope)
         {
             var options = app.ApplicationServices.GetService<BifrostSetupOptions>();
             if (options == null) throw new InvalidOperationException("BifrostSetupOptions not configured. Call AddBifrostQL before UseBifrostQL");
             var useAuth = options.IsUsingAuth;
             var endpointPath = options.EndpointPath;
             var playgroundPath = options.PlaygroundPath;
-
+            var gateAllRoutes = gateScope == BifrostAuthGateScope.AllRoutes;
 
             app.IfFluent(useAuth, a => a.UseAuthentication().UseCookiePolicy());
-            app.IfFluent(useAuth, a => a.UseUiAuth());
-            app.Map(endpointPath, branch => branch.UseMiddleware<BifrostHttpMiddleware>());
+            app.IfFluent(useAuth && gateAllRoutes, a => a.UseUiAuth());
+            // BifrostRoutes: the playground keeps the interactive login redirect, matched on its
+            // exact path (it defaults to "/", which a prefix match would turn into every route).
+            app.IfFluent(useAuth && !gateAllRoutes, a => a.UseWhen(
+                context => string.Equals(context.Request.Path.Value?.TrimEnd('/'), playgroundPath.TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase),
+                branch => branch.UseUiAuth()));
+            app.Map(endpointPath, branch =>
+            {
+                if (useAuth && !gateAllRoutes)
+                    branch.UseUiAuth();
+                branch.UseMiddleware<BifrostHttpMiddleware>();
+            });
             app.UseGraphQLGraphiQL(playgroundPath,
                 new GraphQL.Server.Ui.GraphiQL.GraphiQLOptions
                 {
@@ -49,5 +74,18 @@ namespace BifrostQL.Server
             if (!check) return fluent;
             return doConfig(fluent);
         }
+    }
+}
+
+namespace BifrostQL.Server
+{
+    /// <summary>Which requests <c>UseBifrostQL</c>'s login gate covers when auth is enabled.</summary>
+    public enum BifrostAuthGateScope
+    {
+        /// <summary>Every request that reaches <c>UseBifrostQL</c> in the pipeline (the default).</summary>
+        AllRoutes,
+
+        /// <summary>Only the GraphQL endpoint and the playground.</summary>
+        BifrostRoutes,
     }
 }

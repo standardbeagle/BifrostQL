@@ -109,6 +109,7 @@ export default defineConfig({
 						{ label: 'File Storage', slug: 'guides/file-storage' },
 						{ label: 'State Machines', slug: 'guides/state-machines' },
 						{ label: 'Workflows', slug: 'guides/workflows' },
+						{ label: 'Server Operations', slug: 'guides/server-operations' },
 						{ label: 'Workflow Mutations & Audit Trail', slug: 'guides/workflow-mutations' },
 						{ label: 'Approval Workflows', slug: 'guides/approval-workflows' },
 						{ label: 'Deferred Effects', slug: 'guides/deferred-effects' },

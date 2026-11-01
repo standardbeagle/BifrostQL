@@ -82,10 +82,10 @@ A successful login produces an `AppIdentity` whose `TenantId` comes from the use
 
       "public.jobs { delete-type: soft; soft-delete: deleted_at; soft-delete-by: deleted_by; }",
 
-      "public.*.created_on { populate: created-on; update: none; }",
-      "public.*.created_by { populate: created-by; update: none; }",
-      "public.*.updated_on { populate: updated-on; update: none; }",
-      "public.*.updated_by { populate: updated-by; update: none; }",
+      "public.*.created_on { populate: created-on; }",
+      "public.*.created_by { populate: created-by; }",
+      "public.*.updated_on { populate: updated-on; }",
+      "public.*.updated_by { populate: updated-by; }",
 
       "public.crews { label: name; }",
 

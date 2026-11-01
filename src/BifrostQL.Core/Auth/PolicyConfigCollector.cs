@@ -256,7 +256,8 @@ public static class PolicyConfigCollector
         $"Valid actions: {string.Join(", ", Enum.GetNames<PolicyAction>())}, " +
         "each optionally followed by one [grant,list] bracket.");
 
-    private static IEnumerable<string> SplitList(string? raw)
+    /// <summary>The grant-list split of a [grant,list] bracket; shared with server operations.</summary>
+    internal static IEnumerable<string> SplitList(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
             return Array.Empty<string>();

@@ -28,10 +28,18 @@ namespace BifrostQL.Core.Resolvers
         private readonly IDbModel _model;
         private readonly Dictionary<(string typeName, string fieldName), IBifrostResolver> _resolvers;
 
+        private readonly IReadOnlyList<Operations.ExposedOperation> _operations;
+
         public BifrostDispatcher(IDbModel model)
+            : this(model, Array.Empty<Operations.ExposedOperation>())
+        {
+        }
+
+        internal BifrostDispatcher(IDbModel model, IReadOnlyList<Operations.ExposedOperation> operations)
         {
             _model = model;
-            _resolvers = BuildResolverMap(model);
+            _operations = operations;
+            _resolvers = BuildResolverMap(model, operations);
         }
 
         /// <summary>
@@ -101,7 +109,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (BifrostExecutionError ex)
             {
-                throw new ExecutionError(ex.Message, ex);
+                throw BifrostGraphQlError.From(ex);
             }
         }
 
@@ -214,6 +222,14 @@ namespace BifrostQL.Core.Resolvers
                 query.FieldFor("deferredReviewQueue").Resolver = this;
                 mut.FieldFor("approveDeferredChangeSet").Resolver = this;
                 mut.FieldFor("rejectDeferredChangeSet").Resolver = this;
+            }
+
+            foreach (var operation in _operations)
+            {
+                var root = operation.Operation.Kind == Operations.BifrostOperationKind.Query ? query : mut;
+                root.FieldFor(operation.Operation.Name).Resolver = this;
+                foreach (var (typeName, fieldName) in Operations.OperationValueResolver.DeclaredObjectFields(operation.Operation))
+                    builder.Types.For(typeName).FieldFor(fieldName).Resolver = Operations.OperationValueResolver.Instance;
             }
 
             foreach (var proc in _model.StoredProcedures)
@@ -352,7 +368,8 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        private static Dictionary<(string typeName, string fieldName), IBifrostResolver> BuildResolverMap(IDbModel model)
+        private static Dictionary<(string typeName, string fieldName), IBifrostResolver> BuildResolverMap(
+            IDbModel model, IReadOnlyList<Operations.ExposedOperation> operations)
         {
             var map = new Dictionary<(string, string), IBifrostResolver>();
 
@@ -407,6 +424,16 @@ namespace BifrostQL.Core.Resolvers
                 map[(queryType, "deferredReviewQueue")] = review;
                 map[(mutationType, "approveDeferredChangeSet")] = review;
                 map[(mutationType, "rejectDeferredChangeSet")] = review;
+            }
+
+            foreach (var operation in operations)
+            {
+                var rootType = operation.Operation.Kind == Operations.BifrostOperationKind.Query ? queryType : mutationType;
+                // A name a generated root field already uses would silently replace that
+                // field's resolver; refuse it at schema build instead.
+                if (!map.TryAdd((rootType, operation.Operation.Name), new Operations.OperationResolver(operation)))
+                    throw new InvalidOperationException(
+                        $"Server operation '{operation.Operation.Name}' has the name of a generated {rootType} field.");
             }
 
             foreach (var proc in model.StoredProcedures)

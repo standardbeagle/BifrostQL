@@ -43,7 +43,7 @@ Workflow mutations do **not** replace generated CRUD — they sit alongside it. 
 
 ## The sidecar endpoint pattern
 
-A workflow mutation is an **ASP.NET endpoint hosted alongside the Bifrost GraphQL endpoint** that orchestrates one or more Bifrost mutations server-side. It is a *sidecar*: it lives in the same host process, shares the same database connection and the same user context, but is a separate route from `/graphql`.
+A workflow mutation is an **ASP.NET endpoint hosted alongside the Bifrost GraphQL endpoint** that orchestrates one or more Bifrost mutations server-side. It is a *sidecar*: it lives in the same host process and shares the same user context, but is a separate route from `/graphql`. Each `IBifrostWorkflowExecutor` call opens its own connection and commits its own transaction, so the steps are **not** atomic: if a later step fails, earlier steps stay committed. When the steps must commit or roll back together, write a [server operation](/BifrostQL/guides/server-operations/) instead — a mutation operation runs all its reads and writes in one transaction, on `/graphql`.
 
 ```csharp
 // POST /workflows/membership/renew
@@ -99,7 +99,7 @@ app.MapPost("/workflows/membership/renew", async (
 
 Key properties of the pattern:
 
-- **It runs server-side.** The endpoint is the only thing that knows how to compose the steps. A client cannot do half a renewal.
+- **It runs server-side.** The endpoint is the only thing that knows how to compose the steps. A client cannot *choose* to do half a renewal, but a failure partway through leaves the earlier steps committed (see above).
 - **It reuses the Bifrost mutation pipeline.** Every `UpdateAsync` / `InsertAsync` call goes through the same `IMutationTransformer` chain as a direct GraphQL mutation, so `tenant-filter`, `PolicyMutationTransformer`, and `BasicAuditModule` all still apply. The workflow endpoint adds business logic *on top of* the pipeline; it never bypasses it.
 - **It is named.** The route (`/workflows/membership/renew`) and the audit `action` (`membership.renewed`) name the operation, which is what makes the audit trail readable.
 

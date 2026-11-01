@@ -33,6 +33,9 @@ services:
   mysql:
     image: mysql:8.4
     container_name: bifrost-mysql
+    # CI raises max_connections to 500 before the release tier (dotnet.yml); the
+    # net8/net9/net10 test hosts run in parallel and exhaust the default 151.
+    command: --max-connections=500
     environment:
       MYSQL_ROOT_PASSWORD: bifrost_ci_test
       MYSQL_DATABASE: bifrost_ci

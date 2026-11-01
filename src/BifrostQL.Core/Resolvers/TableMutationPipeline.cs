@@ -30,6 +30,13 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public IReadOnlyDictionary<string, object?> ModuleArguments { get; init; } = ModuleApiRegistry.EmptyArguments;
 
+        /// <summary>
+        /// The mutation operation's shared transaction, when this write is one step of an
+        /// operation (<see cref="OperationWriteScope"/>). Null for every generated write, which
+        /// opens and commits its own transaction.
+        /// </summary>
+        public OperationWriteScope? WriteScope { get; init; }
+
         /// <summary>Allows the deferred undo seam to target a soft-deleted row while preserving every other mutation transformer.</summary>
         public bool RestoreSoftDeleted { get; init; }
 
@@ -132,6 +139,28 @@ namespace BifrostQL.Core.Resolvers
                && string.Equals(left.TableSchema, right.TableSchema, StringComparison.OrdinalIgnoreCase)
                && string.Equals(left.DbName, right.DbName, StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Runs one write's transformer chain, hooks and SQL in a transaction: its own, or the
+        /// operation's shared <see cref="MutationPipelineContext.WriteScope"/> when it has one.
+        /// </summary>
+        private static Task RunInTransactionAsync(
+            MutationPipelineContext ctx, Func<DbConnection, DbTransaction, Task> work)
+            => ctx.WriteScope is { } scope
+                ? scope.JoinAsync(work)
+                : MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, work, ctx.CancellationToken);
+
+        /// <summary>
+        /// Post-commit notifications run after the write's commit: at once for a standalone
+        /// write, after the operation's commit for a write inside a <see cref="OperationWriteScope"/>.
+        /// </summary>
+        private static async ValueTask AfterCommitAsync(MutationPipelineContext ctx, Func<ValueTask> notify)
+        {
+            if (ctx.WriteScope is { } scope)
+                scope.AfterCommit(async () => await notify());
+            else
+                await notify();
+        }
+
         public static async Task<object?> InsertAsync(
             IDbTable table, Dictionary<string, object?> data, MutationPipelineContext ctx)
         {
@@ -144,7 +173,7 @@ namespace BifrostQL.Core.Resolvers
             // write rolls back as a unit.
             object? result = null;
             string? pendingApproval = null;
-            await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
+            await RunInTransactionAsync(ctx, async (conn, transaction) =>
             {
                 // Mutation transformers (e.g. the authorization policy engine) gate
                 // the insert before any SQL is built; non-empty Errors abort it.
@@ -178,12 +207,13 @@ namespace BifrostQL.Core.Resolvers
                 // After-write, still in-transaction: the outbox writer runs here so the
                 // event can name the generated identity (result) returned by the insert.
                 await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
-            }, ctx.CancellationToken);
+            });
             // Thrown AFTER the commit so the enqueued pending row survives; never
             // reported as success-as-applied.
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-            await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext);
+            await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
+                ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext));
             return result;
         }
 
@@ -242,7 +272,7 @@ namespace BifrostQL.Core.Resolvers
             int result = 0;
             string? pendingApproval = null;
             StateTransitionInfo? stateTransition = null;
-            await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
+            await RunInTransactionAsync(ctx, async (conn, transaction) =>
             {
                 // Mutation transformers (e.g. the authorization policy engine) gate
                 // the update before any SQL is built; non-empty Errors abort it.
@@ -315,11 +345,14 @@ namespace BifrostQL.Core.Resolvers
                 // caller never touched, and whose from/to states it is not allowed to see.
                 if (result > 0)
                     stateTransition = transformResult.StateTransition;
-            }, ctx.CancellationToken);
+            });
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-            await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext);
-            await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
+            await AfterCommitAsync(ctx, async () =>
+            {
+                await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext);
+                await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
+            });
             // The update mutation field is typed `Int`, so its scalar return cannot
             // carry a composite key. For a single-key table we keep returning the key
             // value (identifies the affected row, back-compat). For a composite key
@@ -354,7 +387,7 @@ namespace BifrostQL.Core.Resolvers
             // transaction, so the chain sees the write's connection and a veto rolls the
             // whole delete back.
             DeleteOutcome outcome = default;
-            await MutationCommandExecutor.RunInTransactionAsync(ctx.ConnFactory, async (conn, transaction) =>
+            await RunInTransactionAsync(ctx, async (conn, transaction) =>
             {
                 var transformContext = TransformContext(ctx, conn, transaction, dialect, moduleArguments: ctx.ModuleArguments);
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, transformContext);
@@ -377,11 +410,12 @@ namespace BifrostQL.Core.Resolvers
                 outcome = transformResult.MutationType == MutationType.Update
                     ? await ExecuteSoftDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter)
                     : await ExecuteHardDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter);
-            }, ctx.CancellationToken);
+            });
             // Thrown AFTER the commit so the enqueued pending row survives.
             if (outcome.PendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(outcome.PendingApproval);
-            await MutationNotifier.NotifyMutationAsync(ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext);
+            await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
+                ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext));
             return outcome.Affected;
         }
 

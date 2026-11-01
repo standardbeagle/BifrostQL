@@ -704,12 +704,26 @@ namespace BifrostQL.Core.Resolvers
             IDbConnFactory connFactory,
             CancellationToken cancellationToken = default,
             BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager = null)
+            => await ExecuteIntentAsync(query, userContext, connFactory, scope: null, cancellationToken, keyManager);
+
+        /// <summary>
+        /// The intent read, run on a mutation operation's shared connection and transaction
+        /// when <paramref name="scope"/> is set, so the operation reads its own uncommitted
+        /// writes. Every other step — transformers, guards, crypto projection — is identical.
+        /// </summary>
+        internal async ValueTask<QueryIntentResult> ExecuteIntentAsync(
+            GqlObjectQuery query,
+            IDictionary<string, object?> userContext,
+            IDbConnFactory connFactory,
+            OperationWriteScope? scope,
+            CancellationToken cancellationToken,
+            BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager)
         {
             // Same outcome recording as the GraphQL read path so adapter (intent) traffic is measured
             // too; scrape-internal collection queries carry the recursion marker and are skipped.
             try
             {
-                return await ExecuteIntentCoreAsync(query, userContext, connFactory, cancellationToken, keyManager);
+                return await ExecuteIntentCoreAsync(query, userContext, connFactory, scope, cancellationToken, keyManager);
             }
             catch (OperationCanceledException)
             {
@@ -731,8 +745,9 @@ namespace BifrostQL.Core.Resolvers
             GqlObjectQuery query,
             IDictionary<string, object?> userContext,
             IDbConnFactory connFactory,
-            CancellationToken cancellationToken = default,
-            BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager = null)
+            OperationWriteScope? scope,
+            CancellationToken cancellationToken,
+            BifrostQL.Core.Crypto.EnvelopeKeyManager? keyManager)
         {
             if (query.DbTable is null)
                 throw new BifrostExecutionError(
@@ -775,7 +790,7 @@ namespace BifrostQL.Core.Resolvers
             await NotifyIntentAsync(QueryPhase.Transformed, query, scopedContext, filter: query.Filter);
 
             var sw = Stopwatch.StartNew();
-            var (data, sql) = await LoadDataParameterizedAsync(query, connFactory, cancellationToken);
+            var (data, sql) = await LoadDataInScopeAsync(query, connFactory, scope, cancellationToken);
             sw.Stop();
 
             await NotifyIntentAsync(QueryPhase.AfterExecute, query, scopedContext,
@@ -1061,7 +1076,14 @@ namespace BifrostQL.Core.Resolvers
             return newTables;
         }
 
-        private async Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataParameterizedAsync(GqlObjectQuery query, IDbConnFactory connFactory, CancellationToken cancellationToken)
+        private Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataParameterizedAsync(
+            GqlObjectQuery query, IDbConnFactory connFactory, CancellationToken cancellationToken)
+            => LoadDataInScopeAsync(query, connFactory, scope: null, cancellationToken);
+
+        // A separate name rather than an overload or optional parameter: tests invoke the
+        // three-parameter form by reflection, by name.
+        private async Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataInScopeAsync(
+            GqlObjectQuery query, IDbConnFactory connFactory, OperationWriteScope? scope, CancellationToken cancellationToken)
         {
             var dialect = connFactory.Dialect;
             var parameters = new QueryModel.SqlParameterCollection();
@@ -1076,12 +1098,17 @@ namespace BifrostQL.Core.Resolvers
             var resultNames = sqlList.Select(p => p.Key).ToArray();
             string sql = string.Join(";\r\n", sqlList.Select(p => p.Value.Sql));
 
-            await using var conn = connFactory.GetConnection();
+            // An operation's read runs on its shared connection, inside its transaction; the
+            // scope owns that connection, so it is neither opened nor disposed here.
+            await using var ownConnection = scope is null ? connFactory.GetConnection() : null;
+            var conn = scope?.Connection ?? ownConnection!;
             try
             {
-                await conn.OpenAsync(cancellationToken);
+                if (ownConnection is not null)
+                    await conn.OpenAsync(cancellationToken);
                 await using var command = conn.CreateCommand();
                 command.CommandText = sql;
+                command.Transaction = scope?.Transaction;
 
                 DbParameterBinder.AddExtraParameters(command, parameters.Parameters);
 

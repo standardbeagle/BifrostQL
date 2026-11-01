@@ -4,6 +4,24 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-11-01 (approval hardening)
+
+### Security
+
+Maker-checker approval (`approval: enabled`). See the repository's security advisory.
+
+- `approve` and `reject` decide a pending change only for a caller in the change's tenant; a
+  change in another tenant answers exactly like an id that does not exist.
+- `pending_changes` is read-only to every API (GraphQL, batch, sync, filtered update, file
+  mutations, protocol adapters, MCP) once a table is approval-gated. `reject` and `ExpireAsync`
+  record their own transition, so a store declared `policy-actions: read` keeps working.
+- Every read of `pending_changes` is scoped to the caller's tenant (a caller with no tenant claim
+  sees only changes queued without one).
+- An approved replay stamps the requester, not the approver, into `created-by`/`updated-by`/
+  `deleted-by` and the change-history actor. The approver is recorded on `pending_changes.approver`.
+
+Upgrading: follow the advisory's guidance on reviewing existing `pending_changes` rows.
+
 ## Unreleased — 2026-10-17 (write-path transactions, mutation input requiredness)
 
 ### Added

@@ -120,9 +120,8 @@ the bulk path), nested sync and save, filtered update, file mutations, and the p
 adapters and MCP through `IMutationIntentExecutor`. Each is refused as an access denial,
 by the same guard that keeps change-history and deferred-effects tables read-only. Only the gate
 (which queues a change) and `approve`, `reject` and `ExpireAsync` (which decide one)
-write it. A caller who could write the queue could insert a change carrying any
-requester identity, or mark a change approved, without any of the decision checks
-above.
+write it, so every row in the queue was queued by the gate and every decision went
+through the checks above.
 
 Reads stay published so approvers can list the queue, and every read is scoped the way a
 decision is: a caller sees only changes queued in their own tenant (their tenant claim

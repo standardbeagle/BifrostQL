@@ -21,7 +21,8 @@ namespace BifrostQL.Server
             string? providerName,
             IReadOnlyList<string> metadataRules,
             IReadOnlyList<IMetadataSource> metadataSources,
-            BifrostProfileRegistry registry)
+            BifrostProfileRegistry registry,
+            IReadOnlyList<BifrostQL.Core.Operations.IBifrostOperation>? operations = null)
         {
             IDictionary<string, IDictionary<string, object?>>? additionalMetadata = null;
             if (metadataSources.Count > 0)
@@ -40,7 +41,8 @@ namespace BifrostQL.Server
             // synchronous per-profile cache can attach the enum map.
             var baseModel = loader.BuildModel(read, new MetadataLoader(metadataRules), additionalMetadata);
             var enumValues = await loader.LoadEnumValuesAsync(baseModel);
-            var profileCache = new ProfileModelCache(loader, read, metadataRules, additionalMetadata, registry, enumValues);
+            var profileCache = new ProfileModelCache(
+                loader, read, metadataRules, additionalMetadata, registry, enumValues, operations);
             // Default/base build (null → empty default profile) for back-compat extensions.
             var (model, schema) = profileCache.GetFor(null);
             return new Inputs(new Dictionary<string, object?>

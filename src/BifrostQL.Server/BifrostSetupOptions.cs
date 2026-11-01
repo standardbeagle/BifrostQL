@@ -44,6 +44,7 @@ namespace BifrostQL.Server
         private readonly List<Type> _moduleApiTypes = new();
         private readonly List<Type> _protocolAdapterTypes = new();
         private readonly List<Type> _chatConnectorTypes = new();
+        private readonly List<BifrostQL.Core.Operations.IBifrostOperation> _operations = new();
         private IReadOnlyList<IMetadataSource> _metadataSources = Array.Empty<IMetadataSource>();
         private readonly BifrostProfileRegistry _profileRegistry = new();
         private S3.S3Options? _s3Options;
@@ -212,6 +213,21 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// Registers a server operation (see <see cref="BifrostQL.Core.Operations.IBifrostOperation"/>):
+        /// an application-defined root query or mutation field that runs with the generated
+        /// fields' security. It appears in the schema only when the endpoint's
+        /// <c>:root { operations: … }</c> metadata lists it. Operations are stateless — like
+        /// <see cref="AddModuleApi{T}"/>, <typeparamref name="T"/> is activated directly — and
+        /// reach their own dependencies through <c>BifrostOperationContext.Services</c>.
+        /// </summary>
+        public BifrostSetupOptions AddOperation<T>() where T : class, BifrostQL.Core.Operations.IBifrostOperation, new()
+        {
+            if (!_operations.Any(operation => operation.GetType() == typeof(T)))
+                _operations.Add(new T());
+            return this;
+        }
+
+        /// <summary>
         /// Registers a protocol adapter (see <see cref="IProtocolAdapter"/>), resolved from
         /// DI and wrapped in its own hosted service so the host starts and stops it. The
         /// adapter owns wire listening and its codec; it executes reads exclusively through
@@ -354,7 +370,8 @@ namespace BifrostQL.Server
                 _provider,
                 configMetadataRules,
                 metadataSources,
-                profileRegistry));
+                profileRegistry,
+                _operations));
 
             services.AddSingleton(this);
             services.AddSingleton(extensionsLoader);

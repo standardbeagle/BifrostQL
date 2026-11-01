@@ -330,6 +330,8 @@ namespace BifrostQL.Core.Model
             MetadataKeys.AppSchema.PrefixGroups,
             MetadataKeys.Security.TenantContextKey,
             MetadataKeys.Security.AutoFilterBypassRole,
+            MetadataKeys.Operations.Exposed,
+            MetadataKeys.Operations.Tenant,
             MetadataKeys.AppSchema.AutoDetect,
             MetadataKeys.AppSchema.App,
             MetadataKeys.AppSchema.Detected,

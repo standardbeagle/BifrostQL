@@ -74,12 +74,21 @@ public sealed class PolicyEvaluator
                 : PolicyDecision.Deny;
         }
 
-        if (isAdmin)
-            return PolicyDecision.Allow;
-
-        return requiredGrants.Count == 0 || identity.Grants.Any(requiredGrants.Contains)
+        return HoldsAnyGrant(identity, requiredGrants)
             ? PolicyDecision.Allow
             : PolicyDecision.Deny;
+    }
+
+    /// <summary>
+    /// The one grant rule for a <c>[grant,list]</c> bracket: an empty list admits everyone,
+    /// the admin role is admitted, and otherwise the caller must hold at least one listed
+    /// role or permission. Shared by table actions and server operations.
+    /// </summary>
+    public bool HoldsAnyGrant(AppIdentity identity, IReadOnlyCollection<string> requiredGrants)
+    {
+        if (identity is null) throw new ArgumentNullException(nameof(identity));
+        if (requiredGrants is null) throw new ArgumentNullException(nameof(requiredGrants));
+        return requiredGrants.Count == 0 || IsAdmin(identity) || identity.Grants.Any(requiredGrants.Contains);
     }
 
     public PolicyDecision CanAct(TablePolicy policy, PolicyAction action, AppIdentity identity, string requiredRole)

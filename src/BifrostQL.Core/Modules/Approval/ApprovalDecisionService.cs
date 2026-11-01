@@ -79,29 +79,17 @@ public sealed class ApprovalDecisionService
     }
 
     /// <summary>
-    /// Marks a pending change expired through the normal mutation pipeline. This is the seam for
-    /// a scheduler/sweeper: it deliberately does not infer expiry from a timestamp at approval
-    /// time, because the state-machine transition is the authoritative terminal decision.
+    /// Marks a pending change expired. This is the seam for a scheduler/sweeper: it deliberately
+    /// does not infer expiry from a timestamp at approval time, because the guarded
+    /// pending-to-terminal transition is the authoritative decision. Trusted server code only:
+    /// it takes no decider identity and runs no authorization.
     /// </summary>
     public async Task ExpireAsync(long pendingChangeId, string reason, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new ArgumentException("An expiry reason is required.", nameof(reason));
 
-        var store = FindTable(PendingChangeStore.TableName);
-        await _mutations.ExecuteAsync(new MutationIntent
-        {
-            Table = store.DbName,
-            Action = MutationIntentAction.Update,
-            Data = new Dictionary<string, object?>
-            {
-                [PendingChangeStore.ColState] = PendingChangeStore.StateExpired,
-                [PendingChangeStore.ColReason] = reason,
-                [PendingChangeStore.ColDecidedAt] = DateTimeOffset.UtcNow,
-            },
-            PrimaryKey = new object?[] { pendingChangeId },
-            UserContext = new Dictionary<string, object?>(),
-        }, cancellationToken);
+        await TransitionAsync(pendingChangeId, PendingChangeStore.StateExpired, decider: null, reason, cancellationToken);
     }
 
     public async Task RejectAsync(long pendingChangeId, string reason,
@@ -112,7 +100,7 @@ public sealed class ApprovalDecisionService
         var row = await LoadAsync(pendingChangeId, approverContext, cancellationToken);
         Authorize(row, approverContext);
         await TransitionAsync(pendingChangeId, PendingChangeStore.StateRejected,
-            PolicyIdentity.FromUserContext(approverContext).Id, reason, approverContext, cancellationToken);
+            PolicyIdentity.FromUserContext(approverContext).Id, reason, cancellationToken);
     }
 
     private void Authorize(PendingRow row, IDictionary<string, object?> context)
@@ -162,9 +150,7 @@ public sealed class ApprovalDecisionService
         if (deciderContext is null) throw new ArgumentNullException(nameof(deciderContext));
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
-        var table = _model.Tables.FirstOrDefault(t =>
-            string.Equals(t.DbName, PendingChangeStore.TableName, StringComparison.OrdinalIgnoreCase));
-        if (table is null) throw new BifrostExecutionError("The pending-changes store is unavailable.");
+        var table = RequireStore();
         var dialect = _connections.Dialect;
         await using var command = connection.CreateCommand();
         command.CommandText = $"SELECT {string.Join(", ", PendingChangeStore.Columns.Skip(1).Select(dialect.EscapeIdentifier))} FROM {dialect.TableReference(table.TableSchema, table.DbName)} WHERE {dialect.EscapeIdentifier(PendingChangeStore.ColId)} = @id";
@@ -207,27 +193,22 @@ public sealed class ApprovalDecisionService
     private static string? TenantOf(IDictionary<string, object?> context, string tenantKey)
         => context.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
 
-    private async Task TransitionAsync(long id, string state, string approver, string? reason,
-        IDictionary<string, object?> approverContext, CancellationToken cancellationToken)
+    // The store takes no write from any mutation path (PendingChangeStore.IsWriteProtectedStore),
+    // so a rejection or expiry records its own transition, guarded on the row still being pending.
+    private async Task TransitionAsync(long id, string state, string? decider, string? reason,
+        CancellationToken cancellationToken)
     {
-        var store = FindTable(PendingChangeStore.TableName);
-        var result = await _mutations.ExecuteAsync(new MutationIntent
-        {
-            Table = store.DbName,
-            Action = MutationIntentAction.Update,
-            Data = new Dictionary<string, object?>
-            {
-                [PendingChangeStore.ColState] = state,
-                [PendingChangeStore.ColApprover] = approver,
-                [PendingChangeStore.ColDecidedAt] = DateTimeOffset.UtcNow,
-                [PendingChangeStore.ColReason] = reason,
-            },
-            PrimaryKey = new object?[] { id },
-            UserContext = approverContext,
-        }, cancellationToken);
-        if (result.AffectedRows != 1)
-            throw new BifrostExecutionError("The pending change could not be transitioned.");
+        var store = RequireStore();
+        await using var connection = _connections.GetConnection();
+        await connection.OpenAsync(cancellationToken);
+        var affected = await PendingChangeStore.TransitionFromPendingAsync(
+            connection, null, _connections.Dialect, store, id, state, decider, reason, cancellationToken);
+        if (affected != 1)
+            throw new BifrostExecutionError("The pending change has already been decided.");
     }
+
+    private IDbTable RequireStore() => PendingChangeStore.Find(_model)
+        ?? throw new BifrostExecutionError("The pending-changes store is unavailable.");
 
     private static PolicyAction PolicyActionFor(string op) => op.ToLowerInvariant() switch
     {

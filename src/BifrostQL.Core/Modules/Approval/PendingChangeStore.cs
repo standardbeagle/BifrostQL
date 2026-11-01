@@ -1,5 +1,12 @@
+using System;
 using System.Collections.Generic;
+using System.Data.Common;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules.Approval
 {
@@ -10,13 +17,13 @@ namespace BifrostQL.Core.Modules.Approval
     /// store table, divert writes into it, and apply approver decisions all reference one
     /// set of names — the contract cannot drift between slices.
     ///
-    /// The lifecycle (<c>pending -&gt; approved | rejected | expired</c>) is expressed through
-    /// the EXISTING state-machine module (<see cref="MetadataKeys.StateMachine"/>), NOT a
-    /// second hand-rolled state enum: <see cref="StateMachineMetadata"/> produces the exact
-    /// table metadata a state-machine table declares, so the store's illegal transitions are
-    /// rejected by <c>StateMachineMutationTransformer</c> — the machinery that already exists
-    /// and is already tested. Terminal states (<c>approved</c>/<c>rejected</c>/<c>expired</c>)
-    /// have no outgoing transitions, so an approved change can never be re-decided.
+    /// The lifecycle (<c>pending -&gt; approved | rejected | expired</c>) is enforced by
+    /// <see cref="TransitionFromPendingAsync"/>, the one statement every decision writes
+    /// through: it is guarded on the row still being <c>pending</c>, so a terminal change can
+    /// never be re-decided. The store takes no write from any mutation path
+    /// (<see cref="IsWriteProtectedStore"/>), so the state-machine transformer never sees a
+    /// store write; <see cref="StateMachineMetadata"/> remains the metadata a deployment may
+    /// declare on the store so its reads describe the same lifecycle.
     /// </summary>
     public static class PendingChangeStore
     {
@@ -117,5 +124,68 @@ namespace BifrostQL.Core.Modules.Approval
                 [MetadataKeys.StateMachine.States] = States,
                 [MetadataKeys.StateMachine.Transitions] = Transitions,
             };
+
+        /// <summary>
+        /// The store table the approval module writes: the model table named
+        /// <see cref="TableName"/> (any schema, first match — the one rule the intercept hook,
+        /// the decision service and the write guard share), or null when the model has none.
+        /// </summary>
+        internal static IDbTable? Find(IDbModel model) => ModelTableReference.Find(model, TableName);
+
+        /// <summary>
+        /// True when <paramref name="table"/> is the approval queue of a model that gates at
+        /// least one table. Such a table is written ONLY by the approval module (the enqueue in
+        /// <see cref="ApprovalInterceptMutationHook"/>, the decisions in
+        /// <see cref="ApprovalDecisionService"/>), never through a mutation path: a caller who
+        /// could write it could forge a change under any requester identity, or mark one
+        /// approved, without the decision's tenant, self-approval, role and policy checks.
+        /// <see cref="MutationTransformersWrap"/> refuses every such write. A same-named table in
+        /// a model with no approval gate is an ordinary application table and stays writable.
+        /// </summary>
+        internal static bool IsWriteProtectedStore(IDbModel model, IDbTable table)
+            => string.Equals(table.DbName, TableName, StringComparison.OrdinalIgnoreCase)
+               && Find(model) is { } store
+               // Compared by name, not instance: a table object from another load of the same
+               // model must not slip past the guard.
+               && string.Equals(store.TableSchema, table.TableSchema, StringComparison.OrdinalIgnoreCase)
+               && model.Tables.Any(candidate => ApprovalConfig.FromTable(candidate).RequiresApproval);
+
+        /// <summary>The refusal every mutation path returns for a write to the store.</summary>
+        internal const string DirectWriteRefusal =
+            "Access denied: the approval queue is written only by approve and reject.";
+
+        /// <summary>
+        /// Moves one change out of <see cref="StatePending"/> into <paramref name="toState"/>,
+        /// recording the decider, the decision time and the reason. The UPDATE is guarded on
+        /// the row still being pending — the only legal source state — so a change decided
+        /// concurrently, or already terminal, matches nothing. Returns the affected-row count;
+        /// the caller refuses anything but 1. Runs on the caller's connection and transaction,
+        /// so the approval stamp commits atomically with the replayed write.
+        /// </summary>
+        internal static async ValueTask<int> TransitionFromPendingAsync(
+            DbConnection connection, DbTransaction? transaction, ISqlDialect dialect, IDbTable store,
+            object pendingChangeId, string toState, string? decider, string? reason,
+            CancellationToken cancellationToken = default)
+        {
+            var parameters = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ColState] = toState,
+                [ColApprover] = decider,
+                [ColDecidedAt] = DateTimeOffset.UtcNow,
+                [ColReason] = reason,
+                [ColId] = pendingChangeId,
+                ["from_state"] = StatePending,
+            };
+            var sql =
+                $"UPDATE {dialect.TableReference(store.TableSchema, store.DbName)} " +
+                $"SET {dialect.EscapeIdentifier(ColState)}=@state, " +
+                $"{dialect.EscapeIdentifier(ColApprover)}=@approver, " +
+                $"{dialect.EscapeIdentifier(ColDecidedAt)}=@decided_at, " +
+                $"{dialect.EscapeIdentifier(ColReason)}=@reason " +
+                $"WHERE {dialect.EscapeIdentifier(ColId)}=@id " +
+                $"AND {dialect.EscapeIdentifier(ColState)}=@from_state;";
+            return await MutationCommandExecutor.ExecuteNonQuery(
+                connection, transaction, sql, parameters, cancellationToken: cancellationToken);
+        }
     }
 }

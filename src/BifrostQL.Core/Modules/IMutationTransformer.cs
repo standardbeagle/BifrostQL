@@ -277,6 +277,19 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         Dictionary<string, object?> data,
         MutationTransformContext context)
     {
+        // The approval queue is written only by the approval module (enqueue, decisions),
+        // never through a mutation path. Refused here, at the one funnel every write path
+        // (single-row, batch, bulk, filtered update, tree-sync, file, intent executors)
+        // shares, so no transport and no transformer composition can reopen it.
+        if (Approval.PendingChangeStore.IsWriteProtectedStore(context.Model, table))
+            return new MutationTransformResult
+            {
+                MutationType = mutationType,
+                Data = data,
+                Errors = new[] { Approval.PendingChangeStore.DirectWriteRefusal },
+                ErrorCode = Resolvers.BifrostExecutionError.AccessDeniedCode,
+            };
+
         var currentType = mutationType;
         // Rekey GraphQL field names to real database column names ONCE, before any
         // transformer runs. Client input is keyed by GraphQL field name, which can be

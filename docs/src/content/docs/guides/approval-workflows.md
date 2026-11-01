@@ -74,8 +74,8 @@ reject it either.
 
 ## Expiry
 
-`ExpireAsync` moves a pending change to `expired` through the mutation pipeline and the
-state machine, and records the reason. It is a seam for a host-supplied scheduler:
+`ExpireAsync` moves a pending change to `expired` with the same guarded transition every
+decision uses, and records the reason. It is a seam for a host-supplied scheduler:
 BifrostQL ships no expiry sweeper and no expiry-window metadata key, and approval never
 infers expiry from a timestamp. A deployment that needs pending changes to lapse must call
 it on its own schedule.
@@ -105,10 +105,28 @@ when the data itself must be live while only its effects are deferred.
 
 ## Lifecycle
 
-`pending_changes` uses the existing state-machine metadata. Its only legal
-transitions are `pending → approved`, `pending → rejected`, and `pending →
-expired`; all three terminal states have no outgoing transition. This prevents a
-terminal change from being decided again.
+The only legal transitions are `pending → approved`, `pending → rejected`, and
+`pending → expired`. Every decision records its transition with one UPDATE guarded on
+the row still being `pending`, so a terminal change can never be decided again and two
+concurrent decisions cannot both land.
+
+## The queue is read-only to every API
+
+Once any table is approval-gated, `pending_changes` takes no write through the mutation
+transformer chain, whatever its metadata says. Every generated write path funnels through
+that chain — GraphQL insert/update/upsert/delete/batch/sync/save and filtered update, and
+the protocol adapters and MCP through `IMutationIntentExecutor` — and each such write is
+refused as an access denial. Only the gate
+(which queues a change) and `approve`, `reject` and `ExpireAsync` (which decide one)
+write it. A caller who could write the queue could insert a change carrying any
+requester identity, or mark a change approved, without any of the decision checks
+above.
+
+Reads stay published so approvers can list the queue. Declare a read policy on the store
+(for example `policy-actions: read[manager]`) to choose who may list it; decisions do not
+need any write grant on the store. State-machine metadata on the store (see
+`PendingChangeStore.StateMachineMetadata`) is optional: it describes the lifecycle to
+readers, but no store write passes through the state-machine transformer.
 
 The store's columns are `id`, `table`, `op`, `intended_payload`, `requester`, `tenant`,
 `requester_context`, `state`, `approver`, `decided_at`, and `reason`. A gated write is

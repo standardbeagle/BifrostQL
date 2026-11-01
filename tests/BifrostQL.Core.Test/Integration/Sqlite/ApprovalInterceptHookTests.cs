@@ -56,7 +56,10 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         "main.blogs { approval: enabled; approver-role: manager }",
         "main.posts { approval: enabled; approver-role: manager }",
         "main.gated_posts { approval: enabled; approver-role: manager }",
-        "main.pending_changes { state-column: state; initial-state: pending; states: pending, approved, rejected, expired; transitions: pending->approved|pending->rejected|pending->expired }",
+        // The store is read-only to every caller by policy, as a deployment that exposes the queue
+        // for listing would declare it. Decisions must still work: they never write the store
+        // through the mutation pipeline.
+        "main.pending_changes { policy-actions: read; state-column: state; initial-state: pending; states: pending, approved, rejected, expired; transitions: pending->approved|pending->rejected|pending->expired }",
     };
 
     public async Task InitializeAsync()
@@ -682,7 +685,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ExpiredPendingChange_CannotBeApproved_AndUsesTheStateMachineTransition()
+    public async Task ExpiredPendingChange_CannotBeApproved_AndUsesTheGuardedTransition()
     {
         var executor = BuildExecutor();
         await EnqueueAsync(executor, "expired", RequesterContext());
@@ -711,26 +714,59 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RejectAsync_UsesMutationPipelineWithApproverAndReason()
+    public async Task RejectAsync_RecordsApproverAndReason_WithoutWritingThroughTheMutationPipeline()
     {
+        // The store takes no write from any mutation path, so a decision cannot go through one:
+        // it records the transition itself, guarded on the row still being pending.
         var executor = BuildExecutor();
         await EnqueueAsync(executor, "pipeline-rejected", RequesterContext());
         var mutations = Substitute.For<IMutationIntentExecutor>();
-        mutations.ExecuteAsync(Arg.Any<MutationIntent>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(new MutationIntentResult { AffectedRows = 1 }));
-        var approver = ApproverContext("bob", "manager");
         var service = new ApprovalDecisionService(_model, new SqliteDbConnFactory(ConnString), mutations);
 
-        await service.RejectAsync(1, "duplicate", approver);
+        await service.RejectAsync(1, "duplicate", ApproverContext("bob", "manager"));
 
-        await mutations.Received(1).ExecuteAsync(Arg.Is<MutationIntent>(intent =>
-            intent.Table == PendingChangeStore.TableName &&
-            intent.Action == MutationIntentAction.Update &&
-            intent.PrimaryKey != null && intent.PrimaryKey.SequenceEqual(new object?[] { 1L }) &&
-            Equals(intent.Data[PendingChangeStore.ColState], PendingChangeStore.StateRejected) &&
-            Equals(intent.Data[PendingChangeStore.ColApprover], "bob") &&
-            Equals(intent.Data[PendingChangeStore.ColReason], "duplicate") &&
-            ReferenceEquals(intent.UserContext, approver)), Arg.Any<CancellationToken>());
+        await mutations.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        (await CountAsync("pending_changes",
+            "id = 1 AND \"state\" = 'rejected' AND approver = 'bob' AND reason = 'duplicate' AND decided_at IS NOT NULL"))
+            .Should().Be(1);
+
+        Func<Task> again = () => service.RejectAsync(1, "twice", ApproverContext("bob", "manager"));
+        await again.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*already been decided*");
+    }
+
+    // ---- the store is written only by the approval module, never through a mutation path ----
+
+    [Fact]
+    public async Task StoreWrites_ThroughGraphQlOrTheIntentSeam_AreRefused_AndChangeNothing()
+    {
+        // Before the fix the store was an ordinary published table: any caller could insert a
+        // forged change (choosing its requester identity) or mark a change approved directly.
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "store-guarded", RequesterContext());
+        var caller = ApproverContext("mallory", "manager");
+
+        var update = await ExecuteGraphQlAsync(
+            "mutation { pending_changes(update: { id: 1, state: \"approved\", approver: \"mallory\" }) }", caller);
+        var insert = await ExecuteGraphQlAsync(
+            """
+            mutation { pending_changes(insert: { table: "main.orders", op: "insert",
+              intended_payload: "{\"name\":\"forged\",\"tenant_id\":1}", requester: "alice", tenant: "1",
+              requester_context: "{\"user_id\":\"alice\",\"tenant_id\":1}", state: "pending" }) }
+            """, caller);
+        Func<Task> delete = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = PendingChangeStore.TableName, Action = MutationIntentAction.Delete,
+            Data = new Dictionary<string, object?>(), PrimaryKey = new object?[] { 1 },
+            UserContext = caller, Endpoint = EndpointPath,
+        });
+
+        update.Errors.Should().ContainSingle().Which.Message.Should().Contain("approval queue");
+        insert.Errors.Should().ContainSingle().Which.Message.Should().Contain("approval queue");
+        (await delete.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+        (await PendingRowsAsync()).Should().ContainSingle()
+            .Which.State.Should().Be(PendingChangeStore.StatePending);
+        (await CountAsync("pending_changes", "approver IS NULL")).Should().Be(1);
     }
 
     [Fact]

@@ -158,7 +158,7 @@ namespace BifrostQL.Core.Modules.Approval
                     $"The approval gate for '{Qualify(context.Table)}' was invoked without an open " +
                     "transaction; the change could not be enqueued and the write is refused.");
 
-            var store = ModelTableReference.Find(context.Model, PendingChangeStore.TableName)
+            var store = PendingChangeStore.Find(context.Model)
                 ?? throw new BifrostExecutionError(
                     $"Table '{Qualify(context.Table)}' is approval-gated but the pending-changes store " +
                     $"table '{PendingChangeStore.TableName}' is not present in the model; the write cannot " +
@@ -203,31 +203,15 @@ namespace BifrostQL.Core.Modules.Approval
                 throw new BifrostExecutionError(
                     "The approval replay is missing the pending-change id; the approval is refused.");
 
-            var store = ModelTableReference.Find(context.Model, PendingChangeStore.TableName)
+            var store = PendingChangeStore.Find(context.Model)
                 ?? throw new BifrostExecutionError(
                     $"The pending-changes store table '{PendingChangeStore.TableName}' is not present in " +
                     "the model; the approval cannot be recorded and is refused.");
 
-            var d = context.Dialect;
-            var tableRef = d.TableReference(store.TableSchema, store.DbName);
             var approver = context.UserContext.TryGetValue(ReplayApproverKey, out var a) ? a?.ToString() : null;
-            var parameters = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [PendingChangeStore.ColState] = PendingChangeStore.StateApproved,
-                [PendingChangeStore.ColApprover] = approver,
-                [PendingChangeStore.ColDecidedAt] = DateTimeOffset.UtcNow,
-                [PendingChangeStore.ColId] = idValue,
-                ["from_state"] = PendingChangeStore.StatePending,
-            };
-            var sql =
-                $"UPDATE {tableRef} SET {d.EscapeIdentifier(PendingChangeStore.ColState)}=@state, " +
-                $"{d.EscapeIdentifier(PendingChangeStore.ColApprover)}=@approver, " +
-                $"{d.EscapeIdentifier(PendingChangeStore.ColDecidedAt)}=@decided_at " +
-                $"WHERE {d.EscapeIdentifier(PendingChangeStore.ColId)}=@id " +
-                $"AND {d.EscapeIdentifier(PendingChangeStore.ColState)}=@from_state;";
-
-            var affected = await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection, context.Transaction, sql, parameters);
+            var affected = await PendingChangeStore.TransitionFromPendingAsync(
+                context.Connection, context.Transaction, context.Dialect, store, idValue,
+                PendingChangeStore.StateApproved, approver, reason: null);
             if (affected != 1)
                 throw new BifrostExecutionError(
                     "The pending change could not be transitioned to approved (it was already decided or " +

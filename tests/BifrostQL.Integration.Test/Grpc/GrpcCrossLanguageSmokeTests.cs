@@ -78,8 +78,10 @@ namespace BifrostQL.Integration.Test.Grpc
 
             await using var host = await RealKestrelHost.StartAsync(MetadataRules, SeedSql);
 
+            // Reflection is identity-filtered and refuses an anonymous caller, so grpcurl sends
+            // the fixture's identity header like any other authenticated client.
             var (exit, stdout, stderr) = await RunProcessAsync(
-                "grpcurl", $"-plaintext -connect-timeout 5 {host.Address} list");
+                "grpcurl", $"-plaintext -connect-timeout 5 -H \"{GrpcLoopbackFixture.IdentityHeader}: smoke||\" {host.Address} list");
 
             exit.Should().Be(0, $"grpcurl should list services; stderr: {stderr}");
             stdout.Should().Contain("bifrostql.BifrostQuery", "the non-.NET client must discover the generated service via reflection");
@@ -148,8 +150,6 @@ namespace BifrostQL.Integration.Test.Grpc
                 DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
                 var builder = WebApplication.CreateBuilder();
                 builder.WebHost.UseSetting("urls", ""); // the adapter's listener is the sole endpoint
-                builder.WebHost.ConfigureKestrel(k =>
-                    k.ListenLocalhost(0, o => o.Protocols = HttpProtocols.Http2)); // ephemeral h2c loopback
                 builder.Services.AddBifrostEndpoints(o =>
                     o.AddEndpoint(e =>
                     {
@@ -163,7 +163,9 @@ namespace BifrostQL.Integration.Test.Grpc
                 builder.Services.AddBifrostGrpc(o =>
                 {
                     o.Endpoint = GrpcLoopbackFixture.EndpointPath;
-                    o.Port = 0; // let the shared listener bind an ephemeral port too; discovered below
+                    // AddBifrostGrpc binds its own h2c listener on BindAddress (loopback) and Port,
+                    // which must be 1..65535: take a free loopback port. Discovered below.
+                    o.Port = FreeLoopbackPort();
                 });
 
                 var app = builder.Build();
@@ -182,6 +184,15 @@ namespace BifrostQL.Integration.Test.Grpc
             {
                 await _app.StopAsync();
                 await _app.DisposeAsync();
+            }
+
+            private static int FreeLoopbackPort()
+            {
+                var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+                probe.Start();
+                var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+                probe.Stop();
+                return port;
             }
         }
     }

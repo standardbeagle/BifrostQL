@@ -42,8 +42,10 @@ Approval reloads the stored payload and routes one intent through
 `IMutationIntentExecutor` under **the requester's** captured user context. Every
 transformer therefore sees the write it would have seen originally: tenant scoping, row
 scope, soft delete, field encryption, and state-machine checks all apply to the replay.
-The approver's identity is carried separately as the audit actor, so the audit trail
-records who let the change through while the data lands under the requester's scope.
+The requester stays the audit actor: `created-by`/`updated-by`/`deleted-by` columns and the
+change-history actor name the person who asked for the change. The approver is recorded on
+the decision itself — `pending_changes.approver` and `decided_at` — and never widens the
+replay.
 
 For a delete, the replay clears the stored value map and re-runs the intent, letting the
 pipeline decide hard versus soft delete from the table's own metadata.

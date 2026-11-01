@@ -34,18 +34,6 @@ namespace BifrostQL.Core.Modules;
 /// </summary>
 public sealed class AuditMutationTransformer : IMutationTransformer, IModuleNamed
 {
-    /// <summary>
-    /// Internal user-context key for a server-created audit actor override. The value must be an
-    /// <see cref="AuditActorOverride"/>, which external callers cannot construct; ordinary
-    /// user-context data carrying this string never acquires audit authority.
-    /// </summary>
-    internal const string ActorOverrideKey = "bifrost.audit.actor-override";
-
-    /// <summary>Creates the unforgeable audit actor marker used by trusted server workflows.</summary>
-    internal static object CreateActorOverride(object? actor) => new AuditActorOverride(actor);
-
-    private sealed record AuditActorOverride(object? Actor);
-
     public string ModuleName => "audit";
 
     // Runs after security gating (Policy=1, StateMachine=2) but BEFORE the
@@ -83,7 +71,7 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         var dateTime = DateTime.UtcNow;
         var auditKey = context.Model.GetMetadataValue(MetadataKeys.Audit.UserKey);
         var hasAuditKey = !string.IsNullOrWhiteSpace(auditKey);
-        var auditValue = ResolveAuditActor(auditKey, context.UserContext, hasAuditKey);
+        var auditValue = ResolveAuditUser(auditKey, context.UserContext, hasAuditKey);
 
         // Audit user columns (created-by/updated-by/deleted-by) are server-owned and
         // must never be settable by the client, or a caller could spoof audit data.
@@ -133,17 +121,6 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         };
     }
 
-    private static object? ResolveAuditActor(string? auditKey, IDictionary<string, object?> userContext, bool hasAuditKey)
-    {
-        if (!hasAuditKey)
-            return null;
-
-        if (userContext.TryGetValue(ActorOverrideKey, out var value) && value is AuditActorOverride overrideValue)
-            return overrideValue.Actor;
-
-        return ResolveAuditUser(auditKey, userContext, hasAuditKey);
-    }
-
     private static object? ResolveAuditUser(string? auditKey, IDictionary<string, object?> userContext, bool hasAuditKey)
     {
         if (!hasAuditKey || auditKey == null)
@@ -166,6 +143,6 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
     public static object? ResolveActor(IDbModel model, IDictionary<string, object?> userContext)
     {
         var auditKey = model.GetMetadataValue(MetadataKeys.Audit.UserKey);
-        return ResolveAuditActor(auditKey, userContext, !string.IsNullOrWhiteSpace(auditKey));
+        return ResolveAuditUser(auditKey, userContext, !string.IsNullOrWhiteSpace(auditKey));
     }
 }

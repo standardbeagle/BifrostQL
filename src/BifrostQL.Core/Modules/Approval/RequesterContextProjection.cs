@@ -14,8 +14,8 @@ namespace BifrostQL.Core.Modules.Approval
     ///
     /// <para><b>Why a projection and not the context itself.</b> A live user context is not a
     /// value: an authenticated caller's context carries the raw <c>ClaimsPrincipal</c> under
-    /// <c>"user"</c> (see <c>BifrostContext</c>) plus other opaque, code-owned entries (the audit
-    /// actor override, the replay capability token, a profile). A <c>ClaimsPrincipal</c> is an
+    /// <c>"user"</c> (see <c>BifrostContext</c>) plus other opaque, code-owned entries (the
+    /// replay capability token, a profile). A <c>ClaimsPrincipal</c> is an
     /// object CYCLE — <c>Claim.Subject</c> points back at the <c>ClaimsIdentity</c> holding it —
     /// so serializing the context wholesale throws, which made every AUTHENTICATED caller's
     /// gated write fail while anonymous callers (no principal) succeeded. Persisting the raw

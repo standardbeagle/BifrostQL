@@ -35,12 +35,11 @@ public sealed class ApprovalDecisionService
 
         var target = FindTable(row.Table);
         // Replay under the requester identity so tenant, policy, and audit transformers see
-        // the same caller that submitted the change; approver identity is carried only to stamp
-        // the approval decision. This prevents approver privileges from widening the replay.
+        // the same caller that submitted the change: the requester authored the data, so the
+        // audit columns and the history actor name them. The approver is recorded only on the
+        // pending change's decision (approver, decided_at) and never widens the replay.
         var approver = PolicyIdentity.FromUserContext(approverContext).Id;
         var requesterContext = DeserializeContext(row.RequesterContext);
-        requesterContext[AuditMutationTransformer.ActorOverrideKey] =
-            AuditMutationTransformer.CreateActorOverride(approver);
         ApprovalInterceptMutationHook.MarkApprovedReplay(requesterContext, pendingChangeId, approver);
 
         var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(row.Payload)

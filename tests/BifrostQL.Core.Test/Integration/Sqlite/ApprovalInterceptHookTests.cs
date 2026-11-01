@@ -541,8 +541,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         approved.Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "name = 'principal-approved' AND tenant_id = 1")).Should().Be(1,
             "the replay runs under the persisted REQUESTER tenant, not the approver's");
-        (await CountAsync("orders", "name = 'principal-approved' AND created_by = 'bob'")).Should().Be(1,
-            "the approver remains the audit actor");
+        (await CountAsync("orders", "name = 'principal-approved' AND created_by = 'alice'")).Should().Be(1,
+            "the requester authored the row; the approver is recorded on the pending change");
         (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
     }
 
@@ -794,8 +794,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         approved.Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "name = 'approved' AND tenant_id = 1")).Should().Be(1,
             "the replay uses the persisted, pinned requester tenant, not the client's 999");
-        (await CountAsync("orders", "name = 'approved' AND created_by = 'bob' AND updated_by = 'bob'")).Should().Be(1,
-            "the approved replay stamps the approver as the audit actor while retaining requester scope");
+        (await CountAsync("orders", "name = 'approved' AND created_by = 'alice' AND updated_by = 'alice'")).Should().Be(1,
+            "the approved replay keeps the requester as the audit actor, not the approver");
         (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
 
         Func<Task> enqueueRejected = async () => await executor.ExecuteAsync(new MutationIntent
@@ -812,6 +812,28 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         rejected.Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "name = 'rejected'")).Should().Be(0, "rejection never replays data");
         (await CountAsync("pending_changes", "\"state\" = 'rejected' AND approver = 'bob' AND reason = 'duplicate'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_ApprovedUpdate_StampsTheRequesterAsUpdatedBy()
+    {
+        // Before the fix the replay overrode the audit actor with the approver, so every
+        // approved change read as authored by whoever approved it.
+        var executor = BuildExecutor();
+        Func<Task> enqueue = () => executor.ExecuteAsync(new MutationIntent
+        {
+            Table = "orders", Action = MutationIntentAction.Update,
+            Data = new Dictionary<string, object?> { ["name"] = "renamed-by-alice" },
+            PrimaryKey = new object?[] { 10 }, UserContext = RequesterContext(), Endpoint = EndpointPath,
+        });
+        await enqueue.Should().ThrowAsync<BifrostExecutionError>();
+
+        (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager")))
+            .Errors.Should().BeNullOrEmpty();
+
+        (await CountAsync("orders", "id = 10 AND name = 'renamed-by-alice' AND updated_by = 'alice'")).Should().Be(1);
+        (await CountAsync("pending_changes", "id = 1 AND approver = 'bob'")).Should().Be(1,
+            "the approver is recorded on the decision, not on the data row");
     }
 
     // ---- tenant scoping: a change is decided only from inside its own tenant ----

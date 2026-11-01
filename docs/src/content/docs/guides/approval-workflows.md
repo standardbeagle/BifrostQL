@@ -56,10 +56,18 @@ replayed write back rather than applying twice.
 
 Every decision runs the same authorization, in this order:
 
-1. The change must still be `pending`. A decided change is refused.
-2. When `self-approve: false`, the requester may not decide their own change.
-3. The caller must hold the table's `approver-role`.
-4. The caller must pass the table's policy for the action being approved.
+1. The caller must be in the change's tenant: their tenant claim (under the model's
+   `tenant-context-key`, default `tenant_id`) must equal the `tenant` recorded when the
+   change was queued. A change from another tenant, or any tenant-scoped change when the
+   caller has no tenant claim, answers "The pending change was not found." — the same
+   answer as an id that does not exist, so ids cannot be used to probe other tenants. A
+   change queued by a requester with no tenant claim has no tenant and skips this step.
+   A row whose `tenant` disagrees with the tenant of its stored requester identity was not
+   written by the gate and is refused the same way.
+2. The change must still be `pending`. A decided change is refused.
+3. When `self-approve: false`, the requester may not decide their own change.
+4. The caller must hold the table's `approver-role`.
+5. The caller must pass the table's policy for the action being approved.
 
 Rejection runs the identical check set, so a caller who cannot approve a change cannot
 reject it either.

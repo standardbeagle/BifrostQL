@@ -751,13 +751,13 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         });
         await enqueueApproved.Should().ThrowAsync<BifrostExecutionError>();
 
-        var approver = TenantContext(2);
+        var approver = TenantContext(1);
         approver["user_id"] = "bob";
         approver["roles"] = new[] { "manager" };
         var approved = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", approver);
         approved.Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "name = 'approved' AND tenant_id = 1")).Should().Be(1,
-            "the replay uses the persisted requester tenant, not the approver tenant");
+            "the replay uses the persisted, pinned requester tenant, not the client's 999");
         (await CountAsync("orders", "name = 'approved' AND created_by = 'bob' AND updated_by = 'bob'")).Should().Be(1,
             "the approved replay stamps the approver as the audit actor while retaining requester scope");
         (await CountAsync("pending_changes", "\"state\" = 'approved' AND approver = 'bob'")).Should().Be(1);
@@ -776,6 +776,62 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         rejected.Errors.Should().BeNullOrEmpty();
         (await CountAsync("orders", "name = 'rejected'")).Should().Be(0, "rejection never replays data");
         (await CountAsync("pending_changes", "\"state\" = 'rejected' AND approver = 'bob' AND reason = 'duplicate'")).Should().Be(1);
+    }
+
+    // ---- tenant scoping: a change is decided only from inside its own tenant ----
+
+    [Fact]
+    public async Task GraphQlDecision_FromAnotherTenantOrNoTenant_AnswersNotFound_AndLeavesChangePending()
+    {
+        // Pending ids are sequential, so an approver in another tenant can name any change.
+        // Before the fix bob in tenant 2 approved tenant 1's change: the replay ran under the
+        // requester's identity, so nothing downstream noticed the decider was an outsider.
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "cross-tenant", RequesterContext());
+
+        var outsider = ApproverContext("bob", "manager", tenantId: 2);
+        var tenantless = new Dictionary<string, object?> { ["user_id"] = "carol", ["roles"] = new[] { "manager" } };
+        var missing = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"999\") }", outsider);
+        var notFound = missing.Errors!.Single().Message;
+
+        foreach (var decider in new IDictionary<string, object?>[] { outsider, tenantless })
+        {
+            var approved = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", decider);
+            var rejected = await ExecuteGraphQlAsync(
+                "mutation { reject(pendingChangeId: \"1\", reason: \"not yours\") }", decider);
+
+            approved.Errors.Should().ContainSingle().Which.Message.Should().Be(notFound,
+                "another tenant's change must be indistinguishable from a missing one");
+            rejected.Errors.Should().ContainSingle().Which.Message.Should().Be(notFound);
+        }
+
+        (await CountAsync("orders", "name = 'cross-tenant'")).Should().Be(0, "no outsider decision replays the write");
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending' AND approver IS NULL")).Should().Be(1);
+
+        var insider = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager"));
+        insider.Errors.Should().BeNullOrEmpty("an approver inside the change's tenant still decides it");
+        (await CountAsync("orders", "name = 'cross-tenant' AND tenant_id = 1")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_RowWhoseTenantDisagreesWithItsRequesterIdentity_IsRefused()
+    {
+        // A row the gate did not write (forged into the store before it was write-protected):
+        // it claims tenant 2, so a tenant-2 approver may see it, but it replays as a tenant-1
+        // requester. Deciding it would let tenant 2 write into tenant 1.
+        await Exec(
+            """
+            INSERT INTO pending_changes("table", op, intended_payload, requester, tenant, requester_context, "state")
+            VALUES ('main.orders', 'insert', '{"name":"forged","tenant_id":1}', 'alice', '2',
+                    '{"user_id":"alice","roles":["requester"],"tenant_id":1}', 'pending')
+            """);
+
+        var result = await ExecuteGraphQlAsync(
+            "mutation { approve(pendingChangeId: \"1\") }", ApproverContext("bob", "manager", tenantId: 2));
+
+        result.Errors.Should().ContainSingle().Which.Message.Should().Contain("not found");
+        (await CountAsync("orders", "name = 'forged'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
     }
 
     // ---- fail-closed: a gated write with no store table is refused, not applied ----
@@ -842,8 +898,10 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         return context;
     }
 
-    private static IDictionary<string, object?> ApproverContext(string userId, string role)
-        => new Dictionary<string, object?> { ["tenant_id"] = 2, ["user_id"] = userId, ["roles"] = new[] { role } };
+    // Approvers decide from inside the requester's tenant (1) unless a fact says otherwise:
+    // a change is only decidable by a caller in its own tenant.
+    private static IDictionary<string, object?> ApproverContext(string userId, string role, int tenantId = 1)
+        => new Dictionary<string, object?> { ["tenant_id"] = tenantId, ["user_id"] = userId, ["roles"] = new[] { role } };
 
     private static EnvelopeKeyManager NewKeyManager()
     {

@@ -30,7 +30,7 @@ public sealed class ApprovalDecisionService
     public async Task ApproveAsync(long pendingChangeId, IDictionary<string, object?> approverContext,
         CancellationToken cancellationToken = default)
     {
-        var row = await LoadAsync(pendingChangeId, cancellationToken);
+        var row = await LoadAsync(pendingChangeId, approverContext, cancellationToken);
         Authorize(row, approverContext);
 
         var target = FindTable(row.Table);
@@ -109,7 +109,7 @@ public sealed class ApprovalDecisionService
     {
         if (string.IsNullOrWhiteSpace(reason))
             throw new ArgumentException("A rejection reason is required.", nameof(reason));
-        var row = await LoadAsync(pendingChangeId, cancellationToken);
+        var row = await LoadAsync(pendingChangeId, approverContext, cancellationToken);
         Authorize(row, approverContext);
         await TransitionAsync(pendingChangeId, PendingChangeStore.StateRejected,
             PolicyIdentity.FromUserContext(approverContext).Id, reason, approverContext, cancellationToken);
@@ -150,8 +150,16 @@ public sealed class ApprovalDecisionService
         return table ?? throw new BifrostExecutionError("The approval target table is unavailable.");
     }
 
-    private async Task<PendingRow> LoadAsync(long id, CancellationToken cancellationToken)
+    /// <summary>
+    /// Loads the pending change the decider may see. A change in another tenant answers
+    /// exactly as a missing one, so sequential ids cannot be used to probe or decide other
+    /// tenants' changes. The tenant check runs before every other check (state, self-approval,
+    /// role, policy) so none of their answers leaks across tenants either.
+    /// </summary>
+    private async Task<PendingRow> LoadAsync(long id, IDictionary<string, object?> deciderContext,
+        CancellationToken cancellationToken)
     {
+        if (deciderContext is null) throw new ArgumentNullException(nameof(deciderContext));
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
         var table = _model.Tables.FirstOrDefault(t =>
@@ -163,13 +171,41 @@ public sealed class ApprovalDecisionService
         Add(command, "@id", id);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            throw new BifrostExecutionError("The pending change was not found.");
-        return new PendingRow(
+            throw PendingChangeNotFound();
+        var row = new PendingRow(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetValue(4)?.ToString(),
             reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetString(6),
             reader.IsDBNull(9) ? null : reader.GetValue(9)?.ToString());
+        if (!IsDecidableFromTenant(row, deciderContext))
+            throw PendingChangeNotFound();
+        return row;
     }
+
+    private static BifrostExecutionError PendingChangeNotFound() => new("The pending change was not found.");
+
+    /// <summary>
+    /// A change is decidable only from inside its own tenant. The replay runs under the
+    /// REQUESTER's identity, so tenant scoping downstream cannot catch an outsider decider:
+    /// it has to be refused here. Two conditions, both under the model's tenant-context key:
+    /// the row's <c>tenant</c> must equal the tenant of the identity it replays as (the gate
+    /// writes both from one context, so a disagreement means the gate did not write the row),
+    /// and the decider must hold that same tenant. A change with no tenant came from a
+    /// requester with no tenant claim and is decidable without one.
+    /// </summary>
+    private bool IsDecidableFromTenant(PendingRow row, IDictionary<string, object?> deciderContext)
+    {
+        var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(_model);
+        var replayTenant = TenantOf(DeserializeContext(row.RequesterContext), tenantKey);
+        if (!string.Equals(row.Tenant, replayTenant, StringComparison.Ordinal))
+            return false;
+        return row.Tenant is null
+            || string.Equals(row.Tenant, TenantOf(deciderContext, tenantKey), StringComparison.Ordinal);
+    }
+
+    // The same string form the intercept hook stores in the tenant column (value.ToString()).
+    private static string? TenantOf(IDictionary<string, object?> context, string tenantKey)
+        => context.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
 
     private async Task TransitionAsync(long id, string state, string approver, string? reason,
         IDictionary<string, object?> approverContext, CancellationToken cancellationToken)

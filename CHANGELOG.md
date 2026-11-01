@@ -4,6 +4,32 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-11-01 (server-secured operations)
+
+### Added
+
+- Server operations: `IBifrostOperation` + `AddOperation<T>()` add application-defined root
+  query and mutation fields to `/graphql`. Exposure and grants come from
+  `:root { operations: name[grant,list] }`, the tenant rule from `operations-tenant`. Data access
+  through `BifrostOperationContext` always acts as the caller, and a mutation operation's reads
+  and writes share one transaction. See the Server Operations guide.
+- `transition-not-by: from->to:column` on a state machine refuses a transition to the caller
+  whose audit actor equals the row's author column (the "approver is not the author" rule).
+- `UseBifrostQL(BifrostAuthGateScope.BifrostRoutes)` gates only the GraphQL endpoint and
+  playground. The parameterless `UseBifrostQL()` still gates every route after it.
+
+### Fixed
+
+- GraphQL errors carry `BifrostExecutionError.ErrorCode` as `extensions.code` (`ACCESS_DENIED`,
+  `PENDING_APPROVAL`, `CONFLICT`, …) instead of always `BIFROST_EXECUTION_ERROR`.
+- Any `storage`/file metadata no longer breaks the schema: the `Upload` scalar is defined (a
+  base64 string in JSON requests; multipart is still unsupported).
+- With Bifrost auth enabled, a host's own default scheme (for example
+  `AddAuthentication(JwtBearerDefaults.AuthenticationScheme)`) is kept in either registration
+  order; previously a valid bearer token got 401.
+- An update drops client-supplied `created-on`/`created-by` values.
+- Docs, README and the sample host config no longer use the never-supported `update: none` key.
+
 ## Unreleased — 2026-10-17 (write-path transactions, mutation input requiredness)
 
 ### Added

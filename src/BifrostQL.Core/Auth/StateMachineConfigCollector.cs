@@ -20,12 +20,14 @@ public static class StateMachineConfigCollector
         var initialStateRaw = table.GetMetadataValue(MetadataKeys.StateMachine.InitialState);
         var statesRaw = table.GetMetadataValue(MetadataKeys.StateMachine.States);
         var transitionsRaw = table.GetMetadataValue(MetadataKeys.StateMachine.Transitions);
+        var notByRaw = table.GetMetadataValue(MetadataKeys.StateMachine.TransitionNotBy);
 
         var hasAny =
             !string.IsNullOrWhiteSpace(stateColumnRaw) ||
             !string.IsNullOrWhiteSpace(initialStateRaw) ||
             !string.IsNullOrWhiteSpace(statesRaw) ||
-            !string.IsNullOrWhiteSpace(transitionsRaw);
+            !string.IsNullOrWhiteSpace(transitionsRaw) ||
+            !string.IsNullOrWhiteSpace(notByRaw);
 
         if (!hasAny)
             return null;
@@ -41,7 +43,7 @@ public static class StateMachineConfigCollector
         try
         {
             var states = SplitList(statesRaw).ToArray();
-            var transitions = ParseTransitions(transitionsRaw, states).ToArray();
+            var transitions = ApplyNotBy(ParseTransitions(transitionsRaw, states).ToArray(), notByRaw);
             return new StateMachineDefinition(
                 stateColumnRaw!,
                 initialStateRaw!,
@@ -79,6 +81,37 @@ public static class StateMachineConfigCollector
                 SplitList(rolesPart),
                 onEvent);
         }
+    }
+
+    /// <summary>
+    /// Attaches each <c>from-&gt;to:column</c> rule of <c>transition-not-by</c> to its declared
+    /// transition. A rule for an undeclared transition, a repeated rule, or a rule without a
+    /// column is invalid metadata: a separation-of-duties rule that silently matched nothing
+    /// would leave the transition open to its author.
+    /// </summary>
+    private static StateMachineTransition[] ApplyNotBy(StateMachineTransition[] transitions, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return transitions;
+
+        foreach (var token in SplitList(raw))
+        {
+            var colon = token.LastIndexOf(':');
+            if (colon <= 0 || colon == token.Length - 1)
+                throw InvalidMetadata();
+            var route = token[..colon].Split("->", StringSplitOptions.TrimEntries);
+            var column = token[(colon + 1)..].Trim();
+            if (route.Length != 2)
+                throw InvalidMetadata();
+
+            var index = Array.FindIndex(transitions, t =>
+                string.Equals(t.From, route[0], StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(t.To, route[1], StringComparison.OrdinalIgnoreCase));
+            if (index < 0 || transitions[index].DistinctActorColumn is not null)
+                throw InvalidMetadata();
+            transitions[index] = transitions[index] with { DistinctActorColumn = column };
+        }
+        return transitions;
     }
 
     private static (string Value, string? Suffix) SplitOptionalSuffix(string value, char marker)

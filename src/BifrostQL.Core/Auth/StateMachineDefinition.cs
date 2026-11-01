@@ -47,6 +47,12 @@ public sealed record StateMachineTransition
     public IReadOnlySet<string> RequiredRoles { get; }
     public string? OnEvent { get; }
 
+    /// <summary>
+    /// The column naming the row's author for this transition (<c>transition-not-by</c>): a caller
+    /// whose audit actor equals its value may not take the transition. Null when unrestricted.
+    /// </summary>
+    public string? DistinctActorColumn { get; init; }
+
     public StateMachineTransition(
         string from,
         string to,

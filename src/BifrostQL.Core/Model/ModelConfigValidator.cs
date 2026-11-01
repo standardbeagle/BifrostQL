@@ -1984,6 +1984,13 @@ namespace BifrostQL.Core.Model
 
             if (!DbColumnExists(table, definition.StateColumn))
                 errors.Add(Problem(table, MetadataKeys.StateMachine.StateColumn, definition.StateColumn, "state column does not exist"));
+
+            foreach (var transition in definition.Transitions.Where(t => t.DistinctActorColumn is not null))
+            {
+                if (!DbColumnExists(table, transition.DistinctActorColumn!))
+                    errors.Add(Problem(table, MetadataKeys.StateMachine.TransitionNotBy, transition.DistinctActorColumn,
+                        "author column does not exist"));
+            }
         }
 
         /// <summary>

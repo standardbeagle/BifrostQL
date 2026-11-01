@@ -487,6 +487,14 @@ namespace BifrostQL.Core.Model
             /// <c>from-&gt;to[role1,role2]@event</c>. Roles and event are optional.
             /// </summary>
             public const string Transitions = "transitions";
+
+            /// <summary>
+            /// Comma-separated <c>from-&gt;to:column</c> rules: the caller whose audit actor
+            /// (<c>user-audit-key</c>) equals the row's <c>column</c> may not take that transition
+            /// — the "approver is not the author" rule. The transition must be declared in
+            /// <see cref="Transitions"/>; an unknown author or caller is refused.
+            /// </summary>
+            public const string TransitionNotBy = "transition-not-by";
         }
 
         /// <summary>

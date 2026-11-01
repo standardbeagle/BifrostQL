@@ -23,7 +23,7 @@ add server-secured logic, built on Bifrost's own extension points.
 | Module API | `AddModuleApi<T>` (static registry) | add scalar **arguments** to existing table fields | add fields, types or resolvers |
 | Computed column | `computed-expr` / `computed-sql` / `computed-plugin` + `IComputedColumnProvider` | a read-only per-row value | arguments, writes, transaction |
 | Server validation | `IServerValidationProvider` (DI) | refuse a write with field errors | anything else |
-| State machine | `state-column` / `transitions` metadata | legal transitions and role-gated transitions | rules about *who* beyond roles (e.g. approver is not the author) |
+| State machine | `state-column` / `transitions` metadata | legal transitions and role-gated transitions | rules about *who* beyond roles — *now `transition-not-by` (this branch)* |
 | Approval, deferred effects | metadata + built-in hooks | maker-checker queue; reversible change sets | host-defined operations; their `approve`/`undo` fields are hard-coded in `SchemaGenerator` and `BifrostDispatcher` |
 | Protocol adapters | `AddProtocolAdapter<T>` + `IQueryIntentExecutor` / `IMutationIntentExecutor` | a new wire protocol over the secured read/write seams | anything on `/graphql`; each intent is its own transaction |
 | Workflow sidecar | `IBifrostWorkflowExecutor` on an ASP.NET route | compose generated reads and writes under the caller's identity | atomicity (every call is its own transaction), `/graphql`, introspection |
@@ -42,7 +42,7 @@ Findings that shaped the design:
 - `BifrostExecutionError.ErrorCode` never reaches the GraphQL wire: the dispatcher rethrows
   `new ExecutionError(message, inner)`, and GraphQL.NET derives `BIFROST_EXECUTION_ERROR` from the
   inner exception type. The documented `ACCESS_DENIED` and `PENDING_APPROVAL` codes reach only the
-  adapters that map `ErrorCode` themselves.
+  adapters that map `ErrorCode` themselves. *(Fixed on this branch: `BifrostGraphQlError.From`.)*
 - Several docs describe code that does not exist (`BasicAuditModule`, `AddModules`,
   `userContext.ToAppIdentity()`, `IQueryObserver.OnAfterExecuteAsync`), and stored procedures are
   documented as loadable.

@@ -100,6 +100,11 @@ public class RawErrorMessageForwardHygieneTests
                 if (!ForwardsMessageToExecutionError.IsMatch(lines[i]))
                     continue;
 
+                // The one conversion seam: its parameter is typed BifrostExecutionError, so the
+                // forward is the curated type by construction; the catch sites call it.
+                if (Path.GetFileName(path) == "BifrostGraphQlError.cs")
+                    continue;
+
                 // Walk back to the nearest enclosing catch clause; the forward is legal
                 // only when that clause catches BifrostExecutionError.
                 var caughtType = (string?)null;

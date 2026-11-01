@@ -61,7 +61,7 @@ namespace BifrostQL.Core.Resolvers
                 // ArgumentException reaching here is an ambient driver/BCL fault —
                 // it must fall through to the engine's generic unhandled-error
                 // handling, never be forwarded verbatim (invariant 3).
-                throw new ExecutionError(ex.Message, ex);
+                throw BifrostGraphQlError.From(ex);
             }
         }
 

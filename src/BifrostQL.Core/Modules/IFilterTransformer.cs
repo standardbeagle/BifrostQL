@@ -146,7 +146,12 @@ public sealed class FilterTransformersWrap : IFilterTransformers
             .Where(t => t.AppliesTo(table, context))
             .OrderBy(t => t.Priority);
 
-        TableFilter? combined = null;
+        // The approval queue is tenant-scoped on every read, whatever transformers the host
+        // composed: it is applied here, at the one funnel every read surface shares, the read
+        // twin of the write refusal in MutationTransformersWrap.
+        TableFilter? combined = Approval.PendingChangeStore.IsApprovalQueue(context.Model, table)
+            ? Approval.PendingChangeStore.TenantScopeFilter(context.Model, table, context.UserContext)
+            : null;
         foreach (var transformer in applicableTransformers)
         {
             var filter = transformer.GetAdditionalFilter(table, context);

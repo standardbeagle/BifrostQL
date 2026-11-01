@@ -139,9 +139,13 @@ public sealed class TableReadChain
     /// null when nothing applies.
     /// </summary>
     public TableFilter? RowFilter =>
-        _filterTransformers is null || _transformContext is null
+        _transformContext is null
             ? null
-            : _filterTransformers.GetCombinedFilter(Table, _transformContext);
+            // With no transformers registered the funnel still runs: what it enforces itself
+            // (the approval queue's tenant scope) must not depend on DI composition.
+            : (_filterTransformers ?? NoFilterTransformers).GetCombinedFilter(Table, _transformContext);
+
+    private static readonly IFilterTransformers NoFilterTransformers = new FilterTransformersWrap();
 
     /// <summary>
     /// The subset of the table's columns the caller may read, decided entirely by the

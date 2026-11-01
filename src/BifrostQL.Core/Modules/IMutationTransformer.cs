@@ -281,7 +281,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         // never through a mutation path. Refused here, at the one funnel every write path
         // (single-row, batch, bulk, filtered update, tree-sync, file, intent executors)
         // shares, so no transport and no transformer composition can reopen it.
-        if (Approval.PendingChangeStore.IsWriteProtectedStore(context.Model, table))
+        if (Approval.PendingChangeStore.IsApprovalQueue(context.Model, table))
             return new MutationTransformResult
             {
                 MutationType = mutationType,

@@ -892,6 +892,31 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
     }
 
+    [Fact]
+    public async Task StoreReads_ListOnlyTheCallersTenantsChanges()
+    {
+        // Before the fix any caller listed every tenant's queued payloads and requester
+        // identities through the published store table.
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "tenant-one-change", RequesterContext());
+        await ExecuteGraphQlAsync("mutation { blogs(insert: { name: \"tenantless-change\" }) }");
+
+        async Task<string[]> ListAsync(IDictionary<string, object?> caller)
+        {
+            var result = await ExecuteGraphQlAsync(
+                "{ pending_changes { data { intended_payload } } }", caller, readFilters: true);
+            result.Errors.Should().BeNullOrEmpty();
+            var json = new GraphQL.SystemTextJson.GraphQLSerializer().Serialize(result);
+            return new[] { "tenant-one-change", "tenantless-change" }.Where(json.Contains).ToArray();
+        }
+
+        (await ListAsync(ApproverContext("bob", "manager", tenantId: 1))).Should().Equal("tenant-one-change");
+        (await ListAsync(ApproverContext("bob", "manager", tenantId: 2))).Should().BeEmpty(
+            "another tenant's queued change, payload and requester are invisible");
+        (await ListAsync(new Dictionary<string, object?> { ["user_id"] = "carol" })).Should().Equal(
+            new[] { "tenantless-change" }, "a caller with no tenant sees only changes queued without one");
+    }
+
     // ---- fail-closed: a gated write with no store table is refused, not applied ----
 
     [Fact]
@@ -992,7 +1017,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     // before-commit composite in RequestServices, exactly as the host DI composes them, so the
     // nested sync runs the before-commit phase.
     private async Task<ExecutionResult> ExecuteGraphQlAsync(
-        string mutation, IDictionary<string, object?>? userContext = null)
+        string mutation, IDictionary<string, object?>? userContext = null, bool readFilters = false)
     {
         var schema = DbSchema.FromModel(_model);
         var factory = new SqliteDbConnFactory(ConnString);
@@ -1020,7 +1045,11 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             {
                 ["connFactory"] = factory,
                 ["model"] = _model,
-                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
+                // readFilters: the production read funnel with no host transformers registered,
+                // so only what the funnel itself enforces applies.
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, readFilters
+                    ? new QueryTransformerService(new FilterTransformersWrap())
+                    : BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });
         });
     }

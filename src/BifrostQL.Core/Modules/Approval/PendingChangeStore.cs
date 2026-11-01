@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 
@@ -21,7 +22,7 @@ namespace BifrostQL.Core.Modules.Approval
     /// <see cref="TransitionFromPendingAsync"/>, the one statement every decision writes
     /// through: it is guarded on the row still being <c>pending</c>, so a terminal change can
     /// never be re-decided. The store takes no write from any mutation path
-    /// (<see cref="IsWriteProtectedStore"/>), so the state-machine transformer never sees a
+    /// (<see cref="IsApprovalQueue"/>), so the state-machine transformer never sees a
     /// store write; <see cref="StateMachineMetadata"/> remains the metadata a deployment may
     /// declare on the store so its reads describe the same lifecycle.
     /// </summary>
@@ -139,16 +140,34 @@ namespace BifrostQL.Core.Modules.Approval
         /// <see cref="ApprovalDecisionService"/>), never through a mutation path: a caller who
         /// could write it could forge a change under any requester identity, or mark one
         /// approved, without the decision's tenant, self-approval, role and policy checks.
-        /// <see cref="MutationTransformersWrap"/> refuses every such write. A same-named table in
-        /// a model with no approval gate is an ordinary application table and stays writable.
+        /// <see cref="MutationTransformersWrap"/> refuses every such write, and
+        /// <see cref="FilterTransformersWrap"/> scopes every read to the caller's tenant
+        /// (<see cref="TenantScopeFilter"/>). A same-named table in a model with no approval
+        /// gate is an ordinary application table and is left alone.
         /// </summary>
-        internal static bool IsWriteProtectedStore(IDbModel model, IDbTable table)
+        internal static bool IsApprovalQueue(IDbModel model, IDbTable table)
             => string.Equals(table.DbName, TableName, StringComparison.OrdinalIgnoreCase)
                && Find(model) is { } store
                // Compared by name, not instance: a table object from another load of the same
                // model must not slip past the guard.
                && string.Equals(store.TableSchema, table.TableSchema, StringComparison.OrdinalIgnoreCase)
                && model.Tables.Any(candidate => ApprovalConfig.FromTable(candidate).RequiresApproval);
+
+        /// <summary>
+        /// The row scope of every read of the queue: changes queued in the caller's tenant (the
+        /// claim under the model's tenant-context key, compared in the string form the gate
+        /// stores), or, for a caller with no tenant claim, changes queued without one. The
+        /// queue holds each change's intended payload and requester identity, so a read is
+        /// scoped exactly as a decision is (<see cref="ApprovalDecisionService"/>).
+        /// </summary>
+        internal static TableFilter TenantScopeFilter(IDbModel model, IDbTable store, IDictionary<string, object?> userContext)
+        {
+            var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(model);
+            var tenant = userContext.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
+            return tenant is null
+                ? TableFilterFactory.IsNull(store, ColTenant)
+                : TableFilterFactory.Equals(store, ColTenant, tenant);
+        }
 
         /// <summary>The refusal every mutation path returns for a write to the store.</summary>
         internal const string DirectWriteRefusal =

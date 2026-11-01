@@ -124,9 +124,13 @@ write it. A caller who could write the queue could insert a change carrying any
 requester identity, or mark a change approved, without any of the decision checks
 above.
 
-Reads stay published so approvers can list the queue. Declare a read policy on the store
-(for example `policy-actions: read[manager]`) to choose who may list it; decisions do not
-need any write grant on the store. State-machine metadata on the store (see
+Reads stay published so approvers can list the queue, and every read is scoped the way a
+decision is: a caller sees only changes queued in their own tenant (their tenant claim
+equals the row's `tenant`), and a caller with no tenant claim sees only changes queued
+without one. The scope is applied by the read filter funnel itself, on every read surface,
+whatever filter transformers the host registered. Declare a read policy on the store (for
+example `policy-actions: read[manager]`) to choose who inside a tenant may list it;
+decisions do not need any write grant on the store. State-machine metadata on the store (see
 `PendingChangeStore.StateMachineMetadata`) is optional: it describes the lifecycle to
 readers, but no store write passes through the state-machine transformer.
 

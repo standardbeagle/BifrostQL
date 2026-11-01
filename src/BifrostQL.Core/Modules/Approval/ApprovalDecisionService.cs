@@ -192,7 +192,7 @@ public sealed class ApprovalDecisionService
     private static string? TenantOf(IDictionary<string, object?> context, string tenantKey)
         => context.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
 
-    // The store takes no write from any mutation path (PendingChangeStore.IsWriteProtectedStore),
+    // The store takes no write from any mutation path (PendingChangeStore.IsApprovalQueue),
     // so a rejection or expiry records its own transition, guarded on the row still being pending.
     private async Task TransitionAsync(long id, string state, string? decider, string? reason,
         CancellationToken cancellationToken)

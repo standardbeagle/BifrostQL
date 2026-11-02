@@ -268,6 +268,11 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    # id-token: write lets NuGet/login request the OIDC token.
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
       - uses: actions/checkout@v7
       - name: Setup pnpm
@@ -384,69 +389,30 @@ jobs:
           else
             echo "REPO_NUGET not set, skipping GitHub Packages publish"
           fi
-      - name: publish Abstractions to nuget.org
+      # nuget.org trusted publishing: NuGet/login trades this job's GitHub
+      # OIDC token for a short-lived (1 h) API key, matched against the
+      # policy on nuget.org (repo + this workflow file). No long-lived key
+      # to expire — the stored NUGET_API_KEY did, and broke v0.4.24.
+      # NUGET_USER is the nuget.org profile name that owns the policy.
+      - name: nuget.org login (OIDC)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      - name: publish to nuget.org
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/BifrostQL.Abstractions/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
-      - name: publish Core to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/BifrostQL.Core/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
-      - name: publish Server to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/BifrostQL.Server/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
-      - name: publish Ngsql to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.Ngsql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
-      - name: publish SqlServer to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.SqlServer/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
-      - name: publish Sqlite to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.Sqlite/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
-      - name: publish MySql to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -n "$NUGET_API_KEY" ]; then
-            dotnet nuget push "src/data/BifrostQL.MySql/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
-          else
-            echo "Skipping nuget.org publish: NUGET_API_KEY not set"
-          fi
+          for project in \
+            src/BifrostQL.Abstractions \
+            src/BifrostQL.Core \
+            src/BifrostQL.Server \
+            src/data/BifrostQL.Ngsql \
+            src/data/BifrostQL.SqlServer \
+            src/data/BifrostQL.Sqlite \
+            src/data/BifrostQL.MySql; do
+            dotnet nuget push "$project/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
+          done
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
       - name: set editor version

@@ -6,8 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackAsTool>true</PackAsTool>
+    <IsPackable>true</IsPackable>
     <ToolCommandName>bifrost</ToolCommandName>
-    <PackageOutputPath>./nupkg</PackageOutputPath>
     <PackageId>BifrostQL.Tool</PackageId>
     <PackageVersion>0.4.11</PackageVersion>
     <Authors>Andy Brummer</Authors>

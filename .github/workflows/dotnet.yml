@@ -317,6 +317,7 @@ jobs:
           dotnet pack "src/data/BifrostQL.SqlServer/BifrostQL.SqlServer.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
           dotnet pack "src/data/BifrostQL.Sqlite/BifrostQL.Sqlite.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
           dotnet pack "src/data/BifrostQL.MySql/BifrostQL.MySql.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
+          dotnet pack "src/BifrostQL.Tool/BifrostQL.Tool.csproj"  --configuration Release --no-build -p:PackageVersion=0.4.${{ github.run_number }}
       - name: add source
         env:
           REPO_NUGET: ${{ secrets.REPO_NUGET }}
@@ -410,7 +411,8 @@ jobs:
             src/data/BifrostQL.Ngsql \
             src/data/BifrostQL.SqlServer \
             src/data/BifrostQL.Sqlite \
-            src/data/BifrostQL.MySql; do
+            src/data/BifrostQL.MySql \
+            src/BifrostQL.Tool; do
             dotnet nuget push "$project/bin/Release/*.nupkg" --source "nuget.org" -k "$NUGET_API_KEY" --skip-duplicate --no-symbols
           done
       - name: Install frontend deps

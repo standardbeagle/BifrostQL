@@ -139,9 +139,9 @@ BifrostQL includes a CLI tool for schema introspection, config generation, and l
 
 ```bash
 dotnet tool install -g BifrostQL.Tool
-bifrost serve --connection "Server=localhost;Database=mydb;..."
-bifrost schema --connection "..."
-bifrost config-generate --connection "..."
+bifrost serve --connection-string "Server=localhost;Database=mydb;..."
+bifrost schema --connection-string "..."
+bifrost config-generate --connection-string "..."
 ```
 
 ## Query Examples

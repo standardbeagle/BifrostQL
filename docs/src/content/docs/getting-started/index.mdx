@@ -110,9 +110,9 @@ BifrostQL also ships as a standalone CLI tool for quick schema inspection and lo
 
 ```bash
 dotnet tool install -g BifrostQL.Tool
-bifrost serve --connection "Server=localhost;Database=mydb;..."
-bifrost schema --connection "..."
-bifrost config-generate --connection "..."
+bifrost serve --connection-string "Server=localhost;Database=mydb;..."
+bifrost schema --connection-string "..."
+bifrost config-generate --connection-string "..."
 ```
 
 `bifrost serve` starts a local GraphQL server without writing any project files. Useful for exploring a database schema before committing to a project structure.

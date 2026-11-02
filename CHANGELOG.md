@@ -4,6 +4,21 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-11-02 (packaging)
+
+### Added
+
+- `BifrostQL.Tool` (the `bifrost` CLI) is published to nuget.org with every release, so
+  `dotnet tool install -g BifrostQL.Tool` works. It was packable but never pushed.
+
+### Fixed
+
+- CLI examples in the README and docs used `--connection`; the tool only accepts
+  `--connection-string`.
+- The desktop app guide no longer tells users to `dotnet tool install -g BifrostQL.UI`; the
+  desktop app is not a dotnet tool. It now documents building from source and the Windows
+  installer script.
+
 ## Unreleased — 2026-11-01 (server-secured operations)
 
 ### Added

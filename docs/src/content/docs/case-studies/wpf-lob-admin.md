@@ -81,7 +81,7 @@ await app.RunAsync();
 Before writing any configuration, the team pointed the desktop navigator at the database to sanity-check what BifrostQL would generate:
 
 ```bash
-bifrost serve --connection "Server=ops-sql;Database=MeridianOps;..."
+bifrost serve --connection-string "Server=ops-sql;Database=MeridianOps;..."
 ```
 
 That confirmed the FK relationships (`orders → customers`, `order_lines → orders/products`) were detected automatically, so joins and foreign-key navigation would work with no configuration.

@@ -7,13 +7,7 @@ BifrostQL ships a desktop database explorer app built on [Photino.NET](https://w
 
 ## Install
 
-The desktop app ships as a standalone binary:
-
-```bash
-dotnet tool install -g BifrostQL.UI
-```
-
-Or build from source:
+The desktop app is not published to NuGet or as a release download yet; build it from source:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -22,6 +16,16 @@ dotnet build src/BifrostQL.UI/BifrostQL.UI.csproj
 ```
 
 This produces a `bifrostui` binary.
+
+### Windows installer
+
+To produce a Windows installer instead, run the Velopack build script (works from Linux/WSL2; needs the .NET 10 SDK, pnpm, and the `vpk` CLI — `dotnet tool install -g vpk`, matching the Velopack version referenced in `src/BifrostQL.UI/BifrostQL.UI.csproj`):
+
+```bash
+./scripts/build-windows-installer.sh
+```
+
+The output is `dist/installer/BifrostUI-win-Setup.exe`. It installs per-user to `%LocalAppData%\BifrostUI` with Desktop and Start Menu shortcuts; pass `--silent` for an unattended install.
 
 ## Usage
 

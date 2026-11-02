@@ -42,6 +42,10 @@ namespace BifrostQL.Core.Schema
             if (!config.RecordsHistory)
                 return null;
 
+            // A plugin writer owns where the change goes; there is no trail table to read.
+            if (!HistoryConfig.UsesTableWriter(model, trackedTable))
+                return null;
+
             var targetName = config.ResolveTargetName(model);
             if (targetName is null)
                 return null; // No target configured — ModelConfigValidator reports it.

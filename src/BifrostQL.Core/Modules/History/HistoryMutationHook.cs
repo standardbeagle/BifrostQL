@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
@@ -31,9 +30,55 @@ namespace BifrostQL.Core.Modules.History
     ///
     /// The hook is registered unconditionally and no-ops for every table that does not opt
     /// in via <c>history</c>, costing one metadata read per mutation elsewhere.
+    ///
+    /// Where a recorded change is stored is a plugin: the hook hands each
+    /// <see cref="HistoryRecord"/> to the <see cref="IHistoryWriter"/> the table's
+    /// <c>history-writer</c> names — the built-in <see cref="HistoryTableWriter"/> unless a
+    /// host registers and selects its own.
     /// </summary>
     public sealed class HistoryMutationHook : IBeforeCommitMutationHook, IInTransactionMutationHook
     {
+        private readonly IReadOnlyDictionary<string, IHistoryWriter> _writers;
+
+        /// <summary>A hook with only the built-in <see cref="HistoryTableWriter"/>.</summary>
+        public HistoryMutationHook() : this(Array.Empty<IHistoryWriter>())
+        {
+        }
+
+        /// <summary>
+        /// A hook with the built-in <see cref="HistoryTableWriter"/> plus the host's writers
+        /// (every <see cref="IHistoryWriter"/> registered in DI). The built-in name is
+        /// reserved and names must be unique, so a metadata value always selects exactly one
+        /// writer.
+        /// </summary>
+        public HistoryMutationHook(IEnumerable<IHistoryWriter> writers)
+        {
+            var byName = new Dictionary<string, IHistoryWriter>(StringComparer.OrdinalIgnoreCase);
+            foreach (var writer in writers.Prepend(new HistoryTableWriter()))
+            {
+                if (string.IsNullOrWhiteSpace(writer.Name))
+                    throw new InvalidOperationException(
+                        $"History writer {writer.GetType().FullName} has no Name; '{MetadataKeys.History.Writer}' could not select it.");
+                if (!byName.TryAdd(writer.Name.Trim(), writer))
+                    throw new InvalidOperationException(
+                        $"Two history writers are named '{writer.Name}' ({byName[writer.Name.Trim()].GetType().FullName} and " +
+                        $"{writer.GetType().FullName}); '{MetadataKeys.History.Writer}' must select exactly one. " +
+                        $"'{MetadataKeys.History.DefaultWriter}' is the built-in writer's name.");
+            }
+            _writers = byName;
+        }
+
+        /// <summary>The writer the table's <c>history-writer</c> selects. Unknown names fail the write.</summary>
+        private IHistoryWriter ResolveWriter(IDbModel model, IDbTable table)
+        {
+            var name = HistoryConfig.ResolveWriterName(model, table);
+            return _writers.TryGetValue(name, out var writer)
+                ? writer
+                : throw new BifrostExecutionError(
+                    $"Table '{Qualify(table)}' records change history with '{MetadataKeys.History.Writer}: {name}', " +
+                    $"but no history writer of that name is registered (registered: {string.Join(", ", _writers.Keys)}). " +
+                    "Refusing to commit a change that cannot be recorded.");
+        }
         // Key under which the pre-write row is parked for this mutation's after-write phase.
         internal const string BeforeImageKey = "bifrost.history.before-image";
 
@@ -133,17 +178,24 @@ namespace BifrostQL.Core.Modules.History
             // deletes — because prior insert/update trail rows still hold that PII and must be
             // cleared. Gated on MutationType.Delete so a ttl expiry that the pipeline turned
             // into a SOFT delete (surfaced here as an Update, the row still present) records
-            // normally; only an actual physical removal erases. See WriteErasureTombstoneAsync.
+            // normally; only an actual physical removal erases. See IHistoryWriter.EraseAsync.
             if (context.MutationType == MutationType.Delete && HistoryErasure.IsErasurePurge(context.UserContext))
             {
-                await WriteErasureTombstoneAsync(context, config);
+                var erasedKey = ResolveKeyData(context.Table, context.Data, context.Result, MutationType.Delete);
+                var erasureScopeColumn = HistoryConfig.ResolveTenantScopeColumn(context.Table);
+                await ResolveWriter(context.Model, context.Table).EraseAsync(new HistoryRecord(
+                    context.Table, erasedKey, MutationType.Delete,
+                    AuditMutationTransformer.ResolveActor(context.Model, context.UserContext),
+                    DateTime.UtcNow, Before: null, After: null, Array.Empty<string>(),
+                    erasureScopeColumn,
+                    erasureScopeColumn is null ? null : ResolveErasureScopeValue(context)), context);
                 return;
             }
 
             if (!MayRecord(config, context.MutationType))
                 return;
 
-            var historyTable = ResolveHistoryTable(context.Model, context.Table, config);
+            var writer = ResolveWriter(context.Model, context.Table);
             var trackedColumns = TrackedColumns(context.Table, config);
 
             // The operation as RECORDED, which is not always the operation as declared: an
@@ -213,101 +265,26 @@ namespace BifrostQL.Core.Modules.History
             if (operation == MutationType.Update && changedColumns.Count == 0)
                 return;
 
-            var historyRow = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [MetadataKeys.History.Column.Entity] = Qualify(context.Table),
-                [MetadataKeys.History.Column.EntityId] = JsonSerializer.Serialize(keyData),
-                [MetadataKeys.History.Column.Op] = operation.ToString().ToLowerInvariant(),
-                [MetadataKeys.History.Column.Actor] = AuditMutationTransformer.ResolveActor(context.Model, context.UserContext)?.ToString(),
-                [MetadataKeys.History.Column.ChangedAt] = DateTime.UtcNow,
-                [MetadataKeys.History.Column.Before] = before is null ? null : JsonSerializer.Serialize(Project(before, trackedColumns)),
-                [MetadataKeys.History.Column.After] = after is null ? null : JsonSerializer.Serialize(Project(after, trackedColumns)),
-                [MetadataKeys.History.Column.ChangedColumns] = JsonSerializer.Serialize(changedColumns),
-                // id is an identity column, so it is omitted from the INSERT column list.
-            };
-
-            // A tenant-filtered table materializes its tenant scope value into the trail
-            // row's own column (validated to exist at model load), because history reads
-            // are authorized by plain column predicates against the trail itself. The
-            // value is the row's stored scope: the after-image on insert/update, the
-            // before-image on delete — copied even when history-columns narrows the
-            // tenant column out of the recorded images.
+            // A tenant-filtered table carries its tenant scope value on the record: the
+            // row's stored scope, the after-image on insert/update, the before-image on
+            // delete — copied even when history-columns narrows the tenant column out of
+            // the recorded images.
             var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(context.Table);
-            if (scopeColumn is not null)
-                historyRow[scopeColumn] = Lookup(
-                    (operation == MutationType.Delete ? before : after)!, scopeColumn);
+            var scopeValue = scopeColumn is null
+                ? null
+                : Lookup((operation == MutationType.Delete ? before : after)!, scopeColumn);
 
-            var tableRef = context.Dialect.TableReference(historyTable.TableSchema, historyTable.DbName);
-            var sql = MutationCommandExecutor.BuildInsertInto(
-                context.Dialect, historyTable, tableRef, historyRow.Keys) + ";";
-
-            await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection, context.Transaction, sql, historyRow);
-        }
-
-        /// <summary>
-        /// The right-to-erasure trail policy: TOMBSTONE, not append. When a retention/erasure
-        /// purge physically deletes a row, this runs INSTEAD of the normal before-image write:
-        /// <list type="number">
-        ///   <item>it PURGES the entity's existing trail rows (the before/after images from
-        ///     prior inserts/updates — themselves the erased PII) via a direct dialect DELETE
-        ///     on the purge's own transaction, so no PII survives the erasure;</item>
-        ///   <item>it records ONE payload-free tombstone (<c>op='erase'</c>, before/after
-        ///     both null) so the FACT of erasure — who, when, which entity — stays auditable
-        ///     without the data.</item>
-        /// </list>
-        /// Both statements run on <see cref="MutationObserverContext.Connection"/>/
-        /// <see cref="MutationObserverContext.Transaction"/>, so the trail change commits or
-        /// rolls back ATOMICALLY with the delete. The erasure TERMINATES by construction: both
-        /// statements are direct SQL that never re-enter the mutation pipeline, so neither the
-        /// trail purge nor the tombstone triggers history-of-history, and the tombstone carries
-        /// no before-image to re-capture — there is no recursive re-generation of the data.
-        /// </summary>
-        private static async Task WriteErasureTombstoneAsync(MutationObserverContext context, HistoryConfig config)
-        {
-            var historyTable = ResolveHistoryTable(context.Model!, context.Table, config);
-            var keyData = ResolveKeyData(context.Table, context.Data, context.Result, MutationType.Delete);
-            var entity = Qualify(context.Table);
-            var entityId = JsonSerializer.Serialize(keyData);
-            var tableRef = context.Dialect!.TableReference(historyTable.TableSchema, historyTable.DbName);
-
-            // 1. Purge the entity's existing trail. entity_id is the row's serialized primary
-            //    key (row-unique), so this reaches only this entity's trail — it cannot cross
-            //    to another row, or, on a tenant-filtered table, to another tenant.
-            var purgeScope = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [MetadataKeys.History.Column.Entity] = entity,
-                [MetadataKeys.History.Column.EntityId] = entityId,
-            };
-            await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection!, context.Transaction,
-                HistoryErasure.BuildTrailPurgeSql(context.Dialect, tableRef), purgeScope);
-
-            // 2. Record the payload-free tombstone. No before/after image — recording the
-            //    erased PII would defeat the erasure.
-            var tombstone = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [MetadataKeys.History.Column.Entity] = entity,
-                [MetadataKeys.History.Column.EntityId] = entityId,
-                [MetadataKeys.History.Column.Op] = HistoryErasure.EraseOp,
-                [MetadataKeys.History.Column.Actor] = AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
-                [MetadataKeys.History.Column.ChangedAt] = DateTime.UtcNow,
-                [MetadataKeys.History.Column.Before] = null,
-                [MetadataKeys.History.Column.After] = null,
-                [MetadataKeys.History.Column.ChangedColumns] = JsonSerializer.Serialize(Array.Empty<string>()),
-            };
-
-            // A tenant-filtered trail materializes its scope column so tenant-scoped history
-            // reads can authorize the tombstone. On erasure there is no after-image to copy it
-            // from, so the value comes from the purge's synthesized per-tenant context claim.
-            var scopeColumn = HistoryConfig.ResolveTenantScopeColumn(context.Table);
-            if (scopeColumn is not null)
-                tombstone[scopeColumn] = ResolveErasureScopeValue(context);
-
-            var insertSql = MutationCommandExecutor.BuildInsertInto(
-                context.Dialect, historyTable, tableRef, tombstone.Keys) + ";";
-            await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection!, context.Transaction, insertSql, tombstone);
+            await writer.WriteAsync(new HistoryRecord(
+                context.Table,
+                keyData,
+                operation,
+                AuditMutationTransformer.ResolveActor(context.Model, context.UserContext),
+                DateTime.UtcNow,
+                before is null ? null : Project(before, trackedColumns),
+                after is null ? null : Project(after, trackedColumns),
+                changedColumns,
+                scopeColumn,
+                scopeValue), context);
         }
 
         // The tenant scope value for an erasure tombstone: the purge synthesizes a per-tenant
@@ -427,25 +404,6 @@ namespace BifrostQL.Core.Modules.History
             => columns
                 .Where(row.ContainsKey)
                 .ToDictionary(c => c, c => row[c], StringComparer.OrdinalIgnoreCase);
-
-        /// <summary>
-        /// The history table for this table: its own <c>history-table</c> override, else the
-        /// model-level shared default. Both are validated at model load; a failure here means
-        /// the model changed underneath the writer, so it fails the mutation rather than
-        /// silently dropping the trail.
-        /// </summary>
-        private static IDbTable ResolveHistoryTable(IDbModel model, IDbTable table, HistoryConfig config)
-        {
-            var name = config.ResolveTargetName(model);
-            if (name is null)
-                throw new BifrostExecutionError(
-                    $"Table '{Qualify(table)}' records change history but no '{MetadataKeys.History.Table}' is " +
-                    "configured on the table or on the model.");
-
-            return ModelTableReference.Find(model, name)
-                ?? throw new BifrostExecutionError(
-                    $"The configured history table '{name}' was not found in the model.");
-        }
 
         /// <summary>
         /// The row's primary-key values, for the WHERE predicate and the recorded

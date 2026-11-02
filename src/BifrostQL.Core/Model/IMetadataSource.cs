@@ -167,6 +167,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.History.Enabled,
             MetadataKeys.History.Table,
             MetadataKeys.History.Columns,
+            MetadataKeys.History.Writer,
             // Chat module (table-level opt-in + column mappings). A miscased or
             // typo'd key must be flagged, not silently leave the chat surface
             // half-configured.
@@ -353,8 +354,10 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Cdc.SubscriptionTenant,
             MetadataKeys.Cdc.SubscriptionRedact,
             // Temporal change history (model-level). Shared default history table for
-            // every history-enabled table that does not override it.
+            // every history-enabled table that does not override it, and the default
+            // history writer plugin.
             MetadataKeys.History.Table,
+            MetadataKeys.History.Writer,
             // LDAP directory front door (model-level). The base DN under which every mapped
             // entry is published; a miscased key must be flagged, not silently leave a
             // mapped directory with nowhere to root its entries.

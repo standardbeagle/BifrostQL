@@ -64,7 +64,9 @@ namespace BifrostQL.Server
             // before-image in the before-commit phase and writes the history row in the
             // after-write phase, where the write's result is known. One registration,
             // surfaced under both hook interfaces. It no-ops for tables without history
-            // metadata.
+            // metadata. It stores each change through the IHistoryWriter the table's
+            // `history-writer` names: the built-in history-table writer, or any
+            // IHistoryWriter singleton the host registers (injected as IEnumerable).
             services.AddSingleton<BifrostQL.Core.Modules.History.HistoryMutationHook>();
             services.AddSingleton<IBeforeCommitMutationHook>(sp =>
                 sp.GetRequiredService<BifrostQL.Core.Modules.History.HistoryMutationHook>());

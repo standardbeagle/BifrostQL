@@ -860,7 +860,7 @@ namespace BifrostQL.Core.Model
             {
                 // history-table / history-columns without 'history' record nothing: the
                 // author believes the table is tracked and it is not.
-                foreach (var key in new[] { MetadataKeys.History.Table, MetadataKeys.History.Columns })
+                foreach (var key in new[] { MetadataKeys.History.Table, MetadataKeys.History.Columns, MetadataKeys.History.Writer })
                 {
                     var value = table.GetMetadataValue(key);
                     if (!string.IsNullOrWhiteSpace(value))
@@ -915,6 +915,20 @@ namespace BifrostQL.Core.Model
 
             foreach (var (table, config) in configs)
             {
+                // A plugin history writer owns where the change goes: there is no history
+                // table to check and no trail read field (HistorySurface returns none). A
+                // history-table on such a table would never be written. The writer name
+                // itself resolves against DI at write time, which fails closed.
+                if (!HistoryConfig.UsesTableWriter(model, table))
+                {
+                    if (config.HistoryTableOverride is not null)
+                        errors.Add(Problem(table, MetadataKeys.History.Table, config.HistoryTableOverride,
+                            $"has no effect: '{MetadataKeys.History.Writer}: {HistoryConfig.ResolveWriterName(model, table)}' " +
+                            $"stores this table's changes. Remove '{MetadataKeys.History.Table}', or use " +
+                            $"'{MetadataKeys.History.Writer}: {MetadataKeys.History.DefaultWriter}'."));
+                    continue;
+                }
+
                 // Every history-enabled table generates a `<table>History` trail read
                 // field on the root query type. A real table whose generated query
                 // field carries that exact name would produce a duplicate GraphQL

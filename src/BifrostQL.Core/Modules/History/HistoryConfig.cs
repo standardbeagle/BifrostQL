@@ -76,6 +76,26 @@ namespace BifrostQL.Core.Modules.History
         }
 
         /// <summary>
+        /// The <c>history-writer</c> that stores this table's changes: the table-level value,
+        /// else the model-level default, else <see cref="MetadataKeys.History.DefaultWriter"/>.
+        /// The single rule shared by the change-history hook (which dispatches to the
+        /// writer), ModelConfigValidator, and the trail read surface (which exist only for
+        /// the default writer).
+        /// </summary>
+        public static string ResolveWriterName(IDbModel model, IDbTable table)
+        {
+            var name = table.GetMetadataValue(MetadataKeys.History.Writer);
+            if (string.IsNullOrWhiteSpace(name))
+                name = model.GetMetadataValue(MetadataKeys.History.Writer);
+            return string.IsNullOrWhiteSpace(name) ? MetadataKeys.History.DefaultWriter : name.Trim();
+        }
+
+        /// <summary>Whether the table's changes go to the built-in <c>history-table</c> writer.</summary>
+        public static bool UsesTableWriter(IDbModel model, IDbTable table) =>
+            string.Equals(ResolveWriterName(model, table), MetadataKeys.History.DefaultWriter,
+                StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
         /// The tracked table's tenant-isolation column (the <c>tenant-filter</c> metadata),
         /// canonicalized to the column's database casing; null when the table is not
         /// tenant-filtered. History reads will be authorized by plain column predicates,

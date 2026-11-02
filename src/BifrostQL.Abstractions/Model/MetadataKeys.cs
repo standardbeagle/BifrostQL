@@ -1215,6 +1215,23 @@ namespace BifrostQL.Core.Model
             public const string Columns = "history-columns";
 
             /// <summary>
+            /// Name of the history writer plugin that stores each recorded change. Valid
+            /// at BOTH levels: model-level it is the default for every history-enabled
+            /// table, table-level it overrides that default. Omitted means
+            /// <see cref="DefaultWriter"/>, which writes the <see cref="Table"/> contract.
+            /// Any other name selects a host-registered <c>IHistoryWriter</c> with that
+            /// <c>Name</c>; such a table has no <see cref="Table"/> and no generated trail
+            /// read field, because the writer owns where the change goes.
+            /// </summary>
+            public const string Writer = "history-writer";
+
+            /// <summary>
+            /// The built-in <see cref="Writer"/>: one row per change in the configured
+            /// <see cref="Table"/>, carrying the <see cref="HistoryColumns"/> contract.
+            /// </summary>
+            public const string DefaultWriter = "table";
+
+            /// <summary>
             /// The <see cref="Enabled"/> token that expands to every operation. Spelled
             /// <c>enabled</c> so the common "just record everything" case reads as a
             /// plain opt-in switch rather than an operation list.

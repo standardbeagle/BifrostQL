@@ -4,6 +4,19 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-11-02 (history writer plugins)
+
+### Added
+
+- History writer plugins. `history-writer` (model or table level) picks the `IHistoryWriter`
+  that stores each change `HistoryMutationHook` records. The default, `table`, is the
+  existing `history-table` writer, now `HistoryTableWriter`. A host registers its own writer
+  as an `IHistoryWriter` singleton to write an application-owned audit table in the change's
+  transaction. Before, an app with an audit table of its own could not use the history
+  module at all, because the target had to match the fixed `history-table` contract. A table
+  on a plugin writer needs no `history-table` and gets no `<table>History` read field. See
+  "Writing to your own audit table" in the Change History guide.
+
 ## Unreleased — 2026-11-02 (packaging)
 
 ### Added

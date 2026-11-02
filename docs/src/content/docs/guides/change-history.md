@@ -246,6 +246,51 @@ emitted SQL shape is pinned per dialect in the test suite; the lock's hold-until
 semantics are each database's documented guarantee, so no cross-process race is
 simulated in CI.
 
+## Writing to your own audit table
+
+The history table above is the built-in writer. If your application already has an audit
+table with its own shape, register a history writer plugin and point tables at it. The hook
+still does the recording work (the locked before-image, the stored after-image, the changed
+columns, the refusals); the plugin decides where the change goes.
+
+```csharp
+public sealed class AppAuditWriter : IHistoryWriter
+{
+    public string Name => "app-audit";
+
+    public async ValueTask WriteAsync(HistoryRecord record, MutationObserverContext context)
+    {
+        await using var cmd = context.Connection!.CreateCommand();
+        cmd.Transaction = context.Transaction; // same transaction as the change
+        // ... INSERT using record.Entity, record.Key, record.Operation, record.Actor,
+        //     record.Before, record.After, record.ChangedColumns
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    // Called when a retention purge physically erases a row. An append-only store
+    // should throw, which refuses the purge.
+    public ValueTask EraseAsync(HistoryRecord record, MutationObserverContext context) =>
+        throw new InvalidOperationException("The audit log is append-only.");
+}
+
+builder.Services.AddSingleton<IHistoryWriter, AppAuditWriter>();
+```
+
+```text
+":root { history-writer: app-audit }"                         // default for every history table
+"dbo.orders { history: enabled }"                             // uses app-audit
+"dbo.notes { history: enabled; history-writer: table }"       // back to the built-in writer
+```
+
+- `history-writer` works at model level (the default) and table level (an override).
+  Omitted, it is `table`, the built-in writer, which needs `history-table`.
+- A table on a plugin writer has no `history-table` (setting one fails at model load) and no
+  generated `<table>History` read field. Reading the audit table is the application's job.
+- Writer names are case-insensitive and unique; `table` is reserved. A name no registered
+  writer answers to fails the write, which rolls back. Model load cannot see DI, so this
+  check happens on the first recorded write rather than at startup.
+- A writer that throws rolls the change back, like the built-in one.
+
 ## Requirements and limits
 
 - **Updates and deletes must be primary-key scoped.** A predicate-only write (delete every

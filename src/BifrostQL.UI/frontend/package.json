@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@apollo/client": "^3.14.1",
+    "@apollo/client": "^4.3.5",
     "@bifrostql/binary-client": "workspace:*",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",

@@ -15,6 +15,25 @@ paths:
 
 Review checklist for every front door (`IProtocolAdapter` and HTTP mounts). Code comments cite these by number. Keep the numbers stable. Incident write-ups: `docs/solutions/bifrostql/`; full pre-trim text: `git show 58d13dfb:.claude/rules/protocol-adapter-security.md`.
 
+## New-front-door checklist
+
+The posture table is in AGENTS.md, "Listener Exposure Posture". Every new front door must:
+
+- Bind `options.BindAddress` (loopback default), never `ListenAnyIP`. Pinned by `ProtocolListenerPostureTests`.
+- Take its admission slot at accept, before read/TLS/auth, from its own `ProtocolConnectionLimiter` subtype.
+- Run its session through `ProtocolSessionHost` (acquire → pre-auth deadline → run → release; `RunAdmittedAsync` still arms the deadline). The deadline is `TimeProvider`-driven. Only a credentialed action retires it, and free actions never re-arm it (invariant 15).
+- Cap whole frames by total bytes (`MaxFrameLength`), not just per element. Every size cap counts received bytes, never declared ones.
+- Rate-limit credential handshakes per source (`ProtocolSourceKey.Of`, IP not ip:port) and per account, via a sealed `ProtocolAuthAttemptLimiter` subtype. Refuse before the credential lookup, with text that doesn't depend on whether the account exists.
+- Cap per-session state (e.g. pgwire `MaxPreparedStatements` / `MaxPortals`).
+- Project identity through `AdapterIdentityProjection.TryProject` (raw wire) or `BifrostIdentityGate.Project` (HTTP mounts). An empty user context is not a refusal.
+- Refuse credentials on cleartext transport before reading them. A dev override is default-off with a startup warning; StartTLS accepts no buffered plaintext.
+- Bound searches/reads per request. Clients may only narrow the bounds. Report limits explicitly, never truncate silently, and apply join fan-out bounds per entry.
+- MAC continuation cookies and re-derive their binding from the live request. An invalid cookie is refused, never restarted (`LdapPageCookie`, `ODataContinuationToken`, `GrpcPageCursor`).
+- Use `RegexOptions.NonBacktracking` + `Regex.InfiniteMatchTimeout` for untrusted regex on hot paths (invariant 1).
+- HTTP mounts derive their auth requirement from `MountAuthRequirement` as a required constructor parameter, and mount after `UseBifrostQL()` / `UseBifrostEndpoints()`. Mount order is a security fact; review order changes as security diffs.
+
+## Invariants
+
 1. **Protocol exceptions derive from the base the connection handler catches** (or are added to its filter). Untrusted regex uses `NonBacktracking` + `Regex.InfiniteMatchTimeout`. A wall-clock match timeout on a hot path turns host load into client errors. Use one only on cold backtracking paths, mapped to the adapter's exception. Pin with a reflection fact over the type's static `Regex` fields.
 
 2. **Constant-time compares run unconditionally.** Compare first, then AND the existence check. Decoys must match real users on every observable, not just timing: a deterministic per-username salt and iteration count (`PgScramVerifier.Decoy(username)`). Fact: two connections for the same unknown user get byte-equal server-first messages.

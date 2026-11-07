@@ -20,6 +20,7 @@ dotnet run --project src/BifrostQL.Host       # web server
 - Epic tier builds net10.0 only. If you touch `src/BifrostQL.Server/`, `src/BifrostQL.Core/` or `src/BifrostQL.Abstractions/` (multi-TFM), run `dotnet build BifrostQL.sln` before finishing: net9+-only BCL APIs pass epic and break release.
 - Tag fuzz tests `[Trait("Category", "Fuzz")]` with pinned `InlineData` seeds.
 - Tests: xUnit + NSubstitute + FluentAssertions; SQL validation via `Microsoft.SqlServer.TransactSql.ScriptDom`.
+- Writing a test: `.claude/rules/regression-test-non-vacuous.md` loads when you touch `tests/**`.
 
 ## Generated output
 
@@ -71,20 +72,7 @@ Undeclared means `loopback`. Widening (loopback → lan → public) is the opera
 
 `bifrostui --enable-http-bridge` (`/_bridge/{kind}`) runs SQL with no auth. It refuses to start alongside `--expose` (exit 2), and every POST needs `X-Bifrost-Bridge: 1` + `Content-Type: application/json`. The header is the load-bearing half.
 
-Every new front door must:
-
-- Bind `options.BindAddress` (loopback default), never `ListenAnyIP`. Pinned by `ProtocolListenerPostureTests`.
-- Take its admission slot at accept, before read/TLS/auth, from its own `ProtocolConnectionLimiter` subtype.
-- Run its session through `ProtocolSessionHost` (acquire → pre-auth deadline → run → release; `RunAdmittedAsync` still arms the deadline). The deadline is `TimeProvider`-driven. Only a credentialed action retires it, and free actions never re-arm it (invariant 15).
-- Cap whole frames by total bytes (`MaxFrameLength`), not just per element. Every size cap counts received bytes, never declared ones.
-- Rate-limit credential handshakes per source (`ProtocolSourceKey.Of`, IP not ip:port) and per account, via a sealed `ProtocolAuthAttemptLimiter` subtype. Refuse before the credential lookup, with text that doesn't depend on whether the account exists.
-- Cap per-session state (e.g. pgwire `MaxPreparedStatements` / `MaxPortals`).
-- Project identity through `AdapterIdentityProjection.TryProject` (raw wire) or `BifrostIdentityGate.Project` (HTTP mounts). An empty user context is not a refusal.
-- Refuse credentials on cleartext transport before reading them. A dev override is default-off with a startup warning; StartTLS accepts no buffered plaintext.
-- Bound searches/reads per request. Clients may only narrow the bounds. Report limits explicitly, never truncate silently, and apply join fan-out bounds per entry.
-- MAC continuation cookies and re-derive their binding from the live request. An invalid cookie is refused, never restarted (`LdapPageCookie`, `ODataContinuationToken`, `GrpcPageCursor`).
-- Use `RegexOptions.NonBacktracking` + `Regex.InfiniteMatchTimeout` for untrusted regex on hot paths (invariant 1).
-- HTTP mounts derive their auth requirement from `MountAuthRequirement` as a required constructor parameter, and mount after `UseBifrostQL()` / `UseBifrostEndpoints()`. Mount order is a security fact; review order changes as security diffs.
+The new-front-door checklist is in `.claude/rules/protocol-adapter-security.md`.
 
 ## Key components
 
@@ -111,11 +99,7 @@ Every new front door must:
 
 ## Clients
 
-- **Two Client Stacks:** the shipped chain is `src/BifrostQL.UI/frontend` → `@standardbeagle/edit-db`. `@bifrostql/react` and `@bifrostql/app-shell` are experimental. The three fetch clients (`graphql-client.ts`, edit-db `fetcher.ts`, UI `HttpTransport`) are known duplicates; don't merge them ad hoc. Unification targets `QueryTransport` in `frontend/src/lib/transport.ts`.
-- `@bifrostql/types` + `@bifrostql/react` publish as a matched pair. Breaking changes go under `### Breaking changes` in the react CHANGELOG.
-- Editor data paths go through `useFetcher()`; the transport toggle routes them via `TransportGraphQLFetcher`. Don't bump `editorKey` on a profile change.
-- New state in `use-bifrost-table` goes in a focused hook under `hooks/internal/`.
-- GraphQL text: never interpolate user-provided names. Filter input type names come from `tableFilterTypeName(table)`; sort enums are `<GraphQlName>SortEnum`. Composite keys: `.claude/rules/composite-pk-compliance.md`.
+- **Two Client Stacks:** the shipped chain is `src/BifrostQL.UI/frontend` → `@standardbeagle/edit-db`. `@bifrostql/react` and `@bifrostql/app-shell` are experimental. Client rules (fetch clients, transport, table hook, GraphQL text) are in `.claude/rules/clients.md`; composite keys in `.claude/rules/composite-pk-compliance.md`. Both load when you touch client code.
 
 ## Docs
 

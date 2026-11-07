@@ -1,3 +1,9 @@
+---
+paths:
+  - "examples/edit-db/src/**"
+  - "src/BifrostQL.UI/frontend/src/**"
+---
+
 # Composite-PK compliance checklist
 
 Applies to every client surface under `examples/edit-db/src` and

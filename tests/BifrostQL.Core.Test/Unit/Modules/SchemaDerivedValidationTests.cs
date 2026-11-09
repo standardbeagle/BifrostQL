@@ -157,6 +157,35 @@ public sealed class SchemaDerivedValidationTests
         var result = await TransformAsync(new Dictionary<string, object?> { ["Quantity"] = value });
 
         result.Errors.Should().ContainSingle(e => e.Contains("Quantity") && e.Contains("whole number"));
+        result.ErrorCode.Should().Be(BifrostQL.Core.Resolvers.BifrostExecutionError.InvalidValueCode,
+            "the same refusal the database would make, so the client handles one word for both");
+    }
+
+    [Fact]
+    public async Task Transform_LeavesAcceptedValuesWithoutACode()
+    {
+        var result = await TransformAsync(new Dictionary<string, object?> { ["Quantity"] = 42 });
+
+        result.ErrorCode.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Transform_LeavesADeclaredRuleRefusalWithoutACode_EvenBesideAnUnreadableValue()
+    {
+        var model = DbModelTestFixture.Create()
+            .WithTable("Orders", t => t.WithPrimaryKey("Id")
+                .WithColumn("Quantity", "int", isNullable: true)
+                .WithColumn("Code", "nvarchar", isNullable: true)
+                .WithColumnMetadata("Code", "required", "true"))
+            .Build();
+
+        var result = await new ExtendedServerValidationTransformer().TransformAsync(
+            model.GetTableFromDbName("Orders"), MutationType.Insert,
+            new Dictionary<string, object?> { ["Quantity"] = "abc" },
+            new MutationTransformContext { Model = model, UserContext = new Dictionary<string, object?>() });
+
+        result.Errors.Should().HaveCount(2);
+        result.ErrorCode.Should().BeNull("not every refusal is about the value's type");
     }
 
     [Fact]

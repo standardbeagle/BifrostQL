@@ -42,7 +42,9 @@ public sealed class MutationTransformResult
     /// class. An access-denial rejection (policy action/column write-deny) sets
     /// <see cref="BifrostQL.Core.Resolvers.BifrostExecutionError.AccessDeniedCode"/>
     /// so a policy-denied WRITE surfaces the SAME status as the read-side deny
-    /// (the single-funnel-needs-condition-tagging lesson). Validation, enum,
+    /// (the single-funnel-needs-condition-tagging lesson). A value the column's type
+    /// cannot hold sets <see cref="BifrostQL.Core.Resolvers.BifrostExecutionError.InvalidValueCode"/>,
+    /// the code the database's own refusal maps to. Other validation, enum,
     /// concurrency and state-machine rejections leave it null so they stay a
     /// generic fault — an access-denied code must never be blanket-stamped over a
     /// non-authorization error (that would mask a genuine INTERNAL).

@@ -374,18 +374,18 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Validation refuses the text before any statement runs, so unlike a value the database
-    /// refused there is no failed statement and the transaction is still good.
+    /// Validation refuses the text before any statement runs, but a refused write still ends the
+    /// operation, so an author does not need to know which layer refused a value.
     /// </summary>
     [SkippableFact]
-    public async Task Operation_AValueValidationRefused_CanBeCaught_BecauseNoStatementRan()
+    public async Task Operation_AWriteValidationRefused_EndsTheOperation_EvenWhenCaught()
     {
         Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
 
         var reply = await PostAsync(OperationCall("catchRefusedKeyThenUpdate", "2.4"));
 
-        AssertNoErrors(reply);
-        string.Join("|", await CounterNotesAsync()).Should().Be("edited|two");
+        ErrorCode(reply).Should().Be(BifrostExecutionError.InvalidValueCode);
+        string.Join("|", await CounterNotesAsync()).Should().Be("one|two");
     }
 
     [SkippableFact]

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules.Validation;
 
@@ -40,11 +41,12 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         MutationTransformContext context)
     {
         var errors = new List<string>();
+        var unreadableValues = 0;
 
         // Validation is on by default for writes; a table opts out with
         // server-validation: off/false/disabled.
         if (!IsValidationDisabled(table.GetMetadataValue(MetadataKeys.Validation.Server)))
-            ValidateStandardMetadata(table, mutationType, data, context.Model.TypeMapper, errors);
+            unreadableValues = ValidateStandardMetadata(table, mutationType, data, context.Model.TypeMapper, errors);
 
         await RunPluginValidatorsAsync(table, mutationType, data, context, errors);
 
@@ -53,6 +55,9 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
             MutationType = mutationType,
             Data = data,
             Errors = errors.ToArray(),
+            // Refused on the same grounds the database would refuse it, so it answers with the
+            // same code. A declared rule among the refusals keeps the generic classification.
+            ErrorCode = errors.Count > 0 && errors.Count == unreadableValues ? BifrostExecutionError.InvalidValueCode : null,
         };
     }
 
@@ -101,13 +106,15 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         }));
     }
 
-    private static void ValidateStandardMetadata(
+    /// <summary>Returns how many of the refusals it added were on the column's type grounds.</summary>
+    private static int ValidateStandardMetadata(
         IDbTable table,
         MutationType mutationType,
         Dictionary<string, object?> data,
         ITypeMapper typeMapper,
         List<string> errors)
     {
+        var unreadableValues = 0;
         foreach (var column in table.Columns)
         {
             // A column can opt out individually with server-validation: off.
@@ -136,8 +143,12 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
             // engine would reject on type grounds is refused here with a clear
             // message instead of surfacing as a wrapped database error. Shared
             // with BifrostFormValidator so no surface diverges.
+            var before = errors.Count;
             SchemaDerivedValueValidator.Validate(column.GraphQlName, column, rules, value, typeMapper, errors);
+            unreadableValues += errors.Count - before;
         }
+
+        return unreadableValues;
     }
 
     private static void ValidateLength(ColumnDto column, ValidationRules rules, object? value, List<string> errors)

@@ -33,6 +33,58 @@ public sealed class BatchDuplicateNormalizerTests
     private static BatchAction Action(MutationAction action, params (string Col, object? Value)[] values)
         => new(action, values.ToDictionary(v => v.Col, v => v.Value));
 
+    private static IDbTable BuildKeyedByType(string dataType)
+        => DbModelTestFixture.Create()
+            .WithTable("Items", t => t.WithSchema("dbo").WithColumn("Id", dataType, isPrimaryKey: true).WithColumn("Status", "nvarchar"))
+            .Build()
+            .GetTableFromDbName("Items");
+
+    private const string Uuid = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+
+    [Theory]
+    [InlineData("uuid", Uuid, "11111111-AAAA-4BBB-8CCC-DDDDDDDDDDDD")]
+    [InlineData("uuid", Uuid, "11111111aaaa4bbb8cccdddddddddddd")]
+    [InlineData("uuid", Uuid, "{11111111-aaaa-4bbb-8ccc-dddddddddddd}")]
+    [InlineData("uuid", Uuid, "1111-1111-aaaa-4bbb-8ccc-dddd-dddd-dddd")]
+    [InlineData("uniqueidentifier", Uuid, "11111111-AAAA-4BBB-8CCC-DDDDDDDDDDDD")]
+    public void TwoSpellingsOfAUuid_AreOneRow(string dataType, string first, string second)
+    {
+        var result = BatchDuplicateNormalizer.Normalize(BuildKeyedByType(dataType), new[]
+        {
+            Action(MutationAction.Update, ("Id", first), ("Status", "first")),
+            Action(MutationAction.Update, ("Id", second), ("Status", "second")),
+        });
+
+        result.Should().ContainSingle().Which.Data["Status"].Should().Be("second");
+    }
+
+    [Fact]
+    public void AGuidAndItsText_AreOneRow()
+    {
+        var result = BatchDuplicateNormalizer.Normalize(BuildKeyedByType("uuid"), new[]
+        {
+            Action(MutationAction.Update, ("Id", Guid.Parse(Uuid)), ("Status", "first")),
+            Action(MutationAction.Update, ("Id", Uuid.ToUpperInvariant()), ("Status", "second")),
+        });
+
+        result.Should().ContainSingle();
+    }
+
+    [Theory]
+    [InlineData("uuid", "  " + Uuid + "  ")] // the database refuses it, so it is no row's spelling
+    [InlineData("uuid", "not-a-uuid")]
+    [InlineData("nvarchar", "11111111-AAAA-4BBB-8CCC-DDDDDDDDDDDD")] // text that looks like one is still text
+    public void AnythingElse_KeepsItsOwnIdentity(string dataType, string second)
+    {
+        var actions = new[]
+        {
+            Action(MutationAction.Update, ("Id", Uuid), ("Status", "first")),
+            Action(MutationAction.Update, ("Id", second), ("Status", "second")),
+        };
+
+        BatchDuplicateNormalizer.Normalize(BuildKeyedByType(dataType), actions).Should().HaveCount(2);
+    }
+
     [Fact]
     public void DistinctKeys_PassThroughUnchanged()
     {

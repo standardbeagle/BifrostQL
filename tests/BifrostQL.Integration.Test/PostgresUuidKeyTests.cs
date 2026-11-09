@@ -187,6 +187,117 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
         (await EntriesAsync()).Should().BeEmpty();
     }
 
+    private static readonly string Hyphenless = EntryOne.Replace("-", "");
+    private static readonly string Braced = "{" + EntryOne + "}";
+
+    public static IEnumerable<object[]> SameKeyTwoSpellings => new[]
+    {
+        new object[] { EntryOne, EntryOne.ToUpperInvariant() },
+        new object[] { EntryOne.ToUpperInvariant(), EntryOne },
+        new object[] { EntryOne, Hyphenless },
+        new object[] { Hyphenless, EntryOne },
+        new object[] { Braced, EntryOne.ToUpperInvariant() },
+        new object[] { EntryOne, "aaaa-aaaa-aaaa-aaaa-aaaa-aaaa-aaaa-aaaa" },
+    };
+
+    /// <summary>
+    /// The fast path joins on the uuid value, so if the duplicate check compared spellings, two
+    /// updates of one row would reach the join and the database would pick a winner.
+    /// </summary>
+    [SkippableTheory]
+    [MemberData(nameof(SameKeyTwoSpellings))]
+    public async Task GeneratedBatch_TreatsTwoSpellingsOfAUuidAsOneRow_OnBothPaths(string first, string second)
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+        var document = $$"""
+            mutation {
+                time_entries_batch(actions: [
+                    { update: { id: "{{first}}", note: "first" } },
+                    { update: { id: "{{second}}", note: "second" } }
+                ])
+            }
+            """;
+
+        foreach (var bulkThreshold in new[] { "0", "1" })
+        {
+            await ExecAsync(_connectionString, $"UPDATE time_entries SET note = 'first' WHERE id = '{EntryOne}'");
+
+            var reply = await PostAsync(document, bulkThreshold);
+
+            AssertNoErrors(reply);
+            reply.RootElement.GetProperty("data").GetProperty("time_entries_batch").GetInt32()
+                .Should().Be(1, $"threshold {bulkThreshold} sees one row");
+            (await EntriesAsync()).Should().Equal($"{EntryOne}|{PersonOne}|second");
+        }
+    }
+
+    [SkippableTheory]
+    [InlineData("0")]
+    [InlineData("1")]
+    public async Task GeneratedBatch_ADeleteAbsorbsAnUpdateInAnotherSpelling_OnBothPaths(string bulkThreshold)
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(
+            $$"""
+            mutation {
+                time_entries_batch(actions: [
+                    { update: { id: "{{EntryOne}}", note: "gone" } },
+                    { delete: { id: "{{EntryOne.ToUpperInvariant()}}" } }
+                ])
+            }
+            """,
+            bulkThreshold);
+
+        AssertNoErrors(reply);
+        (await EntriesAsync()).Should().BeEmpty();
+    }
+
+    [SkippableTheory]
+    [InlineData("0")]
+    [InlineData("1")]
+    public async Task GeneratedBatch_RejectPolicy_SeesTwoSpellingsAsADuplicate_OnBothPaths(string bulkThreshold)
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(
+            $$"""
+            mutation {
+                time_entries_batch(actions: [
+                    { update: { id: "{{EntryOne}}", note: "first" } },
+                    { update: { id: "{{EntryOne.ToUpperInvariant()}}", note: "second" } }
+                ])
+            }
+            """,
+            bulkThreshold,
+            duplicatePolicy: "reject");
+
+        reply.RootElement.GetProperty("errors")[0].GetProperty("message").GetString().Should().Contain("batch-duplicate-policy");
+        await AssertNothingChangedAsync();
+    }
+
+    [SkippableTheory]
+    [InlineData("0")]
+    [InlineData("1")]
+    public async Task GeneratedBatch_NamesAWhitespaceWrappedUuid_AndWritesNothing_OnBothPaths(string bulkThreshold)
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(
+            $$"""
+            mutation {
+                time_entries_batch(actions: [
+                    { update: { id: "  {{EntryOne}}  ", note: "wrapped" } },
+                    { update: { id: "{{Absent}}", note: "absent" } }
+                ])
+            }
+            """,
+            bulkThreshold);
+
+        AssertInvalidValue(reply);
+        await AssertNothingChangedAsync();
+    }
+
     /// <summary>
     /// Text keys must not quietly cost a batch the fast path: each document here is one statement,
     /// which the per-row loop could not be.
@@ -564,14 +675,14 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
         }
     }
 
-    private async Task<JsonDocument> PostAsync(string query, string bulkThreshold = "0")
+    private async Task<JsonDocument> PostAsync(string query, string bulkThreshold = "0", string duplicatePolicy = "last-wins")
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Bifrost:DisableAuth"] = "true",
             ["Bifrost:Path"] = "/graphql",
             ["Bifrost:Metadata:0"] = ":root { operations: uuidKeyProbe }",
-            ["Bifrost:Metadata:1"] = $"public.time_entries {{ bulk-batch-threshold: {bulkThreshold} }}",
+            ["Bifrost:Metadata:1"] = $"public.time_entries {{ bulk-batch-threshold: {bulkThreshold}; batch-duplicate-policy: {duplicatePolicy} }}",
         }).Build();
         DbConnFactoryResolver.Register(BifrostDbProvider.PostgreSql, connectionString => new PostgresDbConnFactory(connectionString));
         using var host = await new HostBuilder().ConfigureWebHost(web =>

@@ -23,6 +23,15 @@ public sealed class BifrostOperationContext
     private readonly IMutationTransformers _transformers;
     private readonly OperationWriteScope? _scope;
 
+    /// <summary>Stand-in until row locking lands.</summary>
+    public const string LockRowNotFoundCode = "LOCK_ROW_NOT_FOUND";
+
+    /// <summary>Stand-in until row locking lands.</summary>
+    public const string RowLockUnsupportedCode = "ROW_LOCK_UNSUPPORTED";
+
+    /// <summary>Stand-in until the IS NOT NULL test lands.</summary>
+    public static readonly object NotNull = new();
+
     internal BifrostOperationContext(
         IBifrostOperation operation,
         IBifrostFieldContext field,
@@ -80,7 +89,8 @@ public sealed class BifrostOperationContext
         string table,
         IReadOnlyDictionary<string, object?>? where = null,
         IReadOnlyCollection<string>? columns = null,
-        int? limit = null)
+        int? limit = null,
+        IReadOnlyCollection<string>? sort = null)
     {
         var dbTable = ResolveTable(table);
         var query = new GqlObjectQuery
@@ -143,6 +153,10 @@ public sealed class BifrostOperationContext
             dbTable, new Dictionary<string, object?>(key, StringComparer.OrdinalIgnoreCase), PipelineContext());
         return Convert.ToInt32(affected);
     }
+
+    /// <summary>Stand-in until row locking lands.</summary>
+    public Task LockRowAsync(string table, IReadOnlyDictionary<string, object?> key)
+        => throw new NotImplementedException();
 
     private BifrostQL.Core.Crypto.EnvelopeKeyManager? KeyManager =>
         Services?.GetService(typeof(BifrostQL.Core.Crypto.EnvelopeKeyManager)) as BifrostQL.Core.Crypto.EnvelopeKeyManager;

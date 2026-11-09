@@ -16,8 +16,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     /// REAL DB column names (transformer output already rekeyed via the pipeline) — for an insert
     /// the columns to insert, for an update the SET columns plus the key columns, for a delete the
     /// WHERE columns. <see cref="Seq"/> is the action's position in the original batch (the staging
-    /// clustered-index key); <see cref="Group"/> is the column-signature group within the op, so
-    /// rows writing different column sets never share a set-based statement.
+    /// clustered-index key); <see cref="Group"/> is the run of adjacent rows sharing its op and
+    /// column signature, so rows writing different column sets never share a set-based statement.
     /// </summary>
     public sealed record BulkStagedAction(
         int Seq,
@@ -28,7 +28,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
 
     /// <summary>
     /// One set-based statement to emit: every staged row with this op + group is applied by a
-    /// single INSERT…SELECT / UPDATE…JOIN / DELETE…JOIN. <see cref="FilterSql"/> is the
+    /// single INSERT…SELECT / UPDATE…JOIN / DELETE…JOIN. Groups apply in order and hold only
+    /// adjacent rows, which is what keeps a batch in document order. <see cref="FilterSql"/> is the
     /// transformer chain's rendered additional filter (empty, or a leading <c>" AND (…)"</c>
     /// suffix exactly as <c>MutationCommandExecutor.RenderAdditionalFilter</c> produces it) —
     /// identical for every row in the group, verified by the plan builder; its parameters bind on

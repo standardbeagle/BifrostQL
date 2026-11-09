@@ -64,6 +64,8 @@ export type {
   UseBifrostDiffOptions,
   DiffMutationInput,
   DiffMutationResult,
+  BatchDocumentResult,
+  BatchFailure,
   BatchOperation,
   BatchProgress,
   BatchResult,

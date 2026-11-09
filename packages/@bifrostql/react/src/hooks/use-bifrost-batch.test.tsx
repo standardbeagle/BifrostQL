@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
 import { useBifrostBatch, BatchError } from './use-bifrost-batch';
-import type { BatchOperation, BatchProgress } from './use-bifrost-batch';
+import type {
+  BatchOperation,
+  BatchProgress,
+  BatchResult,
+} from './use-bifrost-batch';
 import wireContract from './__fixtures__/batch-wire-contract.json';
 
 function jsonResponse(response: unknown, ok = true, status = 200) {
@@ -64,6 +68,17 @@ function createWrapper(
   };
 }
 
+async function runBatch(operations: BatchOperation[]): Promise<BatchResult> {
+  const { result } = renderHook(() => useBifrostBatch(), {
+    wrapper: createWrapper(),
+  });
+  let settled: BatchResult | undefined;
+  await act(async () => {
+    settled = await result.current.mutateAsync(operations);
+  });
+  return settled!;
+}
+
 async function runToFailure(
   operations: BatchOperation[],
   options: Parameters<typeof useBifrostBatch>[0] = {},
@@ -121,17 +136,11 @@ describe('useBifrostBatch', () => {
     it('sends N operations as one fetch carrying <table>_batch', async () => {
       const fetchMock = mockFetchReplies({ data: { users_batch: 3 } });
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'insert', table: 'users', data: { name: 'Alice' } },
-          { type: 'update', table: 'users', id: 5, data: { name: 'Bob' } },
-          { type: 'delete', table: 'users', id: 6 },
-        ]);
-      });
+      await runBatch([
+        { type: 'insert', table: 'users', data: { name: 'Alice' } },
+        { type: 'update', table: 'users', id: 5, data: { name: 'Bob' } },
+        { type: 'delete', table: 'users', id: 6 },
+      ]);
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [body] = sentBodies(fetchMock);
@@ -147,16 +156,10 @@ describe('useBifrostBatch', () => {
       const { operations, request, reply } = wireContract.mixed;
       const fetchMock = mockFetchReplies(reply);
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync(operations as BatchOperation[]);
-      });
+      const { results } = await runBatch(operations as BatchOperation[]);
 
       expect(sentBodies(fetchMock)).toEqual([request]);
-      expect(result.current.data?.results).toEqual([
+      expect(results).toEqual([
         { table: 'items', indices: [2, 1, 0, 3], affected: 4 },
       ]);
     });
@@ -188,13 +191,7 @@ describe('useBifrostBatch', () => {
         }),
       );
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync(operations);
-      });
+      await runBatch(operations);
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(sentBodies(fetchMock)[0].variables.actions).toHaveLength(150);
@@ -203,41 +200,29 @@ describe('useBifrostBatch', () => {
     it('keeps caller order for a same-table delete-then-insert replace', async () => {
       const fetchMock = mockFetchReplies({ data: { users_batch: 2 } });
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'delete', table: 'users', id: 1 },
-          { type: 'insert', table: 'users', data: { id: 1, name: 'Replaced' } },
-        ]);
-      });
+      const { results } = await runBatch([
+        { type: 'delete', table: 'users', id: 1 },
+        { type: 'insert', table: 'users', data: { id: 1, name: 'Replaced' } },
+      ]);
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(sentBodies(fetchMock)[0].variables.actions).toEqual([
         { delete: { id: 1 } },
         { insert: { id: 1, name: 'Replaced' } },
       ]);
-      expect(result.current.data?.results[0].indices).toEqual([0, 1]);
+      expect(results[0].indices).toEqual([0, 1]);
     });
 
     it('reports fewer affected rows than operations without failing', async () => {
       // A delete that matches no row commits with 0 affected on the server.
       mockFetchReplies({ data: { users_batch: 1 } });
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
+      const { results } = await runBatch([
+        { type: 'insert', table: 'users', data: { name: 'Alice' } },
+        { type: 'delete', table: 'users', id: 404 },
+      ]);
 
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'insert', table: 'users', data: { name: 'Alice' } },
-          { type: 'delete', table: 'users', id: 404 },
-        ]);
-      });
-
-      expect(result.current.data?.results).toEqual([
+      expect(results).toEqual([
         { table: 'users', indices: [0, 1], affected: 1 },
       ]);
     });
@@ -260,23 +245,17 @@ describe('useBifrostBatch', () => {
         { data: { orders_batch: 1 } },
       );
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'insert', table: 'users', data: { name: 'Alice' } },
-          { type: 'insert', table: 'orders', data: { total: 1 } },
-          { type: 'insert', table: 'users', data: { name: 'Bob' } },
-        ]);
-      });
+      const { results } = await runBatch([
+        { type: 'insert', table: 'users', data: { name: 'Alice' } },
+        { type: 'insert', table: 'orders', data: { total: 1 } },
+        { type: 'insert', table: 'users', data: { name: 'Bob' } },
+      ]);
 
       expect(sentBodies(fetchMock).map((b) => b.query)).toEqual([
         USERS_BATCH,
         ORDERS_BATCH,
       ]);
-      expect(result.current.data?.results).toEqual([
+      expect(results).toEqual([
         { table: 'users', indices: [0, 2], affected: 2 },
         { table: 'orders', indices: [1], affected: 1 },
       ]);
@@ -291,18 +270,12 @@ describe('useBifrostBatch', () => {
         { data: { users_batch: 1 } },
       );
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'insert', table: 'users', data: { name: 'Parent' } },
-          { type: 'insert', table: 'orders', data: { user_id: 1 } },
-          { type: 'delete', table: 'orders', id: 9 },
-          { type: 'delete', table: 'users', id: 2 },
-        ]);
-      });
+      const { results } = await runBatch([
+        { type: 'insert', table: 'users', data: { name: 'Parent' } },
+        { type: 'insert', table: 'orders', data: { user_id: 1 } },
+        { type: 'delete', table: 'orders', id: 9 },
+        { type: 'delete', table: 'users', id: 2 },
+      ]);
 
       expect(
         sentBodies(fetchMock).map((b) => [b.query, b.variables.actions.length]),
@@ -311,11 +284,7 @@ describe('useBifrostBatch', () => {
         [ORDERS_BATCH, 2],
         [USERS_BATCH, 1],
       ]);
-      expect(result.current.data?.results.map((r) => r.indices)).toEqual([
-        [0],
-        [1, 2],
-        [3],
-      ]);
+      expect(results.map((r) => r.indices)).toEqual([[0], [1, 2], [3]]);
     });
 
     it('orders documents by verb, then tables by first mention within that verb', async () => {
@@ -325,24 +294,14 @@ describe('useBifrostBatch', () => {
         { data: { orders_batch: 1 } },
       );
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'update', table: 'users', id: 1, data: { name: 'Edited' } },
-          { type: 'update', table: 'orders', id: 2, data: { total: 2 } },
-          { type: 'insert', table: 'orders', data: { total: 1 } },
-          { type: 'insert', table: 'users', data: { name: 'New' } },
-        ]);
-      });
-
-      expect(result.current.data?.results.map((r) => r.indices)).toEqual([
-        [2],
-        [3, 0],
-        [1],
+      const { results } = await runBatch([
+        { type: 'update', table: 'users', id: 1, data: { name: 'Edited' } },
+        { type: 'update', table: 'orders', id: 2, data: { total: 2 } },
+        { type: 'insert', table: 'orders', data: { total: 1 } },
+        { type: 'insert', table: 'users', data: { name: 'New' } },
       ]);
+
+      expect(results.map((r) => r.indices)).toEqual([[2], [3, 0], [1]]);
       expect(sentBodies(fetchMock).map((b) => b.query)).toEqual([
         ORDERS_BATCH,
         USERS_BATCH,
@@ -357,29 +316,19 @@ describe('useBifrostBatch', () => {
         { data: { orders_batch: 1 } },
       );
 
-      const { result } = renderHook(() => useBifrostBatch(), {
-        wrapper: createWrapper(),
-      });
-
-      await act(async () => {
-        await result.current.mutateAsync([
-          { type: 'delete', table: 'orders', id: 9 },
-          { type: 'delete', table: 'users', id: 1 },
-          { type: 'insert', table: 'users', data: { id: 1, name: 'Replaced' } },
-          { type: 'insert', table: 'orders', data: { user_id: 1 } },
-        ]);
-      });
+      const { results } = await runBatch([
+        { type: 'delete', table: 'orders', id: 9 },
+        { type: 'delete', table: 'users', id: 1 },
+        { type: 'insert', table: 'users', data: { id: 1, name: 'Replaced' } },
+        { type: 'insert', table: 'orders', data: { user_id: 1 } },
+      ]);
 
       expect(sentBodies(fetchMock).map((b) => b.query)).toEqual([
         ORDERS_BATCH,
         USERS_BATCH,
         ORDERS_BATCH,
       ]);
-      expect(result.current.data?.results.map((r) => r.indices)).toEqual([
-        [0],
-        [1, 2],
-        [3],
-      ]);
+      expect(results.map((r) => r.indices)).toEqual([[0], [1, 2], [3]]);
     });
 
     it('stops at the first failed document and names what committed and what never ran', async () => {
@@ -675,16 +624,9 @@ describe('useBifrostBatch', () => {
   it('sends nothing for an empty operations array', async () => {
     const fetchMock = mockFetchReplies({ data: {} });
 
-    const { result } = renderHook(() => useBifrostBatch(), {
-      wrapper: createWrapper(),
-    });
+    const { results } = await runBatch([]);
 
-    await act(async () => {
-      await result.current.mutateAsync([]);
-    });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.results).toEqual([]);
+    expect(results).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

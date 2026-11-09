@@ -22,6 +22,8 @@ export type {
 } from './use-bifrost-diff';
 export { useBifrostBatch, BatchError } from './use-bifrost-batch';
 export type {
+  BatchDocumentResult,
+  BatchFailure,
   BatchOperation,
   BatchProgress,
   BatchResult,

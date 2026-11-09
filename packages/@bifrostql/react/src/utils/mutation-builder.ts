@@ -65,3 +65,21 @@ export function buildUpsertMutation(table: string): string {
 export function buildDeleteMutation(table: string): string {
   return buildMutation(table, 'delete');
 }
+
+/**
+ * Build the mutation for a table's server-side `<table>_batch` field: every
+ * action in `$actions` runs in one transaction, and the field replies with the
+ * affected-row count.
+ *
+ * @param table - The database table name.
+ *
+ * @example
+ * ```ts
+ * buildBatchMutation('users');
+ * // => 'mutation Batch($actions: [batch_users!]!) { users_batch(actions: $actions) }'
+ * ```
+ */
+export function buildBatchMutation(table: string): string {
+  assertGraphqlName(table, 'table');
+  return `mutation Batch($actions: [batch_${table}!]!) { ${table}_batch(actions: $actions) }`;
+}

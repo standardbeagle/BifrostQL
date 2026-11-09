@@ -98,6 +98,8 @@ The staging load itself streams where the engine allows, and falls back to chunk
 | PostgreSQL | binary `COPY` | none — always streams; falls back if a column type is unmappable |
 | MySQL | `MySqlBulkCopy` (`LOAD DATA LOCAL INFILE`) | `AllowLoadLocalInfile=true` in the connection string **and** `local_infile=1` on the server; otherwise chunked INSERTs (still fast) |
 
+On PostgreSQL, binary `COPY` refuses text for most non-text columns, and the chunked load then fails too, so the batch takes the per-row loop with no error and no sign in the reply. Measured with text values, as GraphQL sends them, on `date`, `timestamp`, `timestamptz`, `time`, `interval`, `inet`, `cidr`, `macaddr`, `bytea` and `money`. Canonical `uuid` text is converted and stays on the fast path, as `GeneratedBatch_WithTextKeys_StaysOneStatementPerRun` pins.
+
 ## Tuning guidance
 
 - Raise `batch-max-size` (default 100) on tables that receive genuine bulk traffic — the fast path's advantage grows with batch size, and 100-row batches leave most of it on the table.

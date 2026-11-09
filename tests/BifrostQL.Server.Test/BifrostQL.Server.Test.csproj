@@ -41,6 +41,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The wire contract the React package's useBifrostBatch tests pin the hook to;
+         ReactBatchWireContractTests runs the same bodies against a real server. -->
+    <None Include="..\..\packages\@bifrostql\react\src\hooks\__fixtures__\batch-wire-contract.json"
+          Link="Fixtures\batch-wire-contract.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 

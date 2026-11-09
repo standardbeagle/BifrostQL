@@ -1,0 +1,70 @@
+{
+  "mixed": {
+    "operations": [
+      {
+        "type": "update",
+        "table": "items",
+        "id": 2,
+        "data": { "name": "renamed" }
+      },
+      {
+        "type": "upsert",
+        "table": "items",
+        "key": { "id": 1 },
+        "data": { "sku": "sku-1", "name": "upserted" }
+      },
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-new", "name": "new" }
+      },
+      { "type": "delete", "table": "items", "id": 3 }
+    ],
+    "request": {
+      "query": "mutation Batch($actions: [batch_items!]!) { items_batch(actions: $actions) }",
+      "variables": {
+        "actions": [
+          { "insert": { "sku": "sku-new", "name": "new" } },
+          { "upsert": { "id": 1, "sku": "sku-1", "name": "upserted" } },
+          { "update": { "name": "renamed", "id": 2 } },
+          { "delete": { "id": 3 } }
+        ]
+      }
+    },
+    "reply": { "data": { "items_batch": 4 } }
+  },
+  "failing": {
+    "operations": [
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-new", "name": "new" }
+      },
+      {
+        "type": "update",
+        "table": "items",
+        "id": 1,
+        "data": { "name": "renamed" }
+      },
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-2", "name": "duplicate sku" }
+      }
+    ],
+    "request": {
+      "query": "mutation Batch($actions: [batch_items!]!) { items_batch(actions: $actions) }",
+      "variables": {
+        "actions": [
+          { "insert": { "sku": "sku-new", "name": "new" } },
+          { "insert": { "sku": "sku-2", "name": "duplicate sku" } },
+          { "update": { "name": "renamed", "id": 1 } }
+        ]
+      }
+    },
+    "reply": {
+      "data": { "items_batch": null },
+      "errors": [{ "message": "the server's refusal" }]
+    }
+  }
+}

@@ -1088,6 +1088,61 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
             "a caller holding a lock on the trail would stall every tracked write");
     }
 
+    /// <summary>
+    /// A submitted tree carries its root key as text, and a polymorphic link's discriminator comes
+    /// from metadata as text, so both comparisons have to cast them. A child's key is the parent's
+    /// value as read, so it binds as text only when the parent's key is text and the child's is not.
+    /// </summary>
+    [SkippableFact]
+    public async Task TreeSyncLoad_FindsARootAndItsChildren_ByATextUuidKey()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await ExecAsync("""
+            CREATE TABLE sync_orders (id UUID PRIMARY KEY, title TEXT);
+            CREATE TABLE sync_lines (id UUID PRIMARY KEY, order_id UUID NOT NULL REFERENCES sync_orders(id), label TEXT);
+            CREATE TABLE sync_imports (code TEXT PRIMARY KEY, title TEXT);
+            CREATE TABLE sync_notes (id UUID PRIMARY KEY, entity_kind INT NOT NULL, entity_id UUID NOT NULL, body TEXT);
+            """);
+        await LoadModelAsync(
+            $"public.sync_notes {{ {MetadataKeys.Relationships.PolymorphicTypeCol}: entity_kind; {MetadataKeys.Relationships.PolymorphicIdCol}: entity_id; {MetadataKeys.Relationships.PolymorphicMap}: 1=sync_orders, 2=sync_imports }}");
+        var (order, otherOrder) = (Guid.NewGuid(), Guid.NewGuid());
+        await ExecAsync($"""
+            INSERT INTO sync_orders (id, title) VALUES ('{order}', 'mine'), ('{otherOrder}', 'other');
+            INSERT INTO sync_lines (id, order_id, label) VALUES ('{Guid.NewGuid()}', '{order}', 'my line'), ('{Guid.NewGuid()}', '{otherOrder}', 'other line');
+            INSERT INTO sync_notes (id, entity_kind, entity_id, body) VALUES ('{Guid.NewGuid()}', 1, '{order}', 'my note'), ('{Guid.NewGuid()}', 2, '{order}', 'another kind');
+            """);
+        var import = Guid.NewGuid();
+        await ExecAsync($"""
+            INSERT INTO sync_imports (code, title) VALUES ('{import}', 'imported');
+            INSERT INTO sync_notes (id, entity_kind, entity_id, body) VALUES ('{Guid.NewGuid()}', 2, '{import}', 'import note');
+            """);
+        var orders = Model.GetTableFromDbName("sync_orders");
+        string LinkTo(string child) => orders.MultiLinks.Single(link => link.Value.ChildTable.DbName == child).Key;
+        var submitted = new Dictionary<string, object?>
+        {
+            ["id"] = order.ToString(),
+            [LinkTo("sync_lines")] = new List<object?>(),
+            [LinkTo("sync_notes")] = new List<object?>(),
+        };
+
+        var loaded = await new TreeSyncStateLoader(ConnFactory.Dialect, Model, new Dictionary<string, object?>())
+            .LoadAsync(orders, submitted, ConnFactory);
+
+        loaded.Should().NotBeNull("the root's key arrives as text");
+        loaded!["title"].Should().Be("mine");
+        ((List<Dictionary<string, object?>>)loaded[LinkTo("sync_lines")]!).Should().ContainSingle()
+            .Which["label"].Should().Be("my line");
+        ((List<Dictionary<string, object?>>)loaded[LinkTo("sync_notes")]!).Should().ContainSingle()
+            .Which["body"].Should().Be("my note");
+
+        var imports = Model.GetTableFromDbName("sync_imports");
+        var importNotes = imports.MultiLinks.Single(link => link.Value.ChildTable.DbName == "sync_notes").Key;
+        var loadedImport = await new TreeSyncStateLoader(ConnFactory.Dialect, Model, new Dictionary<string, object?>())
+            .LoadAsync(imports, new Dictionary<string, object?> { ["code"] = import.ToString(), [importNotes] = new List<object?>() }, ConnFactory);
+        ((List<Dictionary<string, object?>>)loadedImport![importNotes]!).Should().ContainSingle()
+            .Which["body"].Should().Be("import note", "the parent's text key meets a uuid child column");
+    }
+
     private async Task<string?> ReadTextAsync(string sql)
     {
         await using var conn = ConnFactory.GetConnection();

@@ -259,7 +259,11 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
         return result.Errors.Should().ContainSingle().Subject;
     }
 
-    /// <summary>The host composition: the same transformer chains a generated field runs.</summary>
+    /// <summary>
+    /// The filter and mutation transformer chains a generated field runs, and no validation
+    /// transformer, so a value the real host's validator refuses reaches the database here.
+    /// PostgresUuidKeyTests drives the same operations through the real host.
+    /// </summary>
     protected async Task<ExecutionResult> ExecuteAsync(string document, IDictionary<string, object?> userContext)
     {
         var schema = DbSchema.FromModel(Model, null, new IBifrostOperation[] { _queryProbe, _mutationProbe, _startTimer, _copyWeek });

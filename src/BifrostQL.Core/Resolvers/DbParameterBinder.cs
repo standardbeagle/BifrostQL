@@ -130,8 +130,9 @@ namespace BifrostQL.Core.Resolvers
         /// column fail at the database, whatever value was supplied.
         ///
         /// A value outside <see cref="long"/> range cannot be stored in a bigint column,
-        /// so it is bound as text: it matches no row (the truthful answer) instead of
-        /// being truncated into a different, valid-looking key.
+        /// so it is bound as text: it matches no row (the truthful answer), or on PostgreSQL,
+        /// whose cast to the column's type refuses it, fails with <c>INVALID_VALUE</c>, instead
+        /// of being truncated into a different, valid-looking key.
         /// </summary>
         private static object? ToProviderValue(object? value) => value switch
         {

@@ -18,7 +18,37 @@ public class FromDatabaseExceptionTests
 {
     private sealed class FakeDbException : DbException
     {
-        public FakeDbException(string message) : base(message) { }
+        private readonly string? _sqlState;
+
+        public FakeDbException(string message, string? sqlState = null) : base(message) => _sqlState = sqlState;
+
+        public override string? SqlState => _sqlState;
+    }
+
+    [Theory]
+    [InlineData("22P02")] // invalid_text_representation: "not-a-uuid" for a uuid, "x" for an int
+    [InlineData("22007")] // invalid_datetime_format
+    [InlineData("22008")] // datetime_field_overflow
+    [InlineData("22003")] // numeric_value_out_of_range
+    public void FromDatabaseException_ReadsABadValue_AsTheCallersMistake(string sqlState)
+    {
+        var driverText = $"{sqlState}: invalid input syntax for type uuid: \"secret-value\"";
+
+        var error = BifrostExecutionError.FromDatabaseException(
+            new InvalidOperationException("wrapper", new FakeDbException(driverText, sqlState)));
+
+        error.ErrorCode.Should().Be(BifrostExecutionError.InvalidValueCode);
+        error.Message.Should().NotContain("secret-value").And.NotContain(sqlState);
+    }
+
+    [Theory]
+    [InlineData("23503")] // foreign_key_violation
+    [InlineData("42883")] // undefined_function, which is how an uncast uuid = text fails
+    [InlineData(null)]
+    public void FromDatabaseException_LeavesOtherFailures_AsDatabaseErrors(string? sqlState)
+    {
+        BifrostExecutionError.FromDatabaseException(new FakeDbException("failed", sqlState))
+            .ErrorCode.Should().Be("DATABASE_ERROR");
     }
 
     [Theory]

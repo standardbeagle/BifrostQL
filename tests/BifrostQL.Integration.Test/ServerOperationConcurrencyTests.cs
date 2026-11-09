@@ -786,7 +786,9 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         CREATE UNIQUE INDEX one_running_entry ON time_entries (person_id) WHERE stopped_at IS NULL AND week = 1;
         CREATE TABLE week_locks (person_id INT NOT NULL, week INT NOT NULL, PRIMARY KEY (person_id, week));
         CREATE TABLE keyless (label VARCHAR(50));
-        CREATE TABLE uuid_keyed (id UUID PRIMARY KEY)
+        CREATE TABLE uuid_keyed (id UUID PRIMARY KEY, note TEXT);
+        CREATE TABLE date_keyed (d DATE PRIMARY KEY, note TEXT);
+        CREATE TABLE measures (id INT PRIMARY KEY, reading REAL NOT NULL, price MONEY NOT NULL, at_time TIME NOT NULL)
         """;
 
     protected override async Task CreateDatabaseAsync(string dbName)
@@ -828,6 +830,176 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.InvalidValueCode);
         (await CountAsync("note = 'written'")).Should().Be(0);
         MutationsObserved.Tables.Should().BeEmpty();
+    }
+
+    private async Task<(int? Affected, ExecutionResult Result)> UpdateAsync(string table, string keyColumn, object key, string note)
+    {
+        int? affected = null;
+        MutationProbe.Body = async context => affected = await context.UpdateAsync(table, new Dictionary<string, object?> { [keyColumn] = key, ["note"] = note });
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+        return (affected, result);
+    }
+
+    private async Task<List<object?>> ReadIdsAsync(object? test)
+    {
+        var ids = new List<object?>();
+        QueryProbe.Body = async context =>
+            ids.AddRange((await context.QueryAsync("time_entries", new Dictionary<string, object?> { ["id"] = test }, new[] { "id" })).Select(row => row["id"]));
+        (await ExecuteAsync("{ queryProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+        return ids;
+    }
+
+    public static IEnumerable<object[]> FractionalKeys => new[]
+    {
+        new object[] { 1.5m }, new object[] { 1.5d }, new object[] { 2.5m }, new object[] { 2.5d }, new object[] { 2.4m },
+    };
+
+    [SkippableTheory]
+    [MemberData(nameof(FractionalKeys))]
+    public async Task AFractionalKey_MatchesNoRow_InsteadOfRoundingOntoOne(object key)
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var (affected, result) = await UpdateAsync("time_entries", "id", key, "rounded");
+
+        result.Errors.Should().BeNullOrEmpty();
+        affected.Should().Be(0, "no row has that id; casting it to integer would hit a neighbour");
+        (await CountAsync("note = 'rounded'")).Should().Be(0);
+    }
+
+    [SkippableFact]
+    public async Task ABooleanKey_IsAnError_InsteadOfAddressingRowOne()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var (_, result) = await UpdateAsync("time_entries", "id", true, "from-bool");
+
+        result.Errors.Should().ContainSingle();
+        (await CountAsync("note = 'from-bool'")).Should().Be(0);
+    }
+
+    [SkippableFact]
+    public async Task ABigintKeyOutsideTheColumnsRange_MatchesNoRow()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var (affected, result) = await UpdateAsync("time_entries", "id", 1L << 40, "too-big");
+
+        result.Errors.Should().BeNullOrEmpty();
+        affected.Should().Be(0);
+    }
+
+    [SkippableTheory]
+    [InlineData("1.5")]
+    [InlineData("2.4")]
+    [InlineData("abc")]
+    public async Task TextThatIsNotAnIntegerKey_IsInvalidValue_AndChangesNothing(string key)
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var (_, result) = await UpdateAsync("time_entries", "id", key, "from-text");
+
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.InvalidValueCode);
+        (await CountAsync("note = 'from-text'")).Should().Be(0);
+    }
+
+    [SkippableTheory]
+    [InlineData(2)]
+    [InlineData("2")]
+    public async Task AWholeKey_AddressesItsRow_AsANumberOrAsText(object key)
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var (affected, result) = await UpdateAsync("time_entries", "id", key, "whole");
+
+        result.Errors.Should().BeNullOrEmpty();
+        affected.Should().Be(1);
+        (await CountAsync("id = 2 AND note = 'whole'")).Should().Be(1);
+    }
+
+    [SkippableFact]
+    public async Task AUuidKey_AddressesItsRow_AsAGuidOrAsText()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        var id = Guid.NewGuid();
+        await ExecAsync($"INSERT INTO uuid_keyed (id) VALUES ('{id}')");
+
+        (await UpdateAsync("uuid_keyed", "id", id, "typed")).Affected.Should().Be(1);
+        (await UpdateAsync("uuid_keyed", "id", id.ToString(), "text")).Affected.Should().Be(1);
+    }
+
+    [SkippableFact]
+    public async Task ADateTimeWithATime_DoesNotLandOnADateKey()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await ExecAsync("INSERT INTO date_keyed (d) VALUES ('2026-01-01')");
+
+        (await UpdateAsync("date_keyed", "d", new DateTime(2026, 1, 1, 13, 30, 0), "wrong")).Affected.Should().Be(0, "13:30 on that day is not that date");
+        (await UpdateAsync("date_keyed", "d", new DateOnly(2026, 1, 1), "right")).Affected.Should().Be(1);
+        (await UpdateAsync("date_keyed", "d", "2026-01-01", "right")).Affected.Should().Be(1);
+    }
+
+    [SkippableFact]
+    public async Task LockRow_WithAFractionalKey_FindsNoRow()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        MutationProbe.Body = context => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 1.5m });
+
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostOperationContext.LockRowNotFoundCode);
+    }
+
+    [SkippableFact]
+    public async Task DeleteAsync_WithAFractionalKey_DeletesNothing()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        int? affected = null;
+        MutationProbe.Body = async context => affected = await context.DeleteAsync("time_entries", new Dictionary<string, object?> { ["id"] = 2.4m });
+
+        (await ExecuteAsync("mutation { mutationProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+
+        affected.Should().Be(0);
+        (await CountAsync("id = 2")).Should().Be(1);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_ComparesANumberAsANumber()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        (await ReadIdsAsync(1.5m)).Should().BeEmpty("no row has that id");
+        (await ReadIdsAsync(BifrostOperationContext.LessThan(1.4m))).Should().Equal(1, "1 is less than 1.4, whereas 1.4 cast to integer is 1");
+        (await ReadIdsAsync(BifrostOperationContext.LessThan(2))).Should().Equal(1);
+        (await ReadIdsAsync("2")).Should().Equal(2);
+        (await ReadIdsAsync(BifrostOperationContext.LessThan("2"))).Should().Equal(1);
+    }
+
+    /// <summary>
+    /// What leaving a non-text value bare costs on the types that had no comparison operator
+    /// for it. Each read matched under the old unconditional cast.
+    /// </summary>
+    [SkippableFact]
+    public async Task ANonTextValue_OnTheTypesWithoutANumericOperator()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await ExecAsync("INSERT INTO measures (id, reading, price, at_time) VALUES (1, 1.1, 2.50, '13:30')");
+
+        async Task<ExecutionResult> ReadAsync(string column, object value)
+        {
+            QueryProbe.Body = context => context.QueryAsync("measures", new Dictionary<string, object?> { [column] = value }, new[] { "id" });
+            return await ExecuteAsync("{ queryProbe }", Caller());
+        }
+
+        var count = -1;
+        QueryProbe.Body = async context => count = (await context.QueryAsync("measures", new Dictionary<string, object?> { ["reading"] = 1.1d }, new[] { "id" })).Count;
+        (await ExecuteAsync("{ queryProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+        count.Should().Be(1, "a Float filter on a real column has to keep finding the value it reads back");
+
+        (await ReadAsync("price", "2.50")).Errors.Should().BeNullOrEmpty("money is text at the GraphQL surface");
+        (await ReadAsync("at_time", "13:30")).Errors.Should().BeNullOrEmpty("time is text at the GraphQL surface");
+        (await ReadAsync("price", 2.50m)).Errors.Should().ContainSingle("Postgres has no money = numeric operator; a loud refusal");
+        (await ReadAsync("at_time", new DateTime(2026, 1, 1, 13, 30, 0))).Errors.Should().ContainSingle("Postgres has no time = timestamp operator; a loud refusal");
     }
 
     [SkippableFact]

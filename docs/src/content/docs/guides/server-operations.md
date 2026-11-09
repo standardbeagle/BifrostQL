@@ -244,6 +244,14 @@ until it ends.
   operations can deadlock, and the database will fail one of them.
 - A PostgreSQL `uuid` key can be a `Guid` or its text, as in every other call here. A malformed
   one fails with `INVALID_VALUE`, which ends the operation even if its code catches it.
+- Any other PostgreSQL key value binds as its own type and compares by the database's rules, so pass
+  the column's own type:
+  - A decimal or double on an integer key compares as that type, so PostgreSQL scans the whole table
+    rather than using the key's index. `1.5` there finds no row: `LOCK_ROW_NOT_FOUND`.
+  - A double or decimal on a `real` key is narrowed to `real`. Past `real`'s precision it reaches
+    another row: 16777217 locks, updates or deletes the row holding 16777216.
+  - A long, double or decimal on `money`, an int on a `boolean` and a bool on an integer column have
+    no comparison, and fail with `DATABASE_ERROR`, which ends the operation.
 
 ## One transaction per mutation operation
 

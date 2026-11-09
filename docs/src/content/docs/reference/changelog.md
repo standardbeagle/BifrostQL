@@ -51,7 +51,12 @@ which also names where the two paths still differ.
 
 Generated updates, deletes and upserts, and `UpdateAsync`, `DeleteAsync` and `LockRowAsync`, failed
 with `uuid = text` on a key sent as a string, which is the only way GraphQL can send one. Only a value
-that binds as text is cast; a number binds bare, so `1.5` on an integer key matches no row. A text key
+that binds as text is cast; a number binds bare, so `1.5` on an integer key matches no row on a delete
+or a read, and answers `LOCK_ROW_NOT_FOUND` on a lock. An update refuses it first, with `INVALID_VALUE`.
+A double or decimal on a `real` key is narrowed, and past `real`'s precision it reaches another row:
+16777217 finds the row holding 16777216. A decimal or double on an integer key scans the whole table.
+A long, double or decimal on `money`, an int on a `boolean` and a bool on an integer column fail with
+`DATABASE_ERROR`. A text key
 on an enum or `bit` column still fails, and a `citext` key is compared as text, so a lookup in another
 case finds no row. See [Type mapping specifics](/BifrostQL/reference/dialects/#type-mapping-specifics).
 
@@ -63,7 +68,9 @@ deferred undo finds a uuid-keyed row.
 A malformed uuid, a bad date or a number out of range used to answer `DATABASE_ERROR`. It now
 answers `INVALID_VALUE` with a generic message, from the SQLSTATE. An out-of-range key sent as text on a
 PostgreSQL integer column fails this way where it used to match no row. The validator gives the same
-code for text it cannot read as the column's type.
+code for a value it refuses because of the column's type: unreadable text, a fraction or an out-of-range
+number on an integer column, too many digits before the decimal point, a date outside the type's
+storable range, or a binary value longer than the column.
 
 **Migration:** code that matched `DATABASE_ERROR` for these conditions must match `INVALID_VALUE`.
 See [Type mapping specifics](/BifrostQL/reference/dialects/#type-mapping-specifics).

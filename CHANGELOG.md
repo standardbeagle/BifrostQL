@@ -37,8 +37,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   back. A refusal that comes before any statement runs does not end it and may still be caught:
   `LOCK_ROW_NOT_FOUND`, `PARTIAL_PRIMARY_KEY`, a read of a denied or unknown column, `LessThan(null)`,
   and a write to an approval-gated or unknown table.
-- Text the validator cannot read as its column's type (`"2.4"` for an integer) now has the code
-  `INVALID_VALUE`. A refusal that also breaks a declared rule keeps no code, as before.
+- A value the validator refuses because of its column's type now has the code `INVALID_VALUE`: text
+  it cannot read as a number, date or time (`"2.4"` for an integer), a typed decimal with a fraction
+  on an integer column, a number outside the integer type's range, too many digits before the decimal
+  point, a date outside the type's storable range, and a binary value longer than the column. A
+  refusal that also breaks a declared rule keeps no code, as before.
 - The set-based batch fast path merges only adjacent rows with the same verb, columns and filter,
   and applies each run in document order. It used to group a verb's rows wherever they sat in the
   document, so `[insert x, delete y, insert y]` ran both inserts first and failed with `CONFLICT`
@@ -64,9 +67,15 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as
   text to the column's type. Any other value binds bare and compares by the database's own rules, so
-  `1.5` on an integer key matches no row, while the text `"2.4"` fails with `INVALID_VALUE`. The one
-  exception is a double or decimal on a `real` column, which is narrowed so it can find the value
-  the column reads back. The cast covers the types `PostgresDialect.NeedsParameterCast` lists: a
+  `1.5` on an integer key matches no row on a delete or a read, and answers `LOCK_ROW_NOT_FOUND` on a
+  lock. On an update the validator refuses it first with `INVALID_VALUE`, which ends a mutation
+  operation. The text `"2.4"` fails with `INVALID_VALUE` on all four. The one exception to binding
+  bare is a double or decimal on a `real` column, which is narrowed so it can find the value the
+  column reads back. A value past `real`'s precision narrows onto another row: 16777217 finds the row
+  holding 16777216, and an update or delete changes that row. A decimal or double on an integer key
+  compares as that type, so PostgreSQL scans the whole table rather than using the key's index. A
+  long, double or decimal on `money`, an int on a `boolean` and a bool on an integer column have no
+  comparison and fail with `DATABASE_ERROR`. The cast covers the types `PostgresDialect.NeedsParameterCast` lists: a
   text key on an enum or `bit` column still fails with `operator does not exist`, and a `citext` key
   stays bare, so a lookup in another case finds no row. Batches with uuid text also lost the fast
   path without saying so, because binary COPY refuses a string for a uuid column; canonical text now

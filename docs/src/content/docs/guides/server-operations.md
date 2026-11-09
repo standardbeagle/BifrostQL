@@ -93,7 +93,7 @@ Both checks run before `ExecuteAsync`. A refused caller gets
 | `Model`, `Services`, `CancellationToken` | The endpoint model, request services, request token |
 | `QueryAsync(table, where, columns, limit, sort)` | Rows as the caller. See [Reading rows](#reading-rows). Tenant isolation, row scope, soft delete, column read guards and decryption apply. Rows are keyed by GraphQL field name. |
 | `InsertAsync(table, values)` | One insert through the full mutation pipeline; returns the new key |
-| `UpdateAsync(table, values)` | One update keyed by the key columns in `values`; returns the rows changed (0 when out of scope) |
+| `UpdateAsync(table, values)` | One update keyed by the key columns in `values`; returns the rows changed (0 when out of scope, or when `values` has no key) |
 | `DeleteAsync(table, key)` | One delete (soft where the table declares it); returns the rows affected |
 | `LockRowAsync(table, key)` | Locks one row until the transaction ends. See [Serializing on a row](#serializing-on-a-row). |
 
@@ -254,14 +254,18 @@ exactly as they are for a generated mutation.
 
 - Mutation observers and state-transition observers run after the commit, never for a
   rolled-back write.
-- If a write is refused, or any statement fails, read or write, the operation fails even when its
-  code catches the exception. That covers `INVALID_VALUE` and every other database error: later
-  statements are refused, the transaction rolls back, the client gets the first failure's code, and
-  no observer runs. This holds on every database, including those that could technically carry on.
-  To treat a value as optional, check it before the statement rather than catching the failure.
-- Two answers are not failures, and an operation can catch them and continue:
-  `LOCK_ROW_NOT_FOUND`, and a read refused before it runs, such as one naming a column the caller
-  may not read.
+- If a statement runs and fails, read or write, the operation fails even when its code catches the
+  exception. So does a write refused by policy or by the validator, because both run inside the
+  write. That covers `INVALID_VALUE` and every other database error: later statements are refused,
+  the transaction rolls back, the client gets the first failure's code, and no observer runs. This
+  holds on every database, including those that could technically carry on. To treat a value as
+  optional, check it before the statement rather than catching the failure.
+- A refusal that comes before any statement runs is not a failure. An operation can catch it and
+  continue, and its writes commit:
+  - from `LockRowAsync`, `LOCK_ROW_NOT_FOUND` and `PARTIAL_PRIMARY_KEY`;
+  - a read refused before it runs: a column the caller may not read, an unknown column, or
+    `LessThan(null)`, which is `INVALID_VALUE` here without ending the operation;
+  - a write refused before it starts: an approval-gated table or an unknown table.
 - Writes to an [approval-gated](/BifrostQL/guides/approval-workflows/) table are refused inside an
   operation. A gated write queues a pending change and reports it as an error, which cannot be
   one step of an all-or-nothing operation.

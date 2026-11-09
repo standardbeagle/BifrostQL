@@ -18,10 +18,11 @@ the binary signature changed.
 ### Breaking — a database error ends a mutation operation
 
 A database error inside a mutation operation now ends it on every dialect, even if its code catches
-the error, and so does a write the validator refuses. The transaction rolls back, the client gets an
-error with the first failure's code, and no observer fires. On PostgreSQL a caught read failure used
-to return success while COMMIT silently rolled the writes back. `LOCK_ROW_NOT_FOUND` may still be
-caught, because it is not a database error.
+the error, and so does a write the policy or the validator refuses. The transaction rolls back, the
+client gets an error with the first failure's code, and no observer fires. On PostgreSQL a caught read failure used
+to return success while COMMIT silently rolled the writes back. A refusal that comes before any
+statement runs may still be caught, such as `LOCK_ROW_NOT_FOUND`, a read of a denied column, or a
+write to an approval-gated table.
 
 **Migration:** check a value before the statement that would fail on it, rather than catching the
 failure. See [One transaction per mutation operation](/BifrostQL/guides/server-operations/#one-transaction-per-mutation-operation).

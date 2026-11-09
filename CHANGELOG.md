@@ -31,10 +31,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   operation assembly compiled against an earlier BifrostQL fails with `MissingMethodException`
   until it is rebuilt.
 - A database error inside a mutation operation now ends the operation on every dialect, even if the
-  operation catches it, and so does a write the validator refuses. The operation's transaction rolls
-  back, the client gets an error carrying the first failure's code, and no observer fires. On
+  operation catches it, and so does a write the policy or the validator refuses. The operation's
+  transaction rolls back, the client gets an error carrying the first failure's code, and no observer fires. On
   PostgreSQL a caught read failure used to return success while COMMIT silently rolled the writes
-  back. `LOCK_ROW_NOT_FOUND` is not a database error and may still be caught.
+  back. A refusal that comes before any statement runs does not end it and may still be caught:
+  `LOCK_ROW_NOT_FOUND`, `PARTIAL_PRIMARY_KEY`, a read of a denied or unknown column, `LessThan(null)`,
+  and a write to an approval-gated or unknown table.
 - Text the validator cannot read as its column's type (`"2.4"` for an integer) now has the code
   `INVALID_VALUE`. A refusal that also breaks a declared rule keeps no code, as before.
 - The set-based batch fast path merges only adjacent rows with the same verb, columns and filter,

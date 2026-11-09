@@ -71,14 +71,34 @@ export interface BifrostAuthHandlers {
 }
 
 /**
- * GraphQL error messages matching this pattern are treated as *authentication*
- * failures (HTTP 401 semantics) that trigger a token refresh + session-expiry
- * flow. "forbidden" (HTTP 403 / authorization) is deliberately excluded: a 403
- * means the credential is valid but lacks permission, so refreshing the token
- * and expiring the session is wrong — it would loop or log the user out over a
- * mere permission denial.
+ * `extensions.code` values that mean the caller is not authenticated (HTTP 401
+ * semantics), which trigger the token refresh + session-expiry flow. The engine
+ * emits neither: its auth failures are an HTTP 401 on the mount. They are the
+ * convention for gateways and server operations.
+ *
+ * Authorization codes (`FORBIDDEN`, `ACCESS_DENIED`) are deliberately excluded:
+ * the credential is valid but lacks permission, so refreshing the token and
+ * expiring the session is wrong — it would loop or log the user out over a mere
+ * permission denial.
  */
+const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
+  'UNAUTHENTICATED',
+  'UNAUTHORIZED',
+]);
+
+/** The same decision for an error with no code, read from its message. */
 const AUTH_ERROR_PATTERN = /\b(unauthorized|unauthenticated)\b/i;
+
+/**
+ * A code decides when the server sent one, so a refusal whose message happens to
+ * say "unauthorized" stays the refusal it is.
+ */
+function isAuthError(error: GraphQLErrorEntry): boolean {
+  const code = error.extensions?.code;
+  return code
+    ? AUTH_ERROR_CODES.has(code)
+    : AUTH_ERROR_PATTERN.test(error.message);
+}
 
 /**
  * Compute an exponential backoff delay for retry attempts, capped at 30 seconds.
@@ -159,7 +179,7 @@ async function sendRequest<T>(
   const json: GraphQLResponse<T> = await response.json();
   if (json.errors) {
     const error = new BifrostGraphQLError(json.errors);
-    if (json.errors.some((e) => AUTH_ERROR_PATTERN.test(e.message))) {
+    if (json.errors.some(isAuthError)) {
       throw new BifrostAuthError(error.message);
     }
     throw error;

@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.Deferred;
 using BifrostQL.Core.Operations;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
@@ -1081,6 +1082,67 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
 
         result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode,
             "a caller holding a lock on the trail would stall every tracked write");
+    }
+
+    private async Task<string?> ReadTextAsync(string sql)
+    {
+        await using var conn = ConnFactory.GetConnection();
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return (string?)await cmd.ExecuteScalarAsync();
+    }
+
+    /// <summary>A delta stores its key as JSON, so a uuid key comes back to the undo engine as text.</summary>
+    private async Task<(Guid Row, DeferredUndoEngine Engine)> SeedUuidUndoAsync(string changeSetState, string rowName)
+    {
+        await ExecAsync("""
+            CREATE TABLE uuid_undo (id UUID PRIMARY KEY, name TEXT NOT NULL);
+            CREATE TABLE change_sets (id BIGINT PRIMARY KEY, state TEXT NOT NULL, undo_window_expires_at TIMESTAMPTZ NOT NULL, requester TEXT, tenant TEXT, tables TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, applied_at TIMESTAMPTZ, reversed_at TIMESTAMPTZ);
+            CREATE TABLE change_set_deltas (id BIGINT PRIMARY KEY, change_set_id BIGINT NOT NULL, "table" TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, inverse_op TEXT NOT NULL, before_image TEXT, after_image TEXT, created_at TIMESTAMPTZ NOT NULL);
+            """);
+        await LoadModelAsync();
+        var row = Guid.NewGuid();
+        await ExecAsync($"INSERT INTO uuid_undo (id, name) VALUES ('{row}', '{rowName}')");
+        await ExecAsync($"INSERT INTO change_sets (id, state, undo_window_expires_at, tables, created_at) VALUES (1, '{changeSetState}', now() + interval '1 hour', '[]', now())");
+        await ExecAsync($$"""
+            INSERT INTO change_set_deltas (id, change_set_id, "table", pk, op, inverse_op, before_image, after_image, created_at)
+            VALUES (1, 1, 'public.uuid_undo', '{"id":"{{row}}"}', 'update', 'restore',
+                    '{"id":"{{row}}","name":"original"}', '{"id":"{{row}}","name":"edited"}', now())
+            """);
+
+        var endpoints = new PathCache<Inputs>();
+        endpoints.AddLoader("/graphql", () => Task.FromResult(new Inputs(new Dictionary<string, object?>
+        {
+            ["model"] = Model, ["connFactory"] = ConnFactory,
+        })));
+        var mutations = new MutationIntentExecutor(endpoints, new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[] { new TenantMutationTransformer(), new SoftDeleteMutationTransformer(), new ConcurrencyMutationTransformer() },
+        });
+        return (row, new DeferredUndoEngine(Model, ConnFactory, mutations));
+    }
+
+    [SkippableFact]
+    public async Task Undo_RestoresARowWithAUuidKey()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        var (row, engine) = await SeedUuidUndoAsync("held", rowName: "edited");
+
+        (await engine.UndoAsync(1, new Dictionary<string, object?>())).Should().Be(new DeferredUndoResult(1, 1, 0, false));
+
+        (await ReadTextAsync($"SELECT name FROM uuid_undo WHERE id = '{row}'")).Should().Be("original");
+    }
+
+    [SkippableFact]
+    public async Task ResumedUndo_FindsAnAlreadyRestoredRowByItsUuidKey()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        var (_, engine) = await SeedUuidUndoAsync("undoing", rowName: "original");
+
+        (await engine.UndoAsync(1, new Dictionary<string, object?>())).Should().Be(new DeferredUndoResult(1, 1, 0, false));
+
+        (await ReadTextAsync("SELECT state FROM change_sets WHERE id = 1")).Should().Be("undone");
     }
 
     [SkippableFact]

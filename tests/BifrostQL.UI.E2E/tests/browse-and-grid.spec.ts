@@ -76,8 +76,6 @@ test.describe('Browse & grid (Blog)', () => {
     await expect(next).toBeEnabled({ timeout: 5_000 });
     await next.click();
 
-    await expect(dataRows(page).first()).toBeVisible({ timeout: 10_000 });
-    const firstAfter = await cell(dataRows(page).first(), 'post_id').innerText();
-    expect(firstAfter).not.toBe(firstBefore);
+    await expect(cell(dataRows(page).first(), 'post_id')).not.toHaveText(firstBefore, { timeout: 10_000 });
   });
 });

@@ -125,7 +125,8 @@ var latestStopped = await context.QueryAsync(
   and the value binds as any other, text or typed. A row whose column is null does not match.
   `LessThan(null)` is refused with `INVALID_VALUE`, because nothing is less than null and the read
   would quietly find nothing. A value the column cannot read, such as a malformed date, fails with
-  `INVALID_VALUE` on PostgreSQL.
+  `INVALID_VALUE` on PostgreSQL. Inside a mutation operation that failure cannot be caught to carry
+  on: see [One transaction per mutation operation](#one-transaction-per-mutation-operation).
 
   To find a person's latest date before a target:
 
@@ -213,7 +214,7 @@ client chose unless that is acceptable.
 - An operation that locks several rows should lock them in the same order everywhere, or two
   operations can deadlock, and the database will fail one of them.
 - A PostgreSQL `uuid` key can be a `Guid` or its text, as in every other call here. A malformed
-  one fails with `INVALID_VALUE`.
+  one fails with `INVALID_VALUE`, which ends the operation even if its code catches it.
 
 ## One transaction per mutation operation
 
@@ -224,7 +225,13 @@ exactly as they are for a generated mutation.
 
 - Mutation observers and state-transition observers run after the commit, never for a
   rolled-back write.
-- If a write fails, the operation fails, even when its code catches the exception.
+- If any statement fails, read or write, the operation fails even when its code catches the
+  exception. That covers `INVALID_VALUE` and every other database error: later statements are
+  refused, the transaction rolls back, the client gets the first failure's code, and no observer
+  runs. This holds on every database, including those that could technically carry on. To treat a
+  value as optional, check it before the statement rather than catching the failure.
+- A refusal that runs no statement is different: `LOCK_ROW_NOT_FOUND`, and a column or table the
+  caller may not use, can be caught and the operation can continue.
 - Writes to an [approval-gated](/BifrostQL/guides/approval-workflows/) table are refused inside an
   operation. A gated write queues a pending change and reports it as an error, which cannot be
   one step of an all-or-nothing operation.

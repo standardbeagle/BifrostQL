@@ -559,6 +559,22 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
         (await CountAsync("week = 63")).Should().Be(0);
     }
 
+    [SkippableFact]
+    public async Task ACaughtRefusalThatRanNoStatement_LeavesTheOperationAbleToContinue()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        MutationProbe.Body = async context =>
+        {
+            await FluentActions.Awaiting(() => context.QueryAsync("time_entries", new Dictionary<string, object?>(), new[] { "secret" }))
+                .Should().ThrowAsync<BifrostExecutionError>();
+            await context.InsertAsync("time_entries", new Dictionary<string, object?> { ["person_id"] = 1, ["week"] = 64 });
+        };
+
+        (await ExecuteAsync("mutation { mutationProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+
+        (await CountAsync("week = 64")).Should().Be(1, "a read-denied column is a rule, not a failed statement");
+    }
+
     private static async Task<Exception?> CaptureAsync(Func<Task> statement)
     {
         try

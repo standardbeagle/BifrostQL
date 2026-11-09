@@ -105,7 +105,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 {
                     var keySignature = string.Join("|", keyColumns
                         .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
-                        .Select(c => $"{c}={BatchDuplicateNormalizer.KeyIdentity(table, c, values.TryGetValue(c, out var v) ? v : null)}"));
+                        .Select(c => $"{c}={BatchDuplicateNormalizer.KeyIdentity(dialect, table, c, values.TryGetValue(c, out var v) ? v : null)}"));
                     if (!seenKeys.Add(keySignature))
                     {
                         logger?.LogDebug("Bulk batch fast path skipped for {Table}: duplicate update/delete key in one batch", table.DbName);

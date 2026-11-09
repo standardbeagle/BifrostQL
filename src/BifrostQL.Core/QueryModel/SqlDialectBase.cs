@@ -59,6 +59,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string CastParameterReference(string placeholder, string? dataType) => placeholder;
 
     /// <inheritdoc />
+    public virtual bool ComparesAsUuid(string? dataType) => false;
+
+    /// <inheritdoc />
     /// <remarks>
     /// Any occurrence of the closing delimiter inside <paramref name="identifier"/>
     /// is doubled so it cannot break out of the delimited identifier context:

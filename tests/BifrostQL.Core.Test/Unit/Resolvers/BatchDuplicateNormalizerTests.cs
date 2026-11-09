@@ -1,6 +1,11 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.MySql;
+using BifrostQL.Ngsql;
+using BifrostQL.Sqlite;
+using BifrostQL.SqlServer;
 using FluentAssertions;
 using Xunit;
 using BatchAction = BifrostQL.Core.Resolvers.BatchMutationPipeline.BatchAction;
@@ -49,7 +54,7 @@ public sealed class BatchDuplicateNormalizerTests
     [InlineData("uniqueidentifier", Uuid, "11111111-AAAA-4BBB-8CCC-DDDDDDDDDDDD")]
     public void TwoSpellingsOfAUuid_AreOneRow(string dataType, string first, string second)
     {
-        var result = BatchDuplicateNormalizer.Normalize(BuildKeyedByType(dataType), new[]
+        var result = BatchDuplicateNormalizer.Normalize(EngineStoring(dataType), BuildKeyedByType(dataType), new[]
         {
             Action(MutationAction.Update, ("Id", first), ("Status", "first")),
             Action(MutationAction.Update, ("Id", second), ("Status", "second")),
@@ -61,7 +66,7 @@ public sealed class BatchDuplicateNormalizerTests
     [Fact]
     public void AGuidAndItsText_AreOneRow()
     {
-        var result = BatchDuplicateNormalizer.Normalize(BuildKeyedByType("uuid"), new[]
+        var result = BatchDuplicateNormalizer.Normalize(PostgresDialect.Instance, BuildKeyedByType("uuid"), new[]
         {
             Action(MutationAction.Update, ("Id", Guid.Parse(Uuid)), ("Status", "first")),
             Action(MutationAction.Update, ("Id", Uuid.ToUpperInvariant()), ("Status", "second")),
@@ -82,8 +87,54 @@ public sealed class BatchDuplicateNormalizerTests
             Action(MutationAction.Update, ("Id", second), ("Status", "second")),
         };
 
-        BatchDuplicateNormalizer.Normalize(BuildKeyedByType(dataType), actions).Should().HaveCount(2);
+        BatchDuplicateNormalizer.Normalize(EngineStoring(dataType), BuildKeyedByType(dataType), actions).Should().HaveCount(2);
     }
+
+    public static TheoryData<ISqlDialect, string> ColumnsTheEngineKeepsAsText => new()
+    {
+        { SqliteDialect.Instance, "UUID" },
+        { SqliteDialect.Instance, "uniqueidentifier" },
+        { MySqlDialect.Instance, "uuid" },
+        { PostgresDialect.Instance, "uniqueidentifier" }, // no such type there, so a domain or enum
+        { SqlServerDialect.Instance, "uuid" }, // likewise an alias, not the engine's own type
+    };
+
+    [Theory]
+    [MemberData(nameof(ColumnsTheEngineKeepsAsText))]
+    public void AColumnTheEngineKeepsAsText_KeepsEachSpelling(ISqlDialect dialect, string dataType)
+    {
+        var actions = new[]
+        {
+            Action(MutationAction.Update, ("Id", Uuid), ("Status", "first")),
+            Action(MutationAction.Update, ("Id", Uuid.ToUpperInvariant()), ("Status", "second")),
+        };
+
+        BatchDuplicateNormalizer.Normalize(dialect, BuildKeyedByType(dataType), actions).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void RejectPolicy_RefusesNothing_WhenTheEngineKeepsTheSpellingsAsTwoRows()
+    {
+        var table = DbModelTestFixture.Create()
+            .WithTable("Items", t => t.WithSchema("main")
+                .WithPrimaryKey("Id", "UUID")
+                .WithColumn("Status", "text")
+                .WithMetadata("batch-duplicate-policy", "reject"))
+            .Build()
+            .GetTableFromDbName("Items");
+
+        BatchDuplicateNormalizer.Normalize(SqliteDialect.Instance, table, new[]
+        {
+            Action(MutationAction.Update, ("Id", Uuid), ("Status", "first")),
+            Action(MutationAction.Update, ("Id", Uuid.ToUpperInvariant()), ("Status", "second")),
+        }).Should().HaveCount(2);
+    }
+
+    private static ISqlDialect EngineStoring(string dataType) => dataType switch
+    {
+        "uuid" => PostgresDialect.Instance,
+        _ => SqlServerDialect.Instance,
+    };
 
     [Fact]
     public void DistinctKeys_PassThroughUnchanged()
@@ -95,7 +146,7 @@ public sealed class BatchDuplicateNormalizerTests
             Action(MutationAction.Delete, ("OrderId", 2), ("LineNo", 1)),
         };
 
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), actions);
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), actions);
 
         normalized.Should().Equal(actions);
     }
@@ -105,7 +156,7 @@ public sealed class BatchDuplicateNormalizerTests
     {
         // The sequential net effect of two updates is a per-column merge: the second
         // action's columns overwrite, the first's untouched columns survive.
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), new[]
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), new[]
         {
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "first"), ("Total", 10m)),
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "second")),
@@ -120,7 +171,7 @@ public sealed class BatchDuplicateNormalizerTests
     [Fact]
     public void UpdateThenDelete_DeleteAbsorbsTheUpdate()
     {
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), new[]
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), new[]
         {
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "moot")),
             Action(MutationAction.Delete, ("OrderId", 1), ("LineNo", 1)),
@@ -134,7 +185,7 @@ public sealed class BatchDuplicateNormalizerTests
     {
         // Sequentially the delete removes the row, then the update matches nothing:
         // the net effect is the delete alone.
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), new[]
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), new[]
         {
             Action(MutationAction.Delete, ("OrderId", 1), ("LineNo", 1)),
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "ghost")),
@@ -146,7 +197,7 @@ public sealed class BatchDuplicateNormalizerTests
     [Fact]
     public void DeleteThenDelete_CollapsesToOne()
     {
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), new[]
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), new[]
         {
             Action(MutationAction.Delete, ("OrderId", 1), ("LineNo", 1)),
             Action(MutationAction.Delete, ("OrderId", 1), ("LineNo", 1)),
@@ -160,7 +211,7 @@ public sealed class BatchDuplicateNormalizerTests
     {
         // The merged update takes the LAST occurrence's position: its "final say" happens
         // after the interleaved action on the other key, and order is deterministic.
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), new[]
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), new[]
         {
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "a")),
             Action(MutationAction.Delete, ("OrderId", 2), ("LineNo", 1)),
@@ -176,7 +227,7 @@ public sealed class BatchDuplicateNormalizerTests
     [Fact]
     public void RejectPolicy_DuplicateKey_IsCleanError_BeforeAnySql()
     {
-        var act = () => BatchDuplicateNormalizer.Normalize(BuildTable("reject"), new[]
+        var act = () => BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable("reject"), new[]
         {
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "a")),
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "b")),
@@ -194,7 +245,7 @@ public sealed class BatchDuplicateNormalizerTests
         // cannot be collapsed deterministically — it is refused, never guessed.
         foreach (var policy in new string?[] { null, "reject" })
         {
-            var act = () => BatchDuplicateNormalizer.Normalize(BuildTable(policy), new[]
+            var act = () => BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(policy), new[]
             {
                 Action(MutationAction.Upsert, ("OrderId", 1), ("LineNo", 1), ("Status", "a")),
                 Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "b")),
@@ -212,7 +263,7 @@ public sealed class BatchDuplicateNormalizerTests
             Action(MutationAction.Upsert, ("OrderId", 1), ("LineNo", 2), ("Status", "b")),
         };
 
-        BatchDuplicateNormalizer.Normalize(BuildTable(), actions).Should().Equal(actions);
+        BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), actions).Should().Equal(actions);
     }
 
     [Fact]
@@ -220,7 +271,7 @@ public sealed class BatchDuplicateNormalizerTests
     {
         // A delete keyed by a non-PK predicate has no static row identity: it only
         // collapses against an IDENTICAL predicate, never against PK-keyed actions.
-        var normalized = BatchDuplicateNormalizer.Normalize(BuildTable(), new[]
+        var normalized = BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable(), new[]
         {
             Action(MutationAction.Delete, ("Status", "old")),
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "old")),
@@ -235,7 +286,7 @@ public sealed class BatchDuplicateNormalizerTests
     [Fact]
     public void UnknownPolicyValue_FailsFast()
     {
-        var act = () => BatchDuplicateNormalizer.Normalize(BuildTable("chaos"), new[]
+        var act = () => BatchDuplicateNormalizer.Normalize(SqlServerDialect.Instance, BuildTable("chaos"), new[]
         {
             Action(MutationAction.Update, ("OrderId", 1), ("LineNo", 1), ("Status", "a")),
         });

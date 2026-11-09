@@ -79,9 +79,11 @@ internal static class PostgresStagingStream
     /// A GraphQL uuid arrives as text, and binary COPY refuses text for a uuid column, which cost
     /// every batch with a uuid column its fast path. Only the canonical form is converted. Anything
     /// else stays text, so the COPY fails and the per-row path decides whether PostgreSQL accepts it.
+    /// The length check is that rule's teeth: .NET parses a whitespace-wrapped "D" that PostgreSQL
+    /// refuses, which would write on this path what the per-row path answers with INVALID_VALUE.
     /// </summary>
     private static object ToCopyValue(object value, NpgsqlDbType type)
-        => type == NpgsqlDbType.Uuid && value is string text && Guid.TryParseExact(text, "D", out var uuid)
+        => type == NpgsqlDbType.Uuid && value is string { Length: 36 } text && Guid.TryParseExact(text, "D", out var uuid)
             ? uuid
             : value;
 

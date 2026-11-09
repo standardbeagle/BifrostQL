@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Utils;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
 
 namespace BifrostQL.Core.Resolvers
@@ -33,6 +35,11 @@ namespace BifrostQL.Core.Resolvers
     {
         internal const string LastWins = "last-wins";
         internal const string Reject = "reject";
+
+        // PostgreSQL's uuid_in grammar: optional braces, 32 hex digits, an optional hyphen after any four.
+        private static readonly Regex UuidSpelling = new(
+            @"^(\{)?(?:[0-9a-fA-F]{4}-?){7}[0-9a-fA-F]{4}(?(1)\})\z",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         public static IReadOnlyList<BatchMutationPipeline.BatchAction> Normalize(
             IDbTable table, IReadOnlyList<BatchMutationPipeline.BatchAction> actions)
@@ -113,20 +120,33 @@ namespace BifrostQL.Core.Resolvers
             if (action.Action == MutationAction.Delete && !(pkValues.Count == keyColumns.Count && action.Data.Count == keyColumns.Count))
             {
                 // Predicate delete: identity is the exact predicate, nothing else.
-                return "pred|" + Render(action.Data.ToDictionary(kv => ToDbColumnName(table, kv.Key), kv => kv.Value, StringComparer.OrdinalIgnoreCase));
+                return "pred|" + Render(table, action.Data.ToDictionary(kv => ToDbColumnName(table, kv.Key), kv => kv.Value, StringComparer.OrdinalIgnoreCase));
             }
 
             if (pkValues.Count != keyColumns.Count)
                 return null;
-            return "pk|" + Render(pkValues);
+            return "pk|" + Render(table, pkValues);
         }
 
-        private static string Render(IReadOnlyDictionary<string, object?> values)
+        /// <summary>
+        /// What one key value compares as, in both batch paths. The database compares a uuid by
+        /// value, so every spelling it reads as one uuid is one identity here. Text it would refuse
+        /// keeps its own identity, so the refusal comes from the database as it does for any bad key.
+        /// </summary>
+        internal static string? KeyIdentity(IDbTable table, string dbColumn, object? value)
+            => value is string text
+                && table.ColumnLookup.TryGetValue(dbColumn, out var column)
+                && StringNormalizer.NormalizeType(column.DataType) is "uuid" or "uniqueidentifier"
+                && UuidSpelling.IsMatch(text)
+                    ? Guid.ParseExact(text.Trim('{', '}').Replace("-", ""), "N").ToString("D")
+                    : Convert.ToString(value, CultureInfo.InvariantCulture);
+
+        private static string Render(IDbTable table, IReadOnlyDictionary<string, object?> values)
         {
             var sb = new StringBuilder();
             foreach (var column in values.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
                 sb.Append(column.ToLowerInvariant()).Append('=')
-                  .Append(Convert.ToString(values[column], CultureInfo.InvariantCulture)).Append('|');
+                  .Append(KeyIdentity(table, column, values[column])).Append('|');
             return sb.ToString();
         }
 

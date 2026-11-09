@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.SqlServer;
 
@@ -30,6 +31,9 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// change-history before-image read blocks a concurrent writer instead of racing it.
     /// </remarks>
     public override string UpdateLockTableHint => " WITH (UPDLOCK)";
+
+    /// <inheritdoc />
+    public override bool ComparesAsUuid(string? dataType) => StringNormalizer.NormalizeType(dataType) is "uniqueidentifier";
 
     /// <inheritdoc />
     /// <remarks>SQL Server has no unbounded TEXT alias worth using; NVARCHAR(MAX) is the modern form.</remarks>

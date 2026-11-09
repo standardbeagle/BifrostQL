@@ -218,7 +218,7 @@ public sealed class DeferredUndoEngine
         var predicates = new List<string>();
         foreach (var column in table.KeyColumns)
         {
-            predicates.Add($"{d.EscapeIdentifier(column.ColumnName)}=@{column.ColumnName}");
+            predicates.Add($"{d.EscapeIdentifier(column.ColumnName)}={DbParameterBinder.ComparisonPlaceholder(d, "@" + column.ColumnName, column.DataType, key[column.ColumnName])}");
             Add(command, "@" + column.ColumnName, key[column.ColumnName]);
         }
         command.CommandText = $"SELECT * FROM {d.TableReference(table.TableSchema, table.DbName)} WHERE {string.Join(" AND ", predicates)}";

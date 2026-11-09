@@ -71,7 +71,11 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             var dialect = ctx.ConnFactory.Dialect;
             var rows = new List<BulkStagedAction>(actions.Count);
             var outcomes = new List<PendingOutcome>(actions.Count);
-            var groups = new Dictionary<string, (BulkOpGroup Group, int Id)>();
+            // A group is a RUN: adjacent rows sharing a verb and column signature. Statements
+            // apply in group order, so a row can only ever share a statement with its neighbours
+            // and the batch applies in document order, as the per-row path does.
+            var groups = new List<BulkOpGroup>();
+            string? runSignature = null;
             // Rendered transformer filters all carry the same @p0.. parameter names, so every
             // statement of the batch must share ONE rendered filter (or none): the first
             // non-empty rendering is canonical and any later mismatch aborts the fast path.
@@ -101,7 +105,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 {
                     var keySignature = string.Join("|", keyColumns
                         .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
-                        .Select(c => $"{c}={System.Convert.ToString(values.TryGetValue(c, out var v) ? v : null, System.Globalization.CultureInfo.InvariantCulture)}"));
+                        .Select(c => $"{c}={BatchDuplicateNormalizer.KeyIdentity(dialect, table, c, values.TryGetValue(c, out var v) ? v : null)}"));
                     if (!seenKeys.Add(keySignature))
                     {
                         logger?.LogDebug("Bulk batch fast path skipped for {Table}: duplicate update/delete key in one batch", table.DbName);
@@ -121,18 +125,18 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 }
 
                 var signature = $"{op}|{string.Join(",", setColumns)}|{string.Join(",", keyColumns)}|{filter.WhereSuffix}";
-                if (!groups.TryGetValue(signature, out var group))
+                if (signature != runSignature)
                 {
                     if (groups.Count == MaxOpGroups)
                     {
-                        logger?.LogDebug("Bulk batch fast path skipped for {Table}: more than {Max} column-signature groups", table.DbName, MaxOpGroups);
+                        logger?.LogDebug("Bulk batch fast path skipped for {Table}: more than {Max} runs of one verb and column signature", table.DbName, MaxOpGroups);
                         return null;
                     }
-                    group = (new BulkOpGroup(op, groups.Count, setColumns, keyColumns, filter.WhereSuffix, filter.Parameters), groups.Count);
-                    groups[signature] = group;
+                    groups.Add(new BulkOpGroup(op, groups.Count, setColumns, keyColumns, filter.WhereSuffix, filter.Parameters));
+                    runSignature = signature;
                 }
 
-                rows.Add(new BulkStagedAction(seq, op, group.Id, conflict, values));
+                rows.Add(new BulkStagedAction(seq, op, groups.Count - 1, conflict, values));
                 outcomes.Add(new PendingOutcome(seq, mutationType, observerData));
                 seq++;
             }
@@ -146,8 +150,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 .ToList();
 
             var plan = new BulkBatchPlan(
-                table.TableSchema, table.DbName, stagingColumns, rows,
-                groups.Values.OrderBy(g => g.Id).Select(g => g.Group).ToList());
+                table.TableSchema, table.DbName, stagingColumns, rows, groups);
             return new BuiltBulkBatch(plan, outcomes);
         }
 

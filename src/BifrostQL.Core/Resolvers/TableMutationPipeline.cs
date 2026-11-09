@@ -314,7 +314,7 @@ namespace BifrostQL.Core.Resolvers
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
                 var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData.Keys, additionalFilter.WhereSuffix);
+                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, propertyInfo.keyData, additionalFilter.WhereSuffix);
                 var hookData = new Dictionary<string, object?>(updatedData, StringComparer.OrdinalIgnoreCase);
                 foreach (var key in propertyInfo.keyData)
                     hookData[key.Key] = key.Value;
@@ -482,7 +482,7 @@ namespace BifrostQL.Core.Resolvers
                     "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
+            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData, additionalFilter.WhereSuffix);
             var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect);
             ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, MutationType.Delete);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
@@ -511,7 +511,7 @@ namespace BifrostQL.Core.Resolvers
                     "A delete requires a primary key or at least one predicate column to scope the affected rows.");
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
+            var sql = MutationCommandExecutor.BuildDeleteSql(dialect, table, tableRef, deleteData, additionalFilter.WhereSuffix);
             var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))

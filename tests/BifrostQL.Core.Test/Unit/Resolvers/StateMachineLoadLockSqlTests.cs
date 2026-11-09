@@ -36,7 +36,7 @@ public sealed class StateMachineLoadLockSqlTests
     }
 
     private static string Sql(ISqlDialect dialect, IDbTable table, string scope = "") =>
-        MutationCommandExecutor.BuildStateMachineLoadSql(dialect, table, "status", new[] { "id" }, scope);
+        MutationCommandExecutor.BuildStateMachineLoadSql(dialect, table, "status", new Dictionary<string, object?> { ["id"] = 1 }, scope);
 
     [Fact]
     public void SqlServer_TakesUpdlockTableHint_AfterTheFromTable()

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
 import { useBifrostMutation } from './use-bifrost-mutation';
+import { BifrostGraphQLError } from '../utils/graphql-client';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
@@ -158,6 +159,36 @@ describe('useBifrostMutation', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     expect(result.current.error?.message).toContain('500');
+  });
+
+  it('gives the mutation result and onError the server error code', async () => {
+    globalThis.fetch = createFetchMock({
+      data: { users: null },
+      errors: [{ message: 'Taken', extensions: { code: 'CONFLICT' } }],
+    });
+    const onError = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useBifrostMutation(
+          'mutation Insert($detail: Insert_users) { users(insert: $detail) }',
+          { onError },
+        ),
+      { wrapper: createWrapper() },
+    );
+
+    act(() => {
+      result.current.mutate({ detail: { name: 'a' } });
+    });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+    expect(result.current.error).toBeInstanceOf(BifrostGraphQLError);
+    expect((result.current.error as BifrostGraphQLError).code).toBe('CONFLICT');
+    expect((onError.mock.calls[0][0] as BifrostGraphQLError).code).toBe(
+      'CONFLICT',
+    );
   });
 
   it('throws on GraphQL errors in response', async () => {

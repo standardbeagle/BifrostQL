@@ -231,6 +231,25 @@ public static class TableFilterFactory
     }
 
     /// <summary>
+    /// Creates a less-than filter: column &lt; value
+    /// </summary>
+    public static TableFilter LessThan(IDbTable table, string columnName, object value)
+    {
+        return new TableFilter
+        {
+            Table = table,
+            ColumnName = columnName,
+            FilterType = FilterType.Join,
+            Next = new TableFilter
+            {
+                RelationName = FilterOperators.Lt,
+                Value = value,
+                FilterType = FilterType.Relation,
+            }
+        };
+    }
+
+    /// <summary>
     /// Creates an IN filter: column IN (value1, value2, ...)
     /// </summary>
     public static TableFilter In(IDbTable table, string columnName, IEnumerable<object?> values)

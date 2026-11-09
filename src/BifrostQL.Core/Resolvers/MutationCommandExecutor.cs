@@ -68,11 +68,12 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Renders the AND-joined <c>"col"=@col</c> equality predicate shared by every
         /// UPDATE/DELETE WHERE clause (and the state-machine load). Each column name is
-        /// escaped as an identifier and sanitized for its parameter placeholder, matching
-        /// the placeholders <see cref="AddParameters"/> binds.
+        /// escaped as an identifier, and takes the values it will be bound to because the
+        /// value decides the placeholder: see <see cref="DbParameterBinder.ComparisonPlaceholder"/>.
+        /// The placeholder names match the ones <see cref="AddParameters"/> binds.
         /// </summary>
-        public static string BuildKeyPredicate(ISqlDialect dialect, IEnumerable<string> columns)
-            => string.Join(" AND ", columns.Select(c => $"{dialect.EscapeIdentifier(c)}=@{SqlParameterNames.Sanitize(c)}"));
+        public static string BuildKeyPredicate(ISqlDialect dialect, IDbTable table, IReadOnlyDictionary<string, object?> keyValues)
+            => string.Join(" AND ", keyValues.Select(kv => DbParameterBinder.KeyComparison(dialect, table, kv.Key, kv.Value)));
 
         /// <summary>
         /// The one zero-row policy for every keyed write. Two inputs decide it:
@@ -124,10 +125,10 @@ namespace BifrostQL.Core.Resolvers
         /// AdditionalFilter (empty when none).
         /// </summary>
         public static string BuildUpdateSql(ISqlDialect dialect, IDbTable table, string tableRef,
-            IEnumerable<string> setColumns, IEnumerable<string> keyColumns, string whereSuffix)
+            IEnumerable<string> setColumns, IReadOnlyDictionary<string, object?> keyValues, string whereSuffix)
         {
             var setClause = string.Join(",", setColumns.Select(c => SetAssignment(dialect, table, c)));
-            var whereClause = BuildKeyPredicate(dialect, keyColumns);
+            var whereClause = BuildKeyPredicate(dialect, table, keyValues);
             return $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{whereSuffix};";
         }
 
@@ -149,12 +150,12 @@ namespace BifrostQL.Core.Resolvers
         /// the single-row and batch hard-delete paths. <paramref name="whereSuffix"/>
         /// carries a transformer's ANDed AdditionalFilter (empty when none).
         /// </summary>
-        public static string BuildDeleteSql(ISqlDialect dialect, string tableRef,
-            IEnumerable<string> whereColumns, string whereSuffix)
-            => $"DELETE FROM {tableRef} WHERE {BuildKeyPredicate(dialect, whereColumns)}{whereSuffix};";
+        public static string BuildDeleteSql(ISqlDialect dialect, IDbTable table, string tableRef,
+            IReadOnlyDictionary<string, object?> keyValues, string whereSuffix)
+            => $"DELETE FROM {tableRef} WHERE {BuildKeyPredicate(dialect, table, keyValues)}{whereSuffix};";
 
-        public static string BuildExistsSql(ISqlDialect dialect, string tableRef, IEnumerable<string> keyColumns)
-            => $"SELECT 1 FROM {tableRef} WHERE {BuildKeyPredicate(dialect, keyColumns)};";
+        public static string BuildExistsSql(ISqlDialect dialect, IDbTable table, string tableRef, IReadOnlyDictionary<string, object?> keyValues)
+            => $"SELECT 1 FROM {tableRef} WHERE {BuildKeyPredicate(dialect, table, keyValues)};";
 
         public static string BuildFilteredCountSql(string tableRef, string whereSql)
             => $"SELECT COUNT(*) FROM {tableRef} WHERE {whereSql};";
@@ -224,7 +225,7 @@ namespace BifrostQL.Core.Resolvers
 
             var scope = await RenderRowScopeAsync(table, keyData, transformers, scopeContext, dialect);
 
-            var sql = BuildStateMachineLoadSql(dialect, table, definition.StateColumn, keyData.Keys, scope.WhereSuffix);
+            var sql = BuildStateMachineLoadSql(dialect, table, definition.StateColumn, keyData, scope.WhereSuffix);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
@@ -246,11 +247,11 @@ namespace BifrostQL.Core.Resolvers
         /// key predicate ahead of the locking clause.
         /// </summary>
         public static string BuildStateMachineLoadSql(
-            ISqlDialect dialect, IDbTable table, string stateColumn, IEnumerable<string> keyColumns, string scopeWhereSuffix)
+            ISqlDialect dialect, IDbTable table, string stateColumn, IReadOnlyDictionary<string, object?> keyValues, string scopeWhereSuffix)
         {
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             return $"SELECT {dialect.EscapeIdentifier(stateColumn)} FROM {tableRef}{dialect.UpdateLockTableHint} " +
-                   $"WHERE {BuildKeyPredicate(dialect, keyColumns)}{scopeWhereSuffix}{dialect.UpdateLockClause};";
+                   $"WHERE {BuildKeyPredicate(dialect, table, keyValues)}{scopeWhereSuffix}{dialect.UpdateLockClause};";
         }
 
         /// <summary>
@@ -318,17 +319,20 @@ namespace BifrostQL.Core.Resolvers
             IReadOnlyCollection<string> columns,
             Dictionary<string, object?> keyData,
             bool forUpdate = false,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            TableFilter? rowScope = null)
         {
             if (columns.Count == 0 || keyData.Count == 0)
                 return null;
 
-            var sql = BuildSelectRowByKeySql(dialect, table, columns, keyData.Keys, forUpdate);
+            var scope = RenderAdditionalFilter(rowScope, dialect);
+            var sql = BuildSelectRowByKeySql(dialect, table, columns, keyData, forUpdate, scope.WhereSuffix);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, keyData);
+            DbParameterBinder.AddExtraParameters(cmd, scope.Parameters);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
@@ -350,19 +354,21 @@ namespace BifrostQL.Core.Resolvers
         /// <c>WITH (UPDLOCK)</c>) and the locking clause after the WHERE clause
         /// (Postgres/MySQL <c>FOR UPDATE</c>); SQLite emits neither (whole-database write
         /// locking already serializes writers). Without it the statement is a plain SELECT.
+        /// <paramref name="rowScopeWhereSuffix"/> narrows the row ahead of the locking clause.
         /// </summary>
         public static string BuildSelectRowByKeySql(
             ISqlDialect dialect,
             IDbTable table,
             IReadOnlyCollection<string> columns,
-            IEnumerable<string> keyColumns,
-            bool forUpdate)
+            IReadOnlyDictionary<string, object?> keyValues,
+            bool forUpdate,
+            string rowScopeWhereSuffix = "")
         {
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
             var fromHint = forUpdate ? dialect.UpdateLockTableHint : "";
             var lockClause = forUpdate ? dialect.UpdateLockClause : "";
-            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, keyColumns)}{lockClause};";
+            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, table, keyValues)}{rowScopeWhereSuffix}{lockClause};";
         }
 
         /// <summary>

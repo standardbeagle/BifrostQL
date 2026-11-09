@@ -164,6 +164,23 @@ describe('useBifrost', () => {
     expect(result.current.error?.message).toContain('500');
   });
 
+  it('gives the query result the server error code', async () => {
+    globalThis.fetch = createFetchMock({
+      data: null,
+      errors: [{ message: 'No', extensions: { code: 'ACCESS_DENIED' } }],
+    });
+
+    const { result } = renderHook(
+      () => useBifrost('{ items { id } }', undefined, { retry: false }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+    expect(result.current.error).toMatchObject({ code: 'ACCESS_DENIED' });
+  });
+
   it('throws on GraphQL errors in response', async () => {
     globalThis.fetch = createFetchMock({
       data: null,

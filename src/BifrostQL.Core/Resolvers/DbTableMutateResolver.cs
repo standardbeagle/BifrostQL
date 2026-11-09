@@ -1,3 +1,4 @@
+using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Modules;
@@ -161,16 +162,23 @@ namespace BifrostQL.Core.Resolvers
                 return false;
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var whereClause = MutationCommandExecutor.BuildKeyPredicate(dialect, keyData.Keys);
+            var whereClause = MutationCommandExecutor.BuildKeyPredicate(dialect, table, keyData);
             var sql = $"SELECT 1 FROM {tableRef} WHERE {whereClause};";
 
-            await using var conn = connFactory.GetConnection();
-            await conn.OpenAsync(cancellationToken);
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            AddParameters(cmd, keyData);
-            var result = await cmd.ExecuteScalarAsync(cancellationToken);
-            return result != null && result != DBNull.Value;
+            try
+            {
+                await using var conn = connFactory.GetConnection();
+                await conn.OpenAsync(cancellationToken);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = sql;
+                AddParameters(cmd, keyData);
+                var result = await cmd.ExecuteScalarAsync(cancellationToken);
+                return result != null && result != DBNull.Value;
+            }
+            catch (DbException ex)
+            {
+                throw BifrostExecutionError.FromDatabaseException(ex);
+            }
         }
 
         private async Task<object?> DeleteObject(IBifrostFieldContext context,

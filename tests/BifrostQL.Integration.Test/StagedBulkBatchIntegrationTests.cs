@@ -173,6 +173,39 @@ public abstract class StagedBulkBatchIntegrationTestBase : IAsyncLifetime
         fastState.Should().NotContain(r => r.StartsWith("3|"));
     }
 
+    // ---- parity: a later row of a verb depends on another verb's row between them ----
+
+    private const string InsertDeleteInsertMutation = """
+        mutation {
+            orders_batch(actions: [
+                { insert: { id: 10, tenant_id: 1, status: "a", total: 1.5 } },
+                { delete: { id: 3 } },
+                { insert: { id: 3, tenant_id: 1, status: "reused", total: 2.5 } }
+            ])
+        }
+        """;
+
+    [SkippableFact]
+    public async Task InsertDeleteInsert_ReusingTheFreedKey_ProducesIdenticalOutcomes()
+    {
+        Skip.If(!Available, "test database environment variable not set");
+
+        await SeedOrdersAsync();
+        var fastResult = await ExecuteAsync(await LoadModelAsync(bulkThreshold: "1"), InsertDeleteInsertMutation);
+        var fastTotal = BatchTotal(fastResult, "orders_batch");
+        var fastState = await DumpAsync("orders");
+
+        await SeedOrdersAsync();
+        var slowResult = await ExecuteAsync(await LoadModelAsync(bulkThreshold: "0"), InsertDeleteInsertMutation);
+        var slowTotal = BatchTotal(slowResult, "orders_batch");
+        var slowState = await DumpAsync("orders");
+
+        fastTotal.Should().Be(slowTotal);
+        fastTotal.Should().Be(3);
+        fastState.Should().Equal(slowState);
+        fastState.Should().Contain(r => r.StartsWith("3|") && r.Contains("reused"));
+    }
+
     // ---- parity: duplicate keys collapse deterministically BEFORE the database ----
 
     [SkippableFact]

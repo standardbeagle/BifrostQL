@@ -215,6 +215,14 @@ public interface ISqlDialect
         => CastParameterReference($"{ParameterPrefix}{SqlParameterNames.Sanitize(columnName)}", dataType);
 
     /// <summary>
+    /// Whether this engine stores a column of <paramref name="dataType"/> as a uuid value, so two
+    /// spellings of one uuid address one row. The declared name alone does not say so: SQLite keeps
+    /// a column declared <c>UUID</c> as text, where they are two rows. The default is false.
+    /// </summary>
+    /// <param name="dataType">The column's SQL data type, or null when unknown.</param>
+    bool ComparesAsUuid(string? dataType) => false;
+
+    /// <summary>
     /// Casts an already-rendered bound-parameter reference to a column's SQL type when the
     /// dialect's driver would otherwise bind a string value as text — the same problem
     /// <see cref="AssignmentPlaceholder"/> solves for writes, applied to any context that

@@ -301,7 +301,9 @@ namespace BifrostQL.Mcp.Test
                 TransportMode = HttpTransportMode.StreamableHttp,
                 AdditionalHeaders = headers,
             }, httpClient);
-            return await McpClient.CreateAsync(transport);
+            // No discovery probe timer: TestServer aborts the open response when it fires, and the
+            // client reports that as a failure instead of falling back. Kestrel falls back.
+            return await McpClient.CreateAsync(transport, new McpClientOptions { DiscoverProbeTimeout = Timeout.InfiniteTimeSpan });
         }
 
         private async Task<System.Text.Json.JsonElement> HttpQueryOrdersAsync(string authorization)

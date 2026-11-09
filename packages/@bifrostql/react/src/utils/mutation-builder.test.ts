@@ -4,6 +4,7 @@ import {
   buildInsertMutation,
   buildUpdateMutation,
   buildDeleteMutation,
+  buildBatchMutation,
 } from './mutation-builder';
 
 describe('buildMutation', () => {
@@ -65,5 +66,17 @@ describe('buildDeleteMutation', () => {
     expect(result).toContain('Delete_sessions');
     expect(result).toContain('sessions(delete: $detail)');
     expect(result).toContain('mutation Delete');
+  });
+});
+
+describe('buildBatchMutation', () => {
+  it('targets the table batch field with the server action input type', () => {
+    expect(buildBatchMutation('users')).toBe(
+      'mutation Batch($actions: [batch_users!]!) { users_batch(actions: $actions) }',
+    );
+  });
+
+  it('refuses a table name that is not a GraphQL name', () => {
+    expect(() => buildBatchMutation('users) { evil')).toThrow();
   });
 });

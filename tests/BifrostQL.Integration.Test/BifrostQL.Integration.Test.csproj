@@ -60,6 +60,9 @@
 		<!-- Sample declarative MCP tool document loaded at startup by the DSL-loading
 		     integration test; ships as a living authoring example. -->
 		<None Include="Infrastructure\sample-mcp-tools.json" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="..\..\packages\@bifrostql\react\src\hooks\__fixtures__\batch-wire-contract.json"
+		      Link="Fixtures\batch-wire-contract.json"
+		      CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 </Project>

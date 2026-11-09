@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useContext, useCallback } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
+import {
+  BifrostGraphQLError,
+  type GraphQLErrorEntry,
+} from '../utils/graphql-client';
 
 /**
  * The current state of a subscription connection.
@@ -124,10 +128,12 @@ function createWebSocketConnection<T>(
         break;
 
       case 'error': {
-        const errors = msg.payload as Array<{ message: string }> | undefined;
-        const message =
-          errors?.map((e) => e.message).join(', ') ?? 'Subscription error';
-        callbacks.onError(new Error(message));
+        const errors = msg.payload as GraphQLErrorEntry[] | undefined;
+        callbacks.onError(
+          errors
+            ? new BifrostGraphQLError(errors)
+            : new Error('Subscription error'),
+        );
         break;
       }
 
@@ -197,7 +203,7 @@ function createSSEConnection<T>(
   };
 
   eventSource.onmessage = (event: MessageEvent) => {
-    let parsed: { data?: T; errors?: Array<{ message: string }> };
+    let parsed: { data?: T; errors?: GraphQLErrorEntry[] };
     try {
       parsed = JSON.parse(event.data as string);
     } catch {
@@ -205,9 +211,7 @@ function createSSEConnection<T>(
     }
 
     if (parsed.errors) {
-      callbacks.onError(
-        new Error(parsed.errors.map((e) => e.message).join(', ')),
-      );
+      callbacks.onError(new BifrostGraphQLError(parsed.errors));
       return;
     }
 

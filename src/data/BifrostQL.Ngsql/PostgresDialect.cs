@@ -52,6 +52,9 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     }
 
     /// <inheritdoc />
+    public override bool ComparesAsUuid(string? dataType) => StringNormalizer.NormalizeType(dataType) is "uuid";
+
+    /// <inheritdoc />
     /// <remarks>
     /// Npgsql binds a CLR string parameter as an explicit <c>text</c> type. Postgres
     /// applies a cast to an <em>unknown</em>-typed literal but NOT to a text-typed bind
@@ -61,6 +64,10 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// Casting the reference to the column's type (<c>$1::date</c>) restores the literal-like
     /// behavior. Drives both <see cref="ISqlDialect.AssignmentPlaceholder"/> (writes) and
     /// WHERE-clause filter parameters (reads).
+    ///
+    /// A comparison asks only for a value that binds as text: casting a number would round it
+    /// into the column's type, so <c>$1::integer</c> with 2.4 finds row 2.
+    /// <c>DbParameterBinder.ComparisonPlaceholder</c> holds that rule.
     ///
     /// Uses an allow-list of types that (a) genuinely need the cast — Postgres won't
     /// implicitly compare/assign them against a text parameter — and (b) name a real

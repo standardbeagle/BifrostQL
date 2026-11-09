@@ -66,7 +66,7 @@ The three series:
 
 ## When the fast path runs
 
-The fast path engages when **all** of these hold; anything else falls back to the per-row loop (identical semantics, just slower — falling back is normal operation):
+The fast path engages when **all** of these hold; anything else falls back to the per-row loop (the same semantics, apart from the [exception below](#how-the-fast-path-keeps-document-order), just slower — falling back is normal operation):
 
 - the provider has a bulk executor (SQL Server, PostgreSQL, MySQL — SQLite deliberately stays per-row: a single in-process writer has no round trips to save),
 - the batch has at least `bulk-batch-threshold` actions (default 50; `0` disables per table) and at most `batch-max-size`,
@@ -74,7 +74,19 @@ The fast path engages when **all** of these hold; anything else falls back to th
 - no upsert actions (the upsert existence probe is per-row by design),
 - the table has no state machine,
 - every row's transformer filter (tenant scope, policy row scope, soft-delete guard) renders identically — true for normal tenant/policy filters; per-row-varying filters (e.g. optimistic-concurrency tokens at *different* versions in one batch) fall back,
-- duplicate update/delete keys never reach either path raw: `batch-duplicate-policy` resolves them deterministically in Core before any SQL — `last-wins` (default) collapses them to their sequential net effect (update+update merges per column, a delete absorbs updates on its key; collapsed intermediates never execute, so hooks/history never see them), `reject` refuses the batch. A collision involving an upsert is always refused (its net effect depends on row existence).
+- duplicate update/delete keys never reach either path raw: `batch-duplicate-policy` resolves them deterministically in Core before any SQL — `last-wins` (default) collapses them to their sequential net effect (update+update merges per column, a delete absorbs updates on its key; collapsed intermediates never execute, so hooks/history never see them), `reject` refuses the batch. A collision involving an upsert is always refused (its net effect depends on row existence). On a PostgreSQL `uuid` or SQL Server `uniqueidentifier` column, two spellings of one uuid (case, hyphens, braces) are one key on both paths, by `GeneratedBatch_TreatsTwoSpellingsOfAUuidAsOneRow_OnBothPaths`; that includes a hyphenless spelling SQL Server itself refuses. SQLite keeps a column declared `UUID` as text and MySQL has no uuid type, so each spelling is its own key there, by `SqliteDeclaredUuidColumnTests`. Every other key compares as text, so a `citext` or case-insensitive-collation key differing only in case, or a numeric key written `1.0` and `1.00`, is not seen as a duplicate: on the fast path two actions reach one row, the database picks the winner and the count reads 2.
+- the document has at most 8 runs (see below).
+
+## How the fast path keeps document order
+
+The fast path merges only **adjacent** rows with the same verb, the same columns and the same filter. Each such run is one set-based statement, and the runs apply in document order, so `[insert x, delete y, insert y]` is three statements and gives the per-row result. `ContractDocument_MatchesThePerRowOutcome`, `InsertDeleteInsert_AppliesTheLaterInsertAfterTheDelete` and `UpdateThatFreesAValue_ThenInsertThatReusesIt_MatchesThePerRowOutcome` compare both paths on PostgreSQL, and `InsertDeleteInsert_ReusingTheFreedKey_ProducesIdenticalOutcomes` does on PostgreSQL, MySQL and SQL Server.
+
+**What this costs.** One statement per run, so the fast path pays off when runs are long. 10,000 rows of one verb and one column set are one statement. A batch that changes verb or column set on every row is one statement per row, and past 8 runs the whole batch takes the per-row loop, so it gets no speedup. That includes an insert-only batch that alternates an optional column. Send rows with the same columns next to each other if the batch has a choice.
+
+**The exception.** Constraints are checked per statement, and a run is one statement on the fast path and one per row on the per-row path. Inside a run the two can part:
+
+- A foreign key is checked when the statement ends. Rows that satisfy it only together, such as `[insert child, insert parent]` or `[delete parent, delete child]` on a self-referencing table, apply on the fast path and fail with `DATABASE_ERROR` per row. `RowsThatSatisfyAForeignKeyOnlyTogether_PassAsOneRun_ButNotRowByRow` pins this on PostgreSQL. The key holds afterwards either way. Nothing tells a caller which path ran, so a document that relies on this works only above the threshold.
+- A non-deferrable unique index is checked per row, in the order the query plan visits them, which the statement does not fix to document order. Update chains that hand a value down (`[a -> z, b -> a]`, and the same in reverse) matched the per-row result in every case we measured, up to 5,000 rows on PostgreSQL, but no test can pin a planner's choice. A document that depends on the order inside one update run should set `bulk-batch-threshold: 0` on that table.
 
 ## Streaming staging loads
 
@@ -85,6 +97,8 @@ The staging load itself streams where the engine allows, and falls back to chunk
 | SQL Server | `SqlBulkCopy` (TDS bulk load) | none — always streams |
 | PostgreSQL | binary `COPY` | none — always streams; falls back if a column type is unmappable |
 | MySQL | `MySqlBulkCopy` (`LOAD DATA LOCAL INFILE`) | `AllowLoadLocalInfile=true` in the connection string **and** `local_infile=1` on the server; otherwise chunked INSERTs (still fast) |
+
+On PostgreSQL, binary `COPY` refuses text for most non-text columns, and the chunked load then fails too, so the batch takes the per-row loop with no error and no sign in the reply. Measured with text values, as GraphQL sends them, on `date`, `timestamp`, `timestamptz`, `time`, `interval`, `inet`, `cidr`, `macaddr`, `bytea` and `money`. Canonical `uuid` text is converted and stays on the fast path, as `GeneratedBatch_WithTextKeys_StaysOneStatementPerRun` pins.
 
 ## Tuning guidance
 

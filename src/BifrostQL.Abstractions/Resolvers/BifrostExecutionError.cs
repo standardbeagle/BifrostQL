@@ -1,4 +1,5 @@
 using System;
+using System.Data.Common;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -41,6 +42,14 @@ namespace BifrostQL.Core.Resolvers
         /// failures, which must propagate rather than be swallowed as "no match".
         /// </summary>
         public const string AccessDeniedCode = "ACCESS_DENIED";
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> marking a value the database could not read as its column's
+        /// type: a malformed uuid, a bad date, a number out of range. The caller can fix it, so
+        /// it is not a <c>DATABASE_ERROR</c>. It is the code GraphQL.NET already answers with when
+        /// a variable fails to coerce, so a client handles one word for both.
+        /// </summary>
+        public const string InvalidValueCode = "INVALID_VALUE";
         
         /// <summary>
         /// Suggested actions the user can take to resolve this error.
@@ -96,6 +105,10 @@ namespace BifrostQL.Core.Resolvers
         /// cause; downstream classification keys off <see cref="ErrorCode"/>.</summary>
         public const string ConflictMessage = "A conflicting record already exists.";
 
+        /// <summary>The safe message for <see cref="InvalidValueCode"/>. The driver's own text echoes
+        /// the value and the column's type, so it is not forwarded.</summary>
+        public const string InvalidValueMessage = "A value could not be read as its column's type.";
+
         /// <summary>
         /// Walks the exception chain for the fingerprints of a unique/duplicate-key
         /// violation. Keys off the distinctive PHRASES every supported driver puts in
@@ -129,6 +142,22 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// True when the exception chain holds a driver error whose SQLSTATE says a value could not
+        /// be read as its column's type (class 22, the data exceptions a bad input raises). Read from
+        /// the SQLSTATE rather than the text, which echoes the value. SQL Server reports no SQLSTATE,
+        /// so its conversion errors stay <c>DATABASE_ERROR</c>.
+        /// </summary>
+        public static bool IsInvalidValue(Exception? ex)
+        {
+            for (var current = ex; current != null; current = current.InnerException)
+            {
+                if (current is DbException { SqlState: "22P02" or "22007" or "22008" or "22003" })
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Wraps an exception raised while executing SQL for client return.
         /// Intentional <see cref="BifrostExecutionError"/>s (validation, tenant,
         /// policy) carry safe, authored messages and pass through unchanged.
@@ -149,6 +178,9 @@ namespace BifrostQL.Core.Resolvers
             // without string-matching raw driver text.
             if (IsUniqueViolation(ex))
                 return new BifrostExecutionError(ConflictMessage, ex) { ErrorCode = "CONFLICT" };
+
+            if (IsInvalidValue(ex))
+                return new BifrostExecutionError(InvalidValueMessage, ex) { ErrorCode = InvalidValueCode };
 
             var expose = Environment.GetEnvironmentVariable(ExposeDbErrorsEnvVar);
             var reveal = string.Equals(expose, "1", StringComparison.Ordinal)

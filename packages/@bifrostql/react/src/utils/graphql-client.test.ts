@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeGraphQL, BifrostAuthError } from './graphql-client';
+import {
+  executeGraphQL,
+  BifrostAuthError,
+  BifrostGraphQLError,
+} from './graphql-client';
+import wireContract from './__fixtures__/graphql-error-wire-contract.json';
 
 function createFetchMock(response: unknown, ok = true, status = 200) {
   return vi.fn().mockResolvedValue({
@@ -160,6 +165,213 @@ describe('executeGraphQL', () => {
     await expect(
       executeGraphQL('http://localhost/graphql', {}, '{ missing { id } }'),
     ).rejects.toThrow('Table does not exist');
+  });
+
+  describe('the server error code', () => {
+    const refusal = async (errors: unknown[]) => {
+      globalThis.fetch = createFetchMock({ data: { items: null }, errors });
+      return executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ items { id } }',
+      ).catch((error: unknown) => error);
+    };
+
+    it('carries extensions.code and every error the server sent', async () => {
+      const errors = [
+        {
+          message: 'Duplicate key',
+          locations: [{ line: 1, column: 12 }],
+          path: ['items_batch'],
+          extensions: {
+            code: 'CONFLICT',
+            codes: ['CONFLICT'],
+            number: '23505',
+          },
+        },
+        {
+          message: 'Another',
+          path: ['other'],
+          extensions: { code: 'ACCESS_DENIED' },
+        },
+      ];
+
+      const error = await refusal(errors);
+
+      expect(error).toBeInstanceOf(BifrostGraphQLError);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({
+        name: 'BifrostGraphQLError',
+        message: 'Duplicate key, Another',
+        code: 'CONFLICT',
+        errors,
+      });
+    });
+
+    it('takes the code from the first error that has one', async () => {
+      const error = await refusal([
+        { message: 'No code here' },
+        { message: 'Denied', extensions: { code: 'ACCESS_DENIED' } },
+      ]);
+
+      expect((error as BifrostGraphQLError).code).toBe('ACCESS_DENIED');
+    });
+
+    it('leaves code undefined when no error has one', async () => {
+      const error = await refusal([{ message: 'Bare' }]);
+
+      expect(error).toBeInstanceOf(BifrostGraphQLError);
+      expect((error as BifrostGraphQLError).code).toBeUndefined();
+      expect((error as BifrostGraphQLError).errors).toEqual([
+        { message: 'Bare' },
+      ]);
+    });
+
+    describe('deciding whether an error is an auth failure', () => {
+      function expired(reply: unknown) {
+        globalThis.fetch = createFetchMock(reply);
+        const refreshToken = vi.fn();
+        const onSessionExpired = vi.fn();
+        const settled = executeGraphQL(
+          'http://localhost/graphql',
+          {},
+          '{ users { id } }',
+          undefined,
+          undefined,
+          undefined,
+          { refreshToken, onSessionExpired },
+        ).catch((error: unknown) => error);
+        return { settled, refreshToken, onSessionExpired };
+      }
+
+      it('reads a coded refusal that says unauthorized as the refusal it is', async () => {
+        const { settled, refreshToken, onSessionExpired } = expired(
+          wireContract.codedRefusal.reply,
+        );
+
+        const error = await settled;
+
+        expect(error).toBeInstanceOf(BifrostGraphQLError);
+        expect((error as BifrostGraphQLError).code).toBe('NOT_TIMER_OWNER');
+        expect((error as Error).message).toContain('unauthorized');
+        expect(refreshToken).not.toHaveBeenCalled();
+        expect(onSessionExpired).not.toHaveBeenCalled();
+      });
+
+      it("reads the engine's default code the same way", async () => {
+        const { settled, refreshToken } = expired(
+          wireContract.uncodedRefusal.reply,
+        );
+
+        const error = await settled;
+
+        expect(error).toBeInstanceOf(BifrostGraphQLError);
+        expect((error as BifrostGraphQLError).code).toBe(
+          'BIFROST_EXECUTION_ERROR',
+        );
+        expect(refreshToken).not.toHaveBeenCalled();
+      });
+
+      it('takes the session flow on an auth code, whatever the message says', async () => {
+        const { settled, refreshToken } = expired(wireContract.authCode.reply);
+
+        await settled;
+
+        expect(refreshToken).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(['UNAUTHENTICATED', 'UNAUTHORIZED'])(
+        'surfaces %s as a BifrostAuthError with no hooks set',
+        async (code) => {
+          const error = await refusal([
+            { message: 'Sign in again.', extensions: { code } },
+          ]);
+
+          expect(error).toBeInstanceOf(BifrostAuthError);
+          expect((error as Error).message).toBe('Sign in again.');
+        },
+      );
+
+      it.each(['ACCESS_DENIED', 'FORBIDDEN', 'CONFLICT'])(
+        'does not take the session flow on %s, even when it says unauthenticated',
+        async (code) => {
+          const error = await refusal([
+            { message: 'Unauthenticated.', extensions: { code } },
+          ]);
+
+          expect(error).toBeInstanceOf(BifrostGraphQLError);
+          expect((error as BifrostGraphQLError).code).toBe(code);
+        },
+      );
+
+      it('still reads an error with no code by its message', async () => {
+        const error = await refusal([
+          { message: 'Unauthorized: token expired' },
+        ]);
+
+        expect(error).toBeInstanceOf(BifrostAuthError);
+      });
+
+      it('takes the session flow when any one error of several is an auth failure', async () => {
+        const error = await refusal([
+          { message: 'Denied', extensions: { code: 'ACCESS_DENIED' } },
+          {
+            message: 'Sign in again.',
+            extensions: { code: 'UNAUTHENTICATED' },
+          },
+        ]);
+
+        expect(error).toBeInstanceOf(BifrostAuthError);
+      });
+    });
+
+    it('carries the code from the retry after a refreshed token', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () =>
+            Promise.resolve({ errors: [{ message: 'Unauthorized' }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: () =>
+            Promise.resolve({
+              errors: [
+                { message: 'No', extensions: { code: 'ACCESS_DENIED' } },
+              ],
+            }),
+        });
+
+      const error = await executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ items { id } }',
+        undefined,
+        undefined,
+        undefined,
+        { refreshToken: () => 'fresh' },
+      ).catch((caught: unknown) => caught);
+
+      expect((error as BifrostGraphQLError).code).toBe('ACCESS_DENIED');
+    });
+
+    it('leaves an HTTP failure a plain Error with no code', async () => {
+      globalThis.fetch = createFetchMock({}, false, 500);
+
+      const error = await executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ items { id } }',
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(BifrostGraphQLError);
+    });
   });
 
   it('throws when response contains no data', async () => {

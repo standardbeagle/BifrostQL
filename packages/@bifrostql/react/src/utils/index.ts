@@ -3,8 +3,9 @@ export {
   executeGraphQL,
   defaultRetryDelay,
   BifrostAuthError,
+  BifrostGraphQLError,
 } from './graphql-client';
-export type { BifrostAuthHandlers } from './graphql-client';
+export type { BifrostAuthHandlers, GraphQLErrorEntry } from './graphql-client';
 export {
   buildMutation,
   buildInsertMutation,

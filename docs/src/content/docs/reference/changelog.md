@@ -7,6 +7,83 @@ Notable user-facing changes to BifrostQL. Breaking changes list the migration st
 
 ## Unreleased
 
+### Breaking — recompile server operations
+
+`BifrostOperationContext.QueryAsync` gained an optional `sort` parameter. Source still compiles, but
+the binary signature changed.
+
+**Migration:** rebuild any operation assembly. One compiled against an earlier BifrostQL fails with
+`MissingMethodException`.
+
+### Breaking — a database error ends a mutation operation
+
+A database error inside a mutation operation now ends it on every dialect, even if its code catches
+the error, and so does a write the policy or the validator refuses. The transaction rolls back, the
+client gets an error with the first failure's code, and no observer fires. On PostgreSQL a caught read failure used
+to return success while COMMIT silently rolled the writes back. A refusal that comes before any
+statement runs may still be caught, such as `LOCK_ROW_NOT_FOUND`, a read of a denied column, or a
+write to an approval-gated table.
+
+**Migration:** check a value before the statement that would fail on it, rather than catching the
+failure. See [One transaction per mutation operation](/BifrostQL/guides/server-operations/#one-transaction-per-mutation-operation).
+
+### Breaking — `@bifrostql/react`: `useBifrostBatch` and coded errors
+
+`useBifrostBatch` writes through the server's `<table>_batch` field, one transaction per document, so
+a failure rolls back that whole document. `allowPartialSuccess` is gone. `BatchResult`, `BatchError`
+and `BatchProgress` changed shape, a batch over `batch-max-size` is refused whole, and the table's
+`batch-duplicate-policy` now applies. A coded GraphQL error is judged by its `extensions.code`, not
+its message, so only `UNAUTHENTICATED` and `UNAUTHORIZED` start the session flow.
+
+**Migration:** see "Breaking changes" in `packages/@bifrostql/react/CHANGELOG.md`, which covers each
+shape. A server operation that relied on the word "unauthorized" must set
+`ErrorCode = "UNAUTHENTICATED"`.
+
+### Changed — the batch fast path keeps document order
+
+The fast path now merges only adjacent rows with the same verb, columns and filter, so
+`[insert x, delete y, insert y]` gives the per-row result where it used to fail with `CONFLICT`.
+A batch that changes verb or column set on every row loses the speedup: past 8 runs it takes the
+per-row loop. See [How the fast path keeps document order](/BifrostQL/reference/bulk-batch-performance/#how-the-fast-path-keeps-document-order),
+which also names where the two paths still differ.
+
+### Fixed — PostgreSQL `uuid` keys work as text
+
+Generated updates, deletes and upserts, and `UpdateAsync`, `DeleteAsync` and `LockRowAsync`, failed
+with `uuid = text` on a key sent as a string, which is the only way GraphQL can send one. Only a value
+that binds as text is cast; a number binds bare, so `1.5` on an integer key matches no row on a delete
+or a read, and answers `LOCK_ROW_NOT_FOUND` on a lock. An update refuses it first, with `INVALID_VALUE`.
+A double or decimal on a `real` key is narrowed, and past `real`'s precision it reaches another row:
+16777217 finds the row holding 16777216. A decimal or double on an integer key scans the whole table.
+A long, double or decimal on `money`, an int on a `boolean` and a bool on an integer column fail with
+`DATABASE_ERROR`. A text key
+on an enum or `bit` column still fails, and a `citext` key is compared as text, so a lookup in another
+case finds no row. See [Type mapping specifics](/BifrostQL/reference/dialects/#type-mapping-specifics).
+
+Two spellings PostgreSQL reads as one uuid are now one key in a batch, on both paths, and a resumed
+deferred undo finds a uuid-keyed row. A SQL Server `uniqueidentifier` is treated the same way. SQLite
+keeps a column declared `UUID` as text and MySQL has no uuid type, so each spelling stays its own key
+there.
+
+### Changed — a value its column cannot read is `INVALID_VALUE`
+
+A malformed uuid, a bad date or a number out of range used to answer `DATABASE_ERROR`. It now
+answers `INVALID_VALUE` with a generic message, from the SQLSTATE. An out-of-range key sent as text on a
+PostgreSQL integer column fails this way where it used to match no row. The validator gives the same
+code for a value it refuses because of the column's type: unreadable text, a fraction or an out-of-range
+number on an integer column, too many digits before the decimal point, a date outside the type's
+storable range, or a binary value longer than the column.
+
+**Migration:** code that matched `DATABASE_ERROR` for these conditions must match `INVALID_VALUE`.
+See [Type mapping specifics](/BifrostQL/reference/dialects/#type-mapping-specifics).
+
+### Fixed — a PostgreSQL login that does not own the schema now sees its keys
+
+Keys came from `information_schema.constraint_column_usage`, which only shows the table owner, so
+a least-privilege login built a model with no keys and its keyed writes changed nothing or failed.
+They now come from `pg_constraint`. See
+[Reading keys on PostgreSQL](/BifrostQL/reference/dialects/#reading-keys-on-postgresql).
+
 ### Breaking — `_fileUpload.accessUrl` removed; file metadata no longer stores a presigned URL
 
 Uploading a file used to compute a presigned access URL and store it in the column's

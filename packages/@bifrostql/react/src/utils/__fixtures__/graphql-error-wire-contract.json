@@ -1,0 +1,80 @@
+{
+  "codedRefusal": {
+    "request": {
+      "query": "mutation { refuse(message: \"You are unauthorized to stop this timer.\", code: \"NOT_TIMER_OWNER\") }"
+    },
+    "reply": {
+      "errors": [
+        {
+          "message": "You are unauthorized to stop this timer.",
+          "locations": [
+            {
+              "line": 1,
+              "column": 12
+            }
+          ],
+          "path": ["refuse"],
+          "extensions": {
+            "code": "NOT_TIMER_OWNER",
+            "codes": ["NOT_TIMER_OWNER", "BIFROST_EXECUTION_ERROR"]
+          }
+        }
+      ],
+      "data": {
+        "refuse": null
+      }
+    }
+  },
+  "authCode": {
+    "request": {
+      "query": "mutation { refuse(message: \"Sign in again.\", code: \"UNAUTHENTICATED\") }"
+    },
+    "reply": {
+      "errors": [
+        {
+          "message": "Sign in again.",
+          "locations": [
+            {
+              "line": 1,
+              "column": 12
+            }
+          ],
+          "path": ["refuse"],
+          "extensions": {
+            "code": "UNAUTHENTICATED",
+            "codes": ["UNAUTHENTICATED", "BIFROST_EXECUTION_ERROR"]
+          }
+        }
+      ],
+      "data": {
+        "refuse": null
+      }
+    }
+  },
+  "uncodedRefusal": {
+    "request": {
+      "query": "mutation { refuse(message: \"You are unauthorized to stop this timer.\") }"
+    },
+    "reply": {
+      "errors": [
+        {
+          "message": "You are unauthorized to stop this timer.",
+          "locations": [
+            {
+              "line": 1,
+              "column": 12
+            }
+          ],
+          "path": ["refuse"],
+          "extensions": {
+            "code": "BIFROST_EXECUTION_ERROR",
+            "codes": ["BIFROST_EXECUTION_ERROR"]
+          }
+        }
+      ],
+      "data": {
+        "refuse": null
+      }
+    }
+  }
+}

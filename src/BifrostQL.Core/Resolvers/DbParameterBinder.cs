@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Numerics;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -30,6 +31,36 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public static string ValuePlaceholder(ISqlDialect dialect, IDbTable table, string column)
             => dialect.AssignmentPlaceholder(column, ColumnType(table, column));
+
+        /// <summary>
+        /// Renders the reference for a parameter compared to a column. Only a value that binds
+        /// as text takes the dialect's cast, because Postgres will not compare a text parameter
+        /// to a uuid or integer column. Anything else already has a type the database compares
+        /// honestly, and a cast would change the question: <c>$1::integer</c> turns 2.4 into
+        /// row 2, <c>true</c> into row 1, and <c>LessThan(1.4)</c> into less than 1.
+        ///
+        /// <para>One other case keeps the cast: a double or decimal against a single-precision
+        /// column. Postgres would widen the column to double, where the stored 1.1f is
+        /// 1.10000002384, so <c>_eq: 1.1</c> could never find the value the same field reads
+        /// back. Narrowing the value compares it at the column's own precision.</para>
+        /// </summary>
+        public static string ComparisonPlaceholder(ISqlDialect dialect, string placeholder, string? dataType, object? value)
+            => BindsAsText(value) || (value is double or decimal && IsSinglePrecision(dataType))
+                ? dialect.CastParameterReference(placeholder, dataType)
+                : placeholder;
+
+        private static bool IsSinglePrecision(string? dataType)
+            => dataType is not null && StringNormalizer.NormalizeType(dataType) is "real" or "float4";
+
+        /// <summary>
+        /// Renders the <c>"col"=&lt;placeholder&gt;</c> test one key column runs against the
+        /// value <see cref="AddParameters"/> binds for it.
+        /// </summary>
+        public static string KeyComparison(ISqlDialect dialect, IDbTable table, string column, object? value)
+            => $"{dialect.EscapeIdentifier(column)}={ComparisonPlaceholder(dialect, dialect.AssignmentPlaceholder(column, null), ColumnType(table, column), value)}";
+
+        private static bool BindsAsText(object? value)
+            => ToProviderValue(value) is string or char or IEnumerable<string>;
 
         private static string? ColumnType(IDbTable table, string column)
             => table.ColumnLookup.TryGetValue(column, out var c) ? c.DataType : null;
@@ -130,8 +161,9 @@ namespace BifrostQL.Core.Resolvers
         /// column fail at the database, whatever value was supplied.
         ///
         /// A value outside <see cref="long"/> range cannot be stored in a bigint column,
-        /// so it is bound as text: it matches no row (the truthful answer) instead of
-        /// being truncated into a different, valid-looking key.
+        /// so it is bound as text: it matches no row (the truthful answer), or on PostgreSQL,
+        /// whose cast to the column's type refuses it, fails with <c>INVALID_VALUE</c>, instead
+        /// of being truncated into a different, valid-looking key.
         /// </summary>
         private static object? ToProviderValue(object? value) => value switch
         {

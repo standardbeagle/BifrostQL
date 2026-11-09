@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
 
 namespace BifrostQL.Core.Resolvers
@@ -34,8 +36,13 @@ namespace BifrostQL.Core.Resolvers
         internal const string LastWins = "last-wins";
         internal const string Reject = "reject";
 
+        // PostgreSQL's uuid_in grammar: optional braces, 32 hex digits, an optional hyphen after any four.
+        private static readonly Regex UuidSpelling = new(
+            @"^(\{)?(?:[0-9a-fA-F]{4}-?){7}[0-9a-fA-F]{4}(?(1)\})\z",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
         public static IReadOnlyList<BatchMutationPipeline.BatchAction> Normalize(
-            IDbTable table, IReadOnlyList<BatchMutationPipeline.BatchAction> actions)
+            ISqlDialect dialect, IDbTable table, IReadOnlyList<BatchMutationPipeline.BatchAction> actions)
         {
             var policy = ResolvePolicy(table);
 
@@ -47,7 +54,7 @@ namespace BifrostQL.Core.Resolvers
             for (var i = 0; i < actions.Count; i++)
             {
                 var action = actions[i];
-                var signature = Signature(table, action);
+                var signature = Signature(dialect, table, action);
                 if (signature is null || !bySignature.TryGetValue(signature, out var slot))
                 {
                     if (signature is not null)
@@ -99,7 +106,7 @@ namespace BifrostQL.Core.Resolvers
         /// part of the key, which the executors skip downstream anyway). PK identities and
         /// non-PK delete predicates use disjoint prefixes so they can never collide.
         /// </summary>
-        private static string? Signature(IDbTable table, BatchMutationPipeline.BatchAction action)
+        private static string? Signature(ISqlDialect dialect, IDbTable table, BatchMutationPipeline.BatchAction action)
         {
             if (action.Action == MutationAction.Insert)
                 return null;
@@ -113,20 +120,35 @@ namespace BifrostQL.Core.Resolvers
             if (action.Action == MutationAction.Delete && !(pkValues.Count == keyColumns.Count && action.Data.Count == keyColumns.Count))
             {
                 // Predicate delete: identity is the exact predicate, nothing else.
-                return "pred|" + Render(action.Data.ToDictionary(kv => ToDbColumnName(table, kv.Key), kv => kv.Value, StringComparer.OrdinalIgnoreCase));
+                return "pred|" + Render(dialect, table, action.Data.ToDictionary(kv => ToDbColumnName(table, kv.Key), kv => kv.Value, StringComparer.OrdinalIgnoreCase));
             }
 
             if (pkValues.Count != keyColumns.Count)
                 return null;
-            return "pk|" + Render(pkValues);
+            return "pk|" + Render(dialect, table, pkValues);
         }
 
-        private static string Render(IReadOnlyDictionary<string, object?> values)
+        /// <summary>
+        /// What one key value compares as, in both batch paths. An engine that stores the column as
+        /// a uuid compares by value, so every spelling it reads as one uuid is one identity here.
+        /// Text it would refuse keeps its own identity, so the refusal comes from the database as it
+        /// does for any bad key. An engine that stores the column as text compares the text, so each
+        /// spelling is its own row and keeps its own identity.
+        /// </summary>
+        internal static string? KeyIdentity(ISqlDialect dialect, IDbTable table, string dbColumn, object? value)
+            => value is string text
+                && table.ColumnLookup.TryGetValue(dbColumn, out var column)
+                && dialect.ComparesAsUuid(column.DataType)
+                && UuidSpelling.IsMatch(text)
+                    ? Guid.ParseExact(text.Trim('{', '}').Replace("-", ""), "N").ToString("D")
+                    : Convert.ToString(value, CultureInfo.InvariantCulture);
+
+        private static string Render(ISqlDialect dialect, IDbTable table, IReadOnlyDictionary<string, object?> values)
         {
             var sb = new StringBuilder();
             foreach (var column in values.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
                 sb.Append(column.ToLowerInvariant()).Append('=')
-                  .Append(Convert.ToString(values[column], CultureInfo.InvariantCulture)).Append('|');
+                  .Append(KeyIdentity(dialect, table, column, values[column])).Append('|');
             return sb.ToString();
         }
 

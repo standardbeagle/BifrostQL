@@ -79,7 +79,7 @@ namespace BifrostQL.Core.Resolvers
             // the set-based and per-row paths (batch-duplicate-policy: collapse to the
             // sequential net effect, or reject). The database never sees two actions for one
             // row, so engine join semantics never decide a duplicate's outcome.
-            actions = BatchDuplicateNormalizer.Normalize(table, actions);
+            actions = BatchDuplicateNormalizer.Normalize(ctx.ConnFactory.Dialect, table, actions);
 
             var ct = ctx.CancellationToken;
             var transformContext = new MutationTransformContext
@@ -443,7 +443,7 @@ namespace BifrostQL.Core.Resolvers
                 .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, keyData.Keys, additionalFilter.WhereSuffix);
+            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, standardData.Keys, keyData, additionalFilter.WhereSuffix);
             var (affected, updatePending) = await RunHookedWriteAsync(ctx, MutationType.Update, updatedData, async () =>
             {
                 await using var cmd = ctx.Conn.CreateCommand();
@@ -522,7 +522,7 @@ namespace BifrostQL.Core.Resolvers
                         "A soft delete requires a primary key or at least one predicate column to scope the affected rows.");
                 var setData = dbData.Where(d => !predicateData.ContainsKey(d.Key))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, predicateData.Keys, additionalFilter.WhereSuffix);
+                var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, predicateData, additionalFilter.WhereSuffix);
                 var (softAffected, softPending) = await RunHookedWriteAsync(ctx, MutationType.Update, dbData, async () =>
                 {
                     await using var cmd = ctx.Conn.CreateCommand();
@@ -543,7 +543,7 @@ namespace BifrostQL.Core.Resolvers
             if (predicateData.Count == 0)
                 throw new BifrostExecutionError(
                     "A delete requires a primary key or at least one predicate column to scope the affected rows.");
-            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, predicateData.Keys, additionalFilter.WhereSuffix);
+            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, table, tableRef, predicateData, additionalFilter.WhereSuffix);
             var (deleteAffected, deletePending) = await RunHookedWriteAsync(ctx, MutationType.Delete, predicateData, async () =>
             {
                 await using var deleteCmd = ctx.Conn.CreateCommand();
@@ -602,7 +602,7 @@ namespace BifrostQL.Core.Resolvers
         private static async Task<bool> RowExistsAsync(BatchExecutionContext ctx, Dictionary<string, object?> keyData)
         {
             var tableRef = ctx.Dialect.TableReference(ctx.Table.TableSchema, ctx.Table.DbName);
-            var sql = MutationCommandExecutor.BuildExistsSql(ctx.Dialect, tableRef, keyData.Keys);
+            var sql = MutationCommandExecutor.BuildExistsSql(ctx.Dialect, ctx.Table, tableRef, keyData);
             await using var cmd = ctx.Conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = ctx.Transaction;

@@ -55,6 +55,31 @@ SQL Server requires an `ORDER BY` clause for `OFFSET`/`FETCH` pagination. Bifros
 | MySQL | `INSERT ... ON DUPLICATE KEY UPDATE ...` |
 | SQLite | `INSERT OR REPLACE INTO ...` |
 
+### Row locks
+
+[`LockRowAsync`](/BifrostQL/guides/server-operations/#serializing-on-a-row) in a server operation:
+
+| Database | Form |
+|----------|------|
+| SQL Server | `WITH (UPDLOCK)` |
+| PostgreSQL | `FOR UPDATE` (the login needs `UPDATE` on the table) |
+| MySQL | `FOR UPDATE` |
+| SQLite | None. Refused with `ROW_LOCK_UNSUPPORTED`, as is a custom dialect that declares neither `UpdateLockClause` nor `UpdateLockTableHint`. |
+
+### Reading keys on PostgreSQL
+
+Primary, foreign and unique keys come from `pg_constraint`, not `information_schema`, whose
+constraint views only show the table owner. A login that holds `SELECT` and DML but does not own
+the schema gets the same model as the owner, including composite key order.
+
+- A key is listed only when the login has a privilege on every column in it. A partial column
+  grant that leaves out a key column leaves the table with no key, so keyed writes through that
+  login do not work.
+- A table the login sees in `information_schema.tables` but holds no column privilege on, such as
+  a `DELETE`-only grant, fails model loading. Grant it `SELECT` as well.
+- A foreign key that targets a plain unique index rather than a key constraint is not listed, for
+  owners and non-owners alike.
+
 ### Type mapping specifics
 
 **SQL Server**:
@@ -64,7 +89,7 @@ SQL Server requires an `ORDER BY` clause for `OFFSET`/`FETCH` pagination. Bifros
 
 **PostgreSQL**:
 - `serial`, `bigserial` are treated as auto-increment
-- `uuid` maps to `String`
+- `uuid` maps to `String`. A text value works as a key, a foreign key and a filter value, because a comparison casts a parameter that binds as text to the column's type. Any other value binds bare: `1.5` on an integer key matches no row on a delete or a read and answers `LOCK_ROW_NOT_FOUND` on a lock, while an update refuses it first with `INVALID_VALUE`. Only a double or decimal on a `real` column is narrowed, and past `real`'s precision it reaches another row (16777217 finds the row holding 16777216). A decimal or double on an integer key scans the whole table, and a long, double or decimal on `money`, an int on a `boolean` and a bool on an integer column fail with `DATABASE_ERROR`. A text key on a type outside the cast list, such as an enum or `bit`, still fails with `operator does not exist`, and a `citext` key is compared as text, so a lookup in another case finds no row. A malformed uuid fails with `INVALID_VALUE`, as does any other value the column cannot read: a bad date or a number out of range. That code comes from the SQLSTATE, so it is PostgreSQL-tested only; SQL Server reports no SQLSTATE and its conversion errors stay `DATABASE_ERROR`.
 - `jsonb`, `json` map to `String`
 - `text[]` and `integer[]` are exposed as `String` inputs carrying PostgreSQL array literals (for example, `{a,b}`); their bound parameters are explicitly cast to the resolved array type.
 

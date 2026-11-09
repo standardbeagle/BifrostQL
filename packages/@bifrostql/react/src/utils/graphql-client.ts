@@ -1,6 +1,14 @@
+/** One entry of a GraphQL response's `errors` list, as the server sent it. */
+export interface GraphQLErrorEntry {
+  message: string;
+  locations?: ReadonlyArray<{ line: number; column: number }>;
+  path?: ReadonlyArray<string | number>;
+  extensions?: { code?: string; [key: string]: unknown };
+}
+
 interface GraphQLResponse<T> {
   data?: T;
-  errors?: Array<{ message: string }>;
+  errors?: GraphQLErrorEntry[];
 }
 
 /**
@@ -24,6 +32,29 @@ export class BifrostAuthError extends Error {
 }
 
 /**
+ * Typed failure surfaced when the server answers with a GraphQL `errors` list
+ * that is not an authentication failure. The message is every error's message,
+ * joined.
+ *
+ * Use `code` to tell conditions apart (`CONFLICT`, `ACCESS_DENIED`, an
+ * application's own code) instead of matching message text.
+ */
+export class BifrostGraphQLError extends Error {
+  /** `extensions.code` of the first error that has one. */
+  readonly code?: string;
+  /** Every error the server sent, unchanged. */
+  readonly errors: readonly GraphQLErrorEntry[];
+
+  constructor(errors: readonly GraphQLErrorEntry[]) {
+    super(errors.map((error) => error.message).join(', '));
+    this.name = 'BifrostGraphQLError';
+    this.code = errors.find((error) => error.extensions?.code)?.extensions
+      ?.code;
+    this.errors = errors;
+  }
+}
+
+/**
  * Optional auth-recovery hooks passed to {@link executeGraphQL}. These mirror
  * the `refreshToken` / `onSessionExpired` fields on `BifrostConfig` and are
  * forwarded by the hook layer.
@@ -40,14 +71,34 @@ export interface BifrostAuthHandlers {
 }
 
 /**
- * GraphQL error messages matching this pattern are treated as *authentication*
- * failures (HTTP 401 semantics) that trigger a token refresh + session-expiry
- * flow. "forbidden" (HTTP 403 / authorization) is deliberately excluded: a 403
- * means the credential is valid but lacks permission, so refreshing the token
- * and expiring the session is wrong — it would loop or log the user out over a
- * mere permission denial.
+ * `extensions.code` values that mean the caller is not authenticated (HTTP 401
+ * semantics), which trigger the token refresh + session-expiry flow. The engine
+ * emits neither: its auth failures are an HTTP 401 on the mount. They are the
+ * convention for gateways and server operations.
+ *
+ * Authorization codes (`FORBIDDEN`, `ACCESS_DENIED`) are deliberately excluded:
+ * the credential is valid but lacks permission, so refreshing the token and
+ * expiring the session is wrong — it would loop or log the user out over a mere
+ * permission denial.
  */
+const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
+  'UNAUTHENTICATED',
+  'UNAUTHORIZED',
+]);
+
+/** The same decision for an error with no code, read from its message. */
 const AUTH_ERROR_PATTERN = /\b(unauthorized|unauthenticated)\b/i;
+
+/**
+ * A code decides when the server sent one, so a refusal whose message happens to
+ * say "unauthorized" stays the refusal it is.
+ */
+function isAuthError(error: GraphQLErrorEntry): boolean {
+  const code = error.extensions?.code;
+  return code
+    ? AUTH_ERROR_CODES.has(code)
+    : AUTH_ERROR_PATTERN.test(error.message);
+}
 
 /**
  * Compute an exponential backoff delay for retry attempts, capped at 30 seconds.
@@ -97,7 +148,8 @@ function buildHeaders(
  *
  * @returns The `data` field on success.
  * @throws {BifrostAuthError} On HTTP `401` or a GraphQL auth error.
- * @throws {Error} On other HTTP failures, non-auth GraphQL errors, or missing data.
+ * @throws {BifrostGraphQLError} On any other GraphQL errors.
+ * @throws {Error} On other HTTP failures or missing data.
  */
 async function sendRequest<T>(
   endpoint: string,
@@ -126,11 +178,11 @@ async function sendRequest<T>(
 
   const json: GraphQLResponse<T> = await response.json();
   if (json.errors) {
-    const message = json.errors.map((e) => e.message).join(', ');
-    if (json.errors.some((e) => AUTH_ERROR_PATTERN.test(e.message))) {
-      throw new BifrostAuthError(message);
+    const error = new BifrostGraphQLError(json.errors);
+    if (json.errors.some(isAuthError)) {
+      throw new BifrostAuthError(error.message);
     }
-    throw new Error(message);
+    throw error;
   }
 
   if (json.data === undefined) {
@@ -165,7 +217,8 @@ async function sendRequest<T>(
  * @param auth - Optional auth-recovery hooks (`refreshToken` / `onSessionExpired`).
  * @returns The `data` field from the GraphQL response.
  * @throws {BifrostAuthError} On an unrecoverable authentication failure.
- * @throws {Error} On HTTP failure, GraphQL errors, or missing response data.
+ * @throws {BifrostGraphQLError} On non-auth GraphQL errors, carrying `code` and `errors`.
+ * @throws {Error} On HTTP failure or missing response data.
  *
  * @example
  * ```ts

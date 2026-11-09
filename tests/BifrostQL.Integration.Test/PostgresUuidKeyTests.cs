@@ -2,7 +2,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Operations;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Ngsql;
 using BifrostQL.Server;
 using FluentAssertions;
@@ -34,6 +36,7 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
 
     private string _dbName = null!;
     private string _connectionString = null!;
+    private readonly List<string> _observedMutations = new();
 
     public async Task InitializeAsync()
     {
@@ -51,6 +54,8 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
                 date DATE);
             INSERT INTO people (id, name) VALUES ('{PersonOne}', 'one'), ('{PersonTwo}', 'two');
             INSERT INTO time_entries (id, person_id, note) VALUES ('{EntryOne}', '{PersonOne}', 'first');
+            CREATE TABLE counters (id INT PRIMARY KEY, note TEXT NOT NULL);
+            INSERT INTO counters (id, note) VALUES (1, 'one'), (2, 'two');
             CREATE TABLE write_statements (id SERIAL PRIMARY KEY, verb TEXT NOT NULL, row_count INT NOT NULL);
             CREATE FUNCTION record_write_statement() RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
@@ -337,6 +342,63 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
         ErrorCode(reply).Should().Be(BifrostOperationContext.LockRowNotFoundCode);
     }
 
+    [SkippableFact]
+    public async Task Operation_ACaughtReadFailure_RollsBack_AndTheClientAndObserversSeeIt()
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(OperationCall("updateThenCatchFailedRead", EntryOne));
+
+        ErrorCode(reply).Should().Be(BifrostExecutionError.InvalidValueCode);
+        (await EntriesAsync()).Should().Equal($"{EntryOne}|{PersonOne}|first");
+        _observedMutations.Should().BeEmpty("no observer sees a write that was rolled back");
+
+        AssertNoErrors(await PostAsync(OperationCall("update", EntryOne)));
+        _observedMutations.Should().ContainSingle("the same write does notify when it commits");
+    }
+
+    [SkippableTheory]
+    [InlineData("2.4", null, "one|two")]
+    [InlineData("2", "1", "one|edited")]
+    public async Task Operation_ATextIntegerKey_FindsItsRow_AndAFractionalOneIsRefused(string key, string? answer, string notes)
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(OperationCall("updateCounterByText", key));
+
+        if (answer is null)
+            ErrorCode(reply).Should().Be(BifrostExecutionError.InvalidValueCode, reply.RootElement.GetRawText());
+        else
+            reply.RootElement.GetProperty("data").GetProperty("uuidKeyProbe").GetString().Should().Be(answer);
+        string.Join("|", await CounterNotesAsync()).Should().Be(notes);
+    }
+
+    /// <summary>
+    /// Validation refuses the text before any statement runs, so unlike a value the database
+    /// refused there is no failed statement and the transaction is still good.
+    /// </summary>
+    [SkippableFact]
+    public async Task Operation_AValueValidationRefused_CanBeCaught_BecauseNoStatementRan()
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(OperationCall("catchRefusedKeyThenUpdate", "2.4"));
+
+        AssertNoErrors(reply);
+        string.Join("|", await CounterNotesAsync()).Should().Be("edited|two");
+    }
+
+    [SkippableFact]
+    public async Task Operation_ANumericIntegerKey_ComparesAsANumber()
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        var reply = await PostAsync(OperationCall("lessThanDecimal", "1.4"));
+
+        AssertNoErrors(reply);
+        reply.RootElement.GetProperty("data").GetProperty("uuidKeyProbe").GetString().Should().Be("1");
+    }
+
     /// <summary>The Harvest read: a person's latest date before a target, keyed by text uuid.</summary>
     [SkippableTheory]
     [InlineData("previousDate")]
@@ -415,6 +477,34 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
                 case "lock":
                     await context.LockRowAsync("time_entries", new Dictionary<string, object?> { ["id"] = id });
                     return "locked";
+                case "updateThenCatchFailedRead":
+                    await context.UpdateAsync("time_entries", new Dictionary<string, object?> { ["id"] = id, ["note"] = "edited" });
+                    try
+                    {
+                        await context.QueryAsync("time_entries", new Dictionary<string, object?> { ["date"] = BifrostOperationContext.LessThan("not-a-date") }, columns: new[] { "note" });
+                    }
+                    catch (BifrostExecutionError)
+                    {
+                        // The operation's code carries on, as an author might expect it could.
+                    }
+                    return "continued";
+                case "updateCounterByText":
+                    return (await context.UpdateAsync("counters", new Dictionary<string, object?> { ["id"] = id, ["note"] = "edited" })).ToString();
+                case "catchRefusedKeyThenUpdate":
+                    try
+                    {
+                        await context.UpdateAsync("counters", new Dictionary<string, object?> { ["id"] = id, ["note"] = "refused" });
+                    }
+                    catch (BifrostExecutionError error) when (error.ErrorCode == BifrostExecutionError.InvalidValueCode)
+                    {
+                        await context.UpdateAsync("counters", new Dictionary<string, object?> { ["id"] = 1, ["note"] = "edited" });
+                    }
+                    return "continued";
+                case "lessThanDecimal":
+                    var below = await context.QueryAsync("counters",
+                        new Dictionary<string, object?> { ["id"] = BifrostOperationContext.LessThan(decimal.Parse(id, System.Globalization.CultureInfo.InvariantCulture)) },
+                        columns: new[] { "id" });
+                    return string.Join(",", below.Select(row => row["id"]));
                 case "lockByGuid":
                     await context.LockRowAsync("time_entries", new Dictionary<string, object?> { ["id"] = Guid.Parse(id) });
                     return "locked";
@@ -465,6 +555,15 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
     private static string? ErrorCode(JsonDocument reply)
         => reply.RootElement.GetProperty("errors")[0].GetProperty("extensions").GetProperty("code").GetString();
 
+    private sealed class RecordingMutationObserver(List<string> tables) : IMutationObserver
+    {
+        public ValueTask OnMutationAsync(MutationObserverContext context)
+        {
+            tables.Add(context.Table.DbName);
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private async Task<JsonDocument> PostAsync(string query, string bulkThreshold = "0")
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -481,6 +580,7 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
             web.ConfigureServices(services =>
             {
                 services.AddRouting();
+                services.AddSingleton<IMutationObserver>(new RecordingMutationObserver(_observedMutations));
                 services.AddBifrostQL(options => options
                     .BindConfiguration(config.GetSection("Bifrost"))
                     .BindConnectionString(_connectionString)
@@ -496,6 +596,9 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
         using var response = await client.PostAsync("/graphql", content);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
     }
+
+    private Task<List<string>> CounterNotesAsync()
+        => ReadAsync("SELECT note FROM counters ORDER BY id", reader => reader.GetString(0));
 
     private Task<List<string>> PeopleAsync()
         => ReadAsync("SELECT id, name FROM people ORDER BY name <> 'one', name <> 'renamed', name <> 'upserted', name <> 'two', name",

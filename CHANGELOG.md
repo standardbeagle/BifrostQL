@@ -10,9 +10,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - `BifrostOperationContext.LockRowAsync(table, key)` locks a row until the operation's
   transaction ends, so concurrent operations that read to decide what to write run one after
-  another. It takes no caller scope and grants nothing. A dialect with no row lock (SQLite) is
-  refused with `ROW_LOCK_UNSUPPORTED` rather than running unserialized, and a missing row raises
-  `LOCK_ROW_NOT_FOUND`.
+  another. It stays inside the caller's `tenant-filter` tenant, so a row of another tenant raises
+  the same `LOCK_ROW_NOT_FOUND` as a missing one. Read policy does not apply and the lock grants
+  nothing. A dialect with no row lock (SQLite) is refused with `ROW_LOCK_UNSUPPORTED` rather than
+  running unserialized.
 - `BifrostOperationContext.QueryAsync` takes `sort` (`<column>_asc` / `<column>_desc`, as a
   generated field does), and `where` can test `BifrostOperationContext.NotNull` or
   `BifrostOperationContext.LessThan(value)`. A `null` value is now documented as IS NULL. See "Reading rows" and "Serializing on a row" in the Server Operations
@@ -23,6 +24,17 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed
 
+- **Recompile operations.** `BifrostOperationContext.QueryAsync` gained an optional `sort`
+  parameter. That keeps source compatible, but the method's binary signature changed, so an
+  operation assembly compiled against an earlier BifrostQL fails with `MissingMethodException`
+  until it is rebuilt.
+- A database error inside a mutation operation now ends the operation on every dialect, even if the
+  operation catches it, and so does a write the validator refuses. The operation's transaction rolls
+  back, the client gets an error carrying the first failure's code, and no observer fires. On
+  PostgreSQL a caught read failure used to return success while COMMIT silently rolled the writes
+  back. `LOCK_ROW_NOT_FOUND` is not a database error and may still be caught.
+- Text the validator cannot read as its column's type (`"2.4"` for an integer) now has the code
+  `INVALID_VALUE`. A refusal that also breaks a declared rule keeps no code, as before.
 - The set-based batch fast path merges only adjacent rows with the same verb, columns and filter,
   and applies each run in document order. It used to group a verb's rows wherever they sat in the
   document, so `[insert x, delete y, insert y]` ran both inserts first and failed with `CONFLICT`
@@ -39,16 +51,28 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - A database error for a value its column cannot read (SQLSTATE `22P02`, `22007`, `22008`, `22003`)
   now has the code `INVALID_VALUE` instead of `DATABASE_ERROR`, with a generic message. Code that
-  matched `DATABASE_ERROR` for these needs the new word. An out-of-range key on a PostgreSQL integer
-  column now fails this way where it used to match no row.
+  matched `DATABASE_ERROR` for these needs the new word. An out-of-range key sent as text on a
+  PostgreSQL integer column now fails this way where it used to match no row.
 
 ### Fixed
 
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
-  as a string, so this blocked every uuid-keyed table. Key predicates now cast to the column's type,
-  as SET lists and filters already did. Batches with uuid text also lost the fast path without saying
-  so, because binary COPY refuses a string for a uuid column; canonical text now stays on it.
+  as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as
+  text to the column's type. Any other value binds bare and compares by the database's own rules, so
+  `1.5` on an integer key matches no row, while the text `"2.4"` fails with `INVALID_VALUE`. The one
+  exception is a double or decimal on a `real` column, which is narrowed so it can find the value
+  the column reads back. The cast covers the types `PostgresDialect.NeedsParameterCast` lists: a
+  text key on an enum or `bit` column still fails with `operator does not exist`, and a `citext` key
+  stays bare, so a lookup in another case finds no row. Batches with uuid text also lost the fast
+  path without saying so, because binary COPY refuses a string for a uuid column; canonical text now
+  stays on it.
+- Two spellings PostgreSQL reads as one uuid (case, hyphens, braces) are now one key in a batch, on
+  both paths. Compared as text they were two rows, so the fast path let the database pick a winner,
+  the count read 2, and `batch-duplicate-policy: reject` never fired. A whitespace-wrapped uuid now
+  fails with `INVALID_VALUE` on both paths; the fast path used to write it.
+- A deferred undo on a PostgreSQL uuid-keyed table that was interrupted after its inverse committed
+  failed with `uuid = text` on every retry and never left `undoing`.
 - A PostgreSQL login that does not own the schema saw no primary, foreign or unique keys, because
   `information_schema.constraint_column_usage` only shows the owner. Updates through such a login
   found no key and changed nothing or failed with "has no primary key columns". Keys now come from

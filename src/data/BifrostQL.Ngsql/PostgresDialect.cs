@@ -62,6 +62,10 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// behavior. Drives both <see cref="ISqlDialect.AssignmentPlaceholder"/> (writes) and
     /// WHERE-clause filter parameters (reads).
     ///
+    /// A comparison asks only for a value that binds as text: casting a number would round it
+    /// into the column's type, so <c>$1::integer</c> with 2.4 finds row 2.
+    /// <c>DbParameterBinder.ComparisonPlaceholder</c> holds that rule.
+    ///
     /// Uses an allow-list of types that (a) genuinely need the cast — Postgres won't
     /// implicitly compare/assign them against a text parameter — and (b) name a real
     /// Postgres type. Anything else stays bare: string types (text/varchar) compare to a

@@ -402,6 +402,8 @@ export class BatchError extends Error {
   readonly failed: BatchFailure;
   /** Original indices of the operations in later documents, which were never sent. */
   readonly notAttempted: number[];
+  /** Stand-in until the client keeps the server's errors. */
+  readonly code?: string;
 
   constructor(
     message: string,

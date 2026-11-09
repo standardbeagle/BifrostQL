@@ -104,7 +104,12 @@ public sealed class ReactBatchWireContractTests : IAsyncLifetime
 
         // Assert
         reply.RootElement.GetProperty("errors").GetArrayLength().Should().BeGreaterThan(0);
-        reply.RootElement.GetProperty("errors")[0].GetProperty("message").GetString().Should().NotBeNullOrEmpty();
+        var error = reply.RootElement.GetProperty("errors")[0];
+        var expected = failing.GetProperty("reply").GetProperty("errors")[0];
+        error.GetProperty("message").GetString().Should().NotBeNullOrEmpty();
+        error.GetProperty("extensions").GetProperty("code").GetString()
+            .Should().Be(expected.GetProperty("extensions").GetProperty("code").GetString(), "the hook hands this code to the application");
+        error.GetProperty("path")[0].GetString().Should().Be(expected.GetProperty("path")[0].GetString());
         reply.RootElement.GetProperty("data").GetProperty("items_batch").ValueKind.Should().Be(JsonValueKind.Null);
         (await RowsAsync()).Should().Equal(before, "one transaction: the rows ahead of the failure roll back");
     }

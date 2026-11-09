@@ -442,12 +442,18 @@ describe('useBifrostSubscription', () => {
           data: JSON.stringify({
             type: 'error',
             id: '1',
-            payload: [{ message: 'Permission denied' }],
+            payload: [
+              {
+                message: 'Permission denied',
+                extensions: { code: 'ACCESS_DENIED' },
+              },
+            ],
           }),
         });
       });
 
       expect(result.current.error?.message).toBe('Permission denied');
+      expect(result.current.error).toMatchObject({ code: 'ACCESS_DENIED' });
       expect(onError).toHaveBeenCalledTimes(1);
     });
 
@@ -733,12 +739,15 @@ describe('useBifrostSubscription', () => {
       await act(async () => {
         instances[0].handler.onmessage?.({
           data: JSON.stringify({
-            errors: [{ message: 'Access denied' }],
+            errors: [
+              { message: 'Access denied', extensions: { code: 'ACCESS_DENIED' } },
+            ],
           }),
         });
       });
 
       expect(result.current.error?.message).toBe('Access denied');
+      expect(result.current.error).toMatchObject({ code: 'ACCESS_DENIED' });
     });
 
     it('transitions to disconnected when SSE connection closes', async () => {

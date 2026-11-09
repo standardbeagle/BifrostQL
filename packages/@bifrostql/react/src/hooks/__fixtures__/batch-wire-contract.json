@@ -64,7 +64,7 @@
     },
     "reply": {
       "data": { "items_batch": null },
-      "errors": [{ "message": "the server's refusal" }]
+      "errors": [{ "message": "the server's refusal", "path": ["items_batch"], "extensions": { "code": "CONFLICT" } }]
     }
   }
 }

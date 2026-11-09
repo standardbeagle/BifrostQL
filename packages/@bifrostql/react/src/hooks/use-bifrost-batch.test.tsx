@@ -178,6 +178,19 @@ describe('useBifrostBatch', () => {
       expect(error.notAttempted).toEqual([]);
     });
 
+    it('hands the server error code from the wire contract to the caller', async () => {
+      const { operations, reply } = wireContract.failing;
+      mockFetchReplies(reply);
+
+      const error = await runToFailure(operations as BatchOperation[]);
+
+      expect(error.code).toBe('CONFLICT');
+      expect(error.failed.error).toMatchObject({
+        code: 'CONFLICT',
+        errors: reply.errors,
+      });
+    });
+
     it('does not chunk past the server default batch-max-size', async () => {
       // Chunking would quietly turn one transaction into several, so an
       // oversized batch reaches the server whole and the server refuses it.

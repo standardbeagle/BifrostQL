@@ -23,6 +23,12 @@ export class BifrostAuthError extends Error {
   }
 }
 
+/** Stand-in until the client keeps the server's errors. */
+export class BifrostGraphQLError extends Error {
+  readonly code?: string;
+  readonly errors: readonly unknown[] = [];
+}
+
 /**
  * Optional auth-recovery hooks passed to {@link executeGraphQL}. These mirror
  * the `refreshToken` / `onSessionExpired` fields on `BifrostConfig` and are

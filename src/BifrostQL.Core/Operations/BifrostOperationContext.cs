@@ -46,7 +46,11 @@ public sealed class BifrostOperationContext
     /// A <c>null</c> is refused with <see cref="BifrostExecutionError.InvalidValueCode"/>:
     /// nothing is less than null, so the read would silently find nothing.
     /// </summary>
-    public static object LessThan(object value) => new LessThanTest(value);
+    public static object LessThan(object value) => new LessThanTest(
+        value ?? throw new BifrostExecutionError("LessThan needs a value to compare with; it was given null.")
+        {
+            ErrorCode = BifrostExecutionError.InvalidValueCode,
+        });
 
     private sealed record LessThanTest(object Value);
 
@@ -98,8 +102,8 @@ public sealed class BifrostOperationContext
 
     /// <summary>
     /// Reads rows of <paramref name="table"/> as the caller. <paramref name="where"/> is an AND of
-    /// column tests: a value tests equality, <c>null</c> tests IS NULL and <see cref="NotNull"/>
-    /// tests IS NOT NULL. <paramref name="columns"/> defaults to every column.
+    /// column tests: a value tests equality, <c>null</c> tests IS NULL, <see cref="NotNull"/>
+    /// tests IS NOT NULL and <see cref="LessThan"/> tests the column is less than a value. <paramref name="columns"/> defaults to every column.
     /// <paramref name="sort"/> holds <c>column_asc</c> or <c>column_desc</c> tokens, most
     /// significant first, the same tokens a generated field's <c>sort</c> argument takes.
     /// <paramref name="limit"/> behaves as a generated field's <c>limit</c>: omitted reads the
@@ -133,9 +137,12 @@ public sealed class BifrostOperationContext
         foreach (var (name, value) in where ?? new Dictionary<string, object?>())
         {
             var columnName = ResolveColumn(dbTable, name).DbName;
-            var test = ReferenceEquals(value, NotNull)
-                ? TableFilterFactory.IsNotNull(dbTable, columnName)
-                : TableFilterFactory.Equals(dbTable, columnName, value);
+            var test = value switch
+            {
+                LessThanTest lessThan => TableFilterFactory.LessThan(dbTable, columnName, lessThan.Value),
+                _ when ReferenceEquals(value, NotNull) => TableFilterFactory.IsNotNull(dbTable, columnName),
+                _ => TableFilterFactory.Equals(dbTable, columnName, value),
+            };
             query.Filter = query.Filter is null ? test : TableFilter.CombineAnd(query.Filter, test);
         }
 

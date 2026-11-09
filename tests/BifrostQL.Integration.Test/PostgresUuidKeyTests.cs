@@ -47,7 +47,8 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
             CREATE TABLE time_entries (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 person_id UUID NOT NULL REFERENCES people (id),
-                note TEXT NOT NULL);
+                note TEXT NOT NULL,
+                date DATE);
             INSERT INTO people (id, name) VALUES ('{PersonOne}', 'one'), ('{PersonTwo}', 'two');
             INSERT INTO time_entries (id, person_id, note) VALUES ('{EntryOne}', '{PersonOne}', 'first');
             CREATE TABLE write_statements (id SERIAL PRIMARY KEY, verb TEXT NOT NULL, row_count INT NOT NULL);
@@ -336,6 +337,54 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
         ErrorCode(reply).Should().Be(BifrostOperationContext.LockRowNotFoundCode);
     }
 
+    /// <summary>The Harvest read: a person's latest date before a target, keyed by text uuid.</summary>
+    [SkippableTheory]
+    [InlineData("previousDate")]
+    [InlineData("previousDateTyped")]
+    public async Task Operation_LessThan_FindsThePreviousDate_OfOnePerson(string call)
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+        await ExecAsync(_connectionString,
+            $"""
+            INSERT INTO time_entries (person_id, note, date) VALUES
+                ('{PersonOne}', 'older', '2026-10-01'),
+                ('{PersonOne}', 'previous', '2026-11-03'),
+                ('{PersonOne}', 'the target itself', '2026-11-09'),
+                ('{PersonOne}', 'later', '2026-11-10'),
+                ('{PersonOne}', 'no date', NULL),
+                ('{PersonTwo}', 'another person, nearer', '2026-11-08');
+            """);
+
+        var reply = await PostAsync(PreviousDateCall(call, PersonOne, "2026-11-09"));
+
+        AssertNoErrors(reply);
+        reply.RootElement.GetProperty("data").GetProperty("uuidKeyProbe").GetString().Should().Be("2026-11-03");
+    }
+
+    [SkippableFact]
+    public async Task Operation_LessThan_FindsNothing_WhenNoEarlierRowExists()
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+        await ExecAsync(_connectionString,
+            $"INSERT INTO time_entries (person_id, note, date) VALUES ('{PersonOne}', 'the target itself', '2026-11-09')");
+
+        var reply = await PostAsync(PreviousDateCall("previousDate", PersonOne, "2026-11-09"));
+
+        AssertNoErrors(reply);
+        reply.RootElement.GetProperty("data").GetProperty("uuidKeyProbe").GetString().Should().Be("none");
+    }
+
+    [SkippableFact]
+    public async Task Operation_LessThan_NamesAMalformedDate()
+    {
+        Skip.If(Master is null, "BIFROST_TEST_POSTGRES environment variable not set");
+
+        AssertInvalidValue(await PostAsync(PreviousDateCall("previousDate", PersonOne, "not-a-date")));
+    }
+
+    private static string PreviousDateCall(string call, string personId, string target)
+        => $$"""mutation { uuidKeyProbe(call: "{{call}}", id: "{{personId}}", target: "{{target}}") }""";
+
     private static string OperationCall(string call, string id)
         => $$"""mutation { uuidKeyProbe(call: "{{call}}", id: "{{id}}") }""";
 
@@ -344,7 +393,7 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
     {
         public string Name => "uuidKeyProbe";
         public BifrostOperationKind Kind => BifrostOperationKind.Mutation;
-        public string Signature => "(call: String!, id: String!): String";
+        public string Signature => "(call: String!, id: String!, target: String): String";
 
         public static string ExpectedAnswer(string call) => call switch
         {
@@ -381,9 +430,24 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
                         ["note"] = "inserted",
                     });
                     return "inserted";
+                case "previousDate":
+                    return await PreviousDateAsync(context, id, context.GetArgument<string>("target")!);
+                case "previousDateTyped":
+                    return await PreviousDateAsync(context, id, DateOnly.Parse(context.GetArgument<string>("target")!));
                 default:
                     throw new InvalidOperationException("Unknown probe call.");
             }
+        }
+
+        private static async Task<string> PreviousDateAsync(BifrostOperationContext context, string personId, object target)
+        {
+            var rows = await context.QueryAsync(
+                "time_entries",
+                new Dictionary<string, object?> { ["person_id"] = personId, ["date"] = BifrostOperationContext.LessThan(target) },
+                columns: new[] { "date" },
+                limit: 1,
+                sort: new[] { "date_desc" });
+            return rows.Count == 0 ? "none" : rows[0]["date"] is DateTime date ? date.ToString("yyyy-MM-dd") : Convert.ToString(rows[0]["date"])!;
         }
 
         private static async Task<string> NoteOfOnlyRowAsync(BifrostOperationContext context, string column, string value)

@@ -40,6 +40,16 @@ public sealed class BifrostOperationContext
     /// </summary>
     public static readonly object NotNull = new();
 
+    /// <summary>
+    /// A value in <see cref="QueryAsync"/>'s <c>where</c> that tests the column is less than
+    /// <paramref name="value"/>, the same comparison a generated field's <c>_lt</c> runs.
+    /// A <c>null</c> is refused with <see cref="BifrostExecutionError.InvalidValueCode"/>:
+    /// nothing is less than null, so the read would silently find nothing.
+    /// </summary>
+    public static object LessThan(object value) => new LessThanTest(value);
+
+    private sealed record LessThanTest(object Value);
+
     internal BifrostOperationContext(
         IBifrostOperation operation,
         IBifrostFieldContext field,

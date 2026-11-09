@@ -153,6 +153,45 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task QueryAsync_LessThan_KeepsOnlySmallerValues()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var previous = await ReadAsync(context => context.QueryAsync("time_entries",
+            new Dictionary<string, object?> { ["person_id"] = 2, ["week"] = BifrostOperationContext.LessThan(12) },
+            columns: new[] { "week" },
+            limit: 1,
+            sort: new[] { "week_desc" }));
+
+        previous.Select(row => Convert.ToInt32(row["week"])).Should().Equal(11);
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_LessThan_LeavesOutNulls_AndOtherTenants()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var rows = await ReadAsync(context => context.QueryAsync("time_entries",
+            new Dictionary<string, object?> { ["note"] = BifrostOperationContext.LessThan("z") },
+            columns: new[] { "note" },
+            sort: new[] { "note_asc" }));
+
+        rows.Select(row => row["note"]).Should().Equal(new object?[] { "a", "c", "d" },
+            "a null note compares to nothing, and the other tenant's note stays out of reach");
+    }
+
+    [SkippableFact]
+    public async Task QueryAsync_LessThan_RefusesNull_BecauseNothingIsLessThanNull()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+
+        var refused = await RunReadExpectingErrorAsync(context => context.QueryAsync("time_entries",
+            new Dictionary<string, object?> { ["week"] = BifrostOperationContext.LessThan(null!) }));
+
+        refused.Code.Should().Be(BifrostExecutionError.InvalidValueCode);
+    }
+
+    [SkippableFact]
     public async Task QueryAsync_NullTestOrSort_OnAReadDeniedColumn_IsRefusedLikeAGeneratedRead()
     {
         Skip.IfNot(Available, "test database environment variable not set");
@@ -163,8 +202,10 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
             new Dictionary<string, object?> { ["secret"] = null }, columns: new[] { "week" }));
         var sorted = await RunReadExpectingErrorAsync(context => context.QueryAsync("time_entries",
             columns: new[] { "week" }, sort: new[] { "secret_desc" }));
+        var compared = await RunReadExpectingErrorAsync(context => context.QueryAsync("time_entries",
+            new Dictionary<string, object?> { ["secret"] = BifrostOperationContext.LessThan("t") }, columns: new[] { "week" }));
 
-        foreach (var error in new[] { filtered, nullTested, sorted })
+        foreach (var error in new[] { filtered, nullTested, sorted, compared })
             error.Code.Should().Be(BifrostExecutionError.AccessDeniedCode, "testing or ordering by a column reveals it");
     }
 
@@ -540,6 +581,7 @@ public sealed class SqliteServerOperationQueryTests : ServerOperationQueryTestBa
             person_id INTEGER NOT NULL,
             week INTEGER NOT NULL,
             stopped_at TEXT,
+            date DATE,
             note TEXT,
             secret TEXT
         );
@@ -562,6 +604,40 @@ public sealed class SqliteServerOperationQueryTests : ServerOperationQueryTestBa
     }
 
     protected override IDbConnFactory CreateConnFactory(string dbName) => new SqliteDbConnFactory(ConnectionString(dbName));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueryAsync_LessThan_FindsThePreviousDate(bool typedTarget)
+    {
+        await ExecAsync(
+            """
+            INSERT INTO time_entries (tenant_id, person_id, week, date) VALUES
+                (1, 1, 1, '2026-10-01'),
+                (1, 1, 2, '2026-11-03'),
+                (1, 1, 3, '2026-11-09'),
+                (1, 1, 4, '2026-11-10'),
+                (1, 1, 5, NULL),
+                (1, 2, 6, '2026-11-08')
+            """);
+        object target = typedTarget ? new DateOnly(2026, 11, 9) : "2026-11-09";
+        object? found = null;
+        QueryProbe.Body = async context =>
+        {
+            var rows = await context.QueryAsync(
+                "time_entries",
+                new Dictionary<string, object?> { ["person_id"] = 1, ["date"] = BifrostOperationContext.LessThan(target) },
+                columns: new[] { "date" },
+                limit: 1,
+                sort: new[] { "date_desc" });
+            found = rows.Single()["date"];
+        };
+
+        var result = await ExecuteAsync("{ queryProbe }", Caller());
+
+        result.Errors.Should().BeNullOrEmpty(string.Join("; ", result.Errors?.Select(e => e.Message) ?? Array.Empty<string>()));
+        found.Should().Be("2026-11-03");
+    }
 
     [Fact]
     public async Task LockRow_IsRefusedLoudly_OnADialectWithNoRowLocks()

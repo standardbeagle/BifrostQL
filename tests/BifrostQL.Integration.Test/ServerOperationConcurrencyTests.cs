@@ -421,6 +421,11 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
         var write = await ExecuteAsync("mutation { mutationProbe }", Caller());
         write.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode,
             "the lock is the operation's concurrency control, not a grant to write the row");
+
+        MutationProbe.Body = context => context.QueryAsync("people", columns: new[] { "name" });
+        var read = await ExecuteAsync("mutation { mutationProbe }", Caller());
+        read.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode,
+            "nor a grant to read it");
     }
 
     [SkippableFact]
@@ -705,6 +710,30 @@ public sealed class MySqlServerOperationConcurrencyTests : ServerOperationRowLoc
     protected override IDbConnFactory CreateConnFactory(string dbName)
         => new BifrostQL.MySql.MySqlDbConnFactory(
             new MySqlConnector.MySqlConnectionStringBuilder(Master!) { Database = dbName }.ConnectionString);
+
+    /// <summary>
+    /// Why the guide says to lock before reading: under InnoDB's REPEATABLE READ the first plain
+    /// read fixes the snapshot, so a lock taken after it serializes the operation but the operation
+    /// still reads rows as they were before it waited.
+    /// </summary>
+    [SkippableFact]
+    public async Task ALockTakenAfterARead_StillReadsTheEarlierSnapshot()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        var ofPersonOne = new Dictionary<string, object?> { ["person_id"] = 1 };
+        var seenAfterTheLock = -1;
+        MutationProbe.Body = async context =>
+        {
+            await context.QueryAsync("time_entries", ofPersonOne, new[] { "id" });
+            await ExecAsync("INSERT INTO time_entries (tenant_id, person_id, week) VALUES (1, 1, 99)");
+            await context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 1 });
+            seenAfterTheLock = (await context.QueryAsync("time_entries", ofPersonOne, new[] { "id" })).Count;
+        };
+
+        (await ExecuteAsync("mutation { mutationProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+
+        seenAfterTheLock.Should().Be(0, "the row committed before the lock is outside the snapshot the first read fixed");
+    }
 }
 
 public sealed class SqlServerServerOperationConcurrencyTests : ServerOperationRowLockTestBase

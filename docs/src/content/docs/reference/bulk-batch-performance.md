@@ -66,7 +66,7 @@ The three series:
 
 ## When the fast path runs
 
-The fast path engages when **all** of these hold; anything else falls back to the per-row loop (identical semantics, just slower — falling back is normal operation):
+The fast path engages when **all** of these hold; anything else falls back to the per-row loop (the same semantics apart from the known divergence below, just slower — falling back is normal operation):
 
 - the provider has a bulk executor (SQL Server, PostgreSQL, MySQL — SQLite deliberately stays per-row: a single in-process writer has no round trips to save),
 - the batch has at least `bulk-batch-threshold` actions (default 50; `0` disables per table) and at most `batch-max-size`,
@@ -75,6 +75,8 @@ The fast path engages when **all** of these hold; anything else falls back to th
 - the table has no state machine,
 - every row's transformer filter (tenant scope, policy row scope, soft-delete guard) renders identically — true for normal tenant/policy filters; per-row-varying filters (e.g. optimistic-concurrency tokens at *different* versions in one batch) fall back,
 - duplicate update/delete keys never reach either path raw: `batch-duplicate-policy` resolves them deterministically in Core before any SQL — `last-wins` (default) collapses them to their sequential net effect (update+update merges per column, a delete absorbs updates on its key; collapsed intermediates never execute, so hooks/history never see them), `reject` refuses the batch. A collision involving an upsert is always refused (its net effect depends on row existence).
+
+**Known divergence.** The fast path runs each verb's rows as one set-based statement, in the order each verb first appears, so rows of one verb cannot run on both sides of another. `[insert x, delete y, insert y]` runs both inserts before the delete. Where the second insert reuses a unique value that the delete frees, the fast path fails with `CONFLICT` and writes nothing, while the per-row path applies the document. Measured on PostgreSQL. `[delete y, insert y]` is unaffected, because the delete's statement comes first.
 
 ## Streaming staging loads
 

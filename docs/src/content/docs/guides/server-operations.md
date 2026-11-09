@@ -118,8 +118,29 @@ var latestStopped = await context.QueryAsync(
     sort: new[] { "stopped_at_desc", "id_desc" });
 ```
 
-- `where` is an AND of column tests. There is no OR and no range: anything richer belongs in a
-  view or a generated field.
+- `where` is an AND of column tests. There is no OR and only the one comparison below: anything
+  richer belongs in a view or a generated field.
+- `BifrostOperationContext.LessThan(value)` tests that the column is less than `value`. It runs the
+  same `_lt` a generated filter runs, on the same caller scope, so a read-denied column is refused
+  and the value binds as any other, text or typed. A row whose column is null does not match.
+  `LessThan(null)` is refused with `INVALID_VALUE`, because nothing is less than null and the read
+  would quietly find nothing. A value the column cannot read, such as a malformed date, fails with
+  `INVALID_VALUE` on PostgreSQL.
+
+  To find a person's latest date before a target:
+
+  ```csharp
+  var previous = await context.QueryAsync(
+      "time_entries",
+      where: new Dictionary<string, object?>
+      {
+          ["person_id"] = personId,
+          ["date"] = BifrostOperationContext.LessThan(target),
+      },
+      columns: new[] { "date" },
+      limit: 1,
+      sort: new[] { "date_desc" });
+  ```
 - `sort` takes the tokens a generated field's `sort` argument takes: `<column>_asc` or
   `<column>_desc`, most significant first. A token without a direction, or for a column the table
   does not have, is refused. The primary key is appended as a tie-break.

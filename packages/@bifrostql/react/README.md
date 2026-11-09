@@ -242,33 +242,49 @@ mutate({ id: 1, original: serverRow, updated: editedRow });
 
 ### `useBifrostBatch`
 
-Execute multiple mutations sequentially with progress tracking. Operations are sorted by dependency order (inserts before updates before deletes).
+Write many operations through the server's `<table>_batch` field. Each document is one transaction, and takes the server's set-based fast path when the table is eligible. Operations are sorted by dependency order (insert, upsert, update, delete).
 
 ```tsx
-import { useBifrostBatch } from '@bifrostql/react';
+import { useBifrostBatch, BatchError } from '@bifrostql/react';
 
-const { mutate, getProgress } = useBifrostBatch({
-  allowPartialSuccess: true,
-  invalidateQueries: ['users', 'orders'],
-  onProgress: ({ total, completed, failed, current }) => {
-    console.log(`${completed}/${total} complete`);
+const { mutateAsync, getProgress } = useBifrostBatch({
+  invalidateQueries: ['users'],
+  onProgress: ({ total, completed, documents, documentsSettled }) => {
+    console.log(`${completed}/${total} operations`);
+    console.log(`${documentsSettled}/${documents} documents`);
   },
 });
 
-mutate([
-  { type: 'insert', table: 'users', data: { name: 'Bob' } },
-  { type: 'update', table: 'users', id: 1, data: { name: 'Alice Updated' } },
-  { type: 'delete', table: 'users', id: 99 },
-  {
-    type: 'upsert',
-    table: 'users',
-    key: { email: 'bob@example.com' },
-    data: { name: 'Bob' },
-  },
-]);
+try {
+  // One document, one transaction: all four apply or none do.
+  const { results } = await mutateAsync([
+    { type: 'insert', table: 'users', data: { name: 'Bob' } },
+    { type: 'update', table: 'users', id: 1, data: { name: 'Alice Updated' } },
+    {
+      type: 'upsert',
+      table: 'users',
+      key: { id: 7 },
+      data: { name: 'Carol' },
+    },
+    { type: 'delete', table: 'users', id: 99 },
+  ]);
+  console.log(results); // [{ table: 'users', indices: [0, 2, 1, 3], affected: 4 }]
+} catch (err) {
+  if (err instanceof BatchError) {
+    console.log(err.results); // documents that committed
+    console.log(err.failed); // { table, indices, error }
+    console.log(err.notAttempted); // original indices never sent
+  }
+}
 ```
 
-When `allowPartialSuccess` is `false` (default), a failed operation throws a `BatchError` containing both `results` and `errors` arrays for inspection.
+- **One table is one transaction**, unless operations on another table have to run between its operations.
+- **There is no transaction across tables.** A batch over several tables is several transactions, sent in order. A later failure does not undo an earlier document, and `BatchError.results` says which committed. For one transaction over rows linked by foreign keys, write a `save` graph mutation.
+- **No partial success inside a document.** The batch stops at the first failed document. The server reports no failing row index, and a lost connection cannot tell whether the document committed.
+- **`affected` counts rows and is the only result per document.** An update or delete that matches no row adds 0 and does not fail, and inserted keys do not come back. Use `useBifrostMutation` when you need a generated key.
+- **A document over the table's `batch-max-size` (default 100) is refused whole.** The hook does not split it, because that would make it several transactions. Raise `batch-max-size` on tables that take bulk writes.
+- **`batch-duplicate-policy` applies.** Several updates or deletes of one key collapse to their net effect or are refused, and an upsert sharing a key with an update, delete or another upsert is always refused.
+- **An upsert's `key` is the primary key.** A `key` that is not the primary key does not match an existing row: the operation inserts, or is refused if the table's primary key is required.
 
 ### `useBifrostTable`
 

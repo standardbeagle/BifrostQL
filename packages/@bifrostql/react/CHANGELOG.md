@@ -6,6 +6,48 @@ While the major version is 0, breaking changes may land in any release, but
 never silently: each one is listed under a `### Breaking changes` heading with
 the call-site update it requires.
 
+## Unreleased
+
+### Breaking changes
+
+- **`useBifrostBatch` writes through the server's `<table>_batch` field.** It
+  used to send one mutation per operation, with no transaction and none of the
+  server's set-based fast path. Each document is now one transaction, so a failure
+  rolls back that whole document. All of a table's operations share a document
+  unless operations on another table have to run between them. BifrostQL has no
+  transaction across tables for this, so a batch over several tables is several
+  transactions, and a later failure does not undo an earlier document.
+- **`allowPartialSuccess` is removed.** A transaction has no partial success.
+  Call `mutate` once per table if each table should succeed or fail on its own.
+  There is no runtime check: untyped code that still passes it gets a rejected
+  `BatchError` where it used to get a resolved result with `errors`.
+- **`BatchResult` changed.** `results` holds one
+  `{ table, indices, affected }` per document, replacing one `{ index, data }`
+  per operation, and `errors` is gone because a resolved batch has no failures.
+  `affected` counts rows across the document and is the only thing the server
+  returns, so inserted keys and per-operation data are no longer available. Use
+  `useBifrostMutation` for an insert whose generated key you need.
+- **`BatchError` changed.** `results` holds the documents that committed, and
+  `errors` is replaced by `failed: { table, indices, error }` for the one
+  document that failed, plus `notAttempted`, the original indices never sent. The
+  server reports no failing row index, so read `failed.indices` as the whole
+  document, not as the culprit.
+- **`BatchProgress` changed.** `current` is replaced by `documents` and
+  `documentsSettled`. `completed` and `failed` still count operations but move a
+  document at a time, and `onProgress` fires at the start and once per document.
+- **Batches over the table's `batch-max-size` (default 100) are refused whole.**
+  The hook does not split them, because that would make them several
+  transactions. Raise `batch-max-size` on tables that take bulk writes.
+- **The server's `batch-duplicate-policy` now applies.** Several updates or
+  deletes of one key collapse to their net effect (`last-wins`, the default) or
+  are refused (`reject`). An upsert sharing a key with an update, delete or another
+  upsert is always refused, which includes a delete-then-upsert replace: use
+  delete-then-insert.
+- **An operation that cannot be built refuses the whole batch before anything is
+  sent**, with a plain `Error` naming its index. That covers a missing row
+  identity (previously a `BatchError` after the operations ahead of it had been
+  written) and an insert with no columns, which the server would skip silently.
+
 ## 0.3.0 — 2026-09-01
 
 ### Breaking changes

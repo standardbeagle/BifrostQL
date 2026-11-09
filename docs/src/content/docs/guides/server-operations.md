@@ -98,9 +98,10 @@ Both checks run before `ExecuteAsync`. A refused caller gets
 | `LockRowAsync(table, key)` | Locks one row until the transaction ends. See [Serializing on a row](#serializing-on-a-row). |
 
 There is no way to act as a different user, and no raw SQL. Every read goes through the read
-seam protocol adapters use, and every write through the pipeline generated mutations use. The
-one call that takes no caller scope is `LockRowAsync`: it returns no data and grants no write. A
-query operation can only read; calling a write method or `LockRowAsync` from one is refused.
+seam protocol adapters use, and every write through the pipeline generated mutations use.
+`LockRowAsync` is the one call that takes less of the caller's scope: it applies the caller's tenant
+but not read or write policy, and it returns no data and grants no write. A query operation can only
+read; calling a write method or `LockRowAsync` from one is refused.
 
 ## Reading rows
 
@@ -184,10 +185,11 @@ The lock is held until the operation's transaction commits or rolls back. Concur
 their turn, so of 20 concurrent starts, one entry is left running and 19 are stopped.
 
 **Who may lock.** The lock is bound by the caller's tenant and by nothing else. On a table with a
-`tenant-filter`, a row in another tenant answers exactly as a missing row does, and a caller with no
-tenant claim is denied. Read and write policy do not apply, so a member with no read or write on
-`people` can still lock a `people` row in their own tenant. The lock returns no data and grants
-nothing, and the `UpdateAsync` beside it still runs as the caller.
+`tenant-filter`, a row in another tenant answers `LOCK_ROW_NOT_FOUND`, the same code as a missing row,
+and a caller with no tenant claim is denied. The code is the same, but the databases do not get there
+the same way: see the table below. Read and write policy do not apply, so a member with no read or
+write on `people` can still lock a `people` row in their own tenant. The lock returns no data and
+grants nothing, and the `UpdateAsync` beside it still runs as the caller.
 
 Within a tenant, that leaves two things a caller can do with an id they choose: learn whether the
 row exists, and hold up other writers to it until the operation ends. So take the id from the
@@ -196,17 +198,30 @@ pass a client's id straight through.
 
 - Tenant scope comes from `tenant-filter` metadata only. A table isolated by a policy row scope
   such as `tenant_id = {tenant_id}` has no tenant bound on its lock, so check the row first.
-- On MySQL, a row the key finds keeps its lock even when the tenant test refuses it, because InnoDB
-  at repeatable read holds every row its index scan reaches. The caller still gets
-  `LOCK_ROW_NOT_FOUND` and learns nothing, and an uncaught error releases the lock at once. An
-  operation that catches it holds up the other tenant's writers to that row until it ends.
 - A change-history table, a deferred store and the approval queue are refused with `ACCESS_DENIED`.
+
+**Another tenant's row, by database.**
+
+| Database | While that tenant holds the row | After the caller catches `LOCK_ROW_NOT_FOUND` |
+|---|---|---|
+| PostgreSQL | Answers at once. | Holds nothing. |
+| MySQL | Waits until that tenant's lock is released, then answers. | Keeps a lock on the other tenant's row, so that tenant's writers wait until the operation ends. A key with no row locks the gap around it, so inserts into that gap wait too, from any tenant. |
+| SQL Server | Waits until that tenant's lock is released, then answers. | Holds nothing. |
+
+So tenant isolation does not make the lock silent. On MySQL and SQL Server a missing id answers at
+once and a row another tenant holds does not. The delay tells the caller that the row exists, and the
+caller's operation is held up for as long as the other tenant keeps the lock.
+
+MySQL's locks come from InnoDB at repeatable read, which holds every row its index scan reaches even
+when the tenant test then refuses the row. An uncaught `LOCK_ROW_NOT_FOUND` rolls back and releases
+them at once. An operation on MySQL that catches it should finish quickly, because they stay held
+until it ends.
 
 **Errors.**
 
 | Code | Constant | When |
 |---|---|---|
-| `LOCK_ROW_NOT_FOUND` | `BifrostOperationContext.LockRowNotFoundCode` | The caller's tenant has no row with that key. The message names the table, not the key. The operation may catch it and carry on. |
+| `LOCK_ROW_NOT_FOUND` | `BifrostOperationContext.LockRowNotFoundCode` | The caller's tenant has no row with that key. The message names the table, not the key. The operation may catch it and carry on; on MySQL, finish quickly, because the attempt can leave locks behind. |
 | `ROW_LOCK_UNSUPPORTED` | `BifrostOperationContext.RowLockUnsupportedCode` | The dialect has no row lock. Refused, so the operation never runs unserialized. |
 | `PARTIAL_PRIMARY_KEY` | `MutationArgumentBinder.PartialPrimaryKeyCode` | `key` is anything other than the table's whole primary key, including a table with none. |
 

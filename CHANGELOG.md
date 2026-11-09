@@ -11,9 +11,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - `BifrostOperationContext.LockRowAsync(table, key)` locks a row until the operation's
   transaction ends, so concurrent operations that read to decide what to write run one after
   another. It stays inside the caller's `tenant-filter` tenant, so a row of another tenant raises
-  the same `LOCK_ROW_NOT_FOUND` as a missing one. Read policy does not apply and the lock grants
-  nothing. A dialect with no row lock (SQLite) is refused with `ROW_LOCK_UNSUPPORTED` rather than
-  running unserialized.
+  the same `LOCK_ROW_NOT_FOUND` as a missing one. On MySQL and SQL Server the attempt waits while
+  that tenant holds the row, so the delay can show the row exists. On MySQL a caught
+  `LOCK_ROW_NOT_FOUND` also leaves locks that hold up other writers and inserts until the operation
+  ends. Read policy does not apply and the lock grants nothing. A dialect with no row lock (SQLite)
+  is refused with `ROW_LOCK_UNSUPPORTED` rather than running unserialized.
 - `BifrostOperationContext.QueryAsync` takes `sort` (`<column>_asc` / `<column>_desc`, as a
   generated field does), and `where` can test `BifrostOperationContext.NotNull` or
   `BifrostOperationContext.LessThan(value)`. A `null` value is now documented as IS NULL. See "Reading rows" and "Serializing on a row" in the Server Operations

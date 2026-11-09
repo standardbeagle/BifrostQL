@@ -4,6 +4,28 @@ All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-b
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
 
+## Unreleased — 2026-11-09 (least-privilege logins and operations)
+
+### Added
+
+- `BifrostOperationContext.LockRowAsync(table, key)` locks a row until the operation's
+  transaction ends, so concurrent operations that read to decide what to write run one after
+  another. It takes no caller scope and grants nothing. A dialect with no row lock (SQLite) is
+  refused with `ROW_LOCK_UNSUPPORTED` rather than running unserialized, and a missing row raises
+  `LOCK_ROW_NOT_FOUND`.
+- `BifrostOperationContext.QueryAsync` takes `sort` (`<column>_asc` / `<column>_desc`, as a
+  generated field does), and `where` can test `BifrostOperationContext.NotNull`. A `null` value is
+  now documented as IS NULL. See "Reading rows" and "Serializing on a row" in the Server Operations
+  guide.
+
+### Fixed
+
+- A PostgreSQL login that does not own the schema saw no primary, foreign or unique keys, because
+  `information_schema.constraint_column_usage` only shows the owner. Updates through such a login
+  found no key and changed nothing or failed with "has no primary key columns". Keys now come from
+  `pg_constraint`, and composite keys keep their declared order. For an owner, the one visible
+  change is that same-named constraints on different tables no longer pick up each other's columns.
+
 ## Unreleased — 2026-11-02 (history writer plugins)
 
 ### Added

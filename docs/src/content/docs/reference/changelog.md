@@ -7,6 +7,13 @@ Notable user-facing changes to BifrostQL. Breaking changes list the migration st
 
 ## Unreleased
 
+### Fixed — a PostgreSQL login that does not own the schema now sees its keys
+
+Keys came from `information_schema.constraint_column_usage`, which only shows the table owner, so
+a least-privilege login built a model with no keys and its keyed writes changed nothing or failed.
+They now come from `pg_constraint`. See
+[Reading keys on PostgreSQL](/BifrostQL/reference/dialects/#reading-keys-on-postgresql).
+
 ### Breaking — `_fileUpload.accessUrl` removed; file metadata no longer stores a presigned URL
 
 Uploading a file used to compute a presigned access URL and store it in the column's

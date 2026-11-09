@@ -91,14 +91,108 @@ Both checks run before `ExecuteAsync`. A refused caller gets
 | `Identity` | The caller as the policy engine sees them: id, tenant, roles, permissions |
 | `UserContext` | The caller's user context, read-only |
 | `Model`, `Services`, `CancellationToken` | The endpoint model, request services, request token |
-| `QueryAsync(table, where, columns, limit)` | Rows as the caller. `where` is an AND of column equalities. Tenant isolation, row scope, soft delete, column read guards and decryption apply. Rows are keyed by GraphQL field name. |
+| `QueryAsync(table, where, columns, limit, sort)` | Rows as the caller. See [Reading rows](#reading-rows). Tenant isolation, row scope, soft delete, column read guards and decryption apply. Rows are keyed by GraphQL field name. |
 | `InsertAsync(table, values)` | One insert through the full mutation pipeline; returns the new key |
 | `UpdateAsync(table, values)` | One update keyed by the key columns in `values`; returns the rows changed (0 when out of scope) |
 | `DeleteAsync(table, key)` | One delete (soft where the table declares it); returns the rows affected |
+| `LockRowAsync(table, key)` | Locks one row until the transaction ends. See [Serializing on a row](#serializing-on-a-row). |
 
 There is no way to act as a different user, and no raw SQL. Every read goes through the read
-seam protocol adapters use, and every write through the pipeline generated mutations use. A
-query operation can only read; calling a write method from one is refused.
+seam protocol adapters use, and every write through the pipeline generated mutations use. The
+one call that takes no caller scope is `LockRowAsync`: it returns no data and grants no write. A
+query operation can only read; calling a write method or `LockRowAsync` from one is refused.
+
+## Reading rows
+
+```csharp
+var latestStopped = await context.QueryAsync(
+    "time_entries",
+    where: new Dictionary<string, object?>
+    {
+        ["person_id"] = personId,                       // person_id = @p
+        ["stopped_at"] = BifrostOperationContext.NotNull, // stopped_at IS NOT NULL
+        ["note"] = null,                                // note IS NULL
+    },
+    columns: new[] { "id", "stopped_at" },
+    limit: 1,
+    sort: new[] { "stopped_at_desc", "id_desc" });
+```
+
+- `where` is an AND of column tests. There is no OR and no range: anything richer belongs in a
+  view or a generated field.
+- `sort` takes the tokens a generated field's `sort` argument takes: `<column>_asc` or
+  `<column>_desc`, most significant first. A token without a direction, or for a column the table
+  does not have, is refused. The primary key is appended as a tie-break.
+- `limit` behaves as it does on a generated field. Leaving it out reads the default window of 100
+  rows, **not every row**. `-1` reads up to the endpoint's `max-query-rows` ceiling, and a larger
+  limit is capped at that ceiling.
+- `columns` defaults to every column, so on a table with a read-denied column you must name the
+  columns you want or the read is refused.
+- A column named in `where` or `sort` passes the same read guard as a selected one. Testing or
+  ordering by a column the caller may not read is refused with `ACCESS_DENIED`, because either
+  would reveal it.
+
+## Serializing on a row
+
+An operation that reads to decide what to write can race. Two concurrent "start timer" calls both
+read "nothing running", and the second insert fails on the unique index instead of stopping the
+first entry. Lock a row they all share before the read:
+
+```csharp
+public async ValueTask<object?> ExecuteAsync(BifrostOperationContext context)
+{
+    var personId = context.GetArgument<int>("personId");
+    await context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = personId });
+
+    var running = await context.QueryAsync(
+        "time_entries",
+        new Dictionary<string, object?> { ["person_id"] = personId, ["stopped_at"] = null },
+        columns: new[] { "id" });
+    foreach (var entry in running)
+        await context.UpdateAsync("time_entries",
+            new Dictionary<string, object?> { ["id"] = entry["id"], ["stopped_at"] = DateTime.UtcNow });
+
+    await context.InsertAsync("time_entries", new Dictionary<string, object?> { ["person_id"] = personId });
+    return running.Count;
+}
+```
+
+The lock is held until the operation's transaction commits or rolls back. Concurrent calls wait
+their turn, so of 20 concurrent starts, one entry is left running and 19 are stopped.
+
+**Who may lock.** Operation code is trusted with its keys, so the lock takes no caller scope: a
+member with no read or write on `people` can hold a lock on a `people` row, in any tenant. It
+returns no data and grants nothing. The `UpdateAsync` beside it still runs as the caller. The one
+thing it reveals is whether the row exists, so do not surface the not-found error for an id a
+client chose unless that is acceptable.
+
+**Errors.**
+
+| Code | Constant | When |
+|---|---|---|
+| `LOCK_ROW_NOT_FOUND` | `BifrostOperationContext.LockRowNotFoundCode` | No row has that key. The message names the table, not the key. The operation may catch it and carry on. |
+| `ROW_LOCK_UNSUPPORTED` | `BifrostOperationContext.RowLockUnsupportedCode` | The dialect has no row lock. Refused, so the operation never runs unserialized. |
+| `PARTIAL_PRIMARY_KEY` | `MutationArgumentBinder.PartialPrimaryKeyCode` | `key` is anything other than the table's whole primary key, including a table with none. |
+
+**By database.**
+
+| Database | Statement | Note |
+|---|---|---|
+| PostgreSQL | `SELECT ... FOR UPDATE` | The login needs `UPDATE` on the table, not only `SELECT`. |
+| MySQL | `SELECT ... FOR UPDATE` | Lock **before** any read. Under the default `REPEATABLE READ` the first plain read fixes the snapshot, so a read after a late lock still misses rows committed before it. |
+| SQL Server | `SELECT ... WITH (UPDLOCK)` | |
+| SQLite | none | Refused with `ROW_LOCK_UNSUPPORTED`. |
+
+**What it does not do.**
+
+- It serializes only the code paths that take the same lock. A generated `time_entries` update
+  from elsewhere does not wait for it; keep a unique index as the backstop.
+- On PostgreSQL an insert whose foreign key references the locked row waits until the lock is
+  released, even from code that never asks for a lock. Keep the transaction short.
+- An operation that locks several rows should lock them in the same order everywhere, or two
+  operations can deadlock, and the database will fail one of them.
+- Pass the key in the column's own .NET type: a `Guid` for a PostgreSQL `uuid`, not its text. Text
+  fails with a database error, as it does for `UpdateAsync`.
 
 ## One transaction per mutation operation
 

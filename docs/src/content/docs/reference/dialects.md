@@ -55,6 +55,31 @@ SQL Server requires an `ORDER BY` clause for `OFFSET`/`FETCH` pagination. Bifros
 | MySQL | `INSERT ... ON DUPLICATE KEY UPDATE ...` |
 | SQLite | `INSERT OR REPLACE INTO ...` |
 
+### Row locks
+
+[`LockRowAsync`](/BifrostQL/guides/server-operations/#serializing-on-a-row) in a server operation:
+
+| Database | Form |
+|----------|------|
+| SQL Server | `WITH (UPDLOCK)` |
+| PostgreSQL | `FOR UPDATE` (the login needs `UPDATE` on the table) |
+| MySQL | `FOR UPDATE` |
+| SQLite | None. Refused with `ROW_LOCK_UNSUPPORTED`, as is a custom dialect that declares neither `UpdateLockClause` nor `UpdateLockTableHint`. |
+
+### Reading keys on PostgreSQL
+
+Primary, foreign and unique keys come from `pg_constraint`, not `information_schema`, whose
+constraint views only show the table owner. A login that holds `SELECT` and DML but does not own
+the schema gets the same model as the owner, including composite key order.
+
+- A key is listed only when the login has a privilege on every column in it. A partial column
+  grant that leaves out a key column leaves the table with no key, so keyed writes through that
+  login do not work.
+- A table the login sees in `information_schema.tables` but holds no column privilege on, such as
+  a `DELETE`-only grant, fails model loading. Grant it `SELECT` as well.
+- A foreign key that targets a plain unique index rather than a key constraint is not listed, for
+  owners and non-owners alike.
+
 ### Type mapping specifics
 
 **SQL Server**:

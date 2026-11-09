@@ -1300,6 +1300,11 @@ public sealed class MySqlServerOperationConcurrencyTests : ServerOperationRowLoc
 
     protected override async Task DropDatabaseAsync(string dbName)
     {
+        // Every test gets its own database and so its own pool, and the concurrent runs fill it.
+        // Left alone those idle connections outlive the test by MySqlConnector's idle timeout.
+        await using (var pooled = new MySqlConnector.MySqlConnection(ConnectionStringFor(dbName)))
+            await MySqlConnector.MySqlConnection.ClearPoolAsync(pooled);
+
         await using var conn = new MySqlConnector.MySqlConnection(Master);
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
@@ -1308,8 +1313,10 @@ public sealed class MySqlServerOperationConcurrencyTests : ServerOperationRowLoc
     }
 
     protected override IDbConnFactory CreateConnFactory(string dbName)
-        => new BifrostQL.MySql.MySqlDbConnFactory(
-            new MySqlConnector.MySqlConnectionStringBuilder(Master!) { Database = dbName }.ConnectionString);
+        => new BifrostQL.MySql.MySqlDbConnFactory(ConnectionStringFor(dbName));
+
+    private static string ConnectionStringFor(string dbName)
+        => new MySqlConnector.MySqlConnectionStringBuilder(Master!) { Database = dbName }.ConnectionString;
 
     /// <summary>
     /// Why the guide says to lock before reading: under InnoDB's REPEATABLE READ the first plain

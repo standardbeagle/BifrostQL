@@ -163,7 +163,8 @@ first entry. Lock a row they all share before the read:
 ```csharp
 public async ValueTask<object?> ExecuteAsync(BifrostOperationContext context)
 {
-    var personId = context.GetArgument<int>("personId");
+    // The caller's own person, from their session. See "Who may lock" before using a client's id.
+    var personId = int.Parse(context.Identity.Id);
     await context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = personId });
 
     var running = await context.QueryAsync(
@@ -182,17 +183,30 @@ public async ValueTask<object?> ExecuteAsync(BifrostOperationContext context)
 The lock is held until the operation's transaction commits or rolls back. Concurrent calls wait
 their turn, so of 20 concurrent starts, one entry is left running and 19 are stopped.
 
-**Who may lock.** Operation code is trusted with its keys, so the lock takes no caller scope: a
-member with no read or write on `people` can hold a lock on a `people` row, in any tenant. It
-returns no data and grants nothing. The `UpdateAsync` beside it still runs as the caller. The one
-thing it reveals is whether the row exists, so do not surface the not-found error for an id a
-client chose unless that is acceptable.
+**Who may lock.** The lock is bound by the caller's tenant and by nothing else. On a table with a
+`tenant-filter`, a row in another tenant answers exactly as a missing row does, and a caller with no
+tenant claim is denied. Read and write policy do not apply, so a member with no read or write on
+`people` can still lock a `people` row in their own tenant. The lock returns no data and grants
+nothing, and the `UpdateAsync` beside it still runs as the caller.
+
+Within a tenant, that leaves two things a caller can do with an id they choose: learn whether the
+row exists, and hold up other writers to it until the operation ends. So take the id from the
+caller's session, as above, or check that the caller may act on that row before locking it. Do not
+pass a client's id straight through.
+
+- Tenant scope comes from `tenant-filter` metadata only. A table isolated by a policy row scope
+  such as `tenant_id = {tenant_id}` has no tenant bound on its lock, so check the row first.
+- On MySQL, a row the key finds keeps its lock even when the tenant test refuses it, because InnoDB
+  at repeatable read holds every row its index scan reaches. The caller still gets
+  `LOCK_ROW_NOT_FOUND` and learns nothing, and an uncaught error releases the lock at once. An
+  operation that catches it holds up the other tenant's writers to that row until it ends.
+- A change-history table, a deferred store and the approval queue are refused with `ACCESS_DENIED`.
 
 **Errors.**
 
 | Code | Constant | When |
 |---|---|---|
-| `LOCK_ROW_NOT_FOUND` | `BifrostOperationContext.LockRowNotFoundCode` | No row has that key. The message names the table, not the key. The operation may catch it and carry on. |
+| `LOCK_ROW_NOT_FOUND` | `BifrostOperationContext.LockRowNotFoundCode` | The caller's tenant has no row with that key. The message names the table, not the key. The operation may catch it and carry on. |
 | `ROW_LOCK_UNSUPPORTED` | `BifrostOperationContext.RowLockUnsupportedCode` | The dialect has no row lock. Refused, so the operation never runs unserialized. |
 | `PARTIAL_PRIMARY_KEY` | `MutationArgumentBinder.PartialPrimaryKeyCode` | `key` is anything other than the table's whole primary key, including a table with none. |
 

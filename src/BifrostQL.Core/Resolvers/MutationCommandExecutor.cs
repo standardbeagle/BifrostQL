@@ -68,11 +68,13 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Renders the AND-joined <c>"col"=@col</c> equality predicate shared by every
         /// UPDATE/DELETE WHERE clause (and the state-machine load). Each column name is
-        /// escaped as an identifier and sanitized for its parameter placeholder, matching
-        /// the placeholders <see cref="AddParameters"/> binds.
+        /// escaped as an identifier and rendered with the dialect's typed placeholder, the
+        /// same one the SET and VALUES lists use, because a key arrives as text just as they
+        /// do (a GraphQL uuid is a string) and PostgreSQL will not compare uuid to text. The
+        /// placeholder names match the ones <see cref="AddParameters"/> binds.
         /// </summary>
-        public static string BuildKeyPredicate(ISqlDialect dialect, IEnumerable<string> columns)
-            => string.Join(" AND ", columns.Select(c => $"{dialect.EscapeIdentifier(c)}=@{SqlParameterNames.Sanitize(c)}"));
+        public static string BuildKeyPredicate(ISqlDialect dialect, IDbTable table, IEnumerable<string> columns)
+            => string.Join(" AND ", columns.Select(c => $"{dialect.EscapeIdentifier(c)}={DbParameterBinder.ValuePlaceholder(dialect, table, c)}"));
 
         /// <summary>
         /// The one zero-row policy for every keyed write. Two inputs decide it:
@@ -127,7 +129,7 @@ namespace BifrostQL.Core.Resolvers
             IEnumerable<string> setColumns, IEnumerable<string> keyColumns, string whereSuffix)
         {
             var setClause = string.Join(",", setColumns.Select(c => SetAssignment(dialect, table, c)));
-            var whereClause = BuildKeyPredicate(dialect, keyColumns);
+            var whereClause = BuildKeyPredicate(dialect, table, keyColumns);
             return $"UPDATE {tableRef} SET {setClause} WHERE {whereClause}{whereSuffix};";
         }
 
@@ -149,12 +151,12 @@ namespace BifrostQL.Core.Resolvers
         /// the single-row and batch hard-delete paths. <paramref name="whereSuffix"/>
         /// carries a transformer's ANDed AdditionalFilter (empty when none).
         /// </summary>
-        public static string BuildDeleteSql(ISqlDialect dialect, string tableRef,
+        public static string BuildDeleteSql(ISqlDialect dialect, IDbTable table, string tableRef,
             IEnumerable<string> whereColumns, string whereSuffix)
-            => $"DELETE FROM {tableRef} WHERE {BuildKeyPredicate(dialect, whereColumns)}{whereSuffix};";
+            => $"DELETE FROM {tableRef} WHERE {BuildKeyPredicate(dialect, table, whereColumns)}{whereSuffix};";
 
-        public static string BuildExistsSql(ISqlDialect dialect, string tableRef, IEnumerable<string> keyColumns)
-            => $"SELECT 1 FROM {tableRef} WHERE {BuildKeyPredicate(dialect, keyColumns)};";
+        public static string BuildExistsSql(ISqlDialect dialect, IDbTable table, string tableRef, IEnumerable<string> keyColumns)
+            => $"SELECT 1 FROM {tableRef} WHERE {BuildKeyPredicate(dialect, table, keyColumns)};";
 
         public static string BuildFilteredCountSql(string tableRef, string whereSql)
             => $"SELECT COUNT(*) FROM {tableRef} WHERE {whereSql};";
@@ -250,7 +252,7 @@ namespace BifrostQL.Core.Resolvers
         {
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             return $"SELECT {dialect.EscapeIdentifier(stateColumn)} FROM {tableRef}{dialect.UpdateLockTableHint} " +
-                   $"WHERE {BuildKeyPredicate(dialect, keyColumns)}{scopeWhereSuffix}{dialect.UpdateLockClause};";
+                   $"WHERE {BuildKeyPredicate(dialect, table, keyColumns)}{scopeWhereSuffix}{dialect.UpdateLockClause};";
         }
 
         /// <summary>
@@ -362,7 +364,7 @@ namespace BifrostQL.Core.Resolvers
             var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
             var fromHint = forUpdate ? dialect.UpdateLockTableHint : "";
             var lockClause = forUpdate ? dialect.UpdateLockClause : "";
-            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, keyColumns)}{lockClause};";
+            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, table, keyColumns)}{lockClause};";
         }
 
         /// <summary>

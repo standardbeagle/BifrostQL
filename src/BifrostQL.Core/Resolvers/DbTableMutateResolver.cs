@@ -161,7 +161,7 @@ namespace BifrostQL.Core.Resolvers
                 return false;
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var whereClause = MutationCommandExecutor.BuildKeyPredicate(dialect, keyData.Keys);
+            var whereClause = MutationCommandExecutor.BuildKeyPredicate(dialect, table, keyData.Keys);
             var sql = $"SELECT 1 FROM {tableRef} WHERE {whereClause};";
 
             await using var conn = connFactory.GetConnection();

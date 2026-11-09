@@ -340,7 +340,7 @@ public sealed class TreeSyncExecutor
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = MutationCommandExecutor.BuildDeleteSql(_dialect, tableRef, data.Keys, additionalFilter.WhereSuffix);
+        cmd.CommandText = MutationCommandExecutor.BuildDeleteSql(_dialect, table, tableRef, data.Keys, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
         return await cmd.ExecuteNonQueryAsync();

@@ -52,7 +52,7 @@ public sealed class BeforeImageUpdateLockSqlTests
     {
         var sql = Sql(Ngsql.PostgresDialect.Instance, Table(), forUpdate: true);
 
-        sql.Should().Be("SELECT \"id\",\"status\" FROM \"orders\" WHERE \"id\"=@id FOR UPDATE;");
+        sql.Should().Be("SELECT \"id\",\"status\" FROM \"orders\" WHERE \"id\"=@id::int FOR UPDATE;");
         SqlSyntax.AssertValid(sql, SqlFlavor.Postgres);
     }
 

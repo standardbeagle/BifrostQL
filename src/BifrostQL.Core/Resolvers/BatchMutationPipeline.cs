@@ -543,7 +543,7 @@ namespace BifrostQL.Core.Resolvers
             if (predicateData.Count == 0)
                 throw new BifrostExecutionError(
                     "A delete requires a primary key or at least one predicate column to scope the affected rows.");
-            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, predicateData.Keys, additionalFilter.WhereSuffix);
+            var deleteSql = MutationCommandExecutor.BuildDeleteSql(dialect, table, tableRef, predicateData.Keys, additionalFilter.WhereSuffix);
             var (deleteAffected, deletePending) = await RunHookedWriteAsync(ctx, MutationType.Delete, predicateData, async () =>
             {
                 await using var deleteCmd = ctx.Conn.CreateCommand();
@@ -602,7 +602,7 @@ namespace BifrostQL.Core.Resolvers
         private static async Task<bool> RowExistsAsync(BatchExecutionContext ctx, Dictionary<string, object?> keyData)
         {
             var tableRef = ctx.Dialect.TableReference(ctx.Table.TableSchema, ctx.Table.DbName);
-            var sql = MutationCommandExecutor.BuildExistsSql(ctx.Dialect, tableRef, keyData.Keys);
+            var sql = MutationCommandExecutor.BuildExistsSql(ctx.Dialect, ctx.Table, tableRef, keyData.Keys);
             await using var cmd = ctx.Conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = ctx.Transaction;

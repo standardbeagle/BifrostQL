@@ -129,7 +129,7 @@ public sealed class TreeSyncStateLoader
         IDbTable table, ColumnDto keyCol, object pk, DbConnection conn)
     {
         var rows = await QueryAsync(table,
-            $"{_dialect.EscapeIdentifier(keyCol.ColumnName)} = @pk",
+            $"{_dialect.EscapeIdentifier(keyCol.ColumnName)} = {_dialect.CastParameterReference("@pk", keyCol.DataType)}",
             new Dictionary<string, object?> { ["@pk"] = pk },
             conn);
         return rows.Count > 0 ? rows[0] : null;
@@ -139,11 +139,11 @@ public sealed class TreeSyncStateLoader
         IDbTable childTable, string fkColumn, object parentPk,
         LinkConstantPredicate? predicate, DbConnection conn)
     {
-        var where = $"{_dialect.EscapeIdentifier(fkColumn)} = @fk";
+        var where = $"{_dialect.EscapeIdentifier(fkColumn)} = {_dialect.CastParameterReference("@fk", childTable.ColumnLookup[fkColumn].DataType)}";
         var parameters = new Dictionary<string, object?> { ["@fk"] = parentPk };
         if (predicate != null)
         {
-            where += $" AND {_dialect.EscapeIdentifier(predicate.Column.ColumnName)} = @disc";
+            where += $" AND {_dialect.EscapeIdentifier(predicate.Column.ColumnName)} = {_dialect.CastParameterReference("@disc", predicate.Column.DataType)}";
             parameters["@disc"] = predicate.Value;
         }
         return await QueryAsync(childTable, where, parameters, conn);

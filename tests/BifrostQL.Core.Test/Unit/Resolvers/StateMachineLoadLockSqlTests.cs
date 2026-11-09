@@ -52,7 +52,7 @@ public sealed class StateMachineLoadLockSqlTests
     {
         var sql = Sql(Ngsql.PostgresDialect.Instance, Table(), Scope);
 
-        sql.Should().Be("SELECT \"status\" FROM \"tickets\" WHERE \"id\"=@id AND (\"tenant_id\" = @p0) FOR UPDATE;");
+        sql.Should().Be("SELECT \"status\" FROM \"tickets\" WHERE \"id\"=@id::int AND (\"tenant_id\" = @p0) FOR UPDATE;");
         SqlSyntax.AssertValid(sql, SqlFlavor.Postgres);
     }
 

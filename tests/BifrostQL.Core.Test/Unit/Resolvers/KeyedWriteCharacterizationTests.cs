@@ -106,7 +106,7 @@ public sealed class KeyedWriteCharacterizationTests
         update.Should().Contain("WHERE \"id\"=@id AND \"region\"=@region AND (\"tenant_id\" = @p0);");
 
         var delete = MutationCommandExecutor.BuildDeleteSql(
-            dialect, tableRef,
+            dialect, table, tableRef,
             whereColumns: new[] { "id", "region", "status" },
             whereSuffix: " AND (\"tenant_id\" = @p0)");
         delete.Should().Be(

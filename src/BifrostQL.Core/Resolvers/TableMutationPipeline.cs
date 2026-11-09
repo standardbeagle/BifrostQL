@@ -511,7 +511,7 @@ namespace BifrostQL.Core.Resolvers
                     "A delete requires a primary key or at least one predicate column to scope the affected rows.");
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
-            var sql = MutationCommandExecutor.BuildDeleteSql(dialect, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
+            var sql = MutationCommandExecutor.BuildDeleteSql(dialect, table, tableRef, deleteData.Keys, additionalFilter.WhereSuffix);
             var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))

@@ -64,14 +64,33 @@
     },
     "reply": {
       "data": { "items_batch": null },
-      "errors": [{ "message": "the server's refusal", "path": ["items_batch"], "extensions": { "code": "CONFLICT" } }]
+      "errors": [
+        {
+          "message": "the server's refusal",
+          "path": ["items_batch"],
+          "extensions": { "code": "CONFLICT" }
+        }
+      ]
     }
   },
   "bulk": {
     "operations": [
-      { "type": "insert", "table": "items", "data": { "sku": "sku-a", "name": "a" } },
-      { "type": "insert", "table": "items", "data": { "sku": "sku-b", "name": "b" } },
-      { "type": "update", "table": "items", "id": 1, "data": { "name": "renamed" } },
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-a", "name": "a" }
+      },
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-b", "name": "b" }
+      },
+      {
+        "type": "update",
+        "table": "items",
+        "id": 1,
+        "data": { "name": "renamed" }
+      },
       { "type": "delete", "table": "items", "id": 3 }
     ],
     "request": {
@@ -90,7 +109,11 @@
   "deleteThenInsert": {
     "operations": [
       { "type": "delete", "table": "items", "id": 3 },
-      { "type": "insert", "table": "items", "data": { "sku": "sku-3", "name": "y" } }
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-3", "name": "y" }
+      }
     ],
     "request": {
       "query": "mutation Batch($actions: [batch_items!]!) { items_batch(actions: $actions) }",
@@ -105,9 +128,17 @@
   },
   "insertDeleteInsert": {
     "operations": [
-      { "type": "insert", "table": "items", "data": { "sku": "sku-x", "name": "x" } },
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-x", "name": "x" }
+      },
       { "type": "delete", "table": "items", "id": 3 },
-      { "type": "insert", "table": "items", "data": { "sku": "sku-3", "name": "y" } }
+      {
+        "type": "insert",
+        "table": "items",
+        "data": { "sku": "sku-3", "name": "y" }
+      }
     ],
     "request": {
       "query": "mutation Batch($actions: [batch_items!]!) { items_batch(actions: $actions) }",

@@ -305,7 +305,9 @@ describe('executeGraphQL', () => {
       );
 
       it('still reads an error with no code by its message', async () => {
-        const error = await refusal([{ message: 'Unauthorized: token expired' }]);
+        const error = await refusal([
+          { message: 'Unauthorized: token expired' },
+        ]);
 
         expect(error).toBeInstanceOf(BifrostAuthError);
       });
@@ -313,7 +315,10 @@ describe('executeGraphQL', () => {
       it('takes the session flow when any one error of several is an auth failure', async () => {
         const error = await refusal([
           { message: 'Denied', extensions: { code: 'ACCESS_DENIED' } },
-          { message: 'Sign in again.', extensions: { code: 'UNAUTHENTICATED' } },
+          {
+            message: 'Sign in again.',
+            extensions: { code: 'UNAUTHENTICATED' },
+          },
         ]);
 
         expect(error).toBeInstanceOf(BifrostAuthError);

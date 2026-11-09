@@ -13,15 +13,10 @@
               "column": 12
             }
           ],
-          "path": [
-            "refuse"
-          ],
+          "path": ["refuse"],
           "extensions": {
             "code": "NOT_TIMER_OWNER",
-            "codes": [
-              "NOT_TIMER_OWNER",
-              "BIFROST_EXECUTION_ERROR"
-            ]
+            "codes": ["NOT_TIMER_OWNER", "BIFROST_EXECUTION_ERROR"]
           }
         }
       ],
@@ -44,15 +39,10 @@
               "column": 12
             }
           ],
-          "path": [
-            "refuse"
-          ],
+          "path": ["refuse"],
           "extensions": {
             "code": "UNAUTHENTICATED",
-            "codes": [
-              "UNAUTHENTICATED",
-              "BIFROST_EXECUTION_ERROR"
-            ]
+            "codes": ["UNAUTHENTICATED", "BIFROST_EXECUTION_ERROR"]
           }
         }
       ],
@@ -75,14 +65,10 @@
               "column": 12
             }
           ],
-          "path": [
-            "refuse"
-          ],
+          "path": ["refuse"],
           "extensions": {
             "code": "BIFROST_EXECUTION_ERROR",
-            "codes": [
-              "BIFROST_EXECUTION_ERROR"
-            ]
+            "codes": ["BIFROST_EXECUTION_ERROR"]
           }
         }
       ],

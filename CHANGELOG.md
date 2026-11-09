@@ -22,6 +22,17 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   a denial without matching message text. `BatchError` gains `code`. `BifrostAuthError` is
   unchanged.
 
+### Changed
+
+- The set-based batch fast path merges only adjacent rows with the same verb, columns and filter,
+  and applies each run in document order. It used to group a verb's rows wherever they sat in the
+  document, so `[insert x, delete y, insert y]` ran both inserts first and failed with `CONFLICT`
+  when the later insert reused a key the delete freed. Batches of one verb and one column set stay
+  one statement. A batch of more than 8 runs now takes the per-row loop, which includes a batch that
+  alternates verbs or an optional column on every row: those were set-based, in the wrong order, and
+  10,000 of them now take about as long as the per-row path. See "How the fast path keeps document
+  order" in the bulk batch performance reference, which also names where the two paths still differ.
+
 ### Fixed
 
 - A PostgreSQL login that does not own the schema saw no primary, foreign or unique keys, because

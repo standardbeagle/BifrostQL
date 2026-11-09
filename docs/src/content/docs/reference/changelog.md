@@ -7,6 +7,14 @@ Notable user-facing changes to BifrostQL. Breaking changes list the migration st
 
 ## Unreleased
 
+### Changed — the batch fast path keeps document order
+
+The fast path now merges only adjacent rows with the same verb, columns and filter, so
+`[insert x, delete y, insert y]` gives the per-row result where it used to fail with `CONFLICT`.
+A batch that changes verb or column set on every row loses the speedup: past 8 runs it takes the
+per-row loop. See [How the fast path keeps document order](/BifrostQL/reference/bulk-batch-performance/#how-the-fast-path-keeps-document-order),
+which also names where the two paths still differ.
+
 ### Fixed — a PostgreSQL login that does not own the schema now sees its keys
 
 Keys came from `information_schema.constraint_column_usage`, which only shows the table owner, so

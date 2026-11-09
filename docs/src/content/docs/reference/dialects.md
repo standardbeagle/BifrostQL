@@ -89,7 +89,7 @@ the schema gets the same model as the owner, including composite key order.
 
 **PostgreSQL**:
 - `serial`, `bigserial` are treated as auto-increment
-- `uuid` maps to `String`
+- `uuid` maps to `String`. A text value works as a key, a foreign key and a filter value, because the parameter is cast to the column's type. A malformed one fails with `INVALID_VALUE`, as does any other value the column cannot read: a bad date or a number out of range. That code comes from the SQLSTATE, so it is PostgreSQL-tested only; SQL Server reports no SQLSTATE and its conversion errors stay `DATABASE_ERROR`.
 - `jsonb`, `json` map to `String`
 - `text[]` and `integer[]` are exposed as `String` inputs carrying PostgreSQL array literals (for example, `{a,b}`); their bound parameters are explicitly cast to the resolved array type.
 

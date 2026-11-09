@@ -15,6 +15,20 @@ A batch that changes verb or column set on every row loses the speedup: past 8 r
 per-row loop. See [How the fast path keeps document order](/BifrostQL/reference/bulk-batch-performance/#how-the-fast-path-keeps-document-order),
 which also names where the two paths still differ.
 
+### Fixed — PostgreSQL `uuid` keys work as text
+
+Generated updates, deletes and upserts, and `UpdateAsync`, `DeleteAsync` and `LockRowAsync`, failed
+with `uuid = text` on a key sent as a string, which is the only way GraphQL can send one.
+
+### Changed — a value its column cannot read is `INVALID_VALUE`
+
+A malformed uuid, a bad date or a number out of range used to answer `DATABASE_ERROR`. It now
+answers `INVALID_VALUE` with a generic message, from the SQLSTATE. An out-of-range key on a PostgreSQL
+integer column fails this way where it used to match no row.
+
+**Migration:** code that matched `DATABASE_ERROR` for these conditions must match `INVALID_VALUE`.
+See [Type mapping specifics](/BifrostQL/reference/dialects/#type-mapping-specifics).
+
 ### Fixed — a PostgreSQL login that does not own the schema now sees its keys
 
 Keys came from `information_schema.constraint_column_usage`, which only shows the table owner, so

@@ -37,8 +37,18 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   whose message says "unauthorized" used to log the user out. An operation that relied on that
   wording must set `ErrorCode = "UNAUTHENTICATED"`. An error with no code is read as before.
 
+- A database error for a value its column cannot read (SQLSTATE `22P02`, `22007`, `22008`, `22003`)
+  now has the code `INVALID_VALUE` instead of `DATABASE_ERROR`, with a generic message. Code that
+  matched `DATABASE_ERROR` for these needs the new word. An out-of-range key on a PostgreSQL integer
+  column now fails this way where it used to match no row.
+
 ### Fixed
 
+- On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
+  and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
+  as a string, so this blocked every uuid-keyed table. Key predicates now cast to the column's type,
+  as SET lists and filters already did. Batches with uuid text also lost the fast path without saying
+  so, because binary COPY refuses a string for a uuid column; canonical text now stays on it.
 - A PostgreSQL login that does not own the schema saw no primary, foreign or unique keys, because
   `information_schema.constraint_column_usage` only shows the owner. Updates through such a login
   found no key and changed nothing or failed with "has no primary key columns". Keys now come from

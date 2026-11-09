@@ -191,8 +191,8 @@ client chose unless that is acceptable.
   released, even from code that never asks for a lock. Keep the transaction short.
 - An operation that locks several rows should lock them in the same order everywhere, or two
   operations can deadlock, and the database will fail one of them.
-- Pass the key in the column's own .NET type: a `Guid` for a PostgreSQL `uuid`, not its text. Text
-  fails with a database error, as it does for `UpdateAsync`.
+- A PostgreSQL `uuid` key can be a `Guid` or its text, as in every other call here. A malformed
+  one fails with `INVALID_VALUE`.
 
 ## One transaction per mutation operation
 

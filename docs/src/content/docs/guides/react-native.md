@@ -69,10 +69,12 @@ const config: BifrostConfig = {
 
 Behavior:
 
-- On HTTP `401` or a GraphQL auth error (a message matching
-  `unauthorized` / `unauthenticated` / `forbidden`), the transport invokes
-  `refreshToken`, then **retries the request exactly once** with the refreshed
-  credential.
+- On HTTP `401` or a GraphQL auth error, the transport invokes `refreshToken`,
+  then **retries the request exactly once** with the refreshed credential. A
+  GraphQL error is an auth error when its `extensions.code` is `UNAUTHENTICATED`
+  or `UNAUTHORIZED`, or, with no code, when its message says `unauthorized` or
+  `unauthenticated`. Any other code is not, whatever the message says. A
+  permission denial (`FORBIDDEN`, `ACCESS_DENIED`) never takes this flow.
 - If the retry succeeds, the caller never sees the failure.
 - If no `refreshToken` hook is configured, the refresh throws, or the retry
   still fails authentication, the transport throws a typed `BifrostAuthError`

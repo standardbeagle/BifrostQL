@@ -10,6 +10,15 @@ the call-site update it requires.
 
 ### Breaking changes
 
+- **A coded GraphQL error is judged by its code, not its message.** An error whose
+  `extensions.code` is anything but `UNAUTHENTICATED` or `UNAUTHORIZED` is now a
+  `BifrostGraphQLError`, even when its message says "unauthorized", and no longer
+  calls `refreshToken` or `onSessionExpired`. A `BifrostExecutionError` thrown on the
+  server always reaches the client with a code (`BIFROST_EXECUTION_ERROR` when it
+  names none), so a server operation that relied on the word "unauthorized" to start
+  the session flow must set `ErrorCode = "UNAUTHENTICATED"`. An `UNAUTHENTICATED` or
+  `UNAUTHORIZED` code now starts that flow whatever the message says. An error with
+  no code is judged by its message, as before.
 - **`useBifrostBatch` writes through the server's `<table>_batch` field.** It
   used to send one mutation per operation, with no transaction and none of the
   server's set-based fast path. Each document is now one transaction, so a failure

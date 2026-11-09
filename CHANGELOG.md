@@ -19,8 +19,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   guide.
 - `@bifrostql/react` rejects with `BifrostGraphQLError`, which keeps the server's
   `extensions.code` as `code` and the whole list as `errors`, so a client can tell a conflict from
-  a denial without matching message text. `BatchError` gains `code`. `BifrostAuthError` is
-  unchanged.
+  a denial without matching message text. `BatchError` gains `code`.
 
 ### Changed
 
@@ -32,6 +31,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   alternates verbs or an optional column on every row: those were set-based, in the wrong order, and
   10,000 of them now take about as long as the per-row path. See "How the fast path keeps document
   order" in the bulk batch performance reference, which also names where the two paths still differ.
+
+- `@bifrostql/react` decides whether a GraphQL error is an auth failure by its `extensions.code`
+  when it has one: only `UNAUTHENTICATED` and `UNAUTHORIZED` take the session flow. A coded refusal
+  whose message says "unauthorized" used to log the user out. An operation that relied on that
+  wording must set `ErrorCode = "UNAUTHENTICATED"`. An error with no code is read as before.
 
 ### Fixed
 

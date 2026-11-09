@@ -138,7 +138,7 @@ batch.mutateAsync(operations).catch((error) => {
 
 Three failures carry no `code`:
 
-- **`BifrostAuthError`** is unchanged. An HTTP 401, or a GraphQL error whose message says `unauthorized` or `unauthenticated`, takes the [session flow](/BifrostQL/guides/react-native/) and has no `code`, even when the server sent one.
+- **`BifrostAuthError`** takes the [session flow](/BifrostQL/guides/react-native/) and has no `code`. An HTTP 401 is one, and so is a GraphQL error whose `extensions.code` is `UNAUTHENTICATED` or `UNAUTHORIZED`. A GraphQL error with any other code is a `BifrostGraphQLError`, whatever its message says, so a server operation's `NOT_TIMER_OWNER` refusal reading "You are unauthorized…" never logs anyone out. Only an error with no code is judged by its message, `unauthorized` or `unauthenticated`. BifrostQL's own errors always carry a code on the wire (`BIFROST_EXECUTION_ERROR` when nothing named one), so a server operation that means "sign in again" has to set `ErrorCode = "UNAUTHENTICATED"`.
 - **A non-2xx response** is a plain `Error` naming the status. The server's request-level refusals, such as an HTTP 400 or 403 from the endpoint itself, land here.
 - **Errors the client raises itself**, such as `useBifrostDiff`'s conflict error, are plain `Error`s.
 

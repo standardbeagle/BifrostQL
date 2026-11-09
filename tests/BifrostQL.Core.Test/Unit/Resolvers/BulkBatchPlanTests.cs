@@ -216,6 +216,63 @@ public sealed class BulkBatchPlanTests
     }
 
     [Fact]
+    public async Task AdjacentRowsOfOneSignature_ShareOneStatement()
+    {
+        var ctx = BuildContext(BuildModel());
+
+        var built = await BuildAsync(ctx,
+            Insert(("Status", "a")),
+            Insert(("Status", "b")),
+            Insert(("Status", "c")));
+
+        built!.Plan.Groups.Should().ContainSingle();
+        built.Plan.Rows.Select(r => r.Group).Should().Equal(0, 0, 0);
+    }
+
+    [Fact]
+    public async Task RowsOfOneVerbOnBothSidesOfAnother_KeepDocumentOrder()
+    {
+        var ctx = BuildContext(BuildModel());
+
+        var built = await BuildAsync(ctx,
+            Insert(("Status", "x")),
+            Delete(("OrderId", 1), ("LineNo", 1)),
+            Insert(("Status", "y")));
+
+        var plan = built!.Plan;
+        plan.Groups.Select(g => g.Op).Should().Equal(BulkOpCode.Insert, BulkOpCode.Delete, BulkOpCode.Insert);
+        plan.Groups.Select(g => g.Id).Should().Equal(0, 1, 2);
+        plan.Rows.Select(r => r.Group).Should().Equal(0, 1, 2);
+    }
+
+    [Fact]
+    public async Task ASignatureThatReturns_IsANewStatement_BecauseARowBetweenMayDependOnIt()
+    {
+        var ctx = BuildContext(BuildModel());
+
+        var built = await BuildAsync(ctx,
+            Insert(("Status", "a")),
+            Insert(("Status", "b"), ("Total", 1m)),
+            Insert(("Status", "c")));
+
+        built!.Plan.Rows.Select(r => r.Group).Should().Equal(0, 1, 2);
+    }
+
+    [Fact]
+    public async Task AlternatingVerbsPastTheStatementCap_FallBackToThePerRowLoop()
+    {
+        var ctx = BuildContext(BuildModel());
+        var actions = Enumerable.Range(0, BulkBatchPlanBuilder.MaxOpGroups + 1)
+            .Select(i => i % 2 == 0
+                ? Insert(("Status", $"s{i}"))
+                : Delete(("OrderId", i), ("LineNo", 1)))
+            .ToArray();
+
+        (await BuildAsync(ctx, actions)).Should().BeNull();
+        (await BuildAsync(ctx, actions[..BulkBatchPlanBuilder.MaxOpGroups])).Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task TooManyGroups_FallsBack()
     {
         var model = DbModelTestFixture.Create()

@@ -9,10 +9,13 @@ using BifrostQL.Core.Resolvers;
 namespace BifrostQL.Core.Operations;
 
 /// <summary>
-/// What a server operation runs with: its arguments, the caller, and data access that always
-/// acts as that caller. There is no way to read or write as anyone else, and no raw SQL: every
-/// read goes through the same read seam protocol adapters use, and every write through the
-/// pipeline generated mutations use.
+/// What a server operation runs with: its arguments, the caller, and data access that acts as
+/// that caller. There is no way to read or write as anyone else, and no raw SQL: every read goes
+/// through the same read seam protocol adapters use, and every write through the pipeline
+/// generated mutations use. The one step that does not act as the caller is
+/// <see cref="LockRowAsync"/>: it takes a row lock for the operation's own concurrency control,
+/// neither reads nor changes anything the caller can see beyond whether the row exists, and
+/// grants no read or write.
 /// </summary>
 public sealed class BifrostOperationContext
 {
@@ -23,13 +26,18 @@ public sealed class BifrostOperationContext
     private readonly IMutationTransformers _transformers;
     private readonly OperationWriteScope? _scope;
 
-    /// <summary>Stand-in until row locking lands.</summary>
+    private static readonly string[] SortDirectionSuffixes = { "_asc", "_desc" };
+
+    /// <summary>The error code <see cref="LockRowAsync"/> raises when no row has the key.</summary>
     public const string LockRowNotFoundCode = "LOCK_ROW_NOT_FOUND";
 
-    /// <summary>Stand-in until row locking lands.</summary>
+    /// <summary>The error code <see cref="LockRowAsync"/> raises on a dialect with no row locks.</summary>
     public const string RowLockUnsupportedCode = "ROW_LOCK_UNSUPPORTED";
 
-    /// <summary>Stand-in until the IS NOT NULL test lands.</summary>
+    /// <summary>
+    /// A value in <see cref="QueryAsync"/>'s <c>where</c> that tests the column IS NOT NULL.
+    /// A <c>null</c> value tests IS NULL.
+    /// </summary>
     public static readonly object NotNull = new();
 
     internal BifrostOperationContext(
@@ -80,10 +88,17 @@ public sealed class BifrostOperationContext
 
     /// <summary>
     /// Reads rows of <paramref name="table"/> as the caller. <paramref name="where"/> is an AND of
-    /// column equalities; <paramref name="columns"/> defaults to every column. Tenant isolation,
-    /// policy row scope, soft delete, column read guards and field decryption apply. Rows are
-    /// keyed by GraphQL field name. Inside a mutation operation the read runs in the operation's
-    /// transaction and sees its uncommitted writes.
+    /// column tests: a value tests equality, <c>null</c> tests IS NULL and <see cref="NotNull"/>
+    /// tests IS NOT NULL. <paramref name="columns"/> defaults to every column.
+    /// <paramref name="sort"/> holds <c>column_asc</c> or <c>column_desc</c> tokens, most
+    /// significant first, the same tokens a generated field's <c>sort</c> argument takes.
+    /// <paramref name="limit"/> behaves as a generated field's <c>limit</c>: omitted reads the
+    /// default window of 100 rows, -1 reads up to the endpoint's row ceiling, and a limit above
+    /// the ceiling is capped at it. Tenant isolation, policy row scope, soft delete, column read
+    /// guards (which also cover columns named in <paramref name="where"/> and
+    /// <paramref name="sort"/>) and field decryption apply. Rows are keyed by GraphQL field name.
+    /// Inside a mutation operation the read runs in the operation's transaction and sees its
+    /// uncommitted writes.
     /// </summary>
     public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> QueryAsync(
         string table,
@@ -107,9 +122,15 @@ public sealed class BifrostOperationContext
 
         foreach (var (name, value) in where ?? new Dictionary<string, object?>())
         {
-            var equality = TableFilterFactory.Equals(dbTable, ResolveColumn(dbTable, name).DbName, value);
-            query.Filter = query.Filter is null ? equality : TableFilter.CombineAnd(query.Filter, equality);
+            var columnName = ResolveColumn(dbTable, name).DbName;
+            var test = ReferenceEquals(value, NotNull)
+                ? TableFilterFactory.IsNotNull(dbTable, columnName)
+                : TableFilterFactory.Equals(dbTable, columnName, value);
+            query.Filter = query.Filter is null ? test : TableFilter.CombineAnd(query.Filter, test);
         }
+
+        foreach (var token in sort ?? Array.Empty<string>())
+            query.Sort.Add(ResolveSortToken(dbTable, token));
 
         var result = _scope is null
             ? await _reads.ExecuteIntentAsync(query, _userContext, _connFactory, CancellationToken, KeyManager)
@@ -154,9 +175,44 @@ public sealed class BifrostOperationContext
         return Convert.ToInt32(affected);
     }
 
-    /// <summary>Stand-in until row locking lands.</summary>
-    public Task LockRowAsync(string table, IReadOnlyDictionary<string, object?> key)
-        => throw new NotImplementedException();
+    /// <summary>
+    /// Locks the row of <paramref name="table"/> named by <paramref name="key"/> (its whole primary
+    /// key) until the operation's transaction commits or rolls back, so concurrent operations that
+    /// take the same lock run one after another. Take it before the read it protects.
+    /// <para>Operation code is trusted with its keys, so the lock takes no caller scope: a caller
+    /// with no read or write on the row can still hold it, in any tenant, and it grants neither.
+    /// Raises <see cref="LockRowNotFoundCode"/> when no row has the key, which leaves the operation
+    /// able to continue; <see cref="RowLockUnsupportedCode"/> on a dialect with no row locks, rather
+    /// than running on without one; and
+    /// <see cref="MutationArgumentBinder.PartialPrimaryKeyCode"/> when the key is anything but the
+    /// table's whole primary key. A query operation has no transaction to hold a lock in, and is
+    /// refused.</para>
+    /// </summary>
+    public async Task LockRowAsync(string table, IReadOnlyDictionary<string, object?> key)
+    {
+        if (_scope is null)
+            throw new BifrostExecutionError(
+                $"Operation '{Operation.Name}' is a query operation; only a mutation operation has a transaction to hold a row lock.");
+
+        var dbTable = ResolveTable(table);
+        var dialect = _connFactory.Dialect;
+        if (dialect.UpdateLockClause.Length == 0 && dialect.UpdateLockTableHint.Length == 0)
+            throw new BifrostExecutionError(
+                $"Operation '{Operation.Name}' asked for a row lock, which this database has no form of.")
+            { ErrorCode = RowLockUnsupportedCode };
+
+        var keyData = ResolveWholePrimaryKey(dbTable, key);
+        IReadOnlyDictionary<string, object?>? locked = null;
+        await _scope.JoinAsync(async (connection, transaction) =>
+            locked = await MutationCommandExecutor.LoadRowByKey(
+                connection, transaction, dialect, dbTable, keyData.Keys, keyData, forUpdate: true, CancellationToken));
+
+        // Thrown outside the join: no row is an answer, not a failed statement, so the operation
+        // may catch it and carry on.
+        if (locked is null)
+            throw new BifrostExecutionError($"Table '{dbTable.GraphQlName}' has no row with that key to lock.")
+            { ErrorCode = LockRowNotFoundCode };
+    }
 
     private BifrostQL.Core.Crypto.EnvelopeKeyManager? KeyManager =>
         Services?.GetService(typeof(BifrostQL.Core.Crypto.EnvelopeKeyManager)) as BifrostQL.Core.Crypto.EnvelopeKeyManager;
@@ -200,6 +256,29 @@ public sealed class BifrostOperationContext
                 $"Operation '{Operation.Name}' cannot write '{dbTable.GraphQlName}': the table is approval-gated, " +
                 "and a gated write is queued for approval rather than applied.");
         return dbTable;
+    }
+
+    private static string ResolveSortToken(IDbTable table, string token)
+    {
+        var suffix = SortDirectionSuffixes.FirstOrDefault(direction => token.EndsWith(direction, StringComparison.Ordinal))
+            ?? throw new BifrostExecutionError($"Sort token '{token}' must end in _asc or _desc.");
+        return ResolveColumn(table, token[..^suffix.Length]).GraphQlName + suffix;
+    }
+
+    // Only the whole primary key addresses exactly one row: a partial or non-key "key" would lock
+    // some row the caller did not mean.
+    private static Dictionary<string, object?> ResolveWholePrimaryKey(IDbTable table, IReadOnlyDictionary<string, object?> key)
+    {
+        var keyData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, value) in key)
+            keyData[ResolveColumn(table, name).DbName] = value;
+
+        var primaryKey = table.KeyColumns.Select(column => column.DbName).ToList();
+        if (primaryKey.Count == 0 || key.Count != primaryKey.Count || !primaryKey.All(keyData.ContainsKey))
+            throw new BifrostExecutionError(
+                $"A row lock on '{table.GraphQlName}' needs exactly its primary key ({string.Join(", ", primaryKey)}).")
+            { ErrorCode = MutationArgumentBinder.PartialPrimaryKeyCode };
+        return keyData;
     }
 
     private static ColumnDto ResolveColumn(IDbTable table, string name)

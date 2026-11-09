@@ -61,7 +61,9 @@ on an enum or `bit` column still fails, and a `citext` key is compared as text, 
 case finds no row. See [Type mapping specifics](/BifrostQL/reference/dialects/#type-mapping-specifics).
 
 Two spellings PostgreSQL reads as one uuid are now one key in a batch, on both paths, and a resumed
-deferred undo finds a uuid-keyed row.
+deferred undo finds a uuid-keyed row. A SQL Server `uniqueidentifier` is treated the same way. SQLite
+keeps a column declared `UUID` as text and MySQL has no uuid type, so each spelling stays its own key
+there.
 
 ### Changed — a value its column cannot read is `INVALID_VALUE`
 

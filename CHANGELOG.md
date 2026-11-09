@@ -82,8 +82,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   stays on it.
 - Two spellings PostgreSQL reads as one uuid (case, hyphens, braces) are now one key in a batch, on
   both paths. Compared as text they were two rows, so the fast path let the database pick a winner,
-  the count read 2, and `batch-duplicate-policy: reject` never fired. A whitespace-wrapped uuid now
-  fails with `INVALID_VALUE` on both paths; the fast path used to write it.
+  the count read 2, and `batch-duplicate-policy: reject` never fired. A SQL Server `uniqueidentifier`
+  is treated the same way, and that includes a hyphenless spelling SQL Server itself refuses, so a
+  batch can collapse it before the database would have said so. SQLite keeps a column declared `UUID`
+  as text and MySQL has no uuid type, so each spelling stays its own key there. A whitespace-wrapped
+  uuid now fails with `INVALID_VALUE` on both paths; the fast path used to write it.
 - A deferred undo on a PostgreSQL uuid-keyed table that was interrupted after its inverse committed
   failed with `uuid = text` on every retry and never left `undoing`.
 - A PostgreSQL login that does not own the schema saw no primary, foreign or unique keys, because

@@ -65,6 +65,11 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
                 (2, 3, 11, 'other', NULL)
             """);
 
+        await LoadModelAsync();
+    }
+
+    protected async Task LoadModelAsync(params string[] extraMetadata)
+    {
         Model = await new DbModelLoader(ConnFactory, new MetadataLoader(new[]
         {
             ":root { operations: queryProbe[member], mutationProbe[member], startTimer[member], copyWeek[member] }",
@@ -76,7 +81,7 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
             $"{TableSchema}.time_entries {{ policy-read-deny: secret }}",
             $"{TableSchema}.week_locks {{ policy-actions: read,update }}",
             $"{TableSchema}.keyless {{ policy-actions: read }}",
-        })).LoadAsync();
+        }.Concat(extraMetadata).ToArray())).LoadAsync();
     }
 
     public async Task DisposeAsync()
@@ -485,14 +490,64 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
     }
 
     [SkippableFact]
-    public async Task LockRow_ReachesARowOutsideTheCallersTenant()
+    public async Task LockRow_TreatsARowOutsideTheCallersTenantAsMissing()
     {
         Skip.IfNot(Available, "test database environment variable not set");
         MutationProbe.Body = context => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 3 });
+        var outsideTenant = await ExecuteAsync("mutation { mutationProbe }", Caller(tenantId: 1));
 
-        var result = await ExecuteAsync("mutation { mutationProbe }", Caller(tenantId: 1));
+        MutationProbe.Body = context => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 999 });
+        var missing = await ExecuteAsync("mutation { mutationProbe }", Caller(tenantId: 1));
 
-        result.Errors.Should().BeNullOrEmpty("operation code is trusted with its keys, so the lock takes no caller scope");
+        var error = outsideTenant.Errors.Should().ContainSingle().Subject;
+        error.Code.Should().Be(BifrostOperationContext.LockRowNotFoundCode);
+        var missingError = missing.Errors.Should().ContainSingle().Subject;
+        error.Message.Should().Be(missingError.Message, "the caller must not learn another tenant's row exists");
+    }
+
+    [SkippableFact]
+    public async Task LockRow_OutsideTheCallersTenant_TakesNoLock()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        var free = false;
+        MutationProbe.Body = async context =>
+        {
+            await FluentActions.Awaiting(() => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 3 }))
+                .Should().ThrowAsync<BifrostExecutionError>();
+            free = await TryLockPersonAsync(3);
+        };
+
+        (await ExecuteAsync("mutation { mutationProbe }", Caller(tenantId: 1))).Errors.Should().BeNullOrEmpty();
+
+        free.Should().BeTrue("a tenant must not be able to block another tenant's writes");
+    }
+
+    [SkippableFact]
+    public async Task LockRow_WithNoTenantInTheUserContext_IsDenied()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        MutationProbe.Body = context => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 1 });
+
+        var noTenant = new Dictionary<string, object?> { ["user_id"] = "mem", ["roles"] = new[] { "member" } };
+        var result = await ExecuteAsync("mutation { mutationProbe }", noTenant);
+
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode);
+    }
+
+    [SkippableFact]
+    public async Task LockRow_RefusesAHistoryTable_LikeEveryOtherPath()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await LoadModelAsync(
+            $":root {{ history-table: {TableSchema}.week_locks }}",
+            $"{TableSchema}.time_entries {{ history: enabled }}");
+        await ExecAsync("INSERT INTO week_locks (person_id, week) VALUES (1, 10)");
+        MutationProbe.Body = context => context.LockRowAsync("week_locks", new Dictionary<string, object?> { ["person_id"] = 1, ["week"] = 10 });
+
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode,
+            "a caller holding a lock on the trail would stall every tracked write");
     }
 
     [SkippableFact]
@@ -653,14 +708,16 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
         return json.RootElement.GetProperty("data").GetProperty("copyWeek").GetInt32();
     }
 
-    private async Task<bool> TryLockPersonOneAsync()
+    private Task<bool> TryLockPersonOneAsync() => TryLockPersonAsync(1);
+
+    private async Task<bool> TryLockPersonAsync(int id)
     {
         await using var conn = ConnFactory.GetConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = transaction;
-        cmd.CommandText = TryLockPersonOneSql;
+        cmd.CommandText = TryLockPersonOneSql.Replace("id = 1", $"id = {id}");
         try
         {
             // Scalar reads the batch through: SQL Server raises a lock timeout on the read, not the execute.
@@ -788,6 +845,7 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         CREATE TABLE keyless (label VARCHAR(50));
         CREATE TABLE uuid_keyed (id UUID PRIMARY KEY, note TEXT);
         CREATE TABLE date_keyed (d DATE PRIMARY KEY, note TEXT);
+        CREATE TABLE uuid_tenant (id UUID PRIMARY KEY, tenant_id UUID NOT NULL);
         CREATE TABLE measures (id INT PRIMARY KEY, reading REAL NOT NULL, price MONEY NOT NULL, at_time TIME NOT NULL)
         """;
 
@@ -1004,6 +1062,27 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         (await ReadAsync("at_time", "13:30")).Errors.Should().BeNullOrEmpty("time is text at the GraphQL surface");
         (await ReadAsync("price", 2.50m)).Errors.Should().ContainSingle("Postgres has no money = numeric operator; a loud refusal");
         (await ReadAsync("at_time", new DateTime(2026, 1, 1, 13, 30, 0))).Errors.Should().ContainSingle("Postgres has no time = timestamp operator; a loud refusal");
+    }
+
+    [SkippableFact]
+    public async Task LockRow_ComparesAUuidTenantColumn_WithATextClaim()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await LoadModelAsync($"{TableSchema}.uuid_tenant {{ tenant-filter: tenant_id }}");
+        var (mine, other) = (Guid.NewGuid(), Guid.NewGuid());
+        var row = Guid.NewGuid();
+        await ExecAsync($"INSERT INTO uuid_tenant (id, tenant_id) VALUES ('{row}', '{mine}')");
+        MutationProbe.Body = context => context.LockRowAsync("uuid_tenant", new Dictionary<string, object?> { ["id"] = row });
+
+        async Task<ExecutionResult> LockAsTenantAsync(Guid tenant)
+        {
+            var caller = Caller();
+            caller["tenant_id"] = tenant.ToString();
+            return await ExecuteAsync("mutation { mutationProbe }", caller);
+        }
+
+        (await LockAsTenantAsync(mine)).Errors.Should().BeNullOrEmpty();
+        (await LockAsTenantAsync(other)).Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostOperationContext.LockRowNotFoundCode);
     }
 
     [SkippableFact]

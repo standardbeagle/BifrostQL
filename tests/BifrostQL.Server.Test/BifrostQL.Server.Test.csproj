@@ -46,6 +46,10 @@
     <None Include="..\..\packages\@bifrostql\react\src\hooks\__fixtures__\batch-wire-contract.json"
           Link="Fixtures\batch-wire-contract.json"
           CopyToOutputDirectory="PreserveNewest" />
+    <!-- The error replies the React package's auth decision is tested against. -->
+    <None Include="..\..\packages\@bifrostql\react\src\utils\__fixtures__\graphql-error-wire-contract.json"
+          Link="Fixtures\graphql-error-wire-contract.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

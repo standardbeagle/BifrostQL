@@ -18,15 +18,18 @@ namespace BifrostQL.Core.Resolvers
     /// state-transition observers) are queued with <see cref="AfterCommit"/> and run only once
     /// the scope has committed, so no observer sees a write that is later rolled back.</para>
     ///
-    /// <para>A joined write that throws marks the scope faulted. The operation's code may catch
-    /// the exception, but the scope still refuses to commit: on some engines the transaction is
-    /// already unusable after a failed statement, and a half-applied operation is exactly what
-    /// the scope exists to prevent.</para>
+    /// <para>Any statement in the scope that fails, read or write, marks the scope faulted. The
+    /// operation's code may catch the exception, but the scope refuses every later statement and
+    /// refuses to commit, on every engine: Postgres has already aborted the transaction and would
+    /// answer COMMIT with a silent rollback, the others would commit half an operation, and a
+    /// half-applied operation is exactly what the scope exists to prevent. A rule refused before
+    /// any statement ran (no row to lock, a column the caller may not read) is not a failed
+    /// statement and does not fault the scope.</para>
     /// </summary>
     internal sealed class OperationWriteScope
     {
         private readonly List<Func<Task>> _afterCommit = new();
-        private bool _faulted;
+        private Exception? _firstFault;
 
         private OperationWriteScope(DbConnection connection, DbTransaction transaction)
         {
@@ -54,9 +57,8 @@ namespace BifrostQL.Core.Resolvers
             {
                 scope = new OperationWriteScope(connection, transaction);
                 result = await body(scope);
-                if (scope._faulted)
-                    throw new BifrostExecutionError(
-                        "A write inside the operation failed, so the operation was rolled back.");
+                if (scope._firstFault is not null)
+                    throw scope.Refusal("A statement inside the operation failed, so the operation was rolled back.");
             }, cancellationToken);
 
             foreach (var notification in scope!._afterCommit)
@@ -70,24 +72,36 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public async Task JoinAsync(Func<DbConnection, DbTransaction, Task> work)
         {
-            if (_faulted)
-                throw new BifrostExecutionError(
-                    "A previous write inside the operation failed; no further writes run in it.");
+            ThrowIfFaulted();
             try
             {
                 await work(Connection, Transaction);
             }
             catch (Exception ex) when (ex is BifrostExecutionError or OperationCanceledException)
             {
-                _faulted = true;
+                MarkFaulted(ex);
                 throw;
             }
             catch (Exception ex)
             {
                 // The same mapping a standalone write applies in RunInTransactionAsync.
-                _faulted = true;
-                throw BifrostExecutionError.FromDatabaseException(ex);
+                var error = BifrostExecutionError.FromDatabaseException(ex);
+                MarkFaulted(error);
+                throw error;
             }
         }
+
+        /// <summary>Refuses a statement once an earlier one in the scope has failed.</summary>
+        public void ThrowIfFaulted()
+        {
+            if (_firstFault is not null)
+                throw Refusal("A previous statement inside the operation failed; no further statements run in it.");
+        }
+
+        /// <summary>Records a failed statement; only the first failure names the operation's error.</summary>
+        public void MarkFaulted(Exception fault) => _firstFault ??= fault;
+
+        private BifrostExecutionError Refusal(string message) =>
+            new(message, _firstFault!) { ErrorCode = (_firstFault as BifrostExecutionError)?.ErrorCode };
     }
 }

@@ -1085,6 +1085,7 @@ namespace BifrostQL.Core.Resolvers
         private async Task<(IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> results, string sql)> LoadDataInScopeAsync(
             GqlObjectQuery query, IDbConnFactory connFactory, OperationWriteScope? scope, CancellationToken cancellationToken)
         {
+            scope?.ThrowIfFaulted();
             var dialect = connFactory.Dialect;
             var parameters = new QueryModel.SqlParameterCollection();
             var sqlByName = new Dictionary<string, ParameterizedSql>();
@@ -1135,15 +1136,18 @@ namespace BifrostQL.Core.Resolvers
                 } while (await reader.NextResultAsync(cancellationToken));
                 return (results, sql);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
                 // Propagate request aborts as-is so the pipeline can short-circuit;
                 // wrapping them as execution errors would mask the cancellation.
+                scope?.MarkFaulted(ex);
                 throw;
             }
             catch (Exception ex)
             {
-                throw BifrostExecutionError.FromDatabaseException(ex);
+                var error = BifrostExecutionError.FromDatabaseException(ex);
+                scope?.MarkFaulted(error);
+                throw error;
             }
         }
 

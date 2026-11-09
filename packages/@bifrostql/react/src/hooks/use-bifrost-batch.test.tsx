@@ -178,6 +178,30 @@ describe('useBifrostBatch', () => {
       expect(error.notAttempted).toEqual([]);
     });
 
+    it('sends the bulk fast path document the wire contract says', async () => {
+      const { operations, request, reply } = wireContract.bulk;
+      const fetchMock = mockFetchReplies(reply);
+
+      const { results } = await runBatch(operations as BatchOperation[]);
+
+      expect(sentBodies(fetchMock)).toEqual([request]);
+      expect(results).toEqual([
+        { table: 'items', indices: [0, 1, 2, 3], affected: 4 },
+      ]);
+    });
+
+    it.each(['deleteThenInsert', 'insertDeleteInsert'] as const)(
+      'sends the %s replace in the order the caller wrote it',
+      async (shape) => {
+        const { operations, request, reply } = wireContract[shape];
+        const fetchMock = mockFetchReplies(reply);
+
+        await runBatch(operations as BatchOperation[]);
+
+        expect(sentBodies(fetchMock)).toEqual([request]);
+      },
+    );
+
     it('hands the server error code from the wire contract to the caller', async () => {
       const { operations, reply } = wireContract.failing;
       mockFetchReplies(reply);

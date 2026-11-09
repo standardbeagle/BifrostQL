@@ -40,6 +40,7 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
     protected abstract IDbConnFactory CreateConnFactory(string dbName);
 
     protected DelegateOperation MutationProbe => _mutationProbe;
+    protected RecordingMutationObserver MutationsObserved { get; } = new();
     protected DelegateOperation QueryProbe => _queryProbe;
     protected StartTimer StartTimerOperation => _startTimer;
 
@@ -266,6 +267,7 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
             Transformers = new IMutationTransformer[] { new PolicyMutationTransformer(), new TenantMutationTransformer() },
         });
         services.AddSingleton<IFilterTransformers>(filterTransformers);
+        services.AddSingleton(new MutationObservers(new IMutationObserver[] { MutationsObserved }));
         await using var provider = services.BuildServiceProvider();
 
         return await new DocumentExecuter().ExecuteAsync(options =>
@@ -281,6 +283,19 @@ public abstract class ServerOperationQueryTestBase : IAsyncLifetime
                 ["tableReaderFactory"] = new SqlExecutionManager(Model, schema, new QueryTransformerService(filterTransformers)),
             });
         });
+    }
+
+    /// <summary>Records what the post-commit notification told observers.</summary>
+    protected sealed class RecordingMutationObserver : IMutationObserver
+    {
+        public List<string> Tables { get; } = new();
+
+        public ValueTask OnMutationAsync(MutationObserverContext context)
+        {
+            lock (Tables)
+                Tables.Add(context.Table.DbName);
+            return ValueTask.CompletedTask;
+        }
     }
 
     protected sealed class DelegateOperation(string name, BifrostOperationKind kind) : IBifrostOperation
@@ -478,6 +493,83 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
         var result = await ExecuteAsync("mutation { mutationProbe }", Caller(tenantId: 1));
 
         result.Errors.Should().BeNullOrEmpty("operation code is trusted with its keys, so the lock takes no caller scope");
+    }
+
+    [SkippableFact]
+    public async Task ACommittedWrite_FiresTheObserver()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        MutationProbe.Body = context => context.InsertAsync("time_entries", new Dictionary<string, object?> { ["person_id"] = 1, ["week"] = 61 });
+
+        (await ExecuteAsync("mutation { mutationProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+
+        (await CountAsync("week = 61")).Should().Be(1);
+        MutationsObserved.Tables.Should().ContainSingle();
+    }
+
+    [SkippableFact]
+    public async Task AReadFailureCaughtAfterAWrite_RollsTheOperationBack_AndTheClientSeesIt()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await ExecAsync("DROP TABLE keyless");
+        string? caughtCode = null;
+        MutationProbe.Body = async context =>
+        {
+            await context.InsertAsync("time_entries", new Dictionary<string, object?> { ["person_id"] = 1, ["week"] = 62 });
+            try
+            {
+                await context.QueryAsync("keyless", new Dictionary<string, object?>(), new[] { "label" });
+            }
+            catch (BifrostExecutionError error)
+            {
+                caughtCode = error.ErrorCode;
+            }
+        };
+
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+
+        caughtCode.Should().Be("DATABASE_ERROR");
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be("DATABASE_ERROR",
+            "the client gets the first failure's code, not a report of success over a rolled-back write");
+        (await CountAsync("week = 62")).Should().Be(0);
+        MutationsObserved.Tables.Should().BeEmpty("no observer sees a write that was rolled back");
+    }
+
+    [SkippableFact]
+    public async Task AfterACaughtReadFailure_NoStatementRuns_OnAnyEngine()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await ExecAsync("DROP TABLE keyless");
+        Exception? readRefusal = null, writeRefusal = null, lockRefusal = null;
+        MutationProbe.Body = async context =>
+        {
+            await FluentActions.Awaiting(() => context.QueryAsync("keyless", new Dictionary<string, object?>(), new[] { "label" }))
+                .Should().ThrowAsync<BifrostExecutionError>();
+            readRefusal = await CaptureAsync(() => context.QueryAsync("time_entries", new Dictionary<string, object?>(), new[] { "id" }));
+            writeRefusal = await CaptureAsync(() => context.InsertAsync("time_entries", new Dictionary<string, object?> { ["person_id"] = 1, ["week"] = 63 }));
+            lockRefusal = await CaptureAsync(() => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 1 }));
+        };
+
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+
+        foreach (var refusal in new[] { readRefusal, writeRefusal, lockRefusal })
+            refusal.Should().BeOfType<BifrostExecutionError>().Which.ErrorCode.Should().Be("DATABASE_ERROR",
+                "every engine refuses the same way, whether or not it has already aborted the transaction");
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be("DATABASE_ERROR");
+        (await CountAsync("week = 63")).Should().Be(0);
+    }
+
+    private static async Task<Exception?> CaptureAsync(Func<Task> statement)
+    {
+        try
+        {
+            await statement();
+            return null;
+        }
+        catch (Exception error)
+        {
+            return error;
+        }
     }
 
     [SkippableFact]
@@ -702,6 +794,25 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
     protected override IDbConnFactory CreateConnFactory(string dbName)
         => new BifrostQL.Ngsql.PostgresDbConnFactory(
             new Npgsql.NpgsqlConnectionStringBuilder(Master!) { Database = dbName }.ConnectionString);
+
+    [SkippableFact]
+    public async Task ACaughtInvalidValueRead_RollsTheOperationBack_WithItsCode()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        MutationProbe.Body = async context =>
+        {
+            await context.UpdateAsync("time_entries", new Dictionary<string, object?> { ["id"] = 1, ["note"] = "written" });
+            await FluentActions.Awaiting(() => context.QueryAsync("time_entries",
+                    new Dictionary<string, object?> { ["week"] = BifrostOperationContext.LessThan("not-a-number") }, new[] { "id" }))
+                .Should().ThrowAsync<BifrostExecutionError>();
+        };
+
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.InvalidValueCode);
+        (await CountAsync("note = 'written'")).Should().Be(0);
+        MutationsObserved.Tables.Should().BeEmpty();
+    }
 
     [SkippableFact]
     public async Task LockRow_TakesAUuidKeyAsAGuid()

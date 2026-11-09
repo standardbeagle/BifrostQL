@@ -353,7 +353,7 @@ namespace BifrostQL.Core.QueryModel
             // AddParameter returns the info it bound; keep it directly instead of
             // re-reading the collection (TakeLast re-sorted the whole set per bind).
             var added = values.Select(v => parameters.AddParameter(v)).ToList();
-            var paramRefs = string.Join(",", added.Select(p => dialect.CastParameterReference(p.Name, columnType)));
+            var paramRefs = string.Join(",", added.Select(p => DbParameterBinder.ComparisonPlaceholder(dialect, p.Name, columnType, p.Value)));
             return new ParameterizedSql($"{columnRef} {sqlOp} ({paramRefs})", added);
         }
 
@@ -370,8 +370,8 @@ namespace BifrostQL.Core.QueryModel
 
             var p1 = parameters.AddParameter(values[0]);
             var p2 = parameters.AddParameter(values[1]);
-            var r1 = dialect.CastParameterReference(p1.Name, columnType);
-            var r2 = dialect.CastParameterReference(p2.Name, columnType);
+            var r1 = DbParameterBinder.ComparisonPlaceholder(dialect, p1.Name, columnType, p1.Value);
+            var r2 = DbParameterBinder.ComparisonPlaceholder(dialect, p2.Name, columnType, p2.Value);
             return new ParameterizedSql($"{columnRef} {sqlOp} {r1} AND {r2}",
                 new[] { p1, p2 });
         }
@@ -381,7 +381,7 @@ namespace BifrostQL.Core.QueryModel
         {
             var sqlOp = dialect.GetOperator(op);
             var param = parameters.AddParameter(value);
-            var reference = dialect.CastParameterReference(param.Name, columnType);
+            var reference = DbParameterBinder.ComparisonPlaceholder(dialect, param.Name, columnType, value);
             return new ParameterizedSql($"{columnRef} {sqlOp} {reference}",
                 new[] { param });
         }

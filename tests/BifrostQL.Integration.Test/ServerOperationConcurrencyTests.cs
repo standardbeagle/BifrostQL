@@ -969,7 +969,8 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         Skip.IfNot(Available, "test database environment variable not set");
 
         (await ReadIdsAsync(1.5m)).Should().BeEmpty("no row has that id");
-        (await ReadIdsAsync(BifrostOperationContext.LessThan(1.4m))).Should().Equal(1, "1 is less than 1.4, whereas 1.4 cast to integer is 1");
+        // 1 is less than 1.4, whereas 1.4 cast to integer is 1.
+        (await ReadIdsAsync(BifrostOperationContext.LessThan(1.4m))).Should().Equal(1);
         (await ReadIdsAsync(BifrostOperationContext.LessThan(2))).Should().Equal(1);
         (await ReadIdsAsync("2")).Should().Equal(2);
         (await ReadIdsAsync(BifrostOperationContext.LessThan("2"))).Should().Equal(1);
@@ -991,10 +992,13 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
             return await ExecuteAsync("{ queryProbe }", Caller());
         }
 
-        var count = -1;
-        QueryProbe.Body = async context => count = (await context.QueryAsync("measures", new Dictionary<string, object?> { ["reading"] = 1.1d }, new[] { "id" })).Count;
-        (await ExecuteAsync("{ queryProbe }", Caller())).Errors.Should().BeNullOrEmpty();
-        count.Should().Be(1, "a Float filter on a real column has to keep finding the value it reads back");
+        foreach (var reading in new object[] { 1.1d, 1.1m, 1.1f, "1.1" })
+        {
+            var count = -1;
+            QueryProbe.Body = async context => count = (await context.QueryAsync("measures", new Dictionary<string, object?> { ["reading"] = reading }, new[] { "id" })).Count;
+            (await ExecuteAsync("{ queryProbe }", Caller())).Errors.Should().BeNullOrEmpty();
+            count.Should().Be(1, "a Float filter on a real column has to keep finding the value it reads back");
+        }
 
         (await ReadAsync("price", "2.50")).Errors.Should().BeNullOrEmpty("money is text at the GraphQL surface");
         (await ReadAsync("at_time", "13:30")).Errors.Should().BeNullOrEmpty("time is text at the GraphQL surface");

@@ -99,7 +99,7 @@ public sealed class KeyedWriteCharacterizationTests
         var update = MutationCommandExecutor.BuildUpdateSql(
             dialect, table, tableRef,
             setColumns: new[] { "status", "p0" },
-            keyColumns: new[] { "id", "region" },
+            keyValues: new Dictionary<string, object?> { ["id"] = 1, ["region"] = "eu" },
             whereSuffix: " AND (\"tenant_id\" = @p0)");
         update.Should().Contain($"\"p0\"=@{sanitized}");
         update.Should().NotContain("\"p0\"=@p0,").And.NotContain("\"p0\"=@p0 ");
@@ -107,7 +107,7 @@ public sealed class KeyedWriteCharacterizationTests
 
         var delete = MutationCommandExecutor.BuildDeleteSql(
             dialect, table, tableRef,
-            whereColumns: new[] { "id", "region", "status" },
+            keyValues: new Dictionary<string, object?> { ["id"] = 1, ["region"] = "eu", ["status"] = "open" },
             whereSuffix: " AND (\"tenant_id\" = @p0)");
         delete.Should().Be(
             "DELETE FROM \"main\".\"ledger\" WHERE \"id\"=@id AND \"region\"=@region AND \"status\"=@status AND (\"tenant_id\" = @p0);");

@@ -36,7 +36,7 @@ public sealed class BeforeImageUpdateLockSqlTests
 
     private static string Sql(ISqlDialect dialect, IDbTable table, bool forUpdate) =>
         MutationCommandExecutor.BuildSelectRowByKeySql(
-            dialect, table, new[] { "id", "status" }, new[] { "id" }, forUpdate);
+            dialect, table, new[] { "id", "status" }, new Dictionary<string, object?> { ["id"] = 1 }, forUpdate);
 
     [Fact]
     public void SqlServer_ForUpdate_TakesUpdlockTableHint_AfterTheFromTable()
@@ -52,7 +52,17 @@ public sealed class BeforeImageUpdateLockSqlTests
     {
         var sql = Sql(Ngsql.PostgresDialect.Instance, Table(), forUpdate: true);
 
-        sql.Should().Be("SELECT \"id\",\"status\" FROM \"orders\" WHERE \"id\"=@id::int FOR UPDATE;");
+        sql.Should().Be("SELECT \"id\",\"status\" FROM \"orders\" WHERE \"id\"=@id FOR UPDATE;");
+        SqlSyntax.AssertValid(sql, SqlFlavor.Postgres);
+    }
+
+    [Fact]
+    public void Postgres_CastsATextKey_ToTheColumnsType()
+    {
+        var sql = MutationCommandExecutor.BuildSelectRowByKeySql(
+            Ngsql.PostgresDialect.Instance, Table(), new[] { "id" }, new Dictionary<string, object?> { ["id"] = "1" }, forUpdate: false);
+
+        sql.Should().Be("SELECT \"id\" FROM \"orders\" WHERE \"id\"=@id::int;");
         SqlSyntax.AssertValid(sql, SqlFlavor.Postgres);
     }
 

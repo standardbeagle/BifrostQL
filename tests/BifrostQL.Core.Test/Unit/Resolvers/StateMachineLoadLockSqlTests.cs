@@ -36,7 +36,7 @@ public sealed class StateMachineLoadLockSqlTests
     }
 
     private static string Sql(ISqlDialect dialect, IDbTable table, string scope = "") =>
-        MutationCommandExecutor.BuildStateMachineLoadSql(dialect, table, "status", new[] { "id" }, scope);
+        MutationCommandExecutor.BuildStateMachineLoadSql(dialect, table, "status", new Dictionary<string, object?> { ["id"] = 1 }, scope);
 
     [Fact]
     public void SqlServer_TakesUpdlockTableHint_AfterTheFromTable()
@@ -52,7 +52,7 @@ public sealed class StateMachineLoadLockSqlTests
     {
         var sql = Sql(Ngsql.PostgresDialect.Instance, Table(), Scope);
 
-        sql.Should().Be("SELECT \"status\" FROM \"tickets\" WHERE \"id\"=@id::int AND (\"tenant_id\" = @p0) FOR UPDATE;");
+        sql.Should().Be("SELECT \"status\" FROM \"tickets\" WHERE \"id\"=@id AND (\"tenant_id\" = @p0) FOR UPDATE;");
         SqlSyntax.AssertValid(sql, SqlFlavor.Postgres);
     }
 

@@ -48,6 +48,16 @@ the call-site update it requires.
   identity (previously a `BatchError` after the operations ahead of it had been
   written) and an insert with no columns, which the server would skip silently.
 
+### Added
+
+- **`BifrostGraphQLError` keeps the server's error code.** A GraphQL `errors` reply
+  now rejects with this `Error` subclass, carrying `code` (the first
+  `extensions.code`) and `errors` (the whole list as the server sent it), so a
+  client can tell a conflict from a denial without matching message text. `message`
+  is unchanged. `error.name` is now `BifrostGraphQLError`. It reaches `onError` and
+  `error` on the hooks, and the subscription transports. `BatchError` gains `code`
+  as well. `BifrostAuthError` and HTTP failures are unchanged and have no `code`.
+
 ## 0.3.0 — 2026-09-01
 
 ### Breaking changes

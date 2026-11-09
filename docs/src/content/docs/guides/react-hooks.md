@@ -111,6 +111,37 @@ const { results } = await batch.mutateAsync([
 - **Order is yours within a verb.** Tables run in the order you first mention them for that verb, so list parents first for inserts and children first for deletes. A delete followed by an insert or upsert on the same table keeps your order across the whole batch, so the replace isn't inverted.
 - **`invalidateQueries` fires once anything has committed**, including when a later document fails.
 
+### Telling errors apart
+
+When the server refuses a request, hooks reject with a `BifrostGraphQLError`. Read its `code`, the server's `extensions.code`, rather than matching message text:
+
+```tsx
+import { BatchError, BifrostGraphQLError, useBifrostMutation } from '@bifrostql/react';
+
+const stopTimer = useBifrostMutation(STOP_TIMER, {
+  onError: (error) => {
+    if (error instanceof BifrostGraphQLError && error.code === 'CONFLICT') {
+      showNotice('Someone else changed this entry. Reload and try again.');
+    }
+  },
+});
+
+// A batch rejects with a BatchError, which carries the same code.
+batch.mutateAsync(operations).catch((error) => {
+  if (error instanceof BatchError && error.code === 'ACCESS_DENIED') showDenied();
+});
+```
+
+- `code` is the first error's `extensions.code` that has one. `ACCESS_DENIED`, `CONFLICT` and `PENDING_APPROVAL` come from the engine, and a [server operation](/BifrostQL/guides/server-operations/) can raise its own. An error the engine gives no code to has `BIFROST_EXECUTION_ERROR`.
+- `errors` is every error the server sent, unchanged, with `message`, `path`, `locations` and `extensions`. `message` is their messages joined, as it was before.
+- The same error reaches a hook's `onError`, its `error` result (`useBifrost`, `useBifrostQuery`, `useBifrostInfinite`, `useBifrostMutation`, `useBifrostSubscription`) and `executeGraphQL`. On a `BatchError` it is `failed.error`.
+
+Three failures carry no `code`:
+
+- **`BifrostAuthError`** is unchanged. An HTTP 401, or a GraphQL error whose message says `unauthorized` or `unauthenticated`, takes the [session flow](/BifrostQL/guides/react-native/) and has no `code`, even when the server sent one.
+- **A non-2xx response** is a plain `Error` naming the status. The server's request-level refusals, such as an HTTP 400 or 403 from the endpoint itself, land here.
+- **Errors the client raises itself**, such as `useBifrostDiff`'s conflict error, are plain `Error`s.
+
 ### Headless tables
 
 `useBifrostTable` is a complete table engine without any markup — sorting, multi-column filtering, pagination, row selection, expandable rows, column show/hide and reorder, optional `urlSync`, client `computed` columns, and built-in `count`/`sum`/`avg`/`min`/`max` aggregates. Bring your own UI, or drop in the pre-built `BifrostTable` component (theming, inline editing, CSV export, row actions).

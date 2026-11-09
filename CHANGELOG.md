@@ -17,6 +17,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   generated field does), and `where` can test `BifrostOperationContext.NotNull`. A `null` value is
   now documented as IS NULL. See "Reading rows" and "Serializing on a row" in the Server Operations
   guide.
+- `@bifrostql/react` rejects with `BifrostGraphQLError`, which keeps the server's
+  `extensions.code` as `code` and the whole list as `errors`, so a client can tell a conflict from
+  a denial without matching message text. `BatchError` gains `code`. `BifrostAuthError` is
+  unchanged.
 
 ### Fixed
 

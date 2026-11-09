@@ -274,10 +274,12 @@ try {
     console.log(err.results); // documents that committed
     console.log(err.failed); // { table, indices, error }
     console.log(err.notAttempted); // original indices never sent
+    console.log(err.code); // the server's error code, such as 'CONFLICT'
   }
 }
 ```
 
+- **Tell errors apart by code.** A server refusal is a `BifrostGraphQLError` with `code` (the server's `extensions.code`) and `errors` (the whole list), on every hook's `onError` and `error`. `BifrostAuthError` and non-2xx responses have no `code`.
 - **One table is one transaction**, unless operations on another table have to run between its operations.
 - **There is no transaction across tables.** A batch over several tables is several transactions, sent in order. A later failure does not undo an earlier document, and `BatchError.results` says which committed. For one transaction over rows linked by foreign keys, write a `save` graph mutation.
 - **No partial success inside a document.** The batch stops at the first failed document. The server reports no failing row index, and a lost connection cannot tell whether the document committed.

@@ -5,29 +5,62 @@ using BifrostQL.Core.Model;
 namespace BifrostQL.Ngsql;
 
 /// <summary>
-/// PostgreSQL implementation of schema reader using information_schema views.
+/// PostgreSQL implementation of schema reader. Tables and columns come from information_schema;
+/// primary keys, foreign keys, and unique and check constraints come from pg_constraint, because
+/// information_schema.constraint_column_usage hides every row from a login that does not own the
+/// table, which leaves an application login with a model that has no keys.
 /// Excludes pg_catalog, information_schema, and ag_catalog (Apache AGE extension) system schemas.
 /// Identity columns are detected by checking if column_default starts with 'nextval('.
 /// </summary>
 public sealed class PostgresSchemaReader : ISchemaReader
 {
+    // pg_constraint is readable by every login, so the reader applies information_schema.columns'
+    // own visibility rule. A constraint counts only when the login can see all of its columns:
+    // part of a composite key would widen a WHERE from one row to every row sharing that part,
+    // and a foreign key to a hidden table would link to a table outside the model.
+    private const string ConstraintIsVisible = @"
+  AND NOT EXISTS (
+      SELECT 1 FROM unnest(c.conkey) AS own(attnum)
+      WHERE NOT (pg_has_role(constrained.relowner, 'USAGE')
+          OR has_column_privilege(c.conrelid, own.attnum, 'SELECT, INSERT, UPDATE, REFERENCES')))
+  AND (c.contype <> 'f' OR NOT EXISTS (
+      SELECT 1 FROM unnest(c.confkey) AS referenced(attnum)
+      WHERE NOT (pg_has_role(parent.relowner, 'USAGE')
+          OR has_column_privilege(c.confrelid, referenced.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))))";
+
     private const string SchemaSql = @"
--- Constraints
-SELECT
-    ccu.table_catalog,
-    ccu.table_schema,
-    ccu.table_name,
-    ccu.column_name,
-    ccu.constraint_catalog,
-    ccu.constraint_schema,
-    ccu.constraint_name,
-    tc.constraint_type
-FROM information_schema.constraint_column_usage ccu
-INNER JOIN information_schema.table_constraints tc ON
-    tc.constraint_catalog = ccu.constraint_catalog AND
-    tc.constraint_schema = ccu.constraint_schema AND
-    tc.constraint_name = ccu.constraint_name
-WHERE ccu.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
+-- Constraints, keyed the way information_schema.constraint_column_usage keys them: a foreign
+-- key lists the columns it references, every other kind its own, and a not-null constraint
+-- (catalogued since PostgreSQL 18) reads as a check. A table's primary key comes first, each
+-- constraint's columns in conkey order.
+(SELECT
+    current_database() AS table_catalog,
+    tn.nspname AS table_schema,
+    t.relname AS table_name,
+    a.attname AS column_name,
+    current_database() AS constraint_catalog,
+    cn.nspname AS constraint_schema,
+    c.conname AS constraint_name,
+    CASE c.contype
+        WHEN 'p' THEN 'PRIMARY KEY'
+        WHEN 'u' THEN 'UNIQUE'
+        WHEN 'f' THEN 'FOREIGN KEY'
+        ELSE 'CHECK'
+    END AS constraint_type
+FROM pg_constraint c
+JOIN pg_namespace cn ON cn.oid = c.connamespace
+JOIN pg_class constrained ON constrained.oid = c.conrelid
+LEFT JOIN pg_class parent ON parent.oid = c.confrelid
+JOIN pg_class t ON t.oid = CASE c.contype WHEN 'f' THEN c.confrelid ELSE c.conrelid END
+JOIN pg_namespace tn ON tn.oid = t.relnamespace
+JOIN LATERAL unnest(CASE c.contype WHEN 'f' THEN c.confkey ELSE c.conkey END)
+    WITH ORDINALITY AS k(attnum, ord) ON true
+JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND NOT a.attisdropped
+WHERE c.contype IN ('p', 'u', 'f', 'c', 'n')
+  AND t.relkind IN ('r', 'p')
+  AND NOT pg_is_other_temp_schema(tn.oid)
+  AND tn.nspname NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')" + ConstraintIsVisible + @"
+ORDER BY tn.nspname, t.relname, c.contype = 'p' DESC, c.conname, k.ord)
 UNION ALL
 -- Unique constraints from unique indexes
 SELECT
@@ -100,33 +133,33 @@ FROM information_schema.tables
 WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
 ORDER BY table_catalog, table_schema, table_name;
 
--- Foreign keys (child -> parent column pairs, ordered for composite keys)
+-- Foreign keys (child -> parent column pairs, ordered for composite keys). Only one whose target
+-- is a declared key: information_schema has no constraint to report for a plain unique index.
 SELECT
-    kcu.constraint_name,
-    kcu.table_schema   AS child_schema,
-    kcu.table_name     AS child_table,
-    kcu.column_name    AS child_column,
-    ccu.table_schema   AS parent_schema,
-    ccu.table_name     AS parent_table,
-    ccu.column_name    AS parent_column,
-    kcu.ordinal_position
-FROM information_schema.table_constraints tc
-INNER JOIN information_schema.key_column_usage kcu ON
-    tc.constraint_catalog = kcu.constraint_catalog AND
-    tc.constraint_schema  = kcu.constraint_schema  AND
-    tc.constraint_name    = kcu.constraint_name
-INNER JOIN information_schema.referential_constraints rc ON
-    tc.constraint_catalog = rc.constraint_catalog AND
-    tc.constraint_schema  = rc.constraint_schema  AND
-    tc.constraint_name    = rc.constraint_name
-INNER JOIN information_schema.key_column_usage ccu ON
-    rc.unique_constraint_catalog = ccu.constraint_catalog AND
-    rc.unique_constraint_schema  = ccu.constraint_schema  AND
-    rc.unique_constraint_name    = ccu.constraint_name    AND
-    kcu.position_in_unique_constraint = ccu.ordinal_position
-WHERE tc.constraint_type = 'FOREIGN KEY'
-  AND tc.table_schema NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
-ORDER BY kcu.table_schema, kcu.table_name, kcu.constraint_name, kcu.ordinal_position;
+    c.conname          AS constraint_name,
+    cns.nspname        AS child_schema,
+    constrained.relname AS child_table,
+    ca.attname         AS child_column,
+    pns.nspname        AS parent_schema,
+    parent.relname     AS parent_table,
+    pa.attname         AS parent_column,
+    k.ord              AS ordinal_position
+FROM pg_constraint c
+JOIN pg_class constrained ON constrained.oid = c.conrelid
+JOIN pg_namespace cns ON cns.oid = constrained.relnamespace
+JOIN pg_class parent ON parent.oid = c.confrelid
+JOIN pg_namespace pns ON pns.oid = parent.relnamespace
+JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(child_attnum, parent_attnum, ord) ON true
+JOIN pg_attribute ca ON ca.attrelid = c.conrelid AND ca.attnum = k.child_attnum
+JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = k.parent_attnum
+WHERE c.contype = 'f'
+  AND constrained.relkind IN ('r', 'p')
+  AND NOT pg_is_other_temp_schema(cns.oid)
+  AND cns.nspname NOT IN ('pg_catalog', 'information_schema', 'ag_catalog')
+  AND EXISTS (
+      SELECT 1 FROM pg_constraint target
+      WHERE target.conrelid = c.confrelid AND target.conindid = c.conindid AND target.contype IN ('p', 'u'))" + ConstraintIsVisible + @"
+ORDER BY cns.nspname, constrained.relname, c.conname, k.ord;
 
 -- Indexes (key columns in key order). Expression keys (attnum 0) and partial
 -- indexes are excluded — neither can serve an arbitrary client ORDER BY.

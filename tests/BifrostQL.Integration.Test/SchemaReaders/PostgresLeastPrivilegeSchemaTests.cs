@@ -27,7 +27,9 @@ public sealed class PostgresLeastPrivilegeSchemaTests : IAsyncLifetime
 
     /// <summary>
     /// The pre-pg_constraint constraint and foreign-key queries, kept as the oracle for what the
-    /// owning login must keep seeing. It must never be used to judge a non-owning login.
+    /// owning login must keep seeing. It must never be used to judge a non-owning login. Rows are
+    /// compared with duplicates removed: the views join on the constraint name alone, so two
+    /// tables declaring one name multiply each other's rows.
     /// </summary>
     private const string InformationSchemaConstraints = """
         SELECT DISTINCT ccu.table_schema, ccu.table_name, ccu.column_name, ccu.constraint_schema,
@@ -307,8 +309,12 @@ public sealed class PostgresLeastPrivilegeSchemaTests : IAsyncLifetime
         var expectedForeignKeys = (await QueryRowsAsync(_ownerConn, InformationSchemaForeignKeys))
             .Select(row => row.Split('|'))
             .GroupBy(row => (Schema: row[1], Table: row[2], Name: row[0]))
-            .Select(fk => string.Join("|", fk.Key.Schema, fk.Key.Table, fk.Key.Name,
-                string.Join(",", fk.Select(row => row[3])), fk.First()[4], fk.First()[5], string.Join(",", fk.Select(row => row[6]))));
+            .Select(fk =>
+            {
+                var pairs = fk.Select(row => (Child: row[3], Parent: row[6])).Distinct().ToList();
+                return string.Join("|", fk.Key.Schema, fk.Key.Table, fk.Key.Name, string.Join(",", pairs.Select(pair => pair.Child)),
+                    fk.First()[4], fk.First()[5], string.Join(",", pairs.Select(pair => pair.Parent)));
+            });
         var actualForeignKeys = read.ForeignKeys.Select(fk => string.Join("|",
             fk.ChildTableSchema, fk.ChildTableName, fk.ConstraintName, string.Join(",", fk.ChildColumnNames),
             fk.ParentTableSchema, fk.ParentTableName, string.Join(",", fk.ParentColumnNames)));

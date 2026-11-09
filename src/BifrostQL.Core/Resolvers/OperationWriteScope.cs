@@ -18,13 +18,12 @@ namespace BifrostQL.Core.Resolvers
     /// state-transition observers) are queued with <see cref="AfterCommit"/> and run only once
     /// the scope has committed, so no observer sees a write that is later rolled back.</para>
     ///
-    /// <para>Any statement in the scope that fails, read or write, marks the scope faulted. The
+    /// <para>A failed statement, read or write, and a refused write mark the scope faulted. The
     /// operation's code may catch the exception, but the scope refuses every later statement and
     /// refuses to commit, on every engine: Postgres has already aborted the transaction and would
     /// answer COMMIT with a silent rollback, the others would commit half an operation, and a
-    /// half-applied operation is exactly what the scope exists to prevent. A rule refused before
-    /// any statement ran (no row to lock, a column the caller may not read) is not a failed
-    /// statement and does not fault the scope.</para>
+    /// half-applied operation is exactly what the scope exists to prevent. Two answers that are
+    /// not failures leave it usable: no row to lock, and a read refused before it ran.</para>
     /// </summary>
     internal sealed class OperationWriteScope
     {

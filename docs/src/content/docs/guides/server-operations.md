@@ -225,13 +225,14 @@ exactly as they are for a generated mutation.
 
 - Mutation observers and state-transition observers run after the commit, never for a
   rolled-back write.
-- If any statement fails, read or write, the operation fails even when its code catches the
-  exception. That covers `INVALID_VALUE` and every other database error: later statements are
-  refused, the transaction rolls back, the client gets the first failure's code, and no observer
-  runs. This holds on every database, including those that could technically carry on. To treat a
-  value as optional, check it before the statement rather than catching the failure.
-- A refusal that runs no statement is different: `LOCK_ROW_NOT_FOUND`, and a column or table the
-  caller may not use, can be caught and the operation can continue.
+- If a write is refused, or any statement fails, read or write, the operation fails even when its
+  code catches the exception. That covers `INVALID_VALUE` and every other database error: later
+  statements are refused, the transaction rolls back, the client gets the first failure's code, and
+  no observer runs. This holds on every database, including those that could technically carry on.
+  To treat a value as optional, check it before the statement rather than catching the failure.
+- Two answers are not failures, and an operation can catch them and continue:
+  `LOCK_ROW_NOT_FOUND`, and a read refused before it runs, such as one naming a column the caller
+  may not read.
 - Writes to an [approval-gated](/BifrostQL/guides/approval-workflows/) table are refused inside an
   operation. A gated write queues a pending change and reports it as an error, which cannot be
   one step of an all-or-nothing operation.

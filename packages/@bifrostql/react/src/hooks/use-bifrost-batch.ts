@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useContext, useCallback, useRef } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
-import { executeGraphQL } from '../utils/graphql-client';
+import { BifrostGraphQLError, executeGraphQL } from '../utils/graphql-client';
 import { buildBatchMutation } from '../utils/mutation-builder';
 import type { MutationType } from '../utils/mutation-builder';
 import { invalidateBifrostQueries } from '../utils/invalidation';
@@ -65,7 +65,10 @@ export interface BatchFailure {
   table: string;
   /** Original indices of all of the document's operations. */
   indices: number[];
-  /** What the request failed with. The server reports no failing row index. */
+  /**
+   * What the request failed with: a `BifrostGraphQLError` when the server refused
+   * the document. The server reports no failing row index.
+   */
   error: Error;
 }
 
@@ -402,7 +405,7 @@ export class BatchError extends Error {
   readonly failed: BatchFailure;
   /** Original indices of the operations in later documents, which were never sent. */
   readonly notAttempted: number[];
-  /** Stand-in until the client keeps the server's errors. */
+  /** The server's error code for the failed document, when it sent one. */
   readonly code?: string;
 
   constructor(
@@ -416,5 +419,9 @@ export class BatchError extends Error {
     this.results = results;
     this.failed = failed;
     this.notAttempted = notAttempted;
+    this.code =
+      failed.error instanceof BifrostGraphQLError
+        ? failed.error.code
+        : undefined;
   }
 }

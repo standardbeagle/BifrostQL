@@ -169,9 +169,11 @@ describe('executeGraphQL', () => {
   describe('the server error code', () => {
     const refusal = async (errors: unknown[]) => {
       globalThis.fetch = createFetchMock({ data: { items: null }, errors });
-      return executeGraphQL('http://localhost/graphql', {}, '{ items { id } }').catch(
-        (error: unknown) => error,
-      );
+      return executeGraphQL(
+        'http://localhost/graphql',
+        {},
+        '{ items { id } }',
+      ).catch((error: unknown) => error);
     };
 
     it('carries extensions.code and every error the server sent', async () => {
@@ -180,7 +182,11 @@ describe('executeGraphQL', () => {
           message: 'Duplicate key',
           locations: [{ line: 1, column: 12 }],
           path: ['items_batch'],
-          extensions: { code: 'CONFLICT', codes: ['CONFLICT'], number: '23505' },
+          extensions: {
+            code: 'CONFLICT',
+            codes: ['CONFLICT'],
+            number: '23505',
+          },
         },
         {
           message: 'Another',
@@ -237,7 +243,8 @@ describe('executeGraphQL', () => {
           ok: true,
           status: 200,
           statusText: 'OK',
-          json: () => Promise.resolve({ errors: [{ message: 'Unauthorized' }] }),
+          json: () =>
+            Promise.resolve({ errors: [{ message: 'Unauthorized' }] }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -245,7 +252,9 @@ describe('executeGraphQL', () => {
           statusText: 'OK',
           json: () =>
             Promise.resolve({
-              errors: [{ message: 'No', extensions: { code: 'ACCESS_DENIED' } }],
+              errors: [
+                { message: 'No', extensions: { code: 'ACCESS_DENIED' } },
+              ],
             }),
         });
 

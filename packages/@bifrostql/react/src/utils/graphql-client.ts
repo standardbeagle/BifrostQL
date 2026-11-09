@@ -1,6 +1,14 @@
+/** One entry of a GraphQL response's `errors` list, as the server sent it. */
+export interface GraphQLErrorEntry {
+  message: string;
+  locations?: ReadonlyArray<{ line: number; column: number }>;
+  path?: ReadonlyArray<string | number>;
+  extensions?: { code?: string; [key: string]: unknown };
+}
+
 interface GraphQLResponse<T> {
   data?: T;
-  errors?: Array<{ message: string }>;
+  errors?: GraphQLErrorEntry[];
 }
 
 /**
@@ -23,10 +31,27 @@ export class BifrostAuthError extends Error {
   }
 }
 
-/** Stand-in until the client keeps the server's errors. */
+/**
+ * Typed failure surfaced when the server answers with a GraphQL `errors` list
+ * that is not an authentication failure. The message is every error's message,
+ * joined.
+ *
+ * Use `code` to tell conditions apart (`CONFLICT`, `ACCESS_DENIED`, an
+ * application's own code) instead of matching message text.
+ */
 export class BifrostGraphQLError extends Error {
+  /** `extensions.code` of the first error that has one. */
   readonly code?: string;
-  readonly errors: readonly unknown[] = [];
+  /** Every error the server sent, unchanged. */
+  readonly errors: readonly GraphQLErrorEntry[];
+
+  constructor(errors: readonly GraphQLErrorEntry[]) {
+    super(errors.map((error) => error.message).join(', '));
+    this.name = 'BifrostGraphQLError';
+    this.code = errors.find((error) => error.extensions?.code)?.extensions
+      ?.code;
+    this.errors = errors;
+  }
 }
 
 /**
@@ -103,7 +128,8 @@ function buildHeaders(
  *
  * @returns The `data` field on success.
  * @throws {BifrostAuthError} On HTTP `401` or a GraphQL auth error.
- * @throws {Error} On other HTTP failures, non-auth GraphQL errors, or missing data.
+ * @throws {BifrostGraphQLError} On any other GraphQL errors.
+ * @throws {Error} On other HTTP failures or missing data.
  */
 async function sendRequest<T>(
   endpoint: string,
@@ -132,11 +158,11 @@ async function sendRequest<T>(
 
   const json: GraphQLResponse<T> = await response.json();
   if (json.errors) {
-    const message = json.errors.map((e) => e.message).join(', ');
+    const error = new BifrostGraphQLError(json.errors);
     if (json.errors.some((e) => AUTH_ERROR_PATTERN.test(e.message))) {
-      throw new BifrostAuthError(message);
+      throw new BifrostAuthError(error.message);
     }
-    throw new Error(message);
+    throw error;
   }
 
   if (json.data === undefined) {
@@ -171,7 +197,8 @@ async function sendRequest<T>(
  * @param auth - Optional auth-recovery hooks (`refreshToken` / `onSessionExpired`).
  * @returns The `data` field from the GraphQL response.
  * @throws {BifrostAuthError} On an unrecoverable authentication failure.
- * @throws {Error} On HTTP failure, GraphQL errors, or missing response data.
+ * @throws {BifrostGraphQLError} On non-auth GraphQL errors, carrying `code` and `errors`.
+ * @throws {Error} On HTTP failure or missing response data.
  *
  * @example
  * ```ts

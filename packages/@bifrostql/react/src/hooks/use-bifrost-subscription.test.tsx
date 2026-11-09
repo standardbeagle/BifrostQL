@@ -740,7 +740,10 @@ describe('useBifrostSubscription', () => {
         instances[0].handler.onmessage?.({
           data: JSON.stringify({
             errors: [
-              { message: 'Access denied', extensions: { code: 'ACCESS_DENIED' } },
+              {
+                message: 'Access denied',
+                extensions: { code: 'ACCESS_DENIED' },
+              },
             ],
           }),
         });

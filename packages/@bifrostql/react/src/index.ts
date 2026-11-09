@@ -133,6 +133,7 @@ export {
   buildGraphqlQuery,
   executeGraphQL,
   BifrostAuthError,
+  BifrostGraphQLError,
   buildMutation,
   buildInsertMutation,
   buildUpdateMutation,

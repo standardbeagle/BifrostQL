@@ -186,7 +186,9 @@ describe('useBifrostMutation', () => {
     });
     expect(result.current.error).toBeInstanceOf(BifrostGraphQLError);
     expect((result.current.error as BifrostGraphQLError).code).toBe('CONFLICT');
-    expect((onError.mock.calls[0][0] as BifrostGraphQLError).code).toBe('CONFLICT');
+    expect((onError.mock.calls[0][0] as BifrostGraphQLError).code).toBe(
+      'CONFLICT',
+    );
   });
 
   it('throws on GraphQL errors in response', async () => {

@@ -12,10 +12,11 @@ namespace BifrostQL.Core.Operations;
 /// What a server operation runs with: its arguments, the caller, and data access that acts as
 /// that caller. There is no way to read or write as anyone else, and no raw SQL: every read goes
 /// through the same read seam protocol adapters use, and every write through the pipeline
-/// generated mutations use. The one step that does not act as the caller is
+/// generated mutations use. The one step that does not fully act as the caller is
 /// <see cref="LockRowAsync"/>: it takes a row lock for the operation's own concurrency control,
-/// neither reads nor changes anything the caller can see beyond whether the row exists, and
-/// grants no read or write.
+/// bound by the caller's tenant but not by their read or write policy. It neither reads nor changes
+/// anything the caller can see beyond whether the row exists in their tenant, and grants no read
+/// or write.
 /// </summary>
 public sealed class BifrostOperationContext
 {
@@ -196,10 +197,11 @@ public sealed class BifrostOperationContext
     /// Locks the row of <paramref name="table"/> named by <paramref name="key"/> (its whole primary
     /// key) until the operation's transaction commits or rolls back, so concurrent operations that
     /// take the same lock run one after another. Take it before the read it protects.
-    /// <para>Operation code is trusted with its keys, so the lock takes no caller scope: a caller
-    /// with no read or write on the row can still hold it, in any tenant, and it grants neither.
-    /// Raises <see cref="LockRowNotFoundCode"/> when no row has the key, which leaves the operation
-    /// able to continue; <see cref="RowLockUnsupportedCode"/> on a dialect with no row locks, rather
+    /// <para>The lock is bound by the caller's tenant and not by their read or write policy: a
+    /// caller with no read or write on a row of their own tenant can still hold it, and it grants
+    /// neither. It refuses a change-history table, a deferred store and the approval queue.
+    /// Raises <see cref="LockRowNotFoundCode"/> when the caller's tenant has no row with the key,
+    /// whether or not another tenant does, which leaves the operation able to continue; <see cref="RowLockUnsupportedCode"/> on a dialect with no row locks, rather
     /// than running on without one; and
     /// <see cref="MutationArgumentBinder.PartialPrimaryKeyCode"/> when the key is anything but the
     /// table's whole primary key. A query operation has no transaction to hold a lock in, and is
@@ -212,6 +214,7 @@ public sealed class BifrostOperationContext
                 $"Operation '{Operation.Name}' is a query operation; only a mutation operation has a transaction to hold a row lock.");
 
         var dbTable = ResolveTable(table);
+        TableMutationPipeline.GuardNotHistoryTarget(dbTable, Model);
         var dialect = _connFactory.Dialect;
         if (dialect.UpdateLockClause.Length == 0 && dialect.UpdateLockTableHint.Length == 0)
             throw new BifrostExecutionError(
@@ -219,10 +222,16 @@ public sealed class BifrostOperationContext
             { ErrorCode = RowLockUnsupportedCode };
 
         var keyData = ResolveWholePrimaryKey(dbTable, key);
+        var tenantScope = await TenantMutationTransformer.CallerScopeAsync(dbTable, new MutationTransformContext
+        {
+            Model = Model,
+            UserContext = _userContext,
+            Services = Services,
+        });
         IReadOnlyDictionary<string, object?>? locked = null;
         await _scope.JoinAsync(async (connection, transaction) =>
             locked = await MutationCommandExecutor.LoadRowByKey(
-                connection, transaction, dialect, dbTable, keyData.Keys, keyData, forUpdate: true, CancellationToken));
+                connection, transaction, dialect, dbTable, keyData.Keys, keyData, forUpdate: true, CancellationToken, tenantScope));
 
         // Thrown outside the join: no row is an answer, not a failed statement, so the operation
         // may catch it and carry on.

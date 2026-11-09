@@ -116,6 +116,22 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
     }
 
     /// <summary>
+    /// The row filter a keyed write on <paramref name="table"/> runs under for this caller, for a
+    /// statement that addresses a row without being a write. Null when the table has no tenant
+    /// filter. It asks the write path itself, so it fails closed in the same cases.
+    /// </summary>
+    internal static async ValueTask<TableFilter?> CallerScopeAsync(IDbTable table, MutationTransformContext context)
+    {
+        var transformer = new TenantMutationTransformer();
+        if (!transformer.AppliesTo(table, MutationType.Delete, context))
+            return null;
+
+        var result = await transformer.TransformAsync(table, MutationType.Delete, new Dictionary<string, object?>(), context);
+        result.ThrowIfDenied();
+        return result.AdditionalFilter;
+    }
+
+    /// <summary>
     /// The caller's tenant for <paramref name="table"/>, coerced to its tenant column's type.
     /// Fail-closed: a missing or null claim throws an access denial. Shared with
     /// <see cref="TenantForeignKeyMutationTransformer"/> so a referenced parent is checked

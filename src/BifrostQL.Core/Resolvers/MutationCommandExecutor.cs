@@ -319,17 +319,20 @@ namespace BifrostQL.Core.Resolvers
             IReadOnlyCollection<string> columns,
             Dictionary<string, object?> keyData,
             bool forUpdate = false,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            TableFilter? rowScope = null)
         {
             if (columns.Count == 0 || keyData.Count == 0)
                 return null;
 
-            var sql = BuildSelectRowByKeySql(dialect, table, columns, keyData, forUpdate);
+            var scope = RenderAdditionalFilter(rowScope, dialect);
+            var sql = BuildSelectRowByKeySql(dialect, table, columns, keyData, forUpdate, scope.WhereSuffix);
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, keyData);
+            DbParameterBinder.AddExtraParameters(cmd, scope.Parameters);
 
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
@@ -351,19 +354,21 @@ namespace BifrostQL.Core.Resolvers
         /// <c>WITH (UPDLOCK)</c>) and the locking clause after the WHERE clause
         /// (Postgres/MySQL <c>FOR UPDATE</c>); SQLite emits neither (whole-database write
         /// locking already serializes writers). Without it the statement is a plain SELECT.
+        /// <paramref name="rowScopeWhereSuffix"/> narrows the row ahead of the locking clause.
         /// </summary>
         public static string BuildSelectRowByKeySql(
             ISqlDialect dialect,
             IDbTable table,
             IReadOnlyCollection<string> columns,
             IReadOnlyDictionary<string, object?> keyValues,
-            bool forUpdate)
+            bool forUpdate,
+            string rowScopeWhereSuffix = "")
         {
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
             var fromHint = forUpdate ? dialect.UpdateLockTableHint : "";
             var lockClause = forUpdate ? dialect.UpdateLockClause : "";
-            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, table, keyValues)}{lockClause};";
+            return $"SELECT {columnList} FROM {tableRef}{fromHint} WHERE {BuildKeyPredicate(dialect, table, keyValues)}{rowScopeWhereSuffix}{lockClause};";
         }
 
         /// <summary>

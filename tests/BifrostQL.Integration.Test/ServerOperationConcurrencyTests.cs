@@ -395,6 +395,12 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
     /// <summary>Runs inside a transaction: throws when another transaction holds the row.</summary>
     protected abstract string TryLockPersonOneSql { get; }
 
+    /// <summary>
+    /// Whether a locking read leaves alone a row its key found but its tenant test refused.
+    /// InnoDB at repeatable read does not: it keeps the lock on every row the index scan reached.
+    /// </summary>
+    protected virtual bool ScopedLockSkipsOtherRows => true;
+
     [SkippableFact]
     public async Task ConcurrentStarts_EachStopThePreviousEntry_LeavingOneRunning()
     {
@@ -519,35 +525,22 @@ public abstract class ServerOperationRowLockTestBase : ServerOperationQueryTestB
 
         (await ExecuteAsync("mutation { mutationProbe }", Caller(tenantId: 1))).Errors.Should().BeNullOrEmpty();
 
-        free.Should().BeTrue("a tenant must not be able to block another tenant's writes");
+        free.Should().Be(ScopedLockSkipsOtherRows, "a tenant must not be able to block another tenant's writes");
     }
 
     [SkippableFact]
     public async Task LockRow_WithNoTenantInTheUserContext_IsDenied()
     {
         Skip.IfNot(Available, "test database environment variable not set");
+        await LoadModelAsync($":root {{ {MetadataKeys.Operations.Tenant}: {MetadataKeys.Operations.TenantOptional} }}");
         MutationProbe.Body = context => context.LockRowAsync("people", new Dictionary<string, object?> { ["id"] = 1 });
 
         var noTenant = new Dictionary<string, object?> { ["user_id"] = "mem", ["roles"] = new[] { "member" } };
         var result = await ExecuteAsync("mutation { mutationProbe }", noTenant);
 
-        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode);
-    }
-
-    [SkippableFact]
-    public async Task LockRow_RefusesAHistoryTable_LikeEveryOtherPath()
-    {
-        Skip.IfNot(Available, "test database environment variable not set");
-        await LoadModelAsync(
-            $":root {{ history-table: {TableSchema}.week_locks }}",
-            $"{TableSchema}.time_entries {{ history: enabled }}");
-        await ExecAsync("INSERT INTO week_locks (person_id, week) VALUES (1, 10)");
-        MutationProbe.Body = context => context.LockRowAsync("week_locks", new Dictionary<string, object?> { ["person_id"] = 1, ["week"] = 10 });
-
-        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
-
-        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode,
-            "a caller holding a lock on the trail would stall every tracked write");
+        var error = result.Errors.Should().ContainSingle().Subject;
+        error.Code.Should().Be(BifrostExecutionError.AccessDeniedCode);
+        error.Message.Should().Contain("Tenant context required", "the lock itself must fail closed when the operation allows no tenant");
     }
 
     [SkippableFact]
@@ -846,6 +839,16 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         CREATE TABLE uuid_keyed (id UUID PRIMARY KEY, note TEXT);
         CREATE TABLE date_keyed (d DATE PRIMARY KEY, note TEXT);
         CREATE TABLE uuid_tenant (id UUID PRIMARY KEY, tenant_id UUID NOT NULL);
+        CREATE TABLE trail (
+            id SERIAL PRIMARY KEY,
+            entity TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            op TEXT NOT NULL,
+            actor TEXT,
+            changed_at TIMESTAMPTZ NOT NULL,
+            before TEXT,
+            after TEXT,
+            changed_columns TEXT);
         CREATE TABLE measures (id INT PRIMARY KEY, reading REAL NOT NULL, price MONEY NOT NULL, at_time TIME NOT NULL)
         """;
 
@@ -1065,6 +1068,22 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
     }
 
     [SkippableFact]
+    public async Task LockRow_RefusesAHistoryTable_LikeEveryOtherPath()
+    {
+        Skip.IfNot(Available, "test database environment variable not set");
+        await LoadModelAsync(
+            $":root {{ history-table: {TableSchema}.trail }}",
+            $"{TableSchema}.week_locks {{ history: enabled }}");
+        await ExecAsync("INSERT INTO trail (entity, entity_id, op, changed_at) VALUES ('week_locks', '1', 'insert', now())");
+        MutationProbe.Body = context => context.LockRowAsync("trail", new Dictionary<string, object?> { ["id"] = 1 });
+
+        var result = await ExecuteAsync("mutation { mutationProbe }", Caller());
+
+        result.Errors.Should().ContainSingle().Which.Code.Should().Be(BifrostExecutionError.AccessDeniedCode,
+            "a caller holding a lock on the trail would stall every tracked write");
+    }
+
+    [SkippableFact]
     public async Task LockRow_ComparesAUuidTenantColumn_WithATextClaim()
     {
         Skip.IfNot(Available, "test database environment variable not set");
@@ -1123,6 +1142,8 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
 
 public sealed class MySqlServerOperationConcurrencyTests : ServerOperationRowLockTestBase
 {
+    protected override bool ScopedLockSkipsOtherRows => false;
+
     private static string? Master => Environment.GetEnvironmentVariable("BIFROST_TEST_MYSQL");
     private string? _dbName;
 

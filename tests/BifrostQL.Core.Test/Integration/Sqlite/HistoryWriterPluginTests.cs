@@ -203,7 +203,11 @@ public sealed class HistoryWriterPluginTests : IAsyncLifetime
         var result = await ExecuteMutationAsync("mutation { orders(update: { id: 1, status: \"shipped\" }) }", model);
 
         result.Errors.Should().NotBeNullOrEmpty();
-        result.Errors!.Select(e => e.Message).Should().Contain(m => m.Contains("history-writer: nobody"));
+        // The wire carries a constant message: the qualified table, the configured name and the
+        // registered plugin names stay in the server log (BifrostErrorSink), never in the response.
+        var message = result.Errors!.Single().Message;
+        message.Should().Be("The table's history writer is not registered, so the change was refused.");
+        message.Should().NotContain("orders").And.NotContain("nobody").And.NotContain("app-audit");
         (await CountAsync("orders", "status = 'packing'")).Should().Be(1);
     }
 

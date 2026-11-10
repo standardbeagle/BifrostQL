@@ -177,6 +177,19 @@ public sealed class PartialUpdateMutationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Insert_SupplyingNoColumns_LetsTheDatabaseFillEveryColumn()
+    {
+        // Every column of labels is optional on insert (rowid key, nullable note), so `{}` passes
+        // validation and must reach the database as a default-values insert, not `() VALUES()`.
+        var single = await ExecuteMutationAsync("mutation { labels(insert: {}) }");
+        var batch = await ExecuteMutationAsync("mutation { labels_batch(actions: [{ insert: {} }]) }");
+
+        single.Errors.Should().BeNullOrEmpty();
+        batch.Errors.Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT COUNT(*) FROM labels WHERE id NOT IN (5, 6) AND note IS NULL")).Should().Be("2");
+    }
+
+    [Fact]
     public async Task Insert_OmittingANotNullColumnWithoutDefault_IsRejectedByValidation()
     {
         var result = await ExecuteMutationAsync("mutation { gadgets(insert: { name: \"no-sku\" }) }");

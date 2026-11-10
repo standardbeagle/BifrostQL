@@ -76,6 +76,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   let a tenant-1 insert reference tenant 2's account. An insert that leaves out a defaulted or
   computed foreign-key column is now refused with `ACCESS_DENIED` unless another column of the same
   key is `NULL`; send the value explicitly.
+- An insert that supplies no columns (`insert: {}`, valid since default-aware inserts made every
+  column of such a table optional) rendered `INSERT INTO t() VALUES()` and failed with
+  `DATABASE_ERROR` on SQL Server, PostgreSQL and SQLite; a `_batch` insert of `{}` was silently
+  skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
+  MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
+  `EmptyInsertValues`, with a default implementation.
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as

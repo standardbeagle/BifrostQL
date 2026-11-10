@@ -354,7 +354,8 @@ namespace BifrostQL.Core.Resolvers
 
         private static async Task<BatchActionOutcome?> ExecuteInsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
-            if (data.Count == 0) return null;
+            // An insert with no columns is a real insert (every column from its default), as
+            // on the single-row path, not a skipped action.
             var table = ctx.Table;
             var dialect = ctx.Dialect;
 

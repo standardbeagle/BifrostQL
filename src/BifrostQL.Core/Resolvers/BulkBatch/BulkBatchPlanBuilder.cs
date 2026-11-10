@@ -176,6 +176,11 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 reason = "batch contains an upsert (needs the per-row existence probe)";
                 return false;
             }
+            if (actions.Any(a => a.Action == MutationAction.Insert && a.Data.Count == 0))
+            {
+                reason = "batch contains an insert with no columns (a default-values insert has no staging row)";
+                return false;
+            }
             if (StateMachineConfigCollector.FromTable(table) is not null)
             {
                 reason = "table has a state machine (needs the per-row current-row load)";
@@ -237,7 +242,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             IDbTable table, Dictionary<string, object?> data,
             MutationPipelineContext ctx, MutationTransformContext transformContext)
         {
-            if (data.Count == 0) return null;
+            // IsEligible keeps a no-column insert on the per-row path, which inserts it.
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
             transformResult.ThrowIfDenied();
             // Database-named on the way out of the chain (see IMutationTransformers).

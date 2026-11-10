@@ -108,11 +108,14 @@ namespace BifrostQL.Core.Resolvers
         /// shared by the single-row and batch inserts (callers append their own
         /// terminator: a RETURNING/identity clause, or a bare <c>;</c>). Columns and
         /// value placeholders are drawn from one snapshot of the column set so they
-        /// stay positionally paired.
+        /// stay positionally paired. No columns renders the dialect's
+        /// <see cref="ISqlDialect.EmptyInsertValues"/>, so the database fills every column.
         /// </summary>
         public static string BuildInsertInto(ISqlDialect dialect, IDbTable table, string tableRef, IEnumerable<string> columns)
         {
             var cols = columns.ToList();
+            if (cols.Count == 0)
+                return $"INSERT INTO {tableRef}{dialect.EmptyInsertValues}";
             var columnList = string.Join(",", cols.Select(dialect.EscapeIdentifier));
             var valueList = string.Join(",", cols.Select(c => ValuePlaceholder(dialect, table, c)));
             return $"INSERT INTO {tableRef}({columnList}) VALUES({valueList})";

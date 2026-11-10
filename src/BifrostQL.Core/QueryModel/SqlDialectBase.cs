@@ -46,6 +46,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string LastInsertedIdentity => _lastInsertedIdentity;
 
     /// <inheritdoc />
+    public virtual string EmptyInsertValues => " DEFAULT VALUES";
+
+    /// <inheritdoc />
     public virtual string? ReturningIdentityClause => _returningIdentityClause;
 
     /// <inheritdoc />

@@ -27,6 +27,10 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
     public override string UpdateLockClause => " FOR UPDATE";
 
     /// <inheritdoc />
+    /// <remarks>MySQL has no <c>DEFAULT VALUES</c>; an empty column list is its spelling.</remarks>
+    public override string EmptyInsertValues => "() VALUES()";
+
+    /// <inheritdoc />
     /// <remarks>
     /// MySQL uses CONCAT() function instead of || operator.
     /// </remarks>

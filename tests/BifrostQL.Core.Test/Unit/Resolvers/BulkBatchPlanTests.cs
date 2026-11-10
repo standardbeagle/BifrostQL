@@ -107,6 +107,16 @@ public sealed class BulkBatchPlanTests
     }
 
     [Fact]
+    public async Task InsertWithNoColumns_FallsBack()
+    {
+        // The per-row path inserts a no-column action from defaults; the staging-table path has
+        // no row to stage for it, so the batch must not take the fast path at all.
+        var ctx = BuildContext(BuildModel(t => t.WithMetadata("bulk-batch-threshold", "1")));
+        var built = await BuildAsync(ctx, Insert(("Status", "x")), Insert());
+        built.Should().BeNull();
+    }
+
+    [Fact]
     public async Task StateMachineTable_FallsBack()
     {
         var ctx = BuildContext(BuildModel(t => t

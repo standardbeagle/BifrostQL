@@ -129,6 +129,15 @@ public interface ISqlDialect
     string LastInsertedIdentity { get; }
 
     /// <summary>
+    /// What follows the table reference in an INSERT that supplies no columns, so the
+    /// database fills every column from its default or identity. Standard SQL (SQL Server,
+    /// PostgreSQL, SQLite): <c> DEFAULT VALUES</c>. MySQL has no such clause and takes
+    /// <c>() VALUES()</c>. An empty column list rendered as <c>() VALUES()</c> is a syntax
+    /// error everywhere but MySQL.
+    /// </summary>
+    string EmptyInsertValues => " DEFAULT VALUES";
+
+    /// <summary>
     /// Generates a LIKE pattern expression using database-specific string concatenation.
     /// SQL Server uses '+', PostgreSQL/SQLite use '||', and MySQL uses CONCAT().
     /// </summary>

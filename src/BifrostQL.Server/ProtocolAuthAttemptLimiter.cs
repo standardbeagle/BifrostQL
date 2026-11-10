@@ -31,9 +31,12 @@ namespace BifrostQL.Server
         /// address-churning peer would otherwise grow this map without bound on the
         /// unauthenticated path. The cap is enforced on INSERT only: an already-tracked counter
         /// always updates in place, so a live rate-limit decision can never be evicted to admit a
-        /// new key — the cap cannot be turned into a bypass. Past the cap the limiter degrades to
-        /// best-effort for NEW keys (an untracked key reads as 0), which keeps memory bounded and
-        /// the hot path O(1) amortized.
+        /// new key — the cap cannot be turned into a bypass. Past the cap a NEW key is counted in
+        /// its axis's shared overflow window instead (one per axis, outside the map), under the
+        /// same per-axis cap: every untracked source shares one source budget and every untracked
+        /// account one account budget. That keeps memory bounded and the hot path O(1) amortized
+        /// while a saturated map still limits; the cost of a flood falls on new callers during it,
+        /// never on an already-tracked decision.
         /// </summary>
         internal const int DefaultMaxTrackedKeys = 20_000;
 
@@ -43,6 +46,8 @@ namespace BifrostQL.Server
         private readonly Func<DateTimeOffset> _clock;
         private readonly int _maxTrackedKeys;
         private readonly ConcurrentDictionary<string, Window> _windows = new(StringComparer.Ordinal);
+        // The shared windows for keys the full map cannot track, keyed by axis ("s:"/"a:").
+        private readonly ConcurrentDictionary<string, Window> _overflow = new(StringComparer.Ordinal);
         // Plain object + Monitor rather than System.Threading.Lock: this assembly also targets
         // net8.0, where that type does not exist.
         private readonly object _sweepGate = new();
@@ -83,12 +88,28 @@ namespace BifrostQL.Server
             var accountKey = account is null ? null : $"a:{NormalizeAccountKey(account)}";
             var sourceKey = $"s:{source}";
             var now = _clock();
+            var sourceWindow = Track(sourceKey, "s:", now);
+            var accountWindow = accountKey is null ? default : Track(accountKey, "a:", now);
             // Check both axes first without mutating, so a trip on one axis does not consume the other.
-            if (Peek(sourceKey, now) >= _maxPerSource) return false;
-            if (accountKey is not null && Peek(accountKey, now) >= _maxPerAccount) return false;
-            Increment(sourceKey, now);
-            if (accountKey is not null) Increment(accountKey, now);
+            if (Peek(sourceWindow, now) >= _maxPerSource) return false;
+            if (accountKey is not null && Peek(accountWindow, now) >= _maxPerAccount) return false;
+            Bump(sourceWindow, now);
+            if (accountKey is not null) Bump(accountWindow, now);
             return true;
+        }
+
+        /// <summary>
+        /// Picks the window an attempt is counted in: the key's own when it is tracked or the map
+        /// has room (rolled-over counters are reclaimed first — <see cref="Peek"/> already reads
+        /// them as 0, so dropping them changes no decision), else its axis's shared overflow
+        /// window. Existing counters are never evicted, so a live decision is never dropped.
+        /// </summary>
+        private (ConcurrentDictionary<string, Window> Map, string Key) Track(string key, string axis, DateTimeOffset now)
+        {
+            if (_windows.ContainsKey(key) || _windows.Count < _maxTrackedKeys)
+                return (_windows, key);
+            TrySweepExpired(now);
+            return _windows.Count < _maxTrackedKeys ? (_windows, key) : (_overflow, axis);
         }
 
         /// <summary>
@@ -98,37 +119,14 @@ namespace BifrostQL.Server
         /// </summary>
         protected virtual string NormalizeAccountKey(string account) => account;
 
-        private int Peek(string key, DateTimeOffset now) =>
-            _windows.TryGetValue(key, out var w) && now - w.Start < _window ? w.Count : 0;
+        private int Peek((ConcurrentDictionary<string, Window> Map, string Key) window, DateTimeOffset now) =>
+            window.Map.TryGetValue(window.Key, out var w) && now - w.Start < _window ? w.Count : 0;
 
-        private void Increment(string key, DateTimeOffset now)
-        {
-            // Already-tracked counter: update (or roll over) in place. Existing counters are never
-            // evicted by the cap, so a live rate-limit decision can never be dropped to admit a
-            // new key.
-            if (_windows.ContainsKey(key))
-            {
-                Bump(key, now);
-                return;
-            }
-
-            // New counter: enforce the hard cap BEFORE inserting. Rolled-over counters are
-            // reclaimed first (Peek already treats them as 0, so dropping them changes no
-            // decision); if the map is still full of LIVE counters, refuse to track the new key
-            // rather than evict a live one or grow without bound.
-            if (_windows.Count >= _maxTrackedKeys)
-            {
-                TrySweepExpired(now);
-                if (_windows.Count >= _maxTrackedKeys)
-                    return;
-            }
-
-            Bump(key, now);
-        }
-
-        private void Bump(string key, DateTimeOffset now) =>
-            _windows.AddOrUpdate(
-                key,
+        // Concurrent inserts between Track and Bump can overshoot the cap by at most the number of
+        // in-flight attempts; the next attempt sees the full map and counts in the overflow window.
+        private void Bump((ConcurrentDictionary<string, Window> Map, string Key) window, DateTimeOffset now) =>
+            window.Map.AddOrUpdate(
+                window.Key,
                 _ => new Window(now, 1),
                 (_, w) => now - w.Start < _window ? w with { Count = w.Count + 1 } : new Window(now, 1));
 
@@ -136,8 +134,8 @@ namespace BifrostQL.Server
         {
             // At most one full-map scan per window, one thread at a time: a sustained at-cap flood
             // costs O(1) amortized per attempt, never an O(n) scan on every one. A thread that
-            // finds the sweep running (or run too recently) skips it and the caller simply
-            // declines to track the new key — correctness never depends on the sweep firing.
+            // finds the sweep running (or run too recently) skips it and the caller counts the new
+            // key in the overflow window — correctness never depends on the sweep firing.
             if (!Monitor.TryEnter(_sweepGate))
                 return;
             try

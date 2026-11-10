@@ -141,7 +141,9 @@ public class LdapBindRateLimiterTests
 
         var admitted = Enumerable.Range(0, 10).Count(_ => limiter.TryBind("fresh-src", "victim"));
 
-        admitted.Should().Be(2,
+        // The flood itself spends the shared overflow budget, so the victim may get fewer than
+        // the cap (fail closed during a flood) — never more.
+        admitted.Should().BeLessThanOrEqualTo(2,
             "a key the full map cannot track must still be counted, or a saturated map is no limit at all");
         limiter.TrackedKeyCount.Should().BeLessThanOrEqualTo(4, "the map stays bounded");
     }

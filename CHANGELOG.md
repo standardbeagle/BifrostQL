@@ -82,6 +82,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
   MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
   `EmptyInsertValues`, with a default implementation.
+- The pgwire, RESP and LDAP auth-attempt limiters stopped counting new keys once their tracking map
+  held 20,000 live counters, so a peer that first filled the map from many addresses could then
+  guess a fresh account's password without limit. A source or account the full map cannot track now
+  counts against one shared window for its axis, under the same cap. During such a flood, new
+  callers share that budget and may be refused; already-tracked sources and accounts are unaffected.
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as

@@ -290,6 +290,11 @@ builder.Services.AddSingleton<IHistoryWriter, AppAuditWriter>();
   writer answers to fails the write, which rolls back. Model load cannot see DI, so this
   check happens on the first recorded write rather than at startup.
 - A writer that throws rolls the change back, like the built-in one.
+- **Protect the audit table yourself.** BifrostQL does not know where a plugin writes, so an
+  audit table in the same database is published like any other table, with full CRUD for any
+  caller allowed to write it. Declare it `visibility: hidden` (the writer's own SQL still reaches
+  it), or `policy-actions: read` if clients should read it. The built-in history table needs no
+  such rule; it is a system table.
 
 ## Requirements and limits
 

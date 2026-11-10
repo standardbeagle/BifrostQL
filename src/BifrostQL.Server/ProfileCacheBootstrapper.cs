@@ -17,6 +17,7 @@ namespace BifrostQL.Server
     internal static class ProfileCacheBootstrapper
     {
         public static async Task<Inputs> BuildInputsAsync(
+            string endpointPath,
             string connectionString,
             string? providerName,
             IReadOnlyList<string> metadataRules,
@@ -51,6 +52,7 @@ namespace BifrostQL.Server
                 { "connFactory", connFactory },
                 { "dbSchema", schema },
                 { "profileModelCache", profileCache },
+                { BifrostQL.Core.Resolvers.IntentEndpointResolver.EndpointInputKey, endpointPath },
             });
         }
     }

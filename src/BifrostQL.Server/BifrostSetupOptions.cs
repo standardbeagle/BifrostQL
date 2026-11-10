@@ -365,7 +365,9 @@ namespace BifrostQL.Server
             // Register under a case-normalized key. app.Map matches paths case-insensitively,
             // so a request to /GraphQL reaches this middleware with that casing; the PathCache
             // is ordinal-keyed, so the lookup side normalizes to the same lowercase form.
-            extensionsLoader.AddLoader(path.ToLowerInvariant(), () => ProfileCacheBootstrapper.BuildInputsAsync(
+            var endpointPath = path.ToLowerInvariant();
+            extensionsLoader.AddLoader(endpointPath, () => ProfileCacheBootstrapper.BuildInputsAsync(
+                endpointPath,
                 _connectionString ?? throw new ConnectionNotConfiguredException(),
                 _provider,
                 configMetadataRules,

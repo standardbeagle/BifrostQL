@@ -13,6 +13,14 @@ namespace BifrostQL.Core.Resolvers;
 internal static class IntentEndpointResolver
 {
     /// <summary>
+    /// Key under which an endpoint's shared <see cref="Inputs"/> carry its own (lowercased)
+    /// path, so request-time code that hands work back to an intent executor — approval
+    /// replay, deferred undo — names the endpoint the request came from. Without it a
+    /// multi-endpoint host refuses the intent (see <see cref="ResolveAsync"/>).
+    /// </summary>
+    internal const string EndpointInputKey = "endpoint";
+
+    /// <summary>
     /// Resolves the endpoint's cached Inputs. A named endpoint must be registered
     /// (case-insensitive, matching the middleware's lowercase keying); a null
     /// endpoint is only valid when exactly one endpoint exists — with several

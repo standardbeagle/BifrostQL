@@ -19,10 +19,14 @@ public sealed class DeferredUndoEngine
     private readonly IDbConnFactory _connections;
     private readonly IMutationIntentExecutor _mutations;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly string? _endpoint;
 
+    /// <param name="endpoint">The endpoint whose model this is. Inverse writes run through the
+    /// intent executor, which refuses an endpoint-less intent on a multi-endpoint host.</param>
     public DeferredUndoEngine(IDbModel model, IDbConnFactory connections, IMutationIntentExecutor mutations,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null, string? endpoint = null)
     {
+        _endpoint = endpoint;
         _model = model ?? throw new ArgumentNullException(nameof(model));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
@@ -124,7 +128,9 @@ public sealed class DeferredUndoEngine
 
         return new MutationIntent
         {
-            Table = table.DbName,
+            // Schema-qualified: a bare DbName is ambiguous when another schema holds the same name.
+            Table = $"{table.TableSchema}.{table.DbName}",
+            Endpoint = _endpoint,
             Action = delta.InverseOp switch
             {
                 "delete" => MutationIntentAction.Delete,

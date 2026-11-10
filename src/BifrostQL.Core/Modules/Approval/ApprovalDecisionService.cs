@@ -14,13 +14,18 @@ public sealed class ApprovalDecisionService
     private readonly IDbConnFactory _connections;
     private readonly IMutationIntentExecutor _mutations;
     private readonly PolicyEvaluator _policy;
+    private readonly string? _endpoint;
 
+    /// <param name="endpoint">The endpoint whose model this is. The replay runs through the
+    /// intent executor, which refuses an endpoint-less intent on a multi-endpoint host.</param>
     public ApprovalDecisionService(
         IDbModel model,
         IDbConnFactory connections,
         IMutationIntentExecutor mutations,
-        PolicyEvaluator? policy = null)
+        PolicyEvaluator? policy = null,
+        string? endpoint = null)
     {
+        _endpoint = endpoint;
         _model = model ?? throw new ArgumentNullException(nameof(model));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _mutations = mutations ?? throw new ArgumentNullException(nameof(mutations));
@@ -69,7 +74,9 @@ public sealed class ApprovalDecisionService
         // whole thing rolls back, so a decision is never half-applied.
         await _mutations.ExecuteAsync(new MutationIntent
         {
-            Table = target.DbName,
+            // Schema-qualified: a bare DbName is ambiguous when another schema holds the same name.
+            Table = $"{target.TableSchema}.{target.DbName}",
+            Endpoint = _endpoint,
             Action = action,
             Data = values,
             PrimaryKey = key,

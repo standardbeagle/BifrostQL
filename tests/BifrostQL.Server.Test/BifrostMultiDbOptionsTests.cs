@@ -200,6 +200,37 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task EndpointInputs_CarryTheirOwnPath_SoReplaysNameTheirEndpoint()
+        {
+            // Approval replay and deferred undo build intents from the request's model; on a
+            // multi-endpoint host the executor refuses an intent without an endpoint, so the
+            // endpoint's own inputs must name it. Keyed lowercase, as the PathCache is.
+            BifrostQL.Core.Model.DbConnFactoryResolver.Register(BifrostQL.Core.Model.BifrostDbProvider.Sqlite,
+                cs => new BifrostQL.Sqlite.SqliteDbConnFactory(cs));
+            var options = new BifrostMultiDbOptions();
+            foreach (var path in new[] { "/graphql/DB1", "/graphql/db2" })
+                options.AddEndpoint(e =>
+                {
+                    e.ConnectionString = "Data Source=:memory:";
+                    e.Path = path;
+                    e.Provider = "sqlite";
+                    e.DisableAuth = true;
+                });
+            var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+            options.ConfigureServices(services);
+            await using var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions
+                .BuildServiceProvider(services);
+            var cache = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+                .GetRequiredService<BifrostQL.Core.Schema.PathCache<GraphQL.Inputs>>(provider);
+
+            var db1 = await cache.GetValueAsync("/graphql/db1");
+            var db2 = await cache.GetValueAsync("/graphql/db2");
+
+            Assert.Equal("/graphql/db1", db1["endpoint"]);
+            Assert.Equal("/graphql/db2", db2["endpoint"]);
+        }
+
+        [Fact]
         public void AddEndpoint_DefaultValues_HasCorrectDefaults()
         {
             var config = new BifrostEndpointConfig();

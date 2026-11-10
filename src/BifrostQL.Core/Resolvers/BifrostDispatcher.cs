@@ -321,7 +321,7 @@ namespace BifrostQL.Core.Resolvers
                 var request = new BifrostContextAdapter(context);
                 var mutations = context.RequestServices?.GetService<IMutationIntentExecutor>()
                     ?? throw new BifrostExecutionError("Deferred undo requires the mutation intent executor.");
-                return await new DeferredUndoEngine(request.Model, request.ConnFactory, mutations).UndoAsync(
+                return await new DeferredUndoEngine(request.Model, request.ConnFactory, mutations, endpoint: request.Endpoint).UndoAsync(
                     context.GetArgument<long>("changeSetId"), request.UserContext, context.CancellationToken);
             }
         }
@@ -335,7 +335,8 @@ namespace BifrostQL.Core.Resolvers
                     ?? throw new BifrostExecutionError("Deferred review requires the mutation intent executor.");
                 var identity = PolicyIdentity.FromUserContext(request.UserContext,
                     request.Model.GetMetadataValue(MetadataKeys.Security.TenantContextKey));
-                var queue = new DeferredReviewQueue(request.Model, request.ConnFactory, mutations, new PolicyEvaluator());
+                var queue = new DeferredReviewQueue(request.Model, request.ConnFactory, mutations, new PolicyEvaluator(),
+                    endpoint: request.Endpoint);
                 var id = context.FieldName == "deferredReviewQueue"
                     ? 0
                     : context.GetArgument<long>("changeSetId");
@@ -356,7 +357,7 @@ namespace BifrostQL.Core.Resolvers
                 var request = new BifrostContextAdapter(context);
                 var mutations = context.RequestServices?.GetService<IMutationIntentExecutor>()
                     ?? throw new BifrostExecutionError("Approval decisions require the mutation intent executor.");
-                var service = new ApprovalDecisionService(request.Model, request.ConnFactory, mutations);
+                var service = new ApprovalDecisionService(request.Model, request.ConnFactory, mutations, endpoint: request.Endpoint);
                 var id = context.GetArgument<long>("pendingChangeId");
 
                 if (string.Equals(context.FieldName, "approve", StringComparison.Ordinal))

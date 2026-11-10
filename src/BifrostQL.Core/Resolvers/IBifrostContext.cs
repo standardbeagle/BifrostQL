@@ -10,6 +10,13 @@ namespace BifrostQL.Core.Resolvers
         IDbConnFactory ConnFactory { get; }
         IDictionary<string, object?> UserContext { get; }
         IServiceProvider? RequestServices { get; }
+
+        /// <summary>
+        /// The endpoint path this request was served on, or null when the host's inputs do not
+        /// carry one. Hand it to any intent built from this request's model so the executor
+        /// resolves the same database on a multi-endpoint host.
+        /// </summary>
+        string? Endpoint => null;
     }
 
     public sealed class BifrostContextAdapter : IBifrostContext
@@ -19,6 +26,7 @@ namespace BifrostQL.Core.Resolvers
         public IDbConnFactory ConnFactory { get; }
         public IDictionary<string, object?> UserContext { get; }
         public IServiceProvider? RequestServices { get; }
+        public string? Endpoint { get; }
 
         public BifrostContextAdapter(IBifrostFieldContext context)
         {
@@ -30,6 +38,9 @@ namespace BifrostQL.Core.Resolvers
                 ?? throw new InvalidDataException("tableReaderFactory not configured"));
             UserContext = context.UserContext;
             RequestServices = context.RequestServices;
+            Endpoint = context.InputExtensions.TryGetValue(IntentEndpointResolver.EndpointInputKey, out var endpoint)
+                ? endpoint as string
+                : null;
         }
 
         /// <summary>

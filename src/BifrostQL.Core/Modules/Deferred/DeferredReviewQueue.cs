@@ -16,10 +16,11 @@ public sealed class DeferredReviewQueue
     private readonly IMutationIntentExecutor _mutations;
     private readonly PolicyEvaluator _policies;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly string? _endpoint;
 
     public DeferredReviewQueue(IDbModel model, IDbConnFactory connections, IMutationIntentExecutor mutations,
-        PolicyEvaluator policies, Func<DateTimeOffset>? clock = null)
-    { _model = model; _connections = connections; _mutations = mutations; _policies = policies; _clock = clock ?? (() => DateTimeOffset.UtcNow); }
+        PolicyEvaluator policies, Func<DateTimeOffset>? clock = null, string? endpoint = null)
+    { _model = model; _connections = connections; _mutations = mutations; _policies = policies; _clock = clock ?? (() => DateTimeOffset.UtcNow); _endpoint = endpoint; }
 
     public async Task<IReadOnlyList<DeferredReviewItem>> ListAsync(AppIdentity identity, CancellationToken ct = default)
     {
@@ -57,7 +58,7 @@ public sealed class DeferredReviewQueue
     {
         if (await LoadAuthorizedAsync(id, identity, ct) is null) return null;
         var mapper = new IdentityContextMapper(_model.GetMetadataValue(MetadataKeys.Security.TenantContextKey));
-        return await new DeferredUndoEngine(_model, _connections, _mutations, _clock)
+        return await new DeferredUndoEngine(_model, _connections, _mutations, _clock, _endpoint)
             .RejectApprovalHoldAsync(id, mapper.ToUserContext(identity), ct);
     }
 

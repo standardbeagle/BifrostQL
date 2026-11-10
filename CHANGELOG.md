@@ -82,6 +82,14 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
   MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
   `EmptyInsertValues`, with a default implementation.
+- On a host with more than one endpoint, `approve`, `undo` and the deferred review queue's reject
+  failed with "Multiple BifrostQL endpoints are registered", because their replay intent named no
+  endpoint; the change stayed pending. The replay also named its table by bare `DbName`, which is
+  ambiguous when another schema holds the same name. Each endpoint's inputs now carry its own path,
+  and the replay names that endpoint and the schema-qualified table. `ApprovalDecisionService`,
+  `DeferredUndoEngine` and `DeferredReviewQueue` gain an optional `endpoint` constructor argument
+  (source-compatible; recompile callers), and `IBifrostContext` gains `Endpoint`, which defaults to
+  `null`.
 - The pgwire, RESP and LDAP auth-attempt limiters stopped counting new keys once their tracking map
   held 20,000 live counters, so a peer that first filled the map from many addresses could then
   guess a fresh account's password without limit. A source or account the full map cannot track now

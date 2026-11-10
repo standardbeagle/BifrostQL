@@ -61,7 +61,7 @@ public sealed class SqlServerBulkBatchExecutor : IBulkBatchExecutor
             {
                 var p = dml.CreateParameter();
                 p.ParameterName = parameter.Name;
-                p.Value = parameter.Value ?? DBNull.Value;
+                BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, parameter.Value);
                 dml.Parameters.Add(p);
             }
             try

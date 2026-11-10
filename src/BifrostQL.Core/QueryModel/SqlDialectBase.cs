@@ -62,6 +62,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string CastParameterReference(string placeholder, string? dataType) => placeholder;
 
     /// <inheritdoc />
+    public virtual string DateTimeComparisonReference(string placeholder, string? dataType) => placeholder;
+
+    /// <inheritdoc />
     public virtual bool ComparesAsUuid(string? dataType) => false;
 
     /// <inheritdoc />

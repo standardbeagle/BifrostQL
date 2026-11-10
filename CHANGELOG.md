@@ -63,6 +63,12 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- SQL Server: a `DateTime` value was bound as `datetime`, which SqlClient rounds to 1/300 s.
+  Since compatibility level 130 that rounded value no longer equals a `datetime2` column's, so an
+  `_eq` filter or a key that includes a `datetime2` column matched no row, and a write stored the
+  value rounded (`.1234567` became `.1233333`). Values now bind as `datetime2`. A comparison
+  against a `datetime` or `smalldatetime` column casts the parameter to that type, so it still
+  matches the value a client spells.
 - A server operation whose writes touched two or more `undo-window` tables opened one deferred
   change set per write, so a reviewer could approve or undo half of an all-or-nothing operation.
   Every write in an operation now shares one change set.

@@ -188,14 +188,14 @@ public sealed class TreeSyncStateLoader
         {
             var p = cmd.CreateParameter();
             p.ParameterName = name;
-            p.Value = value ?? DBNull.Value;
+            BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, value);
             cmd.Parameters.Add(p);
         }
         foreach (var securityParameter in securityParams.Parameters)
         {
             var p = cmd.CreateParameter();
             p.ParameterName = securityParameter.Name;
-            p.Value = securityParameter.Value ?? DBNull.Value;
+            BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, securityParameter.Value);
             cmd.Parameters.Add(p);
         }
 

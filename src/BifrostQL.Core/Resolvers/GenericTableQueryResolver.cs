@@ -344,7 +344,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 var p = cmd.CreateParameter();
                 p.ParameterName = name;
-                p.Value = value ?? DBNull.Value;
+                BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, value);
                 cmd.Parameters.Add(p);
             }
         }
@@ -355,7 +355,7 @@ namespace BifrostQL.Core.Resolvers
             {
                 var p = cmd.CreateParameter();
                 p.ParameterName = parameter.Name;
-                p.Value = parameter.Value ?? DBNull.Value;
+                BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, parameter.Value);
                 cmd.Parameters.Add(p);
             }
         }

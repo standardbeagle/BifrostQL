@@ -245,6 +245,16 @@ public interface ISqlDialect
     string CastParameterReference(string placeholder, string? dataType) => placeholder;
 
     /// <summary>
+    /// Renders the reference for a <see cref="DateTime"/> parameter compared to a column of
+    /// <paramref name="dataType"/>. The default returns it unchanged. SQL Server binds every
+    /// <see cref="DateTime"/> as <c>datetime2</c> so a <c>datetime2</c> column compares and
+    /// stores it exactly, and casts the parameter back to <c>datetime</c> /
+    /// <c>smalldatetime</c> for a column of that type, so the parameter rounds the way the
+    /// stored value did and a client's <c>.123</c> still matches.
+    /// </summary>
+    string DateTimeComparisonReference(string placeholder, string? dataType) => placeholder;
+
+    /// <summary>
     /// DDL that creates an internal Bifrost table only if it does not already exist,
     /// mapping each <see cref="SqlColumnDefinition"/>'s portable <see cref="SqlColumnKind"/>
     /// to the dialect's concrete storage type. Interpreted dialects emit

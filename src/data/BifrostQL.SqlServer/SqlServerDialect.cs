@@ -1,5 +1,7 @@
+using System.Data;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Utils;
 
 namespace BifrostQL.SqlServer;
@@ -13,6 +15,12 @@ public sealed class SqlServerDialect : SqlDialectBase
 {
     /// <summary>Shared singleton instance.</summary>
     public static readonly SqlServerDialect Instance = new();
+
+    // SqlClient infers datetime for a DateTime and rounds it to 1/300 s on the client; since
+    // compatibility level 130 that rounded value no longer equals a datetime2 column's, and a
+    // write stores it rounded. Bind DateTime as datetime2 instead (DateTimeComparisonReference
+    // rounds it back for a datetime column).
+    static SqlServerDialect() => DbParameterBinder.BindDateTimeAs(typeof(Microsoft.Data.SqlClient.SqlParameter), DbType.DateTime2);
 
     // SQL Server's OUTPUT clause must sit between the column list and the
     // VALUES clause, but the resolver appends ReturningIdentityClause after
@@ -34,6 +42,13 @@ public sealed class SqlServerDialect : SqlDialectBase
 
     /// <inheritdoc />
     public override bool ComparesAsUuid(string? dataType) => StringNormalizer.NormalizeType(dataType) is "uniqueidentifier";
+
+    /// <inheritdoc />
+    public override string DateTimeComparisonReference(string placeholder, string? dataType)
+    {
+        var type = StringNormalizer.NormalizeType(dataType);
+        return type is "datetime" or "smalldatetime" ? $"CAST({placeholder} AS {type})" : placeholder;
+    }
 
     /// <inheritdoc />
     /// <remarks>SQL Server has no unbounded TEXT alias worth using; NVARCHAR(MAX) is the modern form.</remarks>

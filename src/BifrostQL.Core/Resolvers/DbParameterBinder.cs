@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
 using System.Data.Common;
 using System.Globalization;
 using System.Numerics;
@@ -47,7 +49,9 @@ namespace BifrostQL.Core.Resolvers
         public static string ComparisonPlaceholder(ISqlDialect dialect, string placeholder, string? dataType, object? value)
             => BindsAsText(value) || (value is double or decimal && IsSinglePrecision(dataType))
                 ? dialect.CastParameterReference(placeholder, dataType)
-                : placeholder;
+                : value is DateTime
+                    ? dialect.DateTimeComparisonReference(placeholder, dataType)
+                    : placeholder;
 
         private static bool IsSinglePrecision(string? dataType)
             => dataType is not null && StringNormalizer.NormalizeType(dataType) is "real" or "float4";
@@ -145,10 +149,34 @@ namespace BifrostQL.Core.Resolvers
 
             var p = cmd.CreateParameter();
             p.ParameterName = name;
-            p.Value = ToProviderValue(value) ?? DBNull.Value;
+            SetValue(p, value);
             if (dbType != null)
                 p.DbType = Enum.Parse<System.Data.DbType>(dbType);
             cmd.Parameters.Add(p);
+        }
+
+        // Parameter type -> the DbType its provider must bind a DateTime as. A provider whose
+        // inference loses precision registers here (SqlClient infers datetime, 1/300 s).
+        private static readonly ConcurrentDictionary<Type, DbType> DateTimeParameterTypes = new();
+
+        /// <summary>
+        /// Registers the <see cref="DbType"/> a provider's parameter type binds a
+        /// <see cref="DateTime"/> as, for a provider whose own inference would round it. Called
+        /// by the dialect package (SQL Server: <c>datetime2</c>).
+        /// </summary>
+        internal static void BindDateTimeAs(Type parameterType, DbType dbType) => DateTimeParameterTypes[parameterType] = dbType;
+
+        /// <summary>
+        /// Sets a parameter's value as every bind site must: converted to a type the provider can
+        /// bind (<see cref="ToProviderValue"/>), and a <see cref="DateTime"/> typed as its
+        /// provider registered (<see cref="BindDateTimeAs"/>), so no bind site rounds a value.
+        /// </summary>
+        internal static void SetValue(DbParameter parameter, object? value)
+        {
+            var providerValue = ToProviderValue(value);
+            parameter.Value = providerValue ?? DBNull.Value;
+            if (providerValue is DateTime && DateTimeParameterTypes.TryGetValue(parameter.GetType(), out var dbType))
+                parameter.DbType = dbType;
         }
 
         /// <summary>

@@ -204,7 +204,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                         placeholders.Add("@" + name);
                         var p = cmd.CreateParameter();
                         p.ParameterName = name;
-                        p.Value = value ?? DBNull.Value;
+                        BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, value);
                         cmd.Parameters.Add(p);
                     }
                     Bind($"r{r}_seq", row.Seq);
@@ -227,7 +227,7 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             {
                 var p = cmd.CreateParameter();
                 p.ParameterName = parameter.Name;
-                p.Value = parameter.Value ?? DBNull.Value;
+                BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, parameter.Value);
                 cmd.Parameters.Add(p);
             }
         }

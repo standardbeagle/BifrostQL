@@ -147,7 +147,7 @@ public sealed class EavMetaProvider : IComputedColumnProvider
         {
             var p = command.CreateParameter();
             p.ParameterName = securityParameter.Name;
-            p.Value = securityParameter.Value ?? DBNull.Value;
+            BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, securityParameter.Value);
             command.Parameters.Add(p);
         }
 

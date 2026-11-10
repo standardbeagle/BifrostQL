@@ -39,7 +39,7 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
             "DROP TABLE IF EXISTS claims; " +
             "CREATE TABLE claims (id INTEGER PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, created_by TEXT NULL); " +
             "INSERT INTO claims (id, title, status, created_by) VALUES (1, 'by alice', 'submitted', 'alice'), " +
-            "(2, 'legacy', 'submitted', NULL);",
+            "(2, 'legacy', 'submitted', NULL), (3, 'by a guid', 'submitted', '0f8fad5b-d9cb-469f-a165-70867728950e');",
             _keepAlive);
         await cmd.ExecuteNonQueryAsync();
     }
@@ -55,6 +55,32 @@ public sealed class StateTransitionDistinctActorTests : IAsyncLifetime
 
         await Approve(1, "bob");
         (await StatusAsync(1)).Should().Be("approved");
+    }
+
+    [Fact]
+    public async Task Author_SpelledInAnotherCase_IsStillTheAuthor()
+    {
+        // An IdP may issue the subject in another case than the stored author (a uuid column
+        // reads back lowercase; an oid claim arrives uppercase). An ordinal compare reads them
+        // as two people and lets the author approve their own row.
+        var upperName = () => Approve(1, "ALICE");
+        var upperGuid = () => Approve(3, "0F8FAD5B-D9CB-469F-A165-70867728950E");
+
+        await upperName.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+        await upperGuid.Should().ThrowAsync<BifrostExecutionError>().WithMessage("State transition is not permitted.");
+        (await StatusAsync(1)).Should().Be("submitted");
+        (await StatusAsync(3)).Should().Be("submitted");
+    }
+
+    [Fact]
+    public async Task ModelLoad_RefusesAnAuthorColumnTheServerDoesNotStamp()
+    {
+        // Without populate: created-by the client writes the author column itself, so the
+        // author can name someone else and then approve their own row.
+        var unstamped = () => LoadAsync("main.claims { state-column: status; initial-state: draft; states: draft, submitted, approved; " +
+                                        "transitions: draft->submitted|submitted->approved; transition-not-by: submitted->approved:created_by }");
+
+        await unstamped.Should().ThrowAsync<InvalidOperationException>().WithMessage("*created-by*");
     }
 
     [Fact]

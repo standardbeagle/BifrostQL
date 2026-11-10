@@ -141,8 +141,18 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
 
         var row = await context.LoadRowForUpdateAsync(table, new[] { authorColumn }, key);
         var author = row is not null && row.TryGetValue(authorColumn, out var authorValue) ? authorValue?.ToString() : null;
-        return !string.IsNullOrWhiteSpace(author) && !string.Equals(author, actor, StringComparison.Ordinal);
+        return !string.IsNullOrWhiteSpace(author) && !SameActor(author, actor);
     }
+
+    /// <summary>
+    /// Whether two actor spellings name one person. Uuids compare as values and everything
+    /// else ignoring case: an IdP may issue the subject in another case than the column reads
+    /// back, and erring toward "same" refuses a transition rather than allowing self-approval.
+    /// </summary>
+    internal static bool SameActor(string author, string actor)
+        => Guid.TryParse(author, out var authorId) && Guid.TryParse(actor, out var actorId)
+            ? authorId == actorId
+            : string.Equals(author.Trim(), actor.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static bool TryGetValue(
         IReadOnlyDictionary<string, object?>? data,

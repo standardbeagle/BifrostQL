@@ -28,6 +28,9 @@ The keys are:
 - `transitions`: allowed transitions in `from->to[roles]@event` form.
 - `transition-not-by` (optional): comma-separated `from->to:column` rules. A caller whose audit
   actor equals the row's `column` may not take that transition — "the approver is not the author".
+  The column must declare `populate: created-by`, or model load fails: a column the client writes
+  would let the author name someone else, and `updated-by` names the last editor, not the author.
+  The comparison ignores case, and two uuids compare as values.
 
 Use `|` between transitions in metadata rule strings. The rule parser already uses semicolons between properties, so pipe-separated transitions avoid ambiguity in `appsettings.json` and sample metadata files.
 

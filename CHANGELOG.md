@@ -82,6 +82,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
   MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
   `EmptyInsertValues`, with a default implementation.
+- `transition-not-by` accepted an author column the client could write, so an author could store
+  someone else's name and then approve their own row. It also compared the actor and the author
+  case-sensitively, so a uuid read back in lowercase did not match an uppercase IdP subject. The
+  named column must now declare `populate: created-by`, or model load fails (breaking for a model
+  that named any other column). The comparison ignores case, and two uuids compare as values.
 - On a host with more than one endpoint, `approve`, `undo` and the deferred review queue's reject
   failed with "Multiple BifrostQL endpoints are registered", because their replay intent named no
   endpoint; the change stayed pending. The replay also named its table by bare `DbName`, which is

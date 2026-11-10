@@ -2004,6 +2004,14 @@ namespace BifrostQL.Core.Model
                 if (!DbColumnExists(table, transition.DistinctActorColumn!))
                     errors.Add(Problem(table, MetadataKeys.StateMachine.TransitionNotBy, transition.DistinctActorColumn,
                         "author column does not exist"));
+                // The author must be server-stamped once, on insert. An unstamped column is
+                // client-written, so the author could name someone else and approve their own
+                // row; updated-by is rewritten by every later editor, so it names the last
+                // editor, not the author.
+                else if (!table.ColumnLookup[transition.DistinctActorColumn!]
+                             .CompareMetadata(MetadataKeys.AutoPopulate.Marker, MetadataKeys.AutoPopulate.CreatedBy))
+                    errors.Add(Problem(table, MetadataKeys.StateMachine.TransitionNotBy, transition.DistinctActorColumn,
+                        "author column must declare populate: created-by"));
             }
         }
 

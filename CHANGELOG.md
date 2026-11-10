@@ -63,6 +63,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- A server operation whose writes touched two or more `undo-window` tables opened one deferred
+  change set per write, so a reviewer could approve or undo half of an all-or-nothing operation.
+  Every write in an operation now shares one change set.
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as

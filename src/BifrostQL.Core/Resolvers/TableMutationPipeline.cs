@@ -61,7 +61,9 @@ namespace BifrostQL.Core.Resolvers
         /// The per-mutation hook context shared by BOTH in-transaction hook phases (see
         /// <see cref="MutationNotifier.RunBeforeCommitHooksAsync"/>), carrying a fresh
         /// <see cref="MutationObserverContext.NewMutationState"/> bag so one mutation's
-        /// before-image can never be paired with another mutation's write.
+        /// before-image can never be paired with another mutation's write. Its transaction
+        /// bag is the operation scope's when the write runs inside one, so every write of an
+        /// operation shares one deferred change set.
         /// </summary>
         private static MutationObserverContext HookContext(
             IDbTable table, MutationType mutationType, IDictionary<string, object?> data,
@@ -79,6 +81,7 @@ namespace BifrostQL.Core.Resolvers
                 Dialect = dialect,
                 ConnFactory = ctx.ConnFactory,
                 MutationState = MutationObserverContext.NewMutationState(),
+                TransactionState = ctx.WriteScope?.TransactionState ?? MutationObserverContext.NewMutationState(),
             };
 
         /// <summary>

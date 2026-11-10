@@ -262,6 +262,9 @@ exactly as they are for a generated mutation.
 
 - Mutation observers and state-transition observers run after the commit, never for a
   rolled-back write.
+- Writes to [undo-window](/BifrostQL/guides/deferred-effects/) tables record their reverse deltas
+  in one change set for the whole operation, so a reviewer approves or undoes the operation as a
+  unit.
 - If a statement runs and fails, read or write, the operation fails even when its code catches the
   exception. So does a write refused by policy or by the validator, because both run inside the
   write. That covers `INVALID_VALUE` and every other database error: later statements are refused,

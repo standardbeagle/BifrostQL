@@ -40,6 +40,13 @@ namespace BifrostQL.Core.Resolvers
 
         public DbTransaction Transaction { get; }
 
+        /// <summary>
+        /// The per-transaction hook bag (<c>MutationObserverContext.TransactionState</c>) every
+        /// write in the scope shares, as a batch and a tree sync share theirs: one operation is one
+        /// transaction, so it holds one deferred change set, not one per write.
+        /// </summary>
+        public IDictionary<string, object?> TransactionState { get; } = Modules.MutationObserverContext.NewMutationState();
+
         /// <summary>Queues a post-commit notification; it runs only if the scope commits.</summary>
         public void AfterCommit(Func<Task> notification) => _afterCommit.Add(notification);
 

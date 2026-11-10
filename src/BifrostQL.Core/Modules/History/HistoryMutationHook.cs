@@ -72,12 +72,16 @@ namespace BifrostQL.Core.Modules.History
         private IHistoryWriter ResolveWriter(IDbModel model, IDbTable table)
         {
             var name = HistoryConfig.ResolveWriterName(model, table);
+            // The wire gets a constant message; the table, configured name and registered plugin
+            // names are server detail (invariant 3), logged by the sink for the operator.
             return _writers.TryGetValue(name, out var writer)
                 ? writer
-                : throw new BifrostExecutionError(
+                : throw BifrostErrorSink.Sanitized(
+                    "The table's history writer is not registered, so the change was refused.",
                     $"Table '{Qualify(table)}' records change history with '{MetadataKeys.History.Writer}: {name}', " +
                     $"but no history writer of that name is registered (registered: {string.Join(", ", _writers.Keys)}). " +
-                    "Refusing to commit a change that cannot be recorded.");
+                    "Refusing to commit a change that cannot be recorded.",
+                    nameof(HistoryMutationHook));
         }
         // Key under which the pre-write row is parked for this mutation's after-write phase.
         internal const string BeforeImageKey = "bifrost.history.before-image";

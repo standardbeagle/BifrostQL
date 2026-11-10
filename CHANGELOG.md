@@ -82,6 +82,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
   MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
   `EmptyInsertValues`, with a default implementation.
+- A table whose `history-writer` names no registered writer refused each write with a message that
+  held the schema-qualified table and every registered writer name. The client now gets a constant
+  message ("The table's history writer is not registered, so the change was refused."), and the
+  detail goes to the server log at Debug level through `BifrostErrorSink`.
 - `transition-not-by` accepted an author column the client could write, so an author could store
   someone else's name and then approve their own row. It also compared the actor and the author
   case-sensitively, so a uuid read back in lowercase did not match an uppercase IdP subject. The

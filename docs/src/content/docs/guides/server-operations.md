@@ -258,7 +258,11 @@ until it ends.
 A mutation operation's reads and writes share one connection and one transaction from the
 endpoint's connection factory. The transaction commits when `ExecuteAsync` returns and rolls back
 when it throws. The operation reads its own uncommitted writes. Database errors are reported
-exactly as they are for a generated mutation.
+exactly as they are for a generated mutation. Anything else the operation's code throws, other
+than a `BifrostExecutionError` (a `FormatException` from bad input, a bug), fails it with
+`OPERATION_FAILED` (`BifrostOperationContext.OperationFailedCode`) and the constant message "The
+operation failed, so it was rolled back." The exception is kept as the inner exception for your
+logs and never reaches the client. Throw a `BifrostExecutionError` to give the caller a message.
 
 - Mutation observers and state-transition observers run after the commit, never for a
   rolled-back write.

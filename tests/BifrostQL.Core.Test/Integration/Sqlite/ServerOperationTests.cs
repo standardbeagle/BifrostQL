@@ -28,11 +28,12 @@ public sealed class ServerOperationTests : IAsyncLifetime
     private IDbModel _model = null!;
     private readonly LineTotal _lineTotal = new();
     private readonly ImportLines _importLines = new();
+    private readonly CatchAndThrow _catchAndThrow = new();
     private readonly RecordingObserver _observer = new();
 
     private static readonly string[] Rules =
     {
-        ":root { user-audit-key: user_id; operations: lineTotal, importLines[estimator,claims.import] }",
+        ":root { user-audit-key: user_id; operations: lineTotal, importLines[estimator,claims.import], catchAndThrow[estimator] }",
         "main.claims { tenant-filter: tenant_id }",
         "main.claim_lines { tenant-filter: tenant_id }",
         "main.claim_lines.created_by { populate: created-by }",
@@ -157,6 +158,15 @@ public sealed class ServerOperationTests : IAsyncLifetime
         _observer.Tables.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task MutationOperation_ThatCatchesAFailedStatementAndThrows_ReportsTheFirstFailure()
+    {
+        var result = await ExecuteAsync("mutation { catchAndThrow }", Estimator(1));
+
+        var bifrost = FindBifrostError(result.Errors.Should().ContainSingle().Subject);
+        bifrost!.ErrorCode.Should().Be("CONFLICT", "the duplicate key failed first; the code's own throw came after");
+    }
+
     private static BifrostExecutionError? FindBifrostError(Exception? error)
     {
         for (var current = error; current is not null; current = current.InnerException)
@@ -267,6 +277,30 @@ public sealed class ServerOperationTests : IAsyncLifetime
         }
     }
 
+    private sealed class CatchAndThrow : IBifrostOperation
+    {
+        public string Name => "catchAndThrow";
+        public BifrostOperationKind Kind => BifrostOperationKind.Mutation;
+        public string Signature => ": Int";
+
+        public async ValueTask<object?> ExecuteAsync(BifrostOperationContext context)
+        {
+            try
+            {
+                // id 1 exists: a unique violation, reported as CONFLICT.
+                await context.InsertAsync("claim_lines", new Dictionary<string, object?>
+                {
+                    ["id"] = 1, ["claim_id"] = 1, ["code"] = "D", ["units"] = 1, ["price"] = 1.0,
+                });
+            }
+            catch (BifrostExecutionError)
+            {
+                throw new InvalidOperationException("the import could not continue");
+            }
+            return 0;
+        }
+    }
+
     private sealed class Unlisted : IBifrostOperation
     {
         public string Name => "unlisted";
@@ -320,7 +354,7 @@ public sealed class ServerOperationTests : IAsyncLifetime
     // observer, and the schema built with the registered operations.
     private async Task<ExecutionResult> ExecuteAsync(string document, IDictionary<string, object?> userContext)
     {
-        var schema = DbSchema.FromModel(_model, null, new IBifrostOperation[] { _lineTotal, _importLines, new Unlisted() });
+        var schema = DbSchema.FromModel(_model, null, new IBifrostOperation[] { _lineTotal, _importLines, _catchAndThrow, new Unlisted() });
         var services = new ServiceCollection();
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {

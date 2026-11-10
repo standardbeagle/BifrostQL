@@ -82,6 +82,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
   MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
   `EmptyInsertValues`, with a default implementation.
+- A mutation operation whose own code threw an ordinary exception (a `FormatException` from bad
+  input) was reported as `DATABASE_ERROR`. It now fails with `OPERATION_FAILED`
+  (`BifrostOperationContext.OperationFailedCode`) and a constant message, with the exception kept
+  as the inner exception. A statement that failed earlier in the operation still names the error.
 - A table whose `history-writer` names no registered writer refused each write with a message that
   held the schema-qualified table and every registered writer name. The client now gets a constant
   message ("The table's history writer is not registered, so the change was refused."), and the

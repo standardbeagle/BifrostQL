@@ -36,6 +36,13 @@ public sealed class BifrostOperationContext
     public const string RowLockUnsupportedCode = "ROW_LOCK_UNSUPPORTED";
 
     /// <summary>
+    /// The error code a mutation operation fails with when its own code throws something other
+    /// than a <c>BifrostExecutionError</c> or a database exception. The message is constant; the
+    /// thrown exception is the inner exception, for the server log.
+    /// </summary>
+    public const string OperationFailedCode = "OPERATION_FAILED";
+
+    /// <summary>
     /// A value in <see cref="QueryAsync"/>'s <c>where</c> that tests the column IS NOT NULL.
     /// A <c>null</c> value tests IS NULL.
     /// </summary>

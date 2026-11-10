@@ -62,7 +62,24 @@ namespace BifrostQL.Core.Resolvers
             await MutationCommandExecutor.RunInTransactionAsync(connFactory, async (connection, transaction) =>
             {
                 scope = new OperationWriteScope(connection, transaction);
-                result = await body(scope);
+                try
+                {
+                    result = await body(scope);
+                }
+                catch (Exception ex) when (ex is not (BifrostExecutionError or OperationCanceledException or DbException))
+                {
+                    // A statement already failed and the code threw something else after catching
+                    // it: the first failure still names the operation's error.
+                    if (scope._firstFault is not null)
+                        throw scope.Refusal("A statement inside the operation failed, so the operation was rolled back.");
+                    // The operation's own code threw (bad input, a bug): not a database error, so
+                    // it must not reach the catch-all that reports DATABASE_ERROR. The text is
+                    // the app's, not curated for the wire, so it stays the inner exception.
+                    throw new BifrostExecutionError("The operation failed, so it was rolled back.", ex)
+                    {
+                        ErrorCode = Operations.BifrostOperationContext.OperationFailedCode,
+                    };
+                }
                 if (scope._firstFault is not null)
                     throw scope.Refusal("A statement inside the operation failed, so the operation was rolled back.");
             }, cancellationToken);

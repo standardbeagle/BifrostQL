@@ -117,7 +117,8 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
     }
 
     // The reader and writer SHARE one PathCache so both resolve the same cached model.
-    private static (RetentionPurgeEngine Engine, IMutationIntentExecutor Writer, QueryIntentExecutor Reader, PathCache<Inputs> Cache) Build(int batchSize = RetentionPurgeEngine.DefaultBatchSize)
+    private static (RetentionPurgeEngine Engine, IMutationIntentExecutor Writer, QueryIntentExecutor Reader, PathCache<Inputs> Cache) Build(
+        int batchSize = RetentionPurgeEngine.DefaultBatchSize, Func<Task>? beforeFirstDelete = null)
     {
         var pathCache = new PathCache<Inputs>();
         pathCache.AddLoader(EndpointPath, async () =>
@@ -153,7 +154,8 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
             },
         });
 
-        var engine = new RetentionPurgeEngine(reader, writer, pathCache, clock: () => Now, batchSize: batchSize);
+        IMutationIntentExecutor engineWriter = beforeFirstDelete is null ? writer : new RaceBeforeFirstWrite(writer, beforeFirstDelete);
+        var engine = new RetentionPurgeEngine(reader, engineWriter, pathCache, clock: () => Now, batchSize: batchSize);
         return (engine, writer, reader, pathCache);
     }
 
@@ -240,6 +242,64 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
         // present, deleted_at stamped) — the engine never special-cased soft-delete itself.
         (await ScalarAsync("SELECT COUNT(*) FROM sessions WHERE id = 1")).Should().Be("1", "ttl on a soft-delete table soft-deletes, not hard-deletes");
         (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 1")).Should().NotBeNullOrEmpty();
+    }
+
+    // ---- the row changed between the expiry read and its delete ------------------
+
+    [Fact]
+    public async Task Ttl_RowRefreshedAfterTheExpiryRead_IsNotExpired()
+    {
+        // Another writer touches the session after the sweep selected it as expired: it is a
+        // live session again, and expiring it would log a just-active user out.
+        var (engine, _, reader, _) = Build(beforeFirstDelete: () =>
+            Exec($"UPDATE sessions SET last_seen = '{Fresh}' WHERE id = 1"));
+        var model = await reader.GetModelAsync(EndpointPath);
+        var sessions = model.GetTableFromDbName("sessions");
+
+        var purged = await engine.SweepTableForTenantAsync(
+            model, sessions, RetentionConfig.FromTable(sessions), "tenant_id", tenantValue: 1L,
+            EndpointPath, Now, CancellationToken.None);
+
+        purged.Should().Be(0, "the row is no longer expired when the delete runs");
+        (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 1")).Should().BeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Retain_RowRestoredAfterTheExpiryRead_IsNotHardPurged()
+    {
+        // A user restores the soft-deleted row after the sweep selected it: retain must not
+        // physically delete a row that is live again.
+        var (engine, _, reader, _) = Build(beforeFirstDelete: () =>
+            Exec("UPDATE audit_log SET deleted_at = NULL WHERE id = 1"));
+        var model = await reader.GetModelAsync(EndpointPath);
+        var auditLog = model.GetTableFromDbName("audit_log");
+
+        var purged = await engine.SweepTableForTenantAsync(
+            model, auditLog, RetentionConfig.FromTable(auditLog), "tenant_id", tenantValue: 1L,
+            EndpointPath, Now, CancellationToken.None);
+
+        purged.Should().Be(0, "the restored row is live when the delete runs");
+        (await ScalarAsync("SELECT COUNT(*) FROM audit_log WHERE id = 1")).Should().Be("1");
+    }
+
+    // Runs a concurrent change once, just before the engine's first delete, so the row the
+    // read selected has changed by the time the delete reaches the database.
+    private sealed class RaceBeforeFirstWrite(IMutationIntentExecutor inner, Func<Task> race) : IMutationIntentExecutor
+    {
+        private bool _raced;
+
+        public async Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
+        {
+            if (!_raced)
+            {
+                _raced = true;
+                await race();
+            }
+            return await inner.ExecuteAsync(intent, cancellationToken);
+        }
+
+        public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default) =>
+            inner.ExecuteBatchAsync(intent, cancellationToken);
     }
 
     // ---- criterion 4/6: bounded batch, resumable, independent commits -------------

@@ -410,7 +410,7 @@ namespace BifrostQL.Core.Modules.Retention
             var hardRole = table.GetMetadataValue(MetadataKeys.SoftDelete.HardDeleteRole);
 
             var purged = 0;
-            foreach (var primaryKey in rows)
+            foreach (var row in rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -428,8 +428,8 @@ namespace BifrostQL.Core.Modules.Retention
                 {
                     Table = QualifiedName(table),
                     Action = MutationIntentAction.Delete,
-                    Data = EmptyData,
-                    PrimaryKey = primaryKey,
+                    Data = row.StillExpired,
+                    PrimaryKey = row.PrimaryKey,
                     ModuleArguments = HardDeleteArguments,
                     UserContext = deleteContext,
                     Endpoint = endpoint,
@@ -461,7 +461,7 @@ namespace BifrostQL.Core.Modules.Retention
                 return ReportCandidates(candidates!, table, RetentionMode.Ttl, tenantValue, rows);
 
             var purged = 0;
-            foreach (var primaryKey in rows)
+            foreach (var row in rows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -476,8 +476,8 @@ namespace BifrostQL.Core.Modules.Retention
                 {
                     Table = QualifiedName(table),
                     Action = MutationIntentAction.Delete,
-                    Data = EmptyData,
-                    PrimaryKey = primaryKey,
+                    Data = row.StillExpired,
+                    PrimaryKey = row.PrimaryKey,
                     UserContext = deleteContext,
                     Endpoint = endpoint,
                     HiddenTableAccess = HiddenTableAccess.Granted,
@@ -494,17 +494,19 @@ namespace BifrostQL.Core.Modules.Retention
         // deletes — so the reported set equals what the next live pass removes.
         private static int ReportCandidates(
             List<RetentionCandidate> candidates, IDbTable table, RetentionMode mode,
-            object? tenantValue, IReadOnlyList<IReadOnlyList<object?>> rows)
+            object? tenantValue, IReadOnlyList<ExpiredRow> rows)
         {
-            foreach (var primaryKey in rows)
-                candidates.Add(new RetentionCandidate(table.DbName, mode, tenantValue, primaryKey));
+            foreach (var row in rows)
+                candidates.Add(new RetentionCandidate(table.DbName, mode, tenantValue, row.PrimaryKey));
             return rows.Count;
         }
 
-        // Reads up to _batchSize expired primary keys through the scoped read seam. The tenant/
+        // Reads up to _batchSize expired rows through the scoped read seam. The tenant/
         // soft-delete/policy transformers apply from readContext; the engine adds ONLY the cutoff
         // predicate (anchor < cutoff) as a parameterized GqlObjectQuery filter — no hand-built SQL.
-        private async Task<List<IReadOnlyList<object?>>> ReadExpiredKeysAsync(
+        // Each row carries the anchor value the read saw: the delete runs later, in its own
+        // transaction, and matches the row only while that anchor is unchanged (see ExpiredRow).
+        private async Task<List<ExpiredRow>> ReadExpiredKeysAsync(
             IDbTable table, string anchorColumn, DateTime cutoff,
             IDictionary<string, object?> readContext, string? endpoint, CancellationToken cancellationToken)
         {
@@ -535,6 +537,8 @@ namespace BifrostQL.Core.Modules.Retention
                 query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.ColumnName));
                 query.Sort.Add($"{keyColumn.ColumnName}_asc");
             }
+            if (!keyColumns.Any(c => string.Equals(c.ColumnName, anchorColumn, StringComparison.OrdinalIgnoreCase)))
+                query.ScalarColumns.Add(new GqlObjectColumn(anchorColumn));
 
             var result = await _reader.ExecuteAsync(new QueryIntent
             {
@@ -544,7 +548,7 @@ namespace BifrostQL.Core.Modules.Retention
                 HiddenTableAccess = HiddenTableAccess.Granted,
             }, cancellationToken);
 
-            var keys = new List<IReadOnlyList<object?>>(result.Rows.Count);
+            var keys = new List<ExpiredRow>(result.Rows.Count);
             foreach (var row in result.Rows)
             {
                 var lookup = new Dictionary<string, object?>(row, StringComparer.OrdinalIgnoreCase);
@@ -556,7 +560,10 @@ namespace BifrostQL.Core.Modules.Retention
                             $"Retention read for '{table.TableSchema}.{table.DbName}' did not return key column '{keyColumns[i].ColumnName}'.");
                     pk[i] = value;
                 }
-                keys.Add(pk);
+                if (!lookup.TryGetValue(anchorColumn, out var anchor))
+                    throw new BifrostExecutionError(
+                        $"Retention read for '{table.TableSchema}.{table.DbName}' did not return anchor column '{anchorColumn}'.");
+                keys.Add(new ExpiredRow(pk, new Dictionary<string, object?> { [anchorColumn] = anchor }));
             }
             return keys;
         }
@@ -627,8 +634,12 @@ namespace BifrostQL.Core.Modules.Retention
         // table of the same name, exposed or hidden.
         private static string QualifiedName(IDbTable table) => $"{table.TableSchema}.{table.DbName}";
 
-        private static readonly IReadOnlyDictionary<string, object?> EmptyData =
-            new Dictionary<string, object?>();
+        // One expired row as the read saw it. StillExpired is the delete's Data: the pipeline turns
+        // a delete's client columns into WHERE terms (TableMutationPipeline.SelectPredicateColumns),
+        // so the delete matches only while the anchor still holds the value the read judged
+        // expired. A session touched after the read, or a soft-deleted row restored after it,
+        // no longer matches and is left alone; the next pass re-reads it.
+        private sealed record ExpiredRow(IReadOnlyList<object?> PrimaryKey, IReadOnlyDictionary<string, object?> StillExpired);
 
         private sealed record EndpointModel(string? Path, IDbModel Model, IDbConnFactory ConnFactory);
 

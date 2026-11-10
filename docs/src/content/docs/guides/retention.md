@@ -140,6 +140,12 @@ partial batch. A crash mid-sweep leaves every already-committed delete in place;
 pass re-reads the shrunken expired set and continues. Progress is monotonic and never
 re-scans from zero.
 
+Because the read and each delete are separate transactions, a row can change in between. Each
+delete therefore matches its row only while the anchor column still holds the value the read
+judged expired: a session whose `last_seen` was refreshed after the read, or a soft-deleted
+row restored after it, is left alone and not counted. If it expires again, a later pass
+purges it.
+
 ## Right-to-erasure and the change-history trail
 
 This is the load-bearing compliance decision, so it is worth stating precisely.

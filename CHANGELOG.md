@@ -63,6 +63,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Retention deleted a row that changed between the expiry read and the delete: a session
+  refreshed in that window was still expired, and a soft-deleted row restored in it was still
+  hard-purged. Each delete now matches only while the anchor holds the value the read saw.
 - SQL Server: a `DateTime` value was bound as `datetime`, which SqlClient rounds to 1/300 s.
   Since compatibility level 130 that rounded value no longer equals a `datetime2` column's, so an
   `_eq` filter or a key that includes a `datetime2` column matched no row, and a write stored the

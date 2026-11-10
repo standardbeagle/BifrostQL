@@ -138,6 +138,12 @@ jobs:
         # In-memory ASP.NET host (Mvc.Testing) over the Sqlite dialect — no
         # external service containers required.
         run: dotnet test tests/BifrostQL.Host.Test/BifrostQL.Host.Test.csproj --no-build --verbosity normal --configuration Release
+      - name: Test MCP
+        run: dotnet test tests/BifrostQL.Mcp.Test/BifrostQL.Mcp.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category!=Fuzz"
+      - name: Test public API consumers
+        run: dotnet test tests/BifrostQL.PublicApi.Test/BifrostQL.PublicApi.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category!=Fuzz"
+      - name: Test CLI tool
+        run: dotnet test tests/BifrostQL.Tool.Test/BifrostQL.Tool.Test.csproj --no-build --verbosity normal --configuration Release --filter "Category!=Fuzz"
       - name: Test UI
         # Pure xunit logic tests for the desktop tool — no GUI/display needed.
         run: dotnet test tests/BifrostQL.UI.Tests/BifrostQL.UI.Tests.csproj --no-build --verbosity normal --configuration Release

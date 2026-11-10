@@ -66,6 +66,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 - A server operation whose writes touched two or more `undo-window` tables opened one deferred
   change set per write, so a reviewer could approve or undo half of an all-or-nothing operation.
   Every write in an operation now shares one change set.
+- `HistoryErasure.Marker` was a public static field, so any `IMutationIntentExecutor` caller could
+  place it in an intent's `UserContext` and have an authorized delete erase the row's whole
+  change-history trail. It is now internal, like the other engine-only capabilities. Breaking for
+  out-of-tree code that read it; there is no public replacement by design — erasure runs only from
+  the retention engine.
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as

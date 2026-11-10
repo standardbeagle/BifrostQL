@@ -24,7 +24,8 @@ namespace BifrostQL.Core.Modules.History
     /// is a process-unique <see cref="object"/> reference created at static init: an external
     /// identity claim deserializes to a JSON scalar and can never be reference-equal to it, so
     /// erasure mode is unforgeable by construction — only code holding
-    /// <see cref="Marker"/> can request it.</para>
+    /// <see cref="Marker"/> can request it, and the field is internal, so that is code inside
+    /// Core's <c>InternalsVisibleTo</c> boundary.</para>
     /// </summary>
     public static class HistoryErasure
     {
@@ -39,9 +40,11 @@ namespace BifrostQL.Core.Modules.History
         /// The process-unique sentinel a purge stores under <see cref="ContextKey"/>. Opaque
         /// and reference-compared, so it cannot be reproduced from deserialized identity
         /// claims. Placed by the retention purge engine, read only by
-        /// <see cref="IsErasurePurge"/>.
+        /// <see cref="IsErasurePurge"/>. Internal: only BifrostQL.Core and the assemblies on
+        /// its <c>InternalsVisibleTo</c> list can read it, so BifrostQL.Mcp and every
+        /// out-of-tree <c>IMutationIntentExecutor</c> caller cannot request erasure.
         /// </summary>
-        public static readonly object Marker = new();
+        internal static readonly object Marker = new();
 
         /// <summary>The <c>op</c> value recorded for an erasure tombstone row.</summary>
         public const string EraseOp = "erase";

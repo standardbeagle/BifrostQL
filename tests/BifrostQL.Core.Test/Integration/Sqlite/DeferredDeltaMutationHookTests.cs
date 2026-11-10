@@ -5,6 +5,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Deferred;
 using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.Modules.History;
+using BifrostQL.Core.Operations;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
@@ -227,6 +228,36 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         deltas.Should().HaveCount(2);
         deltas.Select(d => d.Table).Should().BeEquivalentTo("main.blogs", "main.posts");
         deltas.Select(d => d.ChangeSetId).Distinct().Should().ContainSingle("TreeSync shares its connection-scoped active state when its transaction is null");
+    }
+
+    [Fact]
+    public async Task ServerOperation_WritingTwoDeferrableTables_RecordsOneChangeSet()
+    {
+        // One operation is one transaction, so its reverse deltas belong to ONE change set:
+        // two change sets would let a reviewer approve or undo half of an all-or-nothing write.
+        var model = await LoadModelAsync(":root { operations: editTwo; operations-tenant: optional }");
+
+        var result = await ExecuteMutationAsync("mutation { editTwo }", model, operations: new IBifrostOperation[] { new EditTwoTables() });
+
+        result.Errors.Should().BeNullOrEmpty();
+        var deltas = await DeltasAsync();
+        deltas.Select(d => d.Table).Should().BeEquivalentTo("main.widgets", "main.soft_widgets");
+        deltas.Select(d => d.ChangeSetId).Distinct().Should().ContainSingle(
+            "every write of one operation shares the operation's transaction and its active change set");
+        (await CountAsync("change_sets", "1=1")).Should().Be(1);
+    }
+
+    private sealed class EditTwoTables : IBifrostOperation
+    {
+        public string Name => "editTwo";
+        public BifrostOperationKind Kind => BifrostOperationKind.Mutation;
+        public string Signature => ": Int";
+
+        public async ValueTask<object?> ExecuteAsync(BifrostOperationContext context)
+        {
+            await context.InsertAsync("widgets", new Dictionary<string, object?> { ["name"] = "op-insert" });
+            return await context.UpdateAsync("soft_widgets", new Dictionary<string, object?> { ["id"] = 1, ["name"] = "op-update" });
+        }
     }
 
     [Fact]
@@ -469,10 +500,10 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         ":root { history-table: main.__history }",
     }.Concat(extra).ToArray())).LoadAsync();
 
-    private async Task<ExecutionResult> ExecuteMutationAsync(string mutation, IDbModel? model = null, bool registerHistory = true, bool addFailingHook = false, bool registerConcurrency = false)
+    private async Task<ExecutionResult> ExecuteMutationAsync(string mutation, IDbModel? model = null, bool registerHistory = true, bool addFailingHook = false, bool registerConcurrency = false, IReadOnlyList<IBifrostOperation>? operations = null)
     {
         model ??= _model;
-        var schema = DbSchema.FromModel(model);
+        var schema = DbSchema.FromModel(model, null, operations ?? Array.Empty<IBifrostOperation>());
         var services = new ServiceCollection();
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap { Transformers = registerConcurrency ? new IMutationTransformer[] { new ConcurrencyMutationTransformer(), new SoftDeleteMutationTransformer() } : new IMutationTransformer[] { new SoftDeleteMutationTransformer() } });
         if (registerHistory)

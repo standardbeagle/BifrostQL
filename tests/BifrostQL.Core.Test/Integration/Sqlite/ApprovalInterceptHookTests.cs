@@ -177,19 +177,20 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     /// transformer chain (so tenant isolation applies) AND the approval intercept hook,
     /// exactly as the hosted registration composes them.
     /// </summary>
-    private static MutationIntentExecutor BuildExecutor()
+    private static MutationIntentExecutor BuildExecutor(bool secondEndpoint = false)
     {
         var pathCache = new PathCache<Inputs>();
-        pathCache.AddLoader(EndpointPath, async () =>
-        {
-            var factory = new SqliteDbConnFactory(ConnString);
-            var model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
-            return new Inputs(new Dictionary<string, object?>
+        foreach (var path in secondEndpoint ? new[] { EndpointPath, "/other" } : new[] { EndpointPath })
+            pathCache.AddLoader(path, async () =>
             {
-                ["model"] = model,
-                ["connFactory"] = factory,
+                var factory = new SqliteDbConnFactory(ConnString);
+                var model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
+                return new Inputs(new Dictionary<string, object?>
+                {
+                    ["model"] = model,
+                    ["connFactory"] = factory,
+                });
             });
-        });
 
         var services = BuildHookProvider();
         return new MutationIntentExecutor(pathCache, BuiltInTransformers(), services);
@@ -685,6 +686,42 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GraphQlApprove_OnAMultiEndpointHost_ReplaysOnItsOwnEndpointByQualifiedName()
+    {
+        // Two endpoints: an intent with no Endpoint is refused by the executor, so a replay that
+        // drops the request's endpoint leaves every change pending on a multi-database host. The
+        // target must also travel schema-qualified, or a same-named table in another schema is
+        // ambiguous and the replay fails.
+        var executor = BuildExecutor(secondEndpoint: true);
+        await EnqueueAsync(executor, "routed", RequesterContext());
+        var recording = new RecordingMutationExecutor(executor);
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }",
+            ApproverContext("bob", "manager"), mutations: recording);
+
+        result.Errors.Should().BeNullOrEmpty();
+        recording.Intents.Should().ContainSingle();
+        recording.Intents[0].Table.Should().Be("main.orders");
+        recording.Intents[0].Endpoint.Should().Be(EndpointPath);
+        (await CountAsync("orders", "name = 'routed'")).Should().Be(1);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'approved'")).Should().Be(1);
+    }
+
+    private sealed class RecordingMutationExecutor(IMutationIntentExecutor inner) : IMutationIntentExecutor
+    {
+        public List<MutationIntent> Intents { get; } = new();
+
+        public Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
+        {
+            Intents.Add(intent);
+            return inner.ExecuteAsync(intent, cancellationToken);
+        }
+
+        public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
+            => inner.ExecuteBatchAsync(intent, cancellationToken);
+    }
+
+    [Fact]
     public async Task ExpiredPendingChange_CannotBeApproved_AndUsesTheGuardedTransition()
     {
         var executor = BuildExecutor();
@@ -1017,7 +1054,8 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     // before-commit composite in RequestServices, exactly as the host DI composes them, so the
     // nested sync runs the before-commit phase.
     private async Task<ExecutionResult> ExecuteGraphQlAsync(
-        string mutation, IDictionary<string, object?>? userContext = null, bool readFilters = false)
+        string mutation, IDictionary<string, object?>? userContext = null, bool readFilters = false,
+        IMutationIntentExecutor? mutations = null)
     {
         var schema = DbSchema.FromModel(_model);
         var factory = new SqliteDbConnFactory(ConnString);
@@ -1027,7 +1065,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         {
             Transformers = Array.Empty<IMutationTransformer>(),
         });
-        services.AddSingleton<IMutationIntentExecutor>(BuildExecutor());
+        services.AddSingleton<IMutationIntentExecutor>(mutations ?? BuildExecutor());
         services.AddSingleton(KeyManager);
         services.AddSingleton<IBeforeCommitMutationHook, ApprovalInterceptMutationHook>();
         services.AddSingleton(sp => new BeforeCommitMutationHooks(
@@ -1045,6 +1083,7 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             {
                 ["connFactory"] = factory,
                 ["model"] = _model,
+                ["endpoint"] = EndpointPath,
                 // readFilters: the production read funnel with no host transformers registered,
                 // so only what the funnel itself enforces applies.
                 ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, readFilters

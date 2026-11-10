@@ -158,6 +158,39 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GraphQlUndo_OnAMultiEndpointHost_ReplaysOnItsOwnEndpointByQualifiedName()
+    {
+        // Two endpoints: an intent with no Endpoint is refused by the executor, so a replay that
+        // drops the request's endpoint cannot run on any multi-database host. The target must
+        // also travel schema-qualified, or two schemas holding the same table name are ambiguous.
+        await Exec("UPDATE widgets SET name = 'edited', version = 2 WHERE id = 1");
+        await SeedChangeSetAsync(49, "main.widgets", 1, "update", "restore",
+            "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        var recording = new RecordingMutationExecutor(BuildMutationExecutor(_model, secondEndpoint: true));
+        await using var provider = new ServiceCollection().AddSingleton<IMutationIntentExecutor>(recording).BuildServiceProvider();
+        var schema = DbSchema.FromModel(_model);
+
+        var result = await new DocumentExecuter().ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = "mutation { undo(changeSetId: 49) { undoneRows conflictRows } }";
+            options.RequestServices = provider;
+            options.UserContext = new Dictionary<string, object?>();
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = new SqliteDbConnFactory(ConnString), ["model"] = _model, ["endpoint"] = "/graphql",
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
+            });
+        });
+
+        result.Errors.Should().BeNullOrEmpty();
+        recording.Intents.Should().ContainSingle();
+        recording.Intents[0].Table.Should().Be("main.widgets");
+        recording.Intents[0].Endpoint.Should().Be("/graphql");
+        (await ScalarAsync("SELECT name FROM widgets WHERE id = 1")).Should().Be("original");
+    }
+
+    [Fact]
     public async Task GraphQlUndo_WiresDispatcherAndIsIdempotent()
     {
         await Exec("UPDATE widgets SET name = 'edited', version = 2 WHERE id = 1");
@@ -533,13 +566,18 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         });
     }
 
-    private static MutationIntentExecutor BuildMutationExecutor(IDbModel model)
+    private static MutationIntentExecutor BuildMutationExecutor(IDbModel model, bool secondEndpoint = false)
     {
         var cache = new PathCache<Inputs>();
         cache.AddLoader("/graphql", () => Task.FromResult(new Inputs(new Dictionary<string, object?>
         {
             ["model"] = model, ["connFactory"] = new SqliteDbConnFactory(ConnString),
         })));
+        if (secondEndpoint)
+            cache.AddLoader("/other", () => Task.FromResult(new Inputs(new Dictionary<string, object?>
+            {
+                ["model"] = model, ["connFactory"] = new SqliteDbConnFactory(ConnString),
+            })));
         return new MutationIntentExecutor(cache, new MutationTransformersWrap { Transformers = new IMutationTransformer[]
         {
             new TenantMutationTransformer(), new SoftDeleteMutationTransformer(), new ConcurrencyMutationTransformer(),
@@ -604,6 +642,20 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         public ValueTask<EventDeliveryResult> DeliverAsync(
             System.Text.Json.Nodes.JsonObject cloudEvent, string idempotencyKey, CancellationToken cancellationToken)
             => ValueTask.FromResult(EventDeliveryResult.Delivered);
+    }
+
+    private sealed class RecordingMutationExecutor(IMutationIntentExecutor inner) : IMutationIntentExecutor
+    {
+        public List<MutationIntent> Intents { get; } = new();
+
+        public Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
+        {
+            Intents.Add(intent);
+            return inner.ExecuteAsync(intent, cancellationToken);
+        }
+
+        public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
+            => inner.ExecuteBatchAsync(intent, cancellationToken);
     }
 
     private sealed class InterruptingMutationExecutor : IMutationIntentExecutor

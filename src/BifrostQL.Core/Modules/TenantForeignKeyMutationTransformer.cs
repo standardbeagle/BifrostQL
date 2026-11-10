@@ -31,9 +31,12 @@ namespace BifrostQL.Core.Modules;
 /// carrying <see cref="BifrostExecutionError.AccessDeniedCode"/> and no table, column or
 /// value (protocol-adapter-security.md invariants 3 and 9): a different answer would let
 /// a caller probe which keys exist in other tenants. A NULL in any child column means
-/// the row references nothing and is not checked; an UPDATE that supplies only some
-/// columns of a composite link is refused, because the reference it produces mixes
-/// supplied and stored values this check cannot see without reading the target row.</para>
+/// the row references nothing and is not checked; an INSERT that omits a child column is
+/// treated as NULL only when the column has no database default — a defaulted or computed
+/// column writes a reference the client never chose, so such an insert is refused unless
+/// another member of the link is NULL. An UPDATE that supplies only some columns of a
+/// composite link is refused, because the reference it produces mixes supplied and stored
+/// values this check cannot see without reading the target row.</para>
 ///
 /// <para>Priority 155: after <see cref="EnumValueMutationTransformer"/> (150), so a
 /// lookup-enum foreign key is checked by the stored key it maps to, not the enum name the
@@ -88,23 +91,42 @@ public sealed class TenantForeignKeyMutationTransformer : IMutationTransformer, 
         var parentKey = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         var supplied = 0;
         var anyNull = false;
+        var anyDatabaseSupplied = false;
         for (var i = 0; i < childColumns.Count; i++)
         {
             if (!data.TryGetValue(childColumns[i].ColumnName, out var value))
+            {
+                // Insert: an omitted column is NULL unless the database fills it, in which
+                // case the row references a parent whose key this check cannot see.
+                if (mutationType == MutationType.Insert)
+                {
+                    if (childColumns[i].HasDefault || childColumns[i].IsComputed)
+                        anyDatabaseSupplied = true;
+                    else
+                        anyNull = true;
+                }
                 continue;
+            }
             supplied++;
             if (value is null || value == DBNull.Value)
                 anyNull = true;
             parentKey[parentColumns[i].ColumnName] = value;
         }
 
-        // The write does not touch this link, or sets a NULL into it: no reference to check.
-        if (supplied == 0 || anyNull)
+        // The row sets a NULL into this link, so it references nothing (MATCH SIMPLE).
+        if (anyNull)
+            return true;
+        // Insert: a reference made of database defaults names a parent the client never
+        // chose and this check cannot read; refuse it rather than trust the default.
+        if (anyDatabaseSupplied)
+            return false;
+        // The write does not touch this link.
+        if (supplied == 0)
             return true;
         if (supplied < childColumns.Count)
-            // Insert: the unsupplied columns are NULL, so the row references nothing.
-            // Update: they keep their stored values, which this check does not read.
-            return mutationType == MutationType.Insert;
+            // Update: the unsupplied columns keep their stored values, which this check
+            // does not read.
+            return false;
 
         var parent = link.ParentTable;
         var tenantColumn = parent.GetMetadataValue(MetadataKeys.Security.TenantFilter)!;

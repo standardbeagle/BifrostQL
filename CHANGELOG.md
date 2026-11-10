@@ -71,6 +71,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   change-history trail. It is now internal, like the other engine-only capabilities. Breaking for
   out-of-tree code that read it; there is no public replacement by design — erasure runs only from
   the retention engine.
+- The tenant foreign-key check treated a foreign-key column left out of an insert as `NULL`. When
+  the column has a database default, the database writes that default, so `account_id DEFAULT 2`
+  let a tenant-1 insert reference tenant 2's account. An insert that leaves out a defaulted or
+  computed foreign-key column is now refused with `ACCESS_DENIED` unless another column of the same
+  key is `NULL`; send the value explicitly.
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as

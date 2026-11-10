@@ -63,6 +63,7 @@ A write also cannot point a foreign key at another tenant's row. When an insert 
 - A `NULL` foreign key references nothing and is not checked.
 - A parent table without `tenant-filter` (shared lookup data such as countries) is not checked.
 - A composite foreign key is checked on all of its columns together. An update that sets only some columns of a composite foreign key is refused.
+- An insert that leaves a foreign-key column out is refused when that column has a database default (or is computed), because the database would then write a reference the check cannot see. Send the value explicitly. An insert that leaves out a column with no default stores `NULL`, so it references nothing and passes.
 - Name-based and polymorphic relationships are conventions, not constraints, and are not checked.
 - There is no admin bypass, matching the rest of tenant isolation. A missing tenant claim fails closed.
 

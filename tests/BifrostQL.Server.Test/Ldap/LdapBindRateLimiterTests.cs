@@ -127,4 +127,22 @@ public class LdapBindRateLimiterTests
         limiter.TryBind("src", "victim").Should().BeFalse(
             "a counter already tracked is never evicted to admit a new key, so its cap is never bypassed");
     }
+    [Fact]
+    public void SaturatedMap_StillCapsANewAccountFromANewSource()
+    {
+        var clock = new Clock();
+        var limiter = new LdapBindRateLimiter(maxPerSource: 100, maxPerAccount: 2,
+            window: TimeSpan.FromHours(1), clock: clock.Get, maxTrackedKeys: 4);
+
+        // Fill the map with live counters first, as an attacker spreading over many addresses
+        // and account names would, so neither the target account nor the next source is tracked.
+        for (var i = 0; i < 50; i++)
+            limiter.TryBind($"flood-src-{i}", $"flood-acct-{i}");
+
+        var admitted = Enumerable.Range(0, 10).Count(_ => limiter.TryBind("fresh-src", "victim"));
+
+        admitted.Should().Be(2,
+            "a key the full map cannot track must still be counted, or a saturated map is no limit at all");
+        limiter.TrackedKeyCount.Should().BeLessThanOrEqualTo(4, "the map stays bounded");
+    }
 }

@@ -45,13 +45,15 @@ public sealed class TenantForeignKeyWriteTests : IAsyncLifetime
         "main.contacts { tenant-filter: tenant_id }",
         "main.projects { tenant-filter: tenant_id }",
         "main.tasks { tenant-filter: tenant_id }",
+        "main.memos { tenant-filter: tenant_id }",
+        "main.subtasks { tenant-filter: tenant_id }",
     };
 
     public async Task InitializeAsync()
     {
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
-        foreach (var drop in new[] { "tasks", "projects", "contacts", "countries", "accounts" })
+        foreach (var drop in new[] { "subtasks", "memos", "tasks", "projects", "contacts", "countries", "accounts" })
             await Exec($"DROP TABLE IF EXISTS {drop}");
         await Exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, tenant_id INTEGER NOT NULL, name TEXT NOT NULL)");
         await Exec("CREATE TABLE countries (code TEXT PRIMARY KEY, name TEXT NOT NULL)");
@@ -82,6 +84,28 @@ public sealed class TenantForeignKeyWriteTests : IAsyncLifetime
                 tenant_id INTEGER NOT NULL,
                 project_org INTEGER NULL,
                 project_code TEXT NULL,
+                title TEXT NOT NULL,
+                FOREIGN KEY (project_org, project_code) REFERENCES projects(org, code)
+            )
+            """);
+        // Foreign keys whose database DEFAULT names tenant 2's parent: an insert that omits
+        // the column still writes a reference, so the check cannot treat "omitted" as NULL.
+        await Exec(
+            """
+            CREATE TABLE memos (
+                id INTEGER PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                account_id INTEGER NOT NULL DEFAULT 2 REFERENCES accounts(id),
+                title TEXT NOT NULL
+            )
+            """);
+        await Exec(
+            """
+            CREATE TABLE subtasks (
+                id INTEGER PRIMARY KEY,
+                tenant_id INTEGER NOT NULL,
+                project_org INTEGER NULL,
+                project_code TEXT NOT NULL DEFAULT 'B',
                 title TEXT NOT NULL,
                 FOREIGN KEY (project_org, project_code) REFERENCES projects(org, code)
             )
@@ -126,6 +150,32 @@ public sealed class TenantForeignKeyWriteTests : IAsyncLifetime
 
         ShouldBeRefused(result);
         (await CountAsync("contacts", "name = 'c'")).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SingleInsert_OmittedForeignKeyWhoseDefaultIsAnotherTenantsParent_IsRefused()
+    {
+        var omitted = await ExecuteAsync("mutation { memos(insert: { title: \"m\" }) }");
+        var explicitOwn = await ExecuteAsync("mutation { memos(insert: { title: \"own\", account_id: 1 }) }");
+
+        ShouldBeRefused(omitted);
+        (await CountAsync("memos", "title = 'm'")).Should().Be(0,
+            "the default writes account 2, tenant 2's row, though the client sent no reference");
+        ShouldSucceed(explicitOwn);
+    }
+
+    [Fact]
+    public async Task SingleInsert_PartialCompositeForeignKeyWithDefaultedRest_IsRefused()
+    {
+        // project_code defaults to 'B', so (1, default) is tenant 2's project (1,'B').
+        var partial = await ExecuteAsync("mutation { subtasks(insert: { title: \"s\", project_org: 1 }) }");
+        var nullFirst = await ExecuteAsync("mutation { subtasks(insert: { title: \"n\" }) }");
+
+        ShouldBeRefused(partial);
+        (await CountAsync("subtasks", "title = 's'")).Should().Be(0);
+        ShouldSucceed(nullFirst);
+        (await CountAsync("subtasks", "title = 'n' AND project_org IS NULL")).Should().Be(1,
+            "a NULL member means the composite references nothing, default or not");
     }
 
     [Fact]

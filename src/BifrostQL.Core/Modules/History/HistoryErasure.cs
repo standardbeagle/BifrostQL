@@ -63,14 +63,18 @@ namespace BifrostQL.Core.Modules.History
         /// which is row-unique). Emitted entirely through <see cref="ISqlDialect"/> — no
         /// dialect literal — so it renders valid on every supported dialect; the two
         /// placeholders bind to the <c>entity</c>/<c>entity_id</c> parameters the writer adds.
+        /// Each placeholder compares in the trail column's own type, the rule every key
+        /// comparison follows: PostgreSQL will not compare a text parameter to the
+        /// documented <c>JSONB</c> <c>entity_id</c>, so an uncast purge fails every erasure.
         /// </summary>
-        public static string BuildTrailPurgeSql(ISqlDialect dialect, string historyTableRef)
+        public static string BuildTrailPurgeSql(
+            ISqlDialect dialect, IDbTable historyTable, string historyTableRef, string entity, string entityId)
         {
-            var entityCol = dialect.EscapeIdentifier(MetadataKeys.History.Column.Entity);
-            var entityIdCol = dialect.EscapeIdentifier(MetadataKeys.History.Column.EntityId);
-            return $"DELETE FROM {historyTableRef} " +
-                   $"WHERE {entityCol} = @{MetadataKeys.History.Column.Entity} " +
-                   $"AND {entityIdCol} = @{MetadataKeys.History.Column.EntityId};";
+            var entityTest = Resolvers.DbParameterBinder.KeyComparison(
+                dialect, historyTable, MetadataKeys.History.Column.Entity, entity);
+            var entityIdTest = Resolvers.DbParameterBinder.KeyComparison(
+                dialect, historyTable, MetadataKeys.History.Column.EntityId, entityId);
+            return $"DELETE FROM {historyTableRef} WHERE {entityTest} AND {entityIdTest};";
         }
     }
 }

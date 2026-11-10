@@ -1,5 +1,7 @@
 using BifrostQL.Core.Modules.History;
 using BifrostQL.Core.Modules.Retention;
+using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel.TestFixtures;
 using FluentAssertions;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 using Xunit;
@@ -32,7 +34,7 @@ public sealed class RetentionErasureSqlDialectTests
     public void TrailPurgeSql_IsWellFormed_OnEveryDialect(ISqlDialect dialect)
     {
         var tableRef = dialect.TableReference("main", "__history");
-        var sql = HistoryErasure.BuildTrailPurgeSql(dialect, tableRef);
+        var sql = HistoryErasure.BuildTrailPurgeSql(dialect, HistoryTable("text"), tableRef, "main.people", "{\"id\":1}");
 
         sql.Should().StartWith("DELETE FROM ");
         sql.Should().Contain("WHERE");
@@ -58,7 +60,30 @@ public sealed class RetentionErasureSqlDialectTests
     [Fact]
     public void TrailPurgeSql_SqlServer_ParsesAsTSql()
         => AssertValidTSql(HistoryErasure.BuildTrailPurgeSql(
-            SqlServerDialect.Instance, SqlServerDialect.Instance.TableReference("main", "__history")));
+            SqlServerDialect.Instance, HistoryTable("nvarchar"), SqlServerDialect.Instance.TableReference("main", "__history"),
+            "main.people", "{\"id\":1}"));
+
+    [Fact]
+    public void TrailPurgeSql_Postgres_ComparesAJsonbEntityIdAsJsonb()
+    {
+        // PostgreSQL has no jsonb = text operator: the documented trail DDL makes entity_id JSONB.
+        var dialect = BifrostQL.Ngsql.PostgresDialect.Instance;
+        var sql = HistoryErasure.BuildTrailPurgeSql(
+            dialect, HistoryTable("jsonb"), dialect.TableReference("public", "__history"), "public.people", "{\"id\":1}");
+
+        sql.Should().Contain("\"entity_id\"=@entity_id::jsonb");
+
+    }
+
+    private static IDbTable HistoryTable(string entityIdType)
+        => DbModelTestFixture.Create()
+            .WithTable("__history", table => table
+                .WithSchema("main")
+                .WithPrimaryKey("id", "bigint")
+                .WithColumn("entity", "text")
+                .WithColumn("entity_id", entityIdType))
+            .Build()
+            .GetTableFromDbName("__history");
 
     [Fact]
     public void TenantEnumerationSql_SqlServer_ParsesAsTSql()

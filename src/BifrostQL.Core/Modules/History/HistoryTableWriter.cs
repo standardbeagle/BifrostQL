@@ -76,7 +76,8 @@ namespace BifrostQL.Core.Modules.History
             };
             await MutationCommandExecutor.ExecuteNonQuery(
                 context.Connection!, context.Transaction,
-                HistoryErasure.BuildTrailPurgeSql(context.Dialect, tableRef), purgeScope);
+                HistoryErasure.BuildTrailPurgeSql(context.Dialect, historyTable, tableRef, record.Entity, entityId),
+                purgeScope);
 
             // 2. Record the payload-free tombstone.
             var tombstone = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)

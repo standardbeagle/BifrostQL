@@ -26,6 +26,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Changed
 
+- `HistoryErasure.BuildTrailPurgeSql` now takes the history table and the `entity` /
+  `entity_id` values, so each comparison can follow the trail column's type. Callers outside
+  BifrostQL pass the resolved history `IDbTable` and the two values they bind.
+
 - **Recompile operations.** `BifrostOperationContext.QueryAsync` gained an optional `sort`
   parameter. That keeps source compatible, but the method's binary signature changed, so an
   operation assembly compiled against an earlier BifrostQL fails with `MissingMethodException`
@@ -62,6 +66,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   PostgreSQL integer column now fails this way where it used to match no row.
 
 ### Fixed
+
+- A retention erasure of a history-tracked row failed on PostgreSQL when the trail used the
+  documented `JSONB` `entity_id` column: the trail purge compared it to a text parameter and
+  PostgreSQL has no `jsonb = text` operator, so the purge rolled back and no tracked row could
+  expire. The purge now compares each trail column in its own type.
 
 - Retention deleted a row that changed between the expiry read and the delete: a session
   refreshed in that window was still expired, and a soft-deleted row restored in it was still

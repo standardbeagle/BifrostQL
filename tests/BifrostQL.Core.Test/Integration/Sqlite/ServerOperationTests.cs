@@ -139,6 +139,33 @@ public sealed class ServerOperationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MutationOperation_CodeThatThrows_IsNotReportedAsADatabaseError()
+    {
+        // "notanumber" makes the operation's own int.Parse throw after one insert ran. That is a
+        // fault in the operation's code or its input, not in the database, so DATABASE_ERROR
+        // would send the operator to the wrong place. The exception text stays off the wire.
+        var result = await ExecuteAsync(
+            "mutation { importLines(claimId: 1, csv: \"X,1,5\\nY,notanumber,7\") { imported } }", Estimator(1));
+
+        var error = result.Errors.Should().ContainSingle().Subject;
+        var bifrost = FindBifrostError(error);
+        bifrost.Should().NotBeNull();
+        bifrost!.ErrorCode.Should().Be("OPERATION_FAILED");
+        bifrost.Message.Should().Be("The operation failed, so it was rolled back.");
+        bifrost.InnerException.Should().BeOfType<FormatException>("the cause stays on the server for logging");
+        (await CountAsync("claim_lines", "code IN ('X','Y')")).Should().Be(0);
+        _observer.Tables.Should().BeEmpty();
+    }
+
+    private static BifrostExecutionError? FindBifrostError(Exception? error)
+    {
+        for (var current = error; current is not null; current = current.InnerException)
+            if (current is BifrostExecutionError bifrost)
+                return bifrost;
+        return null;
+    }
+
+    [Fact]
     public async Task MutationOperation_IntoAnotherTenantsClaim_SeesNoClaim_AndWritesNothing()
     {
         var result = await ExecuteAsync(

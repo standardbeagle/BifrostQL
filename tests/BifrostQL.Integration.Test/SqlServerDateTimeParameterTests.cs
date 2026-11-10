@@ -93,6 +93,28 @@ public sealed class SqlServerDateTimeParameterTests : IAsyncLifetime
         result.AffectedRows.Should().Be(1, "the key names the row exactly");
     }
 
+    [SkippableFact]
+    public async Task Insert_IntoADatetime2Column_KeepsEveryFractionalDigit()
+    {
+        Skip.IfNot(Master is not null, "BIFROST_TEST_SQLSERVER not set");
+        var writer = new MutationIntentExecutor(_pathCache, new MutationTransformersWrap { Transformers = Array.Empty<IMutationTransformer>() });
+        var precise = new DateTime(2001, 2, 3, 4, 5, 6, DateTimeKind.Unspecified).AddTicks(1234567);
+
+        await writer.ExecuteAsync(new MutationIntent
+        {
+            Table = "dbo.events",
+            Action = MutationIntentAction.Insert,
+            Data = new Dictionary<string, object?> { ["id"] = 2, ["at"] = precise, ["legacy"] = precise },
+            Endpoint = EndpointPath,
+        });
+
+        await using var conn = _connFactory.GetConnection();
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT at FROM events WHERE id = 2";
+        ((DateTime)(await cmd.ExecuteScalarAsync())!).Should().Be(precise, "datetime2(7) stores 100 ns; nothing may round the value on the way in");
+    }
+
     private async Task<int> CountWhereAsync(string column, DateTime value)
     {
         var model = (IDbModel)(await _pathCache.GetValueAsync(EndpointPath))["model"]!;

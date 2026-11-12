@@ -176,6 +176,60 @@ With this configured, `orders(delete: ...)` becomes an UPDATE that sets `deleted
 
 These columns are populated automatically during insert and update, and are optional in the GraphQL input types. A client-supplied value is overwritten, and an update drops a client-supplied `created-*` value.
 
+## Operation ids
+
+A client that loses the response to a write cannot tell whether the write landed. An operation id
+names the attempt, so the server can keep a record of it. A table opts in with `operation-id`,
+and the model names the table the records live in with `operation-id-store`:
+
+```
+":root { operation-id-store: public.operation_ids }"
+"public.operation_ids { visibility: hidden }"
+"public.invoices { operation-id: optional }"
+```
+
+The host creates the store table. It must be `visibility: hidden`, because its rows hold every
+tenant's write results, and it needs these columns and a unique key over `(tenant, operation_id)`:
+
+```sql
+CREATE TABLE operation_ids (
+    tenant       TEXT        NOT NULL,
+    operation_id TEXT        NOT NULL,
+    table_name   TEXT        NOT NULL,
+    action       TEXT        NOT NULL,
+    target_key   TEXT        NOT NULL,
+    input_hash   TEXT        NOT NULL,
+    result       TEXT        NULL,
+    created_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (tenant, operation_id));
+```
+
+The id rides the `_operationId` argument, which only opted-in tables have, or the
+`Idempotency-Key` header on a `/graphql` request:
+
+```graphql
+mutation {
+  invoices(insert: { customer_id: 7, total: 120 }, _operationId: "7b0c1f0e-checkout-1")
+}
+```
+
+An `insert`, `update`, `upsert` or `delete` that carries an id writes one store row on the
+write's own transaction. The row holds the caller's tenant (empty when there is none), the id,
+the table, the verb, the key the write addressed (`{}` for a key the database generates), a
+SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
+record, and a write without an id runs exactly as before.
+
+| Case | Answer |
+|------|--------|
+| Argument and header both present with different values | `INVALID_VALUE`, nothing written |
+| A blank id, or one longer than 200 characters | `INVALID_VALUE`, nothing written |
+| `Idempotency-Key` sent more than once | HTTP 400 |
+| An id on `sync`, `save`, `delta`, `updateWhere` or `_batch` | `OPERATION_ID_UNSUPPORTED`, nothing written |
+| The header on a table that does not opt in | Ignored |
+
+A table that also sets `approval` cannot opt in, and the model fails to load. Model load also
+checks that the store exists, is hidden and carries every column.
+
 ## Optimistic concurrency
 
 Optimistic concurrency prevents *lost updates* — two clients read the same row, both edit it, and the second write silently overwrites the first. Opt in per table with the `concurrency-token` metadata, naming a column that versions the row:

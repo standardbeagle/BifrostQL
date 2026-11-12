@@ -286,6 +286,27 @@ table fail at model load. The delivery-sink host settings (`Cdc:WebhookUrl`,
 }
 ```
 
+### Operation-id metadata
+
+Records writes that carry a caller operation id. See
+[Operation ids](/guides/mutations#operation-ids). Every key is defined in
+`MetadataKeys.OperationId`.
+
+| Property | Values | Applies to | Description |
+|----------|--------|-----------|-------------|
+| `operation-id` | `optional` | table | A write that carries `_operationId` or an `Idempotency-Key` header is recorded; a write without one runs as before. Any other value fails model load, as does combining it with `approval` |
+| `operation-id-store` | qualified table name | model | The table records are written to. **Required** once any table sets `operation-id`; the table must exist, be `visibility: hidden` and carry `tenant`, `operation_id`, `table_name`, `action`, `target_key`, `input_hash`, `result`, `created_at` |
+
+```json
+{
+  "Metadata": [
+    ":root { operation-id-store: public.operation_ids }",
+    "public.operation_ids { visibility: hidden }",
+    "public.invoices { operation-id: optional }"
+  ]
+}
+```
+
 ### Populate values
 
 | Value | Description |

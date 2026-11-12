@@ -108,6 +108,15 @@ A `DateTime` was bound as `datetime`, which rounds to 1/300 s, so an `_eq` filte
 `datetime2` column matched no row and writes lost precision. Values now bind as `datetime2`; a
 comparison against a `datetime` or `smalldatetime` column casts the parameter to that type.
 
+### Added — operation ids record a write under the caller's id
+
+A table with `operation-id: optional` records an `insert`, `update`, `upsert` or `delete` that
+carries `_operationId` or an `Idempotency-Key` header. The record holds the caller's tenant, the
+id, the table, the verb, the target key, an input hash and the result, in the hidden store named
+by `:root { operation-id-store: <table> }`, written on the write's own transaction. A refused
+write leaves no record, and a write without an id runs as before. See
+[Operation ids](/BifrostQL/guides/mutations/#operation-ids).
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

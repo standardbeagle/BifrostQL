@@ -57,6 +57,16 @@ On `main` after v0.4.28; not yet on NuGet.
   `StateMachineRoleGate.CanUseTransition` takes the admin role. A model that relied on `admin`
   adds `:root { policy-admin-role: admin }`.
 
+### Added
+
+- Operation ids. A table with `operation-id: optional` records an `insert`, `update`, `upsert`
+  or `delete` that carries `_operationId` or an `Idempotency-Key` header: tenant, id, table,
+  verb, target key, input hash and result go into the hidden store named by
+  `:root { operation-id-store: <table> }`, on the write's own transaction. A refused write
+  leaves no record; a write without an id runs as before. An id on `sync`, `save`, `delta`,
+  `updateWhere` or `_batch` is refused with `OPERATION_ID_UNSUPPORTED`. Model load checks the
+  store exists, is `visibility: hidden` and carries every column. See the mutations guide.
+
 ### Changed
 
 - `HistoryErasure.BuildTrailPurgeSql` now takes the history table and the `entity` /

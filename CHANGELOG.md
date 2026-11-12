@@ -66,6 +66,10 @@ On `main` after v0.4.28; not yet on NuGet.
   leaves no record; a write without an id runs as before. An id on `sync`, `save`, `delta`,
   `updateWhere` or `_batch` is refused with `OPERATION_ID_UNSUPPORTED`. Model load checks the
   store exists, is `visibility: hidden` and carries every column. See the mutations guide.
+- Operation-id replay. A retry with the same id and the same request answers with the
+  recorded result, generated key included, and runs no SQL write, transformer or hook. The
+  retry still passes the table's policy for its verb, so a caller who lost the grant gets
+  `ACCESS_DENIED`; an `upsert` retry must pass both the create and the update check.
 
 ### Changed
 

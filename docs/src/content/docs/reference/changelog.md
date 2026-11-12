@@ -117,6 +117,11 @@ by `:root { operation-id-store: <table> }`, written on the write's own transacti
 write leaves no record, and a write without an id runs as before. See
 [Operation ids](/BifrostQL/guides/mutations/#operation-ids).
 
+A retry with the same id and the same request answers with the recorded result, generated key
+included, and runs no SQL write, transformer or hook. The retry still passes the table's policy
+for its verb, so a caller who lost the grant gets `ACCESS_DENIED`; an `upsert` retry must pass
+both the create and the update check.
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

@@ -221,12 +221,22 @@ none), the id, the table, the verb, the key the write addressed (`{}` for a key 
 SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
 record, and a write without an id runs exactly as before.
 
+A retry that carries the same id and the same request (table, verb, target key and arguments)
+answers with the recorded result, generated key included. Nothing else runs: no SQL write, no
+transformer and no hook, so a retry leaves no second row and no second audit line. The retry
+still passes the table's policy for its verb (`policy-actions`, `policy-write-deny`,
+`writable-values`), so a caller who has lost the grant gets the same `ACCESS_DENIED` a fresh
+write would. An `upsert` retry must pass both the create and the update check, because the record
+does not say which branch ran. Row scope and the tenant filter are not checked again: a record
+answers only the tenant and user that wrote it.
+
 Each tenant and user has its own id space: two users may send the same id without colliding.
 Callers with no user id share their tenant's id space, or one shared space when there is no
 tenant either, so an anonymous client should send ids it generates at random.
 
 The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
-document with two such fields records both under one id, so the second collides with the first.
+document with two such fields records both under one id, so the second is answered as a retry of
+the first.
 Send one write per request with the header, or omit the header and give each field its own
 `_operationId`. A field whose `_operationId` differs from the header is refused with `INVALID_VALUE`.
 
@@ -235,6 +245,7 @@ Send one write per request with the header, or omit the header and give each fie
 | Argument and header both present with different values | `INVALID_VALUE`, nothing written |
 | A blank id, or one longer than 200 characters | `INVALID_VALUE`, nothing written |
 | `Idempotency-Key` sent more than once | HTTP 400 |
+| A known id with a different table, verb, target or arguments | `CONFLICT`, nothing written |
 | An id on `sync`, `save`, `delta`, `updateWhere` or `_batch` | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | The header on a table that does not opt in | Ignored |
 

@@ -67,7 +67,7 @@ if (principal is not null)
 var userContext = _authFactory.CreateUserContext(identityCarrier);
 ```
 
-An authenticated principal yields the full claim projection; an unauthenticated request yields an empty context, which the tenant transformers downstream refuse on tenant-filtered tables. A second overload, `CreateUserContext(context, existing)`, merges entries your frontend already parsed from the wire — identity-derived keys always win.
+An authenticated principal yields the full claim projection; an unauthenticated request yields an empty context, which the tenant transformers downstream refuse on tenant-filtered tables. Pass entries your frontend already parsed from the wire through `BifrostRequest.WireContext`. After resolving the model, the engine merges them with `WireContextMerger`: identity-derived keys always win, and identity-owned and security-context keys are excluded even when the identity did not supply them.
 
 Never map claims yourself and never fabricate tenant/user keys in the user context: that is exactly the drift the shared factory exists to prevent.
 

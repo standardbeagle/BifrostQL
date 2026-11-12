@@ -228,7 +228,7 @@ still passes the table's policy for its verb (`policy-actions`, `policy-write-de
 `writable-values`), so a caller who has lost the grant gets the same `ACCESS_DENIED` a fresh
 write would. An `upsert` retry must pass both the create and the update check, because the record
 does not say which branch ran. Row scope, the tenant filter and host security transformers are not
-checked again. A record answers only its owner (tenant and user id), so for an authenticated caller
+checked again. A record answers only its owner (tenant and user id), so for a caller with a user id
 it answers only the caller that wrote it. Callers with no user id share one owner (see below): one
 of them who repeats another's id and arguments is answered with the other's recorded key or count.
 

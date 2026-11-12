@@ -27,6 +27,13 @@ namespace BifrostQL.Core.Modules.OperationId
         public const string ReusedCode = "OPERATION_ID_REUSED";
 
         /// <summary>
+        /// <see cref="BifrostExecutionError.ErrorCode"/> for a write without an operation id to a
+        /// table that declares <see cref="MetadataKeys.OperationId.Required"/>: refused before
+        /// any transformer runs, so nothing is written.
+        /// </summary>
+        public const string RequiredCode = "OPERATION_ID_REQUIRED";
+
+        /// <summary>
         /// The operation id a field carries for <paramref name="table"/>: the
         /// <see cref="OperationIdConfig.Argument"/> argument or the request's
         /// <see cref="OperationIdConfig.Header"/> header. Null when the table does not opt in or

@@ -204,6 +204,9 @@ namespace BifrostQL.Core.Resolvers
             => new()
             {
                 WriteScope = writeScope,
+                // This resolver opens a write scope only for a write carrying an operation id
+                // (OperationIdExecution.ExecuteAsync), so the scope is the id's evidence.
+                RecordsOperationId = writeScope is not null,
                 Model = model,
                 ConnFactory = conFactory,
                 Transformers = mutationTransformers,

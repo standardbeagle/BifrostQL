@@ -11,6 +11,9 @@ namespace BifrostQL.Core.Modules.OperationId
 
         /// <summary>A write that carries an id records it; a write without one runs as before.</summary>
         Optional,
+
+        /// <summary>A write that carries an id records it; a write without one is refused.</summary>
+        Required,
     }
 
     /// <summary>
@@ -39,8 +42,9 @@ namespace BifrostQL.Core.Modules.OperationId
 
         /// <summary>
         /// The table's mode. Throws <see cref="InvalidOperationException"/> for a value other
-        /// than <see cref="MetadataKeys.OperationId.Optional"/>: a typo must not leave a table
-        /// that reads as opted in recording nothing.
+        /// than <see cref="MetadataKeys.OperationId.Optional"/> or
+        /// <see cref="MetadataKeys.OperationId.Required"/>: a typo must not leave a table that
+        /// reads as opted in recording nothing.
         /// </summary>
         public static OperationIdMode ModeOf(IDbTable table)
         {
@@ -53,10 +57,14 @@ namespace BifrostQL.Core.Modules.OperationId
             var raw = table.GetMetadataValue(MetadataKeys.OperationId.Mode);
             if (raw is null)
                 return OperationIdMode.None;
-            if (string.Equals(raw.Trim(), MetadataKeys.OperationId.Optional, StringComparison.OrdinalIgnoreCase))
+            var value = raw.Trim();
+            if (string.Equals(value, MetadataKeys.OperationId.Optional, StringComparison.OrdinalIgnoreCase))
                 return OperationIdMode.Optional;
+            if (string.Equals(value, MetadataKeys.OperationId.Required, StringComparison.OrdinalIgnoreCase))
+                return OperationIdMode.Required;
             throw new InvalidOperationException(
-                $"'{MetadataKeys.OperationId.Mode}' must be '{MetadataKeys.OperationId.Optional}'.");
+                $"'{MetadataKeys.OperationId.Mode}' must be '{MetadataKeys.OperationId.Optional}' or " +
+                $"'{MetadataKeys.OperationId.Required}'.");
         }
 
         /// <summary>
@@ -70,6 +78,21 @@ namespace BifrostQL.Core.Modules.OperationId
             if (string.IsNullOrWhiteSpace(name))
                 return null;
             return ModelTableReference.Find(model.HiddenTables, name) ?? ModelTableReference.Find(model.Tables, name);
+        }
+
+        /// <summary>
+        /// Refuses a write to a <see cref="OperationIdMode.Required"/> table that does not carry
+        /// an operation id. Called from <see cref="MutationTransformersWrap.TransformAsync"/>, the
+        /// one seam every write path runs, so no door (GraphQL, batch, save, adapter intent) can
+        /// write such a table unrecorded. The text names no table.
+        /// </summary>
+        internal static void EnsureCarriesIdWhenRequired(IDbTable table, bool recordsOperationId)
+        {
+            if (!recordsOperationId && ModeOf(table) == OperationIdMode.Required)
+                throw new Resolvers.BifrostExecutionError("This write requires an operation id.")
+                {
+                    ErrorCode = OperationIdExecution.RequiredCode,
+                };
         }
 
         /// <summary>Whether <paramref name="table"/> is one of the model's hidden tables.</summary>

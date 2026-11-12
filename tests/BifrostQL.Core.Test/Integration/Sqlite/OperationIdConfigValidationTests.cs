@@ -48,21 +48,25 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
 
-    [Fact]
-    public async Task HiddenStoreWithEveryColumn_Loads()
+    [Theory]
+    [InlineData("optional")]
+    [InlineData("required")]
+    public async Task HiddenStoreWithEveryColumn_Loads(string mode)
     {
         var load = () => LoadAsync(
             ":root { operation-id-store: main.operation_ids }",
             "main.operation_ids { visibility: hidden }",
-            "main.notes { operation-id: optional }");
+            $"main.notes {{ operation-id: {mode} }}");
 
         await load.Should().NotThrowAsync();
     }
 
-    [Fact]
-    public async Task OptedInTable_WithoutStore_IsRefused()
+    [Theory]
+    [InlineData("optional")]
+    [InlineData("required")]
+    public async Task OptedInTable_WithoutStore_IsRefused(string mode)
     {
-        var load = () => LoadAsync("main.notes { operation-id: optional }");
+        var load = () => LoadAsync($"main.notes {{ operation-id: {mode} }}");
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
             .Which.Message.Should().Contain("[operation-id-store]: 1 table(s) set 'operation-id' but no operation-id store is configured.");
@@ -111,16 +115,18 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
             "main.notes { operation-id: sometimes }");
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
-            .Which.Message.Should().Contain("main.notes [operation-id]: 'operation-id' must be 'optional'.");
+            .Which.Message.Should().Contain("main.notes [operation-id]: 'operation-id' must be 'optional' or 'required'.");
     }
 
-    [Fact]
-    public async Task ApprovalGatedTable_CannotRecordOperationIds()
+    [Theory]
+    [InlineData("optional")]
+    [InlineData("required")]
+    public async Task ApprovalGatedTable_CannotRecordOperationIds(string mode)
     {
         var load = () => LoadAsync(
             ":root { operation-id-store: main.operation_ids }",
             "main.operation_ids { visibility: hidden }",
-            "main.notes { operation-id: optional; approval: enabled; approver-role: reviewer }");
+            $"main.notes {{ operation-id: {mode}; approval: enabled; approver-role: reviewer }}");
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
             .Which.Message.Should().Contain("main.notes [operation-id]: a table that requires 'approval' cannot record operation ids.");

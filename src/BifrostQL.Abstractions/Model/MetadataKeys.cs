@@ -1198,12 +1198,19 @@ namespace BifrostQL.Core.Model
 
             /// <summary>
             /// Table-level opt-in. <see cref="Optional"/> records a write that carries an
-            /// operation id and runs a write without one exactly as before.
+            /// operation id and runs a write without one exactly as before. <see cref="Required"/>
+            /// records a write that carries one and refuses every write that does not.
             /// </summary>
             public const string Mode = "operation-id";
 
             /// <summary>The <see cref="Mode"/> value that records an id when the write carries one.</summary>
             public const string Optional = "optional";
+
+            /// <summary>
+            /// The <see cref="Mode"/> value that records an id and refuses, on every write path,
+            /// a write to the table that carries none.
+            /// </summary>
+            public const string Required = "required";
 
             /// <summary>
             /// The store's column contract. ModelConfigValidator checks the configured

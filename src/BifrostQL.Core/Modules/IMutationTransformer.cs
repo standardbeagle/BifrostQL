@@ -226,6 +226,7 @@ public sealed class MutationTransformContext
             ModuleArguments = moduleArguments ?? ModuleArguments,
             RestoreSoftDeleted = RestoreSoftDeleted,
             RestoreHardDeleted = RestoreHardDeleted,
+            RecordsOperationId = RecordsOperationId,
             Connection = write?.Connection ?? Connection,
             Transaction = write is { } w ? w.Transaction : Transaction,
             Dialect = write?.Dialect ?? Dialect,
@@ -244,6 +245,14 @@ public sealed class MutationTransformContext
 
     /// <summary>Set only by the deferred undo pipeline path to reinsert a hard-deleted row.</summary>
     public bool RestoreHardDeleted { get; init; }
+
+    /// <summary>
+    /// True when this write carries a caller operation id and runs inside the scope that
+    /// records it. Internal so only the engine can set it: a table declaring
+    /// <c>operation-id: required</c> refuses every chain run without it
+    /// (<see cref="OperationId.OperationIdConfig.EnsureCarriesIdWhenRequired"/>).
+    /// </summary>
+    internal bool RecordsOperationId { get; init; }
 }
 
 /// <summary>
@@ -279,6 +288,9 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         Dictionary<string, object?> data,
         MutationTransformContext context)
     {
+        // Every write path runs this seam before it writes, so this is where a table that
+        // requires an operation id refuses a write that carries none.
+        OperationId.OperationIdConfig.EnsureCarriesIdWhenRequired(table, context.RecordsOperationId);
         var currentType = mutationType;
         // Rekey GraphQL field names to real database column names ONCE, before any
         // transformer runs. Client input is keyed by GraphQL field name, which can be

@@ -37,6 +37,13 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public OperationWriteScope? WriteScope { get; init; }
 
+        /// <summary>
+        /// True when this write carries a caller operation id that its <see cref="WriteScope"/>
+        /// records; copied to every transformer context
+        /// (<see cref="MutationTransformContext.RecordsOperationId"/>).
+        /// </summary>
+        public bool RecordsOperationId { get; init; }
+
         /// <summary>Allows the deferred undo seam to target a soft-deleted row while preserving every other mutation transformer.</summary>
         public bool RestoreSoftDeleted { get; init; }
 
@@ -102,6 +109,7 @@ namespace BifrostQL.Core.Resolvers
                 ModuleArguments = moduleArguments ?? ModuleApiRegistry.EmptyArguments,
                 RestoreSoftDeleted = ctx.RestoreSoftDeleted,
                 RestoreHardDeleted = ctx.RestoreHardDeleted,
+                RecordsOperationId = ctx.RecordsOperationId,
                 Connection = conn,
                 Transaction = transaction,
                 Dialect = dialect,

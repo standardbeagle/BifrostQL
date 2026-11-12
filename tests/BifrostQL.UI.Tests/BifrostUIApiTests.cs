@@ -1,6 +1,7 @@
 using Xunit;
 using Xunit.Abstractions;
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -204,6 +205,7 @@ public class BifrostUIApiTests
     [Fact]
     public async Task StaticFiles_ServeIndexHtml()
     {
+        AssertSpaBuilt();
         var response = await Client.GetAsync("/index.html");
         response.EnsureSuccessStatusCode();
 
@@ -217,21 +219,29 @@ public class BifrostUIApiTests
     [Fact]
     public async Task StaticAssets_ServeJavaScript()
     {
-        // The bundle filename is content-hashed and changes per SPA build, so a
-        // miss here is informational rather than a failure.
-        var response = await Client.GetAsync("/assets/index-BuX1V4Qj.js");
+        AssertSpaBuilt();
+        // The entry bundle's name is content-hashed per SPA build, so read it from
+        // the index.html the host serves rather than pinning one build's hash.
+        var index = await Client.GetStringAsync("/index.html");
+        var entry = System.Text.RegularExpressions.Regex.Match(
+            index, "<script type=\"module\"[^>]*\\ssrc=\"(/assets/[^\"]+\\.js)\"");
+        Assert.True(entry.Success, "index.html must reference its module entry bundle under /assets/");
 
-        if (response.IsSuccessStatusCode)
-        {
-            var content = await response.Content.ReadAsByteArrayAsync();
-            Assert.True(content.Length > 10000, "JavaScript bundle should be substantial");
-            _output.WriteLine($"JavaScript bundle served: {content.Length} bytes");
-        }
-        else
-        {
-            _output.WriteLine($"JavaScript bundle status: {response.StatusCode} (may have different hash)");
-        }
+        var response = await Client.GetAsync(entry.Groups[1].Value);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("text/javascript", response.Content.Headers.ContentType?.MediaType);
+        var content = await response.Content.ReadAsByteArrayAsync();
+        Assert.True(content.Length > 10000, "JavaScript bundle should be substantial");
+        _output.WriteLine($"JavaScript bundle {entry.Groups[1].Value} served: {content.Length} bytes");
     }
+
+    /// <summary>
+    /// The SPA is gitignored Vite output; name the fix instead of failing on a bare 404.
+    /// </summary>
+    private void AssertSpaBuilt() =>
+        Assert.True(File.Exists(Path.Combine(_server.WebRoot, "index.html")),
+            $"No built SPA at {_server.WebRoot}. Run ./scripts/build-ui-spa.sh and rebuild BifrostQL.UI " +
+            "(scripts/test-epic.sh does both).");
 
     [Fact]
     public async Task BinaryWebSocketEndpoint_AcceptsHandshake()

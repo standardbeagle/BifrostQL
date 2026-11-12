@@ -28,10 +28,14 @@ public sealed class HeadlessUiServer : IAsyncLifetime
     public HttpClient Client { get; private set; } = null!;
     public int Port { get; private set; }
 
+    /// <summary>The wwwroot the host serves: the UI project's bin copy of the built SPA.</summary>
+    public string WebRoot { get; private set; } = null!;
+
     public async Task InitializeAsync()
     {
         Port = GetFreePort();
         var uiDll = ResolveUiAssembly();
+        WebRoot = Path.Combine(Path.GetDirectoryName(uiDll)!, "wwwroot");
 
         var psi = new ProcessStartInfo
         {

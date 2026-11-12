@@ -113,17 +113,17 @@ public interface IBeforeCommitMutationHook
     ValueTask<IReadOnlyList<string>> BeforeCommitAsync(MutationObserverContext context);
 
     /// <summary>
-    /// Whether this hook can act on <paramref name="table"/> at all — the question the
-    /// set-based fast paths (filtered update, bulk batch) must ask. Every built-in hook
-    /// no-ops for a table without its own metadata, and the built-ins are registered
-    /// UNCONDITIONALLY, so "is a hook registered?" is true in every host and would kill
-    /// both fast paths everywhere (finding H5).
+    /// Whether this hook acts on <paramref name="table"/> at all. It is the one answer every
+    /// write path reads: the composite calls the hook only for a table this accepts, and the
+    /// set-based fast paths (filtered update, bulk batch) keep the per-row path only when some
+    /// hook accepts the table. Every built-in hook no-ops for a table without its own
+    /// metadata, and the built-ins are registered UNCONDITIONALLY, so "is a hook registered?"
+    /// is true in every host and would kill both fast paths everywhere (finding H5).
     ///
     /// FAIL CLOSED: the default is true. A hook that cannot decide from the table's
-    /// metadata — any hook that does not override this — keeps the per-row path for every
-    /// table. Skipping a hook that would have run is a correctness bug (a missing history
-    /// row, an un-enqueued approval); keeping the slow path is only slower. Override ONLY
-    /// with the same predicate the hook's own body uses to no-op.
+    /// metadata — any hook that does not override this — is called for every table and keeps
+    /// the per-row path for every table. A hook that overrides it is never called for a table
+    /// it refuses, on any path, so its body need not repeat the check.
     /// </summary>
     bool AppliesTo(IDbTable table) => true;
 }
@@ -155,14 +155,17 @@ public sealed class BeforeCommitMutationHooks
         return false;
     }
 
-    // Runs every hook in order and aggregates returned errors. Exceptions are
-    // NOT caught — a throwing hook aborts the mutation just as returned errors
-    // do. Returns an empty list when all hooks pass (the write may proceed).
+    // Runs, in order, every hook that applies to the context's table and aggregates
+    // returned errors. Exceptions are NOT caught — a throwing hook aborts the mutation
+    // just as returned errors do. Returns an empty list when all hooks pass (the write
+    // may proceed).
     public async ValueTask<IReadOnlyList<string>> RunAsync(MutationObserverContext context)
     {
         List<string>? errors = null;
         foreach (var hook in _hooks)
         {
+            if (!hook.AppliesTo(context.Table))
+                continue;
             var hookErrors = await hook.BeforeCommitAsync(context);
             if (hookErrors is { Count: > 0 })
                 (errors ??= new List<string>()).AddRange(hookErrors);
@@ -184,9 +187,9 @@ public interface IInTransactionMutationHook
     ValueTask AfterWriteInTransactionAsync(MutationObserverContext context);
 
     /// <summary>
-    /// Whether this hook can act on <paramref name="table"/> at all. Same contract — and
-    /// the same fail-closed default of true — as
-    /// <see cref="IBeforeCommitMutationHook.AppliesTo"/>.
+    /// Whether this hook acts on <paramref name="table"/> at all. Same contract — the
+    /// composite calls the hook only for a table this accepts, with the same fail-closed
+    /// default of true — as <see cref="IBeforeCommitMutationHook.AppliesTo"/>.
     /// </summary>
     bool AppliesTo(IDbTable table) => true;
 }
@@ -218,7 +221,10 @@ public sealed class InTransactionMutationHooks
     public async ValueTask RunAsync(MutationObserverContext context)
     {
         foreach (var hook in _hooks)
-            await hook.AfterWriteInTransactionAsync(context);
+        {
+            if (hook.AppliesTo(context.Table))
+                await hook.AfterWriteInTransactionAsync(context);
+        }
     }
 }
 

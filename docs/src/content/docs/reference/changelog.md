@@ -62,6 +62,15 @@ gains `Endpoint`.
 **Migration:** recompile code that constructs those services, and pass the new arguments to
 `BuildTrailPurgeSql`.
 
+### Changed — a mutation hook is called only for tables its `AppliesTo` accepts
+
+The per-row write path called every `IBeforeCommitMutationHook` and `IInTransactionMutationHook`
+for every table, whatever its `AppliesTo` said, while the bulk-batch and filtered-update paths
+skipped it. Every path now calls a hook only for a table its `AppliesTo` accepts.
+
+**Migration:** a hook whose `AppliesTo` refuses a table its body still acts on must widen
+`AppliesTo` to those tables. A hook that does not override `AppliesTo` is unaffected.
+
 ### Changed — SQL Server binds `DateTime` as `datetime2`
 
 A `DateTime` was bound as `datetime`, which rounds to 1/300 s, so an `_eq` filter or key on a

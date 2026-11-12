@@ -1,6 +1,6 @@
 ---
 title: "Mutation Hooks: Timing, Applicability, and Soft-Delete"
-description: "When before-commit and in-transaction mutation hooks run, how to read a generated insert id inside the transaction, why every hook must declare AppliesTo, and how soft-delete's DELETE-to-UPDATE rewrite changes what later code sees."
+description: "When before-commit and in-transaction mutation hooks run, how to read a generated insert id inside the transaction, how AppliesTo decides which tables a hook is called for, and how soft-delete's DELETE-to-UPDATE rewrite changes what later code sees."
 ---
 
 BifrostQL gives host code three places to act on a write. Three of their behaviours are easy to misread, and each one costs either correctness or performance when it is. This page states them from the code.
@@ -51,7 +51,7 @@ using BifrostQL.Core.Resolvers;
 
 public sealed class OrderTimelineHook : IInTransactionMutationHook
 {
-    // One predicate, used by AppliesTo AND by the body's no-op check (section 2).
+    // The hook is called only for a table AppliesTo accepts (section 2).
     private static bool IsOrders(IDbTable table) =>
         string.Equals(table.TableSchema, "dbo", StringComparison.OrdinalIgnoreCase)
         && string.Equals(table.DbName, "orders", StringComparison.OrdinalIgnoreCase);
@@ -60,7 +60,7 @@ public sealed class OrderTimelineHook : IInTransactionMutationHook
 
     public async ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
     {
-        if (!IsOrders(context.Table) || context.MutationType != MutationType.Insert)
+        if (context.MutationType != MutationType.Insert)
             return;
 
         if (context.Connection is null || context.Dialect is null || context.Result is null)
@@ -111,7 +111,7 @@ Both hook interfaces carry a default method:
 bool AppliesTo(IDbTable table) => true;
 ```
 
-Two set-based write paths ask it, through `BeforeCommitMutationHooks.AnyApplies(table)` and `InTransactionMutationHooks.AnyApplies(table)`, because they cannot run per-row hooks:
+Every write path reads it. The composites call a hook only for a table its `AppliesTo` accepts, so a hook that refuses a table is never called for that table's writes, on any path, and its body need not check the table again. Two set-based write paths also ask it, through `BeforeCommitMutationHooks.AnyApplies(table)` and `InTransactionMutationHooks.AnyApplies(table)`, because they cannot run per-row hooks:
 
 - **Bulk batch fast path.** If any registered hook applies to the table, the batch runs row by row instead. The [bulk-batch reference](/BifrostQL/reference/bulk-batch-performance/) lists this among the fast-path gates.
 - **Filtered update (`updateWhere`).** If any registered hook applies to the table, the request is refused with "Filtered update ... is not available while a mutation hook (approval, history, CDC) applies to this table".
@@ -122,7 +122,7 @@ The gate asks *applicability*, never *registration*. Every host registers the bu
 
 ### Narrowing correctly
 
-Override `AppliesTo` with **the same predicate the hook's body uses to no-op**, as `OrderTimelineHook` does above with `IsOrders`. A table where `AppliesTo` returns `false` can take the bulk fast path, and on that path your hook does not run. If the two predicates drift, so that `AppliesTo` says `false` for a table the body would act on, those rows are written with no hook call. Nothing reports it.
+Override `AppliesTo` with the table predicate the hook acts on, as `OrderTimelineHook` does above with `IsOrders`. That one predicate decides both whether the hook is called and whether the table can take the bulk fast path, so the per-row and set-based paths agree: a table where `AppliesTo` returns `false` gets no hook call on either. Through NuGet 0.4.740 the per-row path called every hook whatever `AppliesTo` said, so hooks had to repeat the check in their bodies; that check is now redundant but harmless.
 
 Keep the predicate per **table**, not per operation. Applicability is asked once for a whole batch, which can mix inserts, updates and deletes. The built-in CDC writer follows this rule:
 

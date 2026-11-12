@@ -47,6 +47,12 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Fixed
 
+- A before-commit or in-transaction mutation hook was called for every table's writes on the per-row
+  path, whatever its `AppliesTo` said, while the bulk-batch and filtered-update paths skipped it for
+  the same table. The composites now call a hook only for a table its `AppliesTo` accepts, so both
+  paths agree and a hook no longer needs to repeat the table check in its body. A hook that
+  overrides `AppliesTo` to refuse a table its body still acts on stops running for that table;
+  widen its `AppliesTo` to the tables it acts on.
 - A retention erasure of a history-tracked row failed on PostgreSQL when the trail used the
   documented `JSONB` `entity_id` column: the trail purge compared it to a text parameter and
   PostgreSQL has no `jsonb = text` operator, so the purge rolled back and no tracked row could

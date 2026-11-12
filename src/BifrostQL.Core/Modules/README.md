@@ -111,8 +111,8 @@ reads the row's before-image in the before-commit phase and records it in the
 after-write phase, where it finally knows whether anything actually changed.
 
 Hooks resolve from DI (`BeforeCommitMutationHooks`, built from every registered
-`IBeforeCommitMutationHook`). They run in registration order and their errors are
-aggregated. Neither in-transaction phase is gated by the `WorkflowTriggerHost`
+`IBeforeCommitMutationHook`). They run in registration order, each only for a table
+its `AppliesTo` accepts, and their errors are aggregated. Neither in-transaction phase is gated by the `WorkflowTriggerHost`
 suppression guard — that guard exists to stop a workflow trigger from re-firing
 itself, and it is applied where that recursion happens, in the post-commit observer
 path. Gating these phases instead would let a workflow-triggered write bypass every

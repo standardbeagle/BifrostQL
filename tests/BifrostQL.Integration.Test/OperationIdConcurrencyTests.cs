@@ -9,7 +9,8 @@ namespace BifrostQL.Integration.Test;
 /// Two requests carrying the same operation id run as two real, overlapping transactions on
 /// Postgres. The first claims the id and writes; the second's claim waits on the first's
 /// uncommitted record, and once the first commits it answers from the record: one effect, one
-/// record, two equal replies. A second request whose arguments differ is refused as a reused id.
+/// record, two equal replies. A second request whose arguments differ is refused as a reused id;
+/// one that follows a rolled-back first claims the id and writes.
 ///
 /// <para>The overlap is forced, not hoped for: the test holds <c>SHARE</c> on the written table,
 /// so the first request stops after its claim, inside its transaction; the second is sent only
@@ -33,6 +34,18 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
             result TEXT NULL,
             created_at TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (tenant, caller, operation_id));
+        -- Refuses the first 'flaky' insert only: a sequence advances outside the transaction,
+        -- so the rolled-back attempt still counts.
+        CREATE SEQUENCE flaky_attempts;
+        CREATE FUNCTION refuse_first_flaky() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.title = 'flaky' AND nextval('flaky_attempts') = 1 THEN
+                RAISE EXCEPTION 'first flaky insert refused';
+            END IF;
+            RETURN NEW;
+        END $$;
+        CREATE TRIGGER notes_refuse_first_flaky BEFORE INSERT ON notes
+            FOR EACH ROW EXECUTE FUNCTION refuse_first_flaky();
         """;
 
     private static readonly string[] Metadata =
@@ -91,6 +104,23 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
         (await _host!.CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'first'")).Should().Be(1);
         (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
+    }
+
+    [SkippableFact]
+    public async Task Concurrent_duplicate_claims_the_id_when_the_first_rolls_back()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+        const string mutation = """mutation { notes(insert: { title: "flaky" }, _operationId: "op-race") }""";
+
+        var (first, second) = await RaceAsync(mutation, mutation);
+
+        PostgresGraphQlHost.FirstError(first);
+        PostgresGraphQlHost.AssertNoErrors(second);
+        var key = second.RootElement.GetProperty("data").GetProperty("notes").GetRawText();
+        (await _host!.CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+        (await _host.CountAsync($"SELECT count(*) FROM notes WHERE id = {key} AND title = 'flaky'")).Should().Be(1);
+        (await _host.RowsAsync("SELECT operation_id, result FROM operation_ids")).Should().ContainSingle()
+            .Which.Should().Equal(new Dictionary<string, string?> { ["operation_id"] = "op-race", ["result"] = key });
     }
 
     /// <summary>

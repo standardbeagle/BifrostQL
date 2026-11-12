@@ -69,7 +69,8 @@ enabling OData touches no GraphQL or binary service.
 
 ## Authentication
 
-The endpoint authenticates every request before any operation is dispatched, and
+The endpoint authenticates every supported `GET`/`HEAD` request before any
+operation is dispatched; other methods return `405` before authentication. It
 projects the resolved identity through the shared
 [`IBifrostAuthContextFactory`](/BifrostQL/concepts/protocol-adapters/) — the same
 fail-closed identity seam every other transport gate uses. Two credential shapes

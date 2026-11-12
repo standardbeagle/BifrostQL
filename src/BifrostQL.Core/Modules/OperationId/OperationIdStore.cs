@@ -14,6 +14,35 @@ namespace BifrostQL.Core.Modules.OperationId
     internal static class OperationIdStore
     {
         /// <summary>
+        /// The committed record <paramref name="owner"/> holds for <paramref name="operationId"/>,
+        /// read on the write's transaction; null when there is none.
+        /// </summary>
+        public static async Task<OperationRecord?> FindAsync(
+            IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,
+            OperationOwner owner, string operationId, CancellationToken cancellationToken)
+        {
+            var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [Col.Tenant] = owner.Tenant,
+                [Col.Caller] = owner.Caller,
+                [Col.OperationId] = operationId,
+            };
+            var row = await MutationCommandExecutor.LoadRowByKey(
+                connection, transaction, dialect, store, RecordColumns, key, cancellationToken: cancellationToken);
+            if (row is null)
+                return null;
+            return new OperationRecord(
+                new OperationFingerprint(Text(row, Col.Table), Text(row, Col.Action), Text(row, Col.TargetKey), Text(row, Col.InputHash)),
+                Text(row, Col.Result));
+        }
+
+        private static readonly string[] RecordColumns = { Col.Table, Col.Action, Col.TargetKey, Col.InputHash, Col.Result };
+
+        private static string Text(IReadOnlyDictionary<string, object?> row, string column)
+            => row[column] as string
+               ?? throw new BifrostExecutionError("The operation record is incomplete, so the write did not run.");
+
+        /// <summary>
         /// Inserts the record for <paramref name="operationId"/> before the write runs, with no
         /// result yet. The store's unique key over (tenant, caller, operation id) makes a second
         /// transaction claiming the same id wait for the first and then fail, so one id is one
@@ -61,4 +90,7 @@ namespace BifrostQL.Core.Modules.OperationId
                 throw new BifrostExecutionError("The operation record could not be completed, so the write was rolled back.");
         }
     }
+
+    /// <summary>A committed operation record: the request it was recorded for and the field's result as JSON.</summary>
+    internal sealed record OperationRecord(OperationFingerprint Fingerprint, string ResultJson);
 }

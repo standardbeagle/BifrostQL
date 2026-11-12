@@ -52,13 +52,17 @@ namespace BifrostQL.Core.Modules.OperationId
         }
 
         /// <summary>
-        /// Claims <paramref name="operationId"/>, runs <paramref name="write"/> inside one
-        /// operation scope, and records its result. A write that throws rolls the claim back
-        /// with it, so a failed write leaves no record.
+        /// Answers a retry of a recorded write, or claims <paramref name="operationId"/>, runs
+        /// <paramref name="write"/> inside one operation scope, and records its result. A write
+        /// that throws rolls the claim back with it, so a failed write leaves no record.
+        ///
+        /// <para>When the caller already holds a committed record for the id with the same
+        /// <paramref name="fingerprint"/>, <paramref name="authorizeReplay"/> runs (it throws to
+        /// refuse) and the recorded result is returned: no write, transformer or hook runs.</para>
         /// </summary>
         public static async Task<object?> ExecuteAsync(
             IDbModel model, IDbConnFactory connFactory, IDictionary<string, object?> userContext,
-            string operationId, OperationFingerprint fingerprint,
+            string operationId, OperationFingerprint fingerprint, Action authorizeReplay,
             Func<OperationWriteScope, Task<object?>> write, CancellationToken cancellationToken)
         {
             // ModelConfigValidator refuses a model whose opted-in tables have no store, so a miss
@@ -70,6 +74,13 @@ namespace BifrostQL.Core.Modules.OperationId
 
             return await OperationWriteScope.RunAsync(connFactory, async scope =>
             {
+                var recorded = await OperationIdStore.FindAsync(
+                    store, dialect, scope.Connection, scope.Transaction, owner, operationId, cancellationToken);
+                if (recorded is not null && recorded.Fingerprint == fingerprint)
+                {
+                    authorizeReplay();
+                    return RecordedResult(recorded.ResultJson);
+                }
                 await OperationIdStore.ClaimAsync(
                     store, dialect, scope.Connection, scope.Transaction, owner, operationId, fingerprint, cancellationToken);
                 var result = await write(scope);
@@ -105,6 +116,28 @@ namespace BifrostQL.Core.Modules.OperationId
                 {
                     ErrorCode = BifrostExecutionError.AccessDeniedCode,
                 },
+            };
+        }
+
+        /// <summary>
+        /// The CLR value of a result recorded by <see cref="CanonicalJson"/>: text, a whole
+        /// number as <see cref="int"/> or <see cref="long"/>, any other number as
+        /// <see cref="decimal"/> (<see cref="double"/> past its range), or null. The resolver coerces it to the field's scalar exactly
+        /// as it coerced the original result, so the replay serializes as the write did.
+        /// </summary>
+        internal static object? RecordedResult(string resultJson)
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(resultJson);
+            var value = document.RootElement;
+            return value.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.Null => null,
+                System.Text.Json.JsonValueKind.String => value.GetString(),
+                System.Text.Json.JsonValueKind.Number when value.TryGetInt32(out var i) => i,
+                System.Text.Json.JsonValueKind.Number when value.TryGetInt64(out var l) => l,
+                System.Text.Json.JsonValueKind.Number when value.TryGetDecimal(out var d) => d,
+                System.Text.Json.JsonValueKind.Number => value.GetDouble(),
+                _ => throw new BifrostExecutionError("The recorded operation result cannot be replayed."),
             };
         }
 

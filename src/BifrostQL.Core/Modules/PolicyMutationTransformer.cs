@@ -45,7 +45,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
     private const string ColumnWriteDeniedMessage =
         "The mutation writes a field that is not permitted by authorization policy.";
 
-    private readonly PolicyEvaluator _evaluator = new();
+    private static readonly PolicyEvaluator Evaluator = new();
 
     public string ModuleName => "policy";
 
@@ -81,66 +81,11 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (data is null) throw new ArgumentNullException(nameof(data));
         if (context is null) throw new ArgumentNullException(nameof(context));
 
+        if (Refuse(table, mutationType, data, context.UserContext) is { } refusal)
+            return refusal;
+
         var policy = PolicyConfigCollector.FromTable(table);
         var identity = BuildIdentity(context);
-        var isAdmin = _evaluator.IsAdmin(policy, identity);
-
-        // Table action deny — fail closed before inspecting the data.
-        if (!_evaluator.CanAct(policy, ToPolicyAction(mutationType), identity).Allowed)
-        {
-            return new MutationTransformResult
-            {
-                MutationType = mutationType,
-                Data = data,
-                Errors = new[] { ActionDeniedMessage },
-                // Tag the fail-closed denial so a policy-denied WRITE surfaces the SAME
-                // transport status as the read-side deny (PolicyFilterTransformer throws
-                // AccessDeniedCode). Without it the codeless pipeline abort fell to the
-                // gRPC funnel's default → INTERNAL, a cross-op-class status divergence
-                // for one authorization condition (single-funnel-needs-condition-tagging).
-                ErrorCode = BifrostExecutionError.AccessDeniedCode,
-            };
-        }
-
-        // Column write-deny — any written column on the deny list aborts. The
-        // write-requires grant gate is exempted for deletes (E5: a delete
-        // carries no writable columns); the deny list still applies, matching
-        // the pre-existing delete-data semantics.
-        var isDelete = mutationType == MutationType.Delete;
-        foreach (var column in data.Keys)
-        {
-            if (string.IsNullOrWhiteSpace(column))
-                continue;
-
-            var columnAllowed = _evaluator.IsColumnAllowed(policy, column, PolicyDirection.Write, identity, forDelete: isDelete).Allowed;
-            var valueAllowed = true;
-            if (!isAdmin && !isDelete && table.ColumnLookup.TryGetValue(column, out var columnDto)
-                && policy.WritableValues.TryGetValue(column, out var values))
-            {
-                // A value the coercer cannot convert to the column type is refused with
-                // the same generic column-write result as a disallowed value: the
-                // coercer's own ACCESS_DENIED carries tenant-context wording that must
-                // never reach a caller for this condition. Literals were proven
-                // coercible at model load (ModelConfigValidator), so only the supplied
-                // side can fail here.
-                var supplied = data[column];
-                valueAllowed = supplied is not null && TryCoerce(table, columnDto.DbName, supplied) is { } coerced
-                    && values.Any(value => ScalarEquals(coerced, ContextValueCoercer.Coerce(table, columnDto.DbName, value)));
-            }
-            if (!columnAllowed || !valueAllowed)
-            {
-                return new MutationTransformResult
-                {
-                    MutationType = mutationType,
-                    Data = data,
-                    Errors = new[] { ColumnWriteDeniedMessage },
-                    // Same access-denial classification as the table-action deny above,
-                    // so a column-write-deny maps to the same status as the read-side
-                    // column-read-deny rather than a generic INTERNAL.
-                    ErrorCode = BifrostExecutionError.AccessDeniedCode,
-                };
-            }
-        }
 
         // Self deny (D6) — an update that writes a self-deny column must not match
         // the caller's own row. The predicate is ANDed into the statement like the
@@ -171,6 +116,86 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
             AdditionalFilter = CombineFilters(selfFilter,
                 BuildRowScopeFilter(policy, mutationType, table, identity, context)),
         };
+    }
+
+    /// <summary>
+    /// The refusal this policy gives <paramref name="mutationType"/> on <paramref name="table"/>
+    /// before any row is read: the table action deny and the column write deny (with
+    /// <c>writable-values</c>) over the columns <paramref name="data"/> writes. Null when the
+    /// write passes them. <see cref="TransformAsync"/> starts with it, and an operation-id replay
+    /// asks it in place of the chain, so a caller refused here is refused on both with the same
+    /// message and code.
+    /// </summary>
+    internal static MutationTransformResult? Refuse(
+        IDbTable table,
+        MutationType mutationType,
+        Dictionary<string, object?> data,
+        IDictionary<string, object?> userContext)
+    {
+        var policy = PolicyConfigCollector.FromTable(table);
+        if (!policy.HasPolicy)
+            return null;
+        var identity = PolicyIdentity.FromUserContext(userContext);
+        var isAdmin = Evaluator.IsAdmin(policy, identity);
+
+        // Table action deny — fail closed before inspecting the data.
+        if (!Evaluator.CanAct(policy, ToPolicyAction(mutationType), identity).Allowed)
+        {
+            return new MutationTransformResult
+            {
+                MutationType = mutationType,
+                Data = data,
+                Errors = new[] { ActionDeniedMessage },
+                // Tag the fail-closed denial so a policy-denied WRITE surfaces the SAME
+                // transport status as the read-side deny (PolicyFilterTransformer throws
+                // AccessDeniedCode). Without it the codeless pipeline abort fell to the
+                // gRPC funnel's default → INTERNAL, a cross-op-class status divergence
+                // for one authorization condition (single-funnel-needs-condition-tagging).
+                ErrorCode = BifrostExecutionError.AccessDeniedCode,
+            };
+        }
+
+        // Column write-deny — any written column on the deny list aborts. The
+        // write-requires grant gate is exempted for deletes (E5: a delete
+        // carries no writable columns); the deny list still applies, matching
+        // the pre-existing delete-data semantics.
+        var isDelete = mutationType == MutationType.Delete;
+        foreach (var column in data.Keys)
+        {
+            if (string.IsNullOrWhiteSpace(column))
+                continue;
+
+            var columnAllowed = Evaluator.IsColumnAllowed(policy, column, PolicyDirection.Write, identity, forDelete: isDelete).Allowed;
+            var valueAllowed = true;
+            if (!isAdmin && !isDelete && table.ColumnLookup.TryGetValue(column, out var columnDto)
+                && policy.WritableValues.TryGetValue(column, out var values))
+            {
+                // A value the coercer cannot convert to the column type is refused with
+                // the same generic column-write result as a disallowed value: the
+                // coercer's own ACCESS_DENIED carries tenant-context wording that must
+                // never reach a caller for this condition. Literals were proven
+                // coercible at model load (ModelConfigValidator), so only the supplied
+                // side can fail here.
+                var supplied = data[column];
+                valueAllowed = supplied is not null && TryCoerce(table, columnDto.DbName, supplied) is { } coerced
+                    && values.Any(value => ScalarEquals(coerced, ContextValueCoercer.Coerce(table, columnDto.DbName, value)));
+            }
+            if (!columnAllowed || !valueAllowed)
+            {
+                return new MutationTransformResult
+                {
+                    MutationType = mutationType,
+                    Data = data,
+                    Errors = new[] { ColumnWriteDeniedMessage },
+                    // Same access-denial classification as the table-action deny above,
+                    // so a column-write-deny maps to the same status as the read-side
+                    // column-read-deny rather than a generic INTERNAL.
+                    ErrorCode = BifrostExecutionError.AccessDeniedCode,
+                };
+            }
+        }
+
+        return null;
     }
 
     private static TableFilter? CombineFilters(TableFilter? first, TableFilter? second) =>
@@ -213,7 +238,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (mutationType == MutationType.Insert)
             return null;
 
-        if (_evaluator.IsAdmin(policy, identity))
+        if (Evaluator.IsAdmin(policy, identity))
             return null;
 
         if (!RowScopeApplies(policy, identity))

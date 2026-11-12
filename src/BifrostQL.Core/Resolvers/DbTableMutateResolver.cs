@@ -53,10 +53,13 @@ namespace BifrostQL.Core.Resolvers
                     throw new BifrostExecutionError("This mutation cannot record an operation id.")
                     { ErrorCode = OperationIdExecution.UnsupportedCode };
                 var fingerprint = Fingerprint(context, table, action);
-                return await OperationIdExecution.ExecuteAsync(
+                // A replayed result is coerced like the original was; coercion is idempotent,
+                // so a written result passes through it twice unchanged.
+                return Coerce(await OperationIdExecution.ExecuteAsync(
                     model, conFactory, context.UserContext, operationId, fingerprint,
+                    () => AuthorizeReplay(context, table, action),
                     async scope => Coerce(await DispatchAsync(action, context, table, mutationTransformers, model, conFactory, dialect, scope)),
-                    context.CancellationToken);
+                    context.CancellationToken));
             }
 
             return Coerce(await DispatchAsync(action, context, table, mutationTransformers, model, conFactory, dialect, writeScope: null));
@@ -111,6 +114,33 @@ namespace BifrostQL.Core.Resolvers
             }
             var targetKey = MutationArgumentBinder.SplitProperties(table, input, primaryKey).keyData;
             return OperationFingerprint.Of(table, verb, targetKey, arguments);
+        }
+
+        /// <summary>
+        /// The authorization a replayed write still passes: the policy's table action and column
+        /// write refusals (<see cref="PolicyMutationTransformer.Refuse"/>) for the verb, over the
+        /// columns the request writes. An upsert recorded only its verb, not which branch ran, so
+        /// it must pass both the create and the update check. Row-level checks (row scope, self
+        /// deny, tenant filter) need the row and the chain, which a replay does not run; the
+        /// record's owner key already confines it to the caller and tenant that wrote it.
+        /// </summary>
+        private static void AuthorizeReplay(IBifrostFieldContext context, IDbTable table, MutationAction action)
+        {
+            var verb = action.ToString().ToLowerInvariant();
+            var input = context.GetArgument<Dictionary<string, object?>>(verb) ?? new();
+            var data = action == MutationAction.Insert
+                ? new Dictionary<string, object?>(input, StringComparer.OrdinalIgnoreCase)
+                : MutationArgumentBinder.SplitProperties(table, input, ReadPrimaryKeyValues(context)).data;
+            MutationType[] checks = action switch
+            {
+                MutationAction.Insert => [MutationType.Insert],
+                MutationAction.Update => [MutationType.Update],
+                MutationAction.Delete => [MutationType.Delete],
+                MutationAction.Upsert => [MutationType.Insert, MutationType.Update],
+                _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
+            };
+            foreach (var check in checks)
+                PolicyMutationTransformer.Refuse(table, check, data, context.UserContext)?.ThrowIfDenied();
         }
 
         private async Task<object?> UpsertObject(IBifrostFieldContext context, IDbTable table,

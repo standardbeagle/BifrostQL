@@ -126,6 +126,11 @@ A known id sent with a different table, verb, target key or arguments is refused
 `OPERATION_ID_REUSED` and writes nothing, so a client can tell a reused id from a `CONFLICT` on
 its own data.
 
+A table with `operation-id: required` records a write that carries an id and refuses every write
+without one with `OPERATION_ID_REQUIRED`, writing nothing. The check runs on every write path, so
+`sync`, `save`, `delta`, `updateWhere`, `_batch`, nested and protocol adapter writes cannot write
+the table.
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

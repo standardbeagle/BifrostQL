@@ -219,7 +219,12 @@ An `insert`, `update`, `upsert` or `delete` that carries an id writes one store 
 write's own transaction. The row holds the caller's tenant and user id (each empty when there is
 none), the id, the table, the verb, the key the write addressed (`{}` for a key the database generates), a
 SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
-record, and a write without an id runs exactly as before.
+record. On an `optional` table a write without an id runs exactly as before.
+
+A table that sets `operation-id: required` refuses every write that carries no id with
+`OPERATION_ID_REQUIRED`, and writes nothing. The check runs on every write path, not only
+`/graphql`: `sync`, `save`, `delta`, `updateWhere`, `_batch`, nested writes and protocol adapter
+writes cannot carry an id, so none of them can write such a table.
 
 A retry that carries the same id and the same request (table, verb, target key and arguments)
 answers with the recorded result, generated key included. Nothing else runs: no SQL write, no
@@ -250,6 +255,7 @@ Send one write per request with the header, or omit the header and give each fie
 | `Idempotency-Key` sent more than once | HTTP 400 |
 | A known id with a different table, verb, target key or arguments | `OPERATION_ID_REUSED`, nothing written or replayed |
 | An id on `sync`, `save`, `delta`, `updateWhere` or `_batch` | `OPERATION_ID_UNSUPPORTED`, nothing written |
+| No id on a write to an `operation-id: required` table | `OPERATION_ID_REQUIRED`, nothing written |
 | The header on a table that does not opt in | Ignored |
 
 A table that also sets `approval` cannot opt in, and the model fails to load. Model load also

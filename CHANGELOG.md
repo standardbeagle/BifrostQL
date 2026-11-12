@@ -73,6 +73,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - `OPERATION_ID_REUSED`. A known id sent with a different table, verb, target key or arguments
   is refused with this code and writes nothing, so a client can tell a reused id from a
   `CONFLICT` on its own data.
+- `operation-id: required`. A table with this mode records a write that carries an id and
+  refuses every write without one with `OPERATION_ID_REQUIRED`, writing nothing. The check runs
+  on every write path, so `sync`, `save`, `delta`, `updateWhere`, `_batch`, nested and protocol
+  adapter writes cannot write the table.
 
 ### Changed
 

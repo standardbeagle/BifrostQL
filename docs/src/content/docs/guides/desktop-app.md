@@ -10,8 +10,7 @@ BifrostQL ships a desktop database explorer app built on [Photino.NET](https://w
 The desktop app is not published to NuGet or as a release download yet; build it from source:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm --dir src/BifrostQL.UI/frontend build
+./scripts/build-ui-spa.sh
 dotnet build src/BifrostQL.UI/BifrostQL.UI.csproj
 ```
 
@@ -201,5 +200,7 @@ Database creation streams progress via Server-Sent Events, reporting each stage 
 The desktop app serves static assets from `src/BifrostQL.UI/wwwroot`, but those files are generated Vite output and are not tracked in git. Change the React source under `src/BifrostQL.UI/frontend/src`, then rebuild with:
 
 ```bash
-pnpm --dir src/BifrostQL.UI/frontend build
+./scripts/build-ui-spa.sh
 ```
+
+The script installs the workspace, builds the packages the SPA imports, then the SPA, and skips all of it when no input changed since its last build.

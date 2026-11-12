@@ -86,18 +86,12 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-      - name: Build SPA workspace dependencies
-        # The desktop SPA imports built workspace packages (@standardbeagle/edit-db,
-        # @bifrostql/binary-client and their deps). Build them in topological order
-        # first so their dist/types exist when the SPA's tsc runs.
-        run: pnpm --filter "...@standardbeagle/edit-db" --filter "...@bifrostql/binary-client" build
       - name: Build desktop UI SPA
-        # wwwroot is Vite output and gitignored, so CI must build it: the UI host
-        # tests serve index.html from it, and the .UI csproj copies wwwroot/** to
-        # the Release output during the dotnet build below. Runs before that build.
-        run: pnpm --dir src/BifrostQL.UI/frontend build
+        # wwwroot is Vite output and gitignored, so CI must build it before the
+        # dotnet build: the UI host tests serve it, and the .UI csproj copies
+        # wwwroot/** into bin. The script installs the workspace, builds the
+        # packages the SPA imports, then the SPA (the same script local test runs use).
+        run: ./scripts/build-ui-spa.sh
       - name: Setup .NET 8.0
         uses: actions/setup-dotnet@v6
         with:
@@ -228,12 +222,12 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - name: Install frontend deps
-        run: pnpm install --frozen-lockfile
-      - name: Build SPA workspace dependencies
-        run: pnpm --filter "...@standardbeagle/edit-db" --filter "...@bifrostql/binary-client" build
       - name: Build desktop UI SPA
-        run: pnpm --dir src/BifrostQL.UI/frontend build
+        # wwwroot is Vite output and gitignored, so CI must build it before the
+        # dotnet build: the UI host tests serve it, and the .UI csproj copies
+        # wwwroot/** into bin. The script installs the workspace, builds the
+        # packages the SPA imports, then the SPA (the same script local test runs use).
+        run: ./scripts/build-ui-spa.sh
       - name: Setup .NET 8.0
         uses: actions/setup-dotnet@v6
         with:

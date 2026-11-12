@@ -46,8 +46,10 @@ pnpm --dir docs build
 The Photino desktop app serves files from `src/BifrostQL.UI/wwwroot`, but that directory is Vite output and is not tracked. Make changes in `src/BifrostQL.UI/frontend/src` and rebuild the assets with:
 
 ```bash
-pnpm --dir src/BifrostQL.UI/frontend build
+./scripts/build-ui-spa.sh
 ```
+
+The script also builds the workspace packages the SPA imports, and skips when nothing changed. `scripts/test-epic.sh` runs it before the tests, because `BifrostQL.UI.Tests` serves the built SPA; a bare `dotnet test` does not, and those tests then fail naming the script.
 
 ### Running Tests
 

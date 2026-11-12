@@ -5,7 +5,9 @@ The desktop UI serves static assets from `wwwroot`, but that directory is genera
 Build or refresh those assets from the workspace root with:
 
 ```bash
-pnpm --dir src/BifrostQL.UI/frontend build
+./scripts/build-ui-spa.sh
 ```
+
+It installs the workspace, builds the packages the SPA imports, then the SPA, and skips when nothing changed. The test scripts and CI run it before the dotnet build, because `BifrostQL.UI.Tests` serves the built SPA.
 
 Do not hand-edit files under `wwwroot`; make changes in `frontend/src` and rebuild.

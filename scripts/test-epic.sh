@@ -10,10 +10,14 @@
 # The SQL Server/Postgres/MySQL integration suites run against
 # docker-compose.test.yml, brought up here; BifrostQL.Integration.Test reads
 # their connection strings from local-databases.runsettings.
+#
+# The UI host tests serve the desktop SPA from wwwroot (gitignored Vite output),
+# so scripts/build-ui-spa.sh builds it first; it skips when nothing changed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 docker compose -f docker-compose.test.yml up -d --wait
+./scripts/build-ui-spa.sh
 
 TARGET="${1:-BifrostQL.sln}"
 

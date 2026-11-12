@@ -32,6 +32,9 @@ fi
 # for the VSTest filter grammar, then MSBuild %XX for the property value —
 # a raw comma or quote in a theory name is otherwise parsed as MSBuild syntax
 # and fails the run with MSB4177.
+#
+# The UI host tests serve the desktop SPA, so build it first (skips when current).
+./scripts/build-ui-spa.sh
 filter=$(printf '%s' "$NAME" \
   | sed -e 's/[\\()&|=!~]/\\&/g' -e 's/%/%25/g' -e 's/,/%2C/g' -e 's/"/%22/g' -e 's/;/%3B/g')
 

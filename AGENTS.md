@@ -17,7 +17,7 @@ dotnet run --project src/BifrostQL.Host       # web server
 ./scripts/kill-dev-processes.sh [--kill]      # stray dev processes for this checkout (dry-run default)
 ```
 
-- Both test scripts start `docker-compose.test.yml` (loopback ports 51433/55440/53306, `restart: unless-stopped`). `tests/BifrostQL.Integration.Test/local-databases.runsettings` is the one copy of the `BIFROST_TEST_*` connection strings; a bare `dotnet test` reads it outside CI. An env-gated skip locally means the containers are down.
+- Both test scripts start `docker-compose.test.yml` (loopback ports 51433/55440/53306, `restart: unless-stopped`) and run `scripts/build-ui-spa.sh`, because `BifrostQL.UI.Tests` serves the SPA; a bare `dotnet test` skips both. `tests/BifrostQL.Integration.Test/local-databases.runsettings` is the one copy of the `BIFROST_TEST_*` connection strings; a bare `dotnet test` reads it outside CI. An env-gated skip locally means the containers are down.
 - Epic tier builds net10.0 only. If you touch `src/BifrostQL.Server/`, `src/BifrostQL.Core/` or `src/BifrostQL.Abstractions/` (multi-TFM), run `dotnet build BifrostQL.sln` before finishing: net9+-only BCL APIs pass epic and break release.
 - Tag fuzz tests `[Trait("Category", "Fuzz")]` with pinned `InlineData` seeds.
 - Tests: xUnit + NSubstitute + FluentAssertions; SQL validation via `Microsoft.SqlServer.TransactSql.ScriptDom`.
@@ -25,7 +25,7 @@ dotnet run --project src/BifrostQL.Host       # web server
 
 ## Generated output
 
-- `src/BifrostQL.UI/wwwroot` is Vite output of `src/BifrostQL.UI/frontend`. Never hand-edit; `pnpm --dir src/BifrostQL.UI/frontend build`.
+- `src/BifrostQL.UI/wwwroot` is Vite output of `src/BifrostQL.UI/frontend`. Never hand-edit; `scripts/build-ui-spa.sh` builds it, skipping when inputs are unchanged.
 - `samples/HostedSpa/wwwroot` is committed on purpose (`HostedSpaSmokeTests` serves it, no pnpm step). After changing `samples/HostedSpa/spa/src`, run `pnpm --dir samples/HostedSpa/spa build` and commit the regenerated `wwwroot/`.
 - `bin`, `obj`, `node_modules`, `dist`, coverage and Storybook output are artifacts.
 

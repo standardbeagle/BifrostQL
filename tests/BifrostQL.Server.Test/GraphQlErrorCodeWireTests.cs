@@ -43,7 +43,9 @@ public sealed class GraphQlErrorCodeWireTests : IAsyncLifetime
                 "CREATE TABLE guarded (id INTEGER PRIMARY KEY, body TEXT NOT NULL);" +
                 "CREATE TABLE hooked (id INTEGER PRIMARY KEY, body TEXT NOT NULL);" +
                 "CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL CONSTRAINT tags_name_unique UNIQUE);" +
-                "INSERT INTO tags (id, name) VALUES (1, 'taken');";
+                "CREATE TABLE versioned (id INTEGER PRIMARY KEY, body TEXT NOT NULL, row_version INTEGER NOT NULL);" +
+                "INSERT INTO tags (id, name) VALUES (1, 'taken');" +
+                "INSERT INTO versioned (id, body, row_version) VALUES (1, 'x', 3);";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -53,6 +55,7 @@ public sealed class GraphQlErrorCodeWireTests : IAsyncLifetime
             ["Bifrost:Path"] = "/graphql",
             ["Bifrost:Metadata:0"] = "main.notes { policy-actions: read }",
             ["Bifrost:Metadata:1"] = "main.drafts { approval: enabled; approver-role: manager }",
+            ["Bifrost:Metadata:2"] = "main.versioned { concurrency-token: row_version }",
         }).Build();
 
         _host = await new HostBuilder().ConfigureWebHost(web =>
@@ -86,6 +89,9 @@ public sealed class GraphQlErrorCodeWireTests : IAsyncLifetime
     [InlineData("mutation { guarded(insert: { body: \"x\" }) }", RefusingHostTransformer.Code, RefusingHostTransformer.Message)]
     [InlineData("mutation { guarded_batch(actions: [{ insert: { body: \"x\" } }]) }", RefusingHostTransformer.Code, RefusingHostTransformer.Message)]
     [InlineData("mutation { hooked(insert: { body: \"x\" }) }", RefusingHook.Code, RefusingHook.Message)]
+    [InlineData("mutation { hooked_batch(actions: [{ insert: { body: \"x\" } }]) }", RefusingHook.Code, RefusingHook.Message)]
+    [InlineData("mutation { versioned(update: { id: 1, body: \"y\", row_version: 1 }) }", "CONFLICT",
+        "The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.")]
     [InlineData("mutation { tags(insert: { name: \"taken\" }) }", "CONFLICT", "A conflicting record already exists.")]
     public async Task HostRefusalHookThrowAndUniqueViolation_CarryTheirCode_WithTheSanitizedMessage(
         string mutation, string expectedCode, string expectedMessage)

@@ -27,6 +27,9 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Node 25+ defines its own global localStorage, undefined without --localstorage-file,
+    // and jsdom's window.localStorage is not copied over an existing global.
+    execArgv: ['--no-experimental-webstorage'],
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
     // Parallel jsdom workers on a busy machine can stretch a userEvent-heavy

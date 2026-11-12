@@ -16,6 +16,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
+    // Node 25+ defines its own global localStorage, undefined without --localstorage-file,
+    // and jsdom's window.localStorage is not copied over an existing global.
+    execArgv: ['--no-experimental-webstorage'],
     setupFiles: ['./src/test-setup.ts'],
     coverage: {
       provider: 'v8',

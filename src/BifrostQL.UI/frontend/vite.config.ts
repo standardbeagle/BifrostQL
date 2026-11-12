@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import path from 'node:path';
@@ -60,6 +61,11 @@ export default defineConfig({
         },
       },
     },
+  },
+  test: {
+    // Node 25+ defines its own global localStorage, undefined without --localstorage-file,
+    // and jsdom's window.localStorage is not copied over an existing global.
+    execArgv: ['--no-experimental-webstorage'],
   },
   server: {
     fs: {

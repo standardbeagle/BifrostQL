@@ -212,4 +212,23 @@ public class AppIdentityTests
     {
         Assert.Throws<ArgumentException>(() => new AppIdentity(id: "u", provider: ""));
     }
+
+    [Theory]
+    [InlineData("bifrost:operation-id")]
+    [InlineData("BIFROST:Operation-Id")]
+    public void ProviderClaim_UnderOperationIdSlot_IsStripped(string key)
+    {
+        // Only the HTTP middleware fills the operation-id slot, from the Idempotency-Key
+        // header. A provider claim under that name must not reach the resolver on a front
+        // door (binary WS, frontend middleware) that does not clear the slot itself.
+        var identity = new AppIdentity(
+            id: "user-1",
+            provider: "oidc:test",
+            claims: new Dictionary<string, object?> { [key] = "op-from-claim", ["department"] = "engineering" });
+
+        var context = new IdentityContextMapper().ToUserContext(identity);
+
+        Assert.DoesNotContain(context.Keys, k => string.Equals(k, BifrostQL.Core.Modules.OperationId.OperationIdConfig.UserContextKey, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("engineering", context["department"]);
+    }
 }

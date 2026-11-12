@@ -222,9 +222,12 @@ SHA-256 of the write's arguments and the field's result. A write the database re
 record. On an `optional` table a write without an id runs exactly as before.
 
 A table that sets `operation-id: required` refuses every write that carries no id with
-`OPERATION_ID_REQUIRED`, and writes nothing. The check runs on every write path, not only
-`/graphql`: `sync`, `save`, `delta`, `updateWhere`, `_batch`, nested writes and protocol adapter
-writes cannot carry an id, so none of them can write such a table.
+`OPERATION_ID_REQUIRED`, and writes nothing. The check runs on every write path. Only a
+single-row `insert`, `update`, `upsert` or `delete` on `/graphql` can carry an id, so `sync`,
+`save`, `delta`, `updateWhere`, `_batch`, nested writes, file mutations, custom operations and
+protocol adapter writes cannot write such a table. Model load refuses `required` beside
+`retain`, `ttl`, `deferrable` or an `encrypt` column, because those features' engines write the
+table without an id.
 
 A retry that carries the same id and the same request (table, verb, target key and arguments)
 answers with the recorded result, generated key included. Nothing else runs: no SQL write, no

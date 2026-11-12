@@ -223,11 +223,13 @@ record. On an `optional` table a write without an id runs exactly as before.
 
 A table that sets `operation-id: required` refuses every write that carries no id with
 `OPERATION_ID_REQUIRED`, and writes nothing. The check runs on every write path. Only a
-single-row `insert`, `update`, `upsert` or `delete` on `/graphql` can carry an id, so `sync`,
-`save`, `delta`, `updateWhere`, `_batch`, nested writes, file mutations, custom operations and
-protocol adapter writes cannot write such a table. Model load refuses `required` beside
-`retain`, `ttl`, `deferrable` or an `encrypt` column, because those features' engines write the
-table without an id.
+single-row GraphQL `insert`, `update`, `upsert` or `delete` can carry an id, so `sync`, `save`,
+`delta`, `updateWhere`, `_batch`, nested writes, file mutations, custom operations, LLM chat
+plan writes and protocol adapter writes cannot write such a table. Model load refuses
+`required` beside `retain`, `ttl`, `deferrable`, an `encrypt` column, `chat-conversations` or
+`chat-messages`, because those features' engines write the table without an id. A hidden table
+cannot set `operation-id` at all. Like every metadata key, the mode belongs to one endpoint's
+model: another endpoint over the same database that does not declare it writes as usual.
 
 A retry that carries the same id and the same request (table, verb, target key and arguments)
 answers with the recorded result, generated key included. Nothing else runs: no SQL write, no

@@ -76,9 +76,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - `operation-id: required`. A table with this mode records a write that carries an id and
   refuses every write without one with `OPERATION_ID_REQUIRED`, writing nothing. The check runs
   on every write path, so `sync`, `save`, `delta`, `updateWhere`, `_batch`, nested, file,
-  custom-operation and protocol adapter writes cannot write the table. Model load refuses
-  `required` beside `retain`, `ttl`, `deferrable` or an `encrypt` column, whose engines write
-  without an id.
+  custom-operation, chat plan and protocol adapter writes cannot write the table. Model load
+  refuses `required` beside `retain`, `ttl`, `deferrable`, an `encrypt` column or a chat table,
+  whose engines write without an id, and refuses `operation-id` on a hidden table.
 
 ### Changed
 

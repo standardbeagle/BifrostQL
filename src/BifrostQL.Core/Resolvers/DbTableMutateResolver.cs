@@ -90,14 +90,17 @@ namespace BifrostQL.Core.Resolvers
 
         /// <summary>
         /// The fingerprint a single-row write with an operation id is recorded under: the verb's
-        /// input object, <c>_primaryKey</c> and every module argument the field carries (the
-        /// operation id itself excepted), and the key the write addresses.
+        /// input object, <c>_primaryKey</c> (except on an insert, which ignores it) and every module
+        /// argument the field carries (the operation id itself excepted), and the key the write
+        /// addresses.
         /// </summary>
         private static OperationFingerprint Fingerprint(IBifrostFieldContext context, IDbTable table, MutationAction action)
         {
             var verb = action.ToString().ToLowerInvariant();
             var input = context.GetArgument<Dictionary<string, object?>>(verb) ?? new();
-            var primaryKey = ReadPrimaryKeyValues(context);
+            // An insert never reads _primaryKey, so neither does its fingerprint: a stray one
+            // must not fail the write or change its hash only because an id is present.
+            var primaryKey = action == MutationAction.Insert ? null : ReadPrimaryKeyValues(context);
             var arguments = new Dictionary<string, object?>(StringComparer.Ordinal) { [verb] = input };
             if (primaryKey is not null)
                 arguments["_primaryKey"] = primaryKey;

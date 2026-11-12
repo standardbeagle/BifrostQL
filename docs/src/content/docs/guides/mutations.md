@@ -242,6 +242,11 @@ checked again. A record answers only its owner (tenant and user id), so for a ca
 it answers only the caller that wrote it. Callers with no user id share one owner (see below): one
 of them who repeats another's id and arguments is answered with the other's recorded key or count.
 
+Two requests that carry the same id at the same time commit one effect. The second waits for
+the first to commit, then answers as a retry would: the recorded result for the same request,
+`OPERATION_ID_REUSED` for a different one. If the first rolls back, the second claims the id and
+writes.
+
 Each tenant and user has its own id space: two users may send the same id without colliding.
 Callers with no user id share their tenant's id space, or one shared space when there is no
 tenant either, so an anonymous client should send ids it generates at random.

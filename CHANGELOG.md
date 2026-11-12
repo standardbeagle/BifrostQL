@@ -70,6 +70,9 @@ On `main` after v0.4.28; not yet on NuGet.
   recorded result, generated key included, and runs no SQL write, transformer or hook. The
   retry still passes the table's policy for its verb, so a caller who lost the grant gets
   `ACCESS_DENIED`; an `upsert` retry must pass both the create and the update check.
+- Concurrent operation ids. Two requests with the same id at the same time commit one effect:
+  the second waits for the first to commit and answers as a retry would (the recorded result,
+  or `OPERATION_ID_REUSED` for a different request) instead of a `CONFLICT` on the store.
 - `OPERATION_ID_REUSED`. A known id sent with a different table, verb, target key or arguments
   is refused with this code and writes nothing, so a client can tell a reused id from a
   `CONFLICT` on its own data.

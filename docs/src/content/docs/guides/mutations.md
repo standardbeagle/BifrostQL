@@ -222,12 +222,13 @@ SHA-256 of the write's arguments and the field's result. A write the database re
 record, and a write without an id runs exactly as before.
 
 Each tenant and user has its own id space: two users may send the same id without colliding.
-Callers with no user id and no tenant share one id space, so an anonymous client should send
-ids it generates at random.
+Callers with no user id share their tenant's id space, or one shared space when there is no
+tenant either, so an anonymous client should send ids it generates at random.
 
 The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
 document with two such fields records both under one id, so the second collides with the first.
-Send one write per request with the header, or give each field its own `_operationId`.
+Send one write per request with the header, or omit the header and give each field its own
+`_operationId`. A field whose `_operationId` differs from the header is refused with `INVALID_VALUE`.
 
 | Case | Answer |
 |------|--------|

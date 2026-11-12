@@ -387,7 +387,7 @@ cannot tell one op class from another by its status.
 | Condition | gRPC status | Detail |
 |-----------|-------------|--------|
 | Missing / anonymous / unmapped / oversized credential | `UNAUTHENTICATED` | One fixed message for all — no issuer/user enumeration. |
-| Malformed request, bad operator, over-cap filter/sort/page, bad key value | `INVALID_ARGUMENT` | Message references only the request field; validation faults also carry a `google.rpc.BadRequest` in the `grpc-status-details-bin` trailer. |
+| Malformed request, bad operator, over-cap filter/sort/page token, bad key value | `INVALID_ARGUMENT` | Messages describe the request fault without internal diagnostics. Faults carrying field violations also include a `google.rpc.BadRequest` in the `grpc-status-details-bin` trailer; other request faults have no such trailer. An over-cap `page_size` is clamped rather than rejected. |
 | `Get` on a missing **or** authorization-denied row | `NOT_FOUND` | Byte-identical for both — no existence oracle. |
 | Authorization denial on `List`/`Stream`/writes | `PERMISSION_DENIED` | Generic message; the exception's table/tenant detail never reaches the wire. |
 | Client cancel | `CANCELLED` | |

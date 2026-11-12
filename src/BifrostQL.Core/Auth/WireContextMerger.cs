@@ -53,6 +53,10 @@ public static class WireContextMerger
             // its key is caller-controlled data under an engine-only name.
             if (string.Equals(key, Workflows.WorkflowTriggerHost.SuppressTriggersKey, StringComparison.OrdinalIgnoreCase))
                 continue;
+            // The operation-id slot is set only from the Idempotency-Key header by the HTTP
+            // middleware; a wire entry would record a write under an id the request never carried.
+            if (string.Equals(key, Modules.OperationId.OperationIdConfig.UserContextKey, StringComparison.OrdinalIgnoreCase))
+                continue;
             if (ownedKeys.Contains(key) || securityKeys.Contains(key) ||
                 string.Equals(key, "user", StringComparison.Ordinal))
                 continue;

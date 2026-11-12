@@ -27,7 +27,14 @@ overrides:
   esbuild: ^0.28.1
   fast-uri: ^3.1.9
   form-data: ^4.0.6
+  # GHSA-3g3m-2fjr-6pw4 (glob <=14.0.1) and GHSA-g3hv-75wg-m249 (minimatch
+  # <11.0.1). Storybook's docgen plugin (glob 13, globSync only) and
+  # typescript-eslint (minimatch 10, minimatch() only) still pin the old
+  # majors in their latest releases. glob 7 / minimatch 3 are outside both
+  # ranges and stay as they are.
+  glob@13: ^14.0.2
   js-yaml: ^4.3.2
+  minimatch@10: ^11.0.1
   nanoid: ^3.3.17
   postcss: ^8.5.18
   postcss-selector-parser@6: ^6.1.6

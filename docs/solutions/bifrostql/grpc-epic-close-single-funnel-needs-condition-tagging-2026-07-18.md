@@ -60,16 +60,19 @@ mechanism: a conformance kit that asserts parity facts across op classes,
 not just per-op-class correctness, is what makes the gap visible without a
 human having to think to look for it.
 
-**Residual, tracked non-blocker.** The epic-close security review (attempt 1,
-pass) found one more instance of the same root-cause pattern still present:
-a general authorization-policy write-deny (`TableMutationPipeline.cs:104`)
-also throws a codeless `BifrostExecutionError`, also falls to `INTERNAL`,
-while its read-path equivalent maps to `PERMISSION_DENIED`. Judged
+**Historical residual, tracked non-blocker.** The epic-close security review
+(attempt 1, pass) found one more instance of the same root-cause pattern:
+a general authorization-policy write-deny (`TableMutationPipeline.cs:104`
+in commit `6fbcf06`) also threw a codeless `BifrostExecutionError` and fell to
+`INTERNAL`, while its read-path equivalent mapped to `PERMISSION_DENIED`. Judged
 non-blocking (fires pre-row-lookup, invariant to row existence, reveals only
-the caller's own authorization — not an existence/tenant oracle), but it is
-the same defect shape as 6fbcf06 and the fix is the same: tag it with
+the caller's own authorization — not an existence/tenant oracle), but it was
+the same defect shape as 6fbcf06 and the prescribed fix was the same: tag it with
 `AccessDeniedCode` and add a conformance fact. Left as a recorded follow-up,
-not fixed in this epic.
+not fixed in this epic. The current `TableMutationPipeline` instead calls
+`MutationTransformResult.ThrowIfDenied()` (defined in
+`src/BifrostQL.Core/Modules/IMutationTransformer.cs`), which copies the
+transformer's `ErrorCode` onto the thrown error rather than discarding it.
 
 **Applicability.** Any adapter (or future adapter) that centralizes error
 mapping into one funnel per the OData-doc pattern must, at epic-close, also

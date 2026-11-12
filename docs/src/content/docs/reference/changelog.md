@@ -3,9 +3,74 @@ title: "Changelog"
 description: "User-facing behavior changes, including breaking changes and how to migrate."
 ---
 
-Notable user-facing changes to BifrostQL. Breaking changes list the migration step.
+Notable user-facing changes to BifrostQL. Breaking changes list the migration step. The full
+list, including every fix, is in
+[CHANGELOG.md](https://github.com/standardbeagle/BifrostQL/blob/main/CHANGELOG.md) on GitHub.
+
+Each section is headed by the git tag that shipped it and names its NuGet build. NuGet packages
+are versioned `0.4.<CI run number>`, so a NuGet number does not match its tag: `v0.4.28` is NuGet
+`0.4.740`. When a tag's publish failed, its changes first reached NuGet with the next tag, and the
+section is headed by that tag. The package list is in the
+[README](https://github.com/standardbeagle/BifrostQL#packages), and the full tag-to-build table
+is under "Versions" in CHANGELOG.md.
+
+## Upgrading from an older build
+
+Read every section from the one after your build up to the build you are moving to, and apply each
+migration step on the way. A host on NuGet `0.4.709` (`v0.4.22`) reads every section from 0.4.23 up
+to Unreleased. Releases with no section here (0.4.23, 0.4.26, 0.4.27) made no breaking change;
+their fixes are in the full changelog.
 
 ## Unreleased
+
+On `main` after v0.4.28; not yet on NuGet.
+
+### Breaking — `transition-not-by` needs a `populate: created-by` author column
+
+The author column named by `transition-not-by` used to be any column, so a client could write
+someone else's name into it and then approve its own row. The column must now declare
+`populate: created-by`, or model load fails. The actor and the author now compare case-blind, and
+two uuids compare as values.
+
+**Migration:** add `populate: created-by` to the column `transition-not-by` names.
+
+### Breaking — an insert that leaves out a defaulted tenant foreign key is refused
+
+The tenant foreign-key check treated a foreign-key column left out of an insert as `NULL`, but the
+database writes the column's default, which could reference another tenant's row. An insert that
+leaves out a defaulted or computed foreign-key column is now refused with `ACCESS_DENIED`, unless
+another column of the same key is `NULL`.
+
+**Migration:** send the foreign-key value explicitly.
+
+### Changed — a fault in operation code is `OPERATION_FAILED`
+
+An ordinary exception thrown by a mutation operation's own code (a `FormatException` from bad
+input) used to answer `DATABASE_ERROR`. It now answers `OPERATION_FAILED` with a constant message.
+
+**Migration:** a client that matched `DATABASE_ERROR` for these failures must match
+`OPERATION_FAILED`.
+
+### Breaking — engine-only history APIs
+
+`HistoryErasure.Marker` is now internal; there is no public replacement, because erasure runs only
+from the retention engine. `HistoryErasure.BuildTrailPurgeSql` now takes the resolved history
+`IDbTable` and the `entity` / `entity_id` values. `ApprovalDecisionService`, `DeferredUndoEngine`
+and `DeferredReviewQueue` gain an optional `endpoint` constructor argument, and `IBifrostContext`
+gains `Endpoint`.
+
+**Migration:** recompile code that constructs those services, and pass the new arguments to
+`BuildTrailPurgeSql`.
+
+### Changed — SQL Server binds `DateTime` as `datetime2`
+
+A `DateTime` was bound as `datetime`, which rounds to 1/300 s, so an `_eq` filter or key on a
+`datetime2` column matched no row and writes lost precision. Values now bind as `datetime2`; a
+comparison against a `datetime` or `smalldatetime` column casts the parameter to that type.
+
+## 0.4.28 — 2026-11-09
+
+Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`
 
 ### Breaking — recompile server operations
 

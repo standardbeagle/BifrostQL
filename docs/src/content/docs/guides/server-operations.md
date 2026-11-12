@@ -223,7 +223,7 @@ until it ends.
 | Code | Constant | When |
 |---|---|---|
 | `LOCK_ROW_NOT_FOUND` | `BifrostOperationContext.LockRowNotFoundCode` | The caller's tenant has no row with that key. The message names the table, not the key. The operation may catch it and carry on; on MySQL, finish quickly, because the attempt can leave locks behind. |
-| `ROW_LOCK_UNSUPPORTED` | `BifrostOperationContext.RowLockUnsupportedCode` | The dialect has no row lock. Refused, so the operation never runs unserialized. |
+| `ROW_LOCK_UNSUPPORTED` | `BifrostOperationContext.RowLockUnsupportedCode` | The dialect has no row lock. `LockRowAsync` throws before issuing a lock statement. The error does not fault the transaction, so catching it lets the operation continue without that lock. |
 | `PARTIAL_PRIMARY_KEY` | `MutationArgumentBinder.PartialPrimaryKeyCode` | `key` is anything other than the table's whole primary key, including a table with none. |
 
 **By database.**

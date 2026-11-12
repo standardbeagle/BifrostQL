@@ -219,6 +219,31 @@ Database-managed version columns (SQL Server `rowversion`, PostgreSQL `xmin`) ar
 
 The single-statement batch upsert path (`ON CONFLICT DO UPDATE` / `MERGE`) always writes — it cannot express a "fail if the token moved" WHERE. Rather than silently bypass the guard, BifrostQL **refuses** to write a concurrency-token table through that path (also a `CONFLICT`). A stale token can therefore never degrade into an INSERT that resurrects a row you believed you were updating. Use a plain `update` (or a batch `update` action) for token-guarded tables.
 
+## Constraint violations
+
+A write the database refuses for a constraint answers with a code per kind of constraint and the
+constraint's name in `extensions.constraint`, so a client can tell which rule the write broke:
+
+| SQLSTATE | Constraint | `extensions.code` | Message |
+|----------|------------|-------------------|---------|
+| `23505` | unique or primary key | `CONFLICT` | A conflicting record already exists. |
+| `23P01` | exclusion (`EXCLUDE`) | `EXCLUSION_VIOLATION` | The change conflicts with an existing record. |
+| `23503` | foreign key | `FOREIGN_KEY_VIOLATION` | The change refers to a record that does not exist, or removes one that is still referenced. |
+
+```json
+{ "message": "The change conflicts with an existing record.",
+  "extensions": { "code": "EXCLUSION_VIOLATION", "constraint": "bookings_no_overlap" } }
+```
+
+Name constraints for the rule they hold: the name is the one schema detail that reaches the client.
+The statement and the refused values never do.
+
+The code and the name come from the driver's SQLSTATE and constraint field, which only PostgreSQL
+reports: SQL Server and SQLite give no SQLSTATE, and MySQL gives `23000` for every integrity
+violation. On those dialects a unique violation is `CONFLICT` with no `constraint`, and a
+foreign-key violation stays `DATABASE_ERROR`. Any other integrity
+violation (a `CHECK`, a `NOT NULL`) is `DATABASE_ERROR` on every dialect.
+
 ## Return values
 
 Table mutation fields return scalar values, not row objects:

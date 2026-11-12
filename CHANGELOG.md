@@ -47,6 +47,13 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Fixed
 
+- On PostgreSQL a write refused by an exclusion constraint (SQLSTATE `23P01`) or a foreign key
+  (`23503`) answered `DATABASE_ERROR`, and one refused by a unique constraint (`23505`) answered
+  `CONFLICT`, none of them naming the constraint, so a client could not say which rule the write
+  broke. Exclusion violations now answer `EXCLUSION_VIOLATION` and foreign-key violations
+  `FOREIGN_KEY_VIOLATION`, each with a constant message, and all three carry the constraint's name
+  in `extensions.constraint` (`BifrostExecutionError.ConstraintName`). The statement and the values
+  stay off the wire. SQL Server, SQLite and MySQL report no such SQLSTATE and are unchanged.
 - A before-commit or in-transaction mutation hook was called for every table's writes on the per-row
   path, whatever its `AppliesTo` said, while the bulk-batch and filtered-update paths skipped it for
   the same table. The composites now call a hook only for a table its `AppliesTo` accepts, so both

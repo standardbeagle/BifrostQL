@@ -62,6 +62,16 @@ gains `Endpoint`.
 **Migration:** recompile code that constructs those services, and pass the new arguments to
 `BuildTrailPurgeSql`.
 
+### Changed — PostgreSQL constraint violations name their kind and constraint
+
+An exclusion-constraint violation used to answer `DATABASE_ERROR`; it now answers
+`EXCLUSION_VIOLATION`. A foreign-key violation now answers `FOREIGN_KEY_VIOLATION` instead of
+`DATABASE_ERROR`. A unique violation still answers `CONFLICT`. All three now carry the constraint's
+name in `extensions.constraint`. See [Constraint violations](/BifrostQL/guides/mutations/#constraint-violations).
+
+**Migration:** a client that matched `DATABASE_ERROR` for an exclusion or foreign-key violation
+must match the new codes.
+
 ### Changed — a mutation hook is called only for tables its `AppliesTo` accepts
 
 The per-row write path called every `IBeforeCommitMutationHook` and `IInTransactionMutationHook`

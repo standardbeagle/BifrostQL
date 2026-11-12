@@ -35,6 +35,35 @@ namespace BifrostQL.Core.Resolvers
         public string? ErrorCode { get; init; }
 
         /// <summary>
+        /// The name of the database constraint that refused the write, for a
+        /// <see cref="ConflictCode"/>, <see cref="ExclusionViolationCode"/> or
+        /// <see cref="ForeignKeyViolationCode"/> error whose driver reports it (PostgreSQL does).
+        /// It reaches the client as <c>extensions.constraint</c>: the schema author chose the name,
+        /// and it is the one stable handle a client has to say which rule a write broke. The
+        /// statement and the refused values never travel with it.
+        /// </summary>
+        public string? ConstraintName { get; init; }
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> for a unique or primary-key violation (PostgreSQL SQLSTATE
+        /// <c>23505</c>), and for other conflicts with the stored rows.
+        /// </summary>
+        public const string ConflictCode = "CONFLICT";
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> for an exclusion-constraint violation (PostgreSQL SQLSTATE
+        /// <c>23P01</c>): the row conflicts with a stored one under the constraint's operators,
+        /// such as two overlapping bookings of one room.
+        /// </summary>
+        public const string ExclusionViolationCode = "EXCLUSION_VIOLATION";
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> for a foreign-key violation (SQLSTATE <c>23503</c>): the row
+        /// refers to one that does not exist, or the write removes one still referenced.
+        /// </summary>
+        public const string ForeignKeyViolationCode = "FOREIGN_KEY_VIOLATION";
+
+        /// <summary>
         /// <see cref="ErrorCode"/> marking a read rejected by an authorization
         /// transformer (tenant scoping, row/column policy). It distinguishes a
         /// fail-closed access denial — which callers such as the MCP search tool
@@ -105,6 +134,13 @@ namespace BifrostQL.Core.Resolvers
         /// cause; downstream classification keys off <see cref="ErrorCode"/>.</summary>
         public const string ConflictMessage = "A conflicting record already exists.";
 
+        /// <summary>The safe message for <see cref="ExclusionViolationCode"/>.</summary>
+        public const string ExclusionViolationMessage = "The change conflicts with an existing record.";
+
+        /// <summary>The safe message for <see cref="ForeignKeyViolationCode"/>.</summary>
+        public const string ForeignKeyViolationMessage =
+            "The change refers to a record that does not exist, or removes one that is still referenced.";
+
         /// <summary>The safe message for <see cref="InvalidValueCode"/>. The driver's own text echoes
         /// the value and the column's type, so it is not forwarded.</summary>
         public const string InvalidValueMessage = "A value could not be read as its column's type.";
@@ -141,6 +177,33 @@ namespace BifrostQL.Core.Resolvers
             return false;
         }
 
+        private const string UniqueViolationSqlState = "23505";
+        private const string ExclusionViolationSqlState = "23P01";
+        private const string ForeignKeyViolationSqlState = "23503";
+
+        /// <summary>
+        /// The <see cref="Exception.Data"/> key under which Npgsql's <c>PostgresException</c>
+        /// carries the constraint name. Read from <c>Data</c> because this assembly references
+        /// no driver.
+        /// </summary>
+        private const string DriverConstraintNameKey = "ConstraintName";
+
+        /// <summary>
+        /// The first driver error in the chain whose SQLSTATE is a unique, exclusion or foreign-key
+        /// violation. Read from the SQLSTATE rather than the text, which echoes the values. A driver
+        /// that reports no such SQLSTATE (SQL Server, SQLite, and MySQL's shared <c>23000</c>) is
+        /// left to <see cref="IsUniqueViolation"/>.
+        /// </summary>
+        private static DbException? FindIntegrityViolation(Exception ex)
+        {
+            for (var current = ex; current != null; current = current.InnerException)
+            {
+                if (current is DbException { SqlState: UniqueViolationSqlState or ExclusionViolationSqlState or ForeignKeyViolationSqlState } db)
+                    return db;
+            }
+            return null;
+        }
+
         /// <summary>
         /// True when the exception chain holds a driver error whose SQLSTATE says a value could not
         /// be read as its column's type (class 22, the data exceptions a bad input raises). Read from
@@ -172,12 +235,27 @@ namespace BifrostQL.Core.Resolvers
             if (ex is BifrostExecutionError bifrost)
                 return bifrost;
 
-            // A unique/duplicate-key violation is a client-actionable conflict, not
-            // an infrastructure leak — surface a safe, stable message and code so
-            // callers (e.g. workflow steps mapping to HTTP 409) can classify it
-            // without string-matching raw driver text.
+            // A constraint violation is client-actionable, not an infrastructure leak —
+            // surface a safe, stable message, a code per kind of constraint and the
+            // constraint's name, so callers (e.g. workflow steps mapping to HTTP 409) can
+            // classify it without string-matching raw driver text.
+            if (FindIntegrityViolation(ex) is { } violation)
+            {
+                var (code, safeMessage) = violation.SqlState switch
+                {
+                    UniqueViolationSqlState => (ConflictCode, ConflictMessage),
+                    ExclusionViolationSqlState => (ExclusionViolationCode, ExclusionViolationMessage),
+                    _ => (ForeignKeyViolationCode, ForeignKeyViolationMessage),
+                };
+                return new BifrostExecutionError(safeMessage, ex)
+                {
+                    ErrorCode = code,
+                    ConstraintName = violation.Data[DriverConstraintNameKey] as string,
+                };
+            }
+
             if (IsUniqueViolation(ex))
-                return new BifrostExecutionError(ConflictMessage, ex) { ErrorCode = "CONFLICT" };
+                return new BifrostExecutionError(ConflictMessage, ex) { ErrorCode = ConflictCode };
 
             if (IsInvalidValue(ex))
                 return new BifrostExecutionError(InvalidValueMessage, ex) { ErrorCode = InvalidValueCode };

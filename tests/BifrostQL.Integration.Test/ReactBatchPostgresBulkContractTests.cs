@@ -165,7 +165,7 @@ public sealed class ReactBatchPostgresBulkContractTests : IAsyncLifetime
         var seeded = (await RunAsync(BatchRequest(), PerRow, extraSeed)).Rows;
 
         var perRow = await RunAsync(request, PerRow, extraSeed);
-        perRow.Reply.Should().Contain("DATABASE_ERROR");
+        perRow.Reply.Should().Contain("FOREIGN_KEY_VIOLATION");
         perRow.Rows.Should().Equal(seeded, "the refused document writes nothing");
 
         var fast = await RunAsync(request, FastPath, extraSeed);

@@ -42,13 +42,39 @@ public class FromDatabaseExceptionTests
     }
 
     [Theory]
-    [InlineData("23503")] // foreign_key_violation
+    [InlineData("23514")] // check_violation: a constraint kind the classifier does not name
     [InlineData("42883")] // undefined_function, which is how an uncast uuid = text fails
     [InlineData(null)]
     public void FromDatabaseException_LeavesOtherFailures_AsDatabaseErrors(string? sqlState)
     {
         BifrostExecutionError.FromDatabaseException(new FakeDbException("failed", sqlState))
             .ErrorCode.Should().Be("DATABASE_ERROR");
+    }
+
+    [Theory]
+    [InlineData("23505", BifrostExecutionError.ConflictCode, BifrostExecutionError.ConflictMessage)]
+    [InlineData("23P01", BifrostExecutionError.ExclusionViolationCode, BifrostExecutionError.ExclusionViolationMessage)]
+    [InlineData("23503", BifrostExecutionError.ForeignKeyViolationCode, BifrostExecutionError.ForeignKeyViolationMessage)]
+    public void FromDatabaseException_ConstraintViolation_IsCodedBySqlState_AndNamesTheConstraint(
+        string sqlState, string code, string message)
+    {
+        var driver = new FakeDbException($"{sqlState}: violates \"orders_rule\" Key (email)=(secret@x.io)", sqlState);
+        driver.Data["ConstraintName"] = "orders_rule";
+
+        var error = BifrostExecutionError.FromDatabaseException(new InvalidOperationException("wrapper", driver));
+
+        error.ErrorCode.Should().Be(code);
+        error.Message.Should().Be(message);
+        error.ConstraintName.Should().Be("orders_rule");
+    }
+
+    [Fact]
+    public void FromDatabaseException_ConstraintViolation_WithNoReportedName_HasNoConstraint()
+    {
+        var error = BifrostExecutionError.FromDatabaseException(new FakeDbException("failed", "23P01"));
+
+        error.ErrorCode.Should().Be(BifrostExecutionError.ExclusionViolationCode);
+        error.ConstraintName.Should().BeNull();
     }
 
     [Theory]

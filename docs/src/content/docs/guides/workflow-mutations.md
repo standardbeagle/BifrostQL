@@ -35,7 +35,7 @@ Use a **workflow mutation** when *any* of these is true:
 - The operation spans **more than one row or table** — e.g. *renew membership* updates `organization_memberships.status` **and** inserts a `payments` row **and** writes an `audit_log` entry.
 - It enforces a **business rule** that is not expressible as policy metadata — e.g. *check in attendee* must reject if the event has not started, or if the attendee is already checked in.
 - It must produce an **audit-log entry** describing the operation as a named action (`membership.renewed`), not just a column diff.
-- It needs to be **exposed as one atomic, named operation** to clients, so they cannot perform half of it.
+- It needs to be **exposed as one named operation** to clients. If its steps must commit or roll back together, use a [server operation](/BifrostQL/guides/server-operations/); sidecar executor calls commit separately.
 
 The rule of thumb: **if you would have to explain the operation to a user in a sentence with a verb in it, it is a workflow mutation.** "Renew Carol's membership" is a workflow mutation; "set `organization_memberships.status` to `active`" is raw CRUD.
 

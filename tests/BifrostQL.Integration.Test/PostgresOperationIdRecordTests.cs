@@ -8,7 +8,7 @@ namespace BifrostQL.Integration.Test;
 /// <summary>
 /// A write to a table with <c>operation-id: optional</c> that carries a caller operation id
 /// (the <c>_operationId</c> argument or the <c>Idempotency-Key</c> header) records the id, the
-/// caller's tenant, the table, the verb, the key it addressed, a hash of its arguments and the
+/// caller's tenant and user id, the table, the verb, the key it addressed, a hash of its arguments and the
 /// field's result in the hidden store, on the write's own transaction. A write the database
 /// refuses leaves neither a row nor a record; a write without an id records nothing.
 /// </summary>
@@ -24,7 +24,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
             title TEXT NOT NULL);
         CREATE TABLE operation_ids (
             tenant TEXT NOT NULL,
-            caller TEXT NOT NULL DEFAULT '',
+            caller TEXT NOT NULL,
             operation_id TEXT NOT NULL,
             table_name TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -70,6 +70,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
 
         var record = await SingleRecordAsync("op-insert");
         record["tenant"].Should().BeEmpty();
+        record["caller"].Should().BeEmpty();
         record["table_name"].Should().Be("public.notes");
         record["action"].Should().Be("insert");
         record["target_key"].Should().Be("{}");
@@ -93,6 +94,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
 
         var record = await SingleRecordAsync("op-update");
         record["tenant"].Should().Be("tenant-7");
+        record["caller"].Should().Be("u-1");
         record["action"].Should().Be("update");
         record["target_key"].Should().Be("""{"id":1}""");
         record["result"].Should().Be(reply.RootElement.GetProperty("data").GetProperty("notes").GetRawText());

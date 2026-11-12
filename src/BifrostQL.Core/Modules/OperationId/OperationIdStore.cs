@@ -15,17 +15,18 @@ namespace BifrostQL.Core.Modules.OperationId
     {
         /// <summary>
         /// Inserts the record for <paramref name="operationId"/> before the write runs, with no
-        /// result yet. The store's unique key over (tenant, operation id) makes a second
+        /// result yet. The store's unique key over (tenant, caller, operation id) makes a second
         /// transaction claiming the same id wait for the first and then fail, so one id is one
         /// effect.
         /// </summary>
         public static async Task ClaimAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,
-            string tenant, string operationId, OperationFingerprint fingerprint, CancellationToken cancellationToken)
+            OperationOwner owner, string operationId, OperationFingerprint fingerprint, CancellationToken cancellationToken)
         {
             var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                [Col.Tenant] = tenant,
+                [Col.Tenant] = owner.Tenant,
+                [Col.Caller] = owner.Caller,
                 [Col.OperationId] = operationId,
                 [Col.Table] = fingerprint.Table,
                 [Col.Action] = fingerprint.Action,
@@ -41,11 +42,12 @@ namespace BifrostQL.Core.Modules.OperationId
         /// <summary>Writes the mutation field's result onto the claimed record.</summary>
         public static async Task RecordResultAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,
-            string tenant, string operationId, string resultJson, CancellationToken cancellationToken)
+            OperationOwner owner, string operationId, string resultJson, CancellationToken cancellationToken)
         {
             var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                [Col.Tenant] = tenant,
+                [Col.Tenant] = owner.Tenant,
+                [Col.Caller] = owner.Caller,
                 [Col.OperationId] = operationId,
             };
             var data = new Dictionary<string, object?>(key, StringComparer.OrdinalIgnoreCase)

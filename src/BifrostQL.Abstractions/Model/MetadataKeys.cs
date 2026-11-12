@@ -1209,13 +1209,19 @@ namespace BifrostQL.Core.Model
             /// The store's column contract. ModelConfigValidator checks the configured
             /// <see cref="Store"/> carries every column, so a misconfigured store fails at
             /// model load rather than on the first write that carries an id. The host also
-            /// declares a unique key over (<see cref="Column.Tenant"/>,
-            /// <see cref="Column.OperationId"/>): it is what makes one id one record.
+            /// declares a unique key over (<see cref="Column.Tenant"/>, <see cref="Column.Caller"/>,
+            /// <see cref="Column.OperationId"/>): it is what makes one id one record, and gives
+            /// each caller its own id space.
             /// </summary>
             public static class Column
             {
                 /// <summary>The caller's tenant, empty when the deployment has none. Never null, so the unique key holds.</summary>
                 public const string Tenant = "tenant";
+                /// <summary>
+                /// The caller's user id, empty for a caller with none. Never null, so the unique
+                /// key holds. Callers with no tenant would otherwise share one id space.
+                /// </summary>
+                public const string Caller = "caller";
                 /// <summary>The caller's operation id.</summary>
                 public const string OperationId = "operation_id";
                 /// <summary>The written table, qualified (<c>schema.name</c>).</summary>
@@ -1234,7 +1240,7 @@ namespace BifrostQL.Core.Model
 
             public static readonly IReadOnlyList<string> Columns = new[]
             {
-                Column.Tenant, Column.OperationId, Column.Table, Column.Action,
+                Column.Tenant, Column.Caller, Column.OperationId, Column.Table, Column.Action,
                 Column.TargetKey, Column.InputHash, Column.Result, Column.CreatedAt,
             };
         }

@@ -65,30 +65,35 @@ namespace BifrostQL.Core.Modules.OperationId
             // here is a model that skipped validation: fail closed rather than write unrecorded.
             var store = OperationIdConfig.FindStore(model)
                 ?? throw new BifrostExecutionError("The operation id could not be recorded, so the write did not run.");
-            var tenant = TenantOf(model, userContext);
+            var owner = OwnerOf(model, userContext);
             var dialect = connFactory.Dialect;
 
             return await OperationWriteScope.RunAsync(connFactory, async scope =>
             {
                 await OperationIdStore.ClaimAsync(
-                    store, dialect, scope.Connection, scope.Transaction, tenant, operationId, fingerprint, cancellationToken);
+                    store, dialect, scope.Connection, scope.Transaction, owner, operationId, fingerprint, cancellationToken);
                 var result = await write(scope);
                 await OperationIdStore.RecordResultAsync(
-                    store, dialect, scope.Connection, scope.Transaction, tenant, operationId,
+                    store, dialect, scope.Connection, scope.Transaction, owner, operationId,
                     CanonicalJson.Serialize(result), cancellationToken);
                 return result;
             }, cancellationToken);
         }
 
         /// <summary>
-        /// The caller's tenant as the store keys it: the tenant claim the read and write paths
-        /// scope by (<see cref="TenantFilterTransformer.ResolveTenantContextKey"/>), or empty for
-        /// a caller with none. A claim that is not a single value is refused: recording under a
-        /// guessed tenant would let one tenant's id answer another's.
+        /// Who owns an id as the store keys it: the tenant claim the read and write paths scope
+        /// by (<see cref="TenantFilterTransformer.ResolveTenantContextKey"/>) and the caller's
+        /// user id (<see cref="MetadataKeys.Auth.DefaultUserIdContextKey"/>), each empty when the
+        /// caller has none. Either claim that is not a single value is refused: recording under
+        /// a guessed owner would let one caller's id answer another's.
         /// </summary>
-        internal static string TenantOf(IDbModel model, IDictionary<string, object?> userContext)
+        internal static OperationOwner OwnerOf(IDbModel model, IDictionary<string, object?> userContext)
+            => new(
+                ScalarClaim(userContext, TenantFilterTransformer.ResolveTenantContextKey(model), "tenant"),
+                ScalarClaim(userContext, MetadataKeys.Auth.DefaultUserIdContextKey, "user id"));
+
+        private static string ScalarClaim(IDictionary<string, object?> userContext, string key, string claimName)
         {
-            var key = TenantFilterTransformer.ResolveTenantContextKey(model);
             if (!userContext.TryGetValue(key, out var value) || value is null)
                 return string.Empty;
             return value switch
@@ -96,7 +101,7 @@ namespace BifrostQL.Core.Modules.OperationId
                 string s => s,
                 Guid g => g.ToString("D"),
                 IConvertible c when value is not System.Collections.IEnumerable => c.ToString(CultureInfo.InvariantCulture),
-                _ => throw new BifrostExecutionError("The caller's tenant is not a single value, so the operation id cannot be recorded.")
+                _ => throw new BifrostExecutionError($"The caller's {claimName} is not a single value, so the operation id cannot be recorded.")
                 {
                     ErrorCode = BifrostExecutionError.AccessDeniedCode,
                 },
@@ -106,4 +111,7 @@ namespace BifrostQL.Core.Modules.OperationId
         private static BifrostExecutionError Invalid(string message)
             => new(message) { ErrorCode = BifrostExecutionError.InvalidValueCode };
     }
+
+    /// <summary>The owner an operation id is recorded under: tenant and caller, each empty when absent.</summary>
+    internal readonly record struct OperationOwner(string Tenant, string Caller);
 }

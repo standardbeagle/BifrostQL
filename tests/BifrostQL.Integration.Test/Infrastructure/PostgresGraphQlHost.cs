@@ -5,6 +5,7 @@ using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Ngsql;
 using BifrostQL.Server;
+using BifrostQL.Server.Auth;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -88,6 +89,8 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
                         var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, user.ToString()) };
                         foreach (var role in context.Request.Headers["X-Test-Role"])
                             claims.Add(new Claim(ClaimTypes.Role, role!));
+                        if (context.Request.Headers.TryGetValue("X-Test-Tenant", out var tenant))
+                            claims.Add(new Claim(LocalAuthClaims.Tenant, tenant.ToString()));
                         context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
                     }
                     return next(context);
@@ -113,6 +116,41 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
         }
         using var response = await _client.SendAsync(request);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// Posts <paramref name="query"/> with raw request <paramref name="headers"/> (for example
+    /// <c>X-Test-User</c>, <c>X-Test-Tenant</c>, <c>Idempotency-Key</c>; a repeated name sends
+    /// the header once per value), returning the status and the parsed body.
+    /// </summary>
+    public async Task<(System.Net.HttpStatusCode Status, JsonDocument Body)> SendAsync(
+        string query, params (string Name, string Value)[] headers)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/graphql");
+        request.Content = new StringContent(JsonSerializer.Serialize(new { query }), Encoding.UTF8);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        foreach (var (name, value) in headers)
+            request.Headers.TryAddWithoutValidation(name, value);
+        using var response = await _client.SendAsync(request);
+        return (response.StatusCode, JsonDocument.Parse(await response.Content.ReadAsStringAsync()));
+    }
+
+    /// <summary>Every row <paramref name="sql"/> returns, each column read as text (null stays null).</summary>
+    public async Task<List<Dictionary<string, string?>>> RowsAsync(string sql)
+    {
+        await using var conn = new NpgsqlConnection(ConnectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        var rows = new List<Dictionary<string, string?>>();
+        while (await reader.ReadAsync())
+        {
+            var row = new Dictionary<string, string?>(StringComparer.Ordinal);
+            for (var i = 0; i < reader.FieldCount; i++)
+                row[reader.GetName(i)] = reader.IsDBNull(i) ? null : Convert.ToString(reader.GetValue(i), System.Globalization.CultureInfo.InvariantCulture);
+            rows.Add(row);
+        }
+        return rows;
     }
 
     public async Task<long> CountAsync(string sql)

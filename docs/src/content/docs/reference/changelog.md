@@ -111,8 +111,8 @@ comparison against a `datetime` or `smalldatetime` column casts the parameter to
 ### Added — operation ids record a write under the caller's id
 
 A table with `operation-id: optional` records an `insert`, `update`, `upsert` or `delete` that
-carries `_operationId` or an `Idempotency-Key` header. The record holds the caller's tenant, the
-id, the table, the verb, the target key, an input hash and the result, in the hidden store named
+carries `_operationId` or an `Idempotency-Key` header. The record holds the caller's tenant and
+user id, the id, the table, the verb, the target key, an input hash and the result, in the hidden store named
 by `:root { operation-id-store: <table> }`, written on the write's own transaction. A refused
 write leaves no record, and a write without an id runs as before. See
 [Operation ids](/BifrostQL/guides/mutations/#operation-ids).

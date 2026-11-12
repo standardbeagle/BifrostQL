@@ -189,11 +189,13 @@ and the model names the table the records live in with `operation-id-store`:
 ```
 
 The host creates the store table. It must be `visibility: hidden`, because its rows hold every
-tenant's write results, and it needs these columns and a unique key over `(tenant, operation_id)`:
+tenant's write results, and it needs these columns and a unique key over
+`(tenant, caller, operation_id)`:
 
 ```sql
 CREATE TABLE operation_ids (
     tenant       TEXT        NOT NULL,
+    caller       TEXT        NOT NULL,
     operation_id TEXT        NOT NULL,
     table_name   TEXT        NOT NULL,
     action       TEXT        NOT NULL,
@@ -201,7 +203,7 @@ CREATE TABLE operation_ids (
     input_hash   TEXT        NOT NULL,
     result       TEXT        NULL,
     created_at   TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (tenant, operation_id));
+    PRIMARY KEY (tenant, caller, operation_id));
 ```
 
 The id rides the `_operationId` argument, which only opted-in tables have, or the
@@ -214,10 +216,18 @@ mutation {
 ```
 
 An `insert`, `update`, `upsert` or `delete` that carries an id writes one store row on the
-write's own transaction. The row holds the caller's tenant (empty when there is none), the id,
-the table, the verb, the key the write addressed (`{}` for a key the database generates), a
+write's own transaction. The row holds the caller's tenant and user id (each empty when there is
+none), the id, the table, the verb, the key the write addressed (`{}` for a key the database generates), a
 SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
 record, and a write without an id runs exactly as before.
+
+Each tenant and user has its own id space: two users may send the same id without colliding.
+Callers with no user id and no tenant share one id space, so an anonymous client should send
+ids it generates at random.
+
+The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
+document with two such fields records both under one id, so the second collides with the first.
+Send one write per request with the header, or give each field its own `_operationId`.
 
 | Case | Answer |
 |------|--------|

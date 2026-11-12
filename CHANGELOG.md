@@ -60,8 +60,8 @@ On `main` after v0.4.28; not yet on NuGet.
 ### Added
 
 - Operation ids. A table with `operation-id: optional` records an `insert`, `update`, `upsert`
-  or `delete` that carries `_operationId` or an `Idempotency-Key` header: tenant, id, table,
-  verb, target key, input hash and result go into the hidden store named by
+  or `delete` that carries `_operationId` or an `Idempotency-Key` header: tenant, caller, id,
+  table, verb, target key, input hash and result go into the hidden store named by
   `:root { operation-id-store: <table> }`, on the write's own transaction. A refused write
   leaves no record; a write without an id runs as before. An id on `sync`, `save`, `delta`,
   `updateWhere` or `_batch` is refused with `OPERATION_ID_UNSUPPORTED`. Model load checks the

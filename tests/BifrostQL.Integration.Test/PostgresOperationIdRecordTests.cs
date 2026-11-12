@@ -252,6 +252,35 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(0);
     }
 
+    [SkippableFact]
+    public async Task StoreConflictThatOutlivesTheRetry_NamesNoStoreConstraint()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+
+        // An operator's extra unique index makes one id per store, so a second caller's claim
+        // conflicts on every attempt, the retry included, while no record answers it.
+        await using (var conn = new Npgsql.NpgsqlConnection(_host!.ConnectionString))
+        {
+            await conn.OpenAsync();
+            await using var cmd = new Npgsql.NpgsqlCommand(
+                "CREATE UNIQUE INDEX operation_ids_one_per_id ON operation_ids (operation_id)", conn);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var (_, first) = await _host.SendAsync(
+            """mutation { notes(insert: { title: "from u-1" }, _operationId: "op-one") }""", ("X-Test-User", "u-1"));
+        PostgresGraphQlHost.AssertNoErrors(first);
+
+        var (_, second) = await _host.SendAsync(
+            """mutation { notes(insert: { title: "from u-2" }, _operationId: "op-one") }""", ("X-Test-User", "u-2"));
+
+        var error = PostgresGraphQlHost.FirstError(second);
+        error.GetProperty("extensions").GetProperty("code").GetString().Should().Be("CONFLICT", second.RootElement.GetRawText());
+        error.GetProperty("message").GetString().Should().Be("A conflicting record already exists.");
+        error.GetProperty("extensions").TryGetProperty("constraint", out _).Should().BeFalse(second.RootElement.GetRawText());
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'from u-2'")).Should().Be(0);
+        (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
+    }
+
     private async Task<Dictionary<string, string?>> SingleRecordAsync(string operationId)
     {
         var rows = await _host!.RowsAsync("SELECT * FROM operation_ids");

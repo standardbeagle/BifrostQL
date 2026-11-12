@@ -24,6 +24,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
             title TEXT NOT NULL);
         CREATE TABLE operation_ids (
             tenant TEXT NOT NULL,
+            caller TEXT NOT NULL DEFAULT '',
             operation_id TEXT NOT NULL,
             table_name TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -31,7 +32,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
             input_hash TEXT NOT NULL,
             result TEXT NULL,
             created_at TIMESTAMPTZ NOT NULL,
-            PRIMARY KEY (tenant, operation_id));
+            PRIMARY KEY (tenant, caller, operation_id));
         INSERT INTO notes (title) VALUES ('first'), ('second'), ('third');
         """;
 
@@ -142,6 +143,26 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'pk ignored'")).Should().Be(1);
         var record = await SingleRecordAsync("op-insert-pk");
         record["target_key"].Should().Be("{}");
+    }
+
+    [SkippableFact]
+    public async Task TwoCallersWithoutATenant_KeepSeparateIdSpaces()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+
+        // Neither caller has a tenant, so the tenant alone cannot separate them: one user's
+        // id must not block (or, once replay lands, answer) another user's write.
+        var (_, first) = await _host!.SendAsync(
+            """mutation { notes(insert: { title: "from u-1" }, _operationId: "op-shared") }""", ("X-Test-User", "u-1"));
+        var (_, second) = await _host.SendAsync(
+            """mutation { notes(insert: { title: "from u-2" }, _operationId: "op-shared") }""", ("X-Test-User", "u-2"));
+
+        PostgresGraphQlHost.AssertNoErrors(first);
+        PostgresGraphQlHost.AssertNoErrors(second);
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title IN ('from u-1', 'from u-2')")).Should().Be(2);
+        var callers = (await _host.RowsAsync("SELECT caller FROM operation_ids WHERE operation_id = 'op-shared' ORDER BY caller"))
+            .Select(r => r["caller"]).ToArray();
+        callers.Should().Equal("u-1", "u-2");
     }
 
     [SkippableFact]

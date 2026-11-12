@@ -236,6 +236,7 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
 
         FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
         retry.RootElement.GetProperty("data").GetProperty("items").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM items")).Should().Be(1);
     }
 
     [Fact]

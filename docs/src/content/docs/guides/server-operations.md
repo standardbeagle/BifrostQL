@@ -80,8 +80,9 @@ A bracket uses the same grammar as `policy-actions` and the same rule as the
 or permissions, or the [admin role](/BifrostQL/guides/authorization/#the-admin-role) the model names. An entry without a bracket admits every caller the endpoint
 admits. A malformed entry or an empty bracket (`name[]`) fails model load.
 
-Both checks run before `ExecuteAsync`. A refused caller gets
-`Access denied: the caller may not run operation '…'`, and the operation's code never runs.
+Both checks run before `ExecuteAsync`. A grant denial returns
+`Access denied: the caller may not run operation '…'.`; a missing required tenant returns
+`Access denied: operation '…' requires a tenant context.` In either case, the operation's code never runs.
 
 ## What the context gives you
 

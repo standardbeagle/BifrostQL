@@ -271,13 +271,14 @@ logs and never reaches the client. Throw a `BifrostExecutionError` to give the c
   in one change set for the whole operation, so a reviewer approves or undoes the operation as a
   unit.
 - If a statement runs and fails, read or write, the operation fails even when its code catches the
-  exception. So does a write refused by policy or by the validator, because both run inside the
-  write. That covers `INVALID_VALUE` and every other database error: later statements are refused,
+  exception. So does a write refused by policy, by the validator, or because its table requires an
+  operation id (`OPERATION_ID_REQUIRED`): these checks run inside the write, even before its SQL.
+  That covers `INVALID_VALUE` and every other database error: later statements are refused,
   the transaction rolls back, the client gets the first failure's code, and no observer runs. This
   holds on every database, including those that could technically carry on. To treat a value as
   optional, check it before the statement rather than catching the failure.
-- A refusal that comes before any statement runs is not a failure. An operation can catch it and
-  continue, and its writes commit:
+- The following refusals leave the transaction usable. An operation can catch them and continue,
+  and its writes commit:
   - from `LockRowAsync`, `LOCK_ROW_NOT_FOUND` and `PARTIAL_PRIMARY_KEY`;
   - a read refused before it runs: a column the caller may not read, an unknown column, or
     `LessThan(null)`, which is `INVALID_VALUE` here without ending the operation;

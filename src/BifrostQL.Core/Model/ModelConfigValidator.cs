@@ -756,17 +756,6 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Validates operation-id configuration through the runtime's own parse
-        /// (<see cref="OperationIdConfig"/>): each table's mode, and, when any table opts in, a
-        /// store that exists, is hidden (it holds every tenant's results) and carries the store
-        /// columns. A table that also requires approval is refused: its pending write ends in an
-        /// error that would roll the pending row back with the operation record. A
-        /// <see cref="OperationIdMode.Required"/> table is refused beside a feature whose engine
-        /// writes it through the pipeline with no operation id (retention purge, deferred undo,
-        /// the key-rotation sweep): every such write would be refused. Hidden tables are parsed
-        /// too, because the write-path guard parses every table it writes.
-        /// </summary>
-        /// <summary>
         /// The keys on <paramref name="table"/> whose engine writes the table with no operation id,
         /// each asked through the feature's runtime parse. A malformed config yields nothing here;
         /// its own validation reports it.
@@ -789,12 +778,39 @@ namespace BifrostQL.Core.Model
 
             if (table.Columns.Any(Modules.Crypto.CryptoReEncryptionSweep.IsEncrypted))
                 yield return MetadataKeys.Crypto.Encrypt;
+
+            var chatKind = ChatTableKind.None;
+            try { chatKind = ChatConfig.FromTable(table).Kind; }
+            catch (InvalidOperationException) { } // Reported by ValidateChat.
+            if (chatKind == ChatTableKind.Conversations)
+                yield return MetadataKeys.Chat.Conversations;
+            if (chatKind == ChatTableKind.Messages)
+                yield return MetadataKeys.Chat.Messages;
         }
 
+        /// <summary>
+        /// Validates operation-id configuration through the runtime's own parse
+        /// (<see cref="OperationIdConfig"/>): each table's mode, and, when any table opts in, a
+        /// store that exists, is hidden (it holds every tenant's results) and carries the store
+        /// columns. A table that also requires approval is refused: its pending write ends in an
+        /// error that would roll the pending row back with the operation record. A
+        /// <see cref="OperationIdMode.Required"/> table is refused beside a feature whose engine
+        /// writes it through the pipeline with no operation id (retention purge, deferred undo,
+        /// the key-rotation sweep, the chat store): every such write would be refused. A hidden
+        /// table cannot set the mode at all: no client can address it, so no write to it could
+        /// ever carry an id, and its engine writes bypass the guard.
+        /// </summary>
         private static void ValidateOperationIdStore(IDbModel model, List<string> errors)
         {
             var optedIn = new List<IDbTable>();
-            foreach (var table in model.Tables.Concat(model.HiddenTables))
+            foreach (var table in model.HiddenTables)
+            {
+                if (table.GetMetadataValue(MetadataKeys.OperationId.Mode) is not null)
+                    errors.Add(
+                        $"  {table.TableSchema}.{table.DbName} [{MetadataKeys.OperationId.Mode}]: a hidden table " +
+                        "cannot record operation ids; no client write can reach it.");
+            }
+            foreach (var table in model.Tables)
             {
                 OperationIdMode mode;
                 try { mode = OperationIdConfig.ModeOf(table); }

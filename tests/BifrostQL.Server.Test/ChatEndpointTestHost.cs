@@ -288,19 +288,25 @@ namespace BifrostQL.Server.Test
             throw exception;
         }
 
-        /// <summary>Streams one delta, then hangs until cancelled; signals the observed cancellation.</summary>
+        /// <summary>
+        /// Streams one delta, then hangs until the server stops the stream; signals once it has.
+        /// The hang never ends by itself, so the signal means the server ended the provider's
+        /// stream: either the hang observed the cancellation, or the server disposed the stream at
+        /// the delta because its flush of that delta saw the disconnect first. The delta is visible
+        /// to the client before that flush, so a client that reads it and disconnects can win the
+        /// race, and the stream is then disposed at the <c>yield</c> without resuming.
+        /// </summary>
         public static async IAsyncEnumerable<ChatCompletionEvent> DeltaThenHang(
             string delta, TaskCompletionSource cancelled, [EnumeratorCancellation] CancellationToken ct = default)
         {
-            yield return new ChatCompletionDelta(delta);
             try
             {
+                yield return new ChatCompletionDelta(delta);
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             }
-            catch (OperationCanceledException)
+            finally
             {
                 cancelled.TrySetResult();
-                throw;
             }
         }
 

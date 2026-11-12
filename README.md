@@ -128,7 +128,7 @@ The libraries target net8.0, net9.0 and net10.0.
 
 Cross-cutting concerns handled via metadata configuration. No custom code required for common patterns.
 
-**Tenant Isolation** -- Automatic WHERE clause injection on every read and write, keyed to the authenticated user's tenant ID. Queries physically cannot return another tenant's data.
+**Tenant Isolation** -- For tables configured with `tenant-filter`, the query pipeline adds a tenant predicate from the authenticated user's context. The mutation pipeline scopes updates and deletes to that tenant and pins the tenant column on inserts and updates.
 
 ```
 "dbo.orders { tenant-filter: tenant_id }"

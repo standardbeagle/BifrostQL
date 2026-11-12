@@ -84,7 +84,7 @@ The new-front-door checklist is in `.claude/rules/protocol-adapter-security.md`.
 | `GqlObjectQuery` (query tree → SQL) | `QueryModel/GqlObjectQuery.cs` |
 | `ISqlDialect` | `QueryModel/ISqlDialect.cs` |
 | `ResolverBase` | `Resolvers/ResolverBase.cs` |
-| `MetadataKeys`, `StringNormalizer` | `Model/MetadataKeys.cs`, `Utils/StringNormalizer.cs` |
+| `MetadataKeys`, `StringNormalizer` | `src/BifrostQL.Abstractions/Model/MetadataKeys.cs`, `src/BifrostQL.Core/Utils/StringNormalizer.cs` |
 | `AppMetadataModel` (client presentation overlay, never merged into schema metadata) | `AppMetadata/` |
 | `IProtocolAdapter` (`AddProtocolAdapter<T>`), `ProtocolSessionHost` | `BifrostQL.Server/` |
 | `BifrostMcpAdapter`: `McpAuthOptions.Mode` defaults to `FailClosed`, so snippets must declare a mode | `BifrostQL.Mcp/` |

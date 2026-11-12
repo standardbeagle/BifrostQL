@@ -92,6 +92,18 @@ public sealed class OrderTimelineHook : IInTransactionMutationHook
 
 **A throw rolls the write back.** The hook composite does not catch, so the exception leaves the transaction scope and the pipeline rolls back the `INSERT` together with anything the hook already wrote. Throw `BifrostExecutionError` to choose the message; any other exception type is wrapped as a database error.
 
+**Set `ErrorCode` to give the refusal a code.** A `BifrostExecutionError` thrown by a hook, or a
+transformer result carrying `Errors` and `ErrorCode`, reaches a `/graphql` client with that code
+in `errors[].extensions.code` and the message unchanged, on single-row writes and `_batch` alike.
+A client branches on the code instead of matching message text:
+
+```json
+{ "errors": [ { "message": "The booking was refused.",
+                "extensions": { "code": "BOOKING_REFUSED" } } ] }
+```
+
+An error without a code answers `BIFROST_EXECUTION_ERROR`.
+
 ### Registration
 
 Register hooks as DI services. The pipeline resolves the composites `BeforeCommitMutationHooks` and `InTransactionMutationHooks`, which `AddBifrostQL` registers as **singletons** built from every registered `IBeforeCommitMutationHook` / `IInTransactionMutationHook`. Register yours as a singleton too, so the singleton composite does not capture a scoped instance:

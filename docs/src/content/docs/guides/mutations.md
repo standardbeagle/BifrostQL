@@ -254,7 +254,7 @@ If nobody else has written the row, the token still matches, the row updates, an
 
 ### The conflict shape
 
-A stale-token write does not silently no-op and does not surface a generic error. It fails with a stable, branchable shape: a `BifrostExecutionError` whose **`ErrorCode` is `CONFLICT`**. Detect it and prompt the user to reload and retry:
+A stale-token write does not silently no-op and does not surface a generic error. It fails with a stable, branchable shape: a `BifrostExecutionError` whose **`ErrorCode` is `CONFLICT`**, which a GraphQL client reads as `errors[].extensions.code`. Detect it and prompt the user to reload and retry:
 
 > The concurrency token no longer matches — the row was modified or removed since it was read. Reload and retry.
 

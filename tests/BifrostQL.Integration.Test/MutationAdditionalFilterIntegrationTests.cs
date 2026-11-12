@@ -46,6 +46,7 @@ public sealed class MutationAdditionalFilterIntegrationTests : IAsyncLifetime
     // test fixture; here we set it post-load on the real loaded model.
     private static readonly string[] PolicyMetadata =
     {
+        ":root { policy-admin-role: admin }",
         "main.Orders { policy-actions: read,update,delete }",
     };
 

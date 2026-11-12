@@ -24,9 +24,7 @@ public sealed class RowCapabilityProvider : IComputedColumnProvider
 
     private static readonly RowCapabilities Denied = new(false, false);
 
-    private readonly PolicyEvaluator _evaluator;
-
-    public RowCapabilityProvider(string? adminRole = null) => _evaluator = new PolicyEvaluator(adminRole);
+    private readonly PolicyEvaluator _evaluator = new();
 
     public string Name => ProviderName;
 
@@ -82,7 +80,7 @@ public sealed class RowCapabilityProvider : IComputedColumnProvider
 
     private bool WithinScope(ComputedColumnContext context, TablePolicy policy, RowScopeTerm scope, AppIdentity identity)
     {
-        if (_evaluator.IsAdmin(identity) || identity.Grants.Any(policy.RowScopeExemptGrants.Contains))
+        if (_evaluator.IsAdmin(policy, identity) || identity.Grants.Any(policy.RowScopeExemptGrants.Contains))
             return true;
         if (policy.RowScopeRoles.Count > 0 && !identity.Grants.Any(policy.RowScopeRoles.Contains))
             return true;

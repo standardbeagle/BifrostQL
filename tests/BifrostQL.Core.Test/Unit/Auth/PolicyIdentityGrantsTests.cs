@@ -37,7 +37,10 @@ public sealed class PolicyIdentityGrantsTests
         {
             [MetadataKeys.Auth.DefaultPermissionsContextKey] = new[] { "admin" },
         });
-        var policy = new TablePolicy(rowScopeExpression: "tenant_id = {tenant_id}", rowScopeRoles: new[] { "member" });
+        var policy = new TablePolicy(rowScopeExpression: "tenant_id = {tenant_id}", rowScopeRoles: new[] { "member" })
+        {
+            AdminRole = "admin",
+        };
 
         member.Grants.Should().Contain("member");
         member.Grants.Should().NotContain("admin");

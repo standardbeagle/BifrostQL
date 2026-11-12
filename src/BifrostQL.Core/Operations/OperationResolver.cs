@@ -17,7 +17,7 @@ internal sealed class OperationResolver : IBifrostResolver
 {
     private static readonly IMutationTransformers NoTransformers = new MutationTransformersWrap();
     private readonly ExposedOperation _exposed;
-    private readonly PolicyEvaluator _policy = new();
+    private static readonly PolicyEvaluator Policy = new();
 
     public OperationResolver(ExposedOperation exposed) => _exposed = exposed;
 
@@ -46,7 +46,7 @@ internal sealed class OperationResolver : IBifrostResolver
     {
         var identity = PolicyIdentity.FromUserContext(
             request.UserContext, TenantFilterTransformer.ResolveTenantContextKey(request.Model));
-        if (!_policy.HoldsAnyGrant(identity, _exposed.Grants))
+        if (!Policy.HoldsAnyGrant(identity, _exposed.Grants, PolicyEvaluator.AdminRoleOf(request.Model)))
             throw new BifrostExecutionError(
                 $"Access denied: the caller may not run operation '{_exposed.Operation.Name}'.")
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };

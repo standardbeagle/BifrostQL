@@ -34,8 +34,8 @@ builder.Services.AddBifrostQL(options =>
 // roles (from the app_users.roles column) and the permissions resolved here —
 // `_grants` reports exactly that set.
 //
-// The seeded first-admin's role is the engine's admin role
-// (MetadataKeys.Policy.DefaultAdminRole, "admin"): PolicyEvaluator already lets it
+// The seeded first-admin's role is the admin role appsettings.json names
+// (`:root { policy-admin-role: admin }`): PolicyEvaluator already lets it
 // through every grant, column and row-scope question, so the mapping below does not
 // widen what an admin can DO. It makes `_grants` say so — a client shaping its
 // controls from the discovery query would otherwise read the admin as holding none
@@ -45,7 +45,7 @@ var rolePermissions = new Dictionary<string, string[]>(StringComparer.OrdinalIgn
     ["officer"] = new[] { "members.manage", "events.manage" },
     ["finance"] = new[] { "dues.manage" },
 };
-rolePermissions[MetadataKeys.Policy.DefaultAdminRole] = rolePermissions.Values
+rolePermissions[SampleDatabase.FirstAdminRole] = rolePermissions.Values
     .SelectMany(permissions => permissions)
     .Distinct(StringComparer.OrdinalIgnoreCase)
     .ToArray();

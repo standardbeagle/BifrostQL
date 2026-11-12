@@ -167,7 +167,7 @@ what the column exists for. A caller with no tenant claim gets **zero rows**, an
 **History images obey the tracked table's read policy.** A recorded value of an
 [encrypted column](/concepts/field-encryption) is stored in the images as ciphertext.
 The trail read field passes it through the same decrypt/mask projection as a base-table
-read: a caller holding the column's `unmask-role` (or admin) sees plaintext inside
+read: a caller holding the column's `unmask-role` (or the model's `policy-admin-role`) sees plaintext inside
 `before`/`after`; every other caller sees the column's configured mask; raw ciphertext
 is never returned, so the trail cannot serve as a decryption oracle. Read-gated
 columns are masked to `null` or omitted when their effective `deny-mode` is

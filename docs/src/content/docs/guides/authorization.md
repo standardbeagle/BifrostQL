@@ -18,13 +18,31 @@ from schema descriptions. Selector rules count as declarations, so a rule such
 as `public.*|has(account_id) { policy-actions: read,create,update,delete }` can establish the
 common default and individual tables can narrow it.
 
-An administrator bypasses policy *grants* — never an absent allow-list entry (see "The
-allow-list is a product surface" below). The admin role is not metadata — it is a constructor
-argument, `PolicyEvaluator(string? adminRole)`, carried by the transformers that enforce policy
-(`PolicyFilterTransformer` on reads, `PolicyMutationTransformer` on writes).
-`BifrostServiceCollectionExtensions.Transformers.cs` registers both with no argument, so the
-role is `admin` unless your application registers its own instances. To leave no escape hatch,
-register them with a role nobody holds.
+## The admin role
+
+No role bypasses policy unless the model names one:
+
+```
+:root { policy-admin-role: ops }
+```
+
+A caller holding the named role bypasses policy *grants* — never an absent allow-list entry
+(see "The allow-list is a product surface" below). Without the key, a claim spelled `admin`
+is an ordinary grant: identity providers issue that word for their own administrators, and
+it opens nothing your metadata does not grant it.
+
+The load stamps the root value onto every table, so each seam that reads a table's policy
+(reads, writes, `_dbSchema`, `_can`, state-machine role checks, the MCP, LDAP, gRPC, S3 and
+pgwire catalogues) and the two that read the model's (server operations, encrypted-column
+unmasking) all answer from the one declaration. The key is model-wide: a table that declares
+a different `policy-admin-role` fails model load.
+
+The engine's own bookkeeping writes (the state-transition audit row) pass policy grants as
+the engine, through an in-process marker no request can supply, not through any role.
+
+Through NuGet 0.4.740 the role was a hard-coded `admin` at every seam, and constructor
+arguments on the policy transformers changed only the two seams that read them. Upgrading a
+model that relied on `admin` bypassing policy: add `:root { policy-admin-role: admin }`.
 
 ## Grants
 
@@ -52,7 +70,8 @@ the table quotes those lines, and a test holds the two in step.
 The permissions those lines name come from the grant resolver: `Program.cs`
 registers `AddBifrostGrantResolver` with a role-to-permission catalogue (`officer`
 resolves to `members.manage` and `events.manage`, `finance` to `dues.manage`, and
-`admin` — the evaluator's admin role — to every permission the catalogue names), the
+`admin` — the role the sample's `:root { policy-admin-role: admin }` names — to every
+permission the catalogue names), the
 place a production app queries its `role_permissions` table instead. Grants are the
 union of the login's roles and those permissions, and `_grants` reports that set.
 The admin mapping changes nothing the evaluator decides; it keeps `_grants` honest
@@ -105,9 +124,7 @@ to admins too, with the same generic denial. If admins should delete from
 `main.projects` above, declare the action: `delete[projects.manage,invoices.manage]` —
 the admin bypass then covers the bracket; do not rely on it for an unlisted action. The one carve-out is an empty-actions policy
 (column denies only, or `policy-default: deny` with no further metadata): there the
-historical admin bypass is unchanged, so the internal admin probes keep working. Name a
-different role when you register the evaluator if `admin` means something else in your
-model.
+historical admin bypass is unchanged, so the internal admin probes keep working.
 
 ## Scope rows to the caller
 

@@ -147,7 +147,7 @@ plaintext at any point in the rollout.
 ## What a denied role sees through a rotation
 
 Rotation changes nothing about masking or the no-oracle guarantees. A caller
-**without** the column's `unmask-role` (and not the admin role):
+**without** the column's `unmask-role` (and not the model's `policy-admin-role`):
 
 - Sees the **masked** value (`redact`, `last4`, or `email`) — never the plaintext
   and never the raw ciphertext, before, during, or after rotation.

@@ -98,6 +98,7 @@ namespace BifrostQL.Mcp.Test
                             e.Path = EndpointPath;
                             e.Metadata = new[]
                             {
+                                ":root { policy-admin-role: admin }",
                                  "*.ledger_entries { policy-actions: read[ledger.read], create }",
                                 "*.staff { policy-actions: read; policy-read-deny: ssn }",
                             };

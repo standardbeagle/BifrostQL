@@ -21,7 +21,7 @@ public sealed class SelfDenyTests
     private const string ManageGrant = "profiles.manage";
 
     private static IDbModel Model(bool withRowScope = false, bool withWriteRequires = false, bool explicitSelfColumn = true) =>
-        DbModelTestFixture.Create().WithTable("users", t =>
+        DbModelTestFixture.Create().WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin").WithTable("users", t =>
         {
             t.WithSchema("public").WithPrimaryKey("id")
                 .WithColumn("user_id", "int")

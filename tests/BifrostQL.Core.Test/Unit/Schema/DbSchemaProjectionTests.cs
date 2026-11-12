@@ -34,6 +34,7 @@ public sealed class DbSchemaProjectionTests
     /// cannot see the table at all while an admin bypasses the grant.
     /// </summary>
     private static IDbModel Model() => DbModelTestFixture.Create()
+        .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
         .WithTable("members", t => t
             .WithSchema("dbo")
             .WithPrimaryKey("id")
@@ -111,7 +112,7 @@ public sealed class DbSchemaProjectionTests
         member.EnumerateArray().Select(t => t.GetProperty("graphQlName").GetString())
             .Should().NotContain("ledger", "read sits behind the boss grant");
 
-        var admin = Resolve(Model(), Ctx("root", new[] { MetadataKeys.Policy.DefaultAdminRole }));
+        var admin = Resolve(Model(), Ctx("root", new[] { "admin" }));
         admin.EnumerateArray().Select(t => t.GetProperty("graphQlName").GetString())
             .Should().Contain("ledger", "the admin bypass covers the grant requirement");
     }
@@ -138,6 +139,7 @@ public sealed class DbSchemaProjectionTests
     public void A_table_with_no_visible_columns_still_resolves()
     {
         var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
             .WithTable("empty_view", t => t
                 .WithSchema("dbo")
                 .WithColumn("secret")
@@ -196,7 +198,7 @@ public sealed class DbSchemaProjectionTests
     public void The_admin_body_keeps_the_raw_metadata()
     {
         var members = Table(
-            Resolve(Model(), Ctx("root", new[] { MetadataKeys.Policy.DefaultAdminRole })), "members");
+            Resolve(Model(), Ctx("root", new[] { "admin" })), "members");
         // The wire shape is [dbMetadataSchema!]!; raw JSON serialization of the
         // dictionary projects it as an object — the keys are what matters here.
         members.GetProperty("metadata").EnumerateObject()

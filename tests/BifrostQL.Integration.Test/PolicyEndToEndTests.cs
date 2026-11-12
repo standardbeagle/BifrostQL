@@ -57,6 +57,7 @@ public sealed class PolicyEndToEndTests : IAsyncLifetime
     // same seam DbModel.ApplyAdditionalMetadata uses.
     private static readonly string[] PolicyMetadata =
     {
+        ":root { policy-admin-role: admin }",
         "main.Documents { policy-read-deny: body }",
         // D7 (b4dba388): the admin-only delete is declared with a bracket instead
         // of relying on the bypass, which no longer resurrects unlisted actions.

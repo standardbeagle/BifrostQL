@@ -78,13 +78,13 @@ public sealed class PolicyDefaultDenyLoaderPathTests
     private static AppIdentity NonAdmin() => new("u", "test");
 
     private static AppIdentity Admin() =>
-        new("u", "test", roles: new[] { MetadataKeys.Policy.DefaultAdminRole });
+        new("u", "test", roles: new[] { "admin" });
 
     [Fact]
     public async Task Loader_RootPolicyDefaultDeny_DeniesUndeclaredTableForNonAdmin()
     {
         await using var loaded = await PolicyDefaultDenyModel.LoadAsync(
-            ":root { policy-default: deny }");
+            ":root { policy-default: deny; policy-admin-role: admin }");
 
         var policy = loaded.Policy();
         var evaluator = new PolicyEvaluator();
@@ -94,7 +94,7 @@ public sealed class PolicyDefaultDenyLoaderPathTests
         evaluator.CanAct(policy, PolicyAction.Read, NonAdmin())
             .Allowed.Should().BeFalse();
         evaluator.CanAct(policy, PolicyAction.Read, Admin())
-            .Allowed.Should().BeTrue("the admin role still bypasses policy");
+            .Allowed.Should().BeTrue("the role the model names as admin still bypasses policy");
     }
 
     [Fact]
@@ -122,5 +122,43 @@ public sealed class PolicyDefaultDenyLoaderPathTests
             .Allowed.Should().BeTrue("a selector rule counts as a declaration");
         evaluator.CanAct(policy, PolicyAction.Update, NonAdmin())
             .Allowed.Should().BeFalse("policy-actions omitted update");
+    }
+
+    [Fact]
+    public async Task Loader_RootAdminRole_ReachesEveryTablePolicy_AndAdminIsNotIt()
+    {
+        await using var loaded = await PolicyDefaultDenyModel.LoadAsync(
+            ":root { policy-admin-role: ops }",
+            "main.secret { policy-actions: read[staff] }");
+
+        var policy = loaded.Policy();
+        var evaluator = new PolicyEvaluator();
+
+        policy.AdminRole.Should().Be("ops", "the loader stamps the root admin role onto the table");
+        evaluator.CanAct(policy, PolicyAction.Read, new AppIdentity("u", "test", roles: new[] { "ops" }))
+            .Allowed.Should().BeTrue();
+        evaluator.CanAct(policy, PolicyAction.Read, Admin())
+            .Allowed.Should().BeFalse("admin is an ordinary grant when the model names another role");
+    }
+
+    [Fact]
+    public async Task Loader_TableLevelAdminRole_FailsLoad()
+    {
+        var load = async () => await PolicyDefaultDenyModel.LoadAsync(
+            ":root { policy-admin-role: ops }",
+            "main.secret { policy-admin-role: admin }");
+
+        (await load.Should().ThrowAsync<Exception>())
+            .WithMessage("*the admin role is model-wide*");
+    }
+
+    [Fact]
+    public async Task Loader_TableLevelAdminRole_WithNoRootRole_FailsLoad()
+    {
+        var load = async () => await PolicyDefaultDenyModel.LoadAsync(
+            "main.secret { policy-admin-role: admin }");
+
+        (await load.Should().ThrowAsync<Exception>())
+            .WithMessage("*the admin role is model-wide*");
     }
 }

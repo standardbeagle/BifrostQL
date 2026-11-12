@@ -86,6 +86,7 @@ public sealed class PolicyGateTests
     /// </summary>
     private static readonly string[] PolicyMetadata =
     {
+        ":root { policy-admin-role: admin }",
         "main.payments { policy-actions: read, create[payments.create], update[projects.manage] }",
         "main.payments.cost_rate { write-requires: projects.manage }",
         "main.payments.margin { read-requires: rates.view }",

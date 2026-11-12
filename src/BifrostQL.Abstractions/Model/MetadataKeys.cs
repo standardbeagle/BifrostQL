@@ -464,8 +464,12 @@ namespace BifrostQL.Core.Model
             public const string SelfDeny = "policy-self-deny";
             public const string SelfColumn = "policy-self-column";
 
-            /// <summary>Default role name that bypasses all policy checks.</summary>
-            public const string DefaultAdminRole = "admin";
+            /// <summary>
+            /// Model-level (<c>:root</c>) name of the role that bypasses policy grants. Absent
+            /// means no role does: a claim spelled <c>admin</c> is an ordinary grant unless the
+            /// model names it here.
+            /// </summary>
+            public const string AdminRole = "policy-admin-role";
         }
 
         /// <summary>

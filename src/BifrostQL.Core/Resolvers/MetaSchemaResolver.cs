@@ -44,7 +44,7 @@ namespace BifrostQL.Core.Resolvers
         {
             var tableName = context.GetArgument<string?>("graphQlName");
             var identity = PolicyIdentity.FromUserContext(context.UserContext);
-            var isAdmin = identity.Grants.Contains(MetadataKeys.Policy.DefaultAdminRole);
+            var isAdmin = Evaluator.IsAdmin(PolicyEvaluator.AdminRoleOf(_dbModel), identity);
             var visible = SchemaReadVisibility.Project(_dbModel, context.UserContext);
             return ValueTask.FromResult<object?>(
                 visible

@@ -14,6 +14,10 @@
 -- user-context keys from MetadataKeys.Auth: tenant_id, tenant_ids, user_id,
 -- roles, permissions.
 --
+--   Model-wide (the admin role below bypasses the policy engine only because
+--   the model names it; no role bypasses when :root declares none):
+--     :root                 { policy-admin-role: admin }
+--
 --   Tenant-scoped tables (carry tenant-filter + auto-filter, label as shown):
 --     tenants               { label: Clubs, auto-filter: tenant_id:tenant_ids, policy-actions: read }   -- row is the club itself
 --     app_users             { label: App Users,        tenant-filter: tenant_id, auto-filter: tenant_id:tenant_ids }
@@ -133,7 +137,7 @@
 -- Role intent (table-level; field- and row-level nuance is sub-tasks 2 & 3):
 --
 --   admin            Full control of every table. Bypasses the policy engine
---                    entirely (MetadataKeys.Policy.DefaultAdminRole = "admin"),
+--                    entirely (named by :root { policy-admin-role: admin }),
 --                    so it carries no per-table policy-actions restriction.
 --   officer          Manages the member lifecycle: full CRUD on members,
 --                    households, household_members, membership_plans,
@@ -358,7 +362,7 @@ INSERT INTO tenants (tenant_id, name, slug, plan, is_active, created_at) OVERRID
 -- Roles (global lookup — shared across all clubs) (6)
 -- The six-role Membership Manager catalog. See the role -> permission matrix
 -- in the header for table-level intent. admin bypasses the policy engine
--- (MetadataKeys.Policy.DefaultAdminRole = "admin").
+-- (named by :root { policy-admin-role: admin }).
 INSERT INTO roles (role_id, name, description, is_system) OVERRIDING SYSTEM VALUE VALUES
 (1, 'admin', 'Full administrative control of the club; bypasses the policy engine', TRUE),
 (2, 'officer', 'Manages the member lifecycle: members, households, plans, memberships', TRUE),

@@ -121,15 +121,12 @@ public sealed class TableReadChain
             IsNestedQuery = isNestedQuery,
         };
 
-        // InternalDiff decrypts unconditionally; the admin role is how
-        // CryptoReadProjector expresses "no masking", and the rows never leave the
-        // process. Client projections use the caller's real roles.
-        var roles = projection == ReadProjection.InternalDiff
-            ? new[] { MetadataKeys.Policy.DefaultAdminRole }
-            : PolicyIdentity.ExtractRoles(context);
-
-        var crypto = new CryptoReadProjector(
-            model, services?.GetService<EnvelopeKeyManager>(), roles);
+        // InternalDiff decrypts unconditionally, and the rows never leave the process.
+        // Client projections use the caller's real roles.
+        var keyManager = services?.GetService<EnvelopeKeyManager>();
+        var crypto = projection == ReadProjection.InternalDiff
+            ? CryptoReadProjector.Unmasked(model, keyManager)
+            : new CryptoReadProjector(model, keyManager, PolicyIdentity.ExtractRoles(context));
 
         return new TableReadChain(table, filterTransformers, transformContext, crypto, projection);
     }

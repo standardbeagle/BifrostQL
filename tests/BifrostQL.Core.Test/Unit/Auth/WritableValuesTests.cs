@@ -14,7 +14,7 @@ public sealed class WritableValuesTests
     [Fact]
     public async Task ValueList_IsPresenceKeyed_Coerced_AndAdminBypassed()
     {
-        var model = DbModelTestFixture.Create().WithTable("profiles", t => t
+        var model = DbModelTestFixture.Create().WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin").WithTable("profiles", t => t
             .WithSchema("public").WithPrimaryKey("id").WithColumn("is_builtin", "bool")
             .WithMetadata(MetadataKeys.Policy.Actions, "create,update")
             .WithColumnMetadata("is_builtin", MetadataKeys.Policy.WritableValues, "false"))
@@ -87,7 +87,7 @@ public sealed class WritableValuesTests
     [Fact]
     public async Task NonCoercibleValue_RefusesWithColumnWriteMessage_AndAdminBypasses()
     {
-        var model = DbModelTestFixture.Create().WithTable("profiles", t => t
+        var model = DbModelTestFixture.Create().WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin").WithTable("profiles", t => t
             .WithSchema("public").WithPrimaryKey("id").WithColumn("level", "int")
             .WithMetadata(MetadataKeys.Policy.Actions, "create,update")
             .WithColumnMetadata("level", MetadataKeys.Policy.WritableValues, "0,1"))

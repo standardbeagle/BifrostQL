@@ -23,12 +23,7 @@ public sealed class StateMachineTransitionsProvider : IComputedColumnProvider
     /// <summary>GraphQL type of the emitted field: a list of reachable state names.</summary>
     public const string FieldType = "[String!]";
 
-    private readonly PolicyEvaluator _evaluator;
-
-    public StateMachineTransitionsProvider(string? adminRole = null)
-    {
-        _evaluator = new PolicyEvaluator(adminRole);
-    }
+    private readonly PolicyEvaluator _evaluator = new();
 
     public string Name => ProviderName;
 
@@ -47,10 +42,11 @@ public sealed class StateMachineTransitionsProvider : IComputedColumnProvider
             return new ValueTask<object?>((object?)null);
 
         var identity = StateMachineRoleGate.BuildIdentity(context.UserContext);
+        var adminRole = PolicyConfigCollector.AdminRoleOf(context.Table);
 
         var targets = definition.Transitions
             .Where(t => string.Equals(t.From, currentState.Trim(), StringComparison.OrdinalIgnoreCase))
-            .Where(t => StateMachineRoleGate.CanUseTransition(t, identity, _evaluator))
+            .Where(t => StateMachineRoleGate.CanUseTransition(t, identity, _evaluator, adminRole))
             .Select(t => t.To)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();

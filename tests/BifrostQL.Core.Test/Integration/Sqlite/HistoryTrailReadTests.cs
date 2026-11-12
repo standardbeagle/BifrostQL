@@ -584,7 +584,7 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
         var model = await LoadModelAsync(
             "main.orders.cost_rate { read-requires: rates.view_cost; writable-values: 125 }",
             "main.orders { history: enabled }",
-            ":root { history-table: main.audit_trail }");
+            ":root { history-table: main.audit_trail; policy-admin-role: admin }");
         (await ExecuteMutationAsync("mutation { orders(insert: { status: \"new\", cost_rate: 125 }) }", model))
             .Errors.Should().BeNullOrEmpty();
         // The fixture seeds orders(id 1, cost_rate NULL); the row inserted above is id 2.
@@ -599,7 +599,7 @@ public sealed class HistoryTrailReadTests : IAsyncLifetime
 
         var admin = await ExecuteQueryAsync(
             "query { ordersHistory { data { before } } }", model,
-            new Dictionary<string, object?> { ["roles"] = new[] { MetadataKeys.Policy.DefaultAdminRole } });
+            new Dictionary<string, object?> { ["roles"] = new[] { "admin" } });
         DeleteBeforeImage(admin)["cost_rate"].GetInt64().Should().Be(125,
             "the trail is an audit artefact and an admin bypasses the read policy inside images as on the row");
 

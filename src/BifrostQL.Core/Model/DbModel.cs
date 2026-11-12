@@ -488,6 +488,17 @@ namespace BifrostQL.Core.Model
                     table.Metadata[MetadataKeys.Policy.Default] = policyDefault;
             }
 
+            // The admin role is model-wide, but every policy seam reads a TablePolicy, so
+            // the root declaration is stamped onto each table the same way. A table that
+            // declares its own keeps it, and ModelConfigValidator refuses the disagreement:
+            // overwriting it here would hide a per-table role the author believed in force.
+            if (dbMetadata.TryGetValue(MetadataKeys.Policy.AdminRole, out var adminRole)
+                && !string.IsNullOrWhiteSpace(adminRole?.ToString()))
+            {
+                foreach (var table in tables)
+                    table.Metadata.TryAdd(MetadataKeys.Policy.AdminRole, adminRole);
+            }
+
             // Blind-index shadow columns are server-derived search tokens: hide them
             // from every read schema surface (GraphQL types/sort/filter, LDAP, chat
             // connectors, aggregates — everything honoring Ui.Visibility). They stay

@@ -101,7 +101,8 @@ public sealed class ColumnWriteGrantTests
             writeRequires: new Dictionary<string, IEnumerable<string>>
             {
                 ["cost_rate"] = new[] { "team.manage" },
-            });
+            })
+        { AdminRole = "admin" };
 
     [Fact]
     public void Evaluator_WriteRequires_DeniesCallerLackingGrant()
@@ -160,7 +161,8 @@ public sealed class ColumnWriteGrantTests
             writeRequires: new Dictionary<string, IEnumerable<string>>
             {
                 ["cost_rate"] = new[] { "team.manage" },
-            });
+            })
+        { AdminRole = "admin" };
 
         evaluator.IsColumnAllowed(policy, "cost_rate", PolicyDirection.Write, Identity("team.manage"))
             .Allowed.Should().BeFalse("a held write-requires grant does not override the write-deny list");
@@ -203,7 +205,7 @@ public sealed class ColumnWriteGrantTests
         evaluator.IsColumnAllowed(policy, "total", PolicyDirection.Write, Identity("accounting"))
             .Allowed.Should().BeTrue("a caller holding none of the deny roles may write");
         evaluator.IsColumnAllowed(policy, "total", PolicyDirection.Write, Identity("admin"))
-            .Allowed.Should().BeTrue("admin bypass");
+            .Allowed.Should().BeTrue("admin holds none of the deny roles");
     }
 
     [Fact]

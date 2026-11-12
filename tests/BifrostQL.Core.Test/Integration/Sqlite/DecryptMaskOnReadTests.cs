@@ -40,6 +40,7 @@ public sealed class DecryptMaskOnReadTests : IAsyncLifetime
         var factory = new SqliteDbConnFactory(ConnString);
         _model = await new DbModelLoader(factory, new MetadataLoader(new[]
         {
+            ":root { policy-admin-role: admin }",
             "main.secrets.ssn { encrypt: aes-256-gcm; key-ref: config:pii; mask: last4; unmask-role: compliance; blind-index: ssn_bidx }",
         })).LoadAsync();
 

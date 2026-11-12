@@ -29,7 +29,8 @@ public class StateMachineMutationTransformerTests
             (MetadataKeys.StateMachine.StateColumn, "status"),
             (MetadataKeys.StateMachine.InitialState, "pending"),
             (MetadataKeys.StateMachine.States, "pending, active, inactive"),
-            (MetadataKeys.StateMachine.Transitions, "pending->active[officer]; active->inactive; inactive->active[officer]"));
+            (MetadataKeys.StateMachine.Transitions, "pending->active[officer]; active->inactive; inactive->active[officer]"),
+            (MetadataKeys.Policy.AdminRole, "admin"));
 
     private static MutationTransformContext Context(
         string currentState = "pending",

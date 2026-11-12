@@ -319,6 +319,8 @@ namespace BifrostQL.Server.Test.Pgwire
             table.Columns.Returns(columns ?? Array.Empty<ColumnDto>());
             table.GetMetadataValue(MetadataKeys.Policy.Actions).Returns(policyActions);
             table.GetMetadataValue(MetadataKeys.Policy.ReadDeny).Returns(readDeny);
+            // What DbModel stamps from `:root { policy-admin-role: admin }`.
+            table.GetMetadataValue(MetadataKeys.Policy.AdminRole).Returns("admin");
             return table;
         }
 

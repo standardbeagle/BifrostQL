@@ -15,9 +15,11 @@ namespace BifrostQL.Core.Auth;
 ///      tenant-filter and soft-delete modules: no metadata means no gating.
 ///   2. An action the allow-list omits is denied for everyone — admins
 ///      included — when the policy lists any actions at all (D7).
-///   3. Admin bypass — an identity holding the configured admin role passes
-///      any listed action's GRANT requirement (and every check of an
-///      empty-actions policy). The bypass is explicit and grant-driven.
+///   3. Admin bypass — an identity holding the policy's admin role
+///      (<see cref="TablePolicy.AdminRole"/>, the model's
+///      <c>:root { policy-admin-role }</c>; none when the model names none), or the
+///      engine's own unforgeable identity, passes any listed action's GRANT
+///      requirement (and every check of an empty-actions policy).
 ///   4. Otherwise the action's grant set applies: empty = unconditional,
 ///      non-empty = the caller must hold ANY listed grant.
 ///
@@ -27,18 +29,15 @@ namespace BifrostQL.Core.Auth;
 /// </summary>
 public sealed class PolicyEvaluator
 {
-    private readonly string _adminRole;
-
     /// <summary>
-    /// Creates an evaluator. <paramref name="adminRole"/> defaults to
-    /// <see cref="MetadataKeys.Policy.DefaultAdminRole"/>; an identity holding
-    /// this role bypasses all policy checks.
+    /// The admin role <paramref name="model"/> declares in <c>:root { policy-admin-role }</c>,
+    /// or null when it names none. For checks with no table policy to read it from (server
+    /// operations, the schema listing); a table's own policy carries the same value.
     /// </summary>
-    public PolicyEvaluator(string? adminRole = null)
+    public static string? AdminRoleOf(IDbModel model)
     {
-        _adminRole = string.IsNullOrWhiteSpace(adminRole)
-            ? MetadataKeys.Policy.DefaultAdminRole
-            : adminRole.Trim();
+        if (model is null) throw new ArgumentNullException(nameof(model));
+        return PolicyConfigCollector.NormalizeAdminRole(model.GetMetadataValue(MetadataKeys.Policy.AdminRole));
     }
 
     /// <summary>
@@ -63,7 +62,7 @@ public sealed class PolicyEvaluator
         if (!policy.HasPolicy)
             return PolicyDecision.Allow;
 
-        var isAdmin = IsAdmin(identity);
+        var isAdmin = IsAdmin(policy, identity);
         if (!policy.AllowedActions.TryGetValue(action, out var requiredGrants))
         {
             // An unlisted action is denied for everyone when the policy lists
@@ -74,21 +73,21 @@ public sealed class PolicyEvaluator
                 : PolicyDecision.Deny;
         }
 
-        return HoldsAnyGrant(identity, requiredGrants)
+        return HoldsAnyGrant(identity, requiredGrants, policy.AdminRole)
             ? PolicyDecision.Allow
             : PolicyDecision.Deny;
     }
 
     /// <summary>
     /// The one grant rule for a <c>[grant,list]</c> bracket: an empty list admits everyone,
-    /// the admin role is admitted, and otherwise the caller must hold at least one listed
+    /// <paramref name="adminRole"/> (none when null) is admitted, and otherwise the caller must hold at least one listed
     /// role or permission. Shared by table actions and server operations.
     /// </summary>
-    public bool HoldsAnyGrant(AppIdentity identity, IReadOnlyCollection<string> requiredGrants)
+    public bool HoldsAnyGrant(AppIdentity identity, IReadOnlyCollection<string> requiredGrants, string? adminRole)
     {
         if (identity is null) throw new ArgumentNullException(nameof(identity));
         if (requiredGrants is null) throw new ArgumentNullException(nameof(requiredGrants));
-        return requiredGrants.Count == 0 || IsAdmin(identity) || identity.Grants.Any(requiredGrants.Contains);
+        return requiredGrants.Count == 0 || IsAdmin(adminRole, identity) || identity.Grants.Any(requiredGrants.Contains);
     }
 
     public PolicyDecision CanAct(TablePolicy policy, PolicyAction action, AppIdentity identity, string requiredRole)
@@ -128,7 +127,7 @@ public sealed class PolicyEvaluator
         if (string.IsNullOrWhiteSpace(column))
             throw new ArgumentException("Column name is required.", nameof(column));
 
-        if (IsAdmin(identity))
+        if (IsAdmin(policy, identity))
             return PolicyDecision.Allow;
 
         // Opt-in default: a table with no policy metadata is unrestricted.
@@ -209,7 +208,7 @@ public sealed class PolicyEvaluator
         if (string.IsNullOrWhiteSpace(column))
             throw new ArgumentException("Column name is required.", nameof(column));
 
-        if (IsAdmin(identity))
+        if (IsAdmin(policy, identity))
             return ReadColumnDisposition.Allow;
 
         // Opt-in default: a table with no policy metadata is unrestricted.
@@ -252,10 +251,25 @@ public sealed class PolicyEvaluator
     }
 
     /// <summary>
-    /// True when <paramref name="identity"/> holds the configured admin role. The
-    /// one definition of "admin" every policy consumer reads — the transformers
-    /// and the row-capability provider used to probe it through a denying policy.
+    /// True when <paramref name="identity"/> is the engine's own identity or holds
+    /// <paramref name="policy"/>'s admin role. The one definition of "admin" every policy
+    /// consumer reads — the transformers and the row-capability provider used to probe it
+    /// through a denying policy.
     /// </summary>
-    public bool IsAdmin(AppIdentity identity) =>
-        identity.Grants.Contains(_adminRole);
+    public bool IsAdmin(TablePolicy policy, AppIdentity identity)
+    {
+        if (policy is null) throw new ArgumentNullException(nameof(policy));
+        return IsAdmin(policy.AdminRole, identity);
+    }
+
+    /// <summary>
+    /// True when <paramref name="identity"/> is the engine's own identity or holds
+    /// <paramref name="adminRole"/>. A null role means no claim bypasses: a role spelled
+    /// <c>admin</c> is an ordinary grant unless the model names it.
+    /// </summary>
+    public bool IsAdmin(string? adminRole, AppIdentity identity)
+    {
+        if (identity is null) throw new ArgumentNullException(nameof(identity));
+        return identity.IsEngine || (adminRole is not null && identity.Grants.Contains(adminRole));
+    }
 }

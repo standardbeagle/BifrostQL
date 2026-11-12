@@ -139,7 +139,7 @@ public class PolicyEvaluatorTests
         // absent action. A policy that lists actions is a product surface — an
         // action it does not list is denied for admins too.
         var policy = new TablePolicy(
-            allowedActions: new[] { PolicyAction.Read });
+            allowedActions: new[] { PolicyAction.Read }) { AdminRole = "admin" };
         var evaluator = new PolicyEvaluator();
 
         var decision = evaluator.CanAct(policy, PolicyAction.Delete, Identity("admin"));
@@ -153,7 +153,7 @@ public class PolicyEvaluatorTests
         // D7 carve-out: an empty-actions policy (deny columns only, or
         // policy-default: deny) keeps the historical admin bypass, so
         // PolicyMutationTransformer's admin probe keeps working.
-        var policy = new TablePolicy(readDenyColumns: new[] { "ssn" });
+        var policy = new TablePolicy(readDenyColumns: new[] { "ssn" }) { AdminRole = "admin" };
         var evaluator = new PolicyEvaluator();
 
         evaluator.CanAct(policy, PolicyAction.Delete, Identity("admin")).Allowed
@@ -196,7 +196,8 @@ public class PolicyEvaluatorTests
     public void BracketGrants_AdminBypassesGrantRequirement_ButNotAnAbsentAction()
     {
         var policy = PolicyConfigCollector.FromTable(TableWithMetadata("projects",
-            (MetadataKeys.Policy.Actions, "read,delete[projects.manage]")));
+            (MetadataKeys.Policy.Actions, "read,delete[projects.manage]"),
+            (MetadataKeys.Policy.AdminRole, "admin")));
         var evaluator = new PolicyEvaluator();
 
         // Admin holds no grants, yet the bracket gate is bypassed (D7 grant half).
@@ -318,7 +319,7 @@ public class PolicyEvaluatorTests
     {
         var policy = new TablePolicy(
             allowedActions: new[] { PolicyAction.Read },
-            readDenyColumns: new[] { "ssn" });
+            readDenyColumns: new[] { "ssn" }) { AdminRole = "admin" };
         var evaluator = new PolicyEvaluator();
 
         var decision = evaluator.IsColumnAllowed(policy, "ssn", PolicyDirection.Read, Identity("admin"));
@@ -349,22 +350,59 @@ public class PolicyEvaluatorTests
         decision.Allowed.Should().BeFalse();
     }
 
-    // ---- PolicyEvaluator: custom admin role ----
+    // ---- PolicyEvaluator: the admin role is the model's to name ----
 
     [Fact]
-    public void CanAct_CustomAdminRole_IsHonored()
+    public void CanAct_TheNamedAdminRole_BypassesTheGrant_AndAdminDoesNot()
     {
-        var policy = new TablePolicy(allowedActions: new[] { PolicyAction.Read });
-        var evaluator = new PolicyEvaluator(adminRole: "superuser");
+        var policy = PolicyConfigCollector.FromTable(TableWithMetadata("projects",
+            (MetadataKeys.Policy.Actions, "read[staff]"),
+            (MetadataKeys.Policy.AdminRole, "superuser")));
+        var evaluator = new PolicyEvaluator();
 
-        // The custom admin reads freely — the grant requirement is bypassed.
         evaluator.CanAct(policy, PolicyAction.Read, Identity("superuser")).Allowed
-            .Should().BeTrue();
-        // D7: but an unlisted action is denied to the custom admin too.
+            .Should().BeTrue("the named admin role bypasses the read[staff] grant");
+        // D7: but an unlisted action is denied to the named admin too.
         evaluator.CanAct(policy, PolicyAction.Delete, Identity("superuser")).Allowed
             .Should().BeFalse();
-        // And the default admin role is not honored when a custom one is configured.
-        evaluator.CanAct(policy, PolicyAction.Delete, Identity("admin")).Allowed
-            .Should().BeFalse();
+        evaluator.CanAct(policy, PolicyAction.Read, Identity("admin")).Allowed
+            .Should().BeFalse("a claim named admin is not the named role");
+    }
+
+    [Fact]
+    public void CanAct_NoNamedAdminRole_AdminIsAnOrdinaryGrant()
+    {
+        var policy = PolicyConfigCollector.FromTable(TableWithMetadata("projects",
+            (MetadataKeys.Policy.Actions, "read[staff]")));
+        var evaluator = new PolicyEvaluator();
+
+        policy.AdminRole.Should().BeNull();
+        evaluator.CanAct(policy, PolicyAction.Read, Identity("admin")).Allowed
+            .Should().BeFalse("no role bypasses when the model names none");
+        evaluator.CanAct(policy, PolicyAction.Read, Identity("staff")).Allowed
+            .Should().BeTrue("control: the granted role still reads");
+        evaluator.IsColumnAllowed(new TablePolicy(allowedActions: new[] { PolicyAction.Read }, readDenyColumns: new[] { "ssn" }),
+                "ssn", PolicyDirection.Read, Identity("admin")).Allowed
+            .Should().BeFalse("nor does it open a denied column");
+    }
+
+    [Fact]
+    public void IsAdmin_EngineIdentity_ComesOnlyFromTheEngineMarker()
+    {
+        var policy = new TablePolicy(readDenyColumns: new[] { "ssn" });
+        var evaluator = new PolicyEvaluator();
+
+        var engine = PolicyIdentity.FromUserContext(new Dictionary<string, object?>
+        {
+            [PolicyIdentity.EngineContextKey] = PolicyIdentity.EngineMarker,
+        });
+        var forged = PolicyIdentity.FromUserContext(new Dictionary<string, object?>
+        {
+            [PolicyIdentity.EngineContextKey] = "bifrost.policy.engine-write",
+            [MetadataKeys.Auth.DefaultRolesContextKey] = new[] { "admin" },
+        });
+
+        evaluator.IsAdmin(policy, engine).Should().BeTrue("the engine's own writes pass every grant");
+        evaluator.IsAdmin(policy, forged).Should().BeFalse("a caller cannot spell its way into the engine identity");
     }
 }

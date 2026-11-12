@@ -127,6 +127,7 @@ consistently.
 | `tenant-context-key` | claim key | model | User-context key for tenant ID (default: `tenant_id`) |
 | `auto-filter` | `column:claim[,column:claim]` | table | Inject filters from arbitrary user-context claims |
 | `auto-filter-bypass-role` | role name | model | Role that bypasses `auto-filter` rules |
+| `policy-admin-role` | role name | model | Role that bypasses policy grants ([authorization](/BifrostQL/guides/authorization/#the-admin-role)). Absent: no role does. A table-level value that differs fails model load |
 | `soft-delete` | column name | table | Soft-delete timestamp column |
 | `soft-delete-by` | column name | table | Column recording who deleted |
 | `delete-type` | `soft` | table | Mark table for soft-delete behavior |

@@ -185,6 +185,15 @@ public sealed record TablePolicy
     public bool HasPolicy { get; }
 
     /// <summary>
+    /// The role whose holder bypasses this policy's grants: the model's
+    /// <c>:root { policy-admin-role }</c>, which the model load stamps onto every table.
+    /// Null when the model names none, and then no claim bypasses — a role spelled
+    /// <c>admin</c> is an ordinary grant. Not a restriction, so it leaves
+    /// <see cref="HasPolicy"/> alone.
+    /// </summary>
+    public string? AdminRole { get; init; }
+
+    /// <summary>
     /// Creates a table policy. <paramref name="allowedActions"/> names
     /// unconditional actions (empty grant sets); <paramref name="actionGrants"/>
     /// carries the bracketed grant lists — the two are merged into one map.

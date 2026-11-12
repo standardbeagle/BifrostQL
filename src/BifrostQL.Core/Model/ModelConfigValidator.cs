@@ -53,8 +53,11 @@ namespace BifrostQL.Core.Model
                     errors.Add($"  :root [{MetadataKeys.Policy.Default}]: value must be 'allow' or 'deny'");
             }
 
+            var rootAdminRole = Auth.PolicyConfigCollector.NormalizeAdminRole(
+                model.GetMetadataValue(MetadataKeys.Policy.AdminRole));
             foreach (var table in model.Tables)
             {
+                ValidateAdminRoleIsModelWide(table, rootAdminRole, errors);
                 ValidateComputedColumns(table, errors);
                 ValidateColumnReference(table, MetadataKeys.Security.TenantFilter, errors);
                 ValidateColumnReference(table, MetadataKeys.SoftDelete.Column, errors);
@@ -125,6 +128,19 @@ namespace BifrostQL.Core.Model
             {
                 errors.Add($"  :root [{MetadataKeys.Operations.Exposed}]: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// The admin role is one model-wide declaration (<c>:root { policy-admin-role }</c>). A
+        /// table carrying another value declared its own, which would make a role an
+        /// administrator on that table alone — refused, never silently honoured or dropped.
+        /// </summary>
+        private static void ValidateAdminRoleIsModelWide(IDbTable table, string? rootAdminRole, List<string> errors)
+        {
+            var tableAdminRole = Auth.PolicyConfigCollector.NormalizeAdminRole(
+                table.GetMetadataValue(MetadataKeys.Policy.AdminRole));
+            if (!string.Equals(tableAdminRole, rootAdminRole, StringComparison.Ordinal))
+                errors.Add($"  {table.TableSchema}.{table.DbName} [{MetadataKeys.Policy.AdminRole}]: the admin role is model-wide; declare it once on :root");
         }
 
         private static void ValidateComputedColumns(IDbTable table, List<string> errors)

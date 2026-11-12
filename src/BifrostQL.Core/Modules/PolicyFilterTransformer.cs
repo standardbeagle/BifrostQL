@@ -49,17 +49,7 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
     private const string ColumnReadDeniedMessage =
         "The query references a field that is not permitted by authorization policy.";
 
-    private readonly PolicyEvaluator _evaluator;
-
-    /// <summary>
-    /// Creates a transformer. <paramref name="adminRole"/> is forwarded to the
-    /// <see cref="PolicyEvaluator"/>; when null the evaluator's default admin
-    /// role applies.
-    /// </summary>
-    public PolicyFilterTransformer(string? adminRole = null)
-    {
-        _evaluator = new PolicyEvaluator(adminRole);
-    }
+    private readonly PolicyEvaluator _evaluator = new();
 
     public string ModuleName => "policy";
 
@@ -94,7 +84,7 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
 
         // Admin bypass is consistent across the whole policy — admins are not
         // narrowed by the row-scope filter either.
-        if (_evaluator.IsAdmin(identity))
+        if (_evaluator.IsAdmin(policy, identity))
             return null;
 
         if (!RowScopeApplies(policy, identity))

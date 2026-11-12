@@ -60,6 +60,7 @@ namespace BifrostQL.Server.Test
         // read outright to non-admins (read requires the admin grant).
         private static readonly string[] Metadata =
         {
+            ":root { policy-admin-role: admin }",
             "main.members { policy-actions: read; policy-read-deny: salary }",
             "main.ledger { policy-actions: read[admin],update }",
         };

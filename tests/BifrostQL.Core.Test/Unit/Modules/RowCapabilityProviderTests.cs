@@ -102,7 +102,7 @@ public sealed class RowCapabilityProviderTests
     public async Task Provider_SelfDenyRefusesUpdateOnTheCallersOwnRow_AdminIncluded()
     {
         // policy-self-column defaults to user_id when omitted (PolicyConfigCollector).
-        var table = TestTable("policy-actions: update, delete; policy-self-deny: profile_id");
+        var table = TestTable("policy-actions: update, delete; policy-self-deny: profile_id; policy-admin-role: admin");
         var provider = new RowCapabilityProvider();
 
         var own = await Compute(provider, table, Row(user: 1, profile: 5), Caller(userId: 1));
@@ -156,7 +156,7 @@ public sealed class RowCapabilityProviderTests
     [Fact]
     public async Task Provider_AdminIsCapableOnEveryRow()
     {
-        var table = TestTable("policy-row-scope: user_id = {user_id}; policy-actions: update, delete");
+        var table = TestTable("policy-row-scope: user_id = {user_id}; policy-actions: update, delete; policy-admin-role: admin");
         var provider = new RowCapabilityProvider();
 
         var own = await Compute(provider, table, Row(user: 1), Admin(userId: 1));
@@ -214,7 +214,7 @@ public sealed class RowCapabilityProviderTests
         => new Dictionary<string, object?>
         {
             [MetadataKeys.Auth.DefaultUserIdContextKey] = userId,
-            [MetadataKeys.Auth.DefaultRolesContextKey] = new[] { MetadataKeys.Policy.DefaultAdminRole },
+            [MetadataKeys.Auth.DefaultRolesContextKey] = new[] { "admin" },
         };
 
     /// <summary>

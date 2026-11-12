@@ -68,6 +68,7 @@ public sealed class PolicyBypassPreventionTests : IAsyncLifetime
     // loaded table's metadata to keep setup explicit.
     private static readonly string[] PolicyMetadata =
     {
+        ":root { policy-admin-role: admin }",
         "main.Documents { policy-read-deny: body }",
         "main.Orders { policy-actions: read,update }",
         "main.Orders { policy-read-deny: secret }",

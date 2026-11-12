@@ -129,6 +129,9 @@ namespace BifrostQL.Core.Model
             // ':root { policy-default: deny }', so the per-table unknown-key gate must
             // accept it or a deny-default model fails to load at all.
             MetadataKeys.Policy.Default,
+            // Stamped onto every table from ':root { policy-admin-role }' for the same reason;
+            // ModelConfigValidator refuses a table whose value differs from the root's.
+            MetadataKeys.Policy.AdminRole,
             MetadataKeys.Policy.ReadDeny,
             MetadataKeys.Policy.ReadDenyRoles,
             MetadataKeys.Policy.WriteDeny,
@@ -316,6 +319,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Model.DefaultLimit,
             MetadataKeys.Model.MaxQueryRows,
             MetadataKeys.Policy.Default,
+            MetadataKeys.Policy.AdminRole,
             MetadataKeys.RawSql.Enabled,
             MetadataKeys.RawSql.Role,
             MetadataKeys.RawSql.Timeout,

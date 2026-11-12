@@ -39,6 +39,24 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Security
+
+- A caller whose roles included `admin` bypassed every policy grant, row scope, column deny and
+  state-machine role check, and saw encrypted columns in plaintext, whatever the model said:
+  the role was hard-coded at every seam. An identity provider issues `admin` for its own
+  administrators, so any such login was a BifrostQL superuser. Constructor arguments on the
+  policy transformers changed only the two seams that read them, and the documented escape hatch
+  (registering them with a role nobody holds) left the rest open. No role bypasses policy now
+  unless the model names one in `:root { policy-admin-role: <role> }`, which the load stamps onto
+  every table so every seam reads the one declaration; a table declaring a different value fails
+  model load. The state-transition audit row passes policy as the engine, through an in-process
+  marker no request can supply. Breaking: `MetadataKeys.Policy.DefaultAdminRole` is removed;
+  `PolicyEvaluator`, the policy and state-machine transformers and the row-capability and
+  transitions providers lose their `adminRole` constructor parameter; `PolicyEvaluator.IsAdmin`
+  takes the table policy (or a role) and `HoldsAnyGrant` the admin role;
+  `StateMachineRoleGate.CanUseTransition` takes the admin role. A model that relied on `admin`
+  adds `:root { policy-admin-role: admin }`.
+
 ### Changed
 
 - `HistoryErasure.BuildTrailPurgeSql` now takes the history table and the `entity` /

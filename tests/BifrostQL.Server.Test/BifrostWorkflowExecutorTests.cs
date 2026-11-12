@@ -52,6 +52,7 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
     // executor traverses PolicyMutationTransformer.
     private static readonly string[] PolicyMetadata =
     {
+        ":root { policy-admin-role: admin }",
         "main.Orders { policy-actions: read,update }",
         "main.audit_log { policy-actions: read }",
         "main.audit_log { tenant-filter: tenant_id }",

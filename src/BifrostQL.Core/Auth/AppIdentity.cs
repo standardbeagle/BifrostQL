@@ -17,6 +17,14 @@ public sealed record AppIdentity
     /// <summary>Stable, provider-neutral identifier for the authenticated user.</summary>
     public string Id { get; }
 
+    /// <summary>
+    /// True for the engine's own bookkeeping writes (the state-transition audit row), which
+    /// pass policy grants whatever the model's admin role. Set only by
+    /// <see cref="PolicyIdentity.FromUserContext(IDictionary{string, object?})"/> from the
+    /// engine's unforgeable marker; internal, so no caller outside the engine can claim it.
+    /// </summary>
+    internal bool IsEngine { get; init; }
+
     /// <summary>The user's email address, if known.</summary>
     public string? Email { get; }
 

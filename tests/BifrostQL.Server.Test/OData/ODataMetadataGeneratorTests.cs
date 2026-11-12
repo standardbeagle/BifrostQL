@@ -32,6 +32,7 @@ namespace BifrostQL.Server.Test.OData
 
         private static readonly string[] Metadata =
         {
+            ":root { policy-admin-role: admin }",
             // Customers: read requires the admin grant — a non-admin cannot READ it
             // (nor navigate to it).
             "main.Customers { policy-actions: read[admin],create }",

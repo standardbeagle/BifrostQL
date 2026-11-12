@@ -165,6 +165,11 @@ public sealed class DbModelTestFixture
             parent.MultiLinks[linkName] = link;
         }
 
+        // Mirrors DbModel.FromTables: the model's admin role reaches every table's policy.
+        if (_modelMetadata.TryGetValue(MetadataKeys.Policy.AdminRole, out var adminRole))
+            foreach (var table in _tables.Values)
+                table.Metadata.TryAdd(MetadataKeys.Policy.AdminRole, adminRole);
+
         var model = new TestDbModel(_tables, _modelMetadata);
         if (_eavConfigs.Count > 0)
             model.EavConfigs = _eavConfigs;

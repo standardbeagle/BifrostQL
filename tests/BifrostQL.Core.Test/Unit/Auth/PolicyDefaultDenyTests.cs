@@ -34,10 +34,10 @@ public class PolicyDefaultDenyTests
     public async Task Admin_still_bypasses_deny_default()
     {
         await using var loaded = await PolicyDefaultDenyModel.LoadAsync(
-            ":root { policy-default: deny }");
+            ":root { policy-default: deny; policy-admin-role: admin }");
 
         new PolicyEvaluator().CanAct(loaded.Policy(), PolicyAction.Read,
-            new AppIdentity("u", "test", roles: new[] { MetadataKeys.Policy.DefaultAdminRole }))
+            new AppIdentity("u", "test", roles: new[] { "admin" }))
             .Allowed.Should().BeTrue();
     }
 }

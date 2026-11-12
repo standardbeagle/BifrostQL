@@ -15,6 +15,7 @@ public sealed class StateMachineTransitionsTests
 
     private static IDbModel BuildModel() =>
         DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
             .WithTable("Members", t => t
                 .WithPrimaryKey("Id")
                 .WithColumn(StateColumn, "varchar")

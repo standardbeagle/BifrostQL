@@ -38,6 +38,7 @@ public class SchemaReadVisibilityTests
     /// with no read grant); broken carries an unparseable policy.
     /// </summary>
     private static IDbModel Model() => DbModelTestFixture.Create()
+        .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
         .WithTable("orders", t => t
             .WithSchema("dbo")
             .WithPrimaryKey("id")
@@ -95,7 +96,7 @@ public class SchemaReadVisibilityTests
     public void An_unparseable_policy_excludes_the_table_even_for_admin()
     {
         var visible = SchemaReadVisibility.Project(
-            Model(), Ctx("root", MetadataKeys.Policy.DefaultAdminRole));
+            Model(), Ctx("root", "admin"));
 
         visible.Select(v => v.Table.DbName).Should().NotContain("broken",
             "FromTable throws before the evaluator's admin bypass can run — fail closed");
@@ -114,9 +115,10 @@ public class SchemaReadVisibilityTests
                 .WithPrimaryKey("id")
                 .WithColumn("amount", "decimal")
                 .WithMetadata(MetadataKeys.Policy.Actions, "read[ledger.read]"))
+            .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
             .Build();
 
-        SchemaReadVisibility.Project(model, Ctx("root", MetadataKeys.Policy.DefaultAdminRole))
+        SchemaReadVisibility.Project(model, Ctx("root", "admin"))
             .Select(v => v.Table.DbName).Should().Contain("ledger");
     }
 
@@ -144,11 +146,12 @@ public class SchemaReadVisibilityTests
             .WithMetadata(MetadataKeys.Policy.ReadDeny, "masked, refused")
             .WithColumnMetadata("masked", MetadataKeys.Policy.DenyMode, "null")
             .WithColumnMetadata("refused", MetadataKeys.Policy.DenyMode, "refuse"))
+            .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
             .Build();
 
         var member = Table(SchemaReadVisibility.Project(model, Ctx("u1", "member")), "t");
         member.Columns.Select(c => c.DbName).Should().Contain("masked").And.NotContain("refused");
-        Table(SchemaReadVisibility.Project(model, Ctx("root", MetadataKeys.Policy.DefaultAdminRole)), "t")
+        Table(SchemaReadVisibility.Project(model, Ctx("root", "admin")), "t")
             .Columns.Select(c => c.DbName).Should().Contain(new[] { "masked", "refused" });
     }
 

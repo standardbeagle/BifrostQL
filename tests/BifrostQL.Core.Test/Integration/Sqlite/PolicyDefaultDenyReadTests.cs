@@ -29,7 +29,7 @@ public sealed class PolicyDefaultDenyReadTests : IAsyncLifetime
 
     private static readonly string[] Rules =
     {
-        ":root { policy-default: deny }",
+        ":root { policy-default: deny; policy-admin-role: admin }",
     };
 
     private SqliteConnection _keepAlive = null!;
@@ -101,7 +101,7 @@ public sealed class PolicyDefaultDenyReadTests : IAsyncLifetime
     public async Task Admin_ReadsUndeclaredTableUnderDenyDefault_GetsRows()
     {
         var result = await QueryAsync(
-            "{ notes { data { id body } } }", MetadataKeys.Policy.DefaultAdminRole);
+            "{ notes { data { id body } } }", "admin");
 
         result.Errors.Should().BeNullOrEmpty();
         using var doc = JsonDocument.Parse(new GraphQLSerializer().Serialize(result));

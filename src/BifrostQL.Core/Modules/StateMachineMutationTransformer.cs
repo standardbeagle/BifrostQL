@@ -10,12 +10,7 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
 {
     private const string InvalidTransitionMessage = "State transition is not permitted.";
 
-    private readonly PolicyEvaluator _evaluator;
-
-    public StateMachineMutationTransformer(string? adminRole = null)
-    {
-        _evaluator = new PolicyEvaluator(adminRole);
-    }
+    private readonly PolicyEvaluator _evaluator = new();
 
     public string ModuleName => "state-machine";
 
@@ -92,7 +87,7 @@ public sealed class StateMachineMutationTransformer : IMutationTransformer, IMod
             return Denied(mutationType, data);
 
         var identity = StateMachineRoleGate.BuildIdentity(context.UserContext);
-        if (!StateMachineRoleGate.CanUseTransition(transition, identity, _evaluator))
+        if (!StateMachineRoleGate.CanUseTransition(transition, identity, _evaluator, PolicyConfigCollector.AdminRoleOf(table)))
             return Denied(mutationType, data);
 
         if (transition.DistinctActorColumn is { } authorColumn

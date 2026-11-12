@@ -31,7 +31,7 @@ public class PolicyConfigCollectorTests
     /// <c>role_permissions</c> seed rows — they are exercised by the seed, not
     /// the collector.
     ///
-    /// admin bypasses policy entirely (MetadataKeys.Policy.DefaultAdminRole) so
+    /// admin (the model's :root { policy-admin-role }) bypasses policy entirely so
     /// it needs no per-table entry. read_only is covered by every table
     /// permitting <c>read</c>. The values below are the union of actions any
     /// non-admin role may perform on the table through generated CRUD.

@@ -82,7 +82,7 @@ columns; validate the plaintext at the application layer instead.
 
 ## Reading: decrypt or mask
 
-On read, a caller holding the column's `unmask-role` (or the admin role) receives
+On read, a caller holding the column's `unmask-role` (or the model's `policy-admin-role`) receives
 the decrypted plaintext; every other caller receives the masked value per the
 column's `mask` mode (`redact`, `last4`, `email`). The raw ciphertext is never
 returned — if decryption is impossible (no key manager, wrong key, tampered value)
@@ -146,7 +146,7 @@ dbo.customers.ssn {
 | `encrypt` | Algorithm; enables encryption. Only `aes-256-gcm` today. |
 | `key-ref` | Which DEK, as `provider:id` (`kms:pii`, `config:pii`). Required. |
 | `mask` | What non-unmask-role callers see: `redact` (default), `last4`, `email`. |
-| `unmask-role` | Role that may read plaintext. Absent ⇒ only the admin role. |
+| `unmask-role` | Role that may read plaintext. Absent ⇒ only the model's `policy-admin-role`, and nobody when the model names none. |
 | `blind-index` | Sibling column holding the deterministic hash for equality search. Must exist. |
 
 Misconfiguration fails fast at model load: an unsupported algorithm, a missing or

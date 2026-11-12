@@ -49,6 +49,7 @@ public class PolicyFilterTransformerTests
     private static IDbModel ModelWithPolicy(params (string key, string value)[] metadata)
     {
         var builder = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
             .WithTable("Orders", t =>
             {
                 t.WithSchema("dbo")

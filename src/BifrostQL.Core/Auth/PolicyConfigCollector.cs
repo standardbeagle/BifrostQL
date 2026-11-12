@@ -59,8 +59,9 @@ public static class PolicyConfigCollector
             !string.IsNullOrWhiteSpace(rowScopeRaw) ||
             selfDenyRaw is not null;
 
+        var adminRole = AdminRoleOf(table);
         if (!hasAny)
-            return denyByDefault ? new TablePolicy(forceHasPolicy: true) : TablePolicy.None;
+            return denyByDefault ? new TablePolicy(forceHasPolicy: true) { AdminRole = adminRole } : TablePolicy.None;
 
         return new TablePolicy(
             actionGrants: ParseActions(actionsRaw),
@@ -79,8 +80,29 @@ public static class PolicyConfigCollector
                 ? null
                 : NormalizeDenyMode(tableDenyModeRaw),
             selfDenyColumns: SplitList(selfDenyRaw),
-            selfColumn: selfColumn);
+            selfColumn: selfColumn)
+        {
+            AdminRole = adminRole,
+        };
     }
+
+    /// <summary>
+    /// The admin role in force on <paramref name="table"/>: the model's
+    /// <c>:root { policy-admin-role }</c>, stamped onto every table at load. Null when the
+    /// model names none. For a check that needs the role without a whole policy.
+    /// </summary>
+    public static string? AdminRoleOf(IDbTable table)
+    {
+        if (table is null) throw new ArgumentNullException(nameof(table));
+        return NormalizeAdminRole(table.GetMetadataValue(MetadataKeys.Policy.AdminRole));
+    }
+
+    /// <summary>
+    /// The admin role a <c>policy-admin-role</c> value names, trimmed; null for an absent
+    /// or blank value, which names no role.
+    /// </summary>
+    public static string? NormalizeAdminRole(string? raw)
+        => string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
 
     /// <summary>
     /// Collects the column-selector <c>read-requires</c> grants

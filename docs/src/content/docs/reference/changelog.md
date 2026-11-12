@@ -25,6 +25,27 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Breaking — `admin` no longer bypasses policy unless the model names it
+
+A caller whose roles included `admin` bypassed every policy grant, row scope, column deny and
+state-machine role check, and read encrypted columns in plaintext, whatever the model declared:
+the role was hard-coded at every seam, and an identity provider issues that word for its own
+administrators. No role bypasses policy now unless the model names one:
+
+```
+:root { policy-admin-role: admin }
+```
+
+The load stamps the value onto every table, so every seam answers from it; a table declaring a
+different value fails model load. See [the admin role](/BifrostQL/guides/authorization/#the-admin-role).
+
+**Migration:** a model that relied on `admin` bypassing policy adds
+`:root { policy-admin-role: admin }`, or names the role it actually means. Code that used
+`MetadataKeys.Policy.DefaultAdminRole` (removed), passed an `adminRole` to `PolicyEvaluator` or
+a policy transformer or provider (parameter removed), or called `PolicyEvaluator.IsAdmin(identity)`
+or `HoldsAnyGrant(identity, grants)` (now take the table policy or the admin role) recompiles
+against the new signatures.
+
 ### Breaking — `transition-not-by` needs a `populate: created-by` author column
 
 The author column named by `transition-not-by` used to be any column, so a client could write

@@ -48,8 +48,29 @@ public static class PolicyIdentity
             : null;
 
         return new AppIdentity(userId, "query-context", tenantId: tenantId,
-            roles: ExtractRoles(userContext), permissions: ExtractPermissions(userContext));
+            roles: ExtractRoles(userContext), permissions: ExtractPermissions(userContext))
+        {
+            IsEngine = IsEngineWrite(userContext),
+        };
     }
+
+    /// <summary>
+    /// The <c>UserContext</c> key under which an engine bookkeeping write places
+    /// <see cref="EngineMarker"/>. The value must be the marker itself, so a same-named claim
+    /// never matches: a claim deserializes to a scalar and cannot be reference-equal to it.
+    /// </summary>
+    public const string EngineContextKey = "bifrost.policy.engine-write";
+
+    /// <summary>
+    /// The process-unique sentinel that makes a write the engine's own (<see cref="AppIdentity.IsEngine"/>).
+    /// Internal, so only the engine and the assemblies on Core's <c>InternalsVisibleTo</c> list
+    /// can place it.
+    /// </summary>
+    internal static readonly object EngineMarker = new();
+
+    /// <summary>Whether <paramref name="userContext"/> carries the unforgeable engine marker.</summary>
+    internal static bool IsEngineWrite(IDictionary<string, object?> userContext)
+        => userContext.TryGetValue(EngineContextKey, out var value) && ReferenceEquals(value, EngineMarker);
 
     /// <summary>
     /// Reads the caller's roles from the canonical <c>roles</c> context key,

@@ -8,7 +8,7 @@ namespace BifrostQL.Core.Modules.Crypto
 {
     /// <summary>
     /// Rewrites encrypted column values on read: decrypts for a caller holding the
-    /// column's <c>unmask-role</c> (or the admin role), otherwise returns a masked
+    /// column's <c>unmask-role</c> (or the model's <c>:root { policy-admin-role }</c>), otherwise returns a masked
     /// value per the column's <c>mask</c> mode. The raw ciphertext is NEVER returned
     /// to the client — if decryption is impossible (no key manager, wrong/absent key,
     /// tampered value) the projector falls back to a redaction, so a misconfiguration
@@ -29,12 +29,24 @@ namespace BifrostQL.Core.Modules.Crypto
         private readonly bool _isAdmin;
 
         public CryptoReadProjector(IDbModel model, EnvelopeKeyManager? keyManager, IEnumerable<string> callerRoles)
+            : this(model, keyManager, callerRoles, unmaskAll: false)
+        {
+        }
+
+        private CryptoReadProjector(IDbModel model, EnvelopeKeyManager? keyManager, IEnumerable<string> callerRoles, bool unmaskAll)
         {
             _model = model ?? throw new ArgumentNullException(nameof(model));
             _keyManager = keyManager;
             _roles = new HashSet<string>(callerRoles ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
-            _isAdmin = _roles.Contains(MetadataKeys.Policy.DefaultAdminRole);
+            _isAdmin = unmaskAll || Auth.PolicyEvaluator.AdminRoleOf(model) is { } adminRole && _roles.Contains(adminRole);
         }
+
+        /// <summary>
+        /// A projector that decrypts every column for the engine's own reads (the change
+        /// diff), whose rows never leave the process. Not reachable from a caller's roles.
+        /// </summary>
+        internal static CryptoReadProjector Unmasked(IDbModel model, EnvelopeKeyManager? keyManager)
+            => new(model, keyManager, Array.Empty<string>(), unmaskAll: true);
 
         /// <summary>
         /// Projects <paramref name="raw"/> for the column identified by

@@ -77,7 +77,7 @@ who may call them:
 
 A bracket uses the same grammar as `policy-actions` and the same rule as the
 [policy engine](/BifrostQL/guides/authorization/): the caller must hold one of the listed roles
-or permissions, or the admin role. An entry without a bracket admits every caller the endpoint
+or permissions, or the [admin role](/BifrostQL/guides/authorization/#the-admin-role) the model names. An entry without a bracket admits every caller the endpoint
 admits. A malformed entry or an empty bracket (`name[]`) fails model load.
 
 Both checks run before `ExecuteAsync`. A refused caller gets

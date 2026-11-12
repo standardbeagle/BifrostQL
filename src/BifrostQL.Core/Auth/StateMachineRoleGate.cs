@@ -29,19 +29,24 @@ public static class StateMachineRoleGate
         if (string.IsNullOrWhiteSpace(userId))
             userId = "anonymous";
 
-        return new AppIdentity(userId, "state-machine-context", roles: ExtractRoles(userContext));
+        return new AppIdentity(userId, "state-machine-context", roles: ExtractRoles(userContext))
+        {
+            IsEngine = PolicyIdentity.IsEngineWrite(userContext),
+        };
     }
 
     /// <summary>
     /// Answers whether <paramref name="identity"/> is permitted to use
     /// <paramref name="transition"/>. Transitions with no required roles are open
     /// to every caller; otherwise the caller must hold one of the required roles
-    /// (or the configured admin role bypass via <paramref name="evaluator"/>).
+    /// (or the table's <paramref name="adminRole"/>, the model's
+    /// <c>:root { policy-admin-role }</c>; none when null).
     /// </summary>
     public static bool CanUseTransition(
         StateMachineTransition transition,
         AppIdentity identity,
-        PolicyEvaluator evaluator)
+        PolicyEvaluator evaluator,
+        string? adminRole)
     {
         if (transition is null) throw new ArgumentNullException(nameof(transition));
         if (identity is null) throw new ArgumentNullException(nameof(identity));
@@ -53,16 +58,13 @@ public static class StateMachineRoleGate
         var transitionPolicy = new TablePolicy(
             allowedActions: new[] { PolicyAction.Update },
             rowScopeExpression: "state-machine-role-gate",
-            rowScopeRoles: transition.RequiredRoles);
+            rowScopeRoles: transition.RequiredRoles)
+        {
+            AdminRole = adminRole,
+        };
 
         return evaluator.CanAct(transitionPolicy, PolicyAction.Update, identity).Allowed &&
-               (identity.Roles.Any(transition.RequiredRoles.Contains) || IsAdmin(identity, evaluator));
-    }
-
-    private static bool IsAdmin(AppIdentity identity, PolicyEvaluator evaluator)
-    {
-        var denyAllPolicy = new TablePolicy(rowScopeExpression: "admin-probe");
-        return evaluator.CanAct(denyAllPolicy, PolicyAction.Update, identity).Allowed;
+               (identity.Roles.Any(transition.RequiredRoles.Contains) || evaluator.IsAdmin(adminRole, identity));
     }
 
     private static IReadOnlyList<string> ExtractRoles(IDictionary<string, object?> userContext)

@@ -46,6 +46,7 @@ public sealed class ColumnReadMaskTests
         params (string key, string value)[] tableMetadata)
     {
         var builder = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Policy.AdminRole, "admin")
             .WithTable("members", t =>
             {
                 t.WithSchema("public")

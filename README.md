@@ -42,7 +42,7 @@ That's a complete GraphQL API. Every table, every column, every relationship. Qu
 - **Solves the N+1 problem.** BifrostQL generates one SQL query per table in the request, not one per row. All queries are sent in a single database round-trip and read back as multiple result sets. See [How BifrostQL solves N+1](#how-bifrostql-solves-n1) below.
 - **Relationship fields.** Foreign keys (composite keys included), matching key names, and many-to-many tables become nested GraphQL fields.
 - **Directus-style filtering and pagination.** Filter on any field with operators like `_eq`, `_contains`, `_gt`, `_in`. Pagination via `limit`/`offset`, capped server-side by `max-query-rows`. Sorting via enum fields.
-- **Full mutation support.** Insert, update, upsert, delete, batch, and graph saves -- generated from primary key metadata, each document in one transaction. BifrostQL matches your input fields by name and does the right thing.
+- **Full mutation support.** Insert, update, upsert, delete, batch, and graph saves -- generated from primary key metadata, each batch or graph save in one transaction. BifrostQL matches your input fields by name and does the right thing.
 
 ## What Else Ships
 

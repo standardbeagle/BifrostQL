@@ -20,6 +20,13 @@ namespace BifrostQL.Core.Modules.OperationId
         public const string UnsupportedCode = "OPERATION_ID_UNSUPPORTED";
 
         /// <summary>
+        /// <see cref="BifrostExecutionError.ErrorCode"/> for an id the caller already recorded
+        /// for a different write (another table, verb, target key or arguments): refused, never
+        /// replayed and never run, so a client can tell a reused id from a key collision.
+        /// </summary>
+        public const string ReusedCode = "OPERATION_ID_REUSED";
+
+        /// <summary>
         /// The operation id a field carries for <paramref name="table"/>: the
         /// <see cref="OperationIdConfig.Argument"/> argument or the request's
         /// <see cref="OperationIdConfig.Header"/> header. Null when the table does not opt in or
@@ -58,7 +65,8 @@ namespace BifrostQL.Core.Modules.OperationId
         ///
         /// <para>When the caller already holds a committed record for the id with the same
         /// <paramref name="fingerprint"/>, <paramref name="authorizeReplay"/> runs (it throws to
-        /// refuse) and the recorded result is returned: no write, transformer or hook runs.</para>
+        /// refuse) and the recorded result is returned: no write, transformer or hook runs. A
+        /// record with a different fingerprint is refused with <see cref="ReusedCode"/>.</para>
         /// </summary>
         public static async Task<object?> ExecuteAsync(
             IDbModel model, IDbConnFactory connFactory, IDictionary<string, object?> userContext,
@@ -76,8 +84,13 @@ namespace BifrostQL.Core.Modules.OperationId
             {
                 var recorded = await OperationIdStore.FindAsync(
                     store, dialect, scope.Connection, scope.Transaction, owner, operationId, cancellationToken);
-                if (recorded is not null && recorded.Fingerprint == fingerprint)
+                if (recorded is not null)
                 {
+                    if (recorded.Fingerprint != fingerprint)
+                        throw new BifrostExecutionError("This operation id was already used for a different write.")
+                        {
+                            ErrorCode = ReusedCode,
+                        };
                     authorizeReplay();
                     return RecordedResult(recorded.ResultJson);
                 }

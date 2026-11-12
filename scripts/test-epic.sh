@@ -6,8 +6,14 @@
 #
 #   ./scripts/test-epic.sh                # whole solution, epic tier
 #   ./scripts/test-epic.sh tests/BifrostQL.Server.Test   # one project
+#
+# The SQL Server/Postgres/MySQL integration suites run against
+# docker-compose.test.yml, brought up here; BifrostQL.Integration.Test reads
+# their connection strings from local-databases.runsettings.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+docker compose -f docker-compose.test.yml up -d --wait
 
 TARGET="${1:-BifrostQL.sln}"
 

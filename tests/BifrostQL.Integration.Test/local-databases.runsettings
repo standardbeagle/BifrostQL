@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Connection strings for the local test databases in docker-compose.test.yml.
+  BifrostQL.Integration.Test.csproj points RunSettingsFilePath here outside CI,
+  so every local `dotnet test` of that project (tman, worktrack command steps,
+  an IDE) runs the SQL Server, Postgres and MySQL suites instead of skipping
+  them. CI sets these variables itself, against its own service containers.
+
+  scripts/test-env.sh exports the same values for shells (benchmarks) by
+  reading this file, so this is the only copy.
+-->
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <BIFROST_TEST_SQLSERVER>Server=127.0.0.1,51433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False</BIFROST_TEST_SQLSERVER>
+      <BIFROST_TEST_POSTGRES>Host=127.0.0.1;Port=55440;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test</BIFROST_TEST_POSTGRES>
+      <BIFROST_TEST_MYSQL>Server=127.0.0.1;Port=53306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred</BIFROST_TEST_MYSQL>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

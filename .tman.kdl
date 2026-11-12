@@ -58,8 +58,8 @@ alias "test-js" {
 }
 
 // Release tier: the full net8.0/net9.0/net10.0 matrix plus the Fuzz category,
-// gated before pack-publish. Needs live databases — see scripts/test-release.sh
-// for the docker compose + scripts/test-env.sh preamble.
+// gated before pack-publish. The script brings up docker-compose.test.yml first;
+// the Integration project reads the connection strings from its runsettings.
 alias "test-release" {
     command "./scripts/test-release.sh"
     max-time "90m"

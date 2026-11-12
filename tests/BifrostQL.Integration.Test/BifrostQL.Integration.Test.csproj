@@ -9,6 +9,10 @@
 		<Nullable>enable</Nullable>
 		<IsPackable>false</IsPackable>
 		<RootNamespace>BifrostQL.Integration.Test</RootNamespace>
+		<!-- Local runs point the SQL Server/Postgres/MySQL suites at the
+		     docker-compose.test.yml containers. CI (GitHub sets CI=true) supplies
+		     the BIFROST_TEST_* variables for its own service containers instead. -->
+		<RunSettingsFilePath Condition="'$(CI)' != 'true'">$(MSBuildThisFileDirectory)local-databases.runsettings</RunSettingsFilePath>
 	</PropertyGroup>
 
 	<ItemGroup>

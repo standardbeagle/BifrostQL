@@ -5,13 +5,14 @@
 # CI runs this in the release-tests job that gates pack-publish; run it
 # locally before cutting a release tag.
 #
-# For the 4-engine integration suite, start the containers and source the
-# connection strings first:
-#   docker compose -f docker-compose.test.yml up -d
-#   source scripts/test-env.sh
+# The SQL Server/Postgres/MySQL integration suites run against
+# docker-compose.test.yml, brought up here; BifrostQL.Integration.Test reads
+# their connection strings from local-databases.runsettings.
 #
 #   ./scripts/test-release.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+docker compose -f docker-compose.test.yml up -d --wait
 
 dotnet test BifrostQL.sln -p:ReleaseTests=true "$@"

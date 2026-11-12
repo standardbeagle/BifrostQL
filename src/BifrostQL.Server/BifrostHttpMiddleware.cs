@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.OperationId;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
 using BifrostQL.Model;
@@ -76,6 +77,20 @@ namespace BifrostQL.Server
                 await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
                     "The caller identity is not accepted by this deployment.");
                 return;
+            }
+
+            // The Idempotency-Key header reaches the resolvers only through this one key, which
+            // is overwritten or removed on every request so no identity claim can supply it.
+            userContext.Remove(OperationIdConfig.UserContextKey);
+            if (context.Request.Headers.TryGetValue(OperationIdConfig.Header, out var operationIds))
+            {
+                if (operationIds.Count != 1)
+                {
+                    await WriteErrorAsync(context, StatusCodes.Status400BadRequest,
+                        "The Idempotency-Key header must carry exactly one value.");
+                    return;
+                }
+                userContext[OperationIdConfig.UserContextKey] = operationIds[0];
             }
 
             var options = new ExecutionOptions

@@ -164,6 +164,9 @@ namespace BifrostQL.Core.Model
             // key must be flagged, not silently drop the table from event emission.
             MetadataKeys.Cdc.EmitEvents,
             MetadataKeys.Cdc.EventSink,
+            // Caller operation ids (table-level opt-in). A miscased key must be flagged,
+            // not silently leave a table that reads as opted in recording nothing.
+            MetadataKeys.OperationId.Mode,
             MetadataKeys.Cdc.EventPayload,
             // Temporal change history (table-level opt-in). A miscased key must be
             // flagged, not silently leave the table with no change trail.
@@ -352,6 +355,8 @@ namespace BifrostQL.Core.Model
             // the transactional outbox; webhook-secret signs drained deliveries.
             MetadataKeys.Cdc.OutboxTable,
             MetadataKeys.Cdc.WebhookSecret,
+            // Caller operation ids (model-level): the hidden table the records live in.
+            MetadataKeys.OperationId.Store,
             // CDC subscription (model-level): allow-list of source tables, tenant binding,
             // and payload column redaction applied while routing outbox rows to the sink.
             MetadataKeys.Cdc.SubscriptionTables,

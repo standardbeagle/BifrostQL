@@ -10,7 +10,9 @@ using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.Modules.Chat;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.Modules.Deferred;
+using BifrostQL.Core.Modules.Approval;
 using BifrostQL.Core.Modules.History;
+using BifrostQL.Core.Modules.OperationId;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
 using BifrostQL.Core.Utils;
@@ -94,6 +96,7 @@ namespace BifrostQL.Core.Model
 
             ValidateEavConfigs(model, errors);
             ValidateCdcOutbox(model, errors);
+            ValidateOperationIdStore(model, errors);
             ValidateCdcSubscription(model, errors);
             ValidateHistoryTargets(model, errors);
             ValidateDeferredStores(model, errors);
@@ -761,6 +764,70 @@ namespace BifrostQL.Core.Model
         /// first mutation — aborting a real write in production — so catch it at model
         /// load instead.
         /// </summary>
+        /// <summary>
+        /// Validates operation-id configuration through the runtime's own parse
+        /// (<see cref="OperationIdConfig"/>): each table's mode, and, when any table opts in, a
+        /// store that exists, is hidden (it holds every tenant's results) and carries the store
+        /// columns. A table that also requires approval is refused: its pending write ends in an
+        /// error that would roll the pending row back with the operation record.
+        /// </summary>
+        private static void ValidateOperationIdStore(IDbModel model, List<string> errors)
+        {
+            var optedIn = new List<IDbTable>();
+            foreach (var table in model.Tables)
+            {
+                OperationIdMode mode;
+                try { mode = OperationIdConfig.ModeOf(table); }
+                catch (InvalidOperationException ex)
+                {
+                    errors.Add($"  {table.TableSchema}.{table.DbName} [{MetadataKeys.OperationId.Mode}]: {ex.Message}");
+                    continue;
+                }
+                if (mode == OperationIdMode.None)
+                    continue;
+                optedIn.Add(table);
+
+                bool requiresApproval;
+                try { requiresApproval = ApprovalConfig.FromTable(table).RequiresApproval; }
+                catch (InvalidOperationException) { continue; } // Reported by the approval validation.
+                if (requiresApproval)
+                    errors.Add(
+                        $"  {table.TableSchema}.{table.DbName} [{MetadataKeys.OperationId.Mode}]: a table that " +
+                        $"requires '{MetadataKeys.Approval.Marker}' cannot record operation ids.");
+            }
+
+            if (optedIn.Count == 0)
+                return; // Operation ids not in use: the store is optional.
+
+            var storeName = model.GetMetadataValue(MetadataKeys.OperationId.Store);
+            if (string.IsNullOrWhiteSpace(storeName))
+            {
+                errors.Add(
+                    $"  :root [{MetadataKeys.OperationId.Store}]: {optedIn.Count} table(s) set " +
+                    $"'{MetadataKeys.OperationId.Mode}' but no operation-id store is configured.");
+                return;
+            }
+
+            var store = OperationIdConfig.FindStore(model);
+            if (store == null)
+            {
+                errors.Add(
+                    $"  :root [{MetadataKeys.OperationId.Store}]: '{storeName}' does not name an existing table.");
+                return;
+            }
+            if (!OperationIdConfig.IsHidden(model, store))
+                errors.Add(
+                    $"  :root [{MetadataKeys.OperationId.Store}]: store table '{storeName}' must be " +
+                    $"'{MetadataKeys.Ui.Visibility}: {MetadataKeys.Ui.Hidden}'; it holds every tenant's write results.");
+
+            var missing = MetadataKeys.OperationId.Columns.Where(c => !DbColumnExists(store, c)).ToArray();
+            if (missing.Length > 0)
+                errors.Add(
+                    $"  :root [{MetadataKeys.OperationId.Store}]: store table '{storeName}' is missing required " +
+                    $"column(s): {string.Join(", ", missing)}. The store contract is: " +
+                    $"{string.Join(", ", MetadataKeys.OperationId.Columns)}.");
+        }
+
         private static void ValidateCdcOutbox(IDbModel model, List<string> errors)
         {
             var emittingTables = model.Tables

@@ -95,6 +95,7 @@ public static class ModuleApiRegistry
     public static readonly IReadOnlyList<IModuleApi> BuiltIns = new IModuleApi[]
     {
         new SoftDeleteModuleApi(),
+        new OperationId.OperationIdModuleApi(),
     };
 
     // Consumer modules registered via AddBifrostQL(o => o.AddModuleApi<T>()). The four

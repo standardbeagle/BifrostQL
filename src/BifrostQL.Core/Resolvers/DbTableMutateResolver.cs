@@ -2,6 +2,7 @@ using System.Data.Common;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.OperationId;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Model;
 using GraphQL;
@@ -41,33 +42,77 @@ namespace BifrostQL.Core.Resolvers
             var mutationTransformers = BifrostProfileRegistry.FilterBy(
                 context.RequestServices!.GetRequiredService<IMutationTransformers>(), context.UserContext);
 
-            var result = MutationActionSelector.FromContext(context) switch
+            var action = MutationActionSelector.FromContext(context);
+
+            // A write carrying a caller operation id runs inside one operation scope that also
+            // claims and records the id, so the record commits with the write or not at all.
+            var operationId = OperationIdExecution.Resolve(context, table);
+            if (operationId is not null)
             {
-                MutationAction.Sync => await SyncObject(context, table, mutationTransformers, model, conFactory, dialect),
-                MutationAction.Save => await SaveObject(context, table, mutationTransformers, model, conFactory, dialect),
-                MutationAction.Insert => await InsertObject(context, table, mutationTransformers, model, conFactory),
-                MutationAction.Update => await UpdateObject(context, table, mutationTransformers, model, conFactory),
-                MutationAction.Delete => await DeleteObject(context, mutationTransformers, table, model, conFactory),
-                MutationAction.Upsert => await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect),
-                // updateWhere returns an affected-row COUNT — the same second meaning the
-                // declared scalar already carries for delete, coerced by the same rule below.
-                MutationAction.UpdateWhere => await UpdateWhereObject(context, table, mutationTransformers, model, conFactory),
-                // delta returns the batch's total affected COUNT, coerced like delete's.
-                MutationAction.Delta => await DeltaObject(context, table, mutationTransformers, model, conFactory),
-                _ => null,
-            };
+                if (action is not (MutationAction.Insert or MutationAction.Update or MutationAction.Upsert or MutationAction.Delete))
+                    throw new BifrostExecutionError("This mutation cannot record an operation id.")
+                    { ErrorCode = OperationIdExecution.UnsupportedCode };
+                var fingerprint = Fingerprint(context, table, action);
+                return await OperationIdExecution.ExecuteAsync(
+                    model, conFactory, context.UserContext, operationId, fingerprint,
+                    async scope => Coerce(await DispatchAsync(action, context, table, mutationTransformers, model, conFactory, dialect, scope)),
+                    context.CancellationToken);
+            }
+
+            return Coerce(await DispatchAsync(action, context, table, mutationTransformers, model, conFactory, dialect, writeScope: null));
 
             // This field carries two different meanings — the affected row's KEY, or
             // an affected-row COUNT for a delete or a composite key — through ONE
             // declared scalar. Coercing here, by the same rule that chose the
             // declaration, is what stops a value the scalar cannot serialize from
             // throwing AFTER the write has already committed.
-            return MutationResultScalar.Coerce(result, MutationResultScalar.Name(table, model.TypeMapper));
+            object? Coerce(object? result) => MutationResultScalar.Coerce(result, MutationResultScalar.Name(table, model.TypeMapper));
+        }
+
+        private async Task<object?> DispatchAsync(MutationAction action, IBifrostFieldContext context, IDbTable table,
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect,
+            OperationWriteScope? writeScope)
+            => action switch
+            {
+                MutationAction.Sync => await SyncObject(context, table, mutationTransformers, model, conFactory, dialect),
+                MutationAction.Save => await SaveObject(context, table, mutationTransformers, model, conFactory, dialect),
+                MutationAction.Insert => await InsertObject(context, table, mutationTransformers, model, conFactory, writeScope),
+                MutationAction.Update => await UpdateObject(context, table, mutationTransformers, model, conFactory, writeScope),
+                MutationAction.Delete => await DeleteObject(context, mutationTransformers, table, model, conFactory, writeScope),
+                MutationAction.Upsert => await UpsertObject(context, table, mutationTransformers, model, conFactory, dialect, writeScope),
+                // updateWhere returns an affected-row COUNT — the same second meaning the
+                // declared scalar already carries for delete, coerced by the same rule.
+                MutationAction.UpdateWhere => await UpdateWhereObject(context, table, mutationTransformers, model, conFactory),
+                // delta returns the batch's total affected COUNT, coerced like delete's.
+                MutationAction.Delta => await DeltaObject(context, table, mutationTransformers, model, conFactory),
+                _ => null,
+            };
+
+        /// <summary>
+        /// The fingerprint a single-row write with an operation id is recorded under: the verb's
+        /// input object, <c>_primaryKey</c> and every module argument the field carries (the
+        /// operation id itself excepted), and the key the write addresses.
+        /// </summary>
+        private static OperationFingerprint Fingerprint(IBifrostFieldContext context, IDbTable table, MutationAction action)
+        {
+            var verb = action.ToString().ToLowerInvariant();
+            var input = context.GetArgument<Dictionary<string, object?>>(verb) ?? new();
+            var primaryKey = ReadPrimaryKeyValues(context);
+            var arguments = new Dictionary<string, object?>(StringComparer.Ordinal) { [verb] = input };
+            if (primaryKey is not null)
+                arguments["_primaryKey"] = primaryKey;
+            foreach (var (key, value) in ModuleApiRegistry.CaptureMutationArguments(context, table))
+            {
+                if (key != OperationIdModuleApi.ContextKey)
+                    arguments["module:" + key] = value;
+            }
+            var targetKey = MutationArgumentBinder.SplitProperties(table, input, primaryKey).keyData;
+            return OperationFingerprint.Of(table, verb, targetKey, arguments);
         }
 
         private async Task<object?> UpsertObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
-            IDbConnFactory conFactory, ISqlDialect dialect)
+            IDbConnFactory conFactory, ISqlDialect dialect, OperationWriteScope? writeScope)
         {
             var propertyInfo = GetPropertyInfo(context, _table, "upsert");
             if (!propertyInfo.data.Any())
@@ -102,10 +147,10 @@ namespace BifrostQL.Core.Resolvers
                 // which refuses a key-only update.
                 if (!propertyInfo.standardData.Any())
                     return 0;
-                return await UpdateObject(context, table, mutationTransformers, model, conFactory, "upsert");
+                return await UpdateObject(context, table, mutationTransformers, model, conFactory, writeScope, "upsert");
             }
 
-            return await InsertObject(context, table, mutationTransformers, model, conFactory, "upsert");
+            return await InsertObject(context, table, mutationTransformers, model, conFactory, writeScope, "upsert");
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -121,9 +166,11 @@ namespace BifrostQL.Core.Resolvers
         private static MutationPipelineContext BuildPipelineContext(
             IBifrostFieldContext context, IDbModel model, IDbConnFactory conFactory,
             IMutationTransformers mutationTransformers,
-            IReadOnlyDictionary<string, object?>? moduleArguments = null)
+            IReadOnlyDictionary<string, object?>? moduleArguments = null,
+            OperationWriteScope? writeScope = null)
             => new()
             {
+                WriteScope = writeScope,
                 Model = model,
                 ConnFactory = conFactory,
                 Transformers = mutationTransformers,
@@ -183,7 +230,7 @@ namespace BifrostQL.Core.Resolvers
 
         private async Task<object?> DeleteObject(IBifrostFieldContext context,
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
-            IDbConnFactory conFactory)
+            IDbConnFactory conFactory, OperationWriteScope? writeScope)
         {
             var data = context.GetArgument<Dictionary<string, object?>>("delete") ?? new();
             if (!data.Any())
@@ -197,16 +244,16 @@ namespace BifrostQL.Core.Resolvers
             }
 
             var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers,
-                ModuleApiRegistry.CaptureMutationArguments(context, table));
+                ModuleApiRegistry.CaptureMutationArguments(context, table), writeScope);
             return await TableMutationPipeline.DeleteAsync(table, data, ctx);
         }
 
         private async Task<object?> UpdateObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
-            IDbConnFactory conFactory, string parameterName = "update")
+            IDbConnFactory conFactory, OperationWriteScope? writeScope, string parameterName = "update")
         {
             var propertyInfo = GetPropertyInfo(context, table, parameterName);
-            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers, writeScope: writeScope);
             var (value, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(table, propertyInfo, ctx);
             // A scoped-away (tenant/policy/soft-delete) or vanished row affects zero
             // rows, and Value is the KEY on a single-key table, not a count
@@ -344,10 +391,10 @@ namespace BifrostQL.Core.Resolvers
 
         private async Task<object?> InsertObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
-            IDbConnFactory conFactory, string parameterName = "insert")
+            IDbConnFactory conFactory, OperationWriteScope? writeScope, string parameterName = "insert")
         {
             var data = context.GetArgument<Dictionary<string, object?>>(parameterName) ?? new();
-            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers);
+            var ctx = BuildPipelineContext(context, model, conFactory, mutationTransformers, writeScope: writeScope);
             var generated = await TableMutationPipeline.InsertAsync(table, data, ctx);
 
             // The driver's last-insert-id only means something for an IDENTITY key.

@@ -26,6 +26,15 @@ namespace BifrostQL.Core.Model
         {
             if (model is null)
                 throw new ArgumentNullException(nameof(model));
+            return Find(model.Tables, qualified);
+        }
+
+        /// <summary>
+        /// The same match as <see cref="Find(IDbModel, string)"/> over an explicit table set,
+        /// for a store that lives among the model's hidden tables.
+        /// </summary>
+        public static IDbTable? Find(IEnumerable<IDbTable> tables, string qualified)
+        {
             if (string.IsNullOrWhiteSpace(qualified))
                 return null;
 
@@ -35,12 +44,12 @@ namespace BifrostQL.Core.Model
             {
                 var schema = trimmed[..dot];
                 var name = trimmed[(dot + 1)..];
-                return model.Tables.FirstOrDefault(t =>
+                return tables.FirstOrDefault(t =>
                     string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(t.DbName, name, StringComparison.OrdinalIgnoreCase));
             }
 
-            return model.Tables.FirstOrDefault(t =>
+            return tables.FirstOrDefault(t =>
                 string.Equals(t.DbName, trimmed, StringComparison.OrdinalIgnoreCase));
         }
     }

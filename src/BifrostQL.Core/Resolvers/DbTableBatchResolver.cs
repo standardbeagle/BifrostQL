@@ -1,6 +1,7 @@
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.OperationId;
 using GraphQL;
 using GraphQL.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,10 @@ namespace BifrostQL.Core.Resolvers
             // history target), but guarded at the execution seam too — before argument
             // parsing, so even an empty forged batch is refused. The pipeline re-guards.
             TableMutationPipeline.GuardNotHistoryTarget(_table, bifrost.Model);
+            // A batch does not record an operation id yet: refused rather than run unrecorded.
+            if (OperationIdExecution.Resolve(context, _table) is not null)
+                throw new BifrostExecutionError("This mutation cannot record an operation id.")
+                { ErrorCode = OperationIdExecution.UnsupportedCode };
             var actions = context.GetArgument<List<Dictionary<string, object?>>>("actions");
             if (actions == null || actions.Count == 0)
                 return 0;

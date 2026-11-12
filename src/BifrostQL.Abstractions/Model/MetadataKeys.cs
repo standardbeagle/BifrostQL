@@ -1176,6 +1176,70 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
+        /// Metadata keys for caller operation ids (inbound write idempotency). A table opts in
+        /// with <see cref="Mode"/>; the model names the host-created store table with
+        /// <see cref="Store"/>, the same shape as the CDC outbox
+        /// (<see cref="Cdc.OutboxTable"/>). Every write that carries an operation id records
+        /// one store row in its own transaction:
+        ///   ":root { operation-id-store: public.operation_ids }"
+        ///   "public.operation_ids { visibility: hidden }"
+        ///   "public.invoices { operation-id: optional }"
+        /// </summary>
+        public static class OperationId
+        {
+            /// <summary>
+            /// Model-level qualified name of the store table operation records are written to
+            /// (e.g. <c>public.operation_ids</c>). Required once any table sets
+            /// <see cref="Mode"/>. The table must exist, carry the <see cref="Columns"/>
+            /// contract and be declared <c>visibility: hidden</c>: its rows hold every
+            /// tenant's recorded results, so no read or write surface may expose it.
+            /// </summary>
+            public const string Store = "operation-id-store";
+
+            /// <summary>
+            /// Table-level opt-in. <see cref="Optional"/> records a write that carries an
+            /// operation id and runs a write without one exactly as before.
+            /// </summary>
+            public const string Mode = "operation-id";
+
+            /// <summary>The <see cref="Mode"/> value that records an id when the write carries one.</summary>
+            public const string Optional = "optional";
+
+            /// <summary>
+            /// The store's column contract. ModelConfigValidator checks the configured
+            /// <see cref="Store"/> carries every column, so a misconfigured store fails at
+            /// model load rather than on the first write that carries an id. The host also
+            /// declares a unique key over (<see cref="Column.Tenant"/>,
+            /// <see cref="Column.OperationId"/>): it is what makes one id one record.
+            /// </summary>
+            public static class Column
+            {
+                /// <summary>The caller's tenant, empty when the deployment has none. Never null, so the unique key holds.</summary>
+                public const string Tenant = "tenant";
+                /// <summary>The caller's operation id.</summary>
+                public const string OperationId = "operation_id";
+                /// <summary>The written table, qualified (<c>schema.name</c>).</summary>
+                public const string Table = "table_name";
+                /// <summary>The mutation verb: <c>insert</c>, <c>update</c>, <c>upsert</c>, <c>delete</c>.</summary>
+                public const string Action = "action";
+                /// <summary>The key the write addressed, as canonical JSON (<c>{}</c> for an insert whose key the database generates).</summary>
+                public const string TargetKey = "target_key";
+                /// <summary>SHA-256 (lowercase hex) of the canonical JSON of the field's write arguments.</summary>
+                public const string InputHash = "input_hash";
+                /// <summary>The mutation field's result, as JSON.</summary>
+                public const string Result = "result";
+                /// <summary>When the record was written (UTC).</summary>
+                public const string CreatedAt = "created_at";
+            }
+
+            public static readonly IReadOnlyList<string> Columns = new[]
+            {
+                Column.Tenant, Column.OperationId, Column.Table, Column.Action,
+                Column.TargetKey, Column.InputHash, Column.Result, Column.CreatedAt,
+            };
+        }
+
+        /// <summary>
         /// Metadata keys for temporal change history — the before/after field-level
         /// trail beyond the created/updated audit columns. A table opts in by naming
         /// the operations it records; each recorded mutation writes one history row

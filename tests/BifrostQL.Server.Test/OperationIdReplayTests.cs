@@ -222,6 +222,22 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Header_shared_by_two_different_fields_refuses_the_second_as_reused()
+    {
+        using var reply = await SendWithHeadersAsync(
+            """mutation { a: notes(insert: { title: "first" }) b: notes(insert: { title: "second" }) }""", Writer,
+            ("Idempotency-Key", "op-two-fields"));
+
+        reply.RootElement.GetProperty("data").GetProperty("a").ValueKind.Should().Be(JsonValueKind.Number, reply.RootElement.GetRawText());
+        reply.RootElement.GetProperty("data").GetProperty("b").ValueKind.Should().Be(JsonValueKind.Null);
+        var error = FirstError(reply);
+        error.GetProperty("extensions").GetProperty("code").GetString().Should().Be("OPERATION_ID_REUSED", reply.RootElement.GetRawText());
+        error.GetProperty("path")[0].GetString().Should().Be("b");
+        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+        (await CountAsync("SELECT count(*) FROM notes WHERE title = 'second'")).Should().Be(0);
+    }
+
+    [Fact]
     public async Task Same_id_and_request_from_another_user_writes_its_own_row()
     {
         const string insert = """mutation { notes(insert: { title: "shared" }, _operationId: "op-shared") }""";

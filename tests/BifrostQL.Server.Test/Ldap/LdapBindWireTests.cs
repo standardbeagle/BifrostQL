@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using System.Net.Sockets;
 using BifrostQL.Server;
 using BifrostQL.Server.Ldap;
 using FluentAssertions;
@@ -313,7 +314,19 @@ namespace BifrostQL.Server.Test.Ldap
                     response = null; // the server already closed the connection
                     break;
                 }
-                response = await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                try
+                {
+                    response = await fixture.Client.ReadResponseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (IOException ex) when (ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset })
+                {
+                    // The deadline timer fires on another thread after Advance. When it closes the
+                    // socket after this bind reached the server's receive buffer but before it was
+                    // read, TCP answers with RST instead of FIN, so the close shows up here as a
+                    // reset rather than EOF. Either way the server closed without answering.
+                    response = null;
+                    break;
+                }
                 if (response is null)
                     break;
             }

@@ -95,6 +95,8 @@ public sealed class OrderTimelineHook : IInTransactionMutationHook
 **Set `ErrorCode` to give the refusal a code.** A `BifrostExecutionError` thrown by a hook, or a
 transformer result carrying `Errors` and `ErrorCode`, reaches a `/graphql` client with that code
 in `errors[].extensions.code` and the message unchanged, on single-row writes and `_batch` alike.
+When several transformers refuse one write, the message joins their errors with `; ` and the code
+is the first refuser's.
 A client branches on the code instead of matching message text:
 
 ```json
@@ -102,7 +104,8 @@ A client branches on the code instead of matching message text:
                 "extensions": { "code": "BOOKING_REFUSED" } } ] }
 ```
 
-An error without a code answers `BIFROST_EXECUTION_ERROR`.
+A `BifrostExecutionError` without a code answers `BIFROST_EXECUTION_ERROR`. Any other exception a
+hook throws answers `DATABASE_ERROR` with a generic message.
 
 ### Registration
 

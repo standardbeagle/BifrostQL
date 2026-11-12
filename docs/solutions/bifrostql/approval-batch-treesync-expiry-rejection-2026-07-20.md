@@ -32,7 +32,7 @@ tags: [approval, batch, treesync, expiry, state-machine, mutation-pipeline, affe
 
 ## Why it recurs
 
-Hooks run at different pipeline boundaries, and TreeSync contains several actions in one transaction. Queue diversion can therefore differ from veto semantics. Pending rows are durable state, while wall-clock expiry is only an input to a transition. Direct SQL looks simple for administrative state changes but silently skips the same authorization/audit/scoping contract required for every mutation.
+Hooks run at different pipeline boundaries, and TreeSync contains several actions in one transaction. Queue diversion can therefore differ from veto semantics. Pending rows are durable state, while wall-clock expiry is only an input to a transition. Direct SQL for application-table mutations bypasses the authorization/audit/scoping contract of the shared mutation pipeline. Engine-owned bookkeeping has a separate contract: approve/reject authorize in `ApprovalDecisionService`, while queue decisions use `PendingChangeStore.TransitionFromPendingAsync` with a `state == pending` guard and require exactly one affected row; expiry is a trusted-server-only transition.
 
 ## Apply when
 

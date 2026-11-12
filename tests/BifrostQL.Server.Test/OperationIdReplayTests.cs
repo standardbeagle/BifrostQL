@@ -196,19 +196,29 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
         (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
     }
 
-    [Fact]
-    public async Task Known_id_with_different_arguments_is_refused_not_replayed()
+    public const string ReusedMessage = "This operation id was already used for a different write.";
+
+    [Theory]
+    [InlineData("table", """mutation { codes(insert: { code: "x", label: "a" }, _operationId: "op-reused") }""")]
+    [InlineData("action", """mutation { notes(delete: { id: 1 }, _operationId: "op-reused") }""")]
+    [InlineData("target", """mutation { notes(update: { id: 2, title: "a" }, _operationId: "op-reused") }""")]
+    [InlineData("input", """mutation { notes(update: { id: 1, title: "b" }, _operationId: "op-reused") }""")]
+    public async Task Same_operation_id_on_another_target_is_refused_as_reused(string differs, string mutation)
     {
-        using var first = await SendAsync("""mutation { notes(insert: { title: "one" }, _operationId: "op-reused") }""", Writer);
-        Data(first, "notes").ValueKind.Should().Be(JsonValueKind.Number);
+        await ExecAsync("INSERT INTO notes (id, title) VALUES (1, 'one'), (2, 'two')");
+        using var first = await SendAsync("""mutation { notes(update: { id: 1, title: "a" }, _operationId: "op-reused") }""", Writer);
+        Data(first, "notes");
 
-        using var other = await SendAsync("""mutation { notes(insert: { title: "two" }, _operationId: "op-reused") }""", Writer);
+        using var other = await SendAsync(mutation, Writer);
 
-        FirstError(other).GetProperty("extensions").GetProperty("code").GetString().Should().Be("CONFLICT", other.RootElement.GetRawText());
-        other.RootElement.GetProperty("data").GetProperty("notes").ValueKind.Should().Be(JsonValueKind.Null);
-        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
-        (await CountAsync("SELECT count(*) FROM notes WHERE title = 'two'")).Should().Be(0);
-        _hookCalls.Should().Be(1);
+        var error = FirstError(other);
+        error.GetProperty("extensions").GetProperty("code").GetString().Should().Be("OPERATION_ID_REUSED", differs + ": " + other.RootElement.GetRawText());
+        error.GetProperty("message").GetString().Should().Be(ReusedMessage);
+        other.RootElement.GetProperty("data").EnumerateObject().Single().Value.ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM notes WHERE (id = 1 AND title = 'a') OR (id = 2 AND title = 'two')")).Should().Be(2);
+        (await CountAsync("SELECT count(*) FROM codes")).Should().Be(0);
+        (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
+        _hookCalls.Should().Be(1, "only the first write ran");
     }
 
     [Fact]

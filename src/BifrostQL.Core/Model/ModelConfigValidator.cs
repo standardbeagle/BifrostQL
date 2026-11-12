@@ -760,12 +760,41 @@ namespace BifrostQL.Core.Model
         /// (<see cref="OperationIdConfig"/>): each table's mode, and, when any table opts in, a
         /// store that exists, is hidden (it holds every tenant's results) and carries the store
         /// columns. A table that also requires approval is refused: its pending write ends in an
-        /// error that would roll the pending row back with the operation record.
+        /// error that would roll the pending row back with the operation record. A
+        /// <see cref="OperationIdMode.Required"/> table is refused beside a feature whose engine
+        /// writes it through the pipeline with no operation id (retention purge, deferred undo,
+        /// the key-rotation sweep): every such write would be refused. Hidden tables are parsed
+        /// too, because the write-path guard parses every table it writes.
         /// </summary>
+        /// <summary>
+        /// The keys on <paramref name="table"/> whose engine writes the table with no operation id,
+        /// each asked through the feature's runtime parse. A malformed config yields nothing here;
+        /// its own validation reports it.
+        /// </summary>
+        private static IEnumerable<string> EngineWriterKeys(IDbTable table)
+        {
+            Modules.Retention.RetentionConfig? retention = null;
+            try { retention = Modules.Retention.RetentionConfig.FromTable(table); }
+            catch (InvalidOperationException) { } // Reported by ValidateRetention.
+            if (retention is { PurgesSoftDeleted: true })
+                yield return MetadataKeys.Retention.Retain;
+            if (retention is { ExpiresLiveRows: true })
+                yield return MetadataKeys.Retention.Ttl;
+
+            var deferrable = false;
+            try { deferrable = DeferredConfig.FromTable(table).IsDeferrable; }
+            catch (InvalidOperationException) { } // Reported by ValidateDeferred.
+            if (deferrable)
+                yield return MetadataKeys.Deferred.Deferrable;
+
+            if (table.Columns.Any(Modules.Crypto.CryptoReEncryptionSweep.IsEncrypted))
+                yield return MetadataKeys.Crypto.Encrypt;
+        }
+
         private static void ValidateOperationIdStore(IDbModel model, List<string> errors)
         {
             var optedIn = new List<IDbTable>();
-            foreach (var table in model.Tables)
+            foreach (var table in model.Tables.Concat(model.HiddenTables))
             {
                 OperationIdMode mode;
                 try { mode = OperationIdConfig.ModeOf(table); }
@@ -785,6 +814,13 @@ namespace BifrostQL.Core.Model
                     errors.Add(
                         $"  {table.TableSchema}.{table.DbName} [{MetadataKeys.OperationId.Mode}]: a table that " +
                         $"requires '{MetadataKeys.Approval.Marker}' cannot record operation ids.");
+
+                if (mode == OperationIdMode.Required)
+                    foreach (var key in EngineWriterKeys(table))
+                        errors.Add(
+                            $"  {table.TableSchema}.{table.DbName} [{MetadataKeys.OperationId.Mode}]: a " +
+                            $"'{MetadataKeys.OperationId.Required}' table cannot set '{key}'; its engine writes " +
+                            "carry no operation id.");
             }
 
             if (optedIn.Count == 0)

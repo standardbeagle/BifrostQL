@@ -156,7 +156,8 @@ namespace BifrostQL.Core.Modules.Crypto
             };
         }
 
-        private static bool IsEncrypted(ColumnDto column)
+        /// <summary>Whether the sweep re-encrypts <paramref name="column"/>; ModelConfigValidator asks the same question.</summary>
+        internal static bool IsEncrypted(ColumnDto column)
             => !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt));
 
         private static object? ReadColumn(IReadOnlyDictionary<string, object?> row, ColumnDto column)

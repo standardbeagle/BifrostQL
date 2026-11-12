@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
@@ -37,7 +39,11 @@ public sealed class GraphQlErrorCodeWireTests : IAsyncLifetime
                 "CREATE TABLE drafts (id INTEGER PRIMARY KEY, body TEXT NOT NULL);" +
                 "CREATE TABLE pending_changes (id INTEGER PRIMARY KEY, \"table\" TEXT NOT NULL, op TEXT NOT NULL, " +
                 "intended_payload TEXT NOT NULL, requester TEXT NULL, tenant TEXT NULL, requester_context TEXT NULL, " +
-                "\"state\" TEXT NOT NULL, approver TEXT NULL, decided_at TEXT NULL, reason TEXT NULL);";
+                "\"state\" TEXT NOT NULL, approver TEXT NULL, decided_at TEXT NULL, reason TEXT NULL);" +
+                "CREATE TABLE guarded (id INTEGER PRIMARY KEY, body TEXT NOT NULL);" +
+                "CREATE TABLE hooked (id INTEGER PRIMARY KEY, body TEXT NOT NULL);" +
+                "CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL CONSTRAINT tags_name_unique UNIQUE);" +
+                "INSERT INTO tags (id, name) VALUES (1, 'taken');";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -55,10 +61,12 @@ public sealed class GraphQlErrorCodeWireTests : IAsyncLifetime
             web.ConfigureServices(services =>
             {
                 services.AddRouting();
+                services.AddSingleton<IInTransactionMutationHook, RefusingHook>();
                 services.AddBifrostQL(o => o
                     .BindConfiguration(config.GetSection("Bifrost"))
                     .BindConnectionString($"Data Source={_dbPath}")
-                    .BindProvider("sqlite"));
+                    .BindProvider("sqlite")
+                    .AddMutationTransformer<RefusingHostTransformer>());
             });
             web.Configure(app => app.UseBifrostQL());
         }).StartAsync();
@@ -72,6 +80,57 @@ public sealed class GraphQlErrorCodeWireTests : IAsyncLifetime
         SqliteConnection.ClearAllPools();
         if (File.Exists(_dbPath)) File.Delete(_dbPath);
         await Task.CompletedTask;
+    }
+
+    [Theory]
+    [InlineData("mutation { guarded(insert: { body: \"x\" }) }", RefusingHostTransformer.Code, RefusingHostTransformer.Message)]
+    [InlineData("mutation { guarded_batch(actions: [{ insert: { body: \"x\" } }]) }", RefusingHostTransformer.Code, RefusingHostTransformer.Message)]
+    [InlineData("mutation { hooked(insert: { body: \"x\" }) }", RefusingHook.Code, RefusingHook.Message)]
+    [InlineData("mutation { tags(insert: { name: \"taken\" }) }", "CONFLICT", "A conflicting record already exists.")]
+    public async Task HostRefusalHookThrowAndUniqueViolation_CarryTheirCode_WithTheSanitizedMessage(
+        string mutation, string expectedCode, string expectedMessage)
+    {
+        var response = await _client.PostAsync("/graphql", JsonContent.Create(new { query = mutation }));
+        var body = await response.Content.ReadAsStringAsync();
+
+        using var doc = JsonDocument.Parse(body);
+        var error = doc.RootElement.GetProperty("errors").EnumerateArray().Single();
+        error.GetProperty("extensions").GetProperty("code").GetString().Should().Be(expectedCode, body);
+        error.GetProperty("message").GetString().Should().Be(expectedMessage, body);
+    }
+
+    /// <summary>A host transformer that refuses every write to <c>guarded</c> with its own code.</summary>
+    private sealed class RefusingHostTransformer : IMutationTransformer
+    {
+        public const string Code = "PROTECTED_ITEM";
+        public const string Message = "The item is protected.";
+
+        public int Priority => 200;
+
+        public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context)
+            => table.DbName == "guarded";
+
+        public ValueTask<MutationTransformResult> TransformAsync(
+            IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationTransformContext context)
+            => ValueTask.FromResult(new MutationTransformResult
+            {
+                MutationType = mutationType,
+                Data = data,
+                Errors = new[] { Message },
+                ErrorCode = Code,
+            });
+    }
+
+    /// <summary>An in-transaction hook that throws a coded refusal for every write to <c>hooked</c>.</summary>
+    private sealed class RefusingHook : IInTransactionMutationHook
+    {
+        public const string Code = "BOOKING_REFUSED";
+        public const string Message = "The booking was refused.";
+
+        public bool AppliesTo(IDbTable table) => table.DbName == "hooked";
+
+        public ValueTask AfterWriteInTransactionAsync(MutationObserverContext context)
+            => throw new BifrostExecutionError(Message) { ErrorCode = Code };
     }
 
     [Theory]

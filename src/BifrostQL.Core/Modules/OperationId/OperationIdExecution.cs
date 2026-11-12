@@ -76,10 +76,12 @@ namespace BifrostQL.Core.Modules.OperationId
         /// record with a different fingerprint is refused with <see cref="ReusedCode"/>.</para>
         ///
         /// <para>Two requests claiming one id at once: the second's claim waits on the first's
-        /// uncommitted record and fails when it commits. That attempt rolls back and runs once
-        /// more in a fresh transaction, which sees the committed record and answers as a retry
-        /// would (replay or <see cref="ReusedCode"/>), or claims the id if the first rolled back.
-        /// A claim that loses again reports the store's conflict.</para>
+        /// uncommitted record. If the first rolls back, the waiting claim succeeds in place and the
+        /// second writes. If the first commits, the claim fails; that attempt rolls back and runs
+        /// once more in a fresh transaction, which sees the committed record and answers as a
+        /// retry would (replay or <see cref="ReusedCode"/>). A claim that conflicts again (only
+        /// when the store carries an extra unique key, or a record vanished) is refused as a
+        /// plain <see cref="BifrostExecutionError.ConflictCode"/> that names no store constraint.</para>
         /// </summary>
         public static async Task<object?> ExecuteAsync(
             IDbModel model, IDbConnFactory connFactory, IDictionary<string, object?> userContext,
@@ -100,10 +102,9 @@ namespace BifrostQL.Core.Modules.OperationId
             }
             catch (BifrostExecutionError) when (claimLost)
             {
-                // A concurrent request claimed the same id first, and its claim held this one
-                // until it committed or rolled back. This transaction is spent (Postgres has
-                // aborted it), so a fresh one reads the outcome: the committed record is
-                // replayed or refused as reused; a rolled-back claim leaves the id free to claim.
+                // A concurrent request claimed the same id first and committed while this claim
+                // waited on it. This transaction is spent (Postgres has aborted it), so a fresh
+                // one reads the committed record: replayed, or refused as reused.
                 return await RunOnceAsync(lastAttempt: true);
             }
 
@@ -126,10 +127,19 @@ namespace BifrostQL.Core.Modules.OperationId
                     await OperationIdStore.ClaimAsync(
                         store, dialect, scope.Connection, scope.Transaction, owner, operationId, fingerprint, cancellationToken);
                 }
-                catch (Exception ex) when (!lastAttempt && BifrostExecutionError.IsUniqueViolation(ex))
+                catch (Exception ex) when (BifrostExecutionError.IsUniqueViolation(ex))
                 {
-                    claimLost = true;
-                    throw;
+                    if (!lastAttempt)
+                    {
+                        claimLost = true;
+                        throw;
+                    }
+                    // No record answers this claim, so the conflict is on the store itself. The
+                    // driver error names a constraint of the hidden store: keep it off the wire.
+                    throw new BifrostExecutionError(BifrostExecutionError.ConflictMessage, ex)
+                    {
+                        ErrorCode = BifrostExecutionError.ConflictCode,
+                    };
                 }
                 var result = await write(scope);
                 await OperationIdStore.RecordResultAsync(

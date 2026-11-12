@@ -414,7 +414,10 @@ public interface ISqlDialect
     /// <param name="expr">The expression tree to lower.</param>
     /// <param name="table">The table whose columns a <see cref="SqlExpr.Col"/> must reference.</param>
     /// <param name="parameters">The parameter collection every literal/param value binds into.</param>
+    /// <param name="tableAlias">The alias <paramref name="table"/> carries in the enclosing query
+    /// (e.g. <c>b</c> for a joined table); every column reference is qualified with it. Null for an
+    /// unaliased root select.</param>
     /// <returns>The parameterized SQL fragment (e.g. <c>CASE UPPER("Name") WHEN @p0 THEN ... END</c>).</returns>
-    string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters)
+    string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters, string? tableAlias = null)
         => throw new NotSupportedException("This dialect does not support SqlExpr lowering.");
 }

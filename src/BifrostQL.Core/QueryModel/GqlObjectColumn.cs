@@ -59,7 +59,7 @@ namespace BifrostQL.Core.QueryModel
             // Expression kind lowers to PARAMETERIZED SQL: every Lit/Param binds onto the live
             // query's parameter collection (threaded from AddSqlParameterized), never inline.
             if (ComputedColumn is { Kind: ComputedColumnKind.Expression } exprComputed)
-                return $"{exprComputed.RenderExpression(table, dialect, parameters)}{aliasSeparator}{dialect.EscapeIdentifier(GraphQlDbName)}";
+                return $"{exprComputed.RenderExpression(table, dialect, parameters, tableAlias)}{aliasSeparator}{dialect.EscapeIdentifier(GraphQlDbName)}";
 
             if (ComputedColumn is { Kind: ComputedColumnKind.Provider })
                 throw new InvalidOperationException("Provider computed columns are populated after SQL execution.");

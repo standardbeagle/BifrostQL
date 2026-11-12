@@ -48,10 +48,10 @@ public sealed class SqliteDialect : StandardConcatDialectBase
     /// text modifier like <c>'3 days'</c>; concatenating the bound amount with the fixed unit word
     /// builds that modifier while keeping the amount a parameter (never interpolated).
     /// </remarks>
-    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, Func<SqlExpr, string> lowerOperand)
     {
-        var amount = LowerExpression(node.Amount, table, parameters);
-        var source = LowerExpression(node.Source, table, parameters);
+        var amount = lowerOperand(node.Amount);
+        var source = lowerOperand(node.Source);
         return $"datetime({source}, {amount} || ' {DateTimeModifierUnit(node.Unit)}')";
     }
 
@@ -63,7 +63,7 @@ public sealed class SqliteDialect : StandardConcatDialectBase
     /// they fail fast with <see cref="SqlExprLoweringNotSupportedException"/> rather than emit a
     /// silently-wrong approximation.
     /// </remarks>
-    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, Func<SqlExpr, string> lowerOperand)
     {
         var unitsPerDay = node.Unit switch
         {
@@ -77,26 +77,26 @@ public sealed class SqliteDialect : StandardConcatDialectBase
                 "from a Julian-day delta (calendar boundaries vary); use DatePart-based arithmetic instead.")
         };
 
-        var start = LowerExpression(node.Start, table, parameters);
-        var end = LowerExpression(node.End, table, parameters);
+        var start = lowerOperand(node.Start);
+        var end = lowerOperand(node.End);
         return $"CAST((julianday({end}) - julianday({start})) * {unitsPerDay} AS INTEGER)";
     }
 
     /// <inheritdoc />
     /// <remarks><c>CAST(strftime('%Y', &lt;source&gt;) AS INTEGER)</c> — strftime yields a
     /// zero-padded string, cast to an integer for numeric parity with the other dialects.</remarks>
-    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDatePart(SqlExpr.DatePart node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"CAST(strftime('{StrftimeField(node.Unit)}', {source}) AS INTEGER)";
     }
 
     /// <inheritdoc />
     /// <remarks><c>json_extract(&lt;source&gt;, '$.a.b')</c>. The path is spliced from
     /// <see cref="JsonPath"/>'s validated segments.</remarks>
-    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"json_extract({source}, '{node.Path.ToDollarPath()}')";
     }
 

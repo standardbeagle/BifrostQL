@@ -202,28 +202,28 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// <inheritdoc />
     /// <remarks><c>DATEADD(day, &lt;amount&gt;, &lt;source&gt;)</c>. The amount lowers to a bound
     /// parameter; the datepart is a T-SQL keyword, never client text.</remarks>
-    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, Func<SqlExpr, string> lowerOperand)
     {
-        var amount = LowerExpression(node.Amount, table, parameters);
-        var source = LowerExpression(node.Source, table, parameters);
+        var amount = lowerOperand(node.Amount);
+        var source = lowerOperand(node.Source);
         return $"DATEADD({DatePartKeyword(node.Unit)}, {amount}, {source})";
     }
 
     /// <inheritdoc />
     /// <remarks><c>DATEDIFF(day, &lt;start&gt;, &lt;end&gt;)</c> — native for every unit, including
     /// whole months/years.</remarks>
-    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, Func<SqlExpr, string> lowerOperand)
     {
-        var start = LowerExpression(node.Start, table, parameters);
-        var end = LowerExpression(node.End, table, parameters);
+        var start = lowerOperand(node.Start);
+        var end = lowerOperand(node.End);
         return $"DATEDIFF({DatePartKeyword(node.Unit)}, {start}, {end})";
     }
 
     /// <inheritdoc />
     /// <remarks><c>DATEPART(year, &lt;source&gt;)</c>.</remarks>
-    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDatePart(SqlExpr.DatePart node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"DATEPART({DatePartKeyword(node.Unit)}, {source})";
     }
 
@@ -231,9 +231,9 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// <remarks><c>JSON_VALUE(&lt;source&gt;, '$.a.b')</c>. The path is spliced from
     /// <see cref="JsonPath"/>'s validated segments, so the single-quoted path literal cannot be
     /// broken out of.</remarks>
-    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"JSON_VALUE({source}, '{node.Path.ToDollarPath()}')";
     }
 

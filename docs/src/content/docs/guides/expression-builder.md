@@ -162,8 +162,8 @@ string sql = dialect.LowerExpression(expr, table, parameters);
 // `sql` is a parameterized fragment; every Lit/Param value is bound into `parameters`.
 ```
 
-`ISqlDialect.LowerExpression(SqlExpr, IDbTable, SqlParameterCollection)` is the **public lowering
-surface** — the extension point a third-party dialect implements. The concrete Template-Method
+`ISqlDialect.LowerExpression(SqlExpr, IDbTable, SqlParameterCollection, string? tableAlias = null)`
+is the **public lowering surface** — the extension point a third-party dialect implements. The concrete Template-Method
 implementation lives on `SqlDialectBase`: an exhaustive switch over the closed node set that binds
 every value node as a parameter and validates every identifier. A new dialect derives from
 `SqlDialectBase` and overrides its hooks:
@@ -173,7 +173,12 @@ every value node as a parameter and validates every identifier. A new dialect de
 - `LowerDateAdd`, `LowerDateDiff`, `LowerDatePart`, `LowerJsonGet` — **abstract on purpose**. The
   four engines' date/JSON facilities share no portable spelling, so every dialect must supply its
   own. A dialect that cannot express a requested unit throws `SqlExprLoweringNotSupportedException`
-  rather than emit a wrong approximation.
+  rather than emit a wrong approximation. Each hook receives the node and a `lowerOperand`
+  callback; lower every operand through it, so column references keep the table alias and values
+  stay bound as parameters.
+
+Pass `tableAlias` when the fragment lands in a query that joins other tables: every column is then
+written `"alias"."column"`, so a name the joined tables share cannot be ambiguous.
 
 Because the switch is exhaustive over a closed hierarchy, adding a node type is a compile-time
 obligation on every dialect — never a silent runtime fall-through.

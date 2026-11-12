@@ -204,10 +204,10 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// a unit interval by the bound amount handles any signed count; the interval unit is a fixed
     /// keyword, never client text.
     /// </remarks>
-    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, Func<SqlExpr, string> lowerOperand)
     {
-        var amount = LowerExpression(node.Amount, table, parameters);
-        var source = LowerExpression(node.Source, table, parameters);
+        var amount = lowerOperand(node.Amount);
+        var source = lowerOperand(node.Source);
         return $"({source} + ({amount} * INTERVAL '1 {IntervalUnit(node.Unit)}'))";
     }
 
@@ -220,7 +220,7 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// <see cref="SqlExprLoweringNotSupportedException"/> rather than emit a silently-wrong
     /// approximation.
     /// </remarks>
-    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, Func<SqlExpr, string> lowerOperand)
     {
         var secondsPerUnit = node.Unit switch
         {
@@ -234,16 +234,16 @@ public sealed class PostgresDialect : StandardConcatDialectBase
                 "from an epoch delta (calendar boundaries vary); use DatePart-based arithmetic instead.")
         };
 
-        var start = LowerExpression(node.Start, table, parameters);
-        var end = LowerExpression(node.End, table, parameters);
+        var start = lowerOperand(node.Start);
+        var end = lowerOperand(node.End);
         return $"FLOOR(EXTRACT(EPOCH FROM ({end} - {start})) / {secondsPerUnit})";
     }
 
     /// <inheritdoc />
     /// <remarks><c>EXTRACT(YEAR FROM &lt;source&gt;)</c>.</remarks>
-    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDatePart(SqlExpr.DatePart node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"EXTRACT({ExtractField(node.Unit)} FROM {source})";
     }
 
@@ -254,9 +254,9 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// (returns the scalar as text). Segments are <see cref="JsonPath"/>-validated, so the
     /// single-quoted key literals cannot break out.
     /// </remarks>
-    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, Func<SqlExpr, string> lowerOperand)
     {
-        var expr = LowerExpression(node.Source, table, parameters);
+        var expr = lowerOperand(node.Source);
         var segments = node.Path.Segments;
         for (var i = 0; i < segments.Count; i++)
         {

@@ -96,6 +96,15 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Fixed
 
+- A `computed-expr` column read through a relationship wrote its column references unqualified,
+  so a many-to-many read whose junction shares a column name with the target (a surrogate `id`)
+  failed with an ambiguous-column error, and any join could bind the name to the wrong table.
+  Expression columns now qualify every column with the joined table's alias, as plain and
+  `computed` columns already did. Breaking for third-party dialects: `ISqlDialect.LowerExpression`
+  gains an optional `tableAlias`, and the `SqlDialectBase` hooks `LowerDateAdd`, `LowerDateDiff`,
+  `LowerDatePart` and `LowerJsonGet` now take `(node, Func<SqlExpr, string> lowerOperand)` instead
+  of `(node, IDbTable, SqlParameterCollection)`. Lower each operand with `lowerOperand(node.X)`.
+
 - On PostgreSQL a write refused by an exclusion constraint (SQLSTATE `23P01`) or a foreign key
   (`23503`) answered `DATABASE_ERROR`, and one refused by a unique constraint (`23505`) answered
   `CONFLICT`, none of them naming the constraint, so a client could not say which rule the write

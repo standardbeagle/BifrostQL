@@ -310,65 +310,69 @@ public abstract class SqlDialectBase : ISqlDialect
     /// <see cref="LowerConcat"/>, <see cref="MapFunctionName"/>, and <see cref="RenderCastType"/>,
     /// so no per-dialect branching lives in this method or in the node types.
     /// </remarks>
-    public virtual string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters)
+    public virtual string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters, string? tableAlias = null)
     {
         ArgumentNullException.ThrowIfNull(expr);
         ArgumentNullException.ThrowIfNull(table);
         ArgumentNullException.ThrowIfNull(parameters);
 
-        return expr switch
+        // One closure carries the table, the parameter collection and the alias down the whole
+        // tree. The date/JSON hooks recurse only through it, so no dialect can lower a nested
+        // operand without the alias.
+        string Lower(SqlExpr node) => node switch
         {
-            SqlExpr.Col col => LowerColumn(col, table),
+            SqlExpr.Col col => LowerColumn(col, table, tableAlias),
             SqlExpr.Param p => parameters.AddParameter(p.Value, p.DbType).Name,
             SqlExpr.Lit lit => parameters.AddParameter(lit.Value).Name,
-            SqlExpr.Fn fn => LowerFunction(fn, table, parameters),
-            SqlExpr.Cast cast =>
-                $"CAST({LowerExpression(cast.Operand, table, parameters)} AS {RenderCastType(cast.TargetType)})",
-            SqlExpr.Concat concat =>
-                LowerConcat(concat.Parts.Select(part => LowerExpression(part, table, parameters)).ToList()),
-            SqlExpr.Case @case => LowerCase(@case, table, parameters),
-            SqlExpr.DateAdd dateAdd => LowerDateAdd(dateAdd, table, parameters),
-            SqlExpr.DateDiff dateDiff => LowerDateDiff(dateDiff, table, parameters),
-            SqlExpr.DatePart datePart => LowerDatePart(datePart, table, parameters),
-            SqlExpr.JsonGet jsonGet => LowerJsonGet(jsonGet, table, parameters),
+            SqlExpr.Fn fn => LowerFunction(fn, Lower),
+            SqlExpr.Cast cast => $"CAST({Lower(cast.Operand)} AS {RenderCastType(cast.TargetType)})",
+            SqlExpr.Concat concat => LowerConcat(concat.Parts.Select(Lower).ToList()),
+            SqlExpr.Case @case => LowerCase(@case, Lower),
+            SqlExpr.DateAdd dateAdd => LowerDateAdd(dateAdd, Lower),
+            SqlExpr.DateDiff dateDiff => LowerDateDiff(dateDiff, Lower),
+            SqlExpr.DatePart datePart => LowerDatePart(datePart, Lower),
+            SqlExpr.JsonGet jsonGet => LowerJsonGet(jsonGet, Lower),
             _ => throw new BifrostExecutionError(
-                $"Unsupported SqlExpr node type '{expr.GetType().Name}' in expression lowering.")
+                $"Unsupported SqlExpr node type '{node.GetType().Name}' in expression lowering.")
         };
+
+        return Lower(expr);
     }
 
-    private string LowerColumn(SqlExpr.Col col, IDbTable table)
+    private string LowerColumn(SqlExpr.Col col, IDbTable table, string? tableAlias)
     {
         if (!table.ColumnLookup.TryGetValue(col.Name, out var column))
             throw new BifrostExecutionError(
                 $"Unknown column '{col.Name}' referenced in a SQL expression on table '{table.DbName}'. " +
                 "An expression column reference must name a real schema column of the table.");
-        return EscapeIdentifier(column.DbName);
+        var escaped = EscapeIdentifier(column.DbName);
+        return string.IsNullOrWhiteSpace(tableAlias) ? escaped : $"{EscapeIdentifier(tableAlias)}.{escaped}";
     }
 
-    private string LowerFunction(SqlExpr.Fn fn, IDbTable table, SqlParameterCollection parameters)
+    private string LowerFunction(SqlExpr.Fn fn, Func<SqlExpr, string> lowerOperand)
     {
         // Resolve the dialect name FIRST so an unknown function fails fast (naming the
         // symbol) before any argument is lowered — there is no pass-through path.
         var name = MapFunctionName(fn.Name);
-        var args = fn.Args.Select(a => LowerExpression(a, table, parameters));
+        var args = fn.Args.Select(lowerOperand);
         return $"{name}({string.Join(", ", args)})";
     }
 
-    private string LowerCase(SqlExpr.Case node, IDbTable table, SqlParameterCollection parameters)
+    private static string LowerCase(SqlExpr.Case node, Func<SqlExpr, string> lowerOperand)
     {
         if (node.Branches.Count == 0)
             throw new BifrostExecutionError(
                 "A CASE expression must have at least one WHEN branch; an empty CASE is not valid SQL.");
 
         var sb = new StringBuilder("CASE ");
-        sb.Append(LowerExpression(node.Operand, table, parameters));
+        sb.Append(lowerOperand(node.Operand));
         foreach (var branch in node.Branches)
         {
-            sb.Append(" WHEN ").Append(LowerExpression(branch.When, table, parameters));
-            sb.Append(" THEN ").Append(LowerExpression(branch.Then, table, parameters));
+            sb.Append(" WHEN ").Append(lowerOperand(branch.When));
+            sb.Append(" THEN ").Append(lowerOperand(branch.Then));
         }
         if (node.Else is not null)
-            sb.Append(" ELSE ").Append(LowerExpression(node.Else, table, parameters));
+            sb.Append(" ELSE ").Append(lowerOperand(node.Else));
         sb.Append(" END");
         return sb.ToString();
     }
@@ -428,7 +432,7 @@ public abstract class SqlDialectBase : ISqlDialect
     /// no-op — so forcing every dialect to override makes "a new dialect forgot date/JSON lowering"
     /// a compile error, never a runtime data defect.
     /// </summary>
-    protected abstract string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters);
+    protected abstract string LowerDateAdd(SqlExpr.DateAdd node, Func<SqlExpr, string> lowerOperand);
 
     /// <summary>
     /// Lowers a <see cref="SqlExpr.DateDiff"/> into this dialect's native difference form.
@@ -437,22 +441,22 @@ public abstract class SqlDialectBase : ISqlDialect
     /// <see cref="SqlExprLoweringNotSupportedException"/> (naming node + dialect) rather than emit a
     /// wrong approximation.
     /// </summary>
-    protected abstract string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters);
+    protected abstract string LowerDateDiff(SqlExpr.DateDiff node, Func<SqlExpr, string> lowerOperand);
 
     /// <summary>
     /// Lowers a <see cref="SqlExpr.DatePart"/> into this dialect's native field-extraction form.
     /// Abstract for the same reason as <see cref="LowerDateAdd"/>.
     /// </summary>
-    protected abstract string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters);
+    protected abstract string LowerDatePart(SqlExpr.DatePart node, Func<SqlExpr, string> lowerOperand);
 
     /// <summary>
     /// Lowers a <see cref="SqlExpr.JsonGet"/> into this dialect's native JSON scalar-extraction
     /// form. Abstract for the same reason as <see cref="LowerDateAdd"/>. Implementers splice the
     /// path from <see cref="SqlExpr.JsonGet.Path"/>, whose segments are already validated safe by
     /// <see cref="JsonPath"/>, and lower <see cref="SqlExpr.JsonGet.Source"/> through
-    /// <see cref="LowerExpression"/> so its value binds as a parameter.
+    /// <c>lowerOperand</c> so its value binds as a parameter and its columns keep the table alias.
     /// </summary>
-    protected abstract string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters);
+    protected abstract string LowerJsonGet(SqlExpr.JsonGet node, Func<SqlExpr, string> lowerOperand);
 }
 
 /// <summary>

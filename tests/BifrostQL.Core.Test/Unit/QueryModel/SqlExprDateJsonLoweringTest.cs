@@ -210,4 +210,27 @@ public sealed class SqlExprDateJsonLoweringTest
         SqlSyntax.AssertValid($"SELECT {sql} AS Expr", FlavorOf(dialect),
             $"lowered JsonGet on {dialect.GetType().Name} must be valid SQL");
     }
+    // --- An aliased table qualifies every column the date/JSON hooks lower ----------------------
+    // The hooks recurse through the lowering callback, so a column under a DateAdd/DateDiff/
+    // DatePart/JsonGet keeps the joined table's alias exactly like a top-level column does.
+    [Theory]
+    [MemberData(nameof(MatrixByDialect))]
+    public void Each_node_qualifies_its_columns_with_the_table_alias(ISqlDialect dialect, string nodeName, SqlExpr expr)
+    {
+        var sql = dialect.LowerExpression(expr, EventsTable(), new SqlParameterCollection(), tableAlias: "b");
+
+        var alias = dialect.EscapeIdentifier("b");
+        foreach (var column in new[] { "StartAt", "EndAt", "Payload" })
+        {
+            var bare = dialect.EscapeIdentifier(column);
+            var qualified = $"{alias}.{bare}";
+            var bareCount = sql.Split(bare).Length - 1;
+            var qualifiedCount = sql.Split(qualified).Length - 1;
+            qualifiedCount.Should().Be(bareCount,
+                $"every {column} reference in {nodeName} on {dialect.GetType().Name} carries the alias: {sql}");
+        }
+        sql.Should().Contain($"{alias}.", $"{nodeName} references at least one column");
+        SqlSyntax.AssertValid($"SELECT {sql} AS Expr FROM Events {alias}", FlavorOf(dialect),
+            $"aliased {nodeName} on {dialect.GetType().Name} must be valid SQL");
+    }
 }

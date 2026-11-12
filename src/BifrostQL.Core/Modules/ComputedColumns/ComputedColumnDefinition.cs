@@ -70,7 +70,7 @@ public sealed record ComputedColumnDefinition(
     /// than being interpolated. Unlike <see cref="RenderSqlExpression"/> there is no
     /// verbatim-SQL path and no lexical blocklist — the trust boundary is the lowering itself.
     /// </summary>
-    public string RenderExpression(IDbTable table, ISqlDialect dialect, SqlParameterCollection parameters)
+    public string RenderExpression(IDbTable table, ISqlDialect dialect, SqlParameterCollection parameters, string? tableAlias = null)
     {
         if (Kind != ComputedColumnKind.Expression)
             throw new InvalidOperationException("Only Expression computed columns can render expression SQL.");
@@ -78,7 +78,7 @@ public sealed record ComputedColumnDefinition(
             throw new BifrostExecutionError($"Computed expression column '{Name}' has no expression tree.");
 
         var resolved = ResolveColumns(Expression, table);
-        return dialect.LowerExpression(resolved, table, parameters);
+        return dialect.LowerExpression(resolved, table, parameters, tableAlias);
     }
 
     /// <summary>

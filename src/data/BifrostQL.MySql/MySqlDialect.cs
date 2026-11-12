@@ -87,28 +87,28 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
     /// <inheritdoc />
     /// <remarks><c>DATE_ADD(&lt;source&gt;, INTERVAL &lt;amount&gt; DAY)</c>. The amount lowers to a
     /// bound parameter; the unit is a fixed keyword.</remarks>
-    protected override string LowerDateAdd(SqlExpr.DateAdd node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateAdd(SqlExpr.DateAdd node, Func<SqlExpr, string> lowerOperand)
     {
-        var amount = LowerExpression(node.Amount, table, parameters);
-        var source = LowerExpression(node.Source, table, parameters);
+        var amount = lowerOperand(node.Amount);
+        var source = lowerOperand(node.Source);
         return $"DATE_ADD({source}, INTERVAL {amount} {UnitKeyword(node.Unit)})";
     }
 
     /// <inheritdoc />
     /// <remarks><c>TIMESTAMPDIFF(DAY, &lt;start&gt;, &lt;end&gt;)</c> — native for every unit,
     /// including whole months/years.</remarks>
-    protected override string LowerDateDiff(SqlExpr.DateDiff node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDateDiff(SqlExpr.DateDiff node, Func<SqlExpr, string> lowerOperand)
     {
-        var start = LowerExpression(node.Start, table, parameters);
-        var end = LowerExpression(node.End, table, parameters);
+        var start = lowerOperand(node.Start);
+        var end = lowerOperand(node.End);
         return $"TIMESTAMPDIFF({UnitKeyword(node.Unit)}, {start}, {end})";
     }
 
     /// <inheritdoc />
     /// <remarks><c>EXTRACT(YEAR FROM &lt;source&gt;)</c>.</remarks>
-    protected override string LowerDatePart(SqlExpr.DatePart node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerDatePart(SqlExpr.DatePart node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"EXTRACT({UnitKeyword(node.Unit)} FROM {source})";
     }
 
@@ -116,9 +116,9 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
     /// <remarks><c>JSON_UNQUOTE(JSON_EXTRACT(&lt;source&gt;, '$.a.b'))</c> — JSON_EXTRACT returns a
     /// quoted JSON scalar, JSON_UNQUOTE strips the quotes to the raw text. The path is spliced from
     /// <see cref="JsonPath"/>'s validated segments.</remarks>
-    protected override string LowerJsonGet(SqlExpr.JsonGet node, IDbTable table, SqlParameterCollection parameters)
+    protected override string LowerJsonGet(SqlExpr.JsonGet node, Func<SqlExpr, string> lowerOperand)
     {
-        var source = LowerExpression(node.Source, table, parameters);
+        var source = lowerOperand(node.Source);
         return $"JSON_UNQUOTE(JSON_EXTRACT({source}, '{node.Path.ToDollarPath()}'))";
     }
 

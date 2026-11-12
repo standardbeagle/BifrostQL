@@ -25,6 +25,18 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Breaking — dialect date/JSON hooks take a lowering callback
+
+A `computed-expr` column read through a relationship now qualifies its columns with the joined
+table's alias; before, a many-to-many read whose junction shared a column name (such as `id`)
+failed with an ambiguous-column error. To carry the alias, `ISqlDialect.LowerExpression` gains an
+optional `tableAlias` argument, and the `SqlDialectBase` hooks `LowerDateAdd`, `LowerDateDiff`,
+`LowerDatePart` and `LowerJsonGet` now take `(node, Func<SqlExpr, string> lowerOperand)` instead of
+`(node, IDbTable, SqlParameterCollection)`.
+
+**Migration:** in a third-party dialect, replace `LowerExpression(node.X, table, parameters)` with
+`lowerOperand(node.X)` inside those four overrides.
+
 ### Breaking — `admin` no longer bypasses policy unless the model names it
 
 A caller whose roles included `admin` bypassed every policy grant, row scope, column deny and

@@ -144,6 +144,8 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
     [InlineData("retain", "main.ledger { operation-id: required; soft-delete: deleted_at; retain: 30d }")]
     [InlineData("deferrable", "main.ledger { operation-id: required; deferrable: enabled; undo-window: 1h }")]
     [InlineData("encrypt", "main.ledger { operation-id: required }", "main.ledger.secret { encrypt: aes-256-gcm; key-ref: config:pii }")]
+    [InlineData("chat-conversations", "main.ledger { operation-id: required; chat-conversations: enabled }")]
+    [InlineData("chat-messages", "main.ledger { operation-id: required; chat-messages: enabled; chat-role: title; chat-content: secret; chat-conversation-fk: id; chat-created-at: created_at }")]
     public async Task RequiredTable_WithAnEngineWriter_IsRefused(string key, params string[] tableRules)
     {
         var load = () => LoadAsync(
@@ -158,24 +160,44 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
     [InlineData("main.ledger { operation-id: optional; ttl: 1d after created_at }")]
     [InlineData("main.ledger { operation-id: optional; soft-delete: deleted_at; retain: 30d }")]
     [InlineData("main.ledger { operation-id: optional }", "main.ledger.secret { encrypt: aes-256-gcm; key-ref: config:pii }")]
-    public async Task OptionalTable_WithAnEngineWriter_Loads(params string[] tableRules)
+    [InlineData("main.ledger { operation-id: optional; deferrable: enabled; undo-window: 1h }")]
+    [InlineData("main.ledger { operation-id: optional; chat-conversations: enabled }")]
+    public async Task OptionalTable_WithAnEngineWriter_DoesNotTripTheRequiredRefusal(params string[] tableRules)
     {
-        var load = () => LoadAsync(
+        var errors = await LoadErrorsAsync(
             [":root { operation-id-store: main.operation_ids }", "main.operation_ids { visibility: hidden }", .. tableRules]);
 
-        await load.Should().NotThrowAsync();
+        // A deferrable or chat fixture also reports its own unrelated store/pair errors, so the
+        // control asserts only that the required-mode refusal is absent.
+        errors.Should().NotContain("cannot set '");
     }
 
-    [Fact]
-    public async Task UnknownModeValue_OnAHiddenTable_IsRefused()
+    [Theory]
+    [InlineData("optional")]
+    [InlineData("required")]
+    [InlineData("sometimes")]
+    public async Task OperationIdMode_OnAHiddenTable_IsRefused(string mode)
     {
         var load = () => LoadAsync(
             ":root { operation-id-store: main.operation_ids }",
             "main.operation_ids { visibility: hidden }",
-            "main.ledger { visibility: hidden; operation-id: sometimes }");
+            $"main.ledger {{ visibility: hidden; operation-id: {mode} }}");
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
-            .Which.Message.Should().Contain("main.ledger [operation-id]: 'operation-id' must be 'optional' or 'required'.");
+            .Which.Message.Should().Contain("main.ledger [operation-id]: a hidden table cannot record operation ids; no client write can reach it.");
+    }
+
+    private static async Task<string> LoadErrorsAsync(params string[] rules)
+    {
+        try
+        {
+            await LoadAsync(rules);
+            return string.Empty;
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message;
+        }
     }
 
     private static async Task LoadAsync(params string[] rules)

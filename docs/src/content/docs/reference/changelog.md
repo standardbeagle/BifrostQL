@@ -122,6 +122,10 @@ included, and runs no SQL write, transformer or hook. The retry still passes the
 for its verb, so a caller who lost the grant gets `ACCESS_DENIED`; an `upsert` retry must pass
 both the create and the update check.
 
+A known id sent with a different table, verb, target key or arguments is refused with
+`OPERATION_ID_REUSED` and writes nothing, so a client can tell a reused id from a `CONFLICT` on
+its own data.
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

@@ -237,9 +237,9 @@ Callers with no user id share their tenant's id space, or one shared space when 
 tenant either, so an anonymous client should send ids it generates at random.
 
 The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
-document with two such fields records both under one id: the second answers `CONFLICT` and
-writes nothing, unless it is the same request as the first, in which case it is answered as a
-retry of the first.
+document with two such fields records both under one id: the second answers
+`OPERATION_ID_REUSED` and writes nothing, unless it is the same request as the first, in which
+case it is answered as a retry of the first.
 Send one write per request with the header, or omit the header and give each field its own
 `_operationId`. A field whose `_operationId` differs from the header is refused with `INVALID_VALUE`.
 
@@ -248,7 +248,7 @@ Send one write per request with the header, or omit the header and give each fie
 | Argument and header both present with different values | `INVALID_VALUE`, nothing written |
 | A blank id, or one longer than 200 characters | `INVALID_VALUE`, nothing written |
 | `Idempotency-Key` sent more than once | HTTP 400 |
-| A known id with a different table, verb, target or arguments | `CONFLICT`, nothing written |
+| A known id with a different table, verb, target or arguments | `OPERATION_ID_REUSED`, nothing written or replayed |
 | An id on `sync`, `save`, `delta`, `updateWhere` or `_batch` | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | The header on a table that does not opt in | Ignored |
 

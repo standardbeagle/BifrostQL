@@ -161,4 +161,21 @@ public sealed class WireContextMergerTests
 
         userContext["household_id"].Should().Be("identity-household");
     }
+
+    [Theory]
+    [InlineData("bifrost:operation-id")]
+    [InlineData("BIFROST:Operation-Id")]
+    public void OperationIdSlot_IsNotFillableFromTheWire(string key)
+    {
+        // The Idempotency-Key header is the only route into this slot (the HTTP middleware
+        // sets it per request). A wire entry under it would let a frontend record or, once
+        // replay lands, answer a write under an id the request never carried.
+        var userContext = new Dictionary<string, object?>();
+        var wire = new Dictionary<string, object?> { [key] = "op-from-wire", ["frontend-extra"] = 1 };
+
+        WireContextMerger.Merge(userContext, wire, Model());
+
+        userContext.Keys.Should().NotContain(k => string.Equals(k, BifrostQL.Core.Modules.OperationId.OperationIdConfig.UserContextKey, StringComparison.OrdinalIgnoreCase));
+        userContext["frontend-extra"].Should().Be(1, "the control entry merges, so the skip is specific to the operation-id slot");
+    }
 }

@@ -114,7 +114,8 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
 
         var (first, second) = await RaceAsync(mutation, mutation);
 
-        PostgresGraphQlHost.FirstError(first);
+        PostgresGraphQlHost.FirstError(first).GetProperty("extensions").GetProperty("code").GetString()
+            .Should().Be("DATABASE_ERROR", first.RootElement.GetRawText());
         PostgresGraphQlHost.AssertNoErrors(second);
         var key = second.RootElement.GetProperty("data").GetProperty("notes").GetRawText();
         (await _host!.CountAsync("SELECT count(*) FROM notes")).Should().Be(1);

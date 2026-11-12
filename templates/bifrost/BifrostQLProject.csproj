@@ -6,31 +6,30 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 	</PropertyGroup>
 
+	<!-- Keep every BifrostQL.* package on the same version. See
+	     https://github.com/standardbeagle/BifrostQL#packages -->
 	<ItemGroup>
-		<PackageReference Include="BifrostQL.Core" Version="0.3.0" />
-		<PackageReference Include="BifrostQL.Server" Version="0.3.0" />
+		<PackageReference Include="BifrostQL.Server" Version="0.4.740" />
 	</ItemGroup>
 
 	<!--#if (UseSqlServer) -->
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
-		<!-- SqlClient pulls a System.Security.Cryptography.Pkcs inside CVE-2026-84008 / CVE-2026-70162; pin the patched build, as BifrostQL.SqlServer does. -->
-		<PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+		<PackageReference Include="BifrostQL.SqlServer" Version="0.4.740" />
 	</ItemGroup>
 	<!--#endif -->
 	<!--#if (UsePostgres) -->
 	<ItemGroup>
-		<PackageReference Include="BifrostQL.Ngsql" Version="0.3.0" />
+		<PackageReference Include="BifrostQL.Ngsql" Version="0.4.740" />
 	</ItemGroup>
 	<!--#endif -->
 	<!--#if (UseMySql) -->
 	<ItemGroup>
-		<PackageReference Include="BifrostQL.MySql" Version="0.3.0" />
+		<PackageReference Include="BifrostQL.MySql" Version="0.4.740" />
 	</ItemGroup>
 	<!--#endif -->
 	<!--#if (UseSqlite) -->
 	<ItemGroup>
-		<PackageReference Include="BifrostQL.Sqlite" Version="0.3.0" />
+		<PackageReference Include="BifrostQL.Sqlite" Version="0.4.740" />
 	</ItemGroup>
 	<!--#endif -->
 

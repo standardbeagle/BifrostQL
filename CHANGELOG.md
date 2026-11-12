@@ -2,68 +2,48 @@
 
 All notable changes to BifrostQL after `3c42a60` (`[DART-xDCKBXmI5qsv] add app-builder extraction plan from Membership Manager build`).
 
-The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); pre-1.0 BifrostQL still uses CommitsSinceBaseline-style versioning.
+The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased — 2026-11-09 (least-privilege logins and operations)
+## Versions
 
-### Added
+Each section is headed by the git tag that shipped it and names its NuGet build. NuGet
+packages are versioned `0.4.<CI run number>`, so a NuGet number does not match its tag: tag
+`v0.4.28` is NuGet `0.4.740`. Every `BifrostQL.*` package is published at the same version on
+each release, so keep them on one version in a host. When a tag's publish failed, its changes
+first reached NuGet with the next tag, and the section is headed by that tag.
 
-- `BifrostOperationContext.LockRowAsync(table, key)` locks a row until the operation's
-  transaction ends, so concurrent operations that read to decide what to write run one after
-  another. It stays inside the caller's `tenant-filter` tenant, so a row of another tenant raises
-  the same `LOCK_ROW_NOT_FOUND` as a missing one. On MySQL and SQL Server the attempt waits while
-  that tenant holds the row, so the delay can show the row exists. On MySQL a caught
-  `LOCK_ROW_NOT_FOUND` also leaves locks that hold up other writers and inserts until the operation
-  ends. Read policy does not apply and the lock grants nothing. A dialect with no row lock (SQLite)
-  is refused with `ROW_LOCK_UNSUPPORTED` rather than running unserialized.
-- `BifrostOperationContext.QueryAsync` takes `sort` (`<column>_asc` / `<column>_desc`, as a
-  generated field does), and `where` can test `BifrostOperationContext.NotNull` or
-  `BifrostOperationContext.LessThan(value)`. A `null` value is now documented as IS NULL. See "Reading rows" and "Serializing on a row" in the Server Operations
-  guide.
-- `@bifrostql/react` rejects with `BifrostGraphQLError`, which keeps the server's
-  `extensions.code` as `code` and the whole list as `errors`, so a client can tell a conflict from
-  a denial without matching message text. `BatchError` gains `code`.
+| Tag | Date | NuGet build |
+|-----|------|-------------|
+| v0.4.28 | 2026-11-09 | 0.4.740 |
+| v0.4.27 | 2026-11-02 | 0.4.731 |
+| v0.4.26 | 2026-11-02 | 0.4.729 |
+| v0.4.25 | 2026-11-01 | 0.4.727 (v0.4.24's publish failed) |
+| v0.4.23 | 2026-10-19 | 0.4.711 |
+| v0.4.22 | 2026-10-17 | 0.4.709 (v0.4.21's publish failed) |
+| v0.4.20 | 2026-09-21 | 0.4.688 |
+| v0.4.19 | 2026-09-17 | 0.4.685 (v0.4.18's publish failed) |
+| v0.4.17 | 2026-09-02 | 0.4.597 |
+| v0.4.16 | 2026-08-31 | 0.4.590 |
+| v0.4.15 | 2026-08-24 | 0.4.583 |
+| v0.4.14 | 2026-08-24 | 0.4.581 |
+| v0.4.13 | 2026-07-07 | 0.4.494 |
+| v0.4.12 | 2026-07-05 | 0.4.484 |
+
+The npm packages `@bifrostql/react` and `@bifrostql/types` are released on their own; see
+`packages/@bifrostql/react/CHANGELOG.md`. Version 0.4.0 of both shipped with v0.4.28.
+
+To upgrade across several builds, read every section from your build up to the target and
+apply each breaking or behaviour-change step on the way.
+
+## Unreleased
+
+On `main` after v0.4.28; not yet on NuGet.
 
 ### Changed
 
 - `HistoryErasure.BuildTrailPurgeSql` now takes the history table and the `entity` /
   `entity_id` values, so each comparison can follow the trail column's type. Callers outside
   BifrostQL pass the resolved history `IDbTable` and the two values they bind.
-
-- **Recompile operations.** `BifrostOperationContext.QueryAsync` gained an optional `sort`
-  parameter. That keeps source compatible, but the method's binary signature changed, so an
-  operation assembly compiled against an earlier BifrostQL fails with `MissingMethodException`
-  until it is rebuilt.
-- A database error inside a mutation operation now ends the operation on every dialect, even if the
-  operation catches it, and so does a write the policy or the validator refuses. The operation's
-  transaction rolls back, the client gets an error carrying the first failure's code, and no observer fires. On
-  PostgreSQL a caught read failure used to return success while COMMIT silently rolled the writes
-  back. A refusal that comes before any statement runs does not end it and may still be caught:
-  `LOCK_ROW_NOT_FOUND`, `PARTIAL_PRIMARY_KEY`, a read of a denied or unknown column, `LessThan(null)`,
-  and a write to an approval-gated or unknown table.
-- A value the validator refuses because of its column's type now has the code `INVALID_VALUE`: text
-  it cannot read as a number, date or time (`"2.4"` for an integer), a typed decimal with a fraction
-  on an integer column, a number outside the integer type's range, too many digits before the decimal
-  point, a date outside the type's storable range, and a binary value longer than the column. A
-  refusal that also breaks a declared rule keeps no code, as before.
-- The set-based batch fast path merges only adjacent rows with the same verb, columns and filter,
-  and applies each run in document order. It used to group a verb's rows wherever they sat in the
-  document, so `[insert x, delete y, insert y]` ran both inserts first and failed with `CONFLICT`
-  when the later insert reused a key the delete freed. Batches of one verb and one column set stay
-  one statement. A batch of more than 8 runs now takes the per-row loop, which includes a batch that
-  alternates verbs or an optional column on every row: those were set-based, in the wrong order, and
-  10,000 of them now take about as long as the per-row path. See "How the fast path keeps document
-  order" in the bulk batch performance reference, which also names where the two paths still differ.
-
-- `@bifrostql/react` decides whether a GraphQL error is an auth failure by its `extensions.code`
-  when it has one: only `UNAUTHENTICATED` and `UNAUTHORIZED` take the session flow. A coded refusal
-  whose message says "unauthorized" used to log the user out. An operation that relied on that
-  wording must set `ErrorCode = "UNAUTHENTICATED"`. An error with no code is read as before.
-
-- A database error for a value its column cannot read (SQLSTATE `22P02`, `22007`, `22008`, `22003`)
-  now has the code `INVALID_VALUE` instead of `DATABASE_ERROR`, with a generic message. Code that
-  matched `DATABASE_ERROR` for these needs the new word. An out-of-range key sent as text on a
-  PostgreSQL integer column now fails this way where it used to match no row.
 
 ### Fixed
 
@@ -126,6 +106,68 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   guess a fresh account's password without limit. A source or account the full map cannot track now
   counts against one shared window for its axis, under the same cap. During such a flood, new
   callers share that budget and may be refused; already-tracked sources and accounts are unaffected.
+
+## 0.4.28 — 2026-11-09 (least-privilege logins and operations)
+
+Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`
+
+### Added
+
+- `BifrostOperationContext.LockRowAsync(table, key)` locks a row until the operation's
+  transaction ends, so concurrent operations that read to decide what to write run one after
+  another. It stays inside the caller's `tenant-filter` tenant, so a row of another tenant raises
+  the same `LOCK_ROW_NOT_FOUND` as a missing one. On MySQL and SQL Server the attempt waits while
+  that tenant holds the row, so the delay can show the row exists. On MySQL a caught
+  `LOCK_ROW_NOT_FOUND` also leaves locks that hold up other writers and inserts until the operation
+  ends. Read policy does not apply and the lock grants nothing. A dialect with no row lock (SQLite)
+  is refused with `ROW_LOCK_UNSUPPORTED` rather than running unserialized.
+- `BifrostOperationContext.QueryAsync` takes `sort` (`<column>_asc` / `<column>_desc`, as a
+  generated field does), and `where` can test `BifrostOperationContext.NotNull` or
+  `BifrostOperationContext.LessThan(value)`. A `null` value is now documented as IS NULL. See "Reading rows" and "Serializing on a row" in the Server Operations
+  guide.
+- `@bifrostql/react` rejects with `BifrostGraphQLError`, which keeps the server's
+  `extensions.code` as `code` and the whole list as `errors`, so a client can tell a conflict from
+  a denial without matching message text. `BatchError` gains `code`.
+
+### Changed
+
+- **Recompile operations.** `BifrostOperationContext.QueryAsync` gained an optional `sort`
+  parameter. That keeps source compatible, but the method's binary signature changed, so an
+  operation assembly compiled against an earlier BifrostQL fails with `MissingMethodException`
+  until it is rebuilt.
+- A database error inside a mutation operation now ends the operation on every dialect, even if the
+  operation catches it, and so does a write the policy or the validator refuses. The operation's
+  transaction rolls back, the client gets an error carrying the first failure's code, and no observer fires. On
+  PostgreSQL a caught read failure used to return success while COMMIT silently rolled the writes
+  back. A refusal that comes before any statement runs does not end it and may still be caught:
+  `LOCK_ROW_NOT_FOUND`, `PARTIAL_PRIMARY_KEY`, a read of a denied or unknown column, `LessThan(null)`,
+  and a write to an approval-gated or unknown table.
+- A value the validator refuses because of its column's type now has the code `INVALID_VALUE`: text
+  it cannot read as a number, date or time (`"2.4"` for an integer), a typed decimal with a fraction
+  on an integer column, a number outside the integer type's range, too many digits before the decimal
+  point, a date outside the type's storable range, and a binary value longer than the column. A
+  refusal that also breaks a declared rule keeps no code, as before.
+- The set-based batch fast path merges only adjacent rows with the same verb, columns and filter,
+  and applies each run in document order. It used to group a verb's rows wherever they sat in the
+  document, so `[insert x, delete y, insert y]` ran both inserts first and failed with `CONFLICT`
+  when the later insert reused a key the delete freed. Batches of one verb and one column set stay
+  one statement. A batch of more than 8 runs now takes the per-row loop, which includes a batch that
+  alternates verbs or an optional column on every row: those were set-based, in the wrong order, and
+  10,000 of them now take about as long as the per-row path. See "How the fast path keeps document
+  order" in the bulk batch performance reference, which also names where the two paths still differ.
+
+- `@bifrostql/react` decides whether a GraphQL error is an auth failure by its `extensions.code`
+  when it has one: only `UNAUTHENTICATED` and `UNAUTHORIZED` take the session flow. A coded refusal
+  whose message says "unauthorized" used to log the user out. An operation that relied on that
+  wording must set `ErrorCode = "UNAUTHENTICATED"`. An error with no code is read as before.
+
+- A database error for a value its column cannot read (SQLSTATE `22P02`, `22007`, `22008`, `22003`)
+  now has the code `INVALID_VALUE` instead of `DATABASE_ERROR`, with a generic message. Code that
+  matched `DATABASE_ERROR` for these needs the new word. An out-of-range key sent as text on a
+  PostgreSQL integer column now fails this way where it used to match no row.
+
+### Fixed
+
 - On PostgreSQL, a `uuid` key sent as text failed with `uuid = text` on generated updates, deletes
   and upserts, and on `UpdateAsync`, `DeleteAsync` and `LockRowAsync`. GraphQL can only send a uuid
   as a string, so this blocked every uuid-keyed table. A comparison now casts a value that binds as
@@ -158,7 +200,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   `pg_constraint`, and composite keys keep their declared order. For an owner, the one visible
   change is that same-named constraints on different tables no longer pick up each other's columns.
 
-## Unreleased — 2026-11-02 (history writer plugins)
+## 0.4.27 — 2026-11-02 (history writer plugins)
+
+Tag `v0.4.27` · NuGet `0.4.731`
 
 ### Added
 
@@ -171,7 +215,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   on a plugin writer needs no `history-table` and gets no `<table>History` read field. See
   "Writing to your own audit table" in the Change History guide.
 
-## Unreleased — 2026-11-02 (packaging)
+## 0.4.26 — 2026-11-02 (packaging)
+
+Tag `v0.4.26` · NuGet `0.4.729`
 
 ### Added
 
@@ -186,7 +232,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   desktop app is not a dotnet tool. It now documents building from source and the Windows
   installer script.
 
-## Unreleased — 2026-11-01 (server-secured operations)
+## 0.4.25 — 2026-11-01 (server-secured operations, approval hardening)
+
+Tag `v0.4.25` · NuGet `0.4.727`. Made in `v0.4.24`, whose publish failed.
 
 ### Added
 
@@ -211,7 +259,6 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
   order; previously a valid bearer token got 401.
 - An update drops client-supplied `created-on`/`created-by` values.
 - Docs, README and the sample host config no longer use the never-supported `update: none` key.
-## Unreleased — 2026-11-01 (approval hardening)
 
 ### Security
 
@@ -229,7 +276,32 @@ Maker-checker approval (`approval: enabled`). See the repository's security advi
 
 Upgrading: follow the advisory's guidance on reviewing existing `pending_changes` rows.
 
-## Unreleased — 2026-10-17 (write-path transactions, mutation input requiredness)
+## 0.4.23 — 2026-10-19 (retention covers hidden tables and every endpoint)
+
+Tag `v0.4.23` · NuGet `0.4.711`
+
+### Fixed
+
+- The retention purge now sweeps `visibility: hidden` tables. `DbModel` dropped
+  hidden tables from `Tables`, and the purge only walked `Tables`, so a hidden
+  table's `ttl`/`retain` never ran: `public.sessions { visibility: hidden;
+  ttl: 1d after expires_at }` kept expired sessions forever. Hidden tables now
+  sit in `IDbModel.HiddenTables`. Query and mutation intents reach them only
+  when they carry `HiddenTableAccess`, which only Core can mint, so hidden
+  tables stay off GraphQL, REST, MCP and every protocol adapter.
+- The purge covers every endpoint, not just the first one. It ran
+  `PurgeOnceAsync` on the first registered endpoint with no endpoint path,
+  which the intent executors refuse once two endpoints exist. Each pass now
+  sweeps each physical table (connection data source + database + schema +
+  table) at most once across all endpoints (`PurgeEndpointsOnceAsync`). When
+  endpoints that declare retention for a table disagree on windows, anchors,
+  tenant column, soft-delete column or hard-delete role, the table is skipped
+  and an error logged (fail-closed). Neither window wins. Purge deletes now
+  name the table schema-qualified.
+
+## 0.4.22 — 2026-10-17 (write-path transactions, mutation input requiredness)
+
+Tag `v0.4.22` · NuGet `0.4.709`. Made in `v0.4.21`, whose publish failed.
 
 ### Added
 
@@ -283,22 +355,6 @@ Upgrading: follow the advisory's guidance on reviewing existing `pending_changes
 
 ### Fixed
 
-- The retention purge now sweeps `visibility: hidden` tables. `DbModel` dropped
-  hidden tables from `Tables`, and the purge only walked `Tables`, so a hidden
-  table's `ttl`/`retain` never ran: `public.sessions { visibility: hidden;
-  ttl: 1d after expires_at }` kept expired sessions forever. Hidden tables now
-  sit in `IDbModel.HiddenTables`. Query and mutation intents reach them only
-  when they carry `HiddenTableAccess`, which only Core can mint, so hidden
-  tables stay off GraphQL, REST, MCP and every protocol adapter.
-- The purge covers every endpoint, not just the first one. It ran
-  `PurgeOnceAsync` on the first registered endpoint with no endpoint path,
-  which the intent executors refuse once two endpoints exist. Each pass now
-  sweeps each physical table (connection data source + database + schema +
-  table) at most once across all endpoints (`PurgeEndpointsOnceAsync`). When
-  endpoints that declare retention for a table disagree on windows, anchors,
-  tenant column, soft-delete column or hard-delete role, the table is skipped
-  and an error logged (fail-closed). Neither window wins. Purge deletes now
-  name the table schema-qualified.
 - State-machine transitions are race-free. The current-state read now takes
   the dialect's update lock, and the `UPDATE` re-checks the state it was
   validated from (`state = <loaded state>`); if the row moved between read and
@@ -342,8 +398,27 @@ Upgrading: follow the advisory's guidance on reviewing existing `pending_changes
   NULL column that has a database default; it now agrees with the insert input
   type. Both read one predicate, `ColumnDto.RequiresInsertValue` (NOT NULL, no
   default, not identity, not computed).
+- The SQL Server schema reader reports an `IDENTITY` column as having a default, as the
+  PostgreSQL and MySQL readers already did (`INFORMATION_SCHEMA.COLUMNS.COLUMN_DEFAULT` is
+  `NULL` for identity). Insert requiredness was already right through `IsIdentity`; only
+  `ColumnDto.HasDefault` was wrong. Added in `v0.4.22`.
 
-## Unreleased — 2026-09-13 (authorization epic)
+## 0.4.20 — 2026-09-21 (edit-db host options)
+
+Tag `v0.4.20` · NuGet `0.4.688`. Reconstructed from the commit history.
+
+### Added
+
+- edit-db: the host chooses which column a grid's quick search starts on, and the sort each
+  grid opens with.
+
+### Fixed
+
+- edit-db: select menus open beneath their trigger.
+
+## 0.4.19 — 2026-09-17 (authorization epic)
+
+Tag `v0.4.19` · NuGet `0.4.685`. Made in `v0.4.18`, whose publish failed.
 
 ### Added
 
@@ -377,12 +452,11 @@ Upgrading: follow the advisory's guidance on reviewing existing `pending_changes
   denied and masked values from bypassing authorization in the trail.
 - Read-deny now takes precedence over `read-requires`; schema projections retain
   masked columns and omit refused columns, and contradictory metadata fails load.
+- Approved mutations keep permission-only policy grants when they replay.
 
 ### Removed
 
 - The unused `schema-permissions` metadata key; it was parsed but never enforced, creating a silent fail-open permission declaration.
-
-## Unreleased — 2026-08-22
 
 ### Changed — `_dbSchema` is caller-projected; raw metadata is admin-only (BREAKING, S8)
 
@@ -487,12 +561,126 @@ Upgrading: follow the advisory's guidance on reviewing existing `pending_changes
 
 - A single-key `update` (and the update branch of `upsert`) whose row was scoped away by tenant/policy/soft-delete, or vanished, returned the supplied key as if it had been written. Both now answer `0` — the same not-found answer composite-key tables already gave — so a caller cannot learn a cross-tenant key from the response. Batch `TotalAffected` was already count-only.
 
+## 0.4.17 — 2026-09-02
+
+Tag `v0.4.17` · NuGet `0.4.597`. Reconstructed from the commit history.
+
+### Security
+
+- Blind-index columns are hidden from every read surface and are always server-derived; a
+  client can no longer write one.
+
+### Fixed
+
+- The `tenant-filter` column is optional in mutation input types; the server fills it.
+- `@bifrostql/react`: table-name `invalidateQueries` entries invalidate, the three write hooks
+  share one invalidation helper, built queries use BifrostQL's paged `data { }` envelope, and
+  the library build externalizes `react/jsx-runtime`.
+
+## 0.4.16 — 2026-08-31
+
+Tag `v0.4.16` · NuGet `0.4.590`. Reconstructed from the commit history.
+
+### Added
+
+- Query row limits are clamped to the model's `max-query-rows` ceiling.
+- RESP refuses credentials on a cleartext transport, and gRPC takes its admission slot before
+  the TLS handshake.
+- `@bifrostql/react`: `fields` and `sort` are constrained to the row's keys (`FieldNameOf`).
+- edit-db `saveFile` extension point, so a host intercepts every editor download. The desktop
+  app adds Open in ERD and Copy DDL.
+
+### Fixed
+
+- A batch delete's `WHERE` uses only the predicate columns.
+- Wire context can no longer fill keys that the security modules resolve.
+
+### Removed
+
+- The obsolete two-argument `SqlExecutionManager` constructor.
+
+## 0.4.15 — 2026-08-24
+
+Tag `v0.4.15` · NuGet `0.4.583`
+
+### Fixed
+
+- `BifrostQL.Abstractions` is packed and published with each release. This is its first
+  NuGet build.
+
+## 0.4.14 — 2026-08-24 (multi-model mutation surface)
+
+Tag `v0.4.14` · NuGet `0.4.581`
+
 ### Added — multi-model mutation surface (generous save recipes)
 
 - **`delta:`** collection-diff save on every table's mutation field: `{ inserted, updated, deleted }` flattens onto the batch pipeline in that order — one transaction, `batch-max-size`, `batch-duplicate-policy`, and the set-based bulk fast path unchanged. Returns the total affected count.
 - **`save:`** explicit-ops graph save: every node of a nested `<t>_save` document states its own `_op` (`bifrost_save_op` enum), defaults are key-present-updates / key-absent-inserts, unlisted children are untouched (no orphan inference — that stays `sync:`'s reconcile semantic), root delete is legal, and no current-state load is needed. Executes on the TreeSync executor: per-node transformer chain, instance-scoped FK flow, one transaction.
 - **`updateWhere:`** filtered set-update (`UPDATE ... SET ... WHERE`), **opt-in** via `filtered-update: enabled` table metadata with a `filtered-update-max-affected` cap (default 100, COUNT-prechecked in-transaction with rollback). The caller's `where` reuses the read-side filter grammar, ANDs into transformer row scope, and its columns clear the same column-permission guards as reads. Tables with hooks, state machines, or concurrency tokens refuse the set-based form.
 - `TableFilter.CombineAnd` public combinator (converges three private copies).
+
+## 0.4.13 — 2026-07-07 (hardening)
+
+Tag `v0.4.13` · NuGet `0.4.494`. Reconstructed from the commit history; no entries were
+written for this release.
+
+### Security
+
+- GraphQL depth and complexity limits on every endpoint, including the binary WebSocket
+  transport. Maximum depth is 20 even when unconfigured; set `BifrostQL:MaxQueryDepth` and
+  `BifrostQL:MaxQueryComplexity` (single database) or `BindQueryLimits(section)` (multiple
+  databases).
+- Policy results are no longer memoized across callers, which leaked one caller's row scope to
+  another.
+- The binary WebSocket transport enforces profile authorization, and profile filtering of
+  security modules fails closed.
+- Raw SQL validation checks the exact SQL that runs and closes comment and quote bypasses.
+- Desktop app: CORS, SSH and vault credentials are no longer exposed on loopback.
+
+### Fixed
+
+- Aggregate correlation, pagination, filter and join SQL; a relationship filter with several
+  predicates renders as one ANDed subquery.
+- Cancellation reaches mutation writes and SQL, and a composite-key update returns its key.
+- A null foreign key resolves to null or empty, and table lookups ignore case.
+- Binary client and edit-db fixes: reconnects, the shared ack window, BigInt keys and
+  URL-driven filters.
+
+## 0.4.12 — 2026-07-05 (package split, validation on by default)
+
+Tag `v0.4.12` · NuGet `0.4.484`. Reconstructed from the commit history; no entries were
+written for this release.
+
+### Breaking
+
+- SQL Server support moved from `BifrostQL.Core` to `BifrostQL.SqlServer`: the dialect, type
+  mapper, schema reader, `DbAuthConnectionWrapper` and the SQL Server-backed metadata sources.
+  A SQL Server host must reference `BifrostQL.SqlServer`. Core's default type mapper is now
+  `AnsiSqlTypeMapper`.
+- The S3 storage provider moved from Core to `BifrostQL.Aws`, registered with
+  `AwsStorageRegistration.Register()`. `BifrostQL.Aws` is not published to NuGet.
+- Core references only the GraphQL engine. `BifrostQL.Server` carries the GraphQL server
+  bundle and GraphiQL, so code that got ASP.NET Core through Core must reference it directly.
+- Server-side validation runs on every insert and update. Declared rules (pattern, min/max,
+  length) used to need `server-validation: enabled`; set `server-validation: off` on a table
+  or column to opt out there.
+
+### Security
+
+- Tenant isolation is enforced on the mutation path, and aggregate join chains are scoped by
+  the tenant and soft-delete filters.
+- Raw database error messages no longer reach clients.
+- OIDC tokens from unmapped issuers and unknown `policy-actions` tokens are rejected instead of
+  failing open.
+- The desktop app binds `127.0.0.1` by default; `--expose` opts into the LAN.
+
+### Fixed
+
+- Single-row mutations are transactional.
+- Malformed metadata (numeric, boolean, enum, filter operator, workflow template) fails fast
+  instead of being ignored.
+- GraphQL field names map to database columns in mutation SQL, tree-sync and filters.
+- The `bifrost` CLI registers every dialect.
 
 ## 0.4.11 — 2026-06-23
 
@@ -593,11 +781,9 @@ Upgrading: follow the advisory's guidance on reviewing existing `pending_changes
 - New `CompositeJoin_EmitsAndedOnClause_WithSuffixedJoinIds` Core unit test asserts the suffixed-alias SQL shape.
 - `ForeignKey_Composite_IsSkipped` flipped to `ForeignKey_Composite_LinksWithFullColumnLists`.
 
-## Unreleased
+## Before 0.4.1
 
-### Fixed
-
-- Preserve permission-only policy grants when replaying approved mutations.
+Changes from `3c42a60` up to 0.4.1.
 
 ### Added — state-machine + workflow
 

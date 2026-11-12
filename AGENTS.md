@@ -273,6 +273,13 @@ builder.Services.AddBifrostQL(o => o
     .AddMutationTransformer<MyMutation>());
 ```
 
+## Releases & Changelog
+
+- NuGet 版號乃 `0.4.<github.run_number>`（`dotnet.yml` pack 步），非 git tag 之數：`v0.4.28` 即 NuGet `0.4.740`。諸 `BifrostQL.*` 包同版齊發。
+- 新 entry 唯入 `CHANGELOG.md` 頂之 `## Unreleased`，勿另立「Unreleased — date」節。
+- 打 tag 之同 commit 必改 `## Unreleased` 為 `## 0.4.N — <date> (<theme>)`，下書 `Tag \`v0.4.N\` · NuGet \`0.4.<run>\``，並增 `## Versions` 表一行，再立空 `## Unreleased`。tag 之 publish 若敗，其變更歸下一成功 tag 之節，註「Made in `v0.4.M`, whose publish failed」。`docs/src/content/docs/reference/changelog.md` 同此分節。十七 tag 曾皆積於「Unreleased」，consumer 不能辨何 NuGet build 載何變更——此規即防之。
+- tag 後 `templates/bifrost` 之 `BifrostQL.*` pin 宜隨新 NuGet build。
+
 ## Docs Authority
 
 - Canonical user docs 在 `docs/src/content/docs`。

@@ -25,6 +25,9 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
 {
     private const string Writer = "writer";
     private const string Reader = "reader";
+    private const string Editor = "editor";
+    private const string Clerk = "clerk";
+    private const string Admin = "admin";
 
     private static int _transformerCalls;
     private static int _hookCalls;
@@ -48,7 +51,10 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
                 "CREATE TABLE codes (code TEXT PRIMARY KEY, label TEXT NOT NULL);" +
                 "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, " +
                 "table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, " +
-                "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));";
+                "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));" +
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL);" +
+                "CREATE TABLE memos (id INTEGER PRIMARY KEY, body TEXT NULL);" +
+                "CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL);";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -60,6 +66,11 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
             ["Bifrost:Metadata:1"] = "main.operation_ids { visibility: hidden }",
             ["Bifrost:Metadata:2"] = $"main.notes {{ operation-id: optional; policy-actions: read, create[{Writer}], update[{Writer}], delete[{Writer}] }}",
             ["Bifrost:Metadata:3"] = "main.codes { operation-id: optional }",
+            ["Bifrost:Metadata:4"] = $":root {{ policy-admin-role: {Admin} }}",
+            ["Bifrost:Metadata:5"] = $"main.items {{ operation-id: optional; policy-actions: read, create[{Writer}], update[{Editor}] }}",
+            ["Bifrost:Metadata:6"] = $"main.memos {{ operation-id: optional; policy-actions: read, create[{Writer}]; policy-write-deny: body; policy-write-deny-roles: {Clerk} }}",
+            ["Bifrost:Metadata:7"] = $"main.tickets {{ operation-id: optional; policy-actions: read, create[{Writer}] }}",
+            ["Bifrost:Metadata:8"] = "main.tickets.status { writable-values: open }",
         }).Build();
 
         _host = await new HostBuilder().ConfigureWebHost(web =>
@@ -124,7 +135,7 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
     public async Task Retry_through_the_header_replays_a_write_recorded_through_the_argument()
     {
         using var first = await SendAsync("""mutation { notes(insert: { title: "header" }, _operationId: "op-header") }""", Writer);
-        using var retry = await SendAsync("""mutation { notes(insert: { title: "header" }) }""", Writer,
+        using var retry = await SendWithHeadersAsync("""mutation { notes(insert: { title: "header" }) }""", Writer,
             ("Idempotency-Key", "op-header"));
 
         Data(retry, "notes").GetRawText().Should().Be(Data(first, "notes").GetRawText(), retry.RootElement.GetRawText());
@@ -185,12 +196,93 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
         (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
     }
 
-    private async Task<JsonDocument> SendAsync(string query, string role, params (string Name, string Value)[] headers)
+    [Fact]
+    public async Task Known_id_with_different_arguments_is_refused_not_replayed()
+    {
+        using var first = await SendAsync("""mutation { notes(insert: { title: "one" }, _operationId: "op-reused") }""", Writer);
+        Data(first, "notes").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var other = await SendAsync("""mutation { notes(insert: { title: "two" }, _operationId: "op-reused") }""", Writer);
+
+        FirstError(other).GetProperty("extensions").GetProperty("code").GetString().Should().Be("CONFLICT", other.RootElement.GetRawText());
+        other.RootElement.GetProperty("data").GetProperty("notes").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+        (await CountAsync("SELECT count(*) FROM notes WHERE title = 'two'")).Should().Be(0);
+        _hookCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Same_id_and_request_from_another_user_writes_its_own_row()
+    {
+        const string insert = """mutation { notes(insert: { title: "shared" }, _operationId: "op-shared") }""";
+
+        using var first = await SendAsUserAsync(insert, "u-1", Writer);
+        using var second = await SendAsUserAsync(insert, "u-2", Writer);
+
+        Data(second, "notes").GetRawText().Should().NotBe(Data(first, "notes").GetRawText(), second.RootElement.GetRawText());
+        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(2);
+        (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Upsert_retry_by_a_caller_who_lost_the_update_grant_is_refused()
+    {
+        const string upsert = """mutation { items(upsert: { id: 7, label: "u" }, _operationId: "op-upsert") }""";
+        using var first = await SendAsync(upsert, Writer, Editor);
+        Data(first, "items");
+
+        // Holds create but not update: the record does not say which branch ran.
+        using var retry = await SendAsync(upsert, Writer);
+
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("items").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task Retry_writing_a_column_the_caller_is_now_denied_is_refused()
+    {
+        const string insert = """mutation { memos(insert: { body: "b" }, _operationId: "op-memo") }""";
+        using var first = await SendAsync(insert, Writer);
+        Data(first, "memos").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var retry = await SendAsync(insert, Writer, Clerk);
+        using var live = await SendAsync("""mutation { memos(insert: { body: "c" }) }""", Writer, Clerk);
+
+        var refused = FirstError(retry);
+        refused.GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        refused.GetProperty("message").GetString().Should().Be(FirstError(live).GetProperty("message").GetString());
+        (await CountAsync("SELECT count(*) FROM memos")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Retry_of_a_value_only_an_admin_may_write_is_refused_to_a_non_admin()
+    {
+        const string insert = """mutation { tickets(insert: { status: "closed" }, _operationId: "op-ticket") }""";
+        using var first = await SendAsync(insert, Writer, Admin);
+        Data(first, "tickets").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var retry = await SendAsync(insert, Writer);
+
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("tickets").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM tickets")).Should().Be(1);
+    }
+
+    private Task<JsonDocument> SendAsync(string query, params string[] roles) => SendAsUserAsync(query, "u-1", roles);
+
+    private Task<JsonDocument> SendWithHeadersAsync(string query, string role, params (string Name, string Value)[] headers)
+        => SendCoreAsync(query, "u-1", new[] { role }, headers);
+
+    private Task<JsonDocument> SendAsUserAsync(string query, string user, params string[] roles)
+        => SendCoreAsync(query, user, roles, Array.Empty<(string, string)>());
+
+    private async Task<JsonDocument> SendCoreAsync(string query, string user, string[] roles, (string Name, string Value)[] headers)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/graphql");
         request.Content = new StringContent(JsonSerializer.Serialize(new { query }), Encoding.UTF8, "application/json");
-        request.Headers.Add("X-Test-User", "u-1");
-        request.Headers.Add("X-Test-Role", role);
+        request.Headers.Add("X-Test-User", user);
+        foreach (var role in roles)
+            request.Headers.Add("X-Test-Role", role);
         foreach (var (name, value) in headers)
             request.Headers.Add(name, value);
         using var response = await _client.SendAsync(request);

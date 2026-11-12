@@ -56,7 +56,7 @@ Individual SQL Commands
 ### 2.2 Current Bottlenecks
 
 #### 2.2.1 N+1 Command Problem
-The `DbTableBatchResolver` (see [source](../src/BifrostQL.Core/Resolvers/DbTableBatchResolver.cs)) processes each action in a loop:
+The `DbTableBatchResolver` (see [source](../src/BifrostQL.Core/Resolvers/DbTableBatchResolver.cs)) parses actions in a loop, then delegates execution to `BatchMutationPipeline.ExecuteBatchAsync`. On an opted-in table, it rejects a batch carrying an operation id before parsing the actions. The following loop illustrates the per-action command bottleneck, rather than the resolver's current implementation:
 
 ```csharp
 foreach (var action in actions)
@@ -97,7 +97,7 @@ INSERT INTO users (name, email) VALUES
 ```
 
 #### 2.2.4 Connection Per Operation
-The `DbTableInsertResolver` creates a new connection for each operation:
+The connection-per-operation pattern below does not describe every current insert path. `DbTableMutateResolver` delegates inserts to `TableMutationPipeline`; when a write on an opted-in table carries an operation id, it passes a shared `OperationWriteScope` so the write and its operation-id record use the same transaction:
 
 ```csharp
 private static async ValueTask<object?> ExecuteScalar(IDbConnFactory connFactory, ...)

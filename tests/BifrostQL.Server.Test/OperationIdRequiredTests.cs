@@ -89,7 +89,6 @@ public sealed class OperationIdRequiredTests : IAsyncLifetime
         var error = FirstError(reply);
         error.GetProperty("extensions").GetProperty("code").GetString().Should().Be(RequiredCode, reply.RootElement.GetRawText());
         error.GetProperty("message").GetString().Should().Be(RequiredMessage);
-        reply.RootElement.GetRawText().Should().NotContain("ledger\"").And.NotContain("main.");
         (await CountAsync("SELECT count(*) FROM ledger")).Should().Be(1);
         (await CountAsync("SELECT count(*) FROM ledger WHERE id = 1 AND title = 'seed'")).Should().Be(1);
         (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(0);

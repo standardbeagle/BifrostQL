@@ -24,9 +24,13 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
         await Exec("DROP TABLE IF EXISTS notes");
+        await Exec("DROP TABLE IF EXISTS ledger");
         await Exec("DROP TABLE IF EXISTS operation_ids");
         await Exec("DROP TABLE IF EXISTS short_store");
         await Exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
+        await Exec(
+            "CREATE TABLE ledger (id INTEGER PRIMARY KEY, title TEXT NOT NULL, secret TEXT NULL, " +
+            "created_at DATETIME NOT NULL, deleted_at DATETIME NULL)");
         await Exec(
             """
             CREATE TABLE operation_ids (
@@ -130,6 +134,48 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
             .Which.Message.Should().Contain("main.notes [operation-id]: a table that requires 'approval' cannot record operation ids.");
+    }
+
+    // The engine writes these features run (retention purge, deferred undo, key-rotation
+    // sweep) go through the mutation pipeline with no operation id, so a required table
+    // would refuse them on every pass.
+    [Theory]
+    [InlineData("ttl", "main.ledger { operation-id: required; ttl: 1d after created_at }")]
+    [InlineData("retain", "main.ledger { operation-id: required; soft-delete: deleted_at; retain: 30d }")]
+    [InlineData("deferrable", "main.ledger { operation-id: required; deferrable: enabled; undo-window: 1h }")]
+    [InlineData("encrypt", "main.ledger { operation-id: required }", "main.ledger.secret { encrypt: aes-256-gcm; key-ref: config:pii }")]
+    public async Task RequiredTable_WithAnEngineWriter_IsRefused(string key, params string[] tableRules)
+    {
+        var load = () => LoadAsync(
+            [":root { operation-id-store: main.operation_ids }", "main.operation_ids { visibility: hidden }", .. tableRules]);
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain(
+                $"main.ledger [operation-id]: a 'required' table cannot set '{key}'; its engine writes carry no operation id.");
+    }
+
+    [Theory]
+    [InlineData("main.ledger { operation-id: optional; ttl: 1d after created_at }")]
+    [InlineData("main.ledger { operation-id: optional; soft-delete: deleted_at; retain: 30d }")]
+    [InlineData("main.ledger { operation-id: optional }", "main.ledger.secret { encrypt: aes-256-gcm; key-ref: config:pii }")]
+    public async Task OptionalTable_WithAnEngineWriter_Loads(params string[] tableRules)
+    {
+        var load = () => LoadAsync(
+            [":root { operation-id-store: main.operation_ids }", "main.operation_ids { visibility: hidden }", .. tableRules]);
+
+        await load.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task UnknownModeValue_OnAHiddenTable_IsRefused()
+    {
+        var load = () => LoadAsync(
+            ":root { operation-id-store: main.operation_ids }",
+            "main.operation_ids { visibility: hidden }",
+            "main.ledger { visibility: hidden; operation-id: sometimes }");
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain("main.ledger [operation-id]: 'operation-id' must be 'optional' or 'required'.");
     }
 
     private static async Task LoadAsync(params string[] rules)

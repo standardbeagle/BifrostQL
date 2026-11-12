@@ -47,7 +47,7 @@ public sealed class OperationIdRequiredTests : IAsyncLifetime
             ["Bifrost:Path"] = "/graphql",
             ["Bifrost:Metadata:0"] = ":root { operation-id-store: main.operation_ids }",
             ["Bifrost:Metadata:1"] = "main.operation_ids { visibility: hidden }",
-            ["Bifrost:Metadata:2"] = "main.ledger { operation-id: required }",
+            ["Bifrost:Metadata:2"] = "main.ledger { operation-id: required; filtered-update: enabled }",
             ["Bifrost:Metadata:3"] = "main.notes { operation-id: optional }",
         }).Build();
 
@@ -80,8 +80,13 @@ public sealed class OperationIdRequiredTests : IAsyncLifetime
     [InlineData("""mutation { ledger(insert: { title: "new" }) }""")]
     [InlineData("""mutation { ledger(update: { id: 1, title: "changed" }) }""")]
     [InlineData("""mutation { ledger(upsert: { id: 1, title: "changed" }) }""")]
+    [InlineData("""mutation { ledger(upsert: { id: 2, title: "fresh" }) }""")]
     [InlineData("""mutation { ledger(delete: { id: 1 }) }""")]
     [InlineData("""mutation { ledger_batch(actions: [{ insert: { title: "batched" } }]) }""")]
+    [InlineData("""mutation { ledger(delta: { inserted: [{ title: "diffed" }], updated: [{ id: 1, title: "changed" }] }) }""")]
+    [InlineData("""mutation { ledger(save: { id: 1, title: "changed" }) }""")]
+    [InlineData("""mutation { ledger(sync: { id: 1, title: "changed" }) }""")]
+    [InlineData("""mutation { ledger(updateWhere: { set: { title: "changed" }, where: { id: { _eq: 1 } } }) }""")]
     public async Task Write_without_operation_id_on_a_required_table_is_refused_with_a_named_code(string mutation)
     {
         using var reply = await SendAsync(mutation);
@@ -120,6 +125,29 @@ public sealed class OperationIdRequiredTests : IAsyncLifetime
         Data(reply, "ledger").ValueKind.Should().Be(JsonValueKind.Number);
         (await CountAsync("SELECT count(*) FROM ledger WHERE title = 'kept'")).Should().Be(1);
         (await CountAsync("SELECT count(*) FROM operation_ids WHERE operation_id = 'op-required'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Delete_with_operation_id_on_a_required_table_is_recorded()
+    {
+        using var reply = await SendAsync("""mutation { ledger(delete: { id: 1 }, _operationId: "op-delete") }""");
+
+        Data(reply, "ledger");
+        (await CountAsync("SELECT count(*) FROM ledger")).Should().Be(0);
+        (await CountAsync("SELECT count(*) FROM operation_ids WHERE operation_id = 'op-delete'")).Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(1, "op-upsert-update")]
+    [InlineData(2, "op-upsert-insert")]
+    public async Task Upsert_with_operation_id_on_a_required_table_is_recorded(int id, string operationId)
+    {
+        using var reply = await SendAsync(
+            $$"""mutation { ledger(upsert: { id: {{id}}, title: "upserted" }, _operationId: "{{operationId}}") }""");
+
+        Data(reply, "ledger");
+        (await CountAsync($"SELECT count(*) FROM ledger WHERE id = {id} AND title = 'upserted'")).Should().Be(1);
+        (await CountAsync($"SELECT count(*) FROM operation_ids WHERE operation_id = '{operationId}'")).Should().Be(1);
     }
 
     [Fact]

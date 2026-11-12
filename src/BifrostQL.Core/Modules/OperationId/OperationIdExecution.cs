@@ -74,6 +74,12 @@ namespace BifrostQL.Core.Modules.OperationId
         /// <paramref name="fingerprint"/>, <paramref name="authorizeReplay"/> runs (it throws to
         /// refuse) and the recorded result is returned: no write, transformer or hook runs. A
         /// record with a different fingerprint is refused with <see cref="ReusedCode"/>.</para>
+        ///
+        /// <para>Two requests claiming one id at once: the second's claim waits on the first's
+        /// uncommitted record and fails when it commits. That attempt rolls back and runs once
+        /// more in a fresh transaction, which sees the committed record and answers as a retry
+        /// would (replay or <see cref="ReusedCode"/>), or claims the id if the first rolled back.
+        /// A claim that loses again reports the store's conflict.</para>
         /// </summary>
         public static async Task<object?> ExecuteAsync(
             IDbModel model, IDbConnFactory connFactory, IDictionary<string, object?> userContext,
@@ -87,7 +93,21 @@ namespace BifrostQL.Core.Modules.OperationId
             var owner = OwnerOf(model, userContext);
             var dialect = connFactory.Dialect;
 
-            return await OperationWriteScope.RunAsync(connFactory, async scope =>
+            var claimLost = false;
+            try
+            {
+                return await RunOnceAsync(lastAttempt: false);
+            }
+            catch (BifrostExecutionError) when (claimLost)
+            {
+                // A concurrent request claimed the same id first, and its claim held this one
+                // until it committed or rolled back. This transaction is spent (Postgres has
+                // aborted it), so a fresh one reads the outcome: the committed record is
+                // replayed or refused as reused; a rolled-back claim leaves the id free to claim.
+                return await RunOnceAsync(lastAttempt: true);
+            }
+
+            Task<object?> RunOnceAsync(bool lastAttempt) => OperationWriteScope.RunAsync(connFactory, async scope =>
             {
                 var recorded = await OperationIdStore.FindAsync(
                     store, dialect, scope.Connection, scope.Transaction, owner, operationId, cancellationToken);
@@ -101,8 +121,16 @@ namespace BifrostQL.Core.Modules.OperationId
                     authorizeReplay();
                     return RecordedResult(recorded.ResultJson);
                 }
-                await OperationIdStore.ClaimAsync(
-                    store, dialect, scope.Connection, scope.Transaction, owner, operationId, fingerprint, cancellationToken);
+                try
+                {
+                    await OperationIdStore.ClaimAsync(
+                        store, dialect, scope.Connection, scope.Transaction, owner, operationId, fingerprint, cancellationToken);
+                }
+                catch (Exception ex) when (!lastAttempt && BifrostExecutionError.IsUniqueViolation(ex))
+                {
+                    claimLost = true;
+                    throw;
+                }
                 var result = await write(scope);
                 await OperationIdStore.RecordResultAsync(
                     store, dialect, scope.Connection, scope.Transaction, owner, operationId,

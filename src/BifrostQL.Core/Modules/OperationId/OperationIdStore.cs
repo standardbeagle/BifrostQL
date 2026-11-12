@@ -45,8 +45,9 @@ namespace BifrostQL.Core.Modules.OperationId
         /// <summary>
         /// Inserts the record for <paramref name="operationId"/> before the write runs, with no
         /// result yet. The store's unique key over (tenant, caller, operation id) makes a second
-        /// transaction claiming the same id wait for the first and then fail, so one id is one
-        /// effect.
+        /// transaction claiming the same id wait for the first and then fail with a unique
+        /// violation, so one id is one effect; <see cref="OperationIdExecution.ExecuteAsync"/>
+        /// then reads the first one's outcome in a fresh transaction.
         /// </summary>
         public static async Task ClaimAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,

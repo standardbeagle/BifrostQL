@@ -248,7 +248,7 @@ Send one write per request with the header, or omit the header and give each fie
 | Argument and header both present with different values | `INVALID_VALUE`, nothing written |
 | A blank id, or one longer than 200 characters | `INVALID_VALUE`, nothing written |
 | `Idempotency-Key` sent more than once | HTTP 400 |
-| A known id with a different table, verb, target or arguments | `OPERATION_ID_REUSED`, nothing written or replayed |
+| A known id with a different table, verb, target key or arguments | `OPERATION_ID_REUSED`, nothing written or replayed |
 | An id on `sync`, `save`, `delta`, `updateWhere` or `_batch` | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | The header on a table that does not opt in | Ignored |
 

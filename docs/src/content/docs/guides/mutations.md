@@ -227,16 +227,19 @@ transformer and no hook, so a retry leaves no second row and no second audit lin
 still passes the table's policy for its verb (`policy-actions`, `policy-write-deny`,
 `writable-values`), so a caller who has lost the grant gets the same `ACCESS_DENIED` a fresh
 write would. An `upsert` retry must pass both the create and the update check, because the record
-does not say which branch ran. Row scope and the tenant filter are not checked again: a record
-answers only the tenant and user that wrote it.
+does not say which branch ran. Row scope, the tenant filter and host security transformers are not
+checked again. A record answers only its owner (tenant and user id), so for an authenticated caller
+it answers only the caller that wrote it. Callers with no user id share one owner (see below): one
+of them who repeats another's id and arguments is answered with the other's recorded key or count.
 
 Each tenant and user has its own id space: two users may send the same id without colliding.
 Callers with no user id share their tenant's id space, or one shared space when there is no
 tenant either, so an anonymous client should send ids it generates at random.
 
 The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
-document with two such fields records both under one id, so the second is answered as a retry of
-the first.
+document with two such fields records both under one id: the second answers `CONFLICT` and
+writes nothing, unless it is the same request as the first, in which case it is answered as a
+retry of the first.
 Send one write per request with the header, or omit the header and give each field its own
 `_operationId`. A field whose `_operationId` differs from the header is refused with `INVALID_VALUE`.
 

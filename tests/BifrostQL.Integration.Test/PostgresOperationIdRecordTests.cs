@@ -127,6 +127,24 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task Insert_IgnoresPrimaryKeyArgument_WithAnIdAsWithout()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+
+        // An insert never reads _primaryKey, so a stray (here mis-sized) one must not change
+        // what an id does: the control runs the same insert without an id.
+        var (_, control) = await _host!.SendAsync("""mutation { notes(insert: { title: "pk control" }, _primaryKey: ["1", "2"]) }""");
+        PostgresGraphQlHost.AssertNoErrors(control);
+
+        var (_, reply) = await _host.SendAsync("""mutation { notes(insert: { title: "pk ignored" }, _primaryKey: ["1", "2"], _operationId: "op-insert-pk") }""");
+
+        PostgresGraphQlHost.AssertNoErrors(reply);
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'pk ignored'")).Should().Be(1);
+        var record = await SingleRecordAsync("op-insert-pk");
+        record["target_key"].Should().Be("{}");
+    }
+
+    [SkippableFact]
     public async Task WriteTheDatabaseRefuses_LeavesNoRecord()
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);

@@ -756,15 +756,6 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Fail-fast validation for the transactional outbox contract. Once any table
-        /// opts into <c>emit-events</c>, the model must name an <c>outbox-table</c>,
-        /// that table must exist, and it must expose the full
-        /// <see cref="MetadataKeys.Cdc.OutboxColumns"/> contract. A missing outbox or a
-        /// column hole would surface only when the before-commit writer runs on the
-        /// first mutation — aborting a real write in production — so catch it at model
-        /// load instead.
-        /// </summary>
-        /// <summary>
         /// Validates operation-id configuration through the runtime's own parse
         /// (<see cref="OperationIdConfig"/>): each table's mode, and, when any table opts in, a
         /// store that exists, is hidden (it holds every tenant's results) and carries the store
@@ -828,6 +819,15 @@ namespace BifrostQL.Core.Model
                     $"{string.Join(", ", MetadataKeys.OperationId.Columns)}.");
         }
 
+        /// <summary>
+        /// Fail-fast validation for the transactional outbox contract. Once any table
+        /// opts into <c>emit-events</c>, the model must name an <c>outbox-table</c>,
+        /// that table must exist, and it must expose the full
+        /// <see cref="MetadataKeys.Cdc.OutboxColumns"/> contract. A missing outbox or a
+        /// column hole would surface only when the before-commit writer runs on the
+        /// first mutation — aborting a real write in production — so catch it at model
+        /// load instead.
+        /// </summary>
         private static void ValidateCdcOutbox(IDbModel model, List<string> errors)
         {
             var emittingTables = model.Tables

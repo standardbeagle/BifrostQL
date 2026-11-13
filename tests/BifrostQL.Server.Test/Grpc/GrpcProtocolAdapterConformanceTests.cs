@@ -80,6 +80,12 @@ namespace BifrostQL.Server.Test.Grpc
         // gRPC has a genuine INSERT verb (unlike the key-addressed RESP wire), so the insert facts run.
         protected override bool AdapterSupportsInserts => true;
 
+        protected override bool AdapterSupportsOperationIdRefusal => true;
+
+        // The ledger needs the same grpc-write opt-in so the refusal is reached at the mutation
+        // pipeline, not at the door's write allow-list.
+        protected override string OperationIdLedgerRule => "*.ledger { operation-id: required; grpc-write: enabled }";
+
         // Every fail-closed authorization fault is sanitized to one generic status (invariant 3); the
         // fail-closed facts assert the sanitized text the client actually receives, never the internal
         // reason. The read is still rejected with zero rows / zero writes — only the EXPECTED text is

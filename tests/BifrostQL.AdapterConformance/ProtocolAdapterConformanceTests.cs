@@ -230,6 +230,32 @@ namespace BifrostQL.AdapterConformance
         /// </summary>
         protected virtual IReadOnlyList<string> MetadataRules => DefaultMetadataRules;
 
+        /// <summary>
+        /// Whether the adapter's write path is checked for the operation-id refusal: a write to a
+        /// table declaring <c>operation-id: required</c> carries no id (no adapter wire can send
+        /// one), so it is refused with <c>OPERATION_ID_REQUIRED</c>, and the wire must say so
+        /// rather than report an internal fault the client would retry. Opting in adds the
+        /// <c>ledger</c> table and the hidden <c>operation_ids</c> store to the fixture. Requires
+        /// <see cref="AdapterSupportsMutations"/>.
+        /// </summary>
+        protected virtual bool AdapterSupportsOperationIdRefusal => false;
+
+        /// <summary>
+        /// The metadata rule for the <c>ledger</c> table when
+        /// <see cref="AdapterSupportsOperationIdRefusal"/> is set. An adapter that gates writes by
+        /// a per-table opt-in adds it here, beside <c>operation-id: required</c>.
+        /// </summary>
+        protected virtual string OperationIdLedgerRule => "*.ledger { operation-id: required }";
+
+        private IEnumerable<string> FixtureMetadataRules => AdapterSupportsOperationIdRefusal
+            ? MetadataRules.Concat(new[]
+            {
+                ":root { operation-id-store: main.operation_ids }",
+                "*.operation_ids { visibility: hidden }",
+                OperationIdLedgerRule,
+            })
+            : MetadataRules;
+
         public virtual async Task InitializeAsync()
         {
             _keepAlive = new SqliteConnection(_connString);
@@ -262,6 +288,22 @@ namespace BifrostQL.AdapterConformance
                 )
                 """);
             await Exec("INSERT INTO documents(id, title, body) VALUES (1, 'public title', 'secret body')");
+            if (AdapterSupportsOperationIdRefusal)
+            {
+                await Exec("DROP TABLE IF EXISTS ledger");
+                await Exec("DROP TABLE IF EXISTS operation_ids");
+                await Exec("CREATE TABLE ledger (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+                await Exec("INSERT INTO ledger(id, name) VALUES (1, 'seed')");
+                await Exec(
+                    """
+                    CREATE TABLE operation_ids (
+                        tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL,
+                        table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL,
+                        input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL,
+                        PRIMARY KEY (tenant, caller, operation_id)
+                    )
+                    """);
+            }
 
             Host = await BuildHostAsync();
         }
@@ -297,7 +339,7 @@ namespace BifrostQL.AdapterConformance
                             e.ConnectionString = _connString;
                             e.Provider = "sqlite";
                             e.Path = EndpointPath;
-                            e.Metadata = MetadataRules.ToArray();
+                            e.Metadata = FixtureMetadataRules.ToArray();
                             e.DisableAuth = true;
                         });
                         o.AddQueryObservers(new IQueryObserver[] { _sqlCapture });
@@ -757,6 +799,38 @@ namespace BifrostQL.AdapterConformance
             // Fail-closed on both halves, not merely "the two answers match".
             (await DbScalarAsync("SELECT COUNT(*) FROM orders WHERE name = 'cross-op-parity'"))
                 .Should().Be(0L, "nothing may be written without a tenant identity");
+        }
+
+        /// <summary>
+        /// A write the server refuses for a missing operation id reaches the wire as that named
+        /// condition, not as a generic internal fault: the code is the client's signal that a
+        /// retry of the same write can never succeed. The text names no table or column
+        /// (invariant 3), and nothing is written. Map by condition (invariant 10): the refusal
+        /// comes from the shared write seam, so every write-capable adapter answers it the same.
+        /// </summary>
+        [Fact]
+        public async Task Missing_required_operation_id_surfaces_the_named_code()
+        {
+            if (!AdapterSupportsMutations || !AdapterSupportsOperationIdRefusal) return;
+
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteMutationAsync(new ConformanceMutationRequest
+            {
+                // UPDATE: every write-capable adapter has an update verb (RESP has no insert).
+                Table = "ledger",
+                Action = ConformanceMutationAction.Update,
+                Data = new Dictionary<string, object?> { ["name"] = "unrecorded" },
+                PrimaryKey = new object?[] { 1 },
+                Principal = TenantPrincipal("user-a", "tenant-a"),
+                Endpoint = EndpointPath,
+            }));
+
+            var wire = FlattenMessages(error);
+            wire.Should().Contain("OPERATION_ID_REQUIRED",
+                "a refusal the client must act on is named, never reported as a retryable internal fault");
+            wire.Should().NotContain("ledger").And.NotContain("operation_ids",
+                "the refusal text names no table");
+            (await DbScalarAsync("SELECT name FROM ledger WHERE id = 1"))
+                .Should().Be("seed", "a refused write changes nothing");
         }
 
         // ---- (a2) malformed pre-auth wire input never escapes the handler ----

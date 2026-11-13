@@ -869,6 +869,34 @@ namespace BifrostQL.Core.Model
                     $"  :root [{MetadataKeys.OperationId.Store}]: store table '{storeName}' is missing required " +
                     $"column(s): {string.Join(", ", missing)}. The store contract is: " +
                     $"{string.Join(", ", MetadataKeys.OperationId.Columns)}.");
+            else if (!HasOwnerKey(store))
+                errors.Add(
+                    $"  :root [{MetadataKeys.OperationId.Store}]: store table '{storeName}' needs a primary key or " +
+                    $"unique index over exactly ({string.Join(", ", OwnerKeyColumns)}); without it two concurrent " +
+                    "writes under one id both commit.");
+        }
+
+        private static readonly string[] OwnerKeyColumns =
+        [
+            MetadataKeys.OperationId.Column.Tenant,
+            MetadataKeys.OperationId.Column.Caller,
+            MetadataKeys.OperationId.Column.OperationId,
+        ];
+
+        /// <summary>
+        /// True when the store's primary key, or one of its unique indexes, covers exactly the owner
+        /// key columns: the constraint the claim's insert relies on to make one id one record. A key
+        /// over fewer columns would make two owners' ids collide; one over more would let one owner
+        /// record an id twice.
+        /// </summary>
+        private static bool HasOwnerKey(IDbTable store)
+        {
+            static bool CoversExactly(IEnumerable<string> columns) =>
+                columns.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(OwnerKeyColumns);
+
+            var primaryKey = store.KeyColumns.Select(c => c.DbName).ToArray();
+            return (primaryKey.Length > 0 && CoversExactly(primaryKey))
+                || store.Indexes.Any(i => i.IsUnique && CoversExactly(i.ColumnNames));
         }
 
         /// <summary>

@@ -70,6 +70,10 @@ namespace BifrostQL.Server.Test
         // exposes writes, so it must prove the mutation facts too.
         protected override bool AdapterSupportsMutations => true;
 
+        // The binary wire is an alternate wire for the GraphQL surface, so the refusal must reach
+        // its client named, as GraphQL names it in extensions.code.
+        protected override bool AdapterSupportsOperationIdRefusal => true;
+
         protected override async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ExecuteReadAsync(
             ConformanceReadRequest request)
         {

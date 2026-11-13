@@ -39,6 +39,10 @@ namespace BifrostQL.Server.Test
         // mutation facts; a read-only adapter would leave these members alone.
         protected override bool AdapterSupportsMutations => true;
 
+        // Its writes run the shared write seam, so a write to an operation-id: required table is
+        // refused there; the echo wire propagates the server's error, code and all.
+        protected override bool AdapterSupportsOperationIdRefusal => true;
+
         protected override async Task<object?> ExecuteMutationAsync(ConformanceMutationRequest request)
         {
             var adapter = Host.Services.GetRequiredService<EchoProtocolAdapter>();

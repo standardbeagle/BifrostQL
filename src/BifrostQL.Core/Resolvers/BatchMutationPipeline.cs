@@ -155,6 +155,9 @@ namespace BifrostQL.Core.Resolvers
             // the batch's transaction, now committed). Surface pending-approval AFTER the commit
             // — a batch on a gated table applied nothing and enqueued one pending row per action.
             // Thrown here, outside the try, so it is not caught and wrapped as a database error.
+            // Never inside an operation scope, whose rollback would drop the pending rows: model
+            // load refuses approval on a table that records operation ids, and a batch writes
+            // only its own table.
             var pending = outcomes.FirstOrDefault(o => o.PendingApproval is not null);
             if (pending is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pending.PendingApproval!);

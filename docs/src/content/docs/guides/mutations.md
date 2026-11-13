@@ -246,7 +246,9 @@ A table that sets `operation-id: required` refuses every write that carries no i
 GraphQL `insert`, `update`, `upsert`, `delete`, `_batch` or `save` can carry an id, so `sync`,
 `delta`, `updateWhere`, file mutations, custom operations, LLM chat plan writes and protocol
 adapter writes cannot write such a table. A `save` with an id covers its whole tree, so the
-tree's nested writes to a required table are recorded with it. Model load refuses
+tree's nested writes to a required table are recorded with it. That needs a root table that opts
+in: a `save` rooted on a table without `operation-id` takes no id, so its nested writes to a
+required table are refused. Model load refuses
 `required` beside `retain`, `ttl`, `deferrable`, an `encrypt` column, `chat-conversations` or
 `chat-messages`, because those features' engines write the table without an id. A hidden table
 cannot set `operation-id` at all. Like every metadata key, the mode belongs to one endpoint's

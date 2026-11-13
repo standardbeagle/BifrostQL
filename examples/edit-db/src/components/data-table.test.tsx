@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from './data-table';
 import type { PkFilter } from '@/lib/row-id';

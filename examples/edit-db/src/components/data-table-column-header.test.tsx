@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 import { DataTableColumnHeader } from './data-table-column-header';
 import type { Column, Table } from '@tanstack/react-table';
 import type { Column as ColumnSchema } from '@/types/schema';

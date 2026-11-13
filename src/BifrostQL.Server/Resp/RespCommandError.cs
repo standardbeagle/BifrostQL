@@ -19,12 +19,20 @@ namespace BifrostQL.Server.Resp
     /// worth retrying, when in fact it can never succeed. <c>-NOPERM</c> is the prefix
     /// Redis clients already treat as a terminal permission failure. The category crosses
     /// the wire; the denied table or column never does. See invariant 10.</para>
+    ///
+    /// <para>An operation-id refusal is likewise the client's to fix, not a fault to retry. Its
+    /// code (<c>OPERATION_ID_REQUIRED</c>, …) is the error prefix, the word Redis clients read as
+    /// the error kind, followed by the fixed description from <see cref="OperationIdWireRefusal"/>.</para>
     /// </summary>
     internal static class RespCommandError
     {
-        public static string Map(Exception ex) =>
-            ex is BifrostExecutionError b && b.ErrorCode == BifrostExecutionError.AccessDeniedCode
-                ? RespProtocol.AccessDeniedError
-                : RespProtocol.InternalError;
+        public static string Map(Exception ex)
+        {
+            if (ex is BifrostExecutionError { ErrorCode: BifrostExecutionError.AccessDeniedCode })
+                return RespProtocol.AccessDeniedError;
+            if (OperationIdWireRefusal.Of(ex) is var (code, description))
+                return code + " " + description;
+            return RespProtocol.InternalError;
+        }
     }
 }

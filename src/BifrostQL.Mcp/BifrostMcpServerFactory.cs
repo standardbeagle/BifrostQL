@@ -535,6 +535,11 @@ namespace BifrostQL.Mcp
                     // routine denials must not fill an error log.
                     logger?.LogDebug(denial, "MCP request denied by an authorization transformer.");
                     return AccessDeniedMessage;
+                case BifrostExecutionError refused when OperationIdWireRefusal.TextOf(refused) is { } refusalText:
+                    // The client's to fix (send an id, use a new one), never a fault to retry, so
+                    // Debug like a denial. The text is the per-code constant, never the message.
+                    logger?.LogDebug(refused, "MCP write refused for its operation id.");
+                    return refusalText;
                 case BifrostExecutionError fault:
                     logger?.LogError(fault, "MCP request failed during execution.");
                     return ExecutionErrorMessage;

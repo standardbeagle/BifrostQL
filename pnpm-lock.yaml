@@ -115,9 +115,6 @@ importers:
         specifier: ^3.7.0
         version: 3.7.0
     devDependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
       '@storybook/addon-links':
         specifier: ^10.6.6
         version: 10.6.7(@types/react@18.3.31)(react@18.3.1)(storybook@10.6.7(@types/react@18.3.31)(prettier@3.9.10)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))
@@ -157,9 +154,6 @@ importers:
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
-      babel-loader:
-        specifier: ^10.1.1
-        version: 10.1.1(@babel/core@7.29.7)
       browserslist:
         specifier: ^4.29.5
         version: 4.29.5
@@ -3424,19 +3418,6 @@ packages:
   axobject-query@4.1.0:
     resolution: {integrity: sha512-qIj0G9wZbMGNLjLmg1PT6v2mE9AH2zlnADJD/2tC6E00hgmhUOfEB6greHPAfLRSufHqROIUTkw6E+M3lH0PTQ==}
     engines: {node: '>= 0.4'}
-
-  babel-loader@10.1.1:
-    resolution: {integrity: sha512-JwKSzk2kjIe7mgPK+/lyZ2QAaJcpahNAdM+hgR2HI8D0OJVkdj8Rl6J3kaLYki9pwF7P2iWnD8qVv80Lq1ABtg==}
-    engines: {node: ^18.20.0 || ^20.10.0 || >=22.0.0}
-    peerDependencies:
-      '@babel/core': ^7.12.0 || ^8.0.0-beta.1
-      '@rspack/core': ^1.0.0 || ^2.0.0-0
-      webpack: '>=5.61.0'
-    peerDependenciesMeta:
-      '@rspack/core':
-        optional: true
-      webpack:
-        optional: true
 
   bail@2.0.2:
     resolution: {integrity: sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==}
@@ -8478,11 +8459,6 @@ snapshots:
       - yaml
 
   axobject-query@4.1.0: {}
-
-  babel-loader@10.1.1(@babel/core@7.29.7):
-    dependencies:
-      '@babel/core': 7.29.7
-      find-up: 5.0.0
 
   bail@2.0.2: {}
 

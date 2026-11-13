@@ -28,7 +28,6 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
     "@storybook/addon-links": "^10.6.6",
     "@storybook/react": "^10.6.6",
     "@storybook/react-vite": "^10.6.6",
@@ -42,7 +41,6 @@
     "@typescript-eslint/parser": "^8.72.1",
     "@vitejs/plugin-react-swc": "^4.3.3",
     "ajv": "^8.20.0",
-    "babel-loader": "^10.1.1",
     "browserslist": "^4.29.5",
     "eslint": "^8.57.1",
     "eslint-plugin-react-hooks": "^4.6.2",

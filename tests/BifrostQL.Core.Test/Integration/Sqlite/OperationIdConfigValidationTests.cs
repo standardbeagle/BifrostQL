@@ -231,6 +231,24 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
             .Which.Message.Should().Contain("main.ledger [operation-id]: a hidden table cannot record operation ids; no client write can reach it.");
     }
 
+    // The store is hidden, and the purge sweeps hidden tables, so its ttl must be checked at load
+    // like an exposed table's: an invalid one would otherwise load and purge nothing, skipped
+    // with a log line on every pass. This store's created_at is TEXT, not a timestamp.
+    [Theory]
+    [InlineData("0d after created_at", "the magnitude must be a positive integer.")]
+    [InlineData("1d after created_at", "but a retention anchor must be a timestamp type")]
+    [InlineData("1d after expires_at", "which does not exist on the table")]
+    public async Task Invalid_retention_is_refused_at_model_load(string ttl, string reason)
+    {
+        var load = () => LoadAsync(
+            ":root { operation-id-store: main.operation_ids }",
+            $"main.operation_ids {{ visibility: hidden; ttl: {ttl} }}",
+            "main.notes { operation-id: optional }");
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain($"main.operation_ids [ttl]: '{ttl}' - ").And.Contain(reason);
+    }
+
     private static async Task<string> LoadErrorsAsync(params string[] rules)
     {
         try

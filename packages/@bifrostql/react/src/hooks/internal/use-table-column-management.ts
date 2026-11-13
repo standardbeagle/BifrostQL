@@ -80,6 +80,7 @@ export function useTableColumnManagement({
   }, []);
   const [columnPresets, setColumnPresets] =
     useState<ColumnPreset[]>(initialColumnPresets);
+  const presetStorageKey = localStorageConfig?.key;
 
   useEffect(() => {
     const fieldSet = new Set(defaultColumnFields);
@@ -259,8 +260,8 @@ export function useTableColumnManagement({
           existing >= 0
             ? prev.map((p, i) => (i === existing ? preset : p))
             : [...prev, preset];
-        if (localStorageConfig?.key) {
-          writeColumnPresetsToLocalStorage(localStorageConfig.key, updated);
+        if (presetStorageKey) {
+          writeColumnPresetsToLocalStorage(presetStorageKey, updated);
         }
         return updated;
       });
@@ -270,7 +271,7 @@ export function useTableColumnManagement({
       columnOrder,
       columnWidths,
       pinnedColumns,
-      localStorageConfig?.key,
+      presetStorageKey,
     ],
   );
 
@@ -309,13 +310,13 @@ export function useTableColumnManagement({
     (name: string) => {
       setColumnPresets((prev) => {
         const updated = prev.filter((p) => p.name !== name);
-        if (localStorageConfig?.key) {
-          writeColumnPresetsToLocalStorage(localStorageConfig.key, updated);
+        if (presetStorageKey) {
+          writeColumnPresetsToLocalStorage(presetStorageKey, updated);
         }
         return updated;
       });
     },
-    [localStorageConfig?.key],
+    [presetStorageKey],
   );
 
   const resetColumns = useCallback(() => {

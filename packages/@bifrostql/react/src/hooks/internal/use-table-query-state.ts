@@ -403,6 +403,7 @@ export function useTableQueryState({
     setPage(0);
   }, []);
 
+  const presetStorageKey = localStorageConfig?.key;
   const savePreset = useCallback(
     (name: string) => {
       setPresets((prev) => {
@@ -416,13 +417,13 @@ export function useTableQueryState({
           existing >= 0
             ? prev.map((p, i) => (i === existing ? preset : p))
             : [...prev, preset];
-        if (localStorageConfig?.key) {
-          writePresetsToLocalStorage(localStorageConfig.key, updated);
+        if (presetStorageKey) {
+          writePresetsToLocalStorage(presetStorageKey, updated);
         }
         return updated;
       });
     },
-    [filters, compoundFilter, localStorageConfig?.key],
+    [filters, compoundFilter, presetStorageKey],
   );
 
   const loadPreset = useCallback(
@@ -440,13 +441,13 @@ export function useTableQueryState({
     (name: string) => {
       setPresets((prev) => {
         const updated = prev.filter((p) => p.name !== name);
-        if (localStorageConfig?.key) {
-          writePresetsToLocalStorage(localStorageConfig.key, updated);
+        if (presetStorageKey) {
+          writePresetsToLocalStorage(presetStorageKey, updated);
         }
         return updated;
       });
     },
-    [localStorageConfig?.key],
+    [presetStorageKey],
   );
 
   // -------------------------------------------------------------------------

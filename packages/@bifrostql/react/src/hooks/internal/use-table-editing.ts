@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   ColumnConfig,
   EditingState,
@@ -59,9 +59,12 @@ export function useTableEditing<T = Record<string, unknown>>({
   );
 
   // Held in a ref so a caller passing an inline arrow does not re-create every
-  // save callback on each render.
+  // save callback on each render. Synced after commit; failures are only ever
+  // reported from async save callbacks, which run after it.
   const onSaveErrorRef = useRef(onSaveError);
-  onSaveErrorRef.current = onSaveError;
+  useLayoutEffect(() => {
+    onSaveErrorRef.current = onSaveError;
+  });
 
   /**
    * Record a write failure against the row and hand it to the caller. The

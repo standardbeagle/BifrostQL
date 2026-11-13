@@ -54,8 +54,11 @@ export function useTableResponsive<T = Record<string, unknown>>({
     canAccessWindow() ? window.innerWidth : 1024,
   );
 
+  // Read by the resize handler, which runs outside render.
   const breakpointsRef = useRef(resolvedBreakpoints);
-  breakpointsRef.current = resolvedBreakpoints;
+  useEffect(() => {
+    breakpointsRef.current = resolvedBreakpoints;
+  }, [resolvedBreakpoints]);
 
   useEffect(() => {
     if (!canAccessWindow()) return;

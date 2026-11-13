@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useRef } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   QueryClient,
@@ -15,40 +15,41 @@ export interface BifrostProviderProps {
   children: ReactNode;
 }
 
+function createInternalClient(config: BifrostConfig): QueryClient {
+  const defaults = config.defaultQueryOptions;
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: defaults?.retry ?? 3,
+        staleTime: defaults?.staleTime,
+        gcTime: defaults?.gcTime,
+      },
+      mutations: {
+        onError: config.onError,
+      },
+    },
+  });
+}
+
 export function BifrostProvider({
   config,
   queryClient: externalClient,
   children,
 }: BifrostProviderProps) {
   const parentClient = useContext(QueryClientContext);
-  const internalClientRef = useRef<QueryClient | null>(null);
+  const needsInternalClient = !externalClient && !parentClient;
 
-  const queryClient = useMemo(() => {
-    if (externalClient) return externalClient;
-    if (parentClient) return null;
+  // The internal client is created once, the first time neither a
+  // `queryClient` prop nor a parent QueryClientProvider is available, and
+  // then kept for the provider's lifetime so its cache survives re-renders.
+  const [internalClient, setInternalClient] = useState<QueryClient | null>(
+    () => (needsInternalClient ? createInternalClient(config) : null),
+  );
+  if (needsInternalClient && !internalClient) {
+    setInternalClient(createInternalClient(config));
+  }
 
-    if (!internalClientRef.current) {
-      const defaults = config.defaultQueryOptions;
-      internalClientRef.current = new QueryClient({
-        defaultOptions: {
-          queries: {
-            retry: defaults?.retry ?? 3,
-            staleTime: defaults?.staleTime,
-            gcTime: defaults?.gcTime,
-          },
-          mutations: {
-            onError: config.onError,
-          },
-        },
-      });
-    }
-    return internalClientRef.current;
-  }, [
-    externalClient,
-    parentClient,
-    config.defaultQueryOptions,
-    config.onError,
-  ]);
+  const queryClient = externalClient ?? (parentClient ? null : internalClient);
 
   const contextContent = (
     <BifrostContext.Provider value={config}>{children}</BifrostContext.Provider>

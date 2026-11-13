@@ -57,9 +57,9 @@ export function useTableA11y<T = Record<string, unknown>>({
 }: UseTableA11yOptions<T>): AccessibilityState {
   const [focusedCell, setFocusedCell] = useState<FocusPosition | null>(null);
   const [announcement, setAnnouncement] = useState('');
-  const prevSortRef = useRef(sort);
-  const prevFilterCountRef = useRef(activeFilterCount);
-  const prevDataLenRef = useRef(0);
+  const [prevSortKey, setPrevSortKey] = useState(() => sortKeyOf(sort));
+  const [prevFilterCount, setPrevFilterCount] = useState(activeFilterCount);
+  const [prevDataLen, setPrevDataLen] = useState(0);
 
   // Registry of the live DOM node behind each grid coordinate. Keyboard
   // navigation is only real once DOM focus follows the focused cell — moving
@@ -89,23 +89,25 @@ export function useTableA11y<T = Record<string, unknown>>({
     }
   }, [focusedCell]);
 
-  // Screen reader announcements for data changes
-  useEffect(() => {
-    const dataLen = data.length;
-    if (dataLen !== prevDataLenRef.current) {
-      prevDataLenRef.current = dataLen;
-      setAnnouncement(
-        `Table updated, ${dataLen} row${dataLen === 1 ? '' : 's'} displayed`,
-      );
-    }
-  }, [data.length]);
+  // Screen reader announcements for data, sort and filter changes. Each is
+  // derived while rendering from the previous value kept in state (React's
+  // "adjust state when a prop changes" pattern), so the live region updates
+  // in the same commit instead of in a cascading render from an effect. The
+  // order matters: when several change at once, the last announcement wins.
+  const dataLen = data.length;
+  if (dataLen !== prevDataLen) {
+    setPrevDataLen(dataLen);
+    setAnnouncement(
+      `Table updated, ${dataLen} row${dataLen === 1 ? '' : 's'} displayed`,
+    );
+  }
 
-  // Screen reader announcements for sort changes
-  useEffect(() => {
-    const prev = prevSortRef.current;
-    prevSortRef.current = sort;
-    if (prev === sort) return;
-    if (sort.length === 0 && prev.length > 0) {
+  // Compared by content, not identity: a caller that rebuilds an equal sort
+  // array every render must not re-trigger this render-phase update.
+  const sortKey = sortKeyOf(sort);
+  if (sortKey !== prevSortKey) {
+    setPrevSortKey(sortKey);
+    if (sort.length === 0 && prevSortKey !== '') {
       setAnnouncement('Sort cleared');
     } else if (sort.length > 0) {
       const primary = sort[0];
@@ -115,21 +117,18 @@ export function useTableA11y<T = Record<string, unknown>>({
         `Sorted by ${label} ${primary.direction === 'asc' ? 'ascending' : 'descending'}`,
       );
     }
-  }, [sort, columns]);
+  }
 
-  // Screen reader announcements for filter changes
-  useEffect(() => {
-    const prev = prevFilterCountRef.current;
-    prevFilterCountRef.current = activeFilterCount;
-    if (prev === activeFilterCount) return;
-    if (activeFilterCount === 0 && prev > 0) {
+  if (activeFilterCount !== prevFilterCount) {
+    setPrevFilterCount(activeFilterCount);
+    if (activeFilterCount === 0 && prevFilterCount > 0) {
       setAnnouncement('Filters cleared');
     } else if (activeFilterCount > 0) {
       setAnnouncement(
         `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} active`,
       );
     }
-  }, [activeFilterCount]);
+  }
 
   const visibleColCount = visibleColumns.length;
   const dataRowCount = data.length;
@@ -359,4 +358,9 @@ const HEADER_ROW_INDEX = -1;
 
 function cellKey(rowIndex: number, colIndex: number): string {
   return `${rowIndex}:${colIndex}`;
+}
+
+/** Content key for a sort spec, so equal specs compare equal. */
+function sortKeyOf(sort: SortOption[]): string {
+  return sort.map((s) => `${s.field}:${s.direction}`).join(',');
 }

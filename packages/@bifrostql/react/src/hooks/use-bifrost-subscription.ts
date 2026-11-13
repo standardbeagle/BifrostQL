@@ -1,4 +1,11 @@
-import { useState, useEffect, useRef, useContext, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useContext,
+  useCallback,
+} from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
 import {
   BifrostGraphQLError,
@@ -296,81 +303,97 @@ export function useBifrostSubscription<T = unknown>(
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
+  // Latest callbacks, read by transport events that fire after commit.
   const onDataCallbackRef = useRef(onDataCallback);
-  onDataCallbackRef.current = onDataCallback;
-
   const onErrorCallbackRef = useRef(onErrorCallback);
-  onErrorCallbackRef.current = onErrorCallback;
+  useLayoutEffect(() => {
+    onDataCallbackRef.current = onDataCallback;
+    onErrorCallbackRef.current = onErrorCallback;
+  });
+
+  // Disabling drops the connection; report it in the same render rather than
+  // from the effect that tears it down.
+  const [prevEnabled, setPrevEnabled] = useState(enabled);
+  if (enabled !== prevEnabled) {
+    setPrevEnabled(enabled);
+    if (!enabled) setConnectionState('disconnected');
+  }
 
   const variablesKey = JSON.stringify(variables);
   const headersKey = JSON.stringify(config.headers);
 
   const connect = useCallback(
-    (chosenTransport: 'websocket' | 'sse') => {
-      connectionRef.current?.close();
-
+    (initialTransport: 'websocket' | 'sse') => {
+      const endpoint = config.endpoint;
       const currentHeaders: Record<string, string> = config.headers ?? {};
       const currentVariables: Record<string, unknown> | undefined = variables;
 
-      const callbacks = {
-        onStateChange: (state: ConnectionState) => {
-          if (!mountedRef.current) return;
-          setConnectionState(state);
+      // A named inner function so the reconnect timer can call it again
+      // without the callback referring to its own binding.
+      function open(chosenTransport: 'websocket' | 'sse') {
+        connectionRef.current?.close();
 
-          if (state === 'disconnected' || state === 'error') {
-            if (reconnectCountRef.current < reconnectAttempts) {
-              const delay = reconnectDelay(
-                reconnectCountRef.current,
-                reconnectBaseDelay,
-              );
-              reconnectCountRef.current++;
-              // Overwriting the ref without clearing orphaned the previous
-              // timer, which still fired and opened a second connection.
-              if (reconnectTimerRef.current !== null) {
-                clearTimeout(reconnectTimerRef.current);
-              }
-              reconnectTimerRef.current = setTimeout(() => {
-                reconnectTimerRef.current = null;
-                if (mountedRef.current) {
-                  connect(chosenTransport);
+        const callbacks = {
+          onStateChange: (state: ConnectionState) => {
+            if (!mountedRef.current) return;
+            setConnectionState(state);
+
+            if (state === 'disconnected' || state === 'error') {
+              if (reconnectCountRef.current < reconnectAttempts) {
+                const delay = reconnectDelay(
+                  reconnectCountRef.current,
+                  reconnectBaseDelay,
+                );
+                reconnectCountRef.current++;
+                // Overwriting the ref without clearing orphaned the previous
+                // timer, which still fired and opened a second connection.
+                if (reconnectTimerRef.current !== null) {
+                  clearTimeout(reconnectTimerRef.current);
                 }
-              }, delay);
+                reconnectTimerRef.current = setTimeout(() => {
+                  reconnectTimerRef.current = null;
+                  if (mountedRef.current) {
+                    open(chosenTransport);
+                  }
+                }, delay);
+              }
             }
-          }
 
-          if (state === 'connected') {
-            reconnectCountRef.current = 0;
-          }
-        },
-        onData: (newData: T) => {
-          if (!mountedRef.current) return;
-          setData(newData);
-          setError(undefined);
-          onDataCallbackRef.current?.(newData);
-        },
-        onError: (err: Error) => {
-          if (!mountedRef.current) return;
-          setError(err);
-          onErrorCallbackRef.current?.(err);
-        },
-      };
+            if (state === 'connected') {
+              reconnectCountRef.current = 0;
+            }
+          },
+          onData: (newData: T) => {
+            if (!mountedRef.current) return;
+            setData(newData);
+            setError(undefined);
+            onDataCallbackRef.current?.(newData);
+          },
+          onError: (err: Error) => {
+            if (!mountedRef.current) return;
+            setError(err);
+            onErrorCallbackRef.current?.(err);
+          },
+        };
 
-      if (chosenTransport === 'websocket') {
-        connectionRef.current = createWebSocketConnection<T>(
-          config.endpoint,
-          currentHeaders,
-          subscription,
-          currentVariables,
-          callbacks,
-        );
-      } else {
-        connectionRef.current = createSSEConnection<T>(
-          config.endpoint,
-          subscription,
-          currentVariables,
-          callbacks,
-        );
+        if (chosenTransport === 'websocket') {
+          connectionRef.current = createWebSocketConnection<T>(
+            endpoint,
+            currentHeaders,
+            subscription,
+            currentVariables,
+            callbacks,
+          );
+        } else {
+          connectionRef.current = createSSEConnection<T>(
+            endpoint,
+            subscription,
+            currentVariables,
+            callbacks,
+          );
+        }
       }
+      open(initialTransport);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -386,10 +409,7 @@ export function useBifrostSubscription<T = unknown>(
   useEffect(() => {
     mountedRef.current = true;
 
-    if (!enabled) {
-      setConnectionState('disconnected');
-      return;
-    }
+    if (!enabled) return;
 
     const chosenTransport =
       transport === 'auto'

@@ -19,8 +19,20 @@ export function useTableSearch({
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [isSearchPending, setIsSearchPending] = useState(false);
   const searchDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const requestCountRef = useRef(0);
-  const lastRequestTimeRef = useRef<number | null>(null);
+  // Request metrics, derived while rendering from the loading flag's previous
+  // value: each false -> true transition is one request.
+  const [requestMetrics, setRequestMetrics] = useState<{
+    wasLoading: boolean;
+    count: number;
+    lastTime: number | null;
+  }>({ wasLoading: false, count: 0, lastTime: null });
+  if (isLoading !== requestMetrics.wasLoading) {
+    setRequestMetrics((prev) =>
+      isLoading
+        ? { wasLoading: true, count: prev.count + 1, lastTime: Date.now() }
+        : { ...prev, wasLoading: false },
+    );
+  }
 
   const setSearch = useCallback(
     (value: string) => {
@@ -46,22 +58,14 @@ export function useTableSearch({
     };
   }, []);
 
-  // Track request metrics
-  useEffect(() => {
-    if (isLoading) {
-      requestCountRef.current += 1;
-      lastRequestTimeRef.current = Date.now();
-    }
-  }, [isLoading]);
-
   const isStale = isLoading && dataLength > 0;
 
   return {
     debouncedSearch,
     setSearch,
     isSearchPending,
-    requestCount: requestCountRef.current,
-    lastRequestTime: lastRequestTimeRef.current,
+    requestCount: requestMetrics.count,
+    lastRequestTime: requestMetrics.lastTime,
     isStale,
   };
 }

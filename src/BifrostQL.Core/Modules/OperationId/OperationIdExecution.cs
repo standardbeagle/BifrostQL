@@ -90,6 +90,10 @@ namespace BifrostQL.Core.Modules.OperationId
         /// retry would (replay or <see cref="ReusedCode"/>). A claim that conflicts again (only
         /// when the store carries an extra unique key, or a record vanished) is refused as a
         /// plain <see cref="BifrostExecutionError.ConflictCode"/> that names no store constraint.</para>
+        ///
+        /// <para>Three requests claiming one id while the first rolls back: the two waiting claims
+        /// can deadlock on MySQL. The victim runs once more in a fresh transaction, where its claim
+        /// waits on the survivor's and then proceeds as above. A second deadlock is not retried.</para>
         /// </summary>
         public static async Task<object?> ExecuteAsync(
             IDbModel model, IDbConnFactory connFactory, IDictionary<string, object?> userContext,
@@ -104,16 +108,31 @@ namespace BifrostQL.Core.Modules.OperationId
             var dialect = connFactory.Dialect;
 
             var claimLost = false;
-            try
+            var claimDeadlocked = false;
+            var deadlockRetried = false;
+            var lastAttempt = false;
+            while (true)
             {
-                return await RunOnceAsync(lastAttempt: false);
-            }
-            catch (BifrostExecutionError) when (claimLost)
-            {
-                // A concurrent request claimed the same id first and committed while this claim
-                // waited on it. This transaction is spent (Postgres has aborted it), so a fresh
-                // one reads the committed record: replayed, or refused as reused.
-                return await RunOnceAsync(lastAttempt: true);
+                claimLost = claimDeadlocked = false;
+                try
+                {
+                    return await RunOnceAsync(lastAttempt);
+                }
+                catch (BifrostExecutionError) when (claimLost)
+                {
+                    // A concurrent request claimed the same id first and committed while this claim
+                    // waited on it. This transaction is spent (Postgres has aborted it), so a fresh
+                    // one reads the committed record: replayed, or refused as reused.
+                    lastAttempt = true;
+                }
+                catch (BifrostExecutionError) when (claimDeadlocked)
+                {
+                    // Two claims waited on a third that rolled back: InnoDB grants both a shared
+                    // lock on the released key, both then need the exclusive one, and this one was
+                    // chosen as the deadlock victim (MySQL 1213). The survivor is still running, so
+                    // a fresh attempt waits on its claim like any second claim would.
+                    deadlockRetried = true;
+                }
             }
 
             Task<object?> RunOnceAsync(bool lastAttempt) => OperationWriteScope.RunAsync(connFactory, async scope =>
@@ -149,12 +168,33 @@ namespace BifrostQL.Core.Modules.OperationId
                         ErrorCode = BifrostExecutionError.ConflictCode,
                     };
                 }
+                catch (Exception ex) when (!deadlockRetried && IsDeadlock(ex))
+                {
+                    claimDeadlocked = true;
+                    throw;
+                }
                 var result = await write(scope);
                 await OperationIdStore.RecordResultAsync(
                     store, dialect, scope.Connection, scope.Transaction, owner, operationId,
                     CanonicalJson.Serialize(result), cancellationToken);
                 return result;
             }, cancellationToken);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="ex"/> (or an inner exception) is the database choosing this
+        /// transaction as a deadlock victim: MySQL 1213 "Deadlock found", PostgreSQL 40P01
+        /// "deadlock detected", SQL Server 1205 "was deadlocked". Matched on the message because
+        /// this assembly references no driver, as <see cref="BifrostExecutionError.IsUniqueViolation"/> is.
+        /// </summary>
+        private static bool IsDeadlock(Exception ex)
+        {
+            for (var current = ex; current is not null; current = current.InnerException)
+            {
+                if (current.Message.Contains("deadlock", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>

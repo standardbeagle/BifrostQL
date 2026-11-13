@@ -189,8 +189,9 @@ and the model names the table the records live in with `operation-id-store`:
 ```
 
 The host creates the store table. It must be `visibility: hidden`, because its rows hold every
-tenant's write results, and it needs these columns and a unique key over
-`(tenant, caller, operation_id)`:
+tenant's write results, and it needs these columns and a primary key or unique index over
+exactly `(tenant, caller, operation_id)`. The model refuses to load without that key, because it
+is what makes two concurrent writes under one id commit once. For example:
 
 ```sql
 CREATE TABLE operation_ids (

@@ -65,11 +65,13 @@ On `main` after v0.4.28; not yet on NuGet.
   `:root { operation-id-store: <table> }`, on the write's own transaction. A refused write
   leaves no record; a write without an id runs as before. An id on `sync`, `delta` or
   `updateWhere` is refused with `OPERATION_ID_UNSUPPORTED`. Model load checks the
-  store exists, is `visibility: hidden` and carries every column. See the mutations guide.
+  store exists, is `visibility: hidden`, carries every column and has a primary key or unique
+  index over exactly `(tenant, caller, operation_id)`. See the mutations guide.
 - Operation-id replay. A retry with the same id and the same request answers with the
   recorded result, generated key included, and runs no SQL write, transformer or hook. The
-  retry still passes the table's policy for its verb, so a caller who lost the grant gets
-  `ACCESS_DENIED`; an `upsert` retry must pass both the create and the update check.
+  retry still passes the table's policy for its verb, checked against the column names the
+  policy declares, so a caller who lost the grant gets `ACCESS_DENIED`; an `upsert` retry must
+  pass both the create and the update check.
 - Operation ids on `_batch` and `save`. One id covers the whole batch or saved tree: the
   actions or nodes and the record commit in one transaction, so a failed batch leaves no record,
   and a retry answers the recorded result without a second write. A batch with an id runs row

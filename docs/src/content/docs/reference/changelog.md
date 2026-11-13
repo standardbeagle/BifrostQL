@@ -126,12 +126,13 @@ A table with `operation-id: optional` records an `insert`, `update`, `upsert` or
 carries `_operationId` or an `Idempotency-Key` header. The record holds the caller's tenant and
 user id, the id, the table, the verb, the target key, an input hash and the result, in the hidden store named
 by `:root { operation-id-store: <table> }`, written on the write's own transaction. A refused
-write leaves no record, and a write without an id runs as before. See
+write leaves no record, and a write without an id runs as before. Model load refuses a store
+without a primary key or unique index over exactly `(tenant, caller, operation_id)`. See
 [Operation ids](/BifrostQL/guides/mutations/#operation-ids).
 
 A retry with the same id and the same request answers with the recorded result, generated key
 included, and runs no SQL write, transformer or hook. The retry still passes the table's policy
-for its verb, so a caller who lost the grant gets `ACCESS_DENIED`; an `upsert` retry must pass
+for its verb, checked against the column names the policy declares, so a caller who lost the grant gets `ACCESS_DENIED`; an `upsert` retry must pass
 both the create and the update check.
 
 `_batch` and `save` take one id for the whole batch or saved tree: the actions or nodes and the

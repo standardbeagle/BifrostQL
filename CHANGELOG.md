@@ -112,6 +112,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - On MySQL, three or more requests racing one operation id whose first attempt rolled back could
   answer one of them with `DATABASE_ERROR`: the two waiting claims deadlocked (error 1213). The
   claim the database rolls back now runs once more and answers from the recorded result.
+  The victim is recognized by its driver code (SqlState `40001`/`40P01`, SQL Server error 1205),
+  never by its text, so an unrelated error that mentions a deadlock is not retried.
 - gRPC answered a write refused for its operation id with `INTERNAL`, a status clients retry.
   A write to an `operation-id: required` table now gets `FAILED_PRECONDITION` with
   `OPERATION_ID_REQUIRED: this write requires an operation id.`; `OPERATION_ID_REUSED` maps to

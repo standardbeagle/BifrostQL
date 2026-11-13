@@ -176,6 +176,8 @@ the retention purge deletes older records, and a retry of a purged id runs as a 
 Three or more requests racing one operation id whose first attempt rolled back could deadlock on
 MySQL (error 1213), and the request the database rolled back answered `DATABASE_ERROR`. It now runs
 once more and answers from the record the surviving request commits.
+The victim is recognized by its driver code (SqlState `40001` or `40P01`, SQL Server error 1205),
+never by its text, so an unrelated error that mentions a deadlock is not retried.
 
 ### Changed — gRPC, RESP and MCP name operation-id refusals
 

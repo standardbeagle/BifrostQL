@@ -271,11 +271,9 @@ public class ChatCompletionServiceTests
         request!.Model.Raw().Should().Be(Opus48);
         request.MaxTokens.Should().Be(ChatCompletionOptions.DefaultMaxTokens);
         request.Thinking!.TryPickAdaptive(out _).Should().BeTrue("adaptive thinking is always requested");
-#pragma warning disable CS0618 // asserting the deprecated sampling params are never sent
-        request.Temperature.Should().BeNull("temperature is removed on this model and would 400");
-        request.TopP.Should().BeNull();
-        request.TopK.Should().BeNull();
-#pragma warning restore CS0618
+        // API version 2026-10-21 answers 400 to any sampling parameter; SDK 13 has no
+        // typed property for them, so pin the raw request body instead.
+        request.RawBodyData.Keys.Should().NotContain(new[] { "temperature", "top_p", "top_k" });
     }
 
     [Fact]

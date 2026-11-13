@@ -84,6 +84,15 @@ input) used to answer `DATABASE_ERROR`. It now answers `OPERATION_FAILED` with a
 **Migration:** a client that matched `DATABASE_ERROR` for these failures must match
 `OPERATION_FAILED`.
 
+### Changed — chat sends the API key as `Authorization: Bearer`
+
+The chat module now uses the Anthropic C# SDK 13, which speaks Claude API version `2026-10-21` and
+sends the API key in an `Authorization: Bearer` header instead of `X-Api-Key`. `BifrostQL.Core`
+depends on `Anthropic` 13.x.
+
+**Migration:** a gateway or proxy behind `Chat:BaseUrl` that reads `X-Api-Key` must read
+`Authorization`. A host that references `Anthropic` 12 directly must move to 13.
+
 ### Breaking — engine-only history APIs
 
 `HistoryErasure.Marker` is now internal; there is no public replacement, because erasure runs only

@@ -101,6 +101,11 @@ On `main` after v0.4.28; not yet on NuGet.
 - `HistoryErasure.BuildTrailPurgeSql` now takes the history table and the `entity` /
   `entity_id` values, so each comparison can follow the trail column's type. Callers outside
   BifrostQL pass the resolved history `IDbTable` and the two values they bind.
+- The chat module uses the Anthropic C# SDK 13, which speaks Claude API version `2026-10-21`
+  and sends the API key as `Authorization: Bearer` instead of `X-Api-Key`. A `Chat:BaseUrl`
+  gateway or proxy that reads `X-Api-Key` must read `Authorization` instead. `BifrostQL.Core`
+  now depends on `Anthropic` 13.x (Apache-2.0; 12.x was MIT), so a host that references
+  `Anthropic` 12 directly must move to 13.
 
 ### Fixed
 

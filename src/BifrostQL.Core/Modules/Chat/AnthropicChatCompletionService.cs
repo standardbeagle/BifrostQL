@@ -115,7 +115,8 @@ namespace BifrostQL.Core.Modules.Chat
 
             // BaseUrl override targets Anthropic-Messages-compatible gateways
             // (e.g. OpenRouter at https://openrouter.ai/api); the SDK appends
-            // v1/messages. Null keeps the SDK's api.anthropic.com default.
+            // v1/messages. Null keeps the SDK's api.anthropic.com default. SDK 13
+            // sends the key as `Authorization: Bearer`, not `X-Api-Key`.
             return string.IsNullOrWhiteSpace(options.BaseUrl)
                 ? new AnthropicClient { ApiKey = options.ApiKey }
                 : new AnthropicClient { ApiKey = options.ApiKey, BaseUrl = options.BaseUrl };
@@ -161,12 +162,10 @@ namespace BifrostQL.Core.Modules.Chat
                 // user/assistant in messages; system text rides the system prompt param.
                 if (role == ChatMessageRoles.System)
                     systemParts.Add(message.Content);
+                else if (role == ChatMessageRoles.User)
+                    turns.Add(new UserMessageParam { Content = message.Content });
                 else
-                    turns.Add(new MessageParam
-                    {
-                        Role = role == ChatMessageRoles.User ? Role.User : Role.Assistant,
-                        Content = message.Content,
-                    });
+                    turns.Add(new AssistantMessageParam { Content = message.Content });
             }
 
             if (turns.Count == 0)
@@ -362,7 +361,7 @@ namespace BifrostQL.Core.Modules.Chat
 
                     // The assistant turn goes back VERBATIM — thinking blocks included,
                     // the API rejects a tool continuation that drops them.
-                    turns.Add(new MessageParam { Role = Role.Assistant, Content = turn.BuildAssistantBlocks() });
+                    turns.Add(new AssistantMessageParam { Content = turn.BuildAssistantBlocks() });
 
                     foreach (var toolUse in toolUses)
                         yield return new ChatToolActivity(toolUse.Name, ChatToolPhase.Call, Summarize(toolUse.InputJson));
@@ -422,7 +421,7 @@ namespace BifrostQL.Core.Modules.Chat
                             IsError = result.IsError ? true : null,
                         });
                     }
-                    turns.Add(new MessageParam { Role = Role.User, Content = resultBlocks });
+                    turns.Add(new UserMessageParam { Content = resultBlocks });
                     continue;
                 }
 

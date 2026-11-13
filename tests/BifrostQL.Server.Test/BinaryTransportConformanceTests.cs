@@ -86,16 +86,25 @@ namespace BifrostQL.Server.Test
             return DecodeRows(payload, table);
         }
 
-        protected override async Task<object?> ExecuteMutationAsync(ConformanceMutationRequest request)
-        {
-            var table = await TableAsync(request.Table);
-            var verb = request.Action switch
+        // The wire carries GraphQL text, so it carries the _operationId argument too.
+        protected override bool AdapterCarriesOperationId => true;
+
+        protected override Task<object?> ExecuteMutationAsync(ConformanceMutationRequest request)
+            => SendMutationAsync(request, request.Action switch
             {
                 ConformanceMutationAction.Insert => "insert",
                 ConformanceMutationAction.Update => "update",
                 ConformanceMutationAction.Delete => "delete",
                 _ => throw new ArgumentOutOfRangeException(nameof(request), request.Action, "Unknown action."),
-            };
+            });
+
+        // sync: is a write the server cannot record an operation id for.
+        protected override Task<object?> ExecuteUnrecordableMutationAsync(ConformanceMutationRequest request)
+            => SendMutationAsync(request, "sync");
+
+        private async Task<object?> SendMutationAsync(ConformanceMutationRequest request, string verb)
+        {
+            var table = await TableAsync(request.Table);
 
             var fields = new List<string>();
             // Update/delete address the row by its primary key positionally (composite-key safe);
@@ -113,11 +122,12 @@ namespace BifrostQL.Server.Test
             foreach (var entry in request.Data)
                 fields.Add($"{GraphQlColumn(table, entry.Key)}: {RenderValue(entry.Value)}");
 
-            if (request.Action != ConformanceMutationAction.Delete)
+            if (verb != "delete")
                 foreach (var required in RequiredColumnsMissingFrom(table, supplied))
                     fields.Add($"{required.GraphQlName}: {RenderValue(WireValueFor(table, required, request.Principal))}");
 
-            var mutation = $"mutation {{ {table.GraphQlName}({verb}: {{ {string.Join(", ", fields)} }}) }}";
+            var operationId = request.OperationId is null ? "" : $", _operationId: {RenderValue(request.OperationId)}";
+            var mutation = $"mutation {{ {table.GraphQlName}({verb}: {{ {string.Join(", ", fields)} }}{operationId}) }}";
             var payload = await SendAsync(BifrostMessageType.Mutation, mutation, request.Principal);
 
             using var document = JsonDocument.Parse(payload);

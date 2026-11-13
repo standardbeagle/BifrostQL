@@ -19,6 +19,8 @@
   <ItemGroup>
     <PackageReference Include="FluentAssertions" Version="8.11.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
+    <!-- Facts a derivation cannot run for a structural reason skip with that reason stated. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.85" />
     <!-- TestHost must track the ASP.NET Core shared framework of each TFM. -->
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.34" Condition="'$(TargetFramework)'=='net8.0'" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="9.0.23" Condition="'$(TargetFramework)'=='net9.0'" />

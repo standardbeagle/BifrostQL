@@ -80,6 +80,12 @@ namespace BifrostQL.AdapterConformance
 
         /// <summary>The registered BifrostQL endpoint path the write targets.</summary>
         public required string Endpoint { get; init; }
+
+        /// <summary>
+        /// The caller's operation id for this write, or null for none. Set only by the facts that
+        /// require <c>AdapterCarriesOperationId</c>; a derivation whose wire carries one sends it.
+        /// </summary>
+        public string? OperationId { get; init; }
     }
 
     /// <summary>
@@ -246,6 +252,41 @@ namespace BifrostQL.AdapterConformance
         /// a per-table opt-in adds it here, beside <c>operation-id: required</c>.
         /// </summary>
         protected virtual string OperationIdLedgerRule => "*.ledger { operation-id: required }";
+
+        /// <summary>
+        /// Whether the adapter's wire can carry a caller operation id
+        /// (<see cref="ConformanceMutationRequest.OperationId"/>), so the refusals that only a write
+        /// carrying one can meet (<c>OPERATION_ID_REUSED</c>, <c>OPERATION_ID_UNSUPPORTED</c>,
+        /// <c>OPERATION_ID_ANONYMOUS</c>) run end to end. Only a wire that carries GraphQL text
+        /// (the <c>_operationId</c> argument) or the HTTP <c>Idempotency-Key</c> header can; see
+        /// <see cref="NoOperationIdOnWire"/> for why the intent-based adapters cannot. Requires
+        /// <see cref="AdapterSupportsOperationIdRefusal"/>; a derivation setting it implements
+        /// <see cref="ExecuteUnrecordableMutationAsync"/>.
+        /// </summary>
+        protected virtual bool AdapterCarriesOperationId => false;
+
+        /// <summary>
+        /// Skip reason for the operation-id facts on an adapter that cannot carry an id. Its writes
+        /// run as an <c>IMutationIntent</c>, which has no operation-id member, and the only server
+        /// slot for one (<c>bifrost:operation-id</c> in the user context) is filled solely from the
+        /// HTTP <c>Idempotency-Key</c> header: <c>IdentityContextMapper</c> and
+        /// <c>WireContextMerger</c> drop it from identity claims and wire context. The server
+        /// throws these codes only from the GraphQL mutation resolvers, after resolving an id, so
+        /// no request on such a wire can reach them.
+        /// </summary>
+        protected const string NoOperationIdOnWire =
+            "This adapter's wire carries no operation id (its writes are mutation intents, which have "
+            + "no operation-id member, and the identity projection drops the operation-id slot), so "
+            + "the server can never reuse, refuse or reject one through it.";
+
+        /// <summary>
+        /// Executes <paramref name="request"/> as a write that cannot record an operation id
+        /// (GraphQL's <c>sync:</c>), carrying <see cref="ConformanceMutationRequest.OperationId"/>.
+        /// Required when <see cref="AdapterCarriesOperationId"/> is true.
+        /// </summary>
+        protected virtual Task<object?> ExecuteUnrecordableMutationAsync(ConformanceMutationRequest request)
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterCarriesOperationId)} but does not override {nameof(ExecuteUnrecordableMutationAsync)}.");
 
         private IEnumerable<string> FixtureMetadataRules => AdapterSupportsOperationIdRefusal
             ? MetadataRules.Concat(new[]
@@ -831,6 +872,85 @@ namespace BifrostQL.AdapterConformance
                 "the refusal text names no table");
             (await DbScalarAsync("SELECT name FROM ledger WHERE id = 1"))
                 .Should().Be("seed", "a refused write changes nothing");
+        }
+
+        /// <summary>
+        /// An operation id the caller already recorded for one write, sent again with a different
+        /// write, reaches the wire as <c>OPERATION_ID_REUSED</c>: never replayed, never run. The
+        /// text names no table, and the second write changes nothing.
+        /// </summary>
+        [SkippableFact]
+        public async Task Reused_operation_id_surfaces_the_named_code()
+        {
+            if (!AdapterSupportsMutations || !AdapterSupportsOperationIdRefusal) return;
+            Skip.IfNot(AdapterCarriesOperationId, NoOperationIdOnWire);
+
+            await ExecuteMutationAsync(LedgerUpdate("recorded", "op-reused", TenantPrincipal("user-a", "tenant-a")));
+            (await DbScalarAsync("SELECT name FROM ledger WHERE id = 1"))
+                .Should().Be("recorded", "the first write under the id runs");
+
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteMutationAsync(
+                LedgerUpdate("different", "op-reused", TenantPrincipal("user-a", "tenant-a"))));
+
+            AssertNamedRefusal(error, "OPERATION_ID_REUSED");
+            (await DbScalarAsync("SELECT name FROM ledger WHERE id = 1"))
+                .Should().Be("recorded", "a reused id is refused, not run");
+        }
+
+        /// <summary>
+        /// An operation id on a write that cannot record one (<c>sync:</c>) reaches the wire as
+        /// <c>OPERATION_ID_UNSUPPORTED</c> rather than running unrecorded.
+        /// </summary>
+        [SkippableFact]
+        public async Task Unsupported_operation_id_surfaces_the_named_code()
+        {
+            if (!AdapterSupportsMutations || !AdapterSupportsOperationIdRefusal) return;
+            Skip.IfNot(AdapterCarriesOperationId, NoOperationIdOnWire);
+
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteUnrecordableMutationAsync(
+                LedgerUpdate("unrecordable", "op-unsupported", TenantPrincipal("user-a", "tenant-a"))));
+
+            AssertNamedRefusal(error, "OPERATION_ID_UNSUPPORTED");
+            (await DbScalarAsync("SELECT name FROM ledger WHERE id = 1"))
+                .Should().Be("seed", "a write that cannot record its id does not run");
+        }
+
+        /// <summary>
+        /// An operation id from a caller without a user id reaches the wire as
+        /// <c>OPERATION_ID_ANONYMOUS</c>: such callers would share one id space.
+        /// </summary>
+        [SkippableFact]
+        public async Task Anonymous_operation_id_surfaces_the_named_code()
+        {
+            if (!AdapterSupportsMutations || !AdapterSupportsOperationIdRefusal) return;
+            Skip.IfNot(AdapterCarriesOperationId, NoOperationIdOnWire);
+
+            // An unauthenticated request: an authenticated principal without a subject is refused
+            // earlier, by the identity projection, so it never reaches the operation-id check.
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => ExecuteMutationAsync(
+                LedgerUpdate("anonymous", "op-anonymous", principal: null)));
+
+            AssertNamedRefusal(error, "OPERATION_ID_ANONYMOUS");
+            (await DbScalarAsync("SELECT name FROM ledger WHERE id = 1"))
+                .Should().Be("seed", "an anonymous id is refused before the write");
+        }
+
+        private ConformanceMutationRequest LedgerUpdate(string name, string operationId, ClaimsPrincipal? principal) => new()
+        {
+            Table = "ledger",
+            Action = ConformanceMutationAction.Update,
+            Data = new Dictionary<string, object?> { ["name"] = name },
+            PrimaryKey = new object?[] { 1 },
+            Principal = principal,
+            Endpoint = EndpointPath,
+            OperationId = operationId,
+        };
+
+        private static void AssertNamedRefusal(Exception error, string code)
+        {
+            var wire = FlattenMessages(error);
+            wire.Should().Contain(code, "a refusal the client must act on is named on the wire");
+            wire.Should().NotContain("ledger").And.NotContain("operation_ids", "the refusal text names no table");
         }
 
         // ---- (a2) malformed pre-auth wire input never escapes the handler ----

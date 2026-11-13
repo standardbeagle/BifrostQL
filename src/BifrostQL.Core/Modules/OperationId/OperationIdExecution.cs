@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
@@ -182,20 +183,40 @@ namespace BifrostQL.Core.Modules.OperationId
         }
 
         /// <summary>
-        /// Whether <paramref name="ex"/> (or an inner exception) is the database choosing this
-        /// transaction as a deadlock victim: MySQL 1213 "Deadlock found", PostgreSQL 40P01
-        /// "deadlock detected", SQL Server 1205 "was deadlocked". Matched on the message because
-        /// this assembly references no driver, as <see cref="BifrostExecutionError.IsUniqueViolation"/> is.
+        /// Whether <paramref name="ex"/> (or an inner exception) is a driver error saying the
+        /// database chose this transaction as a deadlock victim. Read from the driver's code, never
+        /// its text, so an error that only mentions a deadlock is not retried: SqlState
+        /// <c>40001</c> (MySQL 1213) or <c>40P01</c> (PostgreSQL), and for SQL Server, which
+        /// reports no SqlState, error 1205 in <see cref="Exception.Data"/>. Read through
+        /// <see cref="DbException"/> because this assembly references no driver.
         /// </summary>
         internal static bool IsDeadlock(Exception ex)
         {
             for (var current = ex; current is not null; current = current.InnerException)
             {
-                if (current.Message.Contains("deadlock", StringComparison.OrdinalIgnoreCase))
+                if (current is DbException { SqlState: SerializationFailureSqlState or DeadlockDetectedSqlState })
+                    return true;
+                if (current is DbException { SqlState: null } db
+                    && db.Data[SqlServerErrorNumberKey] is SqlServerDeadlockVictimNumber)
                     return true;
             }
             return false;
         }
+
+        /// <summary>SQLSTATE 40001, which MySQL reports for deadlock error 1213.</summary>
+        private const string SerializationFailureSqlState = "40001";
+
+        /// <summary>PostgreSQL SQLSTATE 40P01 <c>deadlock_detected</c>.</summary>
+        private const string DeadlockDetectedSqlState = "40P01";
+
+        /// <summary>
+        /// The <see cref="Exception.Data"/> key under which Microsoft.Data.SqlClient's
+        /// <c>SqlException</c> carries the server error number.
+        /// </summary>
+        private const string SqlServerErrorNumberKey = "HelpLink.EvtID";
+
+        /// <summary>SQL Server error 1205: the transaction was chosen as the deadlock victim.</summary>
+        private const string SqlServerDeadlockVictimNumber = "1205";
 
         /// <summary>
         /// Adds every module argument a field carries to a fingerprint's

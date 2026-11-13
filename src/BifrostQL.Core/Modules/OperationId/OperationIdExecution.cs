@@ -187,7 +187,7 @@ namespace BifrostQL.Core.Modules.OperationId
         /// "deadlock detected", SQL Server 1205 "was deadlocked". Matched on the message because
         /// this assembly references no driver, as <see cref="BifrostExecutionError.IsUniqueViolation"/> is.
         /// </summary>
-        private static bool IsDeadlock(Exception ex)
+        internal static bool IsDeadlock(Exception ex)
         {
             for (var current = ex; current is not null; current = current.InnerException)
             {

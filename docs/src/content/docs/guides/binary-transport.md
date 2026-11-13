@@ -145,6 +145,13 @@ if (result.errors.length > 0) {
 }
 ```
 
+`result.errors` holds the same messages the HTTP GraphQL endpoint returns, as plain strings: the
+envelope has no slot for `extensions.code`. A write refused for its [operation id](/BifrostQL/guides/mutations/#operation-ids)
+is the exception, because the client must act on it rather than retry: its text leads with the
+code, as on the gRPC and MCP wires, for example
+`OPERATION_ID_REQUIRED: this write requires an operation id.` The other `OPERATION_ID_*` codes
+read the same way.
+
 In Node.js environments without a global `WebSocket`, pass a constructor explicitly:
 
 ```ts

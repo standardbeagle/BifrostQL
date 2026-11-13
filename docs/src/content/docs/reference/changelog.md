@@ -179,7 +179,7 @@ once more and answers from the record the surviving request commits.
 The victim is recognized by its driver code (SqlState `40001` or `40P01`, SQL Server error 1205),
 never by its text, so an unrelated error that mentions a deadlock is not retried.
 
-### Changed — gRPC, RESP and MCP name operation-id refusals
+### Changed — gRPC, RESP, MCP and the binary transport name operation-id refusals
 
 A gRPC write refused for its operation id answered `INTERNAL`, which clients retry. A write to an
 `operation-id: required` table now gets `FAILED_PRECONDITION` with the message
@@ -191,6 +191,11 @@ RESP answered the same refusal with `ERR internal error` and MCP with `execution
 replies `-OPERATION_ID_REQUIRED this write requires an operation id.`, with the code as the error
 kind, and MCP returns `OPERATION_ID_REQUIRED: this write requires an operation id.` The other
 `OPERATION_ID_*` codes are named the same way on both.
+
+The binary WebSocket transport (`/bifrost-ws`) sent the bare GraphQL message,
+`This write requires an operation id.`, without the code the HTTP wire carries in
+`extensions.code`. It now sends `OPERATION_ID_REQUIRED: this write requires an operation id.`, and
+the other `OPERATION_ID_*` codes the same way. Every other binary error keeps its GraphQL message.
 
 ### Changed — a hidden table's invalid retention fails model load
 

@@ -122,6 +122,10 @@ On `main` after v0.4.28; not yet on NuGet.
   now replies `-OPERATION_ID_REQUIRED this write requires an operation id.` and MCP
   `OPERATION_ID_REQUIRED: this write requires an operation id.`; the other `OPERATION_ID_*`
   codes are named the same way.
+- The binary WebSocket transport (`/bifrost-ws`) answered the same refusal with the bare GraphQL
+  message, `This write requires an operation id.`, dropping the code the HTTP wire carries in
+  `extensions.code`. It now sends `OPERATION_ID_REQUIRED: this write requires an operation id.`,
+  and the other `OPERATION_ID_*` codes the same way; every other error keeps its GraphQL message.
 - A `visibility: hidden` table's `retain` or `ttl` was not checked at model load, although the
   purge sweeps hidden tables. An invalid one (bad duration, missing or non-timestamp anchor)
   loaded and the purge skipped the table with an error on every pass. Model load now refuses it,

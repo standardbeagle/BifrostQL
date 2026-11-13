@@ -94,6 +94,12 @@ namespace BifrostQL.Core.Model
                 }
             }
 
+            // A hidden table is withheld from every surface, but the retention purge still sweeps
+            // it (the operation-id store is one), so its retain/ttl is checked like an exposed
+            // table's rather than loading and being skipped by every pass.
+            foreach (var table in model.HiddenTables)
+                ValidateRetention(table, errors);
+
             ValidateEavConfigs(model, errors);
             ValidateCdcOutbox(model, errors);
             ValidateOperationIdStore(model, errors);

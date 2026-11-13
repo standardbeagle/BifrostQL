@@ -21,8 +21,8 @@ tags: [approval, batch, treesync, expiry, state-machine, mutation-pipeline, affe
 ## Lessons
 
 1. Approval interception is diversion, not a transaction veto. Batch actions each enqueue and apply no target write. TreeSync must pin its mixed-tree contract: an ungated node may commit while a gated node is diverted and queued. Do not promise whole-tree atomic approval semantics unless the whole tree is gated or a separate orchestration policy supplies it.
-2. Expiry is a terminal state-machine transition (`pending -> expired`), not an ad-hoc timestamp check in approval. Sweep/evaluate expiry through the state-machine/mutation seam so a later approval sees the authoritative non-pending state and cannot replay.
-3. Reject/expire state changes use `IMutationIntentExecutor`/`TableMutationPipeline`, not direct SQL. Verify success with `MutationIntentResult.AffectedRows == 1`; never infer affected-row count from `.Value` or nullable success. The pipeline preserves policy, tenant, audit, and other mutation transformers.
+2. Expiry is a terminal queue-lifecycle transition (`pending -> expired`), not an ad-hoc timestamp check in approval. Trusted server sweepers call `ApprovalDecisionService.ExpireAsync`, which uses `PendingChangeStore.TransitionFromPendingAsync` with a `state == pending` guard, so a later approval sees the authoritative non-pending state and cannot replay.
+3. Reject/expire queue-state changes use the engine-owned `PendingChangeStore.TransitionFromPendingAsync` SQL seam; the approval queue refuses writes through the mutation pipeline. `ApprovalDecisionService` requires the returned affected-row count to equal 1. Rejection passes its tenant, self-approval, role, and policy checks; expiry is trusted-server-only and performs no authorization. Approved application-table writes still use `IMutationIntentExecutor` and the shared mutation pipeline.
 
 ## What did not work
 

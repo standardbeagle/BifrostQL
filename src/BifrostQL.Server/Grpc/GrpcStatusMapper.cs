@@ -13,8 +13,9 @@ namespace BifrostQL.Server.Grpc
     /// another by its status.
     ///
     /// <para><b>Sanitization (invariant 3).</b> Only the adapter's own curated
-    /// <see cref="GrpcRequestException"/> surfaces its message verbatim. A
-    /// <see cref="BifrostExecutionError"/> or any other exception maps to a generic INTERNAL status
+    /// <see cref="GrpcRequestException"/> surfaces its message verbatim. An authorization denial and
+    /// an operation-id refusal map by their <see cref="BifrostExecutionError.ErrorCode"/> to a named
+    /// status with fixed text. Any other <see cref="BifrostExecutionError"/> or exception maps to a generic INTERNAL status
     /// with a fixed message; the real detail is logged server-side only, never forwarded onto the
     /// wire (it can wrap raw driver/schema text). Cancellation/deadline maps to CANCELLED /
     /// DEADLINE_EXCEEDED. Because this funnel catches the full exception family, a malformed request
@@ -66,6 +67,15 @@ namespace BifrostQL.Server.Grpc
                     return denialIsNotFound
                         ? new Status(StatusCode.NotFound, RowNotFoundMessage)
                         : new Status(StatusCode.PermissionDenied, "The request was denied by policy.");
+
+                case BifrostExecutionError refused when OperationIdWireRefusal.TextOf(refused) is { } refusalText:
+                    // An operation-id refusal is the client's to fix, never a fault to retry: a
+                    // reused id conflicts with a stored record (ALREADY_EXISTS); a missing,
+                    // unsupported or anonymous id is a request the server cannot accept as sent
+                    // (FAILED_PRECONDITION). The text is the per-code constant (invariant 3).
+                    return new Status(
+                        OperationIdWireRefusal.IsReused(refused) ? StatusCode.AlreadyExists : StatusCode.FailedPrecondition,
+                        refusalText);
 
                 default:
                     // BifrostExecutionError and everything else: treat as untrusted on the wire.

@@ -3,7 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { DataTableColumnHeader } from './data-table-column-header';
 import type { Column, Table } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { Column as ColumnSchema } from '@/types/schema';
+
+type Row = Record<string, unknown>;
 import { getFilterOperators } from '@/lib/query-builder';
 
 // Mock the UI components
@@ -75,7 +78,7 @@ function createMockColumn(overrides: Partial<ColumnSchema> = {}): ColumnSchema {
 function createMockTanStackColumn(
   columnSchema: ColumnSchema | undefined,
   options: { isSorted?: 'asc' | 'desc' | false } = {},
-): Column<unknown, unknown> {
+): Column<DataTableFeatures, Row, unknown> {
   return {
     id: 'test_column',
     columnDef: {
@@ -94,15 +97,15 @@ function createMockTanStackColumn(
     toggleSorting: vi.fn(),
     clearSorting: vi.fn(),
     toggleVisibility: vi.fn(),
-  } as unknown as Column<unknown, unknown>;
+  } as unknown as Column<DataTableFeatures, Row, unknown>;
 }
 
-function createMockTable(): Table<unknown> {
+function createMockTable(): Table<DataTableFeatures, Row> {
   return {
     options: {
       meta: {},
     },
-  } as unknown as Table<unknown>;
+  } as unknown as Table<DataTableFeatures, Row>;
 }
 
 describe('DataTableColumnHeader', () => {
@@ -291,7 +294,7 @@ describe('ColumnMetadataTooltip', () => {
           joinLabelColumn: 'name',
         },
       },
-    } as unknown as Column<unknown, unknown>;
+    } as unknown as Column<DataTableFeatures, Row, unknown>;
     const table = createMockTable();
 
     render(<DataTableColumnHeader column={column} table={table} title="User ID" />);

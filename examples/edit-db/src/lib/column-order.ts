@@ -1,13 +1,13 @@
-import type { ColumnDef } from '@tanstack/react-table';
+import type { ColumnDef, RowData, TableFeatures } from '@tanstack/react-table';
 
-function columnId<TData>(column: ColumnDef<TData, unknown>): string | undefined {
+function columnId<TFeatures extends TableFeatures, TData extends RowData>(column: ColumnDef<TFeatures, TData, unknown>): string | undefined {
     return column.id ?? ('accessorKey' in column ? String(column.accessorKey) : undefined);
 }
 
-function pick<TData>(columns: ColumnDef<TData, unknown>[], names: string[]): ColumnDef<TData, unknown>[] {
+function pick<TFeatures extends TableFeatures, TData extends RowData>(columns: ColumnDef<TFeatures, TData, unknown>[], names: string[]): ColumnDef<TFeatures, TData, unknown>[] {
     return names
         .map((name) => columns.find((c) => columnId(c) === name))
-        .filter((c): c is ColumnDef<TData, unknown> => c !== undefined);
+        .filter((c): c is ColumnDef<TFeatures, TData, unknown> => c !== undefined);
 }
 
 export interface ColumnOrderConfig {
@@ -26,10 +26,10 @@ export interface ColumnOrderConfig {
  * Order is independent of visibility: a column the viewer switches back on lands
  * in its configured place rather than at the end.
  */
-export function orderColumns<TData>(
-    columns: ColumnDef<TData, unknown>[],
+export function orderColumns<TFeatures extends TableFeatures, TData extends RowData>(
+    columns: ColumnDef<TFeatures, TData, unknown>[],
     { leading, trailing }: ColumnOrderConfig,
-): ColumnDef<TData, unknown>[] {
+): ColumnDef<TFeatures, TData, unknown>[] {
     const leadingCols = leading ? pick(columns, leading) : [];
     const trailingCols = trailing ? pick(columns, trailing) : [];
     if (leadingCols.length === 0 && trailingCols.length === 0) return columns;

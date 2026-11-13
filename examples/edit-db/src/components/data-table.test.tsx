@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from './data-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { PkFilter } from '@/lib/row-id';
 
 vi.mock('./grouped-grid-summary', () => ({
@@ -33,7 +34,7 @@ interface EnrollmentRow {
     [key: string]: unknown;
 }
 
-function makeColumns(): ColumnDef<EnrollmentRow, unknown>[] {
+function makeColumns(): ColumnDef<DataTableFeatures, EnrollmentRow, unknown>[] {
     return [
         {
             id: 'student_id',
@@ -202,6 +203,11 @@ describe('DataTable action callback payloads', () => {
         // Radix Checkbox renders as role=checkbox (not a native input). Click the header one to select all rows.
         const selectAll = screen.getByRole('checkbox', { name: /select all/i });
         fireEvent.click(selectAll);
+
+        // With every row selected the header reads as checked, not
+        // indeterminate (TanStack Table 9 reports "some selected" as true
+        // at full selection too, so the all-selected check must win).
+        expect(selectAll).toHaveAttribute('aria-checked', 'true');
 
         // Delete button appears only when something is selected.
         const deleteButton = await screen.findByRole('button', { name: /delete$/i });

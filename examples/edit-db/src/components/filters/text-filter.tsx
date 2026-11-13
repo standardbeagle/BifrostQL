@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Column } from '@tanstack/react-table';
+import type { Column, RowData } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -24,11 +25,11 @@ const operatorLabels: Record<string, string> = {
 
 const DEBOUNCE_MS = 300;
 
-interface TextFilterProps<TData, TValue> {
-    column: Column<TData, TValue>;
+interface TextFilterProps<TData extends RowData, TValue> {
+    column: Column<DataTableFeatures, TData, TValue>;
 }
 
-export function TextFilter<TData, TValue>({ column }: TextFilterProps<TData, TValue>) {
+export function TextFilter<TData extends RowData, TValue>({ column }: TextFilterProps<TData, TValue>) {
     const operators = (column.columnDef.meta as { filterOperators?: string[] })?.filterOperators ?? [];
     const stringOperators = operators.filter((op) => op in operatorLabels);
 

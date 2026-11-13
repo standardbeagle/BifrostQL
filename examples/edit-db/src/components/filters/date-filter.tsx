@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Column } from '@tanstack/react-table';
+import type { Column, RowData } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -23,11 +24,11 @@ const operatorLabels: Record<string, string> = {
     _null: 'Is null',
 };
 
-interface DateFilterProps<TData, TValue> {
-    column: Column<TData, TValue>;
+interface DateFilterProps<TData extends RowData, TValue> {
+    column: Column<DataTableFeatures, TData, TValue>;
 }
 
-export function DateFilter<TData, TValue>({ column }: DateFilterProps<TData, TValue>) {
+export function DateFilter<TData extends RowData, TValue>({ column }: DateFilterProps<TData, TValue>) {
     const operators = (column.columnDef.meta as { filterOperators?: string[] })?.filterOperators ?? [];
     const dateOperators = operators.filter((op) => op in operatorLabels);
 

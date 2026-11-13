@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import type { VisibilityState } from '@tanstack/react-table';
+import type { ColumnVisibilityState } from '@tanstack/react-table';
 
 const COL_VISIBILITY_STORAGE_PREFIX = 'bifrost-col-visibility:';
 
@@ -12,7 +12,7 @@ function storageKey(tableName: string): string {
  * stored, because "no stored preference" (fall back to the host defaults) and
  * "stored: everything visible" are different states.
  */
-export function loadColumnVisibility(tableName: string): VisibilityState | null {
+export function loadColumnVisibility(tableName: string): ColumnVisibilityState | null {
     try {
         const raw = localStorage.getItem(storageKey(tableName));
         if (!raw) return null;
@@ -22,11 +22,11 @@ export function loadColumnVisibility(tableName: string): VisibilityState | null 
     }
 }
 
-function sanitizeColumnVisibility(value: unknown): VisibilityState | null {
+function sanitizeColumnVisibility(value: unknown): ColumnVisibilityState | null {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return null;
     }
-    const visibility: VisibilityState = {};
+    const visibility: ColumnVisibilityState = {};
     for (const [columnId, visible] of Object.entries(value)) {
         if (typeof visible !== 'boolean') continue;
         visibility[columnId] = visible;
@@ -34,7 +34,7 @@ function sanitizeColumnVisibility(value: unknown): VisibilityState | null {
     return visibility;
 }
 
-export function saveColumnVisibility(tableName: string, visibility: VisibilityState): void {
+export function saveColumnVisibility(tableName: string, visibility: ColumnVisibilityState): void {
     try {
         localStorage.setItem(storageKey(tableName), JSON.stringify(visibility));
     } catch {
@@ -56,10 +56,10 @@ export function clearColumnVisibility(tableName: string): void {
  * that this table doesn't have are ignored, so one config can cover a schema
  * that varies between deployments.
  */
-export function visibilityFromDefaults(allColumnIds: string[], defaultVisible?: string[]): VisibilityState {
+export function visibilityFromDefaults(allColumnIds: string[], defaultVisible?: string[]): ColumnVisibilityState {
     if (!defaultVisible || defaultVisible.length === 0) return {};
     const wanted = new Set(defaultVisible);
-    const visibility: VisibilityState = {};
+    const visibility: ColumnVisibilityState = {};
     for (const id of allColumnIds) {
         visibility[id] = wanted.has(id);
     }
@@ -67,8 +67,8 @@ export function visibilityFromDefaults(allColumnIds: string[], defaultVisible?: 
 }
 
 export interface UseColumnVisibilityPersistenceResult {
-    columnVisibility: VisibilityState;
-    setColumnVisibility: React.Dispatch<React.SetStateAction<VisibilityState>>;
+    columnVisibility: ColumnVisibilityState;
+    setColumnVisibility: React.Dispatch<React.SetStateAction<ColumnVisibilityState>>;
     /** Drop the stored selection and go back to the host defaults for this table. */
     resetColumnVisibility: () => void;
 }
@@ -86,9 +86,9 @@ export interface UseColumnVisibilityPersistenceResult {
  */
 export function useColumnVisibilityPersistence(
     tableName: string | undefined,
-    defaultVisibility: VisibilityState,
+    defaultVisibility: ColumnVisibilityState,
 ): UseColumnVisibilityPersistenceResult {
-    const [columnVisibility, setState] = useState<VisibilityState>(
+    const [columnVisibility, setState] = useState<ColumnVisibilityState>(
         () => (tableName ? loadColumnVisibility(tableName) : null) ?? defaultVisibility,
     );
 
@@ -96,12 +96,12 @@ export function useColumnVisibilityPersistence(
     // depending on the current value (and so re-creating on every change).
     const currentRef = useRef(columnVisibility);
 
-    const apply = useCallback((next: VisibilityState) => {
+    const apply = useCallback((next: ColumnVisibilityState) => {
         currentRef.current = next;
         setState(next);
     }, []);
 
-    const setColumnVisibility = useCallback<React.Dispatch<React.SetStateAction<VisibilityState>>>(
+    const setColumnVisibility = useCallback<React.Dispatch<React.SetStateAction<ColumnVisibilityState>>>(
         (updater) => {
             const next = typeof updater === 'function' ? updater(currentRef.current) : updater;
             apply(next);

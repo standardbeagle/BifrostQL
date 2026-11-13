@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { ColumnDef } from '@tanstack/react-table';
 import { orderColumns } from './column-order';
+import type { DataTableFeatures } from './table-features';
 
 type Row = Record<string, unknown>;
 
-const cols = (...ids: string[]): ColumnDef<Row, unknown>[] =>
+const cols = (...ids: string[]): ColumnDef<DataTableFeatures, Row, unknown>[] =>
     ids.map((id) => ({ id, accessorKey: id }));
 
-const idsOf = (columns: ColumnDef<Row, unknown>[]) => columns.map((c) => c.id);
+const idsOf = (columns: ColumnDef<DataTableFeatures, Row, unknown>[]) => columns.map((c) => c.id);
 
 describe('orderColumns', () => {
     it('moves the trailing columns to the end, in the order named', () => {

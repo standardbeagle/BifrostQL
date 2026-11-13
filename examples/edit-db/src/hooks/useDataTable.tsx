@@ -5,6 +5,7 @@ import { useSchema } from "./useSchema";
 import { useEditorConfig, type DefaultSort } from "./useEditorConfig";
 import { Table, Column, Join, SchemaContextValue } from "../types/schema";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
+import type { DataTableFeatures } from "../lib/table-features";
 import { useFetcher } from "../common/fetcher";
 import { DataTableColumnHeader } from "../components/data-table-column-header";
 import { FkCellPopover } from "../components/fk-cell-popover";
@@ -150,7 +151,7 @@ function buildJoinColumn(
     schema: SchemaContextValue,
     operators: string[],
     onOpenColumn?: (panel: DrillFrame) => void,
-): ColumnDef<RowData, unknown> {
+): ColumnDef<DataTableFeatures, RowData, unknown> {
     const joinSchema = schema.findTable(anchorJoin.destinationTable);
     const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
     const composite = isComposite(anchorJoin);
@@ -237,7 +238,7 @@ function buildScalarColumn(
     schema: SchemaContextValue,
     operators: string[],
     onExpandContent?: (rowIndex: number, columnName: string) => void,
-): ColumnDef<RowData, unknown> {
+): ColumnDef<DataTableFeatures, RowData, unknown> {
     if (memberJoin) {
         // Secondary composite-FK column — value renders as a scalar but the
         // header should advertise the FK relation so users can hover for context.
@@ -333,11 +334,11 @@ function buildScalarColumn(
     };
 }
 
-const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): ColumnDef<RowData, unknown>[] => {
+const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): ColumnDef<DataTableFeatures, RowData, unknown>[] => {
     if (!table || !schema) return [];
 
-    const dataColumns: ColumnDef<RowData, unknown>[] = table.columns
-        .map((c: Column): ColumnDef<RowData, unknown> => {
+    const dataColumns: ColumnDef<DataTableFeatures, RowData, unknown>[] = table.columns
+        .map((c: Column): ColumnDef<DataTableFeatures, RowData, unknown> => {
             // A column "anchors" a single-join when it is the first source column of the FK.
             // Composite-FK members beyond the first still belong to the same join — tag them
             // for header tooltip but render as scalar (the join data only attaches to the anchor).
@@ -354,8 +355,8 @@ const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandConte
             return buildScalarColumn(c, memberJoin, table, schema, operators, onExpandContent);
         });
 
-    const multiJoinColumns: ColumnDef<RowData, unknown>[] = table.multiJoins
-        .map((j: Join): ColumnDef<RowData, unknown> => {
+    const multiJoinColumns: ColumnDef<DataTableFeatures, RowData, unknown>[] = table.multiJoins
+        .map((j: Join): ColumnDef<DataTableFeatures, RowData, unknown> => {
             const joinTable = schema.findTable(j.destinationTable);
             const labelCol = joinTable?.labelColumn ?? 'id';
             // Self-referential multi-join (e.g. child categories pointing back
@@ -481,7 +482,7 @@ type QueryData = Record<string, unknown>;
  */
 interface UseDataTableResult {
     /** Column definitions for the table */
-    columns: ColumnDef<RowData, unknown>[];
+    columns: ColumnDef<DataTableFeatures, RowData, unknown>[];
     /** Current sorting state */
     sorting: SortingState;
     /** Active column filters */

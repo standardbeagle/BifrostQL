@@ -1,4 +1,5 @@
-import { Column } from '@tanstack/react-table';
+import type { Column, RowData } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,11 +28,11 @@ function getCurrentOption(filter: ColumnFilterValue | undefined): FilterOption {
     return 'all';
 }
 
-interface BooleanFilterProps<TData, TValue> {
-    column: Column<TData, TValue>;
+interface BooleanFilterProps<TData extends RowData, TValue> {
+    column: Column<DataTableFeatures, TData, TValue>;
 }
 
-export function BooleanFilter<TData, TValue>({ column }: BooleanFilterProps<TData, TValue>) {
+export function BooleanFilter<TData extends RowData, TValue>({ column }: BooleanFilterProps<TData, TValue>) {
     const operators = (column.columnDef.meta as { filterOperators?: string[] })?.filterOperators ?? [];
     const hasNull = operators.includes('_null');
 

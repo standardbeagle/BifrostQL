@@ -1,14 +1,15 @@
 import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-    ColumnDef,
-    ColumnFiltersState,
-    Row,
-    RowSelectionState,
-    SortingState,
     flexRender,
-    getCoreRowModel,
-    useReactTable,
+    useTable,
+    type ColumnDef,
+    type ColumnFiltersState,
+    type Row,
+    type RowData,
+    type RowSelectionState,
+    type SortingState,
 } from '@tanstack/react-table';
+import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
 import {
     Table,
     TableBody,
@@ -74,9 +75,9 @@ import type { GridGroupMemberRequest, GroupingRow, GroupingSort } from '@/lib/gr
  * @interface DataTableProps
  * @template TData - The type of data rows displayed in the table
  */
-interface DataTableProps<TData> {
+interface DataTableProps<TData extends RowData> {
     /** Column definitions for the table */
-    columns: ColumnDef<TData, unknown>[];
+    columns: ColumnDef<DataTableFeatures, TData, unknown>[];
     /** Data rows to display */
     data: TData[];
     /** Table name for persisting column sizing to localStorage */
@@ -196,7 +197,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
  * @param props - DataTable configuration props
  * @returns React element containing the data table interface
  */
-export function DataTable<TData>({
+export function DataTable<TData extends RowData>({
     columns,
     data,
     tableName,
@@ -282,8 +283,8 @@ export function DataTable<TData>({
     // Build columns with optional select column. Memoized so the table doesn't
     // see a fresh `columns` identity every render (which forces it to re-derive
     // its column models) — matters once hover/resize churn is in play.
-    const allColumns = useMemo<ColumnDef<TData, unknown>[]>(() => {
-        const cols: ColumnDef<TData, unknown>[] = [];
+    const allColumns = useMemo<ColumnDef<DataTableFeatures, TData, unknown>[]>(() => {
+        const cols: ColumnDef<DataTableFeatures, TData, unknown>[] = [];
         if (selectable) {
             cols.push({
                 id: '_select',
@@ -334,7 +335,8 @@ export function DataTable<TData>({
     const { columnVisibility, setColumnVisibility, resetColumnVisibility } =
         useColumnVisibilityPersistence(tableName, defaultVisibility);
 
-    const table = useReactTable({
+    const table = useTable({
+        features: dataTableFeatures,
         data,
         columns: allColumns,
         pageCount,
@@ -380,7 +382,6 @@ export function DataTable<TData>({
         onColumnVisibilityChange: setColumnVisibility,
         onRowSelectionChange: setRowSelection,
         enableRowSelection: selectable,
-        getCoreRowModel: getCoreRowModel(),
         manualSorting: true,
         manualFiltering: true,
         manualPagination: true,
@@ -817,8 +818,8 @@ export function DataTable<TData>({
     );
 }
 
-interface DataTableRowProps<TData> {
-    row: Row<TData>;
+interface DataTableRowProps<TData extends RowData> {
+    row: Row<DataTableFeatures, TData>;
     isSelected: boolean;
     /** Checkbox selection state, passed explicitly so the memoized row re-renders
      *  when it toggles (row.getIsSelected() alone wouldn't invalidate the memo). */
@@ -853,7 +854,7 @@ interface DataTableRowProps<TData> {
  * users can act on a focused row: Enter/Space selects, `e` edits, Delete removes
  * — so edit/delete aren't hover/long-press only.
  */
-function DataTableRowInner<TData>({
+function DataTableRowInner<TData extends RowData>({
     row,
     isSelected,
     checked,

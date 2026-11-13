@@ -1,4 +1,4 @@
-import { Column, Table } from '@tanstack/react-table';
+import type { Column, RowData, Table } from '@tanstack/react-table';
 import { ArrowDown, ArrowUp, ArrowUpDown, EyeOff, Filter, RotateCcw, Key, Link2, Hash, Type, Calendar, ToggleLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -21,8 +21,9 @@ import { BooleanFilter } from '@/components/filters/boolean-filter';
 import { FkFilter } from '@/components/filters/fk-filter';
 import type { Column as ColumnSchema } from '@/types/schema';
 import { isNumericScalar, isTimestampScalar } from '@/lib/scalar-types';
+import type { DataTableFeatures } from '@/lib/table-features';
 
-function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string {
+function getBaseParamType<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): string {
     const paramType = (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
     return paramType.replace('!', '');
 }
@@ -33,19 +34,19 @@ function getBaseParamType<TData, TValue>(column: Column<TData, TValue>): string 
 // (Short), tinyint (Byte), bigint (BigInt), decimal/numeric (Decimal) and
 // datetimeoffset (DateTimeOffset) were all unclaimed. The classification lives in
 // lib/scalar-types.ts, shared with the forms, the write path and quick search.
-function isStringColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+function isStringColumn<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): boolean {
     return getBaseParamType(column) === 'String';
 }
 
-function isNumericColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+function isNumericColumn<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): boolean {
     return isNumericScalar(getBaseParamType(column));
 }
 
-function isDateColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+function isDateColumn<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): boolean {
     return isTimestampScalar(getBaseParamType(column));
 }
 
-function isBooleanColumn<TData, TValue>(column: Column<TData, TValue>): boolean {
+function isBooleanColumn<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): boolean {
     return getBaseParamType(column) === 'Boolean';
 }
 
@@ -63,7 +64,7 @@ interface FkMeta {
     isSelfReference: boolean;
 }
 
-function getFkMeta<TData, TValue>(column: Column<TData, TValue>): FkMeta | null {
+function getFkMeta<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): FkMeta | null {
     const meta = column.columnDef.meta as {
         joinTable?: string;
         joinLabelColumn?: string;
@@ -79,7 +80,7 @@ function getFkMeta<TData, TValue>(column: Column<TData, TValue>): FkMeta | null 
     return null;
 }
 
-function getColumnSchema<TData, TValue>(column: Column<TData, TValue>): ColumnSchema | undefined {
+function getColumnSchema<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): ColumnSchema | undefined {
     return (column.columnDef.meta as { column?: ColumnSchema })?.column;
 }
 
@@ -204,13 +205,13 @@ function ColumnMetadataTooltip({ column, fkMeta }: ColumnMetadataTooltipProps) {
     );
 }
 
-interface DataTableColumnHeaderProps<TData, TValue> {
-    column: Column<TData, TValue>;
-    table: Table<TData>;
+interface DataTableColumnHeaderProps<TData extends RowData, TValue> {
+    column: Column<DataTableFeatures, TData, TValue>;
+    table: Table<DataTableFeatures, TData>;
     title: string;
 }
 
-export function DataTableColumnHeader<TData, TValue>({
+export function DataTableColumnHeader<TData extends RowData, TValue>({
     column,
     table: tableInstance,
     title,

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Column } from '@tanstack/react-table';
+import type { Column, RowData } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -27,11 +28,11 @@ const operatorLabels: Record<string, string> = {
 
 const DEBOUNCE_MS = 300;
 
-interface NumberFilterProps<TData, TValue> {
-    column: Column<TData, TValue>;
+interface NumberFilterProps<TData extends RowData, TValue> {
+    column: Column<DataTableFeatures, TData, TValue>;
 }
 
-function paramTypeOf<TData, TValue>(column: Column<TData, TValue>): string {
+function paramTypeOf<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): string {
     return (column.columnDef.meta as { paramType?: string })?.paramType ?? '';
 }
 
@@ -46,7 +47,7 @@ export function parseNumeric(raw: string, paramType: string): number | string | 
     return parseScalarNumber(raw, paramType);
 }
 
-export function NumberFilter<TData, TValue>({ column }: NumberFilterProps<TData, TValue>) {
+export function NumberFilter<TData extends RowData, TValue>({ column }: NumberFilterProps<TData, TValue>) {
     const operators = (column.columnDef.meta as { filterOperators?: string[] })?.filterOperators ?? [];
     const numericOperators = operators.filter((op) => op in operatorLabels);
     const paramType = paramTypeOf(column);

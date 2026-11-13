@@ -1,4 +1,5 @@
-import { Column } from '@tanstack/react-table';
+import type { Column, RowData } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -27,8 +28,8 @@ interface LookupResponse {
     };
 }
 
-interface FkFilterProps<TData, TValue> {
-    column: Column<TData, TValue>;
+interface FkFilterProps<TData extends RowData, TValue> {
+    column: Column<DataTableFeatures, TData, TValue>;
     joinTable: string;
     joinLabelColumn: string;
     /**
@@ -55,7 +56,7 @@ export function buildFkLookupQuery(
     return `query Lookup${joinTable} { ${joinTable}(sort: [${joinLabelColumn}_asc], limit: 100) { data { id: ${joinFkColumn} label: ${joinLabelColumn} } } }`;
 }
 
-export function FkFilter<TData, TValue>({ column, joinTable, joinLabelColumn, joinFkColumn }: FkFilterProps<TData, TValue>) {
+export function FkFilter<TData extends RowData, TValue>({ column, joinTable, joinLabelColumn, joinFkColumn }: FkFilterProps<TData, TValue>) {
     const fetcher = useFetcher();
     const schema = useSchema();
     const joinSchema = schema.findTable(joinTable);

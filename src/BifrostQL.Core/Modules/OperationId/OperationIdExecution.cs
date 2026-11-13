@@ -35,6 +35,13 @@ namespace BifrostQL.Core.Modules.OperationId
         public const string RequiredCode = "OPERATION_ID_REQUIRED";
 
         /// <summary>
+        /// <see cref="BifrostExecutionError.ErrorCode"/> for an operation id from a caller without
+        /// a user id: refused before the claim, so nothing is written. Such callers cannot be
+        /// told apart, so a shared id space would answer one with another's recorded result.
+        /// </summary>
+        public const string AnonymousCode = "OPERATION_ID_ANONYMOUS";
+
+        /// <summary>
         /// The operation id a field carries for <paramref name="table"/>: the
         /// <see cref="OperationIdConfig.Argument"/> argument or the request's
         /// <see cref="OperationIdConfig.Header"/> header. Null when the table does not opt in or
@@ -198,16 +205,25 @@ namespace BifrostQL.Core.Modules.OperationId
         }
 
         /// <summary>
-        /// Who owns an id as the store keys it:the tenant claim the read and write paths scope
-        /// by (<see cref="TenantFilterTransformer.ResolveTenantContextKey"/>) and the caller's
-        /// user id (<see cref="MetadataKeys.Auth.DefaultUserIdContextKey"/>), each empty when the
-        /// caller has none. Either claim that is not a single value is refused: recording under
-        /// a guessed owner would let one caller's id answer another's.
+        /// Who owns an id as the store keys it: the tenant claim the read and write paths scope
+        /// by (<see cref="TenantFilterTransformer.ResolveTenantContextKey"/>), empty when the
+        /// caller has none, and the caller's user id
+        /// (<see cref="MetadataKeys.Auth.DefaultUserIdContextKey"/>). A caller without a user id
+        /// is refused with <see cref="AnonymousCode"/>, and either claim that is not a single
+        /// value is refused: recording under a shared or guessed owner would let one caller's id
+        /// answer another's.
         /// </summary>
         internal static OperationOwner OwnerOf(IDbModel model, IDictionary<string, object?> userContext)
-            => new(
-                ScalarClaim(userContext, TenantFilterTransformer.ResolveTenantContextKey(model), "tenant"),
-                ScalarClaim(userContext, MetadataKeys.Auth.DefaultUserIdContextKey, "user id"));
+        {
+            var tenant = ScalarClaim(userContext, TenantFilterTransformer.ResolveTenantContextKey(model), "tenant");
+            var caller = ScalarClaim(userContext, MetadataKeys.Auth.DefaultUserIdContextKey, "user id");
+            if (string.IsNullOrWhiteSpace(caller))
+                throw new BifrostExecutionError("An operation id needs a caller with a user id.")
+                {
+                    ErrorCode = AnonymousCode,
+                };
+            return new(tenant, caller);
+        }
 
         private static string ScalarClaim(IDictionary<string, object?> userContext, string key, string claimName)
         {
@@ -251,6 +267,6 @@ namespace BifrostQL.Core.Modules.OperationId
             => new(message) { ErrorCode = BifrostExecutionError.InvalidValueCode };
     }
 
-    /// <summary>The owner an operation id is recorded under: tenant and caller, each empty when absent.</summary>
+    /// <summary>The owner an operation id is recorded under: tenant (empty when absent) and the caller's user id.</summary>
     internal readonly record struct OperationOwner(string Tenant, string Caller);
 }

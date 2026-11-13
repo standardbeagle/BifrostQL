@@ -1225,8 +1225,8 @@ namespace BifrostQL.Core.Model
                 /// <summary>The caller's tenant, empty when the deployment has none. Never null, so the unique key holds.</summary>
                 public const string Tenant = "tenant";
                 /// <summary>
-                /// The caller's user id, empty for a caller with none. Never null, so the unique
-                /// key holds. Callers with no tenant would otherwise share one id space.
+                /// The caller's user id. Never empty: an id from a caller without a user id is
+                /// refused, so no two callers share an id space.
                 /// </summary>
                 public const string Caller = "caller";
                 /// <summary>The caller's operation id.</summary>

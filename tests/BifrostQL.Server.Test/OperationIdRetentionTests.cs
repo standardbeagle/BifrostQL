@@ -111,6 +111,31 @@ public sealed class OperationIdRetentionTests : IAsyncLifetime
         (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(2);
     }
 
+    [Fact]
+    public async Task Zero_row_update_follows_the_documented_record_policy()
+    {
+        // The first attempt targets a row that does not exist yet, so it changes nothing. It is
+        // still recorded: a retry answers what the first attempt answered, even once the row
+        // exists, rather than running the update late.
+        const string update = """mutation { notes(update: { id: 7, title: "late" }, _operationId: "op-noop") }""";
+        using var first = await SendAsync(update);
+        var firstAnswer = Data(first, "notes").GetRawText();
+        (await CountAsync("SELECT count(*) FROM operation_ids WHERE operation_id = 'op-noop'")).Should().Be(1);
+
+        await ExecAsync("INSERT INTO notes (id, title) VALUES (7, 'original')");
+
+        using var retry = await SendAsync(update);
+        Data(retry, "notes").GetRawText().Should().Be(firstAnswer);
+        (await CountAsync("SELECT count(*) FROM notes WHERE id = 7 AND title = 'original'")).Should().Be(1);
+        (await CountAsync("SELECT count(*) FROM notes WHERE title = 'late'")).Should().Be(0);
+
+        // Control: the same update without an id runs and changes the row, so the unchanged row
+        // above is the replay, not an update that cannot reach it.
+        using var unrecorded = await SendAsync("""mutation { notes(update: { id: 7, title: "late" }) }""");
+        Data(unrecorded, "notes");
+        (await CountAsync("SELECT count(*) FROM notes WHERE id = 7 AND title = 'late'")).Should().Be(1);
+    }
+
     private async Task<JsonDocument> SendAsync(string query)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/graphql");

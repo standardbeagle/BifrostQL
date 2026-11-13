@@ -265,6 +265,11 @@ does not say which branch ran. Row scope, the tenant filter and host security tr
 checked again. A record answers only its owner (tenant and user id), so it answers only the caller that
 wrote it.
 
+A write that changes no row, such as an `update` or `delete` whose target does not exist, is
+recorded like any other. Its retry answers what the first attempt answered, even if the row
+exists by then: the write does not run late. To apply it to the row that now exists, send a new
+id.
+
 Two requests that carry the same id at the same time commit one effect. The second waits for
 the first to commit, then answers as a retry would: the recorded result for the same request,
 `OPERATION_ID_REUSED` for a different one. If the first rolls back, the second claims the id and
@@ -290,6 +295,7 @@ Send one write per request with the header, or omit the header and give each fie
 | A blank id, or one longer than 200 characters | `INVALID_VALUE`, nothing written |
 | `Idempotency-Key` sent more than once | HTTP 400 |
 | A known id with a different table, verb, target key or arguments | `OPERATION_ID_REUSED`, nothing written or replayed |
+| A retry of a write that changed no row | The recorded answer, nothing written |
 | An id on `sync`, `delta` or `updateWhere` | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | An id on a `save` whose tree reaches an `approval` table | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | No id on a write to an `operation-id: required` table | `OPERATION_ID_REQUIRED`, nothing written |

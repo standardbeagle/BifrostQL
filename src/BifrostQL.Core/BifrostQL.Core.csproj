@@ -79,9 +79,9 @@
 		     were previously supplied transitively through the ASP.NET Core
 		     framework reference that GraphQL.Server.All dragged in; referenced
 		     explicitly now that the server bundle lives only in BifrostQL.Server. -->
-		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.11" />
-		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.13" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.13" />
 		<!-- NATS client for the CDC NATS IEventSink. Only NatsConnectionPublisher
 		     touches these wire types (namespace NATS.Client.Core); the sink itself
 		     depends on the broker-free INatsPublisher abstraction. 2.5.x is

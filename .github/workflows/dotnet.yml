@@ -81,9 +81,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          # 24 to match react-package.yml; the workspace tooling uses node:sqlite
-          # (requires Node 22+), which errored under Node 20.
-          node-version: 24
+          # The current Node LTS, as in every workflow. The workspace tooling uses
+          # node:sqlite (Node 22+), which errored under Node 20.
+          node-version: 26
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Build desktop UI SPA
@@ -219,7 +219,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Build desktop UI SPA
@@ -282,7 +282,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Setup .NET 8.0

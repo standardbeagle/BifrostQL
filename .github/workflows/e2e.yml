@@ -20,18 +20,12 @@ jobs:
         with:
           version: 11.1.1
       - name: Setup Node
-        # Pinned to 22, NOT 24 like the main .NET workflow: Playwright 1.61.0
-        # (latest stable at time of writing) throws
-        # `TypeError: context.conditions?.includes is not a function` under
-        # Node 24 — Node 24's ESM loader passes `conditions` as a Set, but
-        # playwright/lib/transform/esmLoader.js still calls `.includes()` on
-        # it (Array-only API). Only fixed in unreleased 1.62.0 alphas as of
-        # this writing. Node 22 satisfies the workspace's node:sqlite floor
-        # (see AGENTS.md) and does not hit this loader bug. Revisit once
-        # @playwright/test ships a stable release with the fix.
+        # The current Node LTS, as in every workflow. This job was pinned to 22
+        # while Playwright's ESM loader called `.includes()` on the `conditions`
+        # Set that Node 24+ passes; @playwright/test 1.62+ wraps it in a Set.
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Build desktop UI SPA

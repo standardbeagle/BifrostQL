@@ -299,6 +299,18 @@ Send one write per request with the header, or omit the header and give each fie
 A table that also sets `approval` cannot opt in, and the model fails to load. Model load also
 checks that the store exists, is hidden and carries every column.
 
+The store keeps every record until something removes it, so without retention it grows without
+bound. To bound it, give the store a [`ttl`](/BifrostQL/guides/retention/) anchored on
+`created_at`, which must then be a timestamp column:
+
+```
+"public.operation_ids { visibility: hidden; ttl: 30d after created_at }"
+```
+
+The retention purge deletes records older than the window. A retry of a purged id runs as a
+fresh write, so pick a window longer than any client keeps retrying. Model load checks the store's
+`ttl` like any other table's and refuses an invalid one.
+
 ## Optimistic concurrency
 
 Optimistic concurrency prevents *lost updates* — two clients read the same row, both edit it, and the second write silently overwrites the first. Opt in per table with the `concurrency-token` metadata, naming a column that versions the row:

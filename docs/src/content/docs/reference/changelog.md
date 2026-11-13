@@ -159,6 +159,15 @@ Operation ids need a caller with a user id. A write that carries an id from a ca
 is refused with `OPERATION_ID_ANONYMOUS` and writes nothing: such callers would share one id
 space, so one could be answered with another's recorded result.
 
+The store keeps every record unless it declares a `ttl` (`ttl: 30d after created_at`). With one,
+the retention purge deletes older records, and a retry of a purged id runs as a fresh write.
+
+### Changed — a hidden table's invalid retention fails model load
+
+A `visibility: hidden` table's `retain` or `ttl` is now checked at model load like an exposed
+table's. Before, an invalid one loaded and the purge skipped the table with an error on every
+pass. A model with such a table now fails to load: fix the duration or anchor column.
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

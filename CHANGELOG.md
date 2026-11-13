@@ -92,6 +92,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - Operation ids need a caller with a user id. A write that carries an id from a caller without
   one is refused with `OPERATION_ID_ANONYMOUS` and writes nothing: such callers would share one
   id space, so one could be answered with another's recorded result.
+- Operation-id store retention. A `ttl` on the store (`ttl: 30d after created_at`) bounds it:
+  the retention purge deletes older records, and a retry of a purged id runs as a fresh write.
+  Without a `ttl` the store keeps every record.
 
 ### Changed
 
@@ -101,6 +104,10 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Fixed
 
+- A `visibility: hidden` table's `retain` or `ttl` was not checked at model load, although the
+  purge sweeps hidden tables. An invalid one (bad duration, missing or non-timestamp anchor)
+  loaded and the purge skipped the table with an error on every pass. Model load now refuses it,
+  as it does for an exposed table.
 - A `computed-expr` column read through a relationship wrote its column references unqualified,
   so a many-to-many read whose junction shares a column name with the target (a surrogate `id`)
   failed with an ambiguous-column error, and any join could bind the name to the wrong table.

@@ -25,6 +25,7 @@ namespace BifrostQL.Server.Test;
 public sealed class OperationIdBatchSaveTests : IAsyncLifetime
 {
     private const string Writer = "writer";
+    private const string Remover = "remover";
 
     private static int _transformerCalls;
     private static int _hookCalls;
@@ -59,10 +60,11 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
             ["Bifrost:Path"] = "/graphql",
             ["Bifrost:Metadata:0"] = ":root { operation-id-store: main.operation_ids }",
             ["Bifrost:Metadata:1"] = "main.operation_ids { visibility: hidden }",
-            ["Bifrost:Metadata:2"] = $"main.notes {{ operation-id: optional; policy-actions: read, create[{Writer}], update[{Writer}], delete[{Writer}] }}",
+            ["Bifrost:Metadata:2"] = $"main.notes {{ operation-id: optional; policy-actions: read, create[{Writer}], update[{Writer}], delete[{Remover}] }}",
             ["Bifrost:Metadata:3"] = "main.authors { operation-id: optional }",
             ["Bifrost:Metadata:4"] = "main.drafts { approval: enabled; approver-role: manager }",
             ["Bifrost:Metadata:5"] = "main.ledger { operation-id: required }",
+            ["Bifrost:Metadata:6"] = $"main.books {{ policy-actions: read, create[{Writer}], update[{Writer}], delete[{Writer}] }}",
         }).Build();
 
         _host = await new HostBuilder().ConfigureWebHost(web =>
@@ -210,6 +212,39 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
         FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
         retry.RootElement.GetProperty("data").GetProperty("notes_batch").ValueKind.Should().Be(JsonValueKind.Null);
         (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Batch_retry_is_refused_when_only_a_later_action_lost_its_grant()
+    {
+        await ExecAsync("INSERT INTO notes (id, title) VALUES (50, 'doomed')");
+        const string batch =
+            """mutation { notes_batch(actions: [{ insert: { title: "kept" } }, { delete: { id: 50 } }], _operationId: "op-two-verbs") }""";
+        using var first = await SendAsync(batch, Writer, Remover);
+        Data(first, "notes_batch").GetRawText().Should().Be("2");
+
+        using var retry = await SendAsync(batch, Writer);
+
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("notes_batch").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Save_retry_is_refused_when_a_child_node_lost_its_grant()
+    {
+        // The root table carries no policy; only the books the tree writes do.
+        const string save =
+            """mutation { authors(save: { name: "ann", books: [{ title: "one" }] }, _operationId: "op-save-grant") }""";
+        using var first = await SendAsync(save, Writer);
+        Data(first, "authors").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var retry = await SendAsync(save);
+
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("authors").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM authors")).Should().Be(1);
+        (await CountAsync("SELECT count(*) FROM books")).Should().Be(1);
     }
 
     [Fact]

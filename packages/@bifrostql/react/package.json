@@ -56,7 +56,7 @@
     "@vitest/coverage-v8": "^5.1.0",
     "eslint": "^8.57.1",
     "eslint-plugin-react-hooks": "^4.6.2",
-    "eslint-plugin-react-refresh": "^0.4.26",
+    "eslint-plugin-react-refresh": "^0.5.7",
     "jsdom": "^31.0.0",
     "prettier": "^3.9.10",
     "react": "^18.3.1",

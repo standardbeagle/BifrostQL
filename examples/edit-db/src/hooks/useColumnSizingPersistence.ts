@@ -50,19 +50,21 @@ export interface UseColumnSizingPersistenceResult {
  * Owns per-table column sizing, persisted to localStorage.
  *
  * Writes are debounced so a live ('onChange') resize drag doesn't write on every
- * mousemove. `skipPersistRef` suppresses the first run after mount/table-switch,
- * which would only write back the sizing just loaded from storage.
- * `pendingSizingRef` carries the latest unsaved state so a table switch or
- * unmount flushes it instead of dropping a resize made less than the debounce
- * window ago.
+ * mousemove. `loaded` remembers the sizing object last read from storage, and
+ * the effect skips persisting while the state is still that very object — it
+ * would only write back what storage already holds (on mount and after a
+ * table switch). `pendingSizingRef` carries the latest unsaved state so a
+ * table switch or unmount flushes it instead of dropping a resize made less
+ * than the debounce window ago.
  */
 export function useColumnSizingPersistence(tableName?: string): UseColumnSizingPersistenceResult {
-    const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
-        tableName ? loadColumnSizing(tableName) : {},
-    );
+    const [loaded, setLoaded] = useState(() => ({
+        tableName,
+        sizing: tableName ? loadColumnSizing(tableName) : {},
+    }));
+    const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(loaded.sizing);
 
     const pendingSizingRef = useRef<{ tableName: string; sizing: ColumnSizingState } | null>(null);
-    const skipPersistRef = useRef(true);
 
     useEffect(() => {
         // A pending write for a previous table can no longer be superseded — flush it.
@@ -72,17 +74,14 @@ export function useColumnSizingPersistence(tableName?: string): UseColumnSizingP
             saveColumnSizing(stale.tableName, stale.sizing);
         }
         if (!tableName) return;
-        if (skipPersistRef.current) {
-            skipPersistRef.current = false;
-            return;
-        }
+        if (columnSizing === loaded.sizing) return;
         pendingSizingRef.current = { tableName, sizing: columnSizing };
         const t = setTimeout(() => {
             pendingSizingRef.current = null;
             saveColumnSizing(tableName, columnSizing);
         }, 300);
         return () => clearTimeout(t);
-    }, [tableName, columnSizing]);
+    }, [tableName, columnSizing, loaded.sizing]);
 
     // Flush any still-pending sizing write on unmount rather than dropping it.
     useEffect(() => () => {
@@ -91,11 +90,9 @@ export function useColumnSizingPersistence(tableName?: string): UseColumnSizingP
     }, []);
 
     // Reset persisted sizing when table changes
-    const tableNameRef = useRef(tableName);
-    if (tableName && tableName !== tableNameRef.current) {
-        tableNameRef.current = tableName;
-        skipPersistRef.current = true;
+    if (tableName && tableName !== loaded.tableName) {
         const restored = loadColumnSizing(tableName);
+        setLoaded({ tableName, sizing: restored });
         setColumnSizing(restored);
     }
 

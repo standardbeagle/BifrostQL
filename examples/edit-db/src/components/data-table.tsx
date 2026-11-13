@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { memo, useState, useCallback, useMemo, useRef } from 'react';
 import {
     flexRender,
     useTable,
@@ -242,7 +242,7 @@ export function DataTable<TData extends RowData>({
         hoverRow,
         scheduleDismiss,
         cancelDismiss,
-        suppressClick,
+        consumeSuppressedClick,
         startPress,
         onPressMove,
         cancelPress,
@@ -275,10 +275,13 @@ export function DataTable<TData extends RowData>({
         setColumnSizing({});
     }, [setColumnSizing]);
 
-    // Clear selection when data/page changes
-    useEffect(() => {
+    // Clear selection when data/page changes. Adjusted during render (not in
+    // an effect) so a stale selection never paints against the new rows.
+    const [selectionScope, setSelectionScope] = useState({ data, pageIndex });
+    if (selectionScope.data !== data || selectionScope.pageIndex !== pageIndex) {
+        setSelectionScope({ data, pageIndex });
         setRowSelection({});
-    }, [data, pageIndex]);
+    }
 
     // Build columns with optional select column. Memoized so the table doesn't
     // see a fresh `columns` identity every render (which forces it to re-derive
@@ -717,7 +720,7 @@ export function DataTable<TData extends RowData>({
                                     onRowSelect={onRowSelect}
                                     onEditRow={onEditRow ? editRowById : undefined}
                                     onDeleteRow={onDeleteRow ? deleteRowById : undefined}
-                                    suppressClick={suppressClick}
+                                    consumeSuppressedClick={consumeSuppressedClick}
                                     hoverRow={hoverRow}
                                     scheduleDismiss={scheduleDismiss}
                                     startPress={startPress}
@@ -840,7 +843,7 @@ interface DataTableRowProps<TData extends RowData> {
     onRowSelect?: (rowId: string | null) => void;
     onEditRow?: (rowId: string) => void;
     onDeleteRow?: (rowId: string) => void;
-    suppressClick: React.MutableRefObject<boolean>;
+    consumeSuppressedClick: () => boolean;
     hoverRow: (rowId: string, el: HTMLElement) => void;
     scheduleDismiss: () => void;
     startPress: (rowId: string, el: HTMLElement, e: React.PointerEvent) => void;
@@ -868,7 +871,7 @@ function DataTableRowInner<TData extends RowData>({
     onRowSelect,
     onEditRow,
     onDeleteRow,
-    suppressClick,
+    consumeSuppressedClick,
     hoverRow,
     scheduleDismiss,
     startPress,
@@ -884,7 +887,7 @@ function DataTableRowInner<TData extends RowData>({
             onClick={onRowSelect ? () => {
                 // A long-press just opened the actions overlay — swallow the
                 // click that follows the finger lift so it doesn't also select.
-                if (suppressClick.current) { suppressClick.current = false; return; }
+                if (consumeSuppressedClick()) return;
                 // Don't hijack a text-selection drag as a row click — lets users
                 // select/copy cell text without navigating.
                 if (window.getSelection()?.toString()) return;

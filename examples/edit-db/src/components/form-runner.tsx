@@ -13,7 +13,7 @@
  * work without any first-key-only shortcut.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFetcher } from '../common/fetcher';
 import { useSchema } from '../hooks/useSchema';
@@ -255,13 +255,13 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
     return (rowData as SingleRowResponse).value?.data?.[0] ?? null;
   }, [rowData, rowQuery, table.name]);
 
-  // Track the total from offset reads so the position label stays accurate.
-  useEffect(() => {
-    if (rowData && rowQuery?.kind === 'offset') {
-      const page = (rowData as BrowseResponse)[table.name];
-      if (page) setTotal(page.total);
-    }
-  }, [rowData, rowQuery, table.name]);
+  // Track the total from offset reads so the position label stays accurate. It
+  // is state (not derived) because a by-PK read carries no total and the label
+  // keeps the last known one; adjusted during render so it never lags a paint.
+  const offsetTotal = rowData && rowQuery?.kind === 'offset'
+    ? (rowData as BrowseResponse)[table.name]?.total
+    : undefined;
+  if (offsetTotal !== undefined && offsetTotal !== total) setTotal(offsetTotal);
 
   // Identity of the row the draft was seeded from. Re-seeding keys on THIS, not
   // on the `currentRow` OBJECT: a background refetch (window focus, or the
@@ -270,27 +270,38 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   // object-identity dependency then overwrote whatever the user had typed.
   // Same guard shape as the dirty check in data-edit.tsx.
   const rowKey = isNew ? NEW_ROW_KEY : currentRow ? rowIdOf(currentRow, table, 0) : null;
-  const seededRowKeyRef = useRef<string | null>(null);
-  const draftDirtyRef = useRef(false);
+  const [draftDirty, setDraftDirty] = useState(false);
 
-  // Seed the editable draft whenever the row under the form changes.
-  useEffect(() => {
+  // Seed the editable draft whenever the row under the form changes. Done
+  // while rendering (comparing against the inputs of the last seed) rather
+  // than in an effect, so a new row never paints with the previous draft.
+  const seedInputs = { rowKey, currentRow, isNew, bound, initialValues };
+  const [seededFrom, setSeededFrom] = useState<typeof seedInputs | null>(null);
+  if (
+    !seededFrom ||
+    seededFrom.rowKey !== rowKey ||
+    seededFrom.currentRow !== currentRow ||
+    seededFrom.isNew !== isNew ||
+    seededFrom.bound !== bound ||
+    seededFrom.initialValues !== initialValues
+  ) {
+    setSeededFrom(seedInputs);
     // Same row, unsaved edits pending: keep them. The guard is scoped to the row
-    // it protects — a key change below always re-seeds, so navigating away can
-    // never leave an abandoned draft sitting over a different record.
-    if (seededRowKeyRef.current === rowKey && draftDirtyRef.current) return;
-    seededRowKeyRef.current = rowKey;
-    draftDirtyRef.current = false;
-    setFieldErrors({});
-    setFormError(null);
-    if (isNew) {
-      setDraft(initialValues);
-      return;
+    // it protects — a key change always re-seeds, so navigating away can never
+    // leave an abandoned draft sitting over a different record.
+    if (!(seededFrom && seededFrom.rowKey === rowKey && draftDirty)) {
+      setDraftDirty(false);
+      setFieldErrors({});
+      setFormError(null);
+      if (isNew) {
+        setDraft(initialValues);
+      } else {
+        const next: Record<string, unknown> = {};
+        for (const b of bound) next[b.column.name] = currentRow?.[b.column.name] ?? null;
+        setDraft(next);
+      }
     }
-    const next: Record<string, unknown> = {};
-    for (const b of bound) next[b.column.name] = currentRow?.[b.column.name] ?? null;
-    setDraft(next);
-  }, [rowKey, currentRow, isNew, bound, initialValues]);
+  }
 
   const currentIndex = location.kind === 'offset' ? location.index : -1;
 
@@ -326,7 +337,7 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   }, [jump]);
 
   const setField = useCallback((name: string, value: unknown) => {
-    draftDirtyRef.current = true;
+    setDraftDirty(true);
     setDraft((d) => ({ ...d, [name]: value }));
   }, []);
 
@@ -374,7 +385,7 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
         // The draft is now what the server holds, so drop the dirty guard and let
         // the re-read below re-seed — otherwise the guard would pin the form to a
         // stale draft for the rest of the row's visit.
-        draftDirtyRef.current = false;
+        setDraftDirty(false);
         // Re-read so the displayed row reflects what was persisted.
         await queryClient.invalidateQueries({ queryKey: ['formRunner', table.name] });
       }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useDataTable } from './hooks/useDataTable';
 import { useDeleteMutation } from './hooks/useDeleteMutation';
 import { useDeltaMutation } from './hooks/useDeltaMutation';
@@ -124,7 +124,9 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
     // grid resets its own state on data changes.
     const [stagedEdits, setStagedEdits] = useState<Map<string, { pk: PkFilter; changes: Record<string, unknown> }>>(new Map());
     const stagedEditsRef = useRef(stagedEdits);
-    stagedEditsRef.current = stagedEdits;
+    useLayoutEffect(() => {
+        stagedEditsRef.current = stagedEdits;
+    }, [stagedEdits]);
     const [savingEdits, setSavingEdits] = useState(false);
     const deltaMutation = useDeltaMutation(table);
 
@@ -180,8 +182,11 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         return describeDeleteRows(pks, rows as readonly Record<string, unknown>[]);
     }, [deleteTarget, rows]);
 
-    // Keep the expand callback's row mirror current (see rowsRef above).
-    rowsRef.current = rows as readonly Record<string, unknown>[];
+    // Keep the expand callback's row mirror current (see rowsRef above). Synced
+    // after commit, before any handler can read it, rather than during render.
+    useLayoutEffect(() => {
+        rowsRef.current = rows as readonly Record<string, unknown>[];
+    }, [rows]);
 
     const { toast } = useToast();
     const fetcher = useFetcher();
@@ -196,7 +201,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
     // open-time index is only trusted for PK-less tables (view-only there).
     const panelRowIndex = useMemo(() => {
         if (!panel) return -1;
-        // Stale panel from a previous table (cleanup effect hasn't run yet):
+        // Stale panel from a previous table (closed below during this render):
         // never resolve it against the new table's rows.
         if (panel.tableName !== table.name) return -1;
         if (panelPkRoute === null) return panel.rowIndex < rows.length ? panel.rowIndex : -1;
@@ -232,33 +237,38 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         enabled: panelNeedsFetch,
     });
 
-    // Deferred fetch failed: close rather than show an empty editor that would
-    // save '' over real content.
-    useEffect(() => {
-        if (panel !== null && panelNeedsFetch && panelValueError) {
+    // Close a panel that can no longer be shown, while rendering so the invalid
+    // panel is never committed. The toast is a side effect, so the reason is
+    // recorded here and announced by the effect below.
+    const [panelNotice, setPanelNotice] = useState<{ message: string } | null>(null);
+    if (panel !== null) {
+        if (panel.tableName !== table.name) {
+            // Table switched under a reused component instance: drop the stale
+            // panel silently — it belongs to the previous table, so neither the
+            // row-gone error toast nor the PK-less index fallback should see the
+            // new rows.
             setPanel(null);
-            toast(`Could not load content: ${(panelValueError as Error).message}`, 'error');
-        }
-    }, [panel, panelNeedsFetch, panelValueError, toast]);
-
-    // Table switched under a reused component instance: drop the stale panel
-    // silently — it belongs to the previous table, so neither the row-gone
-    // error toast nor the PK-less index fallback should see the new rows.
-    useEffect(() => {
-        if (panel !== null && panel.tableName !== table.name) {
+        } else if (panelNeedsFetch && panelValueError) {
+            // Deferred fetch failed: close rather than show an empty editor that
+            // would save '' over real content.
             setPanel(null);
-        }
-    }, [panel, table.name]);
-
-    // Row gone: the snapshotted row left the current page (deleted, or filtered/
-    // paged away by a refetch). Close the panel rather than showing — or worse,
-    // saving — some other row's data.
-    useEffect(() => {
-        if (panel !== null && panel.tableName === table.name && !loading && panelRowIndex === -1) {
+            setPanelNotice({ message: `Could not load content: ${(panelValueError as Error).message}` });
+        } else if (!loading && panelRowIndex === -1) {
+            // Row gone: the snapshotted row left the current page (deleted, or
+            // filtered/paged away by a refetch). Close the panel rather than
+            // showing — or worse, saving — some other row's data.
             setPanel(null);
-            toast('Row is no longer in the current view; panel closed.', 'error');
+            setPanelNotice({ message: 'Row is no longer in the current view; panel closed.' });
         }
-    }, [panel, table.name, loading, panelRowIndex, toast]);
+    }
+    // Each notice is a fresh object, so it is announced exactly once even if
+    // `toast` changes identity.
+    const announcedPanelNoticeRef = useRef<{ message: string } | null>(null);
+    useEffect(() => {
+        if (!panelNotice || announcedPanelNoticeRef.current === panelNotice) return;
+        announcedPanelNoticeRef.current = panelNotice;
+        toast(panelNotice.message, 'error');
+    }, [panelNotice, toast]);
 
     // Memoized: JSON columns re-stringify the raw value, which for multi-MB
     // payloads would otherwise run on every grid render while the panel is open.

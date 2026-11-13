@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { ColumnVisibilityState } from '@tanstack/react-table';
 
 const COL_VISIBILITY_STORAGE_PREFIX = 'bifrost-col-visibility:';
@@ -94,7 +94,12 @@ export function useColumnVisibilityPersistence(
 
     // Mirrors state so the setter can resolve a functional updater without
     // depending on the current value (and so re-creating on every change).
+    // The setter updates it synchronously; the layout effect re-syncs it after
+    // a render-phase reset below, before any handler can read it.
     const currentRef = useRef(columnVisibility);
+    useLayoutEffect(() => {
+        currentRef.current = columnVisibility;
+    }, [columnVisibility]);
 
     const apply = useCallback((next: ColumnVisibilityState) => {
         currentRef.current = next;
@@ -117,19 +122,16 @@ export function useColumnVisibilityPersistence(
 
     // Re-read on table switch. Done during render (not in an effect) so the grid
     // never paints one table's column selection over another's rows.
-    const tableNameRef = useRef(tableName);
-    if (tableName && tableName !== tableNameRef.current) {
-        tableNameRef.current = tableName;
-        apply(loadColumnVisibility(tableName) ?? defaultVisibility);
-    }
-
     // The defaults only bind while nothing is stored — a host that changes them
     // must not overwrite a selection the viewer already made.
-    const defaultsRef = useRef(defaultVisibility);
-    if (tableName && defaultsRef.current !== defaultVisibility) {
-        defaultsRef.current = defaultVisibility;
+    const [tracked, setTracked] = useState({ tableName, defaultVisibility });
+    if (tableName && tableName !== tracked.tableName) {
+        setTracked({ tableName, defaultVisibility });
+        setState(loadColumnVisibility(tableName) ?? defaultVisibility);
+    } else if (tableName && tracked.defaultVisibility !== defaultVisibility) {
+        setTracked({ tableName: tracked.tableName, defaultVisibility });
         if (loadColumnVisibility(tableName) === null) {
-            apply(defaultVisibility);
+            setState(defaultVisibility);
         }
     }
 

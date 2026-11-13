@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Table } from '../types/schema';
 import { useSchema } from '../hooks/useSchema';
 import { TableView } from '../table-view';
@@ -34,7 +34,11 @@ export function DetailPanel({ parentTable, selectedRowId, onClose, onOpenColumn 
 
     const activeTab = tabs.find((t) => t.key === activeKey) ?? tabs[0];
 
-    useEffect(() => { setChildSelectedRowId(null); }, [activeKey, selectedRowId]);
+    const [selectionScope, setSelectionScope] = useState({ activeKey, selectedRowId });
+    if (selectionScope.activeKey !== activeKey || selectionScope.selectedRowId !== selectedRowId) {
+        setSelectionScope({ activeKey, selectedRowId });
+        setChildSelectedRowId(null);
+    }
 
     if (tabs.length === 0 || !schema.data) return null;
 

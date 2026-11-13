@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "./usePath";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSchema } from "./useSchema";
 import { useEditorConfig, type DefaultSort } from "./useEditorConfig";
 import { Table, Column, Join, SchemaContextValue } from "../types/schema";
@@ -610,9 +610,9 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // reset here — they are owned by the URL `cf` param (see the effect below),
     // which the table switch clears by dropping the query string, so resetting
     // the state here too would fight the source-of-truth reconciliation.
-    const tableRef = useRef(table);
-    if (table && table !== tableRef.current) {
-        tableRef.current = table;
+    const [sortTable, setSortTable] = useState(table);
+    if (table && table !== sortTable) {
+        setSortTable(table);
         if (sorting !== configuredSort) setSorting(configuredSort);
         if (groupingSort !== DEFAULT_GROUPING_SORT) setGroupingSort(DEFAULT_GROUPING_SORT);
         if (pageIndex !== 0) setPageIndex(0);
@@ -622,45 +622,52 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // cfParam only seeded the initial state, so browser back/forward (which
     // restores a path whose cf differs from the last in-memory state) and table
     // switches (which drop cf) left the grid showing stale filters — or filters
-    // belonging to a different table.
-    useEffect(() => {
+    // belonging to a different table. Reconciled while rendering, so the state
+    // never commits out of step with the URL.
+    const [reconciledCf, setReconciledCf] = useState(cfParam);
+    if (reconciledCf !== cfParam) {
+        setReconciledCf(cfParam);
         setColumnFilters((prev) => reconcileColumnFiltersFromUrl(prev, cfParam));
-    }, [cfParam]);
+    }
 
     // Filters that actually DRIVE the query are derived from the URL `cf` param
-    // (the source of truth) during render, not from the reconciled state above.
-    // The effect only settles state on the NEXT commit, so a table switch (which
-    // drops `cf`) would otherwise leave the first post-switch render building the
-    // query with the previous table's filters. When the two tables share a column
-    // name (id, name, created_at, ...) that stale filter leaked into the new
-    // table's query and fired one redundant, wrong fetch before the effect
-    // cleared it. Deriving here makes the switch take effect on the same commit.
+    // (the source of truth), not from the reconciled state above, so a local
+    // filter edit that has not reached the URL yet never drives a fetch on its
+    // own. When two tables share a column name (id, name, created_at, ...) a
+    // stale filter would otherwise leak into the new table's query.
     const effectiveColumnFilters = useMemo(
         () => reconcileColumnFiltersFromUrl(columnFilters, cfParam),
         [columnFilters, cfParam],
     );
-    // gb is URL-owned just like cf: history navigation and a table switch take
-    // effect during render, before a stale grouping request can be issued.
-    const groupingTableRef = useRef(table?.name);
-    const groupingTableChanged = groupingTableRef.current !== table?.name;
-    if (groupingTableChanged) groupingTableRef.current = table?.name;
+    // gb is URL-owned just like cf, and a grouping column is meaningful only
+    // within its source table. On a table switch the gb value carried over is
+    // remembered as stale: it is ignored (no grouping request, even for a
+    // same-named column) until the effect below drops it from the URL, so
+    // Back/Forward cannot reapply it to a new schema. A gb set after that is
+    // honoured normally.
+    const [groupingTable, setGroupingTable] = useState(table?.name);
+    const [staleGbParam, setStaleGbParam] = useState<string | null>(null);
+    if (groupingTable !== table?.name) {
+        setGroupingTable(table?.name);
+        setStaleGbParam(gbParam);
+    } else if (staleGbParam !== null && gbParam !== staleGbParam) {
+        setStaleGbParam(null);
+    }
+    const groupingSuppressed = groupingTable !== table?.name || (gbParam !== null && gbParam === staleGbParam);
     const groupingColumn = useMemo(
-        () => groupingTableChanged ? null : groupingColumnFromUrl(gbParam, table),
-        [groupingTableChanged, gbParam, table],
+        () => groupingSuppressed ? null : groupingColumnFromUrl(gbParam, table),
+        [groupingSuppressed, gbParam, table],
     );
     const groupingSumColumn = useMemo(
-        () => groupingTableChanged ? null : groupingSumColumnFromUrl(gsParam, table),
-        [groupingTableChanged, gsParam, table],
+        () => groupingSuppressed ? null : groupingSumColumnFromUrl(gsParam, table),
+        [groupingSuppressed, gsParam, table],
     );
-    // A grouping column is meaningful only within its source table. Clear it on
-    // switch (including same-named columns) so Back/Forward cannot reapply it to
-    // a new schema. The render-time guard above prevents a transient old request.
     useEffect(() => {
-        if (!groupingTableChanged || !gbParam) return;
+        if (gbParam === null || gbParam !== staleGbParam) return;
         const params = withoutGroupingUrlParams(search);
         const qs = params.toString();
         navigate(qs ? `?${qs}` : '?');
-    }, [groupingTableChanged, gbParam, search, navigate]);
+    }, [gbParam, staleGbParam, search, navigate]);
 
     // The default sort must land on a SORTABLE column. The old fallback used the
     // literal first column, so a table whose leading column is a blob/varbinary,
@@ -797,11 +804,10 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // a new table, but a shrinking row count (or a switch to a smaller table
     // whose data arrives after the reset) can still leave it past the last page
     // — e.g. "page 2 of 1", which also makes the offset query fetch an empty
-    // window and strands the pager. Snap back to the last valid page (min 0).
-    useEffect(() => {
-        const clamped = clampPageIndex(pageIndex, pageCount);
-        if (clamped !== pageIndex) setPageIndex(clamped);
-    }, [pageIndex, pageCount]);
+    // window and strands the pager. Snap back to the last valid page (min 0),
+    // while rendering so the out-of-range page is never committed.
+    const clampedPageIndex = clampPageIndex(pageIndex, pageCount);
+    if (clampedPageIndex !== pageIndex) setPageIndex(clampedPageIndex);
 
     const syncFiltersToUrl = useCallback((filters: ColumnFiltersState) => {
         // Start from the current query string so only 'cf' is rewritten —

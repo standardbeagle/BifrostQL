@@ -43,9 +43,9 @@ export function DataPanel() {
 
     // Reset the drill stack whenever the root table changes so we don't carry
     // ghost breadcrumbs across unrelated navigations.
-    const lastTableRef = useRef(tableName);
-    if (tableName !== lastTableRef.current) {
-        lastTableRef.current = tableName;
+    const [lastTable, setLastTable] = useState(tableName);
+    if (tableName !== lastTable) {
+        setLastTable(tableName);
         if (openColumns.length > 0) setOpenColumns([]);
         if (expandedLevels.size > 0) setExpandedLevels(new Set());
     }

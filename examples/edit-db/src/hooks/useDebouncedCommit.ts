@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
 export interface DebouncedCommit {
     /** Debounce `commit`: it replaces any pending commit and runs after the delay. */
@@ -22,8 +22,12 @@ export interface DebouncedCommit {
 export function useDebouncedCommit(delayMs: number): DebouncedCommit {
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingRef = useRef<(() => void) | null>(null);
+    // Latest delay for `schedule`, which is created once. Synced after commit
+    // (before any handler can schedule) rather than written during render.
     const delayRef = useRef(delayMs);
-    delayRef.current = delayMs;
+    useLayoutEffect(() => {
+        delayRef.current = delayMs;
+    }, [delayMs]);
 
     const api = useMemo<DebouncedCommit>(() => {
         const clearTimer = () => {

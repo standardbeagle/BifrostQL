@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type PointerEvent, type MutableRefObject } from 'react';
+import { useCallback, useRef, useState, type PointerEvent } from 'react';
 
 export interface HoveredRow {
     rowId: string;
@@ -10,8 +10,11 @@ export interface UseRowHoverActionsResult {
     hoverRow: (rowId: string, el: HTMLElement) => void;
     scheduleDismiss: () => void;
     cancelDismiss: () => void;
-    /** Suppresses the click that follows a long-press so it doesn't also select the row. */
-    suppressClick: MutableRefObject<boolean>;
+    /**
+     * True (once) when a long-press just opened the actions, so the click
+     * that follows the finger lift is swallowed instead of selecting the row.
+     */
+    consumeSuppressedClick: () => boolean;
     startPress: (rowId: string, el: HTMLElement, e: PointerEvent) => void;
     onPressMove: () => void;
     cancelPress: () => void;
@@ -70,12 +73,18 @@ export function useRowHoverActions(): UseRowHoverActionsResult {
         cancelPress();
     }, [cancelPress]);
 
+    const consumeSuppressedClick = useCallback(() => {
+        if (!suppressClick.current) return false;
+        suppressClick.current = false;
+        return true;
+    }, []);
+
     return {
         hoveredRow,
         hoverRow,
         scheduleDismiss,
         cancelDismiss,
-        suppressClick,
+        consumeSuppressedClick,
         startPress,
         onPressMove,
         cancelPress,

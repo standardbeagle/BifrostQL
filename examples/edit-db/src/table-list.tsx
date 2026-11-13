@@ -16,7 +16,7 @@ import { useEditorConfig } from './hooks/useEditorConfig';
 import { useTableExport } from './hooks/useTableExport';
 import { useToast } from './hooks/useToast';
 import type { TableAction } from './lib/table-action';
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 
 /** Tables shown per page. Caps the DOM size so the list stays fast with hundreds of tables. */
 const TABLE_LIST_PAGE_SIZE = 50;
@@ -350,8 +350,13 @@ export function TableList() {
     return out;
   }, [multiSchema, schemas, grouped, filtered, collapsed, searching]);
 
-  // Reset to the first page whenever the result set changes shape.
-  useEffect(() => { setPage(0); }, [query]);
+  // Reset to the first page whenever the result set changes shape — adjusted
+  // while rendering so a stale page of the new results never paints.
+  const [pagedQuery, setPagedQuery] = useState(query);
+  if (pagedQuery !== query) {
+    setPagedQuery(query);
+    setPage(0);
+  }
 
   const totalPages = Math.max(1, Math.ceil(rows.length / TABLE_LIST_PAGE_SIZE));
   const clampedPage = Math.min(page, totalPages - 1);

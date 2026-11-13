@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useFetcher } from '@/common/fetcher';
 import type { GridGroupMemberRequest, GroupingRow, GroupingSort } from '@/lib/grid-grouping';
@@ -22,16 +22,23 @@ export function GroupedGridSummary({ label, rows, loading, error, sumLabel, page
     const fetcher = useFetcher();
     const [page, setPage] = useState(0);
     const [expanded, setExpanded] = useState<GroupingRow | null>(null);
+    const groupIdentity = rows.map((row) => `${String(row.value)}:${row.count}:${String(row.sum)}`).join('|');
+    // Aggregate keys and result sets change together on table/filter navigation.
+    // Do not leave an old member bucket expanded beneath the new aggregate list.
+    // Reset while rendering, before the member request is derived, so the old
+    // bucket is never queried or painted against the new groups.
+    const [groupScope, setGroupScope] = useState({ label, groupIdentity, pageSize });
+    if (groupScope.label !== label || groupScope.groupIdentity !== groupIdentity || groupScope.pageSize !== pageSize) {
+        setGroupScope({ label, groupIdentity, pageSize });
+        setPage(0);
+        setExpanded(null);
+    }
     const request = expanded === null ? null : memberRequest(expanded.value);
     const members = useQuery({
         queryKey: ['groupMembers', request?.query, request?.variables],
         queryFn: ({ signal }) => fetcher.query<Record<string, { total?: number; data?: Record<string, unknown>[] }>>(request!.query, request!.variables, { signal }),
         enabled: request !== null,
     });
-    const groupIdentity = rows.map((row) => `${String(row.value)}:${row.count}:${String(row.sum)}`).join('|');
-    // Aggregate keys and result sets change together on table/filter navigation.
-    // Do not leave an old member bucket expanded beneath the new aggregate list.
-    useEffect(() => { setPage(0); setExpanded(null); }, [label, groupIdentity, pageSize]);
     if (error) return <p role="alert" className="px-2 py-1 text-sm text-destructive">Grouping failed: {error.message}</p>;
     if (loading) return <p className="px-2 py-1 text-sm text-muted-foreground">Loading grouped results…</p>;
     // Group pages intentionally follow the active grid page-size preference so

@@ -118,13 +118,16 @@ export function ContentPanel({
     }, [target, sniffed, value]);
 
     // Reset edit state when the target ROW (by PK identity, not grid position)
-    // or column changes.
-    useEffect(() => {
+    // or column changes. Adjusted during render rather than in an effect so
+    // the stale edit state never paints for the new cell.
+    const [cellKey, setCellKey] = useState<[unknown, unknown]>([target?.rowKey, target?.columnName]);
+    if (cellKey[0] !== target?.rowKey || cellKey[1] !== target?.columnName) {
+        setCellKey([target?.rowKey, target?.columnName]);
         setEditing(false);
         setEditValue('');
         setCopied(false);
         setSaving(false);
-    }, [target?.rowKey, target?.columnName]);
+    }
 
     // Keyboard navigation
     useEffect(() => {

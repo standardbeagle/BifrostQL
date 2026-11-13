@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
 import { useColumnNav } from './hooks/useColumnNav';
 import { useEditorConfig } from './hooks/useEditorConfig';
@@ -57,10 +57,14 @@ export function Header() {
     const { defaultSearchColumns } = useEditorConfig();
     const configuredSearchColumn = tableName ? defaultSearchColumns?.[tableName] : undefined;
     const [column, setColumn] = useState(() => pickDefaultSearchColumn(options, configuredSearchColumn));
-    useEffect(() => {
+    // Reset the search box when the searchable columns change (table switch),
+    // adjusted while rendering so the old table's column never paints.
+    const [searchScope, setSearchScope] = useState({ options, configuredSearchColumn });
+    if (searchScope.options !== options || searchScope.configuredSearchColumn !== configuredSearchColumn) {
+        setSearchScope({ options, configuredSearchColumn });
         setSearchVal("");
         setColumn(pickDefaultSearchColumn(options, configuredSearchColumn));
-    }, [options, configuredSearchColumn]);
+    }
     const filter = () => {
         if (!searchVal) return;
         const [columnName, type] = column.split(",");

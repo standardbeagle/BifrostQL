@@ -70,8 +70,11 @@ a scoping input (e.g. tenant id) and asserts it lands in the recorded
 payload, not just that a row was written.
 
 Known residual gap flagged by review (not yet fixed): a multi-node
-tree-sync mixing gated and ungated tables is not all-or-nothing — an
-ungated sibling node can still commit alongside a gated node's diverted
-enqueue. This is a partial-apply/atomicity gap, not a fail-open (the gated
-node's target write never leaks) — track it if extending divert to
-whole-tree semantics.
+tree-sync, including a save without an operation id, mixing gated and
+ungated tables is not all-or-nothing — an ungated sibling node can still
+commit alongside a gated node's diverted enqueue. A save recording an
+operation id instead refuses a diverted node with `OPERATION_ID_UNSUPPORTED`
+and rolls back the whole tree, pending enqueue, and operation-id claim.
+The non-operation-id path's partial-apply/atomicity gap is not a fail-open
+(the gated node's target write never leaks) — track it if extending divert
+to whole-tree semantics.

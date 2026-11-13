@@ -33,6 +33,14 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
             result TEXT NULL,
             created_at TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (tenant, caller, operation_id));
+        -- Refuses to record the result of one id, so a write that ran can still fail at its
+        -- record: what the write did must roll back with it.
+        CREATE FUNCTION refuse_unrecordable() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'result not recordable';
+        END $$;
+        CREATE TRIGGER operation_ids_refuse_unrecordable BEFORE UPDATE ON operation_ids
+            FOR EACH ROW WHEN (NEW.operation_id = 'op-unrecordable') EXECUTE FUNCTION refuse_unrecordable();
         INSERT INTO notes (title) VALUES ('first'), ('second'), ('third');
         """;
 
@@ -40,7 +48,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         ":root { operation-id-store: public.operation_ids }",
         "public.operation_ids { visibility: hidden }",
-        "public.notes { operation-id: optional }",
+        "public.notes { operation-id: optional; bulk-batch-threshold: 2 }",
     };
 
     private PostgresGraphQlHost? _host;
@@ -239,16 +247,36 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     }
 
     [SkippableFact]
-    public async Task BatchWithAnId_IsRefused_RatherThanRunUnrecorded()
+    public async Task BatchWithAnId_IsRecordedOnce_AndItsRetryReplays()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+        const string batch =
+            """mutation { notes_batch(actions: [{ insert: { title: "batched" } }, { insert: { title: "batched" } }], _operationId: "op-batch") }""";
+
+        var (_, first) = await _host!.SendAsync(batch);
+        var (_, retry) = await _host.SendAsync(batch);
+
+        PostgresGraphQlHost.AssertNoErrors(first);
+        first.RootElement.GetRawText().Should().Be("""{"data":{"notes_batch":2}}""");
+        retry.RootElement.GetRawText().Should().Be(first.RootElement.GetRawText());
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'batched'")).Should().Be(2);
+        var record = await SingleRecordAsync("op-batch");
+        record["action"].Should().Be("batch");
+        record["target_key"].Should().Be("{}");
+        record["result"].Should().Be("2");
+    }
+
+    [SkippableFact]
+    public async Task BatchWhoseRecordFails_RollsTheWholeBatchBack()
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
         var (_, reply) = await _host!.SendAsync(
-            """mutation { notes_batch(actions: [{ insert: { title: "batched" } }], _operationId: "op-batch") }""");
+            """mutation { notes_batch(actions: [{ insert: { title: "unrecorded" } }, { insert: { title: "unrecorded" } }], _operationId: "op-unrecordable") }""");
 
-        var error = PostgresGraphQlHost.FirstError(reply);
-        error.GetProperty("extensions").GetProperty("code").GetString().Should().Be("OPERATION_ID_UNSUPPORTED");
-        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'batched'")).Should().Be(0);
+        PostgresGraphQlHost.FirstError(reply).GetProperty("extensions").GetProperty("code").GetString()
+            .Should().Be("DATABASE_ERROR", reply.RootElement.GetRawText());
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'unrecorded'")).Should().Be(0);
         (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(0);
     }
 

@@ -49,7 +49,8 @@ namespace BifrostQL.Core.Resolvers
             var operationId = OperationIdExecution.Resolve(context, table);
             if (operationId is not null)
             {
-                if (action is not (MutationAction.Insert or MutationAction.Update or MutationAction.Upsert or MutationAction.Delete))
+                if (action is not (MutationAction.Insert or MutationAction.Update or MutationAction.Upsert
+                    or MutationAction.Delete or MutationAction.Save))
                     throw new BifrostExecutionError("This mutation cannot record an operation id.")
                     { ErrorCode = OperationIdExecution.UnsupportedCode };
                 var fingerprint = Fingerprint(context, table, action);
@@ -78,7 +79,7 @@ namespace BifrostQL.Core.Resolvers
             => action switch
             {
                 MutationAction.Sync => await SyncObject(context, table, mutationTransformers, model, conFactory, dialect),
-                MutationAction.Save => await SaveObject(context, table, mutationTransformers, model, conFactory, dialect),
+                MutationAction.Save => await SaveObject(context, table, mutationTransformers, model, conFactory, dialect, writeScope),
                 MutationAction.Insert => await InsertObject(context, table, mutationTransformers, model, conFactory, writeScope),
                 MutationAction.Update => await UpdateObject(context, table, mutationTransformers, model, conFactory, writeScope),
                 MutationAction.Delete => await DeleteObject(context, mutationTransformers, table, model, conFactory, writeScope),
@@ -92,8 +93,9 @@ namespace BifrostQL.Core.Resolvers
             };
 
         /// <summary>
-        /// The fingerprint a single-row write with an operation id is recorded under: the verb's
-        /// input object, <c>_primaryKey</c> (except on an insert, which ignores it) and every module
+        /// The fingerprint a single-row write or a save with an operation id is recorded under: the
+        /// verb's input object (a save's whole tree), <c>_primaryKey</c> (except on an insert or a
+        /// save, which ignore it) and every module
         /// argument the field carries (the operation id itself excepted), and the key the write
         /// addresses.
         /// </summary>
@@ -101,47 +103,44 @@ namespace BifrostQL.Core.Resolvers
         {
             var verb = action.ToString().ToLowerInvariant();
             var input = context.GetArgument<Dictionary<string, object?>>(verb) ?? new();
-            // An insert never reads _primaryKey, so neither does its fingerprint: a stray one
-            // must not fail the write or change its hash only because an id is present.
-            var primaryKey = action == MutationAction.Insert ? null : ReadPrimaryKeyValues(context);
+            // An insert and a save never read _primaryKey, so neither does their fingerprint: a
+            // stray one must not fail the write or change its hash only because an id is present.
+            var primaryKey = action is MutationAction.Insert or MutationAction.Save ? null : ReadPrimaryKeyValues(context);
             var arguments = new Dictionary<string, object?>(StringComparer.Ordinal) { [verb] = input };
             if (primaryKey is not null)
                 arguments["_primaryKey"] = primaryKey;
-            foreach (var (key, value) in ModuleApiRegistry.CaptureMutationArguments(context, table))
-            {
-                if (key != OperationIdModuleApi.ContextKey)
-                    arguments["module:" + key] = value;
-            }
+            OperationIdExecution.AddModuleArguments(arguments, ModuleApiRegistry.CaptureMutationArguments(context, table));
             var targetKey = MutationArgumentBinder.SplitProperties(table, input, primaryKey).keyData;
             return OperationFingerprint.Of(table, verb, targetKey, arguments);
         }
 
         /// <summary>
-        /// The authorization a replayed write still passes: the policy's table action and column
-        /// write refusals (<see cref="PolicyMutationTransformer.Refuse"/>) for the verb, over the
-        /// columns the request writes. An upsert recorded only its verb, not which branch ran, so
-        /// it must pass both the create and the update check. Row-level checks (row scope, self
-        /// deny, tenant filter) need the row and the chain, which a replay does not run; the
-        /// record's owner key already confines it to the caller and tenant that wrote it.
+        /// The authorization a replayed write still passes
+        /// (<see cref="OperationIdExecution.AuthorizeReplay"/>): for a save, per node of the
+        /// recorded tree with the operation that node states; otherwise for the field's verb.
         /// </summary>
         private static void AuthorizeReplay(IBifrostFieldContext context, IDbTable table, MutationAction action)
         {
+            if (action == MutationAction.Save)
+            {
+                var tree = context.GetArgument<Dictionary<string, object?>>("save") ?? new();
+                foreach (var operation in new SaveTreeBuilder().BuildOperations(table, tree))
+                    OperationIdExecution.AuthorizeReplay(
+                        operation.Table, TreeNodeAction(operation.OperationType), operation.Data, null, context.UserContext);
+                return;
+            }
             var verb = action.ToString().ToLowerInvariant();
             var input = context.GetArgument<Dictionary<string, object?>>(verb) ?? new();
-            var data = action == MutationAction.Insert
-                ? new Dictionary<string, object?>(input, StringComparer.OrdinalIgnoreCase)
-                : MutationArgumentBinder.SplitProperties(table, input, ReadPrimaryKeyValues(context)).data;
-            MutationType[] checks = action switch
-            {
-                MutationAction.Insert => [MutationType.Insert],
-                MutationAction.Update => [MutationType.Update],
-                MutationAction.Delete => [MutationType.Delete],
-                MutationAction.Upsert => [MutationType.Insert, MutationType.Update],
-                _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
-            };
-            foreach (var check in checks)
-                PolicyMutationTransformer.Refuse(table, check, data, context.UserContext)?.ThrowIfDenied();
+            OperationIdExecution.AuthorizeReplay(table, action, input, ReadPrimaryKeyValues(context), context.UserContext);
         }
+
+        private static MutationAction TreeNodeAction(TreeSyncOperationType type) => type switch
+        {
+            TreeSyncOperationType.Insert => MutationAction.Insert,
+            TreeSyncOperationType.Update => MutationAction.Update,
+            TreeSyncOperationType.Delete => MutationAction.Delete,
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
+        };
 
         private async Task<object?> UpsertObject(IBifrostFieldContext context, IDbTable table,
             IMutationTransformers mutationTransformers, IDbModel model,
@@ -337,8 +336,12 @@ namespace BifrostQL.Core.Resolvers
         // state, and unlisted children are untouched. No current-state load is needed,
         // so a save is cheaper than a sync; execution reuses the TreeSync executor
         // (per-node transformer chain, instance-scoped FK flow, one transaction).
+        //
+        // With an operation id the tree runs on the id's scope (writeScope): one transaction for
+        // the claim, every node and the record, and the notification waits for its commit.
         private static async Task<object?> SaveObject(IBifrostFieldContext context, IDbTable table,
-            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect)
+            IMutationTransformers mutationTransformers, IDbModel model, IDbConnFactory conFactory, ISqlDialect dialect,
+            OperationWriteScope? writeScope)
         {
             var tree = context.GetArgument<Dictionary<string, object?>>("save") ?? new();
             if (tree.Count == 0)
@@ -349,8 +352,11 @@ namespace BifrostQL.Core.Resolvers
             var rootOperation = SaveTreeBuilder.RootOperation(table, tree);
 
             var executor = new TreeSyncExecutor(dialect);
-            var rootId = await executor.ExecuteAsync(
-                operations, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices);
+            var rootId = writeScope is null
+                ? await executor.ExecuteAsync(
+                    operations, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices)
+                : await executor.ExecuteInScopeAsync(
+                    operations, writeScope, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices);
             rootId ??= RootKeyValue(table, tree);
 
             // Notify with the root's ACTUAL op type (sync hard-codes Insert; an explicit
@@ -361,7 +367,11 @@ namespace BifrostQL.Core.Resolvers
                 TreeSyncOperationType.Delete => MutationType.Delete,
                 _ => MutationType.Insert,
             };
-            await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, rootMutationType, tree, rootId, context.UserContext);
+            if (writeScope is null)
+                await MutationNotifier.NotifyMutationAsync(context.RequestServices, table, rootMutationType, tree, rootId, context.UserContext);
+            else
+                writeScope.AfterCommit(async () => await MutationNotifier.NotifyMutationAsync(
+                    context.RequestServices, table, rootMutationType, tree, rootId, context.UserContext));
             return rootId;
         }
 

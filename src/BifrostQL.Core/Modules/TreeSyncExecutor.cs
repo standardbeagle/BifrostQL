@@ -31,7 +31,9 @@ namespace BifrostQL.Core.Modules;
 ///
 /// The transaction is expressed as SQL on the open connection (the dialect's
 /// BEGIN/COMMIT/ROLLBACK keywords) rather than the ADO.NET DbTransaction API, so
-/// the transaction boundary is visible in the emitted SQL.
+/// the transaction boundary is visible in the emitted SQL. A save that records an
+/// operation id runs instead on the operation's DbTransaction
+/// (<see cref="ExecuteInScopeAsync"/>), which commits the tree with its record.
 /// </summary>
 public sealed class TreeSyncExecutor
 {
@@ -66,21 +68,104 @@ public sealed class TreeSyncExecutor
     {
         if (operations.Count == 0)
             return null;
-
-        // History targets take no client writes on ANY seam — a nested sync could
-        // otherwise smuggle a forged trail row in as a tree node. Checked up front,
-        // before a connection is even taken, so a rejected tree writes nothing. The
-        // raw direct-executor path (model == null, no transformer pipeline) has no
-        // model to resolve targets against; every GraphQL entry supplies one.
-        if (model != null)
-        {
-            foreach (var op in operations)
-                TableMutationPipeline.GuardNotHistoryTarget(op.Table, model);
-        }
+        GuardNotHistoryTargets(operations, model);
 
         await using var conn = connFactory.GetConnection();
         await conn.OpenAsync();
 
+        // Transaction control as SQL on the open connection (dialect keywords),
+        // not the ADO.NET DbTransaction API — the boundary shows up in the SQL.
+        await ExecuteRawAsync(conn, _dialect.BeginTransactionSql);
+
+        TreeRun run;
+        try
+        {
+            // Per-TRANSACTION state for the whole tree (the deferred held change set every
+            // node's delta attaches to). Per-ACTION state is built fresh for each operation.
+            run = await RunOperationsAsync(
+                operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
+                connFactory, transformers, model, userContext, services, recordsOperationId: false);
+            await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);
+        }
+        catch (Exception ex)
+        {
+            try { await ExecuteRawAsync(conn, _dialect.RollbackTransactionSql); } catch { /* surface the original error */ }
+            throw BifrostExecutionError.FromDatabaseException(ex);
+        }
+
+        // Thrown AFTER the commit (outside the try, so it is not wrapped as a database error)
+        // so the enqueued pending row(s) survive; never reported as success-as-applied.
+        if (run.PendingApproval is not null)
+            throw Approval.ApprovalInterceptMutationHook.PendingApprovalError(run.PendingApproval);
+        return run.RootId;
+    }
+
+    /// <summary>
+    /// Runs the operations on a mutation operation's shared transaction (a save that records an
+    /// operation id): every node joins <paramref name="scope"/>, so the tree commits with the
+    /// id's record or rolls back with it, and the per-transaction hook bag is the scope's. Commit
+    /// and rollback belong to the scope. A node the approval gate diverts is refused with
+    /// <see cref="OperationId.OperationIdExecution.UnsupportedCode"/>.
+    /// </summary>
+    internal async Task<object?> ExecuteInScopeAsync(
+        IReadOnlyList<TreeSyncOperation> operations,
+        OperationWriteScope scope,
+        IDbConnFactory connFactory,
+        IMutationTransformers transformers,
+        IDbModel model,
+        IDictionary<string, object?> userContext,
+        IServiceProvider? services)
+    {
+        if (operations.Count == 0)
+            return null;
+        GuardNotHistoryTargets(operations, model);
+
+        object? rootId = null;
+        await scope.JoinAsync(async (conn, transaction) =>
+        {
+            var run = await RunOperationsAsync(
+                operations, conn, transaction, scope.TransactionState,
+                connFactory, transformers, model, userContext, services, recordsOperationId: true);
+            rootId = run.RootId;
+        });
+        return rootId;
+    }
+
+    private readonly record struct TreeRun(object? RootId, string? PendingApproval);
+
+    /// <summary>
+    /// History targets take no client writes on ANY seam — a nested sync could otherwise smuggle
+    /// a forged trail row in as a tree node. Checked up front, before a connection is even
+    /// taken, so a rejected tree writes nothing. The raw direct-executor path (model == null, no
+    /// transformer pipeline) has no model to resolve targets against; every GraphQL entry
+    /// supplies one.
+    /// </summary>
+    private static void GuardNotHistoryTargets(IReadOnlyList<TreeSyncOperation> operations, IDbModel? model)
+    {
+        if (model == null)
+            return;
+        foreach (var op in operations)
+            TableMutationPipeline.GuardNotHistoryTarget(op.Table, model);
+    }
+
+    /// <summary>
+    /// Runs every operation, in order, on <paramref name="conn"/> and
+    /// <paramref name="transaction"/> (null under the tree's own SQL-level transaction).
+    /// <paramref name="recordsOperationId"/> marks a tree that records an operation id: every
+    /// chain run carries it, and an approval divert is refused rather than left pending.
+    /// </summary>
+    private async Task<TreeRun> RunOperationsAsync(
+        IReadOnlyList<TreeSyncOperation> operations,
+        DbConnection conn,
+        DbTransaction? transaction,
+        IDictionary<string, object?> treeTransactionState,
+        IDbConnFactory connFactory,
+        IMutationTransformers? transformers,
+        IDbModel? model,
+        IDictionary<string, object?>? userContext,
+        IServiceProvider? services,
+        bool recordsOperationId)
+    {
         // Known PK per parent table GraphQL name. Pre-seeded with parents that
         // already exist (update/delete/PK-bearing ops) so a new child can link to
         // an existing parent, then extended with each freshly inserted PK. This is
@@ -97,164 +182,148 @@ public sealed class TreeSyncExecutor
 
         object? rootId = null;
         string? pendingApproval = null;
-        // Per-TRANSACTION state for the whole tree (the deferred held change set every node's
-        // delta attaches to). Per-ACTION state is built fresh for each operation below.
-        var treeTransactionState = MutationObserverContext.NewMutationState();
 
-        // Transaction control as SQL on the open connection (dialect keywords),
-        // not the ADO.NET DbTransaction API — the boundary shows up in the SQL.
-        await ExecuteRawAsync(conn, _dialect.BeginTransactionSql);
-
-        try
+        foreach (var op in operations)
         {
-            foreach (var op in operations)
+            // Resolve FK links BEFORE transforming so audit / policy see the
+            // final data (including the parent PK just inserted this run).
+            ResolveForeignKeys(op, idsByTable, idsByInstance);
+
+            var mutationType = MapMutationType(op.OperationType);
+            var inferredTarget = op.Inferred;
+            var conflictOnNoRows = false;
+            var logicalMutationType = mutationType;
+            var data = op.Data;
+            // The columns this operation actually carried, snapshotted (in DB-name
+            // space) BEFORE the transformer chain runs. These — plus the primary key
+            // — are the only legitimate WHERE-predicate columns for a delete. Columns
+            // a transformer stamps afterwards (audit updated_at/updated_by) would
+            // otherwise AND a never-matching term into the WHERE and silently affect
+            // zero rows. Same contract as the single-row and batch pipelines.
+            var clientColumns = new HashSet<string>(
+                op.Data.Keys.Select(k => ToDbColumnName(op.Table, k)),
+                StringComparer.OrdinalIgnoreCase);
+            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter
+                = ("", Array.Empty<SqlParameterInfo>());
+
+            if (transformers != null)
             {
-                // Resolve FK links BEFORE transforming so audit / policy see the
-                // final data (including the parent PK just inserted this run).
-                ResolveForeignKeys(op, idsByTable, idsByInstance);
-
-                var mutationType = MapMutationType(op.OperationType);
-                var inferredTarget = op.Inferred;
-                var conflictOnNoRows = false;
-                var logicalMutationType = mutationType;
-                var data = op.Data;
-                // The columns this operation actually carried, snapshotted (in DB-name
-                // space) BEFORE the transformer chain runs. These — plus the primary key
-                // — are the only legitimate WHERE-predicate columns for a delete. Columns
-                // a transformer stamps afterwards (audit updated_at/updated_by) would
-                // otherwise AND a never-matching term into the WHERE and silently affect
-                // zero rows. Same contract as the single-row and batch pipelines.
-                var clientColumns = new HashSet<string>(
-                    op.Data.Keys.Select(k => ToDbColumnName(op.Table, k)),
-                    StringComparer.OrdinalIgnoreCase);
-                (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter
-                    = ("", Array.Empty<SqlParameterInfo>());
-
-                if (transformers != null)
+                var ctx = new MutationTransformContext
                 {
-                    var ctx = new MutationTransformContext
-                    {
-                        Model = model ?? throw new ArgumentNullException(nameof(model),
-                            "A model is required when a mutation-transformer pipeline is supplied."),
-                        UserContext = userContext ?? new Dictionary<string, object?>(),
-                        Services = services,
-                        // The tree's own connection: its transaction is SQL-level
-                        // BEGIN/COMMIT, so commands run on the connection's ambient
-                        // transaction and there is no DbTransaction object to pass.
-                        Connection = conn,
-                        Transaction = null,
-                        Dialect = _dialect,
-                    };
-                    var result = await transformers.TransformAsync(op.Table, mutationType, data, ctx);
-                    result.ThrowIfDenied();
+                    Model = model ?? throw new ArgumentNullException(nameof(model),
+                        "A model is required when a mutation-transformer pipeline is supplied."),
+                    UserContext = userContext ?? new Dictionary<string, object?>(),
+                    Services = services,
+                    // The tree's connection and transaction: null on the tree's own
+                    // connection, whose transaction is SQL-level BEGIN/COMMIT (commands run
+                    // on the ambient transaction); the operation's DbTransaction in a scope.
+                    Connection = conn,
+                    Transaction = transaction,
+                    Dialect = _dialect,
+                    RecordsOperationId = recordsOperationId,
+                };
+                var result = await transformers.TransformAsync(op.Table, mutationType, data, ctx);
+                result.ThrowIfDenied();
 
-                    // Honor a rewritten type (Delete → Update for soft-delete),
-                    // the rewritten data (audit-populate / enum mapping), and the
-                    // transformer's row-scope / IS-NULL guard filter.
-                    mutationType = result.MutationType;
-                    conflictOnNoRows = result.ConflictOnNoRows;
-                    data = result.Data;
-                    additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
-                }
-
-                // Before-commit hooks run immediately before this operation's write, on the
-                // SAME connection (whose transaction is managed with SQL BEGIN/COMMIT here,
-                // so no DbTransaction object exists to pass). A veto throws, and the catch
-                // below rolls the whole tree back — a nested sync is one transaction, so a
-                // rejected node cannot leave its siblings committed. Only when the
-                // transformer pipeline is active: a model is required to resolve what a hook
-                // writes into, and the raw-executor test path supplies none. The context —
-                // and the state bag pairing the two hook phases — is scoped per operation
-                // in the tree, never across operations; only the per-transaction bag spans them.
-                MutationObserverContext? hookContext = null;
-                if (model != null)
-                {
-                    hookContext = new MutationObserverContext
-                    {
-                        Table = op.Table,
-                        MutationType = mutationType,
-                        Data = data,
-                        Result = null,
-                        UserContext = userContext ?? new Dictionary<string, object?>(),
-                        Connection = conn,
-                        Transaction = null,
-                        Model = model,
-                        Dialect = _dialect,
-                        ConnFactory = connFactory,
-                        MutationState = MutationObserverContext.NewMutationState(),
-                        TransactionState = treeTransactionState,
-                    };
-                    Approval.ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalMutationType);
-                    await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);
-
-                    // Approval gate: this operation was enqueued as a pending change on the
-                    // tree's transaction. Skip its write (and after-write hooks) so nothing
-                    // applies to the gated table; the tree commits the pending row(s) and
-                    // surfaces pending-approval after the commit. A gated node never inserts,
-                    // so a child's deferred FK to it stays unresolved (its intent is enqueued,
-                    // not applied) — consistent with "no SQL reaches a gated table".
-                    if (Approval.ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
-                    {
-                        pendingApproval = divertMessage;
-                        continue;
-                    }
-                }
-
-                object? opResult;
-                switch (mutationType)
-                {
-                    case MutationType.Insert:
-                        var id = await ExecuteInsertAsync(conn, op.Table, data);
-                        idsByTable[op.Table.GraphQlName] = id;
-                        idsByInstance[op.InstanceId] = id;
-                        if (op.Depth == 0)
-                            rootId = id;
-                        opResult = id;
-                        break;
-                    case MutationType.Update:
-                        opResult = await ExecuteUpdateAsync(conn, op.Table, data, additionalFilter);
-                        MutationCommandExecutor.EnsureAffectedRows(
-                            (int)opResult, conflictOnNoRows, inferredTarget,
-                            $"{op.Table.TableSchema}.{op.Table.DbName}");
-                        break;
-                    case MutationType.Delete:
-                        var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
-                        if (deleteData.Count == 0)
-                            throw new BifrostExecutionError(
-                                "A delete requires a primary key or at least one predicate column to scope the affected rows.");
-                        var deleted = await ExecuteDeleteAsync(conn, op.Table, deleteData, additionalFilter);
-                        MutationCommandExecutor.EnsureAffectedRows(
-                            deleted, conflictOnNoRows, inferredTarget,
-                            $"{op.Table.TableSchema}.{op.Table.DbName}");
-                        opResult = deleted;
-                        break;
-                    default:
-                        opResult = null;
-                        break;
-                }
-
-                // After the write, still inside the same SQL-level transaction: the CDC event
-                // and the history row are written here, paired with this operation's
-                // before-commit capture through the shared context's MutationState.
-                if (hookContext != null)
-                    await MutationNotifier.RunInTransactionHooksAsync(services, hookContext, opResult);
+                // Honor a rewritten type (Delete → Update for soft-delete),
+                // the rewritten data (audit-populate / enum mapping), and the
+                // transformer's row-scope / IS-NULL guard filter.
+                mutationType = result.MutationType;
+                conflictOnNoRows = result.ConflictOnNoRows;
+                data = result.Data;
+                additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
             }
 
-            await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);
-        }
-        catch (Exception ex)
-        {
-            try { await ExecuteRawAsync(conn, _dialect.RollbackTransactionSql); } catch { /* surface the original error */ }
-            throw BifrostExecutionError.FromDatabaseException(ex);
+            // Before-commit hooks run immediately before this operation's write, on the
+            // SAME connection and transaction (null under the tree's own SQL BEGIN/COMMIT).
+            // A veto throws, and the tree's transaction rolls the whole tree back — a nested sync is one transaction, so a
+            // rejected node cannot leave its siblings committed. Only when the
+            // transformer pipeline is active: a model is required to resolve what a hook
+            // writes into, and the raw-executor test path supplies none. The context —
+            // and the state bag pairing the two hook phases — is scoped per operation
+            // in the tree, never across operations; only the per-transaction bag spans them.
+            MutationObserverContext? hookContext = null;
+            if (model != null)
+            {
+                hookContext = new MutationObserverContext
+                {
+                    Table = op.Table,
+                    MutationType = mutationType,
+                    Data = data,
+                    Result = null,
+                    UserContext = userContext ?? new Dictionary<string, object?>(),
+                    Connection = conn,
+                    Transaction = transaction,
+                    Model = model,
+                    Dialect = _dialect,
+                    ConnFactory = connFactory,
+                    MutationState = MutationObserverContext.NewMutationState(),
+                    TransactionState = treeTransactionState,
+                };
+                Approval.ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalMutationType);
+                await MutationNotifier.RunBeforeCommitHooksAsync(services, hookContext);
+
+                // Approval gate: this operation was enqueued as a pending change on the
+                // tree's transaction. Skip its write (and after-write hooks) so nothing
+                // applies to the gated table; the tree commits the pending row(s) and
+                // surfaces pending-approval after the commit. A gated node never inserts,
+                // so a child's deferred FK to it stays unresolved (its intent is enqueued,
+                // not applied) — consistent with "no SQL reaches a gated table".
+                if (Approval.ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                {
+                    // A tree that records an operation id commits its record or nothing, so it
+                    // cannot also leave a pending change behind: the pending error would roll
+                    // the pending row back with the record. Refused, and the whole tree with it.
+                    if (recordsOperationId)
+                        throw new BifrostExecutionError("This write requires approval, so it cannot record an operation id.")
+                        { ErrorCode = OperationId.OperationIdExecution.UnsupportedCode };
+                    pendingApproval = divertMessage;
+                    continue;
+                }
+            }
+
+            object? opResult;
+            switch (mutationType)
+            {
+                case MutationType.Insert:
+                    var id = await ExecuteInsertAsync(conn, transaction, op.Table, data);
+                    idsByTable[op.Table.GraphQlName] = id;
+                    idsByInstance[op.InstanceId] = id;
+                    if (op.Depth == 0)
+                        rootId = id;
+                    opResult = id;
+                    break;
+                case MutationType.Update:
+                    opResult = await ExecuteUpdateAsync(conn, transaction, op.Table, data, additionalFilter);
+                    MutationCommandExecutor.EnsureAffectedRows(
+                        (int)opResult, conflictOnNoRows, inferredTarget,
+                        $"{op.Table.TableSchema}.{op.Table.DbName}");
+                    break;
+                case MutationType.Delete:
+                    var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
+                    if (deleteData.Count == 0)
+                        throw new BifrostExecutionError(
+                            "A delete requires a primary key or at least one predicate column to scope the affected rows.");
+                    var deleted = await ExecuteDeleteAsync(conn, transaction, op.Table, deleteData, additionalFilter);
+                    MutationCommandExecutor.EnsureAffectedRows(
+                        deleted, conflictOnNoRows, inferredTarget,
+                        $"{op.Table.TableSchema}.{op.Table.DbName}");
+                    opResult = deleted;
+                    break;
+                default:
+                    opResult = null;
+                    break;
+            }
+
+            // After the write, still inside the same transaction: the CDC event
+            // and the history row are written here, paired with this operation's
+            // before-commit capture through the shared context's MutationState.
+            if (hookContext != null)
+                await MutationNotifier.RunInTransactionHooksAsync(services, hookContext, opResult);
         }
 
-        // Thrown AFTER the commit (outside the try, so it is not wrapped as a database error)
-        // so the enqueued pending row(s) survive; never reported as success-as-applied.
-        if (pendingApproval is not null)
-            throw Approval.ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-        return rootId;
+        return new TreeRun(rootId, pendingApproval);
     }
-
 
     private static MutationType MapMutationType(TreeSyncOperationType type) => type switch
     {
@@ -299,7 +368,7 @@ public sealed class TreeSyncExecutor
             idsByTable[op.Table.GraphQlName] = pk;
     }
 
-    private async Task<object?> ExecuteInsertAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data)
+    private async Task<object?> ExecuteInsertAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data)
     {
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         var columns = string.Join(",", data.Keys.Select(k => _dialect.EscapeIdentifier(k)));
@@ -310,6 +379,7 @@ public sealed class TreeSyncExecutor
             : $"INSERT INTO {tableRef}({columns}) VALUES({values});SELECT {_dialect.LastInsertedIdentity} ID;";
 
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = sql;
         AddParameters(cmd, data);
         return HandleDecimals(await cmd.ExecuteScalarAsync());
@@ -317,7 +387,7 @@ public sealed class TreeSyncExecutor
 
     // Returns the affected-row count so the caller can skip emitting a CDC event for a
     // zero-row no-op. Returns 0 for the degenerate no-key / no-set-columns case.
-    private async Task<int> ExecuteUpdateAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
+    private async Task<int> ExecuteUpdateAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data,
         (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
     {
         var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, data);
@@ -326,13 +396,14 @@ public sealed class TreeSyncExecutor
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = MutationCommandExecutor.BuildUpdateSql(_dialect, table, tableRef, setData.Keys, keyData, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
         return await cmd.ExecuteNonQueryAsync();
     }
 
-    private async Task<int> ExecuteDeleteAsync(DbConnection conn, IDbTable table, Dictionary<string, object?> data,
+    private async Task<int> ExecuteDeleteAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data,
         (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
     {
         if (data.Count == 0)
@@ -340,6 +411,7 @@ public sealed class TreeSyncExecutor
 
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         await using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
         cmd.CommandText = MutationCommandExecutor.BuildDeleteSql(_dialect, table, tableRef, data, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);

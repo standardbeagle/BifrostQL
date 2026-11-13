@@ -14,8 +14,9 @@ namespace BifrostQL.Core.Modules.OperationId
     {
         /// <summary>
         /// <see cref="BifrostExecutionError.ErrorCode"/> for an operation id on a mutation that
-        /// cannot record one (a sync, delta or filtered update): refused rather than run without
-        /// the record the caller asked for.
+        /// cannot record one (a sync, delta or filtered update, or a save whose tree reaches a
+        /// table that requires approval): refused rather than run without the record the caller
+        /// asked for.
         /// </summary>
         public const string UnsupportedCode = "OPERATION_ID_UNSUPPORTED";
 
@@ -150,7 +151,51 @@ namespace BifrostQL.Core.Modules.OperationId
         }
 
         /// <summary>
-        /// Who owns an id as the store keys it: the tenant claim the read and write paths scope
+        /// Adds every module argument a field carries to a fingerprint's
+        /// <paramref name="arguments"/>, under <c>module:</c>-prefixed names, except the operation
+        /// id itself: two requests that differ in any module argument differ.
+        /// </summary>
+        internal static void AddModuleArguments(
+            Dictionary<string, object?> arguments, IReadOnlyDictionary<string, object?> moduleArguments)
+        {
+            foreach (var (key, value) in moduleArguments)
+            {
+                if (key != OperationIdModuleApi.ContextKey)
+                    arguments["module:" + key] = value;
+            }
+        }
+
+        /// <summary>
+        /// The authorization a replayed write still passes, per write it recorded: the policy's
+        /// table action and column write refusals (<see cref="PolicyMutationTransformer.Refuse"/>)
+        /// for <paramref name="action"/> over the columns <paramref name="input"/> writes (its key
+        /// from <paramref name="primaryKeyValues"/> when given). An upsert recorded only its verb,
+        /// not which branch ran, so it must pass both the create and the update check. Row-level
+        /// checks (row scope, self deny, tenant filter) need the row and the chain, which a replay
+        /// does not run; the record's owner key already confines it to the caller and tenant that
+        /// wrote it. A batch asks this per action and a save per tree node.
+        /// </summary>
+        internal static void AuthorizeReplay(
+            IDbTable table, MutationAction action, IReadOnlyDictionary<string, object?> input,
+            IReadOnlyList<object?>? primaryKeyValues, IDictionary<string, object?> userContext)
+        {
+            var data = action == MutationAction.Insert
+                ? new Dictionary<string, object?>(input, StringComparer.OrdinalIgnoreCase)
+                : MutationArgumentBinder.SplitProperties(table, input, primaryKeyValues).data;
+            MutationType[] checks = action switch
+            {
+                MutationAction.Insert => [MutationType.Insert],
+                MutationAction.Update => [MutationType.Update],
+                MutationAction.Delete => [MutationType.Delete],
+                MutationAction.Upsert => [MutationType.Insert, MutationType.Update],
+                _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
+            };
+            foreach (var check in checks)
+                PolicyMutationTransformer.Refuse(table, check, data, userContext)?.ThrowIfDenied();
+        }
+
+        /// <summary>
+        /// Who owns an id as the store keys it:the tenant claim the read and write paths scope
         /// by (<see cref="TenantFilterTransformer.ResolveTenantContextKey"/>) and the caller's
         /// user id (<see cref="MetadataKeys.Auth.DefaultUserIdContextKey"/>), each empty when the
         /// caller has none. Either claim that is not a single value is refused: recording under

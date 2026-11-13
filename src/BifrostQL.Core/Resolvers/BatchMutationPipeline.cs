@@ -60,7 +60,10 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Executes the batch inside one transaction and returns the total affected
         /// row count. Post-commit observers fire only after the commit, so audit and
-        /// state-transition notifications never describe rolled-back work.
+        /// state-transition notifications never describe rolled-back work. With a
+        /// <see cref="MutationPipelineContext.WriteScope"/> (a batch that records an operation
+        /// id) the actions run on the scope's transaction, per row, and the observers wait for
+        /// the scope's commit.
         /// </summary>
         public static async Task<int> ExecuteBatchAsync(
             IDbTable table, IReadOnlyList<BatchAction> actions, MutationPipelineContext ctx)
@@ -87,6 +90,7 @@ namespace BifrostQL.Core.Resolvers
                 Model = ctx.Model,
                 UserContext = ctx.UserContext,
                 Services = ctx.Services,
+                RecordsOperationId = ctx.RecordsOperationId,
                 CancellationToken = ct,
             };
 
@@ -96,8 +100,10 @@ namespace BifrostQL.Core.Resolvers
             // have written anything) falls through to the per-row loop below. The plan is
             // built before any write transaction exists, so its chain runs on the
             // connection-less context above; a table whose transformers need the
-            // transaction is ineligible (BulkBatchPlanBuilder.IsEligible).
-            if (ctx.ConnFactory.BulkBatchExecutor is { } bulkExecutor)
+            // transaction is ineligible (BulkBatchPlanBuilder.IsEligible). A batch inside an
+            // operation scope never takes it: the bulk executor commits its own transaction on
+            // its own connection, apart from the scope's record.
+            if (ctx.WriteScope is null && ctx.ConnFactory.BulkBatchExecutor is { } bulkExecutor)
             {
                 var built = await BulkBatch.BulkBatchPlanBuilder.TryBuildAsync(table, actions, ctx, transformContext);
                 if (built is not null)
@@ -108,50 +114,41 @@ namespace BifrostQL.Core.Resolvers
                 }
             }
 
-            await using var conn = ctx.ConnFactory.GetConnection();
             var outcomes = new List<BatchActionOutcome>();
-            DbTransaction? transaction = null;
-            try
+            if (ctx.WriteScope is { } scope)
             {
-                await conn.OpenAsync(ct);
-                transaction = await conn.BeginTransactionAsync(ct);
-                // All per-action executors share the same table/dialect/model,
-                // connection + transaction, and captured contexts; bundle them once
-                // so the executors take only their per-action data.
-                // Every per-row chain run of the batch sees the batch's connection and
-                // transaction, so a guard reads (and locks) state that commits with it.
-                var dialect = ctx.ConnFactory.Dialect;
-                var execContext = new BatchExecutionContext(
-                    table, ctx.Transformers, ctx.Model, dialect, conn, transaction,
-                    ctx.UserContext, transformContext.With(write: (conn, transaction, dialect, ct)),
-                    ctx.ModuleArguments, ct, ctx.ConnFactory,
+                await scope.JoinAsync((conn, transaction) => RunActionsAsync(conn, transaction, scope.TransactionState));
+            }
+            else
+            {
+                await using var conn = ctx.ConnFactory.GetConnection();
+                DbTransaction? transaction = null;
+                try
+                {
+                    await conn.OpenAsync(ct);
+                    transaction = await conn.BeginTransactionAsync(ct);
                     // One per-transaction bag for the whole batch; each action gets its own
                     // per-action bag when its hook context is built.
-                    MutationObserverContext.NewMutationState());
-                foreach (var action in actions)
-                {
-                    var outcome = await ExecuteAction(execContext, action);
-                    if (outcome is not null)
-                        outcomes.Add(outcome);
+                    await RunActionsAsync(conn, transaction, MutationObserverContext.NewMutationState());
+                    await transaction.CommitAsync(ct);
                 }
-                await transaction.CommitAsync(ct);
-            }
-            catch (BifrostExecutionError)
-            {
-                if (transaction != null)
-                    await transaction.RollbackAsync(ct);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                if (transaction != null)
-                    await transaction.RollbackAsync(ct);
-                throw BifrostExecutionError.FromDatabaseException(ex);
-            }
-            finally
-            {
-                if (transaction != null)
-                    await transaction.DisposeAsync();
+                catch (BifrostExecutionError)
+                {
+                    if (transaction != null)
+                        await transaction.RollbackAsync(ct);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    if (transaction != null)
+                        await transaction.RollbackAsync(ct);
+                    throw BifrostExecutionError.FromDatabaseException(ex);
+                }
+                finally
+                {
+                    if (transaction != null)
+                        await transaction.DisposeAsync();
+                }
             }
 
             // The approval gate diverted at least one action into a pending change (enqueued on
@@ -165,11 +162,34 @@ namespace BifrostQL.Core.Resolvers
             // Observers fire only after commit so audit/state-transition
             // notifications never describe rolled-back work. Failures inside
             // observers are swallowed by MutationObservers/StateTransitionObservers.
-            await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext);
+            if (ctx.WriteScope is { } committing)
+                committing.AfterCommit(async () => await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext));
+            else
+                await NotifyObserversAsync(ctx.Services, table, outcomes, ctx.UserContext);
 
             var totalAffected = 0;
             foreach (var outcome in outcomes) totalAffected += outcome.Affected;
             return totalAffected;
+
+            // Every action of the batch, in order, on one connection and transaction. All
+            // per-action executors share the same table/dialect/model, connection + transaction,
+            // and captured contexts; bundle them once so the executors take only their
+            // per-action data. Every per-row chain run of the batch sees the batch's connection
+            // and transaction, so a guard reads (and locks) state that commits with it.
+            async Task RunActionsAsync(DbConnection conn, DbTransaction transaction, IDictionary<string, object?> transactionState)
+            {
+                var dialect = ctx.ConnFactory.Dialect;
+                var execContext = new BatchExecutionContext(
+                    table, ctx.Transformers, ctx.Model, dialect, conn, transaction,
+                    ctx.UserContext, transformContext.With(write: (conn, transaction, dialect, ct)),
+                    ctx.ModuleArguments, ct, ctx.ConnFactory, transactionState);
+                foreach (var action in actions)
+                {
+                    var outcome = await ExecuteAction(execContext, action);
+                    if (outcome is not null)
+                        outcomes.Add(outcome);
+                }
+            }
         }
 
         /// <summary>

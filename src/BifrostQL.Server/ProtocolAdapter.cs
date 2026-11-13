@@ -33,9 +33,11 @@ namespace BifrostQL.Server
     /// adapter:</para>
     /// <code>
     /// webBuilder.ConfigureKestrel(kestrel =&gt;
-    ///     kestrel.ListenAnyIP(9090, listen =&gt;
+    ///     kestrel.Listen(IPAddress.Loopback, 9090, listen =&gt;
     ///         listen.UseConnectionHandler&lt;MyProtocolConnectionHandler&gt;()));
     /// </code>
+    /// <para>Bind loopback unless the operator declared a wider exposure; the shipped
+    /// adapters read a <c>BindAddress</c> option that defaults to <c>IPAddress.Loopback</c>.</para>
     /// <para>Kestrel then owns socket accept/backpressure/shutdown draining, and the
     /// adapter's <see cref="StartAsync"/>/<see cref="StopAsync"/> manage only the
     /// protocol-level state (codec tables, session registries, …).</para>

@@ -161,9 +161,11 @@ Do not open a bare `Socket` accept loop. Bind the port through Kestrel's connect
 
 ```csharp
 webBuilder.ConfigureKestrel(kestrel =>
-    kestrel.ListenAnyIP(9090, listen =>
+    kestrel.Listen(IPAddress.Loopback, 9090, listen =>
         listen.UseConnectionHandler<MyProtocolConnectionHandler>()));
 ```
+
+Bind loopback unless the operator has declared a wider exposure. The shipped adapters take the address from a `BindAddress` option that defaults to `IPAddress.Loopback` (`PgWireOptions`, `RespWireOptions`, `LdapWireOptions`, `GrpcWireOptions`); a new adapter should do the same rather than hard-code an address. `ListenAnyIP` publishes the port on every interface.
 
 Kestrel then owns socket accept, backpressure, and shutdown draining; your adapter's `StartAsync`/`StopAsync` manage only protocol-level state (codec tables, session registries, …).
 

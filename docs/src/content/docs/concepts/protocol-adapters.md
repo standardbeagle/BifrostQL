@@ -54,7 +54,7 @@ a source scan that fails when a second appears.
 
 ### 5. Non-HTTP hosting goes through Kestrel connection handlers, and the contract has no `HttpContext`
 
-Adapters are hosted as `IHostedService` instances (one wrapper per adapter): the host starts them during startup and stops them during graceful shutdown, and a `StartAsync` failure **aborts host startup** — a bind error never produces a host that looks healthy while its front door is dead. Raw TCP protocols bind their port through Kestrel's connection middleware (`ListenAnyIP(port, l => l.UseConnectionHandler<T>())`) rather than a hand-rolled `Socket` accept loop, so Kestrel owns accept, backpressure, and shutdown draining. And the adapter contract itself never sees an `HttpContext` — the intent APIs take plain data plus a user context, which keeps the seam honest for protocols where no HTTP request exists.
+Adapters are hosted as `IHostedService` instances (one wrapper per adapter): the host starts them during startup and stops them during graceful shutdown, and a `StartAsync` failure **aborts host startup** — a bind error never produces a host that looks healthy while its front door is dead. Raw TCP protocols bind their port through Kestrel's connection middleware (`Listen(options.BindAddress, port, l => l.UseConnectionHandler<T>())`, where `BindAddress` defaults to loopback) rather than a hand-rolled `Socket` accept loop, so Kestrel owns accept, backpressure, and shutdown draining. And the adapter contract itself never sees an `HttpContext` — the intent APIs take plain data plus a user context, which keeps the seam honest for protocols where no HTTP request exists.
 
 ## What this buys you
 

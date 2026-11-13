@@ -24,7 +24,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint . --ext ts --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
     "test": "vitest run",
@@ -33,12 +33,13 @@
     "ts": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.72.1",
-    "@typescript-eslint/parser": "^8.72.1",
+    "@eslint/js": "^10.0.1",
     "@vitest/coverage-v8": "^5.1.0",
-    "eslint": "^8.57.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "prettier": "^3.9.10",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^5.1.0"
   },
   "files": [

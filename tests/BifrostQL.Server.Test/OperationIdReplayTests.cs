@@ -180,6 +180,36 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Anonymous_callers_do_not_share_recorded_results()
+    {
+        // Two callers without a user id send the same id and arguments, one through the
+        // argument and one through the header. Recorded under one shared owner, the second
+        // would be answered with the first's key.
+        const string insert = """mutation { codes(insert: { code: "anon", label: "first" }, _operationId: "op-anon") }""";
+        using var callerA = await SendAnonymousAsync(insert);
+        using var callerB = await SendAnonymousAsync(
+            """mutation { codes(insert: { code: "anon", label: "first" }) }""", ("Idempotency-Key", "op-anon"));
+
+        foreach (var reply in new[] { callerA, callerB })
+        {
+            var error = FirstError(reply);
+            error.GetProperty("extensions").GetProperty("code").GetString().Should().Be("OPERATION_ID_ANONYMOUS", reply.RootElement.GetRawText());
+            error.GetProperty("message").GetString().Should().Be("An operation id needs a caller with a user id.");
+            reply.RootElement.GetProperty("data").GetProperty("codes").ValueKind.Should().Be(JsonValueKind.Null);
+        }
+        (await CountAsync("SELECT count(*) FROM codes")).Should().Be(0);
+        (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(0);
+
+        // Control: the same caller without an id writes as before, and a caller with a user id
+        // records the id.
+        using var plain = await SendAnonymousAsync("""mutation { codes(insert: { code: "plain", label: "free" }) }""");
+        Data(plain, "codes").GetString().Should().Be("plain");
+        using var named = await SendAsync(insert);
+        Data(named, "codes").GetString().Should().Be("anon");
+        (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
+    }
+
+    [Fact]
     public async Task Caller_the_policy_now_refuses_is_refused_not_replayed()
     {
         const string insert = """mutation { notes(insert: { title: "revoked" }, _operationId: "op-revoked") }""";
@@ -342,11 +372,15 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
     private Task<JsonDocument> SendAsUserAsync(string query, string user, params string[] roles)
         => SendCoreAsync(query, user, roles, Array.Empty<(string, string)>());
 
-    private async Task<JsonDocument> SendCoreAsync(string query, string user, string[] roles, (string Name, string Value)[] headers)
+    private Task<JsonDocument> SendAnonymousAsync(string query, params (string Name, string Value)[] headers)
+        => SendCoreAsync(query, null, Array.Empty<string>(), headers);
+
+    private async Task<JsonDocument> SendCoreAsync(string query, string? user, string[] roles, (string Name, string Value)[] headers)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/graphql");
         request.Content = new StringContent(JsonSerializer.Serialize(new { query }), Encoding.UTF8, "application/json");
-        request.Headers.Add("X-Test-User", user);
+        if (user is not null)
+            request.Headers.Add("X-Test-User", user);
         foreach (var role in roles)
             request.Headers.Add("X-Test-Role", role);
         foreach (var (name, value) in headers)

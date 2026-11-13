@@ -8,8 +8,9 @@ namespace BifrostQL.Core.Test.Modules;
 
 /// <summary>
 /// The owner an operation id is recorded under: the caller's tenant claim (the model's tenant
-/// context key) and user id, each empty when absent. A claim that is not a single value is
-/// refused rather than recorded under a guessed owner.
+/// context key), empty when absent, and user id. A caller without a user id is refused, so no
+/// two callers share an id space; a claim that is not a single value is refused rather than
+/// recorded under a guessed owner.
 /// </summary>
 public sealed class OperationIdOwnerTests
 {
@@ -40,16 +41,35 @@ public sealed class OperationIdOwnerTests
         {
             ["tenant_id"] = "ignored",
             ["org_id"] = "org-3",
+            ["user_id"] = "u-2",
         });
 
-        owner.Should().Be(new OperationOwner("org-3", ""));
+        owner.Should().Be(new OperationOwner("org-3", "u-2"));
     }
 
     [Fact]
-    public void NoClaims_AreAnEmptyOwner()
+    public void UserIdWithoutTenant_IsAnOwnerWithAnEmptyTenant()
     {
-        OperationIdExecution.OwnerOf(Model(), new Dictionary<string, object?>())
-            .Should().Be(new OperationOwner("", ""));
+        OperationIdExecution.OwnerOf(Model(), new Dictionary<string, object?> { ["user_id"] = "u-3" })
+            .Should().Be(new OperationOwner("", "u-3"));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("t-1", null)]
+    [InlineData("t-1", "")]
+    [InlineData("t-1", "  ")]
+    public void CallerWithoutUserId_IsRefused(string? tenant, string? userId)
+    {
+        var userContext = new Dictionary<string, object?>();
+        if (tenant is not null) userContext["tenant_id"] = tenant;
+        if (userId is not null) userContext["user_id"] = userId;
+
+        var act = () => OperationIdExecution.OwnerOf(Model(), userContext);
+
+        act.Should().Throw<BifrostExecutionError>()
+            .Where(e => e.ErrorCode == "OPERATION_ID_ANONYMOUS")
+            .WithMessage("An operation id needs a caller with a user id.");
     }
 
     [Theory]

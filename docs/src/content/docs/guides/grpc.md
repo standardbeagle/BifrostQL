@@ -390,6 +390,7 @@ cannot tell one op class from another by its status.
 | Malformed request, bad operator, over-cap filter/sort/page token, bad key value | `INVALID_ARGUMENT` | Messages describe the request fault without internal diagnostics. Faults carrying field violations also include a `google.rpc.BadRequest` in the `grpc-status-details-bin` trailer; other request faults have no such trailer. An over-cap `page_size` is clamped rather than rejected. |
 | `Get` on a missing **or** authorization-denied row | `NOT_FOUND` | Byte-identical for both — no existence oracle. |
 | Authorization denial on `List`/`Stream`/writes | `PERMISSION_DENIED` | Generic message; the exception's table/tenant detail never reaches the wire. |
+| Write to an `operation-id: required` table (a gRPC write cannot carry an [operation id](/BifrostQL/guides/mutations/#operation-ids)) | `FAILED_PRECONDITION` | `OPERATION_ID_REQUIRED: this write requires an operation id.` Retrying the same write cannot succeed. `OPERATION_ID_UNSUPPORTED` and `OPERATION_ID_ANONYMOUS` map the same way and `OPERATION_ID_REUSED` maps to `ALREADY_EXISTS`, each with a fixed `<code>: ...` message. |
 | Client cancel | `CANCELLED` | |
 | Deadline elapsed | `DEADLINE_EXCEEDED` | |
 | Any internal / `BifrostExecutionError` fault | `INTERNAL` | Generic sanitized message; full detail logged server-side only (it can wrap raw driver/schema text). |

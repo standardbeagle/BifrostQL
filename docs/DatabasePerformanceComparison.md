@@ -72,7 +72,7 @@ SQLite serves as the baseline for comparison. Being an embedded database with no
 | Simple SELECT | Fast | Advanced query optimizer |
 | Complex JOINs | Very Fast | Sophisticated join algorithms |
 | INSERT (single) | Moderate | Network round-trip overhead |
-| INSERT (batch) | Fast | TVPs and bulk insert APIs |
+| INSERT (batch) | Path-dependent | SQL Server offers TVPs and bulk insert APIs; `_batch` carrying an operation id instead executes actions per row in one shared transaction. |
 | UPDATE/DELETE | Fast | Row-level locking |
 | Aggregation | Very Fast | Parallel query execution |
 
@@ -114,7 +114,7 @@ WHEN NOT MATCHED THEN INSERT (Name) VALUES (source.Name);
 | Simple SELECT | Fast | Efficient executor |
 | Complex JOINs | Fast | Hash joins, merge joins |
 | INSERT (single) | Moderate | Network overhead |
-| INSERT (batch) | Fast | Multi-row VALUES syntax |
+| INSERT (batch) | Path-dependent | PostgreSQL supports multi-row VALUES; `_batch` carrying an operation id instead executes actions per row in one shared transaction. |
 | UPDATE/DELETE | Fast | MVCC concurrency model |
 | Text search | Very Fast | Full-text search indexes |
 
@@ -152,7 +152,7 @@ SELECT * FROM Users WHERE Metadata @> '{"role": "admin"}';
 | Simple SELECT | Fast | Fast primary key lookups |
 | Complex JOINs | Moderate | Nested loop joins |
 | INSERT (single) | Moderate | Network overhead |
-| INSERT (batch) | Fast | Multi-row INSERT |
+| INSERT (batch) | Path-dependent | MySQL supports multi-row INSERT; `_batch` carrying an operation id instead executes actions per row in one shared transaction. |
 | UPDATE/DELETE | Fast | InnoDB row-level locking |
 | Full-text search | Moderate | InnoDB FTS available |
 
@@ -194,9 +194,9 @@ For typical BifrostQL workloads:
 ### Mutation Performance Ranking
 
 1. **SQLite** - Fastest for single-row operations (no network)
-2. **PostgreSQL** - Excellent batch insert performance
+2. **PostgreSQL** - Batch insert performance depends on the execution path; operation-id `_batch` requests bypass the bulk executor.
 3. **SQL Server** - Good with TVPs and bulk insert
-4. **MySQL** - Good for simple inserts, batch operations
+4. **MySQL** - Simple inserts and batch operations use different execution paths; operation-id `_batch` requests bypass the bulk executor.
 
 ### Concurrency Performance
 
@@ -215,7 +215,7 @@ For typical BifrostQL workloads:
    - Configure appropriate pool sizes
 
 2. **Batch Operations**
-   - Always prefer batch inserts over individual inserts
+   - Benchmark batch inserts against individual inserts for your workload; `_batch` carrying an operation id runs actions per row in one shared transaction and does not use the bulk executor.
    - Use multi-row VALUES syntax when available
    - Consider transaction batching
 

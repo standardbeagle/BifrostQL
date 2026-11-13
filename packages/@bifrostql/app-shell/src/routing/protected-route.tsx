@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useSession } from '../auth/use-session';
 import { usePolicy } from '../auth/use-policy';
@@ -104,9 +104,12 @@ export function ProtectedRoute({
   // is a new function on every render. Keeping it in the effect's deps made
   // the effect re-run on each one, firing the redirect repeatedly for as long
   // as the user stayed unauthenticated. Hold it in a ref so the effect depends
-  // only on the auth state, while still calling the latest callback.
+  // only on the auth state, while still calling the latest callback. The ref
+  // is synced in a layout effect, which runs before the redirect effect.
   const onUnauthenticatedRef = useRef(onUnauthenticated);
-  onUnauthenticatedRef.current = onUnauthenticated;
+  useLayoutEffect(() => {
+    onUnauthenticatedRef.current = onUnauthenticated;
+  });
 
   useEffect(() => {
     if (shouldRedirect) {

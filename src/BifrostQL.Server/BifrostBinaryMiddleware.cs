@@ -767,8 +767,13 @@ namespace BifrostQL.Server
                     // desynchronize the two transports' error contracts. If this transport
                     // ever serves a non-GraphQL surface, that surface must map conditions
                     // through its own funnel instead of this pass-through.
+                    //
+                    // The envelope's errors are strings, with no slot for the extensions.code
+                    // the HTTP wire carries, so an operation-id refusal leads with its code in
+                    // the text, worded as on the other non-GraphQL wires: the client must act on
+                    // it (send an id, use a new one) and must be able to tell it from a fault.
                     foreach (var error in result.Errors)
-                        response.Errors.Add(error.Message);
+                        response.Errors.Add(OperationIdWireRefusal.TextOfCode(CodeOf(error)) ?? error.Message);
                 }
 
                 if (result.Data != null)
@@ -785,6 +790,12 @@ namespace BifrostQL.Server
 
             return response;
         }
+
+        private static string? CodeOf(BifrostResultError error)
+            => error.Extensions is not null
+                && error.Extensions.TryGetValue(BifrostEngine.CodeExtension, out var code)
+                    ? code as string
+                    : null;
 
         /// <summary>
         /// Serializes the execution result's data into the binary Payload using the same

@@ -150,17 +150,33 @@ namespace BifrostQL.Server.Test
                 identityCarrier.User = request.Principal;
             var userContext = _authFactory.CreateUserContext(identityCarrier);
 
-            var result = await _mutationExecutor.ExecuteAsync(new MutationIntent
+            try
             {
-                Table = request.Table,
-                Action = request.Action,
-                Data = request.Data,
-                PrimaryKey = request.PrimaryKey,
-                UserContext = userContext,
-                Endpoint = request.Endpoint,
-            }, cancellationToken);
-            return result.Value;
+                var result = await _mutationExecutor.ExecuteAsync(new MutationIntent
+                {
+                    Table = request.Table,
+                    Action = request.Action,
+                    Data = request.Data,
+                    PrimaryKey = request.PrimaryKey,
+                    UserContext = userContext,
+                    Endpoint = request.Endpoint,
+                }, cancellationToken);
+                return result.Value;
+            }
+            catch (BifrostExecutionError refused) when (OperationIdWireRefusal.TextOf(refused) is { } refusalText)
+            {
+                // The error funnel a real adapter owns: an operation-id refusal is a condition the
+                // client must act on, so its wire text leads with the code (the shared per-code
+                // wording), never the server message.
+                throw new EchoWireException(refusalText);
+            }
         }
+    }
+
+    /// <summary>The error the echo wire answers with: only text the adapter's funnel chose.</summary>
+    public sealed class EchoWireException : Exception
+    {
+        public EchoWireException(string message) : base(message) { }
     }
 
     /// <summary>

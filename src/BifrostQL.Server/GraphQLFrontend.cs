@@ -246,7 +246,7 @@ namespace BifrostQL.Server
                 {
                     Message = e.Message,
                     Path = e.Path?.ToList(),
-                    Extensions = e.Extensions,
+                    Extensions = WithCode(e),
                 }).ToArray();
             }
 
@@ -256,6 +256,27 @@ namespace BifrostQL.Server
                 Errors = errors,
             };
         }
+
+        /// <summary>
+        /// The error's extensions plus its code under <see cref="CodeExtension"/>, as the GraphQL
+        /// wire serializes them. GraphQL.NET keeps the code (a
+        /// <see cref="BifrostExecutionError.ErrorCode"/> such as <c>OPERATION_ID_REQUIRED</c>)
+        /// apart from <see cref="ExecutionError.Extensions"/>, so without this a frontend that
+        /// reads the result could not tell one condition from another.
+        /// </summary>
+        private static IReadOnlyDictionary<string, object?>? WithCode(ExecutionError error)
+        {
+            if (string.IsNullOrEmpty(error.Code))
+                return error.Extensions;
+            var extensions = error.Extensions is null
+                ? new Dictionary<string, object?>()
+                : new Dictionary<string, object?>(error.Extensions);
+            extensions[CodeExtension] = error.Code;
+            return extensions;
+        }
+
+        /// <summary>The <see cref="BifrostResultError.Extensions"/> key holding the error code.</summary>
+        internal const string CodeExtension = "code";
 
         private static Inputs Combine(IReadOnlyDictionary<string, object?> input1, IReadOnlyDictionary<string, object?> input2)
         {

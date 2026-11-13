@@ -5,7 +5,7 @@ namespace BifrostQL.Server
 {
     /// <summary>
     /// The client-safe wording a non-GraphQL wire carries for an operation-id refusal, shared by
-    /// every adapter error funnel (gRPC, RESP, MCP) so one condition reads the same on each.
+    /// every adapter error funnel (gRPC, RESP, MCP, the binary transport) so one condition reads the same on each.
     ///
     /// <para>The refusal is a condition the client must act on (send an id, use a new id), not a
     /// server fault, so reporting it as an internal error tells the client to retry a write that
@@ -21,9 +21,14 @@ namespace BifrostQL.Server
         /// refusal, or null for any other error.
         /// </summary>
         public static (string Code, string Description)? Of(Exception error)
+            => error is BifrostExecutionError { ErrorCode: { } code } ? OfCode(code) : null;
+
+        /// <summary>
+        /// The code and description for an error carrying <paramref name="code"/> (the GraphQL
+        /// wire's <c>extensions.code</c>) when it is an operation-id refusal, or null otherwise.
+        /// </summary>
+        public static (string Code, string Description)? OfCode(string? code)
         {
-            if (error is not BifrostExecutionError { ErrorCode: { } code })
-                return null;
             string? description = code switch
             {
                 OperationIdExecution.RequiredCode => "this write requires an operation id.",
@@ -32,7 +37,7 @@ namespace BifrostQL.Server
                 OperationIdExecution.AnonymousCode => "an operation id needs a caller with a user id.",
                 _ => null,
             };
-            return description is null ? null : (code, description);
+            return description is null ? null : (code!, description);
         }
 
         /// <summary>
@@ -41,7 +46,18 @@ namespace BifrostQL.Server
         /// Redis error's first word is its kind.
         /// </summary>
         public static string? TextOf(Exception error)
-            => Of(error) is var (code, description) ? code + ": " + description : null;
+            => Text(Of(error));
+
+        /// <summary>
+        /// <c>CODE: description</c> for an error carrying <paramref name="code"/> when it is an
+        /// operation-id refusal, or null otherwise: the form for a wire that receives the
+        /// condition as a GraphQL error code rather than an exception (the binary transport).
+        /// </summary>
+        public static string? TextOfCode(string? code)
+            => Text(OfCode(code));
+
+        private static string? Text((string Code, string Description)? refusal)
+            => refusal is var (code, description) ? code + ": " + description : null;
 
         /// <summary>
         /// Whether <paramref name="error"/> refuses an id already recorded for another write: a

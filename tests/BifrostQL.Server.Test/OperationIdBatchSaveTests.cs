@@ -26,6 +26,7 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
 {
     private const string Writer = "writer";
     private const string Remover = "remover";
+    private const string Clerk = "clerk";
 
     private static int _transformerCalls;
     private static int _hookCalls;
@@ -50,6 +51,8 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
             "intended_payload TEXT NOT NULL, requester TEXT NULL, tenant TEXT NULL, requester_context TEXT NULL, " +
             "\"state\" TEXT NOT NULL, approver TEXT NULL, decided_at TEXT NULL, reason TEXT NULL);" +
             "CREATE TABLE ledger (id INTEGER PRIMARY KEY, title TEXT NOT NULL);" +
+            // A column whose name differs from its GraphQL field (rate_pct), denied to the clerk.
+            "CREATE TABLE royalties (id INTEGER PRIMARY KEY, author_id INTEGER NOT NULL REFERENCES authors(id), \"rate-pct\" INTEGER NULL);" +
             "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, " +
             "table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, " +
             "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));");
@@ -65,6 +68,7 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
             ["Bifrost:Metadata:4"] = "main.drafts { approval: enabled; approver-role: manager }",
             ["Bifrost:Metadata:5"] = "main.ledger { operation-id: required }",
             ["Bifrost:Metadata:6"] = $"main.books {{ policy-actions: read, create[{Writer}], update[{Writer}], delete[{Writer}] }}",
+            ["Bifrost:Metadata:7"] = $"main.royalties {{ operation-id: optional; policy-actions: read, create[{Writer}]; policy-write-deny: rate-pct; policy-write-deny-roles: {Clerk} }}",
         }).Build();
 
         _host = await new HostBuilder().ConfigureWebHost(web =>
@@ -228,6 +232,43 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
         FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
         retry.RootElement.GetProperty("data").GetProperty("notes_batch").ValueKind.Should().Be(JsonValueKind.Null);
         (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Batch_retry_writing_a_renamed_column_the_caller_is_now_denied_is_refused()
+    {
+        using var author = await SendAsync("""mutation { authors(insert: { name: "ann" }) }""");
+        var authorId = Data(author, "authors").GetRawText();
+        var batch = $$"""mutation { royalties_batch(actions: [{ insert: { author_id: {{authorId}}, rate_pct: 5 } }], _operationId: "op-rate-batch") }""";
+        using var first = await SendAsync(batch, Writer);
+        Data(first, "royalties_batch").GetRawText().Should().Be("1");
+
+        using var live = await SendAsync(
+            $$"""mutation { royalties_batch(actions: [{ insert: { author_id: {{authorId}}, rate_pct: 6 } }]) }""", Writer, Clerk);
+        using var retry = await SendAsync(batch, Writer, Clerk);
+
+        FirstError(live).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", live.RootElement.GetRawText());
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("royalties_batch").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM royalties")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Save_retry_writing_a_renamed_child_column_the_caller_is_now_denied_is_refused()
+    {
+        const string save =
+            """mutation { authors(save: { name: "bea", royalties: [{ rate_pct: 5 }] }, _operationId: "op-rate-save") }""";
+        using var first = await SendAsync(save, Writer);
+        Data(first, "authors").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var live = await SendAsync(
+            """mutation { authors(save: { name: "cy", royalties: [{ rate_pct: 6 }] }) }""", Writer, Clerk);
+        using var retry = await SendAsync(save, Writer, Clerk);
+
+        FirstError(live).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", live.RootElement.GetRawText());
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("authors").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM royalties")).Should().Be(1);
     }
 
     [Fact]

@@ -54,7 +54,10 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
                 "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));" +
                 "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL);" +
                 "CREATE TABLE memos (id INTEGER PRIMARY KEY, body TEXT NULL);" +
-                "CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL);";
+                "CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL);" +
+                // Column names that differ from their GraphQL fields (sale_price, stage_name), so a
+                // replay that checks the client's field names instead of the columns misses the policy.
+                "CREATE TABLE prices (id INTEGER PRIMARY KEY, \"sale-price\" INTEGER NULL, \"stage-name\" TEXT NULL);";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -71,6 +74,8 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
             ["Bifrost:Metadata:6"] = $"main.memos {{ operation-id: optional; policy-actions: read, create[{Writer}]; policy-write-deny: body; policy-write-deny-roles: {Clerk} }}",
             ["Bifrost:Metadata:7"] = $"main.tickets {{ operation-id: optional; policy-actions: read, create[{Writer}] }}",
             ["Bifrost:Metadata:8"] = "main.tickets.status { writable-values: open }",
+            ["Bifrost:Metadata:9"] = $"main.prices {{ operation-id: optional; policy-actions: read, create[{Writer}]; policy-write-deny: sale-price; policy-write-deny-roles: {Clerk} }}",
+            ["Bifrost:Metadata:10"] = "main.prices.stage-name { writable-values: open }",
         }).Build();
 
         _host = await new HostBuilder().ConfigureWebHost(web =>
@@ -293,6 +298,40 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
         FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
         retry.RootElement.GetProperty("data").GetProperty("tickets").ValueKind.Should().Be(JsonValueKind.Null);
         (await CountAsync("SELECT count(*) FROM tickets")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Retry_writing_a_renamed_column_the_caller_is_now_denied_is_refused()
+    {
+        const string insert = """mutation { prices(insert: { sale_price: 5 }, _operationId: "op-price") }""";
+        using var first = await SendAsync(insert, Writer);
+        Data(first, "prices").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var live = await SendAsync("""mutation { prices(insert: { sale_price: 6 }) }""", Writer, Clerk);
+        using var retry = await SendAsync(insert, Writer, Clerk);
+
+        FirstError(live).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", live.RootElement.GetRawText());
+        var refused = FirstError(retry);
+        refused.GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        refused.GetProperty("message").GetString().Should().Be(FirstError(live).GetProperty("message").GetString());
+        retry.RootElement.GetProperty("data").GetProperty("prices").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM prices")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Retry_of_a_renamed_column_value_only_an_admin_may_write_is_refused_to_a_non_admin()
+    {
+        const string insert = """mutation { prices(insert: { stage_name: "closed" }, _operationId: "op-stage") }""";
+        using var first = await SendAsync(insert, Writer, Admin);
+        Data(first, "prices").ValueKind.Should().Be(JsonValueKind.Number);
+
+        using var live = await SendAsync("""mutation { prices(insert: { stage_name: "closed" }) }""", Writer);
+        using var retry = await SendAsync(insert, Writer);
+
+        FirstError(live).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", live.RootElement.GetRawText());
+        FirstError(retry).GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetProperty("prices").ValueKind.Should().Be(JsonValueKind.Null);
+        (await CountAsync("SELECT count(*) FROM prices")).Should().Be(1);
     }
 
     private Task<JsonDocument> SendAsync(string query, params string[] roles) => SendAsUserAsync(query, "u-1", roles);

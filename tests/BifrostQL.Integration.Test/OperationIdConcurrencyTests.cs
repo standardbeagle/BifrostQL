@@ -146,9 +146,9 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
         await using var observer = new NpgsqlConnection(_host.ConnectionString);
         await observer.OpenAsync();
 
-        var first = _host.SendAsync(firstQuery);
+        var first = _host.SendAsync(firstQuery, ("X-Test-User", "u-1"));
         await WaitForBlockedBackendsAsync(observer, 1, first);
-        var second = _host.SendAsync(secondQuery);
+        var second = _host.SendAsync(secondQuery, ("X-Test-User", "u-1"));
         await WaitForBlockedBackendsAsync(observer, 2, first, second);
 
         await hold.CommitAsync();

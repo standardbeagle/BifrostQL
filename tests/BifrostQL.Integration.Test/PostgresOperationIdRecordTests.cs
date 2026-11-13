@@ -69,7 +69,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync("""mutation { notes(insert: { title: "fourth" }, _operationId: "op-insert") }""");
+        var (_, reply) = await SendAsync("""mutation { notes(insert: { title: "fourth" }, _operationId: "op-insert") }""");
 
         PostgresGraphQlHost.AssertNoErrors(reply);
         var key = reply.RootElement.GetProperty("data").GetProperty("notes").GetRawText();
@@ -78,7 +78,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
 
         var record = await SingleRecordAsync("op-insert");
         record["tenant"].Should().BeEmpty();
-        record["caller"].Should().BeEmpty();
+        record["caller"].Should().Be(DefaultUser);
         record["table_name"].Should().Be("public.notes");
         record["action"].Should().Be("insert");
         record["target_key"].Should().Be("{}");
@@ -92,7 +92,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (status, reply) = await _host!.SendAsync(
+        var (status, reply) = await SendAsync(
             """mutation { notes(update: { id: 1, title: "edited" }) }""",
             ("X-Test-User", "u-1"), ("X-Test-Tenant", "tenant-7"), ("Idempotency-Key", "op-update"));
 
@@ -113,7 +113,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync("""mutation { notes(upsert: { id: 2, title: "upserted" }, _operationId: "op-upsert") }""");
+        var (_, reply) = await SendAsync("""mutation { notes(upsert: { id: 2, title: "upserted" }, _operationId: "op-upsert") }""");
 
         PostgresGraphQlHost.AssertNoErrors(reply);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE id = 2 AND title = 'upserted'")).Should().Be(1);
@@ -127,7 +127,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync("""mutation { notes(delete: { id: 3 }, _operationId: "op-delete") }""");
+        var (_, reply) = await SendAsync("""mutation { notes(delete: { id: 3 }, _operationId: "op-delete") }""");
 
         PostgresGraphQlHost.AssertNoErrors(reply);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE id = 3")).Should().Be(0);
@@ -144,10 +144,10 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
 
         // An insert never reads _primaryKey, so a stray (here mis-sized) one must not change
         // what an id does: the control runs the same insert without an id.
-        var (_, control) = await _host!.SendAsync("""mutation { notes(insert: { title: "pk control" }, _primaryKey: ["1", "2"]) }""");
+        var (_, control) = await SendAsync("""mutation { notes(insert: { title: "pk control" }, _primaryKey: ["1", "2"]) }""");
         PostgresGraphQlHost.AssertNoErrors(control);
 
-        var (_, reply) = await _host.SendAsync("""mutation { notes(insert: { title: "pk ignored" }, _primaryKey: ["1", "2"], _operationId: "op-insert-pk") }""");
+        var (_, reply) = await SendAsync("""mutation { notes(insert: { title: "pk ignored" }, _primaryKey: ["1", "2"], _operationId: "op-insert-pk") }""");
 
         PostgresGraphQlHost.AssertNoErrors(reply);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'pk ignored'")).Should().Be(1);
@@ -162,9 +162,9 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
 
         // Neither caller has a tenant, so the tenant alone cannot separate them: one user's
         // id must not block (or, once replay lands, answer) another user's write.
-        var (_, first) = await _host!.SendAsync(
+        var (_, first) = await SendAsync(
             """mutation { notes(insert: { title: "from u-1" }, _operationId: "op-shared") }""", ("X-Test-User", "u-1"));
-        var (_, second) = await _host.SendAsync(
+        var (_, second) = await SendAsync(
             """mutation { notes(insert: { title: "from u-2" }, _operationId: "op-shared") }""", ("X-Test-User", "u-2"));
 
         PostgresGraphQlHost.AssertNoErrors(first);
@@ -180,7 +180,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync("""mutation { notes(insert: { title: "refused" }, _operationId: "op-refused") }""");
+        var (_, reply) = await SendAsync("""mutation { notes(insert: { title: "refused" }, _operationId: "op-refused") }""");
 
         PostgresGraphQlHost.FirstError(reply);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'refused'")).Should().Be(0);
@@ -192,7 +192,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync("""mutation { notes(insert: { title: "plain write" }) }""");
+        var (_, reply) = await SendAsync("""mutation { notes(insert: { title: "plain write" }) }""");
 
         PostgresGraphQlHost.AssertNoErrors(reply);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'plain write'")).Should().Be(1);
@@ -204,7 +204,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync(
+        var (_, reply) = await SendAsync(
             """mutation { notes(insert: { title: "two ids" }, _operationId: "op-a") }""",
             ("Idempotency-Key", "op-b"));
 
@@ -220,10 +220,10 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, withArgument) = await _host!.SendAsync("""mutation { plain(insert: { title: "arg" }, _operationId: "op-plain") }""");
+        var (_, withArgument) = await SendAsync("""mutation { plain(insert: { title: "arg" }, _operationId: "op-plain") }""");
         PostgresGraphQlHost.FirstError(withArgument);
 
-        var (_, withHeader) = await _host.SendAsync(
+        var (_, withHeader) = await SendAsync(
             """mutation { plain(insert: { title: "header" }) }""", ("Idempotency-Key", "op-plain"));
         PostgresGraphQlHost.AssertNoErrors(withHeader);
 
@@ -237,7 +237,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (status, _) = await _host!.SendAsync(
+        var (status, _) = await SendAsync(
             """mutation { notes(insert: { title: "repeated header" }) }""",
             ("Idempotency-Key", "op-x"), ("Idempotency-Key", "op-y"));
 
@@ -253,8 +253,8 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         const string batch =
             """mutation { notes_batch(actions: [{ insert: { title: "batched" } }, { insert: { title: "batched" } }], _operationId: "op-batch") }""";
 
-        var (_, first) = await _host!.SendAsync(batch);
-        var (_, retry) = await _host.SendAsync(batch);
+        var (_, first) = await SendAsync(batch);
+        var (_, retry) = await SendAsync(batch);
 
         PostgresGraphQlHost.AssertNoErrors(first);
         first.RootElement.GetRawText().Should().Be("""{"data":{"notes_batch":2}}""");
@@ -271,7 +271,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
-        var (_, reply) = await _host!.SendAsync(
+        var (_, reply) = await SendAsync(
             """mutation { notes_batch(actions: [{ insert: { title: "unrecorded" } }, { insert: { title: "unrecorded" } }], _operationId: "op-unrecordable") }""");
 
         PostgresGraphQlHost.FirstError(reply).GetProperty("extensions").GetProperty("code").GetString()
@@ -294,11 +294,11 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
                 "CREATE UNIQUE INDEX operation_ids_one_per_id ON operation_ids (operation_id)", conn);
             await cmd.ExecuteNonQueryAsync();
         }
-        var (_, first) = await _host.SendAsync(
+        var (_, first) = await SendAsync(
             """mutation { notes(insert: { title: "from u-1" }, _operationId: "op-one") }""", ("X-Test-User", "u-1"));
         PostgresGraphQlHost.AssertNoErrors(first);
 
-        var (_, second) = await _host.SendAsync(
+        var (_, second) = await SendAsync(
             """mutation { notes(insert: { title: "from u-2" }, _operationId: "op-one") }""", ("X-Test-User", "u-2"));
 
         var error = PostgresGraphQlHost.FirstError(second);
@@ -308,6 +308,19 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'from u-2'")).Should().Be(0);
         (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
     }
+
+    private const string DefaultUser = "u-1";
+
+    /// <summary>
+    /// Posts <paramref name="query"/> as <see cref="DefaultUser"/> unless
+    /// <paramref name="headers"/> names its own <c>X-Test-User</c>: an operation id needs a
+    /// caller with a user id.
+    /// </summary>
+    private Task<(HttpStatusCode Status, JsonDocument Body)> SendAsync(
+        string query, params (string Name, string Value)[] headers)
+        => _host!.SendAsync(query, headers.Any(h => h.Name == "X-Test-User")
+            ? headers
+            : headers.Prepend(("X-Test-User", DefaultUser)).ToArray());
 
     private async Task<Dictionary<string, string?>> SingleRecordAsync(string operationId)
     {

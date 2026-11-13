@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using BifrostQL.Core.Model;
@@ -62,7 +63,17 @@ public sealed class OperationIdRequiredTests : IAsyncLifetime
                     .BindConnectionString($"Data Source={_dbPath}")
                     .BindProvider("sqlite"));
             });
-            web.Configure(app => app.UseBifrostQL());
+            web.Configure(app =>
+            {
+                // An operation id needs a caller with a user id, so every request here has one.
+                app.Use((context, next) =>
+                {
+                    context.User = new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] { new Claim(ClaimTypes.NameIdentifier, "u-1") }, "test"));
+                    return next(context);
+                });
+                app.UseBifrostQL();
+            });
         }).StartAsync();
         _client = _host.GetTestClient();
     }

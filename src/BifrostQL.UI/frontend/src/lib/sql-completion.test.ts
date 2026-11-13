@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EditorState } from '@codemirror/state';
+import { ensureSyntaxTree } from '@codemirror/language';
 import { CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 import { SQLite } from '@codemirror/lang-sql';
 import { buildSchemaCompletionMap, createSchemaCompletionSource } from './sql-completion';
@@ -24,6 +25,10 @@ const mockSchema: BuilderSchema = {
 function completionLabels(doc: string, pos: number): string[] {
   const source = createSchemaCompletionSource('sqlite', mockSchema);
   const state = EditorState.create({ doc, extensions: [SQLite] });
+  // EditorState.create parses only as far as a ~20ms work budget allows, and lang-sql reads
+  // aliases from that tree. On a starved CPU the FROM clause past the cursor is left unparsed
+  // and the alias resolves to nothing, so parse the whole document before asking.
+  if (!ensureSyntaxTree(state, state.doc.length, 10_000)) throw new Error('SQL parse did not finish');
   const result = source(new CompletionContext(state, pos, true)) as CompletionResult | null;
   return result ? result.options.map((o) => o.label) : [];
 }

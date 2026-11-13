@@ -27,6 +27,9 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
         await Exec("DROP TABLE IF EXISTS ledger");
         await Exec("DROP TABLE IF EXISTS operation_ids");
         await Exec("DROP TABLE IF EXISTS short_store");
+        await Exec("DROP TABLE IF EXISTS unkeyed_store");
+        await Exec("DROP TABLE IF EXISTS id_only_store");
+        await Exec("DROP TABLE IF EXISTS indexed_store");
         await Exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL)");
         await Exec(
             "CREATE TABLE ledger (id INTEGER PRIMARY KEY, title TEXT NOT NULL, secret TEXT NULL, " +
@@ -48,9 +51,50 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (tenant, caller, operation_id))
             """);
+        // Every column, but nothing makes (tenant, caller, operation_id) unique: two concurrent
+        // claims of one id would both insert, and both writes would commit.
+        await Exec("CREATE TABLE unkeyed_store (id INTEGER PRIMARY KEY, " +
+            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL, " +
+            "action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL)");
+        // Unique, but over the id alone: two callers' ids would collide instead of staying apart.
+        await Exec("CREATE TABLE id_only_store (id INTEGER PRIMARY KEY, " +
+            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL, " +
+            "action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL)");
+        await Exec("CREATE UNIQUE INDEX ux_id_only ON id_only_store (operation_id)");
+        // A unique index over the three key columns, in another order, instead of the primary key.
+        await Exec("CREATE TABLE indexed_store (id INTEGER PRIMARY KEY, " +
+            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL, " +
+            "action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL)");
+        await Exec("CREATE UNIQUE INDEX ux_indexed ON indexed_store (operation_id, caller, tenant)");
     }
 
     public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
+
+    [Fact]
+    public async Task StoreKeyedByAUniqueIndexOverTheOwnerAndId_Loads()
+    {
+        var load = () => LoadAsync(
+            ":root { operation-id-store: main.indexed_store }",
+            "main.indexed_store { visibility: hidden }",
+            "main.notes { operation-id: optional }");
+
+        await load.Should().NotThrowAsync();
+    }
+
+    [Theory]
+    [InlineData("unkeyed_store")]
+    [InlineData("id_only_store")]
+    public async Task StoreWithoutAUniqueKeyOverTheOwnerAndId_IsRefused(string store)
+    {
+        var load = () => LoadAsync(
+            $":root {{ operation-id-store: main.{store} }}",
+            $"main.{store} {{ visibility: hidden }}",
+            "main.notes { operation-id: optional }");
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain(
+                $"store table 'main.{store}' needs a primary key or unique index over exactly (tenant, caller, operation_id)");
+    }
 
     [Theory]
     [InlineData("optional")]

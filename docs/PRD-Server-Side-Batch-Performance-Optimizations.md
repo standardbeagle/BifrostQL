@@ -56,7 +56,7 @@ Individual SQL Commands
 ### 2.2 Current Bottlenecks
 
 #### 2.2.1 N+1 Command Problem
-The `DbTableBatchResolver` (see [source](../src/BifrostQL.Core/Resolvers/DbTableBatchResolver.cs)) parses actions in a loop, then delegates execution to `BatchMutationPipeline.ExecuteBatchAsync`. On an opted-in table, it rejects a batch carrying an operation id before parsing the actions. The following loop illustrates the per-action command bottleneck, rather than the resolver's current implementation:
+The `DbTableBatchResolver` (see [source](../src/BifrostQL.Core/Resolvers/DbTableBatchResolver.cs)) parses actions in a loop, then delegates execution to `BatchMutationPipeline.ExecuteBatchAsync`. On an opted-in table, a batch carrying an operation id runs inside one `OperationWriteScope`, so the actions and the id's record commit together; that path skips the bulk fast path, which opens its own transaction. The following loop illustrates the per-action command bottleneck, rather than the resolver's current implementation:
 
 ```csharp
 foreach (var action in actions)

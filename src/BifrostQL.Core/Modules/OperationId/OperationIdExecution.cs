@@ -173,15 +173,18 @@ namespace BifrostQL.Core.Modules.OperationId
         /// not which branch ran, so it must pass both the create and the update check. Row-level
         /// checks (row scope, self deny, tenant filter) need the row and the chain, which a replay
         /// does not run; the record's owner key already confines it to the caller and tenant that
-        /// wrote it. A batch asks this per action and a save per tree node.
+        /// wrote it. A batch asks this per action and a save per tree node. The input is rekeyed
+        /// from GraphQL field names to column names first, as the live chain does in
+        /// <see cref="MutationTransformersWrap.TransformAsync"/>: the policy names columns, so a
+        /// column whose name differs from its field would otherwise escape its refusal.
         /// </summary>
         internal static void AuthorizeReplay(
             IDbTable table, MutationAction action, IReadOnlyDictionary<string, object?> input,
             IReadOnlyList<object?>? primaryKeyValues, IDictionary<string, object?> userContext)
         {
-            var data = action == MutationAction.Insert
-                ? new Dictionary<string, object?>(input, StringComparer.OrdinalIgnoreCase)
-                : MutationArgumentBinder.SplitProperties(table, input, primaryKeyValues).data;
+            var data = DbParameterBinder.ToDbColumnKeys(table, action == MutationAction.Insert
+                ? input
+                : MutationArgumentBinder.SplitProperties(table, input, primaryKeyValues).data);
             MutationType[] checks = action switch
             {
                 MutationAction.Insert => [MutationType.Insert],

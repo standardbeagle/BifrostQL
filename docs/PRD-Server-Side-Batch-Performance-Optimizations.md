@@ -313,7 +313,7 @@ public class StreamingBatchResolver
 ```
 
 #### Expected Performance Gain
-- **Constant memory usage** regardless of batch size
+- **Bounded action buffering** proportional to `BatchSize`, independent of total streamed row count
 - **Progress reporting** capability
 - **Cancellation support** at row level
 
@@ -325,7 +325,9 @@ public class StreamingBatchResolver
 > (`src/data/BifrostQL.SqlServer`) stages transformed batch rows into a
 > clustered-indexed `#temp` table via `SqlBulkCopy` with an I/U/D op column,
 > then applies set-based INSERT…SELECT / UPDATE…JOIN / DELETE…JOIN inside one
-> inline SQL transaction. Gated per table by `bulk-batch-threshold` and built
+> inline SQL transaction. Only batches without an operation-id write scope are
+> eligible; batches carrying an operation id execute per row on that scope's
+> transaction. Gated per table by `bulk-batch-threshold` and built
 > by `BulkBatchPlanBuilder` in Core (full per-row transformer chain; falls
 > back to the per-row loop for hooks/upserts/state machines/heterogeneous
 > filters).

@@ -122,6 +122,11 @@ included, and runs no SQL write, transformer or hook. The retry still passes the
 for its verb, so a caller who lost the grant gets `ACCESS_DENIED`; an `upsert` retry must pass
 both the create and the update check.
 
+`_batch` and `save` take one id for the whole batch or saved tree: the actions or nodes and the
+record commit in one transaction, so a failed batch leaves no record, and a retry answers the
+recorded result without a second write. A batch with an id runs row by row, never on the bulk
+path. A `save` whose tree reaches an `approval` table is refused with `OPERATION_ID_UNSUPPORTED`.
+
 Two requests with the same id at the same time commit one effect: the second waits for the first
 to commit and answers as a retry would (the recorded result, or `OPERATION_ID_REUSED` for a
 different request) instead of a `CONFLICT` on the store.
@@ -132,8 +137,8 @@ its own data.
 
 A table with `operation-id: required` records a write that carries an id and refuses every write
 without one with `OPERATION_ID_REQUIRED`, writing nothing. The check runs on every write path, so
-`sync`, `save`, `delta`, `updateWhere`, `_batch`, nested, file, custom-operation, chat plan and
-protocol adapter writes cannot write the table. Model load refuses `required` beside `retain`,
+`sync`, `delta`, `updateWhere`, file, custom-operation, chat plan and protocol adapter writes
+cannot write the table. Model load refuses `required` beside `retain`,
 `ttl`, `deferrable`, an `encrypt` column or a chat table, whose engines write without an id, and
 refuses `operation-id` on a hidden table.
 

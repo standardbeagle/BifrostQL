@@ -63,13 +63,18 @@ On `main` after v0.4.28; not yet on NuGet.
   or `delete` that carries `_operationId` or an `Idempotency-Key` header: tenant, caller, id,
   table, verb, target key, input hash and result go into the hidden store named by
   `:root { operation-id-store: <table> }`, on the write's own transaction. A refused write
-  leaves no record; a write without an id runs as before. An id on `sync`, `save`, `delta`,
-  `updateWhere` or `_batch` is refused with `OPERATION_ID_UNSUPPORTED`. Model load checks the
+  leaves no record; a write without an id runs as before. An id on `sync`, `delta` or
+  `updateWhere` is refused with `OPERATION_ID_UNSUPPORTED`. Model load checks the
   store exists, is `visibility: hidden` and carries every column. See the mutations guide.
 - Operation-id replay. A retry with the same id and the same request answers with the
   recorded result, generated key included, and runs no SQL write, transformer or hook. The
   retry still passes the table's policy for its verb, so a caller who lost the grant gets
   `ACCESS_DENIED`; an `upsert` retry must pass both the create and the update check.
+- Operation ids on `_batch` and `save`. One id covers the whole batch or saved tree: the
+  actions or nodes and the record commit in one transaction, so a failed batch leaves no record,
+  and a retry answers the recorded result without a second write. A batch with an id runs row
+  by row, never on the bulk path. A `save` whose tree reaches an `approval` table is refused with
+  `OPERATION_ID_UNSUPPORTED`.
 - Concurrent operation ids. Two requests with the same id at the same time commit one effect:
   the second waits for the first to commit and answers as a retry would (the recorded result,
   or `OPERATION_ID_REUSED` for a different request) instead of a `CONFLICT` on the store.
@@ -78,8 +83,8 @@ On `main` after v0.4.28; not yet on NuGet.
   `CONFLICT` on its own data.
 - `operation-id: required`. A table with this mode records a write that carries an id and
   refuses every write without one with `OPERATION_ID_REQUIRED`, writing nothing. The check runs
-  on every write path, so `sync`, `save`, `delta`, `updateWhere`, `_batch`, nested, file,
-  custom-operation, chat plan and protocol adapter writes cannot write the table. Model load
+  on every write path, so `sync`, `delta`, `updateWhere`, file, custom-operation, chat plan and
+  protocol adapter writes cannot write the table. Model load
   refuses `required` beside `retain`, `ttl`, `deferrable`, an `encrypt` column or a chat table,
   whose engines write without an id, and refuses `operation-id` on a hidden table.
 

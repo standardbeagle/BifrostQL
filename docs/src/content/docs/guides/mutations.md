@@ -221,11 +221,32 @@ none), the id, the table, the verb, the key the write addressed (`{}` for a key 
 SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
 record. On an `optional` table a write without an id runs exactly as before.
 
+A `<table>_batch` field and a `save` take one id for the whole request:
+
+```graphql
+mutation {
+  invoices_batch(actions: [
+    { insert: { customer_id: 7, total: 120 } },
+    { insert: { customer_id: 8, total: 80 } }
+  ], _operationId: "7b0c1f0e-import-1")
+}
+```
+
+The claim, every action (or every node of the saved tree) and the record share one transaction:
+the batch commits with its record or rolls back with it, so a batch that fails leaves no record
+and the id stays free. The record's verb is `batch` or `save`. A batch's target key is `{}`; a
+save's is the root's key. A batch with an id always runs row by row, never on the set-based bulk
+path. A `save` whose tree reaches a table that requires `approval` is refused with
+`OPERATION_ID_UNSUPPORTED` and writes nothing, because a pending change cannot outlive a write
+whose record must commit with it. A retry of a batch or save passes the policy for every action
+or node it recorded.
+
 A table that sets `operation-id: required` refuses every write that carries no id with
 `OPERATION_ID_REQUIRED`, and writes nothing. The check runs on every write path. Only a
-single-row GraphQL `insert`, `update`, `upsert` or `delete` can carry an id, so `sync`, `save`,
-`delta`, `updateWhere`, `_batch`, nested writes, file mutations, custom operations, LLM chat
-plan writes and protocol adapter writes cannot write such a table. Model load refuses
+GraphQL `insert`, `update`, `upsert`, `delete`, `_batch` or `save` can carry an id, so `sync`,
+`delta`, `updateWhere`, file mutations, custom operations, LLM chat plan writes and protocol
+adapter writes cannot write such a table. A `save` with an id covers its whole tree, so the
+tree's nested writes to a required table are recorded with it. Model load refuses
 `required` beside `retain`, `ttl`, `deferrable`, an `encrypt` column, `chat-conversations` or
 `chat-messages`, because those features' engines write the table without an id. A hidden table
 cannot set `operation-id` at all. Like every metadata key, the mode belongs to one endpoint's
@@ -264,7 +285,8 @@ Send one write per request with the header, or omit the header and give each fie
 | A blank id, or one longer than 200 characters | `INVALID_VALUE`, nothing written |
 | `Idempotency-Key` sent more than once | HTTP 400 |
 | A known id with a different table, verb, target key or arguments | `OPERATION_ID_REUSED`, nothing written or replayed |
-| An id on `sync`, `save`, `delta`, `updateWhere` or `_batch` | `OPERATION_ID_UNSUPPORTED`, nothing written |
+| An id on `sync`, `delta` or `updateWhere` | `OPERATION_ID_UNSUPPORTED`, nothing written |
+| An id on a `save` whose tree reaches an `approval` table | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | No id on a write to an `operation-id: required` table | `OPERATION_ID_REQUIRED`, nothing written |
 | The header on a table that does not opt in | Ignored |
 

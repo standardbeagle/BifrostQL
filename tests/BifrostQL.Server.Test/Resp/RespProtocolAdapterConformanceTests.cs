@@ -61,6 +61,10 @@ namespace BifrostQL.Server.Test.Resp
         // …but the key-addressed wire has no INSERT verb; the two insert facts are skipped honestly.
         protected override bool AdapterSupportsInserts => false;
 
+        // A write to an operation-id: required table cannot carry an id on this wire, so the
+        // refusal must reach the client as OPERATION_ID_REQUIRED, not as an internal error.
+        protected override bool AdapterSupportsOperationIdRefusal => true;
+
         // The wire withholds the specific rejection reason (invariant 3); the fail-closed facts assert
         // the sanitized text the client actually receives.
         // Both fail-closed conditions the kit exercises (tenant-context-required and

@@ -35,6 +35,10 @@ namespace BifrostQL.Mcp.Test
 
         protected override bool AdapterSupportsMutations => true;
 
+        // A write to an operation-id: required table cannot carry an id on this wire, so the
+        // refusal must reach the client as OPERATION_ID_REQUIRED, not as an internal error.
+        protected override bool AdapterSupportsOperationIdRefusal => true;
+
         /// <summary>
         /// MCP sanitizes every <see cref="BifrostExecutionError"/> before it reaches the wire
         /// (invariant 3): the canonical server fragments name a schema-qualified table, a tenant

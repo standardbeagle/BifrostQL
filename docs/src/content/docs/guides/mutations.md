@@ -217,8 +217,8 @@ mutation {
 ```
 
 An `insert`, `update`, `upsert` or `delete` that carries an id writes one store row on the
-write's own transaction. The row holds the caller's tenant and user id (each empty when there is
-none), the id, the table, the verb, the key the write addressed (`{}` for a key the database generates), a
+write's own transaction. The row holds the caller's tenant (empty when there is none) and user
+id, the id, the table, the verb, the key the write addressed (`{}` for a key the database generates), a
 SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
 record. On an `optional` table a write without an id runs exactly as before.
 
@@ -262,9 +262,8 @@ still passes the table's policy for its verb (`policy-actions`, `policy-write-de
 `writable-values`), so a caller who has lost the grant gets the same `ACCESS_DENIED` a fresh
 write would. An `upsert` retry must pass both the create and the update check, because the record
 does not say which branch ran. Row scope, the tenant filter and host security transformers are not
-checked again. A record answers only its owner (tenant and user id), so for a caller with a user id
-it answers only the caller that wrote it. Callers with no user id share one owner (see below): one
-of them who repeats another's id and arguments is answered with the other's recorded key or count.
+checked again. A record answers only its owner (tenant and user id), so it answers only the caller that
+wrote it.
 
 Two requests that carry the same id at the same time commit one effect. The second waits for
 the first to commit, then answers as a retry would: the recorded result for the same request,
@@ -272,8 +271,11 @@ the first to commit, then answers as a retry would: the recorded result for the 
 writes.
 
 Each tenant and user has its own id space: two users may send the same id without colliding.
-Callers with no user id share their tenant's id space, or one shared space when there is no
-tenant either, so an anonymous client should send ids it generates at random.
+A write that carries an id from a caller without a user id is refused with
+`OPERATION_ID_ANONYMOUS` and writes nothing. Such callers cannot be told apart, so a shared id
+space would answer one of them with another's recorded result. The same caller's write without
+an id runs as usual on an `optional` table; a `required` table cannot be written without a user
+id.
 
 The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
 document with two such fields records both under one id: the second answers
@@ -291,6 +293,7 @@ Send one write per request with the header, or omit the header and give each fie
 | An id on `sync`, `delta` or `updateWhere` | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | An id on a `save` whose tree reaches an `approval` table | `OPERATION_ID_UNSUPPORTED`, nothing written |
 | No id on a write to an `operation-id: required` table | `OPERATION_ID_REQUIRED`, nothing written |
+| An id from a caller without a user id | `OPERATION_ID_ANONYMOUS`, nothing written |
 | The header on a table that does not opt in | Ignored |
 
 A table that also sets `approval` cannot opt in, and the model fails to load. Model load also

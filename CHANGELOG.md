@@ -89,6 +89,9 @@ On `main` after v0.4.28; not yet on NuGet.
   protocol adapter writes cannot write the table. Model load
   refuses `required` beside `retain`, `ttl`, `deferrable`, an `encrypt` column or a chat table,
   whose engines write without an id, and refuses `operation-id` on a hidden table.
+- Operation ids need a caller with a user id. A write that carries an id from a caller without
+  one is refused with `OPERATION_ID_ANONYMOUS` and writes nothing: such callers would share one
+  id space, so one could be answered with another's recorded result.
 
 ### Changed
 

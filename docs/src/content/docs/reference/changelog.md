@@ -155,6 +155,10 @@ cannot write the table. Model load refuses `required` beside `retain`,
 `ttl`, `deferrable`, an `encrypt` column or a chat table, whose engines write without an id, and
 refuses `operation-id` on a hidden table.
 
+Operation ids need a caller with a user id. A write that carries an id from a caller without one
+is refused with `OPERATION_ID_ANONYMOUS` and writes nothing: such callers would share one id
+space, so one could be answered with another's recorded result.
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

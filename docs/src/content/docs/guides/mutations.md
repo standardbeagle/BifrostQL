@@ -273,7 +273,8 @@ id.
 Two requests that carry the same id at the same time commit one effect. The second waits for
 the first to commit, then answers as a retry would: the recorded result for the same request,
 `OPERATION_ID_REUSED` for a different one. If the first rolls back, the second claims the id and
-writes.
+writes, and any others answer from its record. On MySQL two requests waiting on a claim that rolls
+back can deadlock; the one the database rolls back runs once more and answers from the record too.
 
 Each tenant and user has its own id space: two users may send the same id without colliding.
 A write that carries an id from a caller without a user id is refused with

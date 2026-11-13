@@ -162,6 +162,12 @@ space, so one could be answered with another's recorded result.
 The store keeps every record unless it declares a `ttl` (`ttl: 30d after created_at`). With one,
 the retention purge deletes older records, and a retry of a purged id runs as a fresh write.
 
+### Fixed — racing operation ids on MySQL no longer answer `DATABASE_ERROR`
+
+Three or more requests racing one operation id whose first attempt rolled back could deadlock on
+MySQL (error 1213), and the request the database rolled back answered `DATABASE_ERROR`. It now runs
+once more and answers from the record the surviving request commits.
+
 ### Changed — gRPC, RESP and MCP name operation-id refusals
 
 A gRPC write refused for its operation id answered `INTERNAL`, which clients retry. A write to an

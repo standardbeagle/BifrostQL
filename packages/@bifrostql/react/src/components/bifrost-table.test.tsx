@@ -298,9 +298,12 @@ describe('BifrostTable', () => {
 
         const table = screen.getByRole('table');
         const theme = getTheme(themeName);
-        expect(table.style.fontFamily).toBe(
-          (theme.table.fontFamily as string) ?? '',
-        );
+        // Compare against the DOM's own serialization of the theme value:
+        // whether a family name like "Segoe UI" keeps its quotes is up to
+        // the CSS engine, not the component.
+        const expected = document.createElement('div');
+        expected.style.fontFamily = (theme.table.fontFamily as string) ?? '';
+        expect(table.style.fontFamily).toBe(expected.style.fontFamily);
       });
     }
 

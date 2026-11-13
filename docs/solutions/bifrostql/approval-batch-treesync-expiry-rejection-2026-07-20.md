@@ -20,7 +20,7 @@ tags: [approval, batch, treesync, expiry, state-machine, mutation-pipeline, affe
 
 ## Lessons
 
-1. Approval interception is diversion, not a transaction veto. Batch actions each enqueue and apply no target write. TreeSync must pin its mixed-tree contract: an ungated node may commit while a gated node is diverted and queued. Do not promise whole-tree atomic approval semantics unless the whole tree is gated or a separate orchestration policy supplies it.
+1. Approval interception is diversion, not a transaction veto. On an approval-gated table, batch actions enqueue pending changes and apply no target writes. Without an operation ID, TreeSync must pin its mixed-tree contract: an ungated node may commit while a gated node is diverted and queued. A `save` that records an operation ID instead refuses a diverted node with `OPERATION_ID_UNSUPPORTED` and rolls back the entire tree, pending enqueue, and operation-ID record. Do not promise whole-tree atomic approval semantics unless the whole tree is gated or a separate orchestration policy supplies it.
 2. Expiry is a terminal queue-lifecycle transition (`pending -> expired`), not an ad-hoc timestamp check in approval. Trusted server sweepers call `ApprovalDecisionService.ExpireAsync`, which uses `PendingChangeStore.TransitionFromPendingAsync` with a `state == pending` guard, so a later approval sees the authoritative non-pending state and cannot replay.
 3. Reject/expire queue-state changes use the engine-owned `PendingChangeStore.TransitionFromPendingAsync` SQL seam; the approval queue refuses writes through the mutation pipeline. `ApprovalDecisionService` requires the returned affected-row count to equal 1. Rejection passes its tenant, self-approval, role, and policy checks; expiry is trusted-server-only and performs no authorization. Approved application-table writes still use `IMutationIntentExecutor` and the shared mutation pipeline.
 
@@ -28,7 +28,7 @@ tags: [approval, batch, treesync, expiry, state-machine, mutation-pipeline, affe
 
 - The initial TreeSync assumption treated a queued child like a veto and risked claiming all-or-nothing semantics; the proving mixed-tree test showed partial application is the shipped contract.
 - Expiry was not represented as a state transition until this slice, leaving approval-time timestamp logic as an easy bypass point.
-- Review caught rejection using direct `UPDATE` SQL. The first implementation test passed, but it bypassed the mutation pipeline; rework routed it through the executor and added an intent/AffectedRows contract test.
+- The earlier executor-based rejection rework is not the current queue-state contract. The approval queue now refuses mutation-pipeline writes; rejection authorizes in `ApprovalDecisionService`, then uses the engine-owned `PendingChangeStore.TransitionFromPendingAsync` SQL seam with a `state == pending` guard and requires exactly one affected row.
 
 ## Why it recurs
 

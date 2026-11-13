@@ -11,6 +11,26 @@ updates:
       dotnet-dependencies:
         patterns:
           - "*"
+    # These packages' major version is the .NET release they ship with, so
+    # it moves with the TargetFrameworks, not with a weekly bump. #53 tried
+    # to put the .NET 11 line on libraries that target net8.0/net9.0/net10.0
+    # (Data.Sqlite.Core 11 ships no net8.0/net9.0 build). It also rewrote the
+    # net8.0/net9.0-conditioned ASP.NET test hosts to 10.x, because Dependabot
+    # can't follow per-framework conditions. Patch and minor updates still
+    # arrive as usual.
+    ignore:
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.Configuration*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.DependencyInjection*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.Logging*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Data.Sqlite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.IO.Hashing"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used by the workflows below.
   - package-ecosystem: "github-actions"

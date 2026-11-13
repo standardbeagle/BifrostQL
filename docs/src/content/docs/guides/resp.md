@@ -246,6 +246,12 @@ An unexpected server-side execution fault (e.g. a policy read-deny deeper in the
 pipeline) is answered with a sanitized `ERR internal error`; the real exception is
 logged server-side and never crosses the wire.
 
+A write to an `operation-id: required` table is refused, because a RESP write cannot carry an
+[operation id](/BifrostQL/guides/mutations/#operation-ids). The reply names the condition with
+its code as the error kind, `-OPERATION_ID_REQUIRED this write requires an operation id.`, so a
+client does not retry it as an internal fault. The other `OPERATION_ID_*` refusals are named the
+same way.
+
 ## Security guarantees
 
 Everything above rolls up to a short list a security reviewer can check:

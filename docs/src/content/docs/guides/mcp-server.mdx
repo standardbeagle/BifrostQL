@@ -334,6 +334,7 @@ answered with a stable code and the detail is logged server-side only:
 |---|---|---|
 | A table the caller may not READ, named to any read tool | none — the `Unknown table '<name>'` prompt | Pick a table from the list the prompt gives; a denied table and a name that does not exist are deliberately indistinguishable. |
 | Authorization refusal reaching the pipeline — a tenant-less identity, a policy-denied column, a denied write | `access_denied` | Try a table it is permitted to read, or ask the user to supply the missing context. |
+| A write to an `operation-id: required` table (an MCP write cannot carry an [operation id](/BifrostQL/guides/mutations/#operation-ids)) | `OPERATION_ID_REQUIRED` | Not retryable; the table accepts writes only through GraphQL with an id. The other `OPERATION_ID_*` refusals are named the same way. |
 | Any other server-side execution failure | `execution_error` | Not retryable as-is; the identical call will fail the same way. |
 | Unmapped OIDC issuer | generic authentication error | Re-authenticate; the issuer name is never on the wire. |
 

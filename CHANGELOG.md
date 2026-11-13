@@ -108,6 +108,10 @@ On `main` after v0.4.28; not yet on NuGet.
   A write to an `operation-id: required` table now gets `FAILED_PRECONDITION` with
   `OPERATION_ID_REQUIRED: this write requires an operation id.`; `OPERATION_ID_REUSED` maps to
   `ALREADY_EXISTS`. The text is fixed per code and names no table.
+- RESP and MCP answered the same refusal with `ERR internal error` and `execution_error`. RESP
+  now replies `-OPERATION_ID_REQUIRED this write requires an operation id.` and MCP
+  `OPERATION_ID_REQUIRED: this write requires an operation id.`; the other `OPERATION_ID_*`
+  codes are named the same way.
 - A `visibility: hidden` table's `retain` or `ttl` was not checked at model load, although the
   purge sweeps hidden tables. An invalid one (bad duration, missing or non-timestamp anchor)
   loaded and the purge skipped the table with an error on every pass. Model load now refuses it,

@@ -162,13 +162,18 @@ space, so one could be answered with another's recorded result.
 The store keeps every record unless it declares a `ttl` (`ttl: 30d after created_at`). With one,
 the retention purge deletes older records, and a retry of a purged id runs as a fresh write.
 
-### Changed — gRPC names operation-id refusals
+### Changed — gRPC, RESP and MCP name operation-id refusals
 
 A gRPC write refused for its operation id answered `INTERNAL`, which clients retry. A write to an
 `operation-id: required` table now gets `FAILED_PRECONDITION` with the message
 `OPERATION_ID_REQUIRED: this write requires an operation id.` `OPERATION_ID_REUSED` maps to
 `ALREADY_EXISTS`; `OPERATION_ID_UNSUPPORTED` and `OPERATION_ID_ANONYMOUS` to `FAILED_PRECONDITION`.
 A client that branches on `INTERNAL` for these writes should branch on the new status.
+
+RESP answered the same refusal with `ERR internal error` and MCP with `execution_error`. RESP now
+replies `-OPERATION_ID_REQUIRED this write requires an operation id.`, with the code as the error
+kind, and MCP returns `OPERATION_ID_REQUIRED: this write requires an operation id.` The other
+`OPERATION_ID_*` codes are named the same way on both.
 
 ### Changed — a hidden table's invalid retention fails model load
 

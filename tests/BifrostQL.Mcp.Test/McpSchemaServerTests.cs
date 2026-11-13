@@ -139,7 +139,10 @@ namespace BifrostQL.Mcp.Test
         [Fact]
         public void Handshake_ReportsBifrostServerWithToolsAndResources()
         {
-            _client.ServerInfo.Name.Should().Be("BifrostQL");
+            // ServerInfo is nullable since SDK 2.3 (servers may omit identity on
+            // discovery); BifrostQL always sends it, so require it here.
+            _client.ServerInfo.Should().NotBeNull();
+            _client.ServerInfo!.Name.Should().Be("BifrostQL");
             _client.ServerCapabilities.Tools.Should().NotBeNull();
             _client.ServerCapabilities.Resources.Should().NotBeNull();
             _client.ServerInstructions.Should().Contain("bifrost_schema_overview");

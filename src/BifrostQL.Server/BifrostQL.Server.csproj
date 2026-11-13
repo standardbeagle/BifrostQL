@@ -50,12 +50,12 @@
 	</PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.22" Condition="'$(TargetFramework)'=='net8.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.12" Condition="'$(TargetFramework)'=='net9.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.2" Condition="'$(TargetFramework)'=='net10.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.22" Condition="'$(TargetFramework)'=='net8.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="9.0.12" Condition="'$(TargetFramework)'=='net9.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.2" Condition="'$(TargetFramework)'=='net10.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.34" Condition="'$(TargetFramework)'=='net8.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.23" Condition="'$(TargetFramework)'=='net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" Condition="'$(TargetFramework)'=='net10.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="8.0.34" Condition="'$(TargetFramework)'=='net8.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="9.0.23" Condition="'$(TargetFramework)'=='net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.15" Condition="'$(TargetFramework)'=='net10.0'" />
     <!-- ASP.NET Core GraphQL server transports + GraphiQL UI. Previously pulled
          in transitively via Core; now referenced directly since Core narrowed to
          the GraphQL engine only. -->
@@ -66,11 +66,11 @@
          dynamically (byte[] marshallers + a contract-driven protobuf codec), so no
          compiled .proto stubs are needed. Server.Reflection carries the
          Grpc.Reflection message types the identity-filtered reflection service reuses. -->
-    <PackageReference Include="Grpc.AspNetCore" Version="2.84.0" />
-    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.84.0" />
-    <PackageReference Include="System.IO.Hashing" Version="10.0.13" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.13" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.13" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.85.0" />
+    <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.85.0" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.15" />
   </ItemGroup>
 
   <ItemGroup>

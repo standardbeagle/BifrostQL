@@ -13,12 +13,12 @@
     "@standardbeagle/edit-db": "workspace:*",
     "@standardbeagle/virtual-router": "^1.2.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/react": "^18.3.28",
-    "@types/react-dom": "^18.3.7",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react-swc": "^4.3.3",
     "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",

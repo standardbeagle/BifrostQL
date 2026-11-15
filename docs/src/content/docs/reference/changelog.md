@@ -33,6 +33,10 @@ On `main` after v0.4.28; not yet on NuGet.
   operation-id claim treated any such error as a lost claim. `BifrostExecutionError.IsUniqueViolation`
   now reads the driver's code: PostgreSQL `23505`, MySQL error 1062, SQL Server 2627/2601, SQLite
   extended code 2067/1555. An exception that is not a `DbException` is never a unique violation.
+- A workflow step was reported as `conflict` when its error text contained BifrostQL's own conflict
+  message, so a value quoting that message failed its step as a conflict. The runner now reads the
+  `CONFLICT` error code. `IBifrostWorkflowExecutor` errors keep their joined message and now carry
+  the GraphQL error (the conflict, when there is one) as `InnerException`.
 
 ### Breaking — dialect date/JSON hooks take a lowering callback
 

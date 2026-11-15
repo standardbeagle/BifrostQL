@@ -386,6 +386,11 @@ violation. On those dialects a unique violation is `CONFLICT` with no `constrain
 foreign-key violation stays `DATABASE_ERROR`. Any other integrity
 violation (a `CHECK`, a `NOT NULL`) is `DATABASE_ERROR` on every dialect.
 
+A unique violation is recognized by the driver's own error code, never its message: MySQL error
+1062, SQL Server error 2627 or 2601, SQLite extended code 2067 or 1555, PostgreSQL `23505`. Drivers
+quote the refused value in other errors, so a value that happens to read "duplicate key" never
+turns an invalid-value or truncation error into `CONFLICT`.
+
 ## Return values
 
 Table mutation fields return scalar values, not row objects:

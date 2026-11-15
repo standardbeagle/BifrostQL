@@ -39,6 +39,15 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Fixed — unique violations recognized by driver code
+
+- A database error whose text quoted a uniqueness phrase was reported as `CONFLICT`. Drivers quote
+  the caller's value in other errors (PostgreSQL 22P02, MySQL 1366, SQL Server 2628), so a value
+  reading "duplicate key" turned an invalid-value or truncation error into a conflict, and the
+  operation-id claim treated any such error as a lost claim. `BifrostExecutionError.IsUniqueViolation`
+  now reads the driver's code: PostgreSQL `23505`, MySQL error 1062, SQL Server 2627/2601, SQLite
+  extended code 2067/1555. An exception that is not a `DbException` is never a unique violation.
+
 ### Security
 
 - A caller whose roles included `admin` bypassed every policy grant, row scope, column deny and

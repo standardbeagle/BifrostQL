@@ -146,36 +146,78 @@ namespace BifrostQL.Core.Resolvers
         public const string InvalidValueMessage = "A value could not be read as its column's type.";
 
         /// <summary>
-        /// Walks the exception chain for the fingerprints of a unique/duplicate-key
-        /// violation. Keys off the distinctive PHRASES every supported driver puts in
-        /// these messages, not bare words:
+        /// True when the exception chain holds a driver error whose code says a unique or primary-key
+        /// constraint refused the write. Read from the driver's code, never its text: drivers echo the
+        /// caller's values (Postgres 22P02, MySQL 1366, SQL Server 2628 all quote the rejected value),
+        /// so a phrase match calls any error that quotes "duplicate key" a conflict. The codes, as the
+        /// pinned drivers report them:
         /// <list type="bullet">
-        /// <item>SQLite: <c>UNIQUE constraint failed</c></item>
-        /// <item>SQL Server / PostgreSQL: <c>duplicate key</c> ("Cannot insert duplicate
-        /// key" / "duplicate key value violates unique constraint")</item>
-        /// <item>MySQL: <c>Duplicate entry</c></item>
-        /// <item>PostgreSQL SQLSTATE <c>23505</c></item>
+        /// <item>PostgreSQL: SqlState <c>23505</c>.</item>
+        /// <item>MySQL: SqlState <c>23000</c>, which foreign-key and not-null failures share, with
+        /// server error 1062 in <c>Data["Server Error Code"]</c>.</item>
+        /// <item>SQL Server: no SqlState; error 2627 (constraint) or 2601 (unique index) in
+        /// <c>Data["HelpLink.EvtID"]</c>.</item>
+        /// <item>SQLite: no SqlState and nothing in <c>Data</c>; extended code 2067 (unique) or 1555
+        /// (primary key) on <c>SqliteException.SqliteExtendedErrorCode</c>, read by name because this
+        /// assembly references no driver. A trigger's RAISE text has the same message wrapper as the
+        /// engine's unique check, so the text cannot stand in for the code.</item>
         /// </list>
-        /// Bare "UNIQUE" / "duplicate" are deliberately NOT matched: those words occur in
-        /// ordinary error text — a CHECK constraint named <c>..._unique_...</c>, a column
-        /// or value a driver echoes back ("Duplicate the record?"), a table named
-        /// <c>unique_codes</c> — so a single-word substring test misclassifies unrelated
-        /// failures as conflicts. Short numeric codes (1062, 2627, …) are excluded for the
-        /// same reason: those digits appear in values, ids and offsets.
+        /// Pinned against the real engines by <c>ConstraintViolationClassificationTests</c>.
         /// </summary>
         public static bool IsUniqueViolation(Exception? ex)
         {
             for (var current = ex; current != null; current = current.InnerException)
             {
-                var m = current.Message;
-                if (m.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase)  // SQLite
-                    || m.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)          // SQL Server, PostgreSQL
-                    || m.Contains("Duplicate entry", StringComparison.OrdinalIgnoreCase)        // MySQL
-                    || m.Contains("23505", StringComparison.Ordinal))                           // PostgreSQL SQLSTATE unique_violation
+                if (current is DbException db && IsUniqueViolationCode(db))
                     return true;
             }
             return false;
         }
+
+        private static bool IsUniqueViolationCode(DbException db) => db.SqlState switch
+        {
+            UniqueViolationSqlState => true,
+            MySqlIntegrityViolationSqlState => db.Data[MySqlServerErrorCodeKey] is MySqlDuplicateKeyErrorCode,
+            null => db.Data[SqlServerErrorNumberKey] is SqlServerUniqueConstraintNumber or SqlServerUniqueIndexNumber
+                || SqliteExtendedErrorCode(db) is SqliteUniqueExtendedCode or SqlitePrimaryKeyExtendedCode,
+            _ => false,
+        };
+
+        /// <summary>The SQLite extended result code of a <c>SqliteException</c>, or null for any other error.</summary>
+        private static int? SqliteExtendedErrorCode(DbException db)
+        {
+            var type = db.GetType();
+            if (type.FullName != SqliteExceptionTypeName)
+                return null;
+            return type.GetProperty(SqliteExtendedErrorCodeProperty)?.GetValue(db) as int?;
+        }
+
+        /// <summary>MySQL SQLSTATE 23000, shared by duplicate-key, foreign-key and not-null failures.</summary>
+        private const string MySqlIntegrityViolationSqlState = "23000";
+
+        /// <summary>The <see cref="Exception.Data"/> key under which MySqlConnector carries the server error number.</summary>
+        private const string MySqlServerErrorCodeKey = "Server Error Code";
+
+        /// <summary>MySQL error 1062 <c>ER_DUP_ENTRY</c>.</summary>
+        private const int MySqlDuplicateKeyErrorCode = 1062;
+
+        /// <summary>The <see cref="Exception.Data"/> key under which Microsoft.Data.SqlClient carries the server error number.</summary>
+        private const string SqlServerErrorNumberKey = "HelpLink.EvtID";
+
+        /// <summary>SQL Server error 2627: violation of a PRIMARY KEY or UNIQUE constraint.</summary>
+        private const string SqlServerUniqueConstraintNumber = "2627";
+
+        /// <summary>SQL Server error 2601: duplicate key row in a unique index.</summary>
+        private const string SqlServerUniqueIndexNumber = "2601";
+
+        private const string SqliteExceptionTypeName = "Microsoft.Data.Sqlite.SqliteException";
+        private const string SqliteExtendedErrorCodeProperty = "SqliteExtendedErrorCode";
+
+        /// <summary>SQLite <c>SQLITE_CONSTRAINT_UNIQUE</c>.</summary>
+        private const int SqliteUniqueExtendedCode = 2067;
+
+        /// <summary>SQLite <c>SQLITE_CONSTRAINT_PRIMARYKEY</c>.</summary>
+        private const int SqlitePrimaryKeyExtendedCode = 1555;
 
         private const string UniqueViolationSqlState = "23505";
         private const string ExclusionViolationSqlState = "23P01";

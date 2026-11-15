@@ -8,11 +8,10 @@ namespace BifrostQL.Core.Test.Resolvers;
 
 /// <summary>
 /// Pins the redaction seam <see cref="BifrostExecutionError.FromDatabaseException"/>
-/// and its conflict fingerprinting <see cref="BifrostExecutionError.IsUniqueViolation"/>.
-/// The conflict match keys off distinctive driver PHRASES, not bare words: a bare
-/// "UNIQUE"/"duplicate" occurs in ordinary error text (a CHECK constraint name, a
-/// column/table name, an echoed value), so a single-word test would misclassify
-/// unrelated failures as 409-class conflicts.
+/// and its conflict check <see cref="BifrostExecutionError.IsUniqueViolation"/>, which reads
+/// each driver's duplicate-key code and never the message: drivers echo the caller's values,
+/// so any phrase test misclassifies an unrelated failure as a 409-class conflict. The real
+/// engines are pinned by <c>ConstraintViolationClassificationTests</c>.
 /// </summary>
 public class FromDatabaseExceptionTests
 {
@@ -77,36 +76,59 @@ public class FromDatabaseExceptionTests
         error.ConstraintName.Should().BeNull();
     }
 
-    [Theory]
-    [InlineData("SQLite Error 19: 'UNIQUE constraint failed: users.email'")]     // SQLite
-    [InlineData("Violation of UNIQUE KEY constraint 'IX'. Cannot insert duplicate key in object 'dbo.users'.")] // SQL Server
-    [InlineData("Duplicate entry 'a@b.com' for key 'users.email'")]              // MySQL
-    [InlineData("duplicate key value violates unique constraint \"users_email_key\"")] // PostgreSQL
-    [InlineData("ERROR: 23505: duplicate key")]                                   // PostgreSQL SQLSTATE
-    public void IsUniqueViolation_MatchesRealDriverPhrases(string message)
+    private static FakeDbException MySqlError(int serverErrorCode, string message = "failed")
     {
-        BifrostExecutionError.IsUniqueViolation(new FakeDbException(message)).Should().BeTrue();
+        var error = new FakeDbException(message, "23000");
+        error.Data["Server Error Code"] = serverErrorCode;
+        return error;
+    }
+
+    private static FakeDbException SqlServerError(string errorNumber, string message = "failed")
+    {
+        var error = new FakeDbException(message, sqlState: null);
+        error.Data["HelpLink.EvtID"] = errorNumber;
+        return error;
+    }
+
+    [Fact]
+    public void IsUniqueViolation_ReadsEachDriversDuplicateKeyCode_WithoutItsText()
+    {
+        BifrostExecutionError.IsUniqueViolation(new FakeDbException("failed", "23505")).Should().BeTrue("PostgreSQL 23505");
+        BifrostExecutionError.IsUniqueViolation(MySqlError(1062)).Should().BeTrue("MySQL 23000 with error 1062");
+        BifrostExecutionError.IsUniqueViolation(SqlServerError("2627")).Should().BeTrue("SQL Server 2627, a constraint");
+        BifrostExecutionError.IsUniqueViolation(SqlServerError("2601")).Should().BeTrue("SQL Server 2601, a unique index");
+    }
+
+    [Fact]
+    public void IsUniqueViolation_RefusesOtherCodesThatShareTheState()
+    {
+        BifrostExecutionError.IsUniqueViolation(MySqlError(1452, "Duplicate entry")).Should().BeFalse(
+            "MySQL reports a foreign-key failure (1452) under the same 23000");
+        BifrostExecutionError.IsUniqueViolation(MySqlError(1048)).Should().BeFalse("1048 is a not-null failure");
+        BifrostExecutionError.IsUniqueViolation(SqlServerError("547", "Cannot insert duplicate key")).Should().BeFalse(
+            "SQL Server 547 is a foreign-key or check failure");
+        BifrostExecutionError.IsUniqueViolation(new FakeDbException("23505", "23503")).Should().BeFalse(
+            "a foreign-key SqlState is not a conflict, whatever the text says");
     }
 
     [Theory]
-    // A CHECK constraint whose NAME contains "unique" — not a uniqueness violation.
-    [InlineData("CHECK constraint 'chk_unique_flag' failed")]
-    // A driver echoing a column/value containing the bare word — not a conflict.
-    [InlineData("Column 'UNIQUE_CODE' cannot be null")]
-    [InlineData("Invalid value 'duplicate' for column 'status'")]
-    // An ordinary not-found / syntax error.
-    [InlineData("no such table: ghost")]
-    public void IsUniqueViolation_DoesNotMatchBareWordsOrUnrelatedFailures(string message)
+    [InlineData("SQLite Error 19: 'UNIQUE constraint failed: users.email'")]
+    [InlineData("Violation of UNIQUE KEY constraint 'IX'. Cannot insert duplicate key in object 'dbo.users'.")]
+    [InlineData("Duplicate entry 'a@b.com' for key 'users.email'")]
+    [InlineData("duplicate key value violates unique constraint \"users_email_key\"")]
+    [InlineData("ERROR: 23505: duplicate key")]
+    public void IsUniqueViolation_IgnoresTheDriverPhrases_WithoutTheCode(string message)
     {
         BifrostExecutionError.IsUniqueViolation(new FakeDbException(message)).Should().BeFalse(
-            "only distinctive driver phrases, never a bare UNIQUE/duplicate substring, mark a conflict");
+            "drivers echo the caller's values, so the text alone never marks a conflict");
+        BifrostExecutionError.IsUniqueViolation(new InvalidOperationException(message)).Should().BeFalse(
+            "a non-driver error is never a conflict");
     }
 
     [Fact]
     public void IsUniqueViolation_WalksTheInnerExceptionChain()
     {
-        var inner = new FakeDbException("UNIQUE constraint failed: t.c");
-        var outer = new InvalidOperationException("write failed", inner);
+        var outer = new InvalidOperationException("write failed", MySqlError(1062));
 
         BifrostExecutionError.IsUniqueViolation(outer).Should().BeTrue();
     }
@@ -114,14 +136,23 @@ public class FromDatabaseExceptionTests
     [Fact]
     public void FromDatabaseException_UniqueViolation_MapsToStableConflict()
     {
-        var ex = new FakeDbException("UNIQUE constraint failed: users.email");
+        var ex = SqlServerError("2627", "Violation of UNIQUE KEY constraint 'UQ_users_email'.");
 
         var result = BifrostExecutionError.FromDatabaseException(ex);
 
         result.ErrorCode.Should().Be("CONFLICT");
         result.Message.Should().Be(BifrostExecutionError.ConflictMessage);
-        result.Message.Should().NotContain("users.email", "the conflict message carries no schema detail");
+        result.Message.Should().NotContain("UQ_users_email", "the conflict message carries no schema detail");
         result.InnerException.Should().BeSameAs(ex);
+    }
+
+    [Fact]
+    public void FromDatabaseException_AnEchoedPhrase_StaysTheErrorItIs()
+    {
+        var echo = new FakeDbException("invalid input syntax for type integer: \"duplicate key\"", "22P02");
+
+        BifrostExecutionError.FromDatabaseException(echo).ErrorCode.Should().Be(BifrostExecutionError.InvalidValueCode,
+            "the phrase is the caller's value, so the bad value, not a conflict, is the error");
     }
 
     [Fact]

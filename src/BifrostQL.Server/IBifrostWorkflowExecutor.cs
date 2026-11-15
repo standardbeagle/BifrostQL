@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Workflows;
 using BifrostQL.Model;
 using GraphQL;
@@ -168,11 +169,18 @@ namespace BifrostQL.Server
                 .ToList();
         }
 
+        /// <summary>
+        /// Raises the document's errors as one exception. Its inner exception is the
+        /// conflict error when one occurred, else the first error, so a caller reads the
+        /// condition from <see cref="BifrostExecutionError.ErrorCode"/> on the chain: the
+        /// joined messages can quote the caller's own values.
+        /// </summary>
         private static void ThrowOnErrors(ExecutionResult result)
         {
-            if (result.Errors is { Count: > 0 })
-                throw new InvalidOperationException(
-                    string.Join("; ", result.Errors.Select(e => e.Message)));
+            if (result.Errors is not { Count: > 0 } errors)
+                return;
+            var cause = errors.FirstOrDefault(e => e.Code == BifrostExecutionError.ConflictCode) ?? errors[0];
+            throw new InvalidOperationException(string.Join("; ", errors.Select(e => e.Message)), cause);
         }
 
         /// <summary>

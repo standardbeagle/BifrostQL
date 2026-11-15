@@ -154,24 +154,24 @@ public sealed class WorkflowRunner : IWorkflowRunner
         }
         catch (Exception ex) when (ex is not ArgumentException)
         {
-            // Classify server-side against the full exception chain: the raw
-            // driver error, with its duplicate-key code, lives on the
-            // InnerException because the client-facing message is sanitized.
-            var code = MentionsUniqueViolation(ex) ? "conflict" : "step_failed";
+            // Classify server-side against the full exception chain: the CONFLICT
+            // error, or the raw driver error with its duplicate-key code, lives on
+            // the InnerException because the client-facing message is sanitized.
+            var code = IsConflict(ex) ? "conflict" : "step_failed";
             return StepRunResult.Failure(
                 new WorkflowStepTrace(step.Name, step.Type, false, Error: StepError),
                 code);
         }
     }
 
-    private static bool MentionsUniqueViolation(Exception? ex)
+    private static bool IsConflict(Exception? ex)
     {
-        // The raw driver error is sanitized out of client-facing messages, so
-        // match either the safe conflict message that survives the pipeline or a
-        // driver duplicate-key code still present on the exception chain.
+        // A conflict is read from a code: the CONFLICT error BifrostQL raised, or a
+        // driver's duplicate-key code. Never from message text, which can quote the
+        // caller's values, BifrostQL's own conflict message included.
         for (var current = ex; current != null; current = current.InnerException)
         {
-            if (current.Message.Contains(BifrostExecutionError.ConflictMessage, StringComparison.Ordinal))
+            if (current is BifrostExecutionError { ErrorCode: BifrostExecutionError.ConflictCode })
                 return true;
         }
         return BifrostExecutionError.IsUniqueViolation(ex);

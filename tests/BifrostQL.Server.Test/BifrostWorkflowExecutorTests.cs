@@ -1,8 +1,10 @@
 using System.Security.Claims;
+using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Schema;
+using BifrostQL.Core.Workflows;
 using BifrostQL.Model;
 using BifrostQL.Server.Auth;
 using BifrostQL.Sqlite;
@@ -79,12 +81,18 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
                     audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     tenant_id INTEGER NOT NULL,
                     action TEXT NOT NULL
+                );
+                CREATE TABLE tags (
+                    tag_id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    weight INTEGER NOT NULL
                 );", conn);
             await ddl.ExecuteNonQueryAsync();
 
             var seed = new SqliteCommand(
                 @"INSERT INTO Orders (tenant_id, total) VALUES (1, 10.0), (2, 20.0);
-                  INSERT INTO audit_log (tenant_id, action) VALUES (1, 'seed.tenant1'), (2, 'seed.tenant2');", conn);
+                  INSERT INTO audit_log (tenant_id, action) VALUES (1, 'seed.tenant1'), (2, 'seed.tenant2');
+                  INSERT INTO tags (tag_id, name, weight) VALUES (1, 'red', 1);", conn);
             await seed.ExecuteNonQueryAsync();
         }
 
@@ -282,6 +290,58 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
 
         row.Should().NotBeNull("an admin is not narrowed by the row-scope filter");
         IdOf(row!).Should().Be((long)2);
+    }
+
+    // ---- A workflow step's conflict is read from the error code ----
+
+    /// <summary>
+    /// Runs a one-step workflow that inserts <paramref name="valuesJson"/> into
+    /// <c>tags</c> through the real executor, and returns the run's error code.
+    /// </summary>
+    private async Task<string?> RunTagInsertAsync(string valuesJson)
+    {
+        var (executor, userContext, provider) = BuildExecutor("admin", 1);
+        await using var _ = provider;
+        var workflow = new WorkflowDefinition
+        {
+            Name = "tag-insert",
+            Trigger = new WorkflowTrigger { Type = "manual" },
+            Steps = new[]
+            {
+                new WorkflowStep
+                {
+                    Name = "insert",
+                    Type = "mutation",
+                    Payload = JsonDocument.Parse(
+                        $$"""{ "table": "tags", "action": "insert", "values": {{valuesJson}} }""").RootElement.Clone(),
+                },
+            },
+        };
+        var runner = new WorkflowRunner(
+            new Dictionary<string, WorkflowDefinition> { [workflow.Name] = workflow }, executor);
+
+        var result = await runner.RunAsync(workflow.Name, new Dictionary<string, object?>(), userContext);
+        return result.Error?.Code;
+    }
+
+    [Fact]
+    public async Task WorkflowRunner_DuplicateKeyInsert_FailsAsConflict()
+    {
+        var code = await RunTagInsertAsync("""{ "name": "red", "weight": 1 }""");
+
+        code.Should().Be("conflict", "the unique name 'red' already exists, so the step lost to a conflicting record");
+    }
+
+    [Fact]
+    public async Task WorkflowRunner_AValueEchoingTheConflictMessage_IsNotAConflict()
+    {
+        // weight is an integer column, so this insert fails on the value's type. The
+        // failure text quotes the value, which is BifrostQL's own conflict message: a
+        // runner that matched the text would report a conflict that never happened.
+        var code = await RunTagInsertAsync(
+            $$"""{ "name": "blue", "weight": "{{BifrostExecutionError.ConflictMessage}}" }""");
+
+        code.Should().Be("step_failed", "a bad value is not a conflict, whatever text it carries");
     }
 
     /// <summary>

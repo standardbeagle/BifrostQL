@@ -173,20 +173,13 @@ namespace BifrostQL.Core.QueryModel
 
         private static bool IsMultiLink(IDbModel model, IQueryField parent, string fieldName)
         {
-            var normalizedFieldName = NormalizeColumnName(fieldName);
             var parentTable = ResolveTable(model, NormalizeColumnName(parent.Name));
             // A single-link sharing the field name (self-referential FK) takes
-            // precedence — it stays a bare object, so don't treat it as paged.
-            if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out _)
-                || parentTable.SingleLinks.Values.Any(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase)))
-                return false;
-            if (parentTable.MultiLinks.TryGetValue(normalizedFieldName, out _)
-                || parentTable.MultiLinks.Values.Any(l => string.Equals(l.ChildFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase)))
-                return true;
-            // Many-to-many target collections page per source parent exactly like
-            // multi-links (the junction hop is transparent to the contract).
-            return parentTable.ManyToManyLinks.TryGetValue(normalizedFieldName, out _)
-                || parentTable.ManyToManyLinks.Values.Any(l => string.Equals(l.TargetTable.GraphQlName, normalizedFieldName, StringComparison.OrdinalIgnoreCase));
+            // precedence inside TryResolveLink: it stays a bare object, so it is not
+            // paged. Many-to-many target collections page per source parent exactly
+            // like multi-links (the junction hop is transparent to the contract).
+            return TableLinkResolver.TryResolveLink(parentTable, NormalizeColumnName(fieldName)).Kind
+                is ResolvedLinkKind.Multi or ResolvedLinkKind.ManyToMany;
         }
 
         private static string ResolveTableName(IDbModel model, IQueryField? parent, string fieldName)
@@ -196,18 +189,11 @@ namespace BifrostQL.Core.QueryModel
                 return normalizedFieldName;
 
             var parentTable = ResolveTable(model, NormalizeColumnName(parent.Name));
-            if (parentTable.SingleLinks.TryGetValue(normalizedFieldName, out var singleLink)
-                || (singleLink = parentTable.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase))) != null)
-                // The TABLE name, not the link's field name: the caller feeds this
-                // straight into a table lookup. Which of several links to that table
-                // was navigated is recovered later, by field name, in ConnectLinks.
-                return singleLink.ParentTable.GraphQlName;
-
-            if (parentTable.MultiLinks.TryGetValue(normalizedFieldName, out var multiLink)
-                || (multiLink = parentTable.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, normalizedFieldName, StringComparison.OrdinalIgnoreCase))) != null)
-                return multiLink.ChildTable.GraphQlName;
-
-            return normalizedFieldName;
+            // The TABLE name, not the link's field name: the caller feeds this
+            // straight into a table lookup. Which of several links to that table
+            // was navigated is recovered later, by field name, in ConnectLinks.
+            return TableLinkResolver.TryResolveLink(parentTable, normalizedFieldName).TargetTable?.GraphQlName
+                ?? normalizedFieldName;
         }
 
         public TableJoin ToJoin(IDbModel model, GqlObjectQuery parent)
@@ -287,25 +273,21 @@ namespace BifrostQL.Core.QueryModel
                     continue;
                 }
 
-                var matched = false;
-                if (currentTable.SingleLinks.TryGetValue(linkName, out var singleLink)
-                    || (singleLink = currentTable.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, linkName, StringComparison.OrdinalIgnoreCase))) != null)
+                // Aggregate paths walk single and multi links only; a many-to-many
+                // hop has no aggregate correlation and is reported as unmatched.
+                var resolved = TableLinkResolver.TryResolveLink(currentTable, linkName);
+                switch (resolved.Kind)
                 {
-                    links.Add((LinkDirection.ManyToOne, singleLink));
-                    currentTable = singleLink.ParentTable;
-                    matched = true;
+                    case ResolvedLinkKind.Single:
+                        links.Add((LinkDirection.ManyToOne, resolved.Link!));
+                        break;
+                    case ResolvedLinkKind.Multi:
+                        links.Add((LinkDirection.OneToMany, resolved.Link!));
+                        break;
+                    default:
+                        throw new BifrostExecutionError($"Unable to find link {linkName} on table {currentTable.GraphQlName}");
                 }
-
-                if (!matched && (currentTable.MultiLinks.TryGetValue(linkName, out var multiLink)
-                    || (multiLink = currentTable.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, linkName, StringComparison.OrdinalIgnoreCase))) != null)
-                )
-                {
-                    links.Add((LinkDirection.OneToMany, multiLink));
-                    currentTable = multiLink.ChildTable;
-                    matched = true;
-                }
-                if (!matched)
-                    throw new BifrostExecutionError($"Unable to find link {linkName} on table {currentTable.GraphQlName}");
+                currentTable = resolved.TargetTable!;
 
                 value = objVal.Values.First();
             }

@@ -646,14 +646,13 @@ namespace BifrostQL.Core.QueryModel
         {
             foreach (var link in Links)
             {
-                var thisDto = DbTable;
                 // The real query path sets FieldName (normalized) via QueryField; links
-                // constructed directly carry only GraphQlName. Fall back so both resolve
-                // — matching the ManyToMany branch below, which keys on GraphQlName.
+                // constructed directly carry only GraphQlName. Fall back so both resolve.
                 var fieldName = string.IsNullOrEmpty(link.FieldName) ? link.GraphQlName : link.FieldName;
-                if (thisDto.SingleLinks.TryGetValue(fieldName, out var singleLink)
-                    || (singleLink = thisDto.SingleLinks.Values.FirstOrDefault(l => string.Equals(l.ParentFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                var resolved = TableLinkResolver.TryResolveLink(DbTable, fieldName);
+                if (resolved.Kind == ResolvedLinkKind.Single)
                 {
+                    var singleLink = resolved.Link!;
                     link.DbTable = singleLink.ParentTable;
                     link.TableName = singleLink.ParentTable.DbName;
                     link.SchemaName = singleLink.ParentTable.TableSchema;
@@ -666,9 +665,9 @@ namespace BifrostQL.Core.QueryModel
                         queryType: QueryType.Single));
                     continue;
                 }
-                if (thisDto.MultiLinks.TryGetValue(fieldName, out var multiLink)
-                    || (multiLink = thisDto.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
+                if (resolved.Kind == ResolvedLinkKind.Multi)
                 {
+                    var multiLink = resolved.Link!;
                     link.DbTable = multiLink.ChildTable;
                     link.TableName = multiLink.ChildTable.DbName;
                     link.SchemaName = multiLink.ChildTable.TableSchema;
@@ -701,8 +700,9 @@ namespace BifrostQL.Core.QueryModel
                     Joins.Add(join);
                     continue;
                 }
-                if (thisDto.ManyToManyLinks.TryGetValue(link.GraphQlName, out var m2mLink))
+                if (resolved.Kind == ResolvedLinkKind.ManyToMany)
                 {
+                    var m2mLink = resolved.ManyToMany!;
                     // Single source->target join that bridges through the junction
                     // table. Keying by the source key (src_id = source column) keeps
                     // the collection per-parent and lets the same window-paging the

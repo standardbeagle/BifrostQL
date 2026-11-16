@@ -71,7 +71,16 @@ namespace BifrostQL.Core.QueryModel
 
         public AggregateOperationType? AggregateType { get; init; }
 
-        public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, ParameterizedSql filterSql)
+        /// <summary>
+        /// Builds the per-row aggregate statement for the parent rows on
+        /// <paramref name="parent"/>'s page. The first hop reads the parent table
+        /// through <see cref="GqlObjectQuery.PagedRowWindowSql"/>: the parent
+        /// SELECT's own filter, ORDER BY, offset and clamped limit. With only the
+        /// filter it grouped every matching parent in the table, so a 100-row page
+        /// of a 10M-row table materialised 10M groups and max-query-rows never
+        /// bound it.
+        /// </summary>
+        public ParameterizedSql ToSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, GqlObjectQuery parent, ParameterizedSql parentFilter)
         {
             if (Links.Count == 0)
                 throw new BifrostExecutionError(
@@ -86,7 +95,14 @@ namespace BifrostQL.Core.QueryModel
             var srcId = dialect.EscapeIdentifier("srcId");
 
             var (firstDirection, firstLink) = Links[0];
-            var sql = $"SELECT {TableLinkSql.SourceColumns(firstLink, dialect, firstDirection, columnName: "joinId")}, {TableLinkSql.SourceColumns(firstLink, dialect, firstDirection, columnName: "srcId")} FROM {TableLinkSql.SourceTableRef(firstLink, dialect, firstDirection)}{filterSql.Sql}";
+            // The first hop reads the parent's rows, so its source table must be the
+            // parent table: the parent's filter and window are rendered against it.
+            if (TableLinkSql.SourceTableRef(firstLink, dialect, firstDirection) != dialect.TableReference(parent.SchemaName, parent.TableName))
+                throw new BifrostExecutionError(
+                    "Aggregate correlation requires the first link to start at the queried table.");
+            var firstHopProjection = $"{TableLinkSql.SourceColumns(firstLink, dialect, firstDirection, columnName: "joinId")}, {TableLinkSql.SourceColumns(firstLink, dialect, firstDirection, columnName: "srcId")}";
+            var firstHop = parent.PagedRowWindowSql(model, dialect, firstHopProjection, parentFilter);
+            var sql = firstHop.Sql;
 
             var linkFilterParams = new List<SqlParameterInfo>();
             for (var i = 0; i < Links.Count; ++i)
@@ -121,7 +137,7 @@ namespace BifrostQL.Core.QueryModel
                 }
             }
 
-            return new ParameterizedSql(sql + $" GROUP BY {src}.{srcId}", filterSql.Parameters.Concat(linkFilterParams).ToList());
+            return new ParameterizedSql(sql + $" GROUP BY {src}.{srcId}", firstHop.Parameters.Concat(linkFilterParams).ToList());
         }
     }
     public enum LinkDirection

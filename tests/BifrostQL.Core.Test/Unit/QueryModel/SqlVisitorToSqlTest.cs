@@ -84,7 +84,7 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) THEN (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) ELSE (SELECT COUNT(*) FROM [dbo].[work shops]) END"},
-                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Count([next].[sid]) [_agg] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
+                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Count([next].[sid]) [_agg] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
                 });
         }
 
@@ -102,7 +102,7 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) THEN (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) ELSE (SELECT COUNT(*) FROM [dbo].[work shops]) END"},
-                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Avg([next].[value]) [_agg] FROM (SELECT [next].[id] AS [joinId], [src].[srcId] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid]) [src] INNER JOIN [dbo].[entry] [next] ON [src].[joinId] = [next].[session_id] GROUP BY [src].[srcId]"}
+                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Avg([next].[value]) [_agg] FROM (SELECT [next].[id] AS [joinId], [src].[srcId] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid]) [src] INNER JOIN [dbo].[entry] [next] ON [src].[joinId] = [next].[session_id] GROUP BY [src].[srcId]"}
                 });
         }
 
@@ -120,7 +120,7 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0 ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT COUNT(*) FROM [dbo].[work shops] WHERE [work shops].[id] = @p0"},
-                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Avg([next].[value]) [_agg] FROM (SELECT [next].[id] AS [joinId], [src].[srcId] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid]) [src] INNER JOIN [dbo].[entry] [next] ON [src].[joinId] = [next].[session_id] GROUP BY [src].[srcId]"}
+                    { "work__shops=>agg__agg", "SELECT [src].[srcId], Avg([next].[value]) [_agg] FROM (SELECT [next].[id] AS [joinId], [src].[srcId] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] WHERE [work shops].[id] = @p0 ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid]) [src] INNER JOIN [dbo].[entry] [next] ON [src].[joinId] = [next].[session_id] GROUP BY [src].[srcId]"}
                 });
         }
 
@@ -207,7 +207,7 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) THEN (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) ELSE (SELECT COUNT(*) FROM [dbo].[work shops]) END"},
-                    { "work__shops=>agg_ct", "SELECT [src].[srcId], Count([next].[sid]) [ct] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
+                    { "work__shops=>agg_ct", "SELECT [src].[srcId], Count([next].[sid]) [ct] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
                 });
 
         }
@@ -226,8 +226,8 @@ namespace BifrostQL.Core.QueryModel
                 .Which.Should().Equal(new Dictionary<string, string> {
                     { "work__shops", "SELECT [id] [id] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY"},
                     { "work__shops=>count", "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) THEN (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(N'[dbo].[work shops]') AND p.index_id IN (0, 1)) ELSE (SELECT COUNT(*) FROM [dbo].[work shops]) END"},
-                    { "work__shops=>agg_ct", "SELECT [src].[srcId], Count([next].[sid]) [ct] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"},
-                    { "work__shops=>agg_sum", "SELECT [src].[srcId], Sum([next].[sid]) [sum] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops]) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
+                    { "work__shops=>agg_ct", "SELECT [src].[srcId], Count([next].[sid]) [ct] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"},
+                    { "work__shops=>agg_sum", "SELECT [src].[srcId], Sum([next].[sid]) [sum] FROM (SELECT [work shops].[id] AS [joinId], [work shops].[id] AS [srcId] FROM [dbo].[work shops] ORDER BY [id] asc OFFSET 0 ROWS FETCH NEXT 100 ROWS ONLY) [src] INNER JOIN [dbo].[sessions] [next] ON [src].[joinId] = [next].[workshopid] GROUP BY [src].[srcId]"}
                 });
         }
 

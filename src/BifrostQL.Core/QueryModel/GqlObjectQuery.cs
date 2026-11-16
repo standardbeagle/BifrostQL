@@ -236,7 +236,8 @@ namespace BifrostQL.Core.QueryModel
         /// (<see cref="RenderPagedSortColumns"/>), <see cref="Offset"/>, and the clamped
         /// <see cref="ResolveRowWindow"/> limit. The root row SELECT and every statement
         /// that must touch only the rows on that page (the link join-id window in
-        /// <see cref="GetRestrictedSqlParameterized"/>) build their window here, so they
+        /// <see cref="GetRestrictedSqlParameterized"/>, and the first hop of every per-row aggregate in
+        /// <see cref="GqlAggregateColumn.ToSqlParameterized"/>) build their window here, so they
         /// all select the same rows by construction. <paramref name="projection"/> is
         /// rendered against the unaliased table.
         /// </summary>
@@ -360,7 +361,7 @@ namespace BifrostQL.Core.QueryModel
 
             foreach (var col in AggregateColumns)
             {
-                var aggregateSql = col.ToSqlParameterized(dbModel, dialect, parameters, filter);
+                var aggregateSql = col.ToSqlParameterized(dbModel, dialect, parameters, this, filter);
                 col.SqlKey = $"{sqlKeyName}=>agg_{col.FinalColumnGraphQlName}";
                 sqls[col.SqlKey] = aggregateSql;
             }

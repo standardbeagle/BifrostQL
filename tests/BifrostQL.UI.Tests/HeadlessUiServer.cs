@@ -31,12 +31,35 @@ public sealed class HeadlessUiServer : IAsyncLifetime
     /// <summary>The wwwroot the host serves: the UI project's bin copy of the built SPA.</summary>
     public string WebRoot { get; private set; } = null!;
 
+    // GetFreePort releases the port before the host binds it, so another process (a parallel
+    // test assembly) can take it in between. The host then exits with this message, and only
+    // that exit is retried on a fresh port; any other early exit fails the run.
+    private const int MaxStartAttempts = 5;
+
     public async Task InitializeAsync()
     {
-        Port = GetFreePort();
         var uiDll = ResolveUiAssembly();
         WebRoot = Path.Combine(Path.GetDirectoryName(uiDll)!, "wwwroot");
 
+        for (var attempt = 1; ; attempt++)
+        {
+            Port = GetFreePort();
+            Start(uiDll);
+            try
+            {
+                await WaitForHealthAsync();
+                return;
+            }
+            catch (InvalidOperationException) when (attempt < MaxStartAttempts && LostThePortRace())
+            {
+                StopProcess();
+            }
+        }
+    }
+
+    private void Start(string uiDll)
+    {
+        lock (_logLock) _log.Clear();
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -56,14 +79,23 @@ public sealed class HeadlessUiServer : IAsyncLifetime
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
 
+        Client?.Dispose();
         Client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{Port}") };
-
-        await WaitForHealthAsync();
     }
+
+    private bool LostThePortRace()
+        => _process is { HasExited: true }
+           && Snapshot().Contains($"Port {Port} is already in use", StringComparison.Ordinal);
 
     public Task DisposeAsync()
     {
         Client?.Dispose();
+        StopProcess();
+        return Task.CompletedTask;
+    }
+
+    private void StopProcess()
+    {
         try
         {
             if (_process is { HasExited: false })
@@ -75,7 +107,7 @@ public sealed class HeadlessUiServer : IAsyncLifetime
             // Best effort — the test run is tearing down regardless.
         }
         _process?.Dispose();
-        return Task.CompletedTask;
+        _process = null;
     }
 
     /// <summary>Polls /api/health until the host answers 200 or the timeout elapses.</summary>
@@ -86,11 +118,19 @@ public sealed class HeadlessUiServer : IAsyncLifetime
         while (DateTime.UtcNow < deadline)
         {
             if (_process is { HasExited: true })
+            {
+                // HasExited turns true before the async readers deliver the last lines;
+                // the parameterless WaitForExit waits for both streams to reach EOF.
+                _process.WaitForExit();
                 throw new InvalidOperationException(
                     $"Headless UI host exited early (code {_process.ExitCode}).\n{Snapshot()}");
+            }
             try
             {
-                using var resp = await Client.GetAsync("/api/health");
+                // A short probe: whatever holds a contested port may accept and never answer,
+                // and an unbounded wait would hide the host's exit until the deadline.
+                using var probe = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                using var resp = await Client.GetAsync("/api/health", probe.Token);
                 if (resp.IsSuccessStatusCode)
                     return;
             }

@@ -65,7 +65,7 @@ public class SchemaReadVisibilityTests
         .Build();
 
     private static VisibleTable Table(IReadOnlyList<VisibleTable> visible, string name) =>
-        SchemaReadVisibility.Find(visible, name)
+        SchemaReadVisibility.FindByClientName(visible, name)
             ?? throw new InvalidOperationException($"'{name}' should be visible");
 
     [Fact]
@@ -82,8 +82,8 @@ public class SchemaReadVisibilityTests
     {
         var visible = SchemaReadVisibility.Project(Model(), Ctx("u1", "member"));
 
-        var denied = SchemaReadVisibility.Find(visible, "ledger");
-        var nonExistent = SchemaReadVisibility.Find(visible, "no_such_table");
+        var denied = SchemaReadVisibility.FindByClientName(visible, "ledger");
+        var nonExistent = SchemaReadVisibility.FindByClientName(visible, "no_such_table");
 
         denied.Should().BeNull();
         nonExistent.Should().BeNull();

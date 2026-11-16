@@ -230,7 +230,7 @@ enabled. Every argument name below matches the tool's input schema verbatim.
 | Tool | Arguments | Returns |
 |------|-----------|---------|
 | `bifrost_schema_overview` | `detail` (`"summary"` \| `"full"`, default `"summary"`) | Curated map of the whole database: every table with primary key, foreign-key edges (both directions), and behavior notes. `detail=full` inlines condensed per-table column lists. Row counts and sample values are never included. |
-| `bifrost_describe_table` | `table` (required) | Column-level detail for one table: columns with types and nullability, primary key, foreign keys in both directions, and behavior notes. An unknown table name returns a prompt-style error with a nearest-name suggestion and the table list. |
+| `bifrost_describe_table` | `table` (required) | Column-level detail for one table: columns with types and nullability, primary key, foreign keys in both directions, and behavior notes. A name two schemas share must be sent as `schema.name`; the bare name is then a miss. An unknown, ambiguous or read-denied table name returns the same prompt-style error with a nearest-name suggestion and the table list. |
 
 ### Read tools
 
@@ -275,7 +275,7 @@ may contain `|`.
 The same schema payloads are also served as MCP resources:
 
 - `bifrost://schema/overview` — the full-detail schema map.
-- `bifrost://schema/{table}` — one table's description (URL-escaped table name).
+- `bifrost://schema/{table}` — one table's description (URL-escaped table name; `schema.name` when two schemas share the name, as `resources/list` lists it).
 
 ## Tool-design rationale
 

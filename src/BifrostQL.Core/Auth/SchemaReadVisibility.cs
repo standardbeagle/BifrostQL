@@ -122,16 +122,63 @@ public static class SchemaReadVisibility
     }
 
     /// <summary>
-    /// The visible table whose DB name matches <paramref name="tableName"/>, or null. A
-    /// policy-denied table returns null exactly like a table that does not exist, so a caller's
-    /// "unknown table" path is the single answer for both — the filter never converts a
-    /// disclosure into an existence ORACLE.
+    /// Resolves a CLIENT-SUPPLIED table name within <paramref name="visible"/> by the rule
+    /// <see cref="IDbModel.TryGetTableFromClientName"/> applies to the full model: a
+    /// schema-qualified <c>schema.name</c> resolves exactly (split on the FIRST dot, so a dotted
+    /// DB name stays reachable as <c>schema.dot.ted</c>), and a bare name resolves only when
+    /// exactly one visible table carries it. An ambiguous bare name returns null, never an
+    /// arbitrary pick. A policy-denied table returns null exactly like one that does not exist,
+    /// so a caller's single "unknown table" answer covers unknown, ambiguous and denied alike
+    /// (invariant 9) and the filter never becomes an existence ORACLE.
+    ///
+    /// <para>Ambiguity is decided over the VISIBLE set, not the model: a bare name shared with a
+    /// table the caller may not read still resolves to the one it can, so the answer never
+    /// depends on whether a hidden same-named table exists.</para>
     /// </summary>
-    public static VisibleTable? Find(IEnumerable<VisibleTable> visible, string tableName)
+    public static VisibleTable? FindByClientName(IReadOnlyCollection<VisibleTable> visible, string clientName)
     {
         if (visible is null) throw new ArgumentNullException(nameof(visible));
-        return visible.FirstOrDefault(v =>
-            string.Equals(v.Table.DbName, tableName, StringComparison.OrdinalIgnoreCase));
+        if (clientName is null) throw new ArgumentNullException(nameof(clientName));
+
+        var dot = clientName.IndexOf('.');
+        if (dot > 0 && dot < clientName.Length - 1)
+        {
+            var schema = clientName[..dot];
+            var dbName = clientName[(dot + 1)..];
+            var qualified = visible.FirstOrDefault(v =>
+                string.Equals(v.Table.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(v.Table.DbName, dbName, StringComparison.OrdinalIgnoreCase));
+            if (qualified is not null)
+                return qualified;
+        }
+
+        VisibleTable? found = null;
+        foreach (var candidate in visible)
+        {
+            if (!string.Equals(candidate.Table.DbName, clientName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (found is not null)
+                return null; // ambiguous bare name: a positive resolve is impossible
+            found = candidate;
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// The name a client addresses <paramref name="table"/> by within <paramref name="visible"/>:
+    /// its bare DB name when no other visible table shares it, else <c>schema.name</c>. Every
+    /// name a surface LISTS for the caller to send back (resource URIs, did-you-mean lists) must
+    /// round-trip through <see cref="FindByClientName"/>, and a bare name two visible tables
+    /// share never does.
+    /// </summary>
+    public static string ClientName(IReadOnlyCollection<VisibleTable> visible, IDbTable table)
+    {
+        if (visible is null) throw new ArgumentNullException(nameof(visible));
+        if (table is null) throw new ArgumentNullException(nameof(table));
+
+        var shared = visible.Count(v =>
+            string.Equals(v.Table.DbName, table.DbName, StringComparison.OrdinalIgnoreCase)) > 1;
+        return shared ? $"{table.TableSchema}.{table.DbName}" : table.DbName;
     }
 
     /// <summary>

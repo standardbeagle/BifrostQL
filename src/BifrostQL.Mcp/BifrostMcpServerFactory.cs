@@ -93,7 +93,7 @@ namespace BifrostQL.Mcp
               "properties": {
                 "table": {
                   "type": "string",
-                  "description": "Database table name exactly as listed by bifrost_schema_overview."
+                  "description": "Database table name exactly as listed by bifrost_schema_overview. Qualify it as schema.name when two schemas define a table with that name."
                 }
               },
               "required": ["table"],
@@ -659,7 +659,7 @@ namespace BifrostQL.Mcp
                     // A policy-denied table takes the SAME path as a table that does not
                     // exist — same message, same table list — so describe_table is not an
                     // existence oracle for tables the caller may not read.
-                    var table = SchemaReadVisibility.Find(visible, tableName);
+                    var table = SchemaReadVisibility.FindByClientName(visible, tableName);
                     if (table is null)
                         return ErrorResult(SchemaDescriber.UnknownTableMessage(visible, tableName));
                     return StructuredResult(SchemaDescriber.BuildTableDescription(table, visible));
@@ -689,15 +689,17 @@ namespace BifrostQL.Mcp
                     MimeType = JsonMimeType,
                 },
             };
+            // A bare name two visible tables share is listed schema-qualified, so every URI
+            // listed here resolves back through ReadResourceAsync's FindByClientName.
             resources.AddRange(visible
-                .Select(v => v.Table)
-                .OrderBy(t => t.DbName, StringComparer.OrdinalIgnoreCase)
-                .Select(t => new Resource
+                .Select(v => SchemaReadVisibility.ClientName(visible, v.Table))
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Select(name => new Resource
                 {
-                    Uri = TableResourceUriPrefix + Uri.EscapeDataString(t.DbName),
-                    Name = t.DbName,
-                    Title = $"Table {t.DbName}",
-                    Description = $"Columns, keys, foreign keys, and behavior notes for table '{t.DbName}'.",
+                    Uri = TableResourceUriPrefix + Uri.EscapeDataString(name),
+                    Name = name,
+                    Title = $"Table {name}",
+                    Description = $"Columns, keys, foreign keys, and behavior notes for table '{name}'.",
                     MimeType = JsonMimeType,
                 }));
             return new ListResourcesResult { Resources = resources };
@@ -723,7 +725,7 @@ namespace BifrostQL.Mcp
             var tableName = Uri.UnescapeDataString(uri.Substring(TableResourceUriPrefix.Length));
             // Policy-denied and non-existent resolve identically — same error, same code,
             // same table list — so the resource URI space is not an existence oracle.
-            var table = SchemaReadVisibility.Find(visible, tableName);
+            var table = SchemaReadVisibility.FindByClientName(visible, tableName);
             if (table is null)
                 throw new McpProtocolException(SchemaDescriber.UnknownTableMessage(visible, tableName), McpErrorCode.ResourceNotFound);
             return JsonResource(uri, SchemaDescriber.BuildTableDescription(table, visible));

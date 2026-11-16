@@ -129,11 +129,13 @@ namespace BifrostQL.Mcp
         /// self-correct without another round trip. An empty model (no tables
         /// exposed) still yields a prompt-style message rather than throwing,
         /// so agents get an actionable error instead of a protocol fault.
+        /// The list names each table the way <see cref="SchemaReadVisibility.FindByClientName"/>
+        /// resolves it, so a bare name two schemas share is listed schema-qualified.
         /// </summary>
         public static string UnknownTableMessage(IReadOnlyList<VisibleTable> visible, string requestedTable)
         {
             var names = visible
-                .Select(v => v.Table.DbName)
+                .Select(v => SchemaReadVisibility.ClientName(visible, v.Table))
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             if (names.Length == 0)

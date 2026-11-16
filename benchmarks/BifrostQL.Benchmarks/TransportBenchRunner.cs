@@ -160,9 +160,7 @@ public static class TransportBenchRunner
                     price DECIMAL(18,2) NOT NULL,
                     ratio REAL NOT NULL,
                     created_at DATETIME NOT NULL,
-                    -- INTEGER, not BOOLEAN: a SQLite BOOLEAN column fails to resolve
-                    -- (the driver reads 0/1 as long, which the Boolean scalar rejects).
-                    active INTEGER NOT NULL,
+                    active BOOLEAN NOT NULL,
                     notes TEXT NULL
                 );
                 """;

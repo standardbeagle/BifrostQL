@@ -39,6 +39,10 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Fixed — SQLite BOOLEAN and BIT columns read as booleans
+
+A SQLite column declared `BOOLEAN` or `BIT` stores 0/1 and the driver returns it as an integer. The schema advertises it as `Boolean`, and the stock scalar rejected the integer, so every read of such a column failed with `Unable to convert '1' value of type 'Int64' to the scalar type 'Boolean'`. The `Boolean` scalar now maps 0 and 1 to `false` and `true`. Any other integer still fails the field rather than being coerced.
+
 ### Changed — the binary transport copies less per frame
 
 - A binary response used to be copied about four times on its way to the socket, and a received

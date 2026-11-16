@@ -324,5 +324,29 @@ namespace BifrostQL.Server.Test.S3
 
             (await act.Should().ThrowAsync<S3ProtocolException>()).Which.Code.Should().Be("InvalidArgument");
         }
+
+        [Fact]
+        public async Task ListObjectsV2_fails_fast_when_max_query_rows_cuts_the_scan_below_the_cap()
+        {
+            // max-query-rows (3) sits below MaxListMaterialize (10). A scan LIMIT of
+            // MaxListMaterialize + 1 is clamped to 3 inside SQL generation, so a row count
+            // compared against 10 never trips and tenant-b's 11 visible rows list as 3
+            // objects with IsTruncated=false. The probe must come from the clamped window.
+            var rules = MetadataRules.Append(":root { max-query-rows: 3 }").ToArray();
+            await using var harness = await S3ListingRealDbHarness.StartAsync(
+                nameof(ListObjectsV2_fails_fast_when_max_query_rows_cuts_the_scan_below_the_cap), rules, SeedSql());
+            var lister = harness.Listing(Options(maxListMaterialize: 10));
+
+            var act = async () => await lister.ListObjectsV2Async(
+                "documents", null, null, null, null, null, Ctx("user-b", "tenant-b"));
+            (await act.Should().ThrowAsync<S3ProtocolException>()).Which.Code.Should().Be("InvalidArgument");
+
+            // Control: tenant-a's 2 rows fit under the clamped page (3 - 1 sentinel), so
+            // the same lister still answers with every object.
+            var page = await lister.ListObjectsV2Async(
+                "documents", null, null, null, null, null, Ctx("user-a", "tenant-a"));
+            page.Objects.Select(o => o.Key).Should().BeEquivalentTo("body/1", "body/2", "thumbnail/1");
+            page.IsTruncated.Should().BeFalse();
+        }
     }
 }

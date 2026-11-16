@@ -186,7 +186,7 @@ namespace BifrostQL.Server.S3
             else
                 resumeAfter = string.IsNullOrEmpty(startAfter) ? null : startAfter;
 
-            var allObjects = await MaterializeAsync(table, fileColumns, effectivePrefix, userContext, cancellationToken);
+            var allObjects = await MaterializeAsync(model, table, fileColumns, effectivePrefix, userContext, cancellationToken);
 
             return BuildPage(
                 bucket, allObjects, effectivePrefix, delimiter, effectiveMaxKeys,
@@ -199,10 +199,11 @@ namespace BifrostQL.Server.S3
         /// Reads every addressable object in the bucket through the authorized read
         /// seam: the primary key plus each file-storage column, ordered by primary key
         /// for a deterministic scan. Rows whose file column is null hold no object and
-        /// are skipped. Bounded by <see cref="S3Options.MaxListMaterialize"/>.
+        /// are skipped. Bounded by <see cref="S3Options.MaxListMaterialize"/>, narrowed by
+        /// the model's <c>max-query-rows</c> ceiling through <see cref="RowProbeWindow"/>.
         /// </summary>
         private async Task<List<S3ObjectInfo>> MaterializeAsync(
-            IDbTable table, IReadOnlyList<ColumnDto> fileColumns, string prefix,
+            IDbModel model, IDbTable table, IReadOnlyList<ColumnDto> fileColumns, string prefix,
             IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         {
             var keyColumns = table.KeyColumns.ToList();
@@ -211,6 +212,12 @@ namespace BifrostQL.Server.S3
                 // rather than throwing (it survived the file-column check by config).
                 return new List<S3ObjectInfo>();
 
+            // One past the cap, so we can detect (and fail fast on) a bucket that exceeds
+            // what this slice can page in memory. The window comes from the same clamp SQL
+            // generation applies: a hand-rolled MaxListMaterialize + 1 is cut to
+            // max-query-rows, the count never exceeds the cap, and a partial bucket lists
+            // as complete.
+            var window = RowProbeWindow.For(model, _options.MaxListMaterialize);
             var query = new GqlObjectQuery
             {
                 DbTable = table,
@@ -219,9 +226,7 @@ namespace BifrostQL.Server.S3
                 GraphQlName = table.GraphQlName,
                 Path = table.GraphQlName,
                 Sort = keyColumns.Select(c => $"{c.GraphQlName}_asc").ToList(),
-                // One past the cap, so we can detect (and fail fast on) a bucket that
-                // exceeds what this slice can page in memory.
-                Limit = _options.MaxListMaterialize + 1,
+                Limit = window.Fetch,
             };
             foreach (var keyColumn in keyColumns)
                 query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.DbName, keyColumn.GraphQlName));
@@ -235,7 +240,7 @@ namespace BifrostQL.Server.S3
                 Endpoint = _options.Endpoint,
             }, cancellationToken);
 
-            if (result.Rows.Count > _options.MaxListMaterialize)
+            if (window.HasMore(result.Rows.Count))
                 throw S3ProtocolException.InvalidArgument(
                     "This bucket has more objects than the endpoint is configured to list in a single scan.");
 

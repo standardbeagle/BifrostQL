@@ -1,5 +1,6 @@
 using System.Globalization;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -77,9 +78,14 @@ namespace BifrostQL.Server.Resp
                         return RespValue.Err(cursorError!);
                 }
 
-                var pageSize = Math.Min(parsed.Count, RespProtocol.MaxScanPageSize);
+                // COUNT is clamped to the adapter's own maximum, then to the model's row ceiling. A
+                // ceiling of 1 leaves no room for the one-row probe that tells a last page from a
+                // full one, so SCAN refuses rather than ending the enumeration after its first key.
+                var window = RowProbeWindow.For(model, Math.Min(parsed.Count, RespProtocol.MaxScanPageSize));
+                if (window.Page < 1)
+                    return RespValue.Err(ScanCeilingTooLowError);
                 var page = await RespScanEngine.ScanAsync(
-                    executor, table, keyPrefix!, afterKey, pageSize,
+                    executor, table, keyPrefix!, afterKey, window,
                     context.Session.UserContext, context.Endpoint, cancellationToken);
 
                 var nextCursor = page.NextAfterKey is null
@@ -220,5 +226,8 @@ namespace BifrostQL.Server.Resp
             { '*', '?', '[', ']', RespProtocol.KeySeparator };
 
         private static string SyntaxError => $"{RespProtocol.ErrPrefix}syntax error";
+
+        private static string ScanCeilingTooLowError =>
+            $"{RespProtocol.ErrPrefix}SCAN needs a row ceiling of at least 2 to page";
     }
 }

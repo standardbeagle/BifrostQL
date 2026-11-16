@@ -38,16 +38,20 @@ namespace BifrostQL.Server.Resp
     {
         /// <summary>
         /// Fetches one keyset page of primary keys for <paramref name="table"/> starting strictly after
-        /// <paramref name="afterKey"/> (null → from the beginning). The query fetches
-        /// <paramref name="pageSize"/> + 1 rows: if the extra row is present there are more pages and the
-        /// last emitted row's PK becomes the next cursor position; otherwise the page is final.
+        /// <paramref name="afterKey"/> (null → from the beginning). The page comes from
+        /// <paramref name="window"/>, the <see cref="RowProbeWindow"/> for the client's COUNT: the query
+        /// carries <see cref="RowProbeWindow.Fetch"/> rows, and when the extra row is present there are
+        /// more pages and the last emitted row's PK becomes the next cursor position; otherwise the page
+        /// is final. Sizing the probe from the window, not from COUNT + 1, is what keeps a
+        /// <c>max-query-rows</c> ceiling below COUNT from reading as the last page: SQL generation
+        /// clamps the LIMIT, so a COUNT + 1 probe never saw its sentinel and ended the enumeration early.
         /// </summary>
         public static async Task<RespScanPage> ScanAsync(
             IQueryIntentExecutor executor,
             IDbTable table,
             string keyPrefix,
             IReadOnlyList<object?>? afterKey,
-            int pageSize,
+            RowProbeWindow window,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken)
@@ -57,7 +61,7 @@ namespace BifrostQL.Server.Resp
             if (afterKey is not null)
                 query.Filter = BuildKeysetFilter(keyColumns, afterKey, table);
             // Peek one past the page so the terminal page can report cursor 0 without a trailing empty round-trip.
-            query.Limit = pageSize + 1;
+            query.Limit = window.Fetch;
 
             var intent = new QueryIntent
             {
@@ -67,8 +71,8 @@ namespace BifrostQL.Server.Resp
             };
             var result = await executor.ExecuteAsync(intent, cancellationToken);
 
-            var hasMore = result.Rows.Count > pageSize;
-            var emitted = hasMore ? result.Rows.Take(pageSize).ToList() : result.Rows;
+            var hasMore = window.HasMore(result.Rows.Count);
+            var emitted = hasMore ? result.Rows.Take(window.Page).ToList() : result.Rows;
 
             var keys = new List<string>(emitted.Count);
             foreach (var row in emitted)

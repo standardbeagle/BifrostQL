@@ -133,5 +133,45 @@ namespace BifrostQL.Server.Test.Resp
             texts.Should().HaveCount(8).And.NotContainNulls();
             texts[7].Should().Contain("\"item-3\"");
         }
+
+        [Fact]
+        public async Task Scan_CountAboveMaxQueryRows_PagesUntilEveryKeyIsEnumerated()
+        {
+            await using var harness = await StartAsync(nameof(Scan_CountAboveMaxQueryRows_PagesUntilEveryKeyIsEnumerated), 5);
+
+            // COUNT 10 under a ceiling of 5: the probe for "more pages" must fit under the ceiling,
+            // or the first clamped page reads as the last and the cursor returns 0 after 5 keys.
+            var keys = await harness.RunAsync(Caller, client => RespWire.ScanAllKeysAsync(client, "items", count: 10));
+
+            keys.Should().Equal(ItemKeys(SeededRows));
+        }
+
+        [Fact]
+        public async Task Scan_FirstPageUnderTheCeiling_CarriesACursorAndTheCeilingBoundedPage()
+        {
+            await using var harness = await StartAsync(nameof(Scan_FirstPageUnderTheCeiling_CarriesACursorAndTheCeilingBoundedPage), 5);
+
+            var reply = await SendAsync(harness,
+                RespProtocol.Scan, RespProtocol.ScanStartCursor,
+                RespProtocol.ScanMatchOption, "items" + RespProtocol.ScanWildcardSuffix,
+                RespProtocol.ScanCountOption, "10");
+
+            var page = (RespArray)reply;
+            BulkTexts(new RespArray(new[] { page.Items![0] })).Single()
+                .Should().NotBe(RespProtocol.ScanStartCursor, "145 keys remain after this page");
+            BulkTexts(page.Items[1]).Should().Equal("items:1", "items:2", "items:3", "items:4");
+        }
+
+        [Fact]
+        public async Task Scan_UnderACeilingOfOne_IsRefused()
+        {
+            await using var harness = await StartAsync(nameof(Scan_UnderACeilingOfOne_IsRefused), 1);
+
+            var reply = await SendAsync(harness,
+                RespProtocol.Scan, RespProtocol.ScanStartCursor,
+                RespProtocol.ScanMatchOption, "items" + RespProtocol.ScanWildcardSuffix);
+
+            reply.Should().Be(new RespError("ERR SCAN needs a row ceiling of at least 2 to page"));
+        }
     }
 }

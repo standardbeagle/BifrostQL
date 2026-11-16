@@ -190,7 +190,12 @@ Cursor-paginated primary-key enumeration of one table. The reply is the Redis SC
   (`users:1*`), a missing MATCH, or an unknown table is a clean `-ERR` — never a
   silent over-broad enumeration.
 - **COUNT** is a page-size hint, defaulting to `10` and capped at `1000`. A
-  non-positive or unparseable COUNT is a syntax error.
+  non-positive or unparseable COUNT is a syntax error. The model's
+  `max-query-rows` ceiling narrows the page further, to one below the ceiling,
+  because each page reads one extra row to tell a full page from the last. A
+  narrowed page still returns a cursor, so iteration reaches every key. A
+  ceiling of `1` leaves no room for that row, and SCAN answers
+  `-ERR SCAN needs a row ceiling of at least 2 to page`.
 - **TYPE** is accepted and ignored — a Bifrost row has no single Redis type, so
   filtering by it would be dishonest.
 - The **cursor** is opaque, integrity-protected, and encodes only a primary-key

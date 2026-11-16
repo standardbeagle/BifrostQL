@@ -661,22 +661,24 @@ namespace BifrostQL.Core.Model
 
         /// <summary>
         /// Converts a detector's synthetic foreign keys into <see cref="DbForeignKey"/>
-        /// objects. Synthetic FKs reference tables by base name, so each end is resolved
-        /// against the model's tables (case-insensitive) and the FK is dropped when
-        /// either end is missing.
+        /// objects. A synthetic FK names its tables by bare DbName and carries no schema,
+        /// while one database may hold the same application in several schemas (two
+        /// WordPress sites, each with its own <c>wp_posts</c>). So every table whose DbName
+        /// is the child end gets the FK, with the parent resolved in THAT table's schema:
+        /// the link never crosses schemas, and a child whose schema lacks the parent gets
+        /// none.
         /// </summary>
-        private static List<DbForeignKey> BuildSyntheticForeignKeys(AppSchema.AppSchemaResult appResult, DbModel model)
+        internal static List<DbForeignKey> BuildSyntheticForeignKeys(AppSchema.AppSchemaResult appResult, IDbModel model)
         {
             var syntheticFks = new List<DbForeignKey>();
             if (appResult.ExplicitForeignKeys.Count == 0)
                 return syntheticFks;
 
-            var tableLookup = model.Tables.ToDictionary(t => t.DbName, t => t, StringComparer.OrdinalIgnoreCase);
             foreach (var sfk in appResult.ExplicitForeignKeys)
+            foreach (var childTable in model.Tables)
             {
-                // Resolve table names — synthetic FKs use base names, try exact match first
-                if (!tableLookup.TryGetValue(sfk.ChildTable, out var childTable) ||
-                    !tableLookup.TryGetValue(sfk.ParentTable, out var parentTable))
+                if (!string.Equals(childTable.DbName, sfk.ChildTable, StringComparison.OrdinalIgnoreCase)
+                    || !model.TryGetTableFromDbName(childTable.TableSchema, sfk.ParentTable, out var parentTable))
                     continue;
 
                 syntheticFks.Add(new DbForeignKey

@@ -26,7 +26,7 @@ public class EnumColumnRenderingTests
         return DbModelTestFixture.Create()
             .WithTable(EnumTable, t => t
                 .WithSchema("dbo")
-                .WithMetadata(EnumTableConfig.MetadataKey, ValueColumn)
+                .WithMetadata(MetadataKeys.Enum.Table, ValueColumn)
                 .WithColumn("Id", "int", isPrimaryKey: true)
                 .WithColumn("code", "varchar")
                 .WithColumn("label", "nvarchar"))

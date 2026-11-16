@@ -251,7 +251,7 @@ public sealed class RenamedColumnMutationRekeyTests
         var model = (DbModel)DbModelTestFixture.Create()
             .WithTable(enumTable, t => t
                 .WithSchema("dbo")
-                .WithMetadata(EnumTableConfig.MetadataKey, valueColumn)
+                .WithMetadata(MetadataKeys.Enum.Table, valueColumn)
                 .WithColumn("Id", "int", isPrimaryKey: true)
                 .WithColumn(valueColumn, "varchar")
                 .WithColumn("Label", "nvarchar"))

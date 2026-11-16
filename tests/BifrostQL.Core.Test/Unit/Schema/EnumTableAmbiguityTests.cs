@@ -31,7 +31,7 @@ public sealed class EnumTableAmbiguityTests
             TableType = "BASE TABLE",
             ColumnLookup = columns.ToDictionary(c => c.DbName, StringComparer.OrdinalIgnoreCase),
             GraphQlLookup = columns.ToDictionary(c => c.GraphQlName, StringComparer.OrdinalIgnoreCase),
-            Metadata = new Dictionary<string, object?> { [EnumTableConfig.MetadataKey] = "Code" },
+            Metadata = new Dictionary<string, object?> { [MetadataKeys.Enum.Table] = "Code" },
         };
     }
 

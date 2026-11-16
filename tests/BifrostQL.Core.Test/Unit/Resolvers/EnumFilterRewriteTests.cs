@@ -26,7 +26,7 @@ public class EnumFilterRewriteTests
         var model = (DbModel)DbModelTestFixture.Create()
             .WithTable(EnumTable, t => t
                 .WithSchema("dbo")
-                .WithMetadata(EnumTableConfig.MetadataKey, ValueColumn)
+                .WithMetadata(MetadataKeys.Enum.Table, ValueColumn)
                 .WithColumn("Id", "int", isPrimaryKey: true)
                 .WithColumn("Code", "varchar")
                 .WithColumn("Label", "nvarchar"))

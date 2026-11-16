@@ -226,6 +226,13 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static class Enum
         {
+            /// <summary>
+            /// Table metadata: marks a lookup table as a GraphQL enum source. Value is
+            /// <c>true</c> (auto-detect the value column), <c>code</c> (explicit value
+            /// column) or <c>code:label</c> (value and label columns).
+            /// </summary>
+            public const string Table = "enum";
+
             /// <summary>Comma-separated list of enum values.</summary>
             public const string Values = "enum-values";
 

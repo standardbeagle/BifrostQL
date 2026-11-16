@@ -152,7 +152,7 @@ namespace BifrostQL.Core.Model
             // Storage bucket config blob.
             MetadataKeys.Storage.Config,
             // Enum configuration.
-            EnumTableConfig.MetadataKey,  // "enum": marks a lookup table as an enum source
+            MetadataKeys.Enum.Table,       // "enum": marks a lookup table as an enum source
             MetadataKeys.Enum.Values,
             MetadataKeys.Enum.Labels,
             MetadataKeys.Enum.Ref,

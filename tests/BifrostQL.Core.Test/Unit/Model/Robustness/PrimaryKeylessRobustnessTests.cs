@@ -129,7 +129,7 @@ public sealed class PrimaryKeylessRobustnessTests
             .WithTable("statuses", t => t
                 .WithPrimaryKey("Id")
                 .WithColumn("Code", "varchar")
-                .WithMetadata(EnumTableConfig.MetadataKey, "Code"))
+                .WithMetadata(MetadataKeys.Enum.Table, "Code"))
             .Build();
 
         var entries = EnumValueSanitizer.SanitizeAll(new[] { "active", "inactive" });

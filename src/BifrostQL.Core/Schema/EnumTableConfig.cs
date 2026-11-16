@@ -13,8 +13,6 @@ namespace BifrostQL.Core.Schema;
 /// </summary>
 public sealed class EnumTableConfig
 {
-    public const string MetadataKey = "enum";
-
     /// <summary>The database table name.</summary>
     public string TableName { get; init; } = null!;
 
@@ -33,7 +31,7 @@ public sealed class EnumTableConfig
     /// </summary>
     public static EnumTableConfig? FromTable(IDbTable table)
     {
-        if (!table.Metadata.TryGetValue(MetadataKey, out var metaValue) || metaValue == null)
+        if (!table.Metadata.TryGetValue(MetadataKeys.Enum.Table, out var metaValue) || metaValue == null)
             return null;
 
         var raw = metaValue.ToString()!.Trim();

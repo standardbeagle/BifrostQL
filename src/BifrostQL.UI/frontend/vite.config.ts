@@ -66,6 +66,11 @@ export default defineConfig({
     // Node 25+ defines its own global localStorage, undefined without --localstorage-file,
     // and jsdom's window.localStorage is not copied over an existing global.
     execArgv: ['--no-experimental-webstorage'],
+    setupFiles: ['./src/test-setup.ts'],
+    // A hang detector, not a speed check: under machine load a jsdom test body
+    // can run 10x slower than on an idle box. Stays above the asyncUtilTimeout
+    // in src/test-setup.ts so waitFor failures surface with their DOM dump.
+    testTimeout: 20000,
   },
   server: {
     fs: {

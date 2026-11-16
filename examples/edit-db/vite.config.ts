@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => ({
     insertTypesEntry: true,
     // Declarations are the published API: tests, perf harnesses and stories are not
     // part of it, and the stories' inferred Storybook types cannot be emitted portably.
-    exclude: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src/**/*.stories.tsx'],
+    exclude: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src/**/*.stories.tsx', 'src/test-setup.ts'],
   })],
   resolve: {
     alias: {

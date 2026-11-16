@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Google.Protobuf;
 
 namespace BifrostQL.Server
@@ -242,6 +243,19 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
+        /// The bytes of a ByteString the parser just read. ReadBytes copies the field out of the
+        /// input into a fresh array of exactly its length; this takes that array instead of
+        /// copying it a second time. Nothing else holds the ByteString, so the array is ours.
+        /// </summary>
+        private static byte[] TakeArray(ByteString bytes)
+        {
+            if (MemoryMarshal.TryGetArray(bytes.Memory, out var segment)
+                && segment.Offset == 0 && segment.Count == segment.Array!.Length)
+                return segment.Array;
+            return bytes.ToByteArray();
+        }
+
+        /// <summary>
         /// Deserializes a BifrostMessage from protobuf wire format bytes.
         /// </summary>
         public static BifrostMessage FromBytes(byte[] data)
@@ -275,7 +289,7 @@ namespace BifrostQL.Server
                         msg.VariablesJson = input.ReadString();
                         break;
                     case PayloadTag:
-                        msg.Payload = input.ReadBytes().ToByteArray();
+                        msg.Payload = TakeArray(input.ReadBytes());
                         break;
                     case ErrorsTag:
                         msg.Errors.Add(input.ReadString());

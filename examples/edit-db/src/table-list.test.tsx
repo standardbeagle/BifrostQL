@@ -48,15 +48,28 @@ vi.mock('@/components/ui/table', () => ({
 
 // Render the Radix dropdown inline (no portal/pointer-capture) so the kebab's
 // action items are directly clickable under jsdom — same approach as
-// export-button.test.tsx.
-vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div role="menu">{children}</div>,
-  DropdownMenuItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) => (
-    <button type="button" role="menuitem" onClick={onSelect}>{children}</button>
-  ),
-}));
+// export-button.test.tsx. Like Radix, the content mounts only once the trigger
+// opens it: always rendering every row's menu put ~18 extra elements on each
+// row, which made a 50-row page render 5x slower than the list itself.
+vi.mock('@/components/ui/dropdown-menu', async () => {
+  const React = await vi.importActual<typeof import('react')>('react');
+  const Open = React.createContext<{ open: boolean; toggle: () => void }>({ open: false, toggle: () => {} });
+  return {
+    DropdownMenu: ({ children }: { children: React.ReactNode }) => {
+      const [open, setOpen] = React.useState(false);
+      return <Open.Provider value={{ open, toggle: () => setOpen((o) => !o) }}><div>{children}</div></Open.Provider>;
+    },
+    DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => {
+      const { toggle } = React.useContext(Open);
+      return <div onClick={toggle}>{children}</div>;
+    },
+    DropdownMenuContent: ({ children }: { children: React.ReactNode }) =>
+      React.useContext(Open).open ? <div role="menu">{children}</div> : null,
+    DropdownMenuItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) => (
+      <button type="button" role="menuitem" onClick={onSelect}>{children}</button>
+    ),
+  };
+});
 
 vi.mock('@/components/ui/alert', () => ({
   Alert: ({ children, variant }: { children: React.ReactNode; variant?: string }) => (

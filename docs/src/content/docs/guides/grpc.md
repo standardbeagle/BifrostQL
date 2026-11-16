@@ -171,10 +171,12 @@ grpcurl -plaintext -H 'authorization: Bearer <token>' \
   -d '{"filter": "{\"age\": {\"_gte\": 18}}", "order_by": "name asc", "page_size": 100}' \
   localhost:5090 bifrostql.BifrostQuery/ListUsers
 
-# The response carries "rows" and, when a full page came back, a "next_page_token".
+# The response carries "rows" and, when more rows remain, a "next_page_token".
 # Pass it back as page_token to fetch the next page.
 
-# Stream all matching rows (server-streaming; bounded by MaxStreamRows)
+# Stream matching rows (server-streaming; bounded by page_size, MaxStreamRows and
+# max-query-rows). A stream that stopped while rows remained ends with the
+# trailer "bifrost-truncated: true".
 grpcurl -plaintext -H 'authorization: Bearer <token>' \
   -d '{"filter": "{\"active\": {\"_eq\": true}}"}' \
   localhost:5090 bifrostql.BifrostQuery/StreamUsers
@@ -274,6 +276,17 @@ carries four fields:
 | `page_size` | `int32` | Rows per page. `0` or negative means the endpoint default; a positive value is clamped to the maximum. |
 | `page_token` | `string` | Opaque continuation token from a previous page's `next_page_token`. |
 
+`List` returns a `next_page_token` only when more rows exist. A page that ends
+exactly at the last row carries none, so a client never makes a round trip for an
+empty final page. The endpoint's `max-query-rows` ceiling can narrow a page below
+`page_size`: the page is then at most one row below the ceiling, the token still
+appears while rows remain, and following every token returns every row.
+
+`Stream` has no continuation. It emits at most one page, and when matching rows
+remain past that page it ends with the response trailer
+`bifrost-truncated: true`. A stream that returned every matching row carries no
+such trailer, so check for it before treating a stream as the complete answer.
+
 ### Filter JSON
 
 The `filter` is a JSON object of the same shape the GraphQL/OData paths use.
@@ -370,7 +383,7 @@ Per visible table `T` (using its `GraphQlName`), under service
 |-----|------|---------|----------|
 | `GetT` | unary | `GetTRequest` (one field per key column) | `GetTResponse` (`row`) |
 | `ListT` | unary | `ListTRequest` (`filter`, `order_by`, `page_size`, `page_token`) | `ListTResponse` (`rows`, `next_page_token`) |
-| `StreamT` | server-streaming | `StreamTRequest` (same read fields) | stream of `TRow` |
+| `StreamT` | server-streaming | `StreamTRequest` (same read fields) | stream of `TRow`; trailer `bifrost-truncated: true` when cut |
 | `InsertT` † | unary | `InsertTRequest` (all columns, optional) | `InsertTResponse` (`affected_rows`, `returned_key`) |
 | `UpdateT` † | unary | `UpdateTRequest` (required keys + optional SET columns) | `UpdateTResponse` (`affected_rows`) |
 | `DeleteT` † | unary | `DeleteTRequest` (required keys only) | `DeleteTResponse` (`affected_rows`) |

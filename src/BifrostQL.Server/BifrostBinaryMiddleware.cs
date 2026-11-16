@@ -1040,9 +1040,9 @@ namespace BifrostQL.Server
                 executionResult.Errors = errors;
             }
 
-            using var ms = new MemoryStream();
-            await serializer.WriteAsync(ms, executionResult, cancellationToken);
-            return ms.ToArray();
+            using var buffer = new PooledBufferStream();
+            await serializer.WriteAsync(buffer, executionResult, cancellationToken);
+            return buffer.ToArray();
         }
 
         private static IReadOnlyDictionary<string, object?>? ParseVariables(string variablesJson, IServiceProvider services)

@@ -72,7 +72,7 @@ builder.Services.AddSingleton<ILdapBindObserver, MyBindAuditor>();
 | `MaxOutstandingOperations` | `64` | In-flight operations on one connection. |
 | `MaxSearchResults` | `1000` | Hard ceiling on entries from one search. A client's own `sizeLimit` can only narrow it. |
 | `MaxPageSize` | `500` | Largest page the paged-results control may request; a larger request is narrowed, never honoured. |
-| `SearchBatchSize` | `200` | Rows fetched per pipeline round trip while filling a page. |
+| `SearchBatchSize` | `200` | Rows consumed per pipeline round trip while filling a page. Each fetch reads one extra row to tell a full batch from the last, and the model's `max-query-rows` ceiling narrows the batch (a ceiling of 1 refuses searches with `adminLimitExceeded`). |
 | `MaxSearchDuration` | `30 s` | Wall-clock ceiling on one search; a client's `timeLimit` can only narrow it. |
 | `MaxMembersPerEntry` | `1000` | Cap on member DNs resolved for one group entry. Exceeding it answers `adminLimitExceeded` rather than returning a silently truncated member list. |
 | `MemberOfEnabled` | `false` | Whether entries publish the reverse `memberOf` attribute. Off by default: it costs an extra bounded query per search. |

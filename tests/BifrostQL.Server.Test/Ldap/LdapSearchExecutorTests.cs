@@ -351,7 +351,8 @@ namespace BifrostQL.Server.Test.Ldap
 
             await RunAsync(executor, Search());
 
-            pipeline.Intents.Should().OnlyContain(i => i.Query.Limit != null && i.Query.Limit <= 7);
+            // A batch of 7 rows plus the one probe row that tells a full batch from the last.
+            pipeline.Intents.Should().OnlyContain(i => i.Query.Limit != null && i.Query.Limit <= 8);
         }
 
         [Fact]
@@ -403,6 +404,67 @@ namespace BifrostQL.Server.Test.Ldap
 
             seen.Should().HaveCount(12);
             seen.Should().OnlyHaveUniqueItems();
+        }
+
+        // ---- the model's row ceiling below the batch size ----
+
+        private static LdapModelBuilder CeilingModel(int maxQueryRows) =>
+            LdapModelBuilder.Create().WithPeople().WithGroups()
+                .WithModelMetadata(MetadataKeys.Model.MaxQueryRows, maxQueryRows);
+
+        [Fact]
+        public async Task Search_UnderAMaxQueryRowsCeilingBelowTheBatch_ReturnsEveryEntry()
+        {
+            // SQL generation clamps each batch's LIMIT to the ceiling. A batch judged against
+            // SearchBatchSize came back "short" and ended the family after the first 5 rows.
+            var (executor, pipeline) = Build(CeilingModel(5));
+            pipeline.WithPeople(12);
+
+            var outcome = await RunAsync(executor, Search(attributes: new[] { "uid" }));
+
+            outcome.ResultCode.Should().Be(LdapResultCode.Success);
+            outcome.Entries.Select(e => ValueOf(e, "uid")).Should().Equal(
+                Enumerable.Range(1, 12).Select(i => $"user{i:D4}"));
+            pipeline.Intents.Should().OnlyContain(i => i.Query.Limit <= 5,
+                "no batch asks for more rows than the ceiling allows");
+        }
+
+        [Fact]
+        public async Task Search_PagedUnderAMaxQueryRowsCeilingBelowThePage_ResumesUntilEveryEntryIsSeen()
+        {
+            var (executor, pipeline) = Build(CeilingModel(3));
+            pipeline.WithPeople(12);
+
+            var first = await RunAsync(executor, Search(attributes: new[] { "uid" }), Session(), PagingControl(5));
+            first.Entries.Should().HaveCount(5, "the page fills across several ceiling-sized batches");
+            ResponseCookie(first).Should().NotBeEmpty("seven entries remain, so the page is not the last");
+
+            var seen = first.Entries.Select(e => ValueOf(e, "uid")).ToList();
+            var cookie = ResponseCookie(first);
+            for (var page = 0; page < 10 && cookie.Length > 0; page++)
+            {
+                var outcome = await RunAsync(
+                    executor, Search(attributes: new[] { "uid" }), Session(), PagingControl(5, cookie));
+                outcome.ResultCode.Should().Be(LdapResultCode.Success);
+                seen.AddRange(outcome.Entries.Select(e => ValueOf(e, "uid")));
+                cookie = ResponseCookie(outcome);
+            }
+
+            seen.Should().Equal(Enumerable.Range(1, 12).Select(i => $"user{i:D4}"));
+        }
+
+        [Fact]
+        public async Task Search_UnderAMaxQueryRowsCeilingOfOne_IsRefusedAndExecutesNothing()
+        {
+            // A ceiling of 1 leaves no room for the probe row, so the end of a family cannot be told.
+            var (executor, pipeline) = Build(CeilingModel(1));
+            pipeline.WithPeople(3);
+
+            var outcome = await RunAsync(executor, Search());
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+            outcome.Entries.Should().BeEmpty();
+            pipeline.Intents.Should().BeEmpty();
         }
 
         [Fact]

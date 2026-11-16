@@ -17,7 +17,8 @@ namespace BifrostQL.Server.Test.Ldap
     /// policy, and soft-delete predicates on. This is what lets a test assert that the LDAP layer
     /// cannot emit a foreign row's DN: the row never reaches it.</para>
     ///
-    /// <para><b>It applies the intent's own filter, limit, and offset</b>, so paging and predicate
+    /// <para><b>It applies the intent's own filter, limit, and offset</b> (the limit clamped to the
+    /// model's <c>max-query-rows</c> by the production clamp), so paging and predicate
     /// pushdown are exercised rather than assumed. The filter interpreter covers the operator set
     /// the LDAP compiler emits and nothing else; an operator it does not know throws, so a compiler
     /// change that started emitting something new fails loudly here instead of being silently
@@ -116,8 +117,10 @@ namespace BifrostQL.Server.Test.Ldap
             IEnumerable<Dictionary<string, object?>> page = filtered;
             if (intent.Query.Offset is { } offset)
                 page = page.Skip(offset);
+            // The row ceiling, through the production clamp SQL generation applies: an intent's
+            // LIMIT above max-query-rows reads only the ceiling, exactly as the real pipeline does.
             if (intent.Query.Limit is { } limit)
-                page = page.Take(limit);
+                page = page.Take(GqlObjectQuery.ResolveRowWindow(_model, limit));
 
             // Only the columns the intent selected, so a test can prove a column was never fetched.
             var selected = intent.Query.ScalarColumns.Select(c => c.DbDbName).ToList();

@@ -197,7 +197,7 @@ namespace BifrostQL.Server.Ldap
 
                 default:
                     return await SearchEntriesAsync(
-                        index, resolution, request, selection, paging, session, ct);
+                        model, index, resolution, request, selection, paging, session, ct);
             }
         }
 
@@ -222,6 +222,7 @@ namespace BifrostQL.Server.Ldap
         }
 
         private async Task<LdapSearchOutcome> SearchEntriesAsync(
+            IDbModel model,
             LdapDirectoryIndex index,
             LdapScopeResolution resolution,
             LdapSearchRequest request,
@@ -263,6 +264,20 @@ namespace BifrostQL.Server.Ldap
                     return LdapSearchOutcome.Refused(LdapResultCode.UnavailableCriticalExtension);
             }
 
+            // The batch window comes from the model's row ceiling, not from SearchBatchSize alone.
+            // SQL generation clamps every LIMIT to max-query-rows, so a batch sized and judged by
+            // SearchBatchSize came back short under a lower ceiling and read as "family exhausted":
+            // the search stopped after the first batch and handed back an empty cookie with rows
+            // left unread. The probe row tells a full batch from the last one whatever the clamp.
+            var batchWindow = RowProbeWindow.For(model, _options.SearchBatchSize);
+            if (batchWindow.Page < 1)
+            {
+                // A ceiling of 1 leaves no room for the probe row, so no batch could ever tell
+                // "more rows" from "done". Refused explicitly rather than answered short.
+                _logger.LogWarning("ldap search refused: max-query-rows is too low to page a search.");
+                return LdapSearchOutcome.Refused(LdapResultCode.AdminLimitExceeded);
+            }
+
             var membership = new LdapMembershipResolver(_reads, index, _options);
             var entries = new List<LdapSearchResultEntry>();
             var truncated = false;
@@ -294,9 +309,16 @@ namespace BifrostQL.Server.Ldap
                     ct.ThrowIfCancellationRequested();
 
                     var batch = await FetchBatchAsync(
-                        target, selection, request, scoped, offset, userContext, visibility, ct);
+                        target, selection, request, scoped, offset, batchWindow, userContext, visibility, ct);
                     if (batch.Count == 0)
                         break;
+
+                    // The probe row is not part of this batch: the next batch re-reads it at the
+                    // advanced offset. Dropping it here keeps "consumed" counting only rows that
+                    // were actually considered.
+                    var moreInFamily = batchWindow.HasMore(batch.Count);
+                    if (moreInFamily)
+                        batch.RemoveRange(batchWindow.Page, batch.Count - batchWindow.Page);
 
                     // The pushdown is an over-approximation, so the exact evaluation runs here and
                     // is what decides membership of the result set.
@@ -351,8 +373,8 @@ namespace BifrostQL.Server.Ldap
                         break;
                     }
 
-                    // A short batch means the ordered source is exhausted for this family.
-                    if (batch.Count < _options.SearchBatchSize)
+                    // No probe row means the ordered source is exhausted for this family.
+                    if (!moreInFamily)
                         break;
                 }
 
@@ -431,6 +453,7 @@ namespace BifrostQL.Server.Ldap
             LdapSearchRequest request,
             IReadOnlyDictionary<string, object?> predicate,
             int offset,
+            RowProbeWindow batchWindow,
             IDictionary<string, object?> userContext,
             VisibleTable? visibility,
             CancellationToken ct)
@@ -442,7 +465,7 @@ namespace BifrostQL.Server.Ldap
                 TableName = target.Table.DbName,
                 GraphQlName = target.Table.GraphQlName,
                 Path = target.Table.GraphQlName,
-                Limit = _options.SearchBatchSize,
+                Limit = batchWindow.Fetch,
                 Offset = offset > 0 ? offset : null,
             };
 

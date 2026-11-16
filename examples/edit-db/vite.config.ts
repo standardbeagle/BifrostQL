@@ -6,7 +6,12 @@ import tailwindcss from '@tailwindcss/vite';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  plugins: [tailwindcss(), react(), dts({ insertTypesEntry: true })],
+  plugins: [tailwindcss(), react(), dts({
+    insertTypesEntry: true,
+    // Declarations are the published API: tests, perf harnesses and stories are not
+    // part of it, and the stories' inferred Storybook types cannot be emitted portably.
+    exclude: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src/**/*.stories.tsx'],
+  })],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

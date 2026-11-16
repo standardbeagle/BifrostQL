@@ -181,6 +181,77 @@ namespace BifrostQL.Server.Test.Prometheus
             text.Should().NotContain("sales_total{region"); // unbounded metric never emitted
         }
 
+        // ---- cardinality window: the group LIMIT comes from RowProbeWindow --------------------
+
+        private const string RegionMetric =
+            "main.Sales { metric-name: sales_total; metric-help: Sales rows; metric-count: enabled; metric-labels: region }";
+
+        // One Sales row per region: `groups` distinct label values, past the 100-row default window.
+        private static string[] RegionSeed(int groups) => new[]
+        {
+            "CREATE TABLE Sales (id INTEGER PRIMARY KEY, region TEXT NOT NULL, product TEXT NOT NULL, amount REAL NOT NULL);",
+            "INSERT INTO Sales(id, region, product, amount) VALUES " +
+                string.Join(", ", Enumerable.Range(1, groups).Select(i => $"({i}, 'r{i:D4}', 'a', 1.0)")) + ";",
+        };
+
+        private static int RegionSeriesCount(string text) =>
+            text.Split('\n').Count(line => line.StartsWith("sales_total{region=\"", StringComparison.Ordinal));
+
+        [Fact]
+        public async Task A_metric_with_more_groups_than_the_default_window_but_under_its_bound_emits_every_series()
+        {
+            // 400 groups, bound 1000. With no LIMIT on the grouped aggregate the 100-row default
+            // window cut the result to 100 groups, the bound check saw 100 <= 1000, and the scrape
+            // emitted 100 of 400 series as if complete.
+            await using var harness = await ODataRealDbHarness.StartAsync("svc-window-under", new[] { RegionMetric }, RegionSeed(400));
+            var text = await Service(harness.Reads, Opts(global: 1000)).ScrapeAsync();
+
+            RegionSeriesCount(text).Should().Be(400);
+            text.Should().Contain("sales_total{region=\"r0400\"} 1\n");
+            text.Should().NotContain("bifrostql_prometheus_metric_capped{metric=\"sales_total\"} 1\n");
+            text.Should().Contain("bifrostql_prometheus_scrape_success{metric=\"sales_total\"} 1\n");
+        }
+
+        [Fact]
+        public async Task A_metric_with_more_groups_than_its_bound_is_capped_even_past_the_default_window()
+        {
+            // 400 groups, per-metric bound 300 (above the 100-row default window). The default
+            // window returned 100 groups, 100 <= 300 never tripped the cap, and 100 series shipped
+            // with capped never set.
+            var metric = RegionMetric.Replace(" }", "; metric-max-cardinality: 300 }");
+            await using var harness = await ODataRealDbHarness.StartAsync("svc-window-over", new[] { metric }, RegionSeed(400));
+            var text = await Service(harness.Reads, Opts(global: 1000)).ScrapeAsync();
+
+            text.Should().Contain("bifrostql_prometheus_metric_capped{metric=\"sales_total\"} 1\n");
+            text.Should().Contain("bifrostql_prometheus_scrape_success{metric=\"sales_total\"} 0\n");
+            RegionSeriesCount(text).Should().Be(0);
+        }
+
+        [Fact]
+        public async Task A_metric_cut_by_max_query_rows_below_its_bound_is_capped_not_truncated()
+        {
+            // 400 groups, bound 1000, max-query-rows 50: the ceiling, not the bound, sets the page.
+            // The grouped aggregate returned 50 groups and the scrape emitted them as complete.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "svc-window-ceiling", new[] { ":root { max-query-rows: 50 }", RegionMetric }, RegionSeed(400));
+            var text = await Service(harness.Reads, Opts(global: 1000)).ScrapeAsync();
+
+            text.Should().Contain("bifrostql_prometheus_metric_capped{metric=\"sales_total\"} 1\n");
+            RegionSeriesCount(text).Should().Be(0);
+        }
+
+        [Fact]
+        public async Task A_metric_that_fits_under_max_query_rows_still_emits_every_series()
+        {
+            // Control for the ceiling fact: 40 groups fit the 49-group page under max-query-rows 50.
+            await using var harness = await ODataRealDbHarness.StartAsync(
+                "svc-window-ceiling-fit", new[] { ":root { max-query-rows: 50 }", RegionMetric }, RegionSeed(40));
+            var text = await Service(harness.Reads, Opts(global: 1000)).ScrapeAsync();
+
+            RegionSeriesCount(text).Should().Be(40);
+            text.Should().NotContain("bifrostql_prometheus_metric_capped{metric=\"sales_total\"} 1\n");
+        }
+
         // ---- slice 5: engine self-metrics rendered SEPARATELY from the business series ------
 
         private static PrometheusScrapeService ServiceWithEngine(

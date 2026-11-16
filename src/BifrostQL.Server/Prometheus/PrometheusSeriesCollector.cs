@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Server.Prometheus
@@ -42,16 +43,28 @@ namespace BifrostQL.Server.Prometheus
         {
             var plan = PrometheusMetricPlanner.Plan(config, table, endpoint, userContext);
 
+            // Cardinality bound (maximum returned groups). The effective bound is the
+            // caller-supplied override (the exposition service passes the metric's per-metric
+            // cap OR the global backstop) falling back to the metric's own declared cap; no
+            // bound at all asks for every group up to the max-query-rows ceiling. The group
+            // window comes from RowProbeWindow, the same clamp SQL generation applies: a
+            // grouped aggregate with no Limit takes the 100-row default window, so the count
+            // check below never saw more than 100 groups and a 400-group metric emitted 100
+            // series as if complete.
+            var bound = maxCardinalityOverride ?? config.MaxCardinality;
+            var model = await _reads.GetModelAsync(endpoint);
+            var window = RowProbeWindow.For(model, bound ?? -1);
+            plan.Intent.Query.Limit = window.Fetch;
+
             var result = await ExecuteWithDeadlineAsync(plan, cancellationToken);
 
-            // Cardinality bound (maximum returned groups) — reject deterministically before
-            // materializing any series so a misconfigured high-cardinality label can never
-            // emit an unbounded series set. (A count over the flat result is O(groups), and
-            // rejection short-circuits the sort/emit below entirely.) The effective bound is the
-            // caller-supplied override (the exposition service passes the metric's per-metric
-            // cap OR the global backstop) falling back to the metric's own declared cap.
-            if ((maxCardinalityOverride ?? config.MaxCardinality) is { } bound && result.Rows.Count > bound)
-                throw new PrometheusCardinalityExceededException(config.MetricName, bound, result.Rows.Count);
+            // Reject deterministically before materializing any series so a misconfigured
+            // high-cardinality label can never emit a partial or unbounded series set. A
+            // sentinel row past the page means more groups exist than the metric may emit —
+            // whether its own bound or the ceiling set the page — so the metric is capped,
+            // never cut short.
+            if (window.HasMore(result.Rows.Count))
+                throw new PrometheusCardinalityExceededException(config.MetricName, window.Page, result.Rows.Count);
 
             var samples = new List<PrometheusMetricSample>(result.Rows.Count);
             foreach (var row in result.Rows)

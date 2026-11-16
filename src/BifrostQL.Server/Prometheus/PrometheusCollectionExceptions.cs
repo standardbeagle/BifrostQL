@@ -4,16 +4,18 @@ namespace BifrostQL.Server.Prometheus
 {
     /// <summary>
     /// Thrown when a metric's grouped aggregate returns MORE distinct label groups than the
-    /// metric's <c>metric-max-cardinality</c> bound allows. The collection is rejected
+    /// metric may emit: its <c>metric-max-cardinality</c> bound, narrowed by the model's
+    /// <c>max-query-rows</c> ceiling. The query fetches one group past that page, so
+    /// <see cref="Observed"/> is a lower bound on the group count. The collection is rejected
     /// deterministically (fail-fast, no fallback) so a misconfigured high-cardinality label
     /// column can never emit an unbounded set of series onto the scrape wire.
     /// </summary>
     public sealed class PrometheusCardinalityExceededException : Exception
     {
         public PrometheusCardinalityExceededException(string? metricName, int limit, int observed)
-            : base($"Prometheus metric '{metricName}' produced {observed} label groups, exceeding its " +
-                   $"metric-max-cardinality bound of {limit}; the metric is rejected rather than emitting " +
-                   "an unbounded series set.")
+            : base($"Prometheus metric '{metricName}' produced at least {observed} label groups, exceeding " +
+                   $"its effective cardinality bound of {limit}; the metric is rejected rather than emitting " +
+                   "an unbounded or partial series set.")
         {
             MetricName = metricName;
             Limit = limit;

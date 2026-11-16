@@ -152,7 +152,11 @@ concatenated into SQL.
   effective cap — its own `metric-max-cardinality`, else
   `Exposition.GlobalMaxCardinality` (default **1000**) — is **capped**: the
   series is not emitted and the operator sees a `bifrostql_prometheus_metric_capped`
-  health metric. A labeled metric with **no** per-metric cap **and**
+  health metric. The grouped aggregate fetches one group past the cap to detect
+  overflow, and that probe has to fit under the model's `max-query-rows` ceiling
+  (default 10000), so the effective cap is the smaller of the metric's cap and
+  `max-query-rows` minus one. A metric past the effective cap is capped the same
+  way; it is never emitted as a partial series set. A labeled metric with **no** per-metric cap **and**
   `GlobalMaxCardinality = null` is an unbounded configuration, rejected as a
   scrape-error rather than emitted.
 - **Query timeout.** A collection that exceeds `Collection.QueryTimeout` (default

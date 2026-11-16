@@ -214,7 +214,9 @@ Each expansion is executed as its own independent, fully-scoped read intent — 
 the expanded child entity gets its own tenant/soft-delete/policy pass. A single
 `$expand` navigation that would return more than `MaxExpandFanout` (default
 `1000`) related rows across the page fails closed with a `400`, rather than
-materializing an unbounded fan-out.
+materializing an unbounded fan-out. When the endpoint's `max-query-rows` ceiling
+is lower, the bound is one below that ceiling, and a navigation over it also
+fails with a `400`. An expanded collection is never returned short.
 
 ## Server-driven paging
 
@@ -222,6 +224,12 @@ Every collection response is bounded to at most `MaxPageSize` rows. When more ro
 match than fit on the page, the response includes an `@odata.nextLink` carrying an
 opaque, server-signed `$skiptoken`. Follow the link to fetch the next page; a
 client never constructs the token itself.
+
+The endpoint's `max-query-rows` ceiling can narrow a page further. A page is then
+at most one row below the ceiling, and the response still carries a `nextLink`
+when more rows remain, so following every link returns every row. `$top=0`
+returns an empty page and never carries a `nextLink`. Use it with `$count=true`
+to get only the total.
 
 The token is HMAC-signed and binds the entity set, the query shape
 (`$filter`/`$select`/`$orderby`), the effective page size, and a fingerprint of

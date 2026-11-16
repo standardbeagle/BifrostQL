@@ -25,6 +25,16 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Changed — the binary transport copies less per frame
+
+- A binary response used to be copied about four times on its way to the socket, and a received
+  payload twice. `BifrostMessage.ToBytes` now sizes the frame first and writes into one array,
+  wrapping the payload without copying it. `FromBytes` keeps the array the parser already made.
+  Result JSON is serialized through a pooled buffer instead of a growing `MemoryStream`. Output is
+  byte-for-byte unchanged. Measured allocation per `ToBytes` of a 1,000-row result: 1,549 KB to
+  262 KB. Per end-to-end 10,000-row query (transport bench, process-wide): 62 MB to 34 MB (HTTP
+  allocates 23 MB).
+
 ### Changed — edit-db formats grid cells from a per-column formatter
 
 - edit-db built a new `Intl.NumberFormat` for every number and percent cell, called

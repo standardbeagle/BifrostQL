@@ -166,6 +166,66 @@ namespace BifrostQL.Server.Test.OData
             root.GetProperty("@odata.nextLink").GetString().Should().Contain("$skiptoken=");
         }
 
+        // ---- max-query-rows ceiling below the page: narrowed pages, nothing lost ------------
+
+        // Ceiling 4 leaves a page of 3 beside the sentinel row; the 7 widgets need three pages.
+        private static readonly string[] CeilingMetadata =
+        {
+            $":root {{ {BifrostQL.Core.Model.MetadataKeys.Model.MaxQueryRows}: 4 }}",
+        };
+
+        [Fact]
+        public async Task A_ceiling_below_the_page_narrows_the_page_and_still_emits_a_nextlink()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("page-ceiling", CeilingMetadata, Seed);
+            var opts = Opts(max: 1000, def: 100);
+
+            // $top=1000 under a ceiling of 4: the page is 3 (one slot is the sentinel), more rows
+            // exist, so the response must say so with a nextLink instead of reading as complete.
+            var (s1, _, b1) = await Run(harness, "/widgets", "?$top=1000", options: opts);
+            s1.Should().Be(200);
+            var r1 = JsonDocument.Parse(b1).RootElement;
+            r1.TryGetProperty("@odata.nextLink", out _).Should().BeTrue("the ceiling cut the page, rows remain");
+            Ids(r1).Should().Equal(1, 2, 3);
+
+            // Walking every nextLink yields every row exactly once: the offset advances by the
+            // narrowed page, not by the requested $top.
+            var seen = new List<int>(Ids(r1));
+            var link = r1.GetProperty("@odata.nextLink").GetString();
+            while (link is not null)
+            {
+                var (path, query) = SplitLink(link);
+                var (s, _, b) = await Run(harness, path, query, options: opts);
+                s.Should().Be(200);
+                var r = JsonDocument.Parse(b).RootElement;
+                seen.AddRange(Ids(r));
+                link = r.TryGetProperty("@odata.nextLink", out var n) ? n.GetString() : null;
+            }
+            seen.Should().Equal(1, 2, 3, 4, 5, 6, 7);
+        }
+
+        // ---- $top=0: an empty page never links to itself -----------------------------------
+
+        [Fact]
+        public async Task Top_zero_returns_an_empty_page_with_no_nextlink()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("page-top-zero", Metadata, Seed);
+
+            var (status, _, body) = await Run(harness, "/widgets", "?$top=0&$count=true");
+
+            status.Should().Be(200);
+            var root = JsonDocument.Parse(body).RootElement;
+            root.GetProperty("value").GetArrayLength().Should().Be(0);
+            // $top=0 is still the count-only idiom: the total is reported.
+            root.GetProperty("@odata.count").GetInt64().Should().Be(7);
+            root.TryGetProperty("@odata.nextLink", out _).Should().BeFalse(
+                "a nextLink from an empty page resumes at the same offset and loops forever");
+
+            // Control: the same set with $top=1 does page on, so the absence above is the $top=0 rule.
+            var (_, _, controlBody) = await Run(harness, "/widgets", "?$top=1");
+            JsonDocument.Parse(controlBody).RootElement.TryGetProperty("@odata.nextLink", out _).Should().BeTrue();
+        }
+
         // ---- token security: tamper, cross-query, tenant isolation on continuation ----------
 
         [Fact]

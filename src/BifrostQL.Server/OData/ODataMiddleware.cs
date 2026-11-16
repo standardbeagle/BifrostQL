@@ -202,9 +202,12 @@ namespace BifrostQL.Server.OData
                 : (read.Query.Offset ?? 0);
 
             // Over-fetch one row past the page to detect whether a next page exists without a
-            // second round-trip; the extra row is trimmed from the response.
+            // second round-trip; the extra row is trimmed from the response. The window comes from
+            // the same max-query-rows clamp SQL generation applies, so a ceiling below the page
+            // narrows the page (and still pages on) instead of silently cutting rows.
+            var window = RowProbeWindow.For(model, pageSize);
             read.Query.Offset = offset > 0 ? offset : null;
-            read.Query.Limit = pageSize + 1;
+            read.Query.Limit = window.Fetch;
             // $count reports the pipeline-filtered total through the SAME intent (COUNT(*) with the
             // same tenant/soft-delete/$filter predicate) — never a side-channel query.
             read.Query.IncludeResult = options.Count;
@@ -218,9 +221,9 @@ namespace BifrostQL.Server.OData
                 },
                 context.RequestAborted);
 
-            var hasMore = result.Rows.Count > pageSize;
+            var hasMore = window.HasMore(result.Rows.Count);
             var pageRows = hasMore
-                ? (IReadOnlyList<IReadOnlyDictionary<string, object?>>)result.Rows.Take(pageSize).ToList()
+                ? (IReadOnlyList<IReadOnlyDictionary<string, object?>>)result.Rows.Take(window.Page).ToList()
                 : result.Rows;
 
             // Expand runs AFTER the page is trimmed so the child fetch only ever binds the keys of
@@ -230,10 +233,13 @@ namespace BifrostQL.Server.OData
                 expandPlan, pageRows, _reads, model, userContext, _options.Endpoint,
                 _options.MaxExpandFanout, context.RequestAborted);
 
+            // An empty page ($top=0, or a ceiling of 1 leaving no room beside the sentinel) never
+            // advances the offset, so a nextLink from it would point back at itself and a client
+            // following it would loop forever.
             string? nextLink = null;
-            if (hasMore)
+            if (hasMore && window.Page > 0)
             {
-                var token = ODataContinuationToken.Issue(offset + pageSize, DateTimeOffset.UtcNow, binding, _tokenSecret);
+                var token = ODataContinuationToken.Issue(offset + window.Page, DateTimeOffset.UtcNow, binding, _tokenSecret);
                 nextLink = BuildNextLink(ServiceRoot(context), entity.Table.GraphQlName, options, token);
             }
 

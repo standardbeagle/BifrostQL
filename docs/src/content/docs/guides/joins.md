@@ -139,6 +139,7 @@ Prefer real database foreign keys where possible. Known application schemas such
 - Top-level table queries are paged; relationship fields return nested objects or lists.
 - Child collection fields support filters.
 - Automatic join detection uses database foreign keys and name-based conventions. Disable it with `auto-join: false` metadata.
+- A name-based link (`employee_id` → `employee`) resolves the parent in the child table's own schema first. If the child's schema has no such table, it links to the one schema that has it. If two or more other schemas have it, no link is inferred: declare a foreign key instead.
 
 ## Controlling join behavior
 

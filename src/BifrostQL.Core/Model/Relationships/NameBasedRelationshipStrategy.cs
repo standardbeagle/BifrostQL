@@ -24,6 +24,46 @@ namespace BifrostQL.Core.Model.Relationships
         }
         private readonly IReadOnlyList<PrefixGroup> _prefixGroups;
 
+        /// <summary>
+        /// Candidate parent tables by NormalizedName, schema-aware. A table's bare name
+        /// is not its identity: <c>hr.employee</c> and <c>payroll.employee</c> share
+        /// one. A column resolves to the same-named table in its own table's schema;
+        /// failing that, to the one schema that defines the name. A name defined in two
+        /// or more other schemas is not inferred — picking one would link across
+        /// schemas by read order.
+        /// </summary>
+        private sealed class SingleKeyTableIndex
+        {
+            private readonly Dictionary<(string Schema, string Name), IDbTable> _bySchema = new(new SchemaTableComparer());
+            private readonly Dictionary<string, List<IDbTable>> _byName = new(StringComparer.InvariantCultureIgnoreCase);
+
+            public SingleKeyTableIndex(IEnumerable<IDbTable> tables)
+            {
+                foreach (var table in tables)
+                {
+                    // First-wins within one schema (two tables singularizing to the
+                    // same name), as before.
+                    if (!_bySchema.TryAdd((table.TableSchema, table.NormalizedName), table))
+                        continue;
+                    if (!_byName.TryGetValue(table.NormalizedName, out var list))
+                    {
+                        list = new List<IDbTable>();
+                        _byName[table.NormalizedName] = list;
+                    }
+                    list.Add(table);
+                }
+            }
+
+            public IDbTable? Find(string schema, string normalizedName)
+            {
+                if (_bySchema.TryGetValue((schema, normalizedName), out var sameSchema))
+                    return sameSchema;
+                return _byName.TryGetValue(normalizedName, out var candidates) && candidates.Count == 1
+                    ? candidates[0]
+                    : null;
+            }
+        }
+
         public NameBasedRelationshipStrategy(IReadOnlyList<PrefixGroup>? prefixGroups = null)
         {
             _prefixGroups = prefixGroups ?? Array.Empty<PrefixGroup>();
@@ -35,17 +75,12 @@ namespace BifrostQL.Core.Model.Relationships
             // Get columns already linked by foreign keys to avoid duplicates
             var fkLinkedColumns = GetFkLinkedColumns(model, foreignKeys);
 
-            // Global lookup: NormalizedName -> table (for non-prefixed matching).
-            // Filtered to tables with exactly ONE primary key column so that all
-            // downstream KeyColumns.First() calls (in DiscoverRelationships and
-            // FindIdMatches) are safe — this is the single guard for those three
-            // call-sites, matching the repo pattern of guarding at candidate-selection
-            // time rather than scattering checks through the code.
-            var singleTables = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
-            foreach (var table in model.Tables.Where(t => t.KeyColumns.Count() == 1))
-            {
-                singleTables.TryAdd(table.NormalizedName, table);
-            }
+            // Non-prefixed candidate parents, filtered to tables with exactly ONE
+            // primary key column so that all downstream KeyColumns.First() calls (in
+            // DiscoverRelationships and FindIdMatches) are safe — this is the single
+            // guard for those three call-sites, matching the repo pattern of guarding
+            // at candidate-selection time rather than scattering checks through the code.
+            var singleTables = new SingleKeyTableIndex(model.Tables.Where(t => t.KeyColumns.Count() == 1));
 
             // Per-prefix-group lookup
             var prefixLookups = BuildPrefixLookups(model);
@@ -168,7 +203,7 @@ namespace BifrostQL.Core.Model.Relationships
 
         private IEnumerable<(ColumnDto column, IDbTable table, IDbTable parent)> FindIdMatches(
             IDbModel model,
-            Dictionary<string, IDbTable> singleTables,
+            SingleKeyTableIndex singleTables,
             Dictionary<string, Dictionary<string, IDbTable>> prefixLookups,
             Dictionary<string, string> tableToPrefixGroup,
             HashSet<(string TableSchema, string TableName, string ColumnName)> fkLinkedColumns)
@@ -183,11 +218,7 @@ namespace BifrostQL.Core.Model.Relationships
                     return prefixMatch;
                 }
 
-                // Fall back to global lookup
-                if (singleTables.TryGetValue(column.NormalizedName, out var globalMatch))
-                    return globalMatch;
-
-                return null;
+                return singleTables.Find(ownerTable.TableSchema, column.NormalizedName);
             }
 
             return model.Tables

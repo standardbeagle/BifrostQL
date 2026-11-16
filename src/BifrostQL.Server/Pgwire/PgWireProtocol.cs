@@ -124,6 +124,14 @@ namespace BifrostQL.Server.Pgwire
         public const string SqlStateTooManyConnections = "53300";   // too_many_connections (over the limit)
         public const string SqlStateInvalidSqlStatementName = "26000"; // reference to an unknown prepared statement/portal
         public const string SqlStateConfigurationLimitExceeded = "53400"; // per-session prepared-statement/portal cap reached
+        public const string SqlStateProgramLimitExceeded = "54000"; // program_limit_exceeded (result over max-query-rows)
+
+        /// <summary>
+        /// Client-safe ErrorResponse message when an unbounded or over-ceiling SELECT has more
+        /// rows than the server's max-query-rows ceiling allows. Fixed text: no table, column
+        /// or limit value.
+        /// </summary>
+        public const string RowCeilingExceededMessage = "result exceeds the server row limit; add a LIMIT clause";
 
         /// <summary>
         /// Client-safe ErrorResponse message for a query aborted by a matching CancelRequest.

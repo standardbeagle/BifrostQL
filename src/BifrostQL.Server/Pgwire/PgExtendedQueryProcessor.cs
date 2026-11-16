@@ -436,8 +436,8 @@ namespace BifrostQL.Server.Pgwire
         private sealed class ResolvedPortal
         {
             public required IReadOnlyList<PgResultColumn> Columns { get; init; }
-            /// <summary>Non-null for the SQL read path: execute this for rows.</summary>
-            public QueryIntent? Intent { get; init; }
+            /// <summary>Non-null for the SQL read path: execute its intent for rows.</summary>
+            public PgQueryPlan? Plan { get; init; }
             /// <summary>Non-null for a catalog/introspection portal: rows already materialized.</summary>
             public IReadOnlyList<IReadOnlyDictionary<string, object?>>? CatalogRows { get; init; }
         }
@@ -462,7 +462,7 @@ namespace BifrostQL.Server.Pgwire
             }
 
             var plan = await _translator.TranslateAsync(_executor, portal.Statement.Sql, portal.Parameters, _userContext, _endpoint, ct);
-            var resolved = new ResolvedPortal { Columns = plan.Columns, Intent = plan.Intent };
+            var resolved = new ResolvedPortal { Columns = plan.Columns, Plan = plan };
             portal.Resolved = resolved;
             return resolved;
         }
@@ -479,8 +479,12 @@ namespace BifrostQL.Server.Pgwire
             }
             else
             {
-                var result = await _executor.ExecuteAsync(resolved.Intent!, ct);
-                rows = result.Rows;
+                // Bounded once, on the first Execute, before any DataRow: a ceiling-cut
+                // result fails here, and a row-limited Execute (max_rows) only ever pages
+                // through the already-bounded rows cached below.
+                var plan = resolved.Plan!;
+                var result = await _executor.ExecuteAsync(plan.Intent, ct);
+                rows = plan.BoundRows(result.Rows);
             }
             portal.ExecutedRows = rows;
             return rows;

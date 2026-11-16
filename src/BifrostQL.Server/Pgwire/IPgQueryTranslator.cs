@@ -18,6 +18,32 @@ namespace BifrostQL.Server.Pgwire
         /// (0 for a simple query). Drives the extended protocol's ParameterDescription.
         /// </summary>
         public int ParameterCount { get; init; }
+
+        /// <summary>
+        /// The probe window the query's LIMIT came from: <see cref="RowProbeWindow.Fetch"/>
+        /// is on <see cref="Intent"/>, <see cref="RowProbeWindow.Page"/> is the most rows
+        /// the wire may return.
+        /// </summary>
+        public required RowProbeWindow RowWindow { get; init; }
+
+        /// <summary>
+        /// The rows the wire returns for <paramref name="executedRows"/>: at most
+        /// <see cref="RowProbeWindow.Page"/>, the sentinel row dropped. When the
+        /// max-query-rows ceiling, not the statement's own LIMIT, cut the result, this
+        /// throws <c>54000 program_limit_exceeded</c> instead of returning a short answer
+        /// with a plausible <c>SELECT n</c> tag. The simple and extended paths both call
+        /// it on the fully materialized result, before any DataRow is written.
+        /// </summary>
+        public IReadOnlyList<IReadOnlyDictionary<string, object?>> BoundRows(
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> executedRows)
+        {
+            if (RowWindow.IsCutByCeiling(executedRows.Count))
+                throw new PgQueryTranslationException(
+                    PgWireProtocol.RowCeilingExceededMessage, PgWireProtocol.SqlStateProgramLimitExceeded);
+            return RowWindow.HasMore(executedRows.Count)
+                ? executedRows.Take(RowWindow.Page).ToList()
+                : executedRows;
+        }
     }
 
     /// <summary>

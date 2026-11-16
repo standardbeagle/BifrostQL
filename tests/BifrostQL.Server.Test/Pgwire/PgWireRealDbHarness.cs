@@ -84,6 +84,12 @@ namespace BifrostQL.Server.Test.Pgwire
         public Task<SimpleQueryResult> QueryAsync(ClaimsPrincipal principal, string sql)
             => PgWireLoopback.RunAsync(Executor, principal, sql, EndpointPath, TimeSpan.FromSeconds(20));
 
+        /// <summary>
+        /// A loopback pgwire front door over the same real executor, for extended-protocol
+        /// (Parse/Bind/Execute) sessions. The caller disposes it.
+        /// </summary>
+        public PgWireTestHarness OpenFrontDoor() => new(Executor);
+
         /// <summary>All SQL the pipeline generated for a table (parameter placeholders, never inlined values).</summary>
         public string CapturedSql(string table) => string.Join("\n---\n", _sqlCapture.SqlFor(table));
 

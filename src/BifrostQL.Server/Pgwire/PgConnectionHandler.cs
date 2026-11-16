@@ -562,8 +562,9 @@ namespace BifrostQL.Server.Pgwire
 
                 var plan = await translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, queryToken);
                 var result = await executor.ExecuteAsync(plan.Intent, queryToken);
+                var rows = plan.BoundRows(result.Rows);
 
-                await WriteResultAsync(stream, plan.Columns, result.Rows, ct);
+                await WriteResultAsync(stream, plan.Columns, rows, ct);
             }
             catch (OperationCanceledException) when (cancellation.WasCancelRequested && !ct.IsCancellationRequested)
             {

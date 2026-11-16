@@ -52,7 +52,9 @@ namespace BifrostQL.Server.Test.Pgwire
             var plan = await Translate("SELECT id FROM users ORDER BY name DESC, id ASC LIMIT 10 OFFSET 5", UsersOnlyModel());
 
             plan.Intent.Query.Sort.Should().Equal("name_desc", "id_asc");
-            plan.Intent.Query.Limit.Should().Be(10);
+            // LIMIT 10 asks for a page of 10; the query fetches one sentinel row past it.
+            plan.RowWindow.Page.Should().Be(10);
+            plan.Intent.Query.Limit.Should().Be(11);
             plan.Intent.Query.Offset.Should().Be(5);
         }
 

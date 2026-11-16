@@ -81,13 +81,19 @@ namespace BifrostQL.Server.Pgwire
                 query.Sort.Add($"{col.GraphQlName}{(term.Descending ? "_desc" : "_asc")}");
             }
 
-            query.Limit = stmt.Limit;
+            // SQL without LIMIT means every row, so the probe asks for the ceiling; an
+            // explicit LIMIT n asks for n. Either way the query carries the probe's Fetch
+            // (one past the page), so the executed rows tell a complete answer from one the
+            // max-query-rows ceiling cut short (PgQueryPlan.BoundRows).
+            var rowWindow = RowProbeWindow.For(model, stmt.Limit ?? -1);
+            query.Limit = rowWindow.Fetch;
             query.Offset = stmt.Offset;
 
             return new PgQueryPlan
             {
                 Intent = new QueryIntent { Query = query, UserContext = userContext, Endpoint = endpoint },
                 Columns = outputColumns,
+                RowWindow = rowWindow,
                 ParameterCount = stmt.ParameterCount,
             };
         }

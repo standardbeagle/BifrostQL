@@ -184,6 +184,9 @@ describe('useBifrostTable', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
+    // urlSync is on by default: a test that outlasts its debounce writes its sort/filter to
+    // the URL, and the next test would read that state back on mount.
+    window.history.replaceState(null, '', '/');
   });
 
   describe('column configuration', () => {
@@ -968,6 +971,10 @@ describe('useBifrostTable', () => {
 
   describe('URL sync', () => {
     let replaceStateSpy: ReturnType<typeof vi.spyOn>;
+    // These tests swap in a fake location on another origin (http://localhost, not jsdom's
+    // http://localhost:3000). Left in place, a later test's debounced URL write would hand
+    // that cross-origin URL to the real replaceState, which throws SecurityError.
+    const jsdomLocation = Object.getOwnPropertyDescriptor(window, 'location')!;
 
     beforeEach(() => {
       Object.defineProperty(window, 'location', {
@@ -982,6 +989,7 @@ describe('useBifrostTable', () => {
 
     afterEach(() => {
       replaceStateSpy.mockRestore();
+      Object.defineProperty(window, 'location', jsdomLocation);
     });
 
     it('syncs state to URL when urlSync is enabled (default)', async () => {

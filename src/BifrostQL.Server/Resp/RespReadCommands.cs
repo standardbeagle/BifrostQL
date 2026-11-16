@@ -37,7 +37,7 @@ namespace BifrostQL.Server.Resp
                 if (parseError is not null)
                     return RespValue.Err(parseError);
 
-                return await ExecuteAsync(context, executor, keys, cancellationToken);
+                return await ExecuteAsync(context, executor, model, keys, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -58,7 +58,7 @@ namespace BifrostQL.Server.Resp
 
         /// <summary>Produces the reply from the already-parsed, validated keys.</summary>
         protected abstract Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken);
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken);
 
         /// <summary>The single-key commands (GET/TYPE) resolve exactly one key.</summary>
         protected static RespValue? RequireExactArgs(int argumentCount, string command) =>
@@ -110,10 +110,10 @@ namespace BifrostQL.Server.Resp
         protected override RespValue? ValidateArity(int argumentCount) => RequireExactArgs(argumentCount, Name);
 
         protected override async Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
         {
             var rows = await RespReadEngine.ResolveRowsAsync(
-                executor, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
+                executor, model, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
             var row = rows[0];
             return row is null
                 ? RespValue.NullBulk
@@ -133,10 +133,10 @@ namespace BifrostQL.Server.Resp
         protected override RespValue? ValidateArity(int argumentCount) => RequireAtLeastOneKey(argumentCount, Name);
 
         protected override async Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
         {
             var rows = await RespReadEngine.ResolveRowsAsync(
-                executor, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
+                executor, model, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
             var items = new RespValue[rows.Count];
             for (var i = 0; i < rows.Count; i++)
                 items[i] = rows[i] is { } row
@@ -157,10 +157,10 @@ namespace BifrostQL.Server.Resp
         protected override RespValue? ValidateArity(int argumentCount) => RequireAtLeastOneKey(argumentCount, Name);
 
         protected override async Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
         {
             var rows = await RespReadEngine.ResolveRowsAsync(
-                executor, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
+                executor, model, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
             return RespValue.Int(rows.Count(r => r is not null));
         }
     }
@@ -176,10 +176,10 @@ namespace BifrostQL.Server.Resp
         protected override RespValue? ValidateArity(int argumentCount) => RequireExactArgs(argumentCount, Name);
 
         protected override async Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
         {
             var rows = await RespReadEngine.ResolveRowsAsync(
-                executor, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
+                executor, model, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
             return RespValue.Simple(rows[0] is null ? RespProtocol.TypeNone : RespProtocol.TypeString);
         }
     }

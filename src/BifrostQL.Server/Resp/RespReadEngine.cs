@@ -150,9 +150,16 @@ namespace BifrostQL.Server.Resp
         /// mapped back per key. A lone key resolves with an exact primary-key-equality intent. Every intent carries the caller's
         /// <paramref name="userContext"/>, so tenant/soft-delete/policy filtering applies per key —
         /// an out-of-scope row simply yields <c>null</c>.
+        ///
+        /// <para>A batch reads every requested key in ONE query, so its LIMIT is the distinct key
+        /// count, and that count must fit under the model's <c>max-query-rows</c> ceiling. Over it,
+        /// the whole command is refused with <see cref="RespRowCeilingExceededException"/>: SQL
+        /// generation would clamp the LIMIT silently and the keys past the ceiling would read as
+        /// missing (nil in MGET, uncounted in EXISTS).</para>
         /// </summary>
         public static async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>?>> ResolveRowsAsync(
             IQueryIntentExecutor executor,
+            IDbModel model,
             IReadOnlyList<RespKey> keys,
             IDictionary<string, object?> userContext,
             string? endpoint,
@@ -176,9 +183,9 @@ namespace BifrostQL.Server.Resp
                 if (indices.Count > 1)
                 {
                     if (keyColumns.Count == 1)
-                        await ResolveSinglePkBatchAsync(executor, keys, indices, table, keyColumns[0], userContext, endpoint, results, cancellationToken);
+                        await ResolveSinglePkBatchAsync(executor, model, keys, indices, table, keyColumns[0], userContext, endpoint, results, cancellationToken);
                     else
-                        await ResolveCompositePkBatchAsync(executor, keys, indices, table, keyColumns, userContext, endpoint, results, cancellationToken);
+                        await ResolveCompositePkBatchAsync(executor, model, keys, indices, table, keyColumns, userContext, endpoint, results, cancellationToken);
                     continue;
                 }
 
@@ -256,8 +263,22 @@ namespace BifrostQL.Server.Resp
                 : json;
         }
 
+        /// <summary>
+        /// The LIMIT a batch of <paramref name="distinctKeyCount"/> keys carries: one row per key.
+        /// Refuses the command when the model's row ceiling would clamp that LIMIT, because a
+        /// clamped batch drops the keys past the ceiling without a trace.
+        /// </summary>
+        private static int BatchRowWindow(IDbModel model, int distinctKeyCount)
+        {
+            var window = GqlObjectQuery.ResolveRowWindow(model, distinctKeyCount);
+            if (window < distinctKeyCount)
+                throw new RespRowCeilingExceededException(distinctKeyCount, window);
+            return distinctKeyCount;
+        }
+
         private static async Task ResolveSinglePkBatchAsync(
             IQueryIntentExecutor executor,
+            IDbModel model,
             IReadOnlyList<RespKey> keys,
             List<int> indices,
             IDbTable table,
@@ -275,6 +296,7 @@ namespace BifrostQL.Server.Resp
                     [pkColumn.GraphQlName] = new Dictionary<string, object?> { [FilterOperators.In] = wanted },
                 },
                 table);
+            query.Limit = BatchRowWindow(model, wanted.Count);
 
             var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
 
@@ -304,6 +326,7 @@ namespace BifrostQL.Server.Resp
         /// </summary>
         private static async Task ResolveCompositePkBatchAsync(
             IQueryIntentExecutor executor,
+            IDbModel model,
             IReadOnlyList<RespKey> keys,
             List<int> indices,
             IDbTable table,
@@ -329,6 +352,7 @@ namespace BifrostQL.Server.Resp
             query.Filter = TableFilter.FromObject(
                 new Dictionary<string, object?> { ["or"] = branchByToken.Values.ToList() },
                 table);
+            query.Limit = BatchRowWindow(model, branchByToken.Count);
             var result = await executor.ExecuteAsync(NewIntent(query, userContext, endpoint), cancellationToken);
 
             var byToken = new Dictionary<string, IReadOnlyDictionary<string, object?>>(StringComparer.Ordinal);

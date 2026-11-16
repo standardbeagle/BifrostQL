@@ -28,11 +28,31 @@ namespace BifrostQL.Server.Resp
     {
         public static string Map(Exception ex)
         {
+            if (ex is RespRowCeilingExceededException ceiling)
+                return ceiling.WireMessage;
             if (ex is BifrostExecutionError { ErrorCode: BifrostExecutionError.AccessDeniedCode })
                 return RespProtocol.AccessDeniedError;
             if (OperationIdWireRefusal.Of(ex) is var (code, description))
                 return code + " " + description;
             return RespProtocol.InternalError;
         }
+    }
+
+    /// <summary>
+    /// A multi-key read asked for more rows in one query than the model's <c>max-query-rows</c>
+    /// ceiling allows. Adapter-owned: the wire text is built only from the two counts, never from
+    /// a table or column name (invariant 3), and the refusal is explicit rather than a shorter
+    /// answer (new-front-door checklist: report limits, never truncate silently).
+    /// </summary>
+    internal sealed class RespRowCeilingExceededException : Exception
+    {
+        public RespRowCeilingExceededException(int requestedKeys, int ceiling)
+            : base($"{requestedKeys} distinct keys requested against one table; the row ceiling allows {ceiling}")
+        {
+            WireMessage = $"{RespProtocol.ErrPrefix}too many keys for one table: {requestedKeys} requested, " +
+                          $"at most {ceiling} per command";
+        }
+
+        public string WireMessage { get; }
     }
 }

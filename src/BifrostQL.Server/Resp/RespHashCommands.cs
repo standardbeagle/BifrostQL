@@ -1,3 +1,4 @@
+using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Server.Resp
@@ -44,10 +45,10 @@ namespace BifrostQL.Server.Resp
         protected override RespValue? ValidateArity(int argumentCount) => RequireArgs(argumentCount, 2, Name);
 
         protected override async Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
         {
             var rows = await RespReadEngine.ResolveRowsAsync(
-                executor, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
+                executor, model, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
             var protocol = context.Session.Protocol;
 
             // Missing key OR a row the identity cannot see: an empty hash, per Redis HGETALL semantics.
@@ -96,10 +97,10 @@ namespace BifrostQL.Server.Resp
         protected override RespValue? ValidateArity(int argumentCount) => RequireArgs(argumentCount, 3, Name);
 
         protected override async Task<RespValue> ExecuteAsync(
-            RespCommandContext context, IQueryIntentExecutor executor, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
+            RespCommandContext context, IQueryIntentExecutor executor, IDbModel model, IReadOnlyList<RespKey> keys, CancellationToken cancellationToken)
         {
             var rows = await RespReadEngine.ResolveRowsAsync(
-                executor, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
+                executor, model, keys, context.Session.UserContext, context.Endpoint, cancellationToken);
             var protocol = context.Session.Protocol;
             var field = context.Arguments[2];
 

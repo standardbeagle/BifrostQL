@@ -140,6 +140,13 @@ splits into the wrong segment count); callers must encode such values.
 | `EXISTS <key> [key …]` | The integer count of keys resolving to a visible row. A row the identity cannot see counts as not-existing, exactly like a missing key. |
 | `TYPE <key>` | `string` for a visible row (a Bifrost row is modeled as a JSON string value), or `none` for a missing/invisible key. |
 
+**Batch size.** MGET and EXISTS read all keys of one table in a single query, so the
+distinct keys per table must fit under the model's `max-query-rows` ceiling (default
+10 000). A larger batch is refused whole with
+`-ERR too many keys for one table: <n> requested, at most <ceiling> per command`;
+it is never answered with the keys past the ceiling reported as missing. Split the
+keys across several commands.
+
 **Row → JSON shape.** A found row is a JSON object mapping each column's database
 name to its value, in schema ordinal order. A SQL `NULL` is a JSON `null`. Values
 serialize with System.Text.Json Web defaults: numbers/booleans as JSON scalars,

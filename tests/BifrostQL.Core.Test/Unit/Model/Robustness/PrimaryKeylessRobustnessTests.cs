@@ -133,13 +133,13 @@ public sealed class PrimaryKeylessRobustnessTests
             .Build();
 
         var entries = EnumValueSanitizer.SanitizeAll(new[] { "active", "inactive" });
-        var enumValues = new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+        var enumValues = new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>()
         {
-            ["statuses"] = entries
+            [new EnumTableKey(string.Empty, "statuses")] = entries
         };
-        var resolvedCols = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var resolvedCols = new Dictionary<EnumTableKey, string>()
         {
-            ["statuses"] = "Code"
+            [new EnumTableKey(string.Empty, "statuses")] = "Code"
         };
         var orphanedEnumMap = EnumColumnMap.Build(modelWithStatus, enumValues, resolvedCols);
 

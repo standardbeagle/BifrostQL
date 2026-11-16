@@ -1058,11 +1058,11 @@ namespace BifrostQL.Core.Resolvers
             if (_dbModel.EnumColumns is not { } enumCols)
                 return;
 
-            enumCols.RewriteFilterValues(table.Filter, table.DbTable.DbName);
+            enumCols.RewriteFilterValues(table.Filter, table.DbTable);
             foreach (var join in table.RecurseJoins)
             {
                 var connected = join.ConnectedTable;
-                enumCols.RewriteFilterValues(connected.Filter, connected.DbTable.DbName);
+                enumCols.RewriteFilterValues(connected.Filter, connected.DbTable);
             }
         }
 

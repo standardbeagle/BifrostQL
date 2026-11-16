@@ -44,8 +44,8 @@ namespace BifrostQL.Model
         /// over a single shared connection, so the (async) schema-loader body can
         /// pre-load them and hand the result to the (synchronous) per-profile cache.
         /// </summary>
-        public Task<BifrostQL.Core.Schema.EnumValueLoader.LoadResult> LoadEnumValuesAsync(IDbModel model)
-            => BifrostQL.Core.Schema.EnumValueLoader.LoadAsync(model, _connFactory);
+        public Task<BifrostQL.Core.Schema.EnumValueLoader.LoadResult> LoadEnumValuesAsync(IDbModel model, CancellationToken cancellationToken = default)
+            => BifrostQL.Core.Schema.EnumValueLoader.LoadAsync(model, _connFactory, cancellationToken);
 
         /// <summary>
         /// Reads the database schema once. The result can drive many

@@ -50,16 +50,20 @@ public class EnumColumnMapTests
             .Build();
     }
 
+    // The map is keyed by schema-qualified table identity, so any instance of the
+    // fixture's table addresses it.
+    private static IDbTable Table(string dbName) => BuildModel().GetTableFromDbName(dbName);
+
     private static EnumColumnMap BuildMap(IDbModel model)
     {
         var entries = EnumValueSanitizer.SanitizeAll(new[] { "active", "pending", "on hold" });
-        var enumValues = new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+        var enumValues = new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>()
         {
-            [EnumTable] = entries,
+            [new EnumTableKey("dbo", EnumTable)] = entries,
         };
-        var resolvedValueColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var resolvedValueColumns = new Dictionary<EnumTableKey, string>()
         {
-            [EnumTable] = ValueColumn,
+            [new EnumTableKey("dbo", EnumTable)] = ValueColumn,
         };
         return EnumColumnMap.Build(model, enumValues, resolvedValueColumns);
     }
@@ -69,9 +73,9 @@ public class EnumColumnMapTests
     {
         var map = BuildMap(BuildModel());
 
-        map.TryGetEnumType("Orders", "StatusCode", out var enumName).Should().BeTrue();
+        map.TryGetEnumType(Table("Orders"), "StatusCode", out var enumName).Should().BeTrue();
         enumName.Should().Be("OrderStatusValues");
-        map.HasAnyFor("Orders").Should().BeTrue();
+        map.HasAnyFor(Table("Orders")).Should().BeTrue();
     }
 
     [Fact]
@@ -79,7 +83,7 @@ public class EnumColumnMapTests
     {
         var map = BuildMap(BuildModel());
 
-        map.TryGetEnumType("Orders", "PriorityName", out var enumName).Should().BeTrue();
+        map.TryGetEnumType(Table("Orders"), "PriorityName", out var enumName).Should().BeTrue();
         enumName.Should().Be("OrderStatusValues");
     }
 
@@ -89,9 +93,9 @@ public class EnumColumnMapTests
         var map = BuildMap(BuildModel());
 
         // plain column
-        map.TryGetEnumType("Orders", "Total", out _).Should().BeFalse();
+        map.TryGetEnumType(Table("Orders"), "Total", out _).Should().BeFalse();
         // FK to a non-enum table
-        map.TryGetEnumType("Orders", "CustomerId", out _).Should().BeFalse();
+        map.TryGetEnumType(Table("Orders"), "CustomerId", out _).Should().BeFalse();
     }
 
     [Fact]
@@ -99,9 +103,9 @@ public class EnumColumnMapTests
     {
         var map = BuildMap(BuildModel());
 
-        map.EnumTables.Should().ContainKey(EnumTable);
-        map.EnumTables[EnumTable].EnumName.Should().Be("OrderStatusValues");
-        map.EnumTables[EnumTable].Entries.Should().HaveCount(3);
+        map.EnumTables.Should().ContainKey(new EnumTableKey("dbo", EnumTable));
+        map.EnumTables[new EnumTableKey("dbo", EnumTable)].EnumName.Should().Be("OrderStatusValues");
+        map.EnumTables[new EnumTableKey("dbo", EnumTable)].Entries.Should().HaveCount(3);
     }
 
     [Fact]
@@ -109,19 +113,19 @@ public class EnumColumnMapTests
     {
         var map = BuildMap(BuildModel());
 
-        map.ValueToName("Orders", "StatusCode", "active").Should().Be("ACTIVE");
-        map.NameToValue("Orders", "StatusCode", "ACTIVE").Should().Be("active");
+        map.ValueToName(Table("Orders"), "StatusCode", "active").Should().Be("ACTIVE");
+        map.NameToValue(Table("Orders"), "StatusCode", "ACTIVE").Should().Be("active");
 
         // value containing a space sanitizes to ON_HOLD
-        map.ValueToName("Orders", "StatusCode", "on hold").Should().Be("ON_HOLD");
-        map.NameToValue("Orders", "StatusCode", "ON_HOLD").Should().Be("on hold");
+        map.ValueToName(Table("Orders"), "StatusCode", "on hold").Should().Be("ON_HOLD");
+        map.NameToValue(Table("Orders"), "StatusCode", "ON_HOLD").Should().Be("on hold");
 
         // drift → null both directions
-        map.ValueToName("Orders", "StatusCode", "deleted").Should().BeNull();
-        map.NameToValue("Orders", "StatusCode", "UNKNOWN").Should().BeNull();
+        map.ValueToName(Table("Orders"), "StatusCode", "deleted").Should().BeNull();
+        map.NameToValue(Table("Orders"), "StatusCode", "UNKNOWN").Should().BeNull();
 
         // non-enum column → null
-        map.ValueToName("Orders", "Total", "active").Should().BeNull();
+        map.ValueToName(Table("Orders"), "Total", "active").Should().BeNull();
     }
 
     [Fact]
@@ -156,7 +160,7 @@ public class EnumColumnMapTests
             },
         }, model.GetTableFromDbName("Orders"));
 
-        map.RewriteFilterValues(filter, "Orders");
+        map.RewriteFilterValues(filter, Table("Orders"));
 
         // _eq operand translated: ACTIVE -> active
         var eqNode = filter.And[0].Next!;
@@ -182,7 +186,7 @@ public class EnumColumnMapTests
             ["StatusCode"] = new Dictionary<string, object?> { ["_eq"] = "BOGUS" },
         }, model.GetTableFromDbName("Orders"));
 
-        map.RewriteFilterValues(filter, "Orders");
+        map.RewriteFilterValues(filter, Table("Orders"));
 
         var eqNode = filter.Next!;
         eqNode.RelationName.Should().Be("_eq");
@@ -212,7 +216,7 @@ public class EnumColumnMapTests
             },
         }, model.GetTableFromDbName("Orders"));
 
-        map.RewriteFilterValues(filter, "Orders");
+        map.RewriteFilterValues(filter, Table("Orders"));
 
         filter.Or[0].Next!.Value.Should().Be("active");
         filter.Or[1].Next!.Value.Should().Be("pending");
@@ -243,7 +247,7 @@ public class EnumColumnMapTests
                 string.Equals(c.ColumnName, ValueColumn, StringComparison.OrdinalIgnoreCase)),
         };
 
-        map.IsEnumLink("Orders", link).Should().BeTrue();
+        map.IsEnumLink(Table("Orders"), link).Should().BeTrue();
     }
 
     /// <summary>
@@ -276,7 +280,7 @@ public class EnumColumnMapTests
                 string.Equals(c.ColumnName, "Id", StringComparison.OrdinalIgnoreCase)),
         };
 
-        map.IsEnumLink("Orders", link).Should().BeFalse();
+        map.IsEnumLink(Table("Orders"), link).Should().BeFalse();
     }
 
     [Fact]
@@ -285,7 +289,7 @@ public class EnumColumnMapTests
         var map = BuildMap(BuildModel());
 
         // Customers has no enum columns.
-        map.HasAnyFor("Customers").Should().BeFalse();
+        map.HasAnyFor(Table("Customers")).Should().BeFalse();
     }
 
     [Fact]
@@ -295,10 +299,10 @@ public class EnumColumnMapTests
 
         // A non-string db value is coerced via .ToString(); "active" -> ACTIVE.
         // (Custom type whose ToString yields a known database value.)
-        map.ValueToName("Orders", "StatusCode", new Stringy("active")).Should().Be("ACTIVE");
+        map.ValueToName(Table("Orders"), "StatusCode", new Stringy("active")).Should().Be("ACTIVE");
 
         // An int has no matching database value, so it resolves to null without throwing.
-        map.ValueToName("Orders", "StatusCode", 42).Should().BeNull();
+        map.ValueToName(Table("Orders"), "StatusCode", 42).Should().BeNull();
     }
 
     private sealed record Stringy(string Text)

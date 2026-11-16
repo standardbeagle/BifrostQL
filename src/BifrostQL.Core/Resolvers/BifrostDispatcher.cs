@@ -161,7 +161,7 @@ namespace BifrostQL.Core.Resolvers
                     // navigation field to wire — mirror TableSchemaGenerator via the
                     // shared EnumColumnMap.IsEnumLink predicate.
                     if (_model.EnumColumns != null
-                        && _model.EnumColumns.IsEnumLink(table.DbName, singleLink.Value))
+                        && _model.EnumColumns.IsEnumLink(table, singleLink.Value))
                         continue;
                     tableType.FieldFor(singleLink.Value.ParentFieldName).Resolver = this;
                 }

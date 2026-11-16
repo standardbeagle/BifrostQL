@@ -61,7 +61,7 @@ namespace BifrostQL.Core.Schema
         /// suppression rule cannot drift between schema emission and resolver wiring.
         /// </summary>
         private bool IsEnumColumnLink(TableLinkDto link) =>
-            _enumColumns != null && _enumColumns.IsEnumLink(_table.DbName, link);
+            _enumColumns != null && _enumColumns.IsEnumLink(_table, link);
 
         /// <summary>
         /// Which GraphQL emission surface a field type is being resolved for. Each
@@ -89,7 +89,7 @@ namespace BifrostQL.Core.Schema
         /// </summary>
         private string ResolveFieldType(ColumnDto column, bool nullable, FieldTypeKind kind)
         {
-            if (_enumColumns != null && _enumColumns.TryGetEnumType(_table.DbName, column.ColumnName, out var enumName))
+            if (_enumColumns != null && _enumColumns.TryGetEnumType(_table, column.ColumnName, out var enumName))
             {
                 return kind switch
                 {

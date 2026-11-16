@@ -42,13 +42,13 @@ public class EnumColumnRenderingTests
     private static EnumColumnMap BuildMap(IDbModel model)
     {
         var entries = EnumValueSanitizer.SanitizeAll(new[] { "active", "inactive" });
-        var enumValues = new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+        var enumValues = new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>()
         {
-            [EnumTable] = entries,
+            [new EnumTableKey("dbo", EnumTable)] = entries,
         };
-        var resolvedValueColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var resolvedValueColumns = new Dictionary<EnumTableKey, string>()
         {
-            [EnumTable] = ValueColumn,
+            [new EnumTableKey("dbo", EnumTable)] = ValueColumn,
         };
         return EnumColumnMap.Build(model, enumValues, resolvedValueColumns);
     }

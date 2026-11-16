@@ -41,13 +41,13 @@ public class EnumValueMutationTransformerTests
             .Build();
 
         var entries = EnumValueSanitizer.SanitizeAll(new[] { "active", "pending", "on hold" });
-        var enumValues = new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+        var enumValues = new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>()
         {
-            [EnumTable] = entries,
+            [new EnumTableKey("dbo", EnumTable)] = entries,
         };
-        var resolvedValueColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var resolvedValueColumns = new Dictionary<EnumTableKey, string>()
         {
-            [EnumTable] = ValueColumn,
+            [new EnumTableKey("dbo", EnumTable)] = ValueColumn,
         };
         model.EnumColumns = EnumColumnMap.Build(model, enumValues, resolvedValueColumns);
         return model;

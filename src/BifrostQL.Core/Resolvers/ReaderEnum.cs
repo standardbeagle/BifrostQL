@@ -1,4 +1,5 @@
 using System.Collections;
+using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Schema;
 using Microsoft.Extensions.Logging;
@@ -56,7 +57,7 @@ namespace BifrostQL.Core.Resolvers
             if (found)
             {
                 var raw = DbConvert(table.data[row][index]);
-                return ValueTask.FromResult(ApplyColumnMask(_tableSql, name, MapEnumValueOrRaw(_tableSql.DbTable.DbName, name, raw)));
+                return ValueTask.FromResult(ApplyColumnMask(_tableSql, name, MapEnumValueOrRaw(_tableSql.DbTable, name, raw)));
             }
             return GetDataForMissingColumn(context, table, row);
         }
@@ -90,34 +91,34 @@ namespace BifrostQL.Core.Resolvers
         /// enum member (drift) resolves to null and emits a structured warning.
         /// Shared by the top-level read and by nested projections
         /// (<see cref="SingleRowLookup"/>, <see cref="SubTableEnumerable"/>),
-        /// which pass their own table DbName so the single mapping/drift policy
+        /// which pass their own level's table so the single mapping/drift policy
         /// applies uniformly regardless of read depth.
         /// </summary>
-        internal object? MapEnumValueOrRaw(string tableDbName, string field, object? raw)
+        internal object? MapEnumValueOrRaw(IDbTable table, string field, object? raw)
         {
-            var mapped = MapEnumOnly(tableDbName, field, raw);
+            var mapped = MapEnumOnly(table, field, raw);
             // Decrypt/mask on read. A column is never both an enum and encrypted, so the
             // enum step above is a passthrough for encrypted columns; apply crypto to the
             // (enum-passed-through) value. Non-encrypted columns pass through untouched.
-            return _cryptoRead != null ? _cryptoRead.Project(tableDbName, field, mapped) : mapped;
+            return _cryptoRead != null ? _cryptoRead.Project(table.DbName, field, mapped) : mapped;
         }
 
-        private object? MapEnumOnly(string tableDbName, string field, object? raw)
+        private object? MapEnumOnly(IDbTable table, string field, object? raw)
         {
             if (_enumColumns == null)
                 return raw;
 
-            if (!_enumColumns.TryGetEnumType(tableDbName, field, out _))
+            if (!_enumColumns.TryGetEnumType(table, field, out _))
                 return raw;
 
-            var mapped = _enumColumns.ValueToName(tableDbName, field, raw);
+            var mapped = _enumColumns.ValueToName(table, field, raw);
             if (mapped != null)
                 return mapped;
 
             if (raw != null)
                 _logger?.LogWarning(
                     "Enum drift: value '{Value}' on {Table}.{Field} is not a declared enum member; returning null.",
-                    raw, tableDbName, field);
+                    raw, $"{table.TableSchema}.{table.DbName}", field);
             return null;
         }
         public ValueTask<object?> GetDataForMissingColumn(IBifrostFieldContext context, (IDictionary<string, int> index, IList<object?[]> data) table, int row)
@@ -430,7 +431,7 @@ namespace BifrostQL.Core.Resolvers
             }
 
             var raw = ReaderEnum.DbConvert(_data[row][index]);
-            return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, column, _root.MapEnumValueOrRaw(_level.DbTable.DbName, column, raw)));
+            return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, column, _root.MapEnumValueOrRaw(_level.DbTable, column, raw)));
         }
 
 
@@ -483,9 +484,9 @@ namespace BifrostQL.Core.Resolvers
             var name = context.FieldName;
             var alias = context.FieldAlias;
             if (_index.TryGetValue(alias ?? name, out var index))
-                return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, name, _root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index]))));
+                return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, name, _root.MapEnumValueOrRaw(_level.DbTable, name, ReaderEnum.DbConvert(_row[index]))));
             if (_index.TryGetValue(name, out var index2))
-                return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, name, _root.MapEnumValueOrRaw(_level.DbTable.DbName, name, ReaderEnum.DbConvert(_row[index2]))));
+                return ValueTask.FromResult(ReaderEnum.ApplyColumnMask(_level, name, _root.MapEnumValueOrRaw(_level.DbTable, name, ReaderEnum.DbConvert(_row[index2]))));
 
             _data ??= new List<object?[]> { _row };
 

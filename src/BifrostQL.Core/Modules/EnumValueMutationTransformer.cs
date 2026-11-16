@@ -22,7 +22,7 @@ namespace BifrostQL.Core.Modules
             if (table is null) throw new ArgumentNullException(nameof(table));
             if (context is null) throw new ArgumentNullException(nameof(context));
             return mutationType is MutationType.Insert or MutationType.Update or MutationType.Delete
-                && context.Model.EnumColumns?.HasAnyFor(table.DbName) == true;
+                && context.Model.EnumColumns?.HasAnyFor(table) == true;
         }
 
         public ValueTask<MutationTransformResult> TransformAsync(
@@ -53,11 +53,11 @@ namespace BifrostQL.Core.Modules
                 // both keyed by column name, so one lookup covers both.
                 if (!table.ColumnLookup.TryGetValue(kv.Key, out var column))
                     continue;
-                if (!map.TryGetEnumType(table.DbName, column.ColumnName, out _))
+                if (!map.TryGetEnumType(table, column.ColumnName, out _))
                     continue;
                 if (kv.Value is string name)
                 {
-                    var dbValue = map.NameToValue(table.DbName, column.ColumnName, name);
+                    var dbValue = map.NameToValue(table, column.ColumnName, name);
                     if (dbValue == null)
                     {
                         errors.Add($"'{name}' is not a valid {column.GraphQlName} value.");

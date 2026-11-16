@@ -1,5 +1,7 @@
 using System.Data.Common;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Resolvers;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Schema;
 
@@ -8,18 +10,19 @@ namespace BifrostQL.Core.Schema;
 /// table at schema-build time, resolving each table's effective value column.
 ///
 /// One table's failure (missing column, query error) degrades only that table to
-/// a plain scalar — it never fails the whole load.
+/// a plain scalar — it never fails the whole load — and is logged through
+/// <see cref="BifrostErrorSink.Logger"/> so the degradation is visible.
 /// </summary>
 public static class EnumValueLoader
 {
     /// <summary>
     /// The result of loading every enum lookup table.
     /// </summary>
-    /// <param name="Values">Map of table DB name → sanitized enum entries.</param>
-    /// <param name="ValueColumns">Map of table DB name → resolved value column.</param>
+    /// <param name="Values">Map of schema-qualified table → sanitized enum entries.</param>
+    /// <param name="ValueColumns">Map of schema-qualified table → resolved value column.</param>
     public sealed record LoadResult(
-        IReadOnlyDictionary<string, IReadOnlyList<EnumValueEntry>> Values,
-        IReadOnlyDictionary<string, string> ValueColumns);
+        IReadOnlyDictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>> Values,
+        IReadOnlyDictionary<EnumTableKey, string> ValueColumns);
 
     /// <summary>
     /// Loads the DISTINCT values of every enum lookup table over a single shared
@@ -28,16 +31,18 @@ public static class EnumValueLoader
     /// </summary>
     /// <param name="model">The database model whose enum tables are loaded.</param>
     /// <param name="connFactory">Connection + dialect provider.</param>
+    /// <param name="cancellationToken">Cancels the open and every per-table read.</param>
     public static async Task<LoadResult> LoadAsync(
         IDbModel model,
-        IDbConnFactory connFactory)
+        IDbConnFactory connFactory,
+        CancellationToken cancellationToken = default)
     {
-        var values = new Dictionary<string, IReadOnlyList<EnumValueEntry>>();
-        var valueColumns = new Dictionary<string, string>();
+        var values = new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>();
+        var valueColumns = new Dictionary<EnumTableKey, string>();
         var dialect = connFactory.Dialect;
 
         await using var conn = connFactory.GetConnection();
-        await conn.OpenAsync();
+        await conn.OpenAsync(cancellationToken);
 
         foreach (var table in model.Tables)
         {
@@ -49,17 +54,24 @@ public static class EnumValueLoader
             if (valueColumn == null)
                 continue;
 
-            valueColumns[table.DbName] = valueColumn;
+            var key = EnumTableKey.Of(table);
+            valueColumns[key] = valueColumn;
 
             try
             {
-                values[table.DbName] = await LoadTableAsync(
-                    conn, dialect, table, valueColumn);
+                values[key] = await LoadTableAsync(
+                    conn, dialect, table, valueColumn, cancellationToken);
             }
-            catch (DbException)
+            // Some providers surface cancellation as a DbException; a cancelled load
+            // must propagate, not degrade every remaining table.
+            catch (DbException ex) when (!cancellationToken.IsCancellationRequested)
             {
                 // Degrade this table to a plain scalar; never fail the whole load.
-                values[table.DbName] = Array.Empty<EnumValueEntry>();
+                BifrostErrorSink.Logger?.LogWarning(ex,
+                    "Enum lookup table {Table} failed to load its values from column {Column}; " +
+                    "its referencing columns degrade to plain scalars.",
+                    key.ToString(), valueColumn);
+                values[key] = Array.Empty<EnumValueEntry>();
             }
         }
 
@@ -70,7 +82,8 @@ public static class EnumValueLoader
         DbConnection conn,
         QueryModel.ISqlDialect dialect,
         IDbTable table,
-        string valueColumn)
+        string valueColumn,
+        CancellationToken cancellationToken)
     {
         var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
         var escapedColumn = dialect.EscapeIdentifier(valueColumn);
@@ -90,8 +103,8 @@ public static class EnumValueLoader
         cmd.CommandText = sql;
 
         var raw = new List<string?>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
             var value = reader.GetValue(0);
             raw.Add(value is DBNull ? null : value.ToString());

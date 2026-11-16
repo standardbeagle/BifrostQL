@@ -26,6 +26,8 @@ public sealed class EnumLoadingTests : IAsyncLifetime
     // lookup table as an enum whose value column is "code".
     private const string Rule = "*.status { enum: code }";
 
+    private static readonly EnumTableKey StatusKey = new("main", "status");
+
     public async Task InitializeAsync()
     {
         _keepAlive = new SqliteConnection(ConnString);
@@ -66,10 +68,10 @@ public sealed class EnumLoadingTests : IAsyncLifetime
     {
         var result = await _loader.LoadEnumValuesAsync(_model);
 
-        result.ValueColumns.Should().ContainKey("status").WhoseValue.Should().Be("code");
+        result.ValueColumns.Should().ContainKey(StatusKey).WhoseValue.Should().Be("code");
 
-        result.Values.Should().ContainKey("status");
-        var names = result.Values["status"].Select(e => e.GraphQlName).ToList();
+        result.Values.Should().ContainKey(StatusKey);
+        var names = result.Values[StatusKey].Select(e => e.GraphQlName).ToList();
         names.Should().Contain("ACTIVE");
         names.Should().Contain("INACTIVE");
     }
@@ -81,7 +83,7 @@ public sealed class EnumLoadingTests : IAsyncLifetime
 
         var map = EnumColumnMap.Build(_model, result.Values, result.ValueColumns);
 
-        map.TryGetEnumType("orders", "status", out var name).Should().BeTrue();
+        map.TryGetEnumType(_model.GetTableFromDbName("orders"), "status", out var name).Should().BeTrue();
         name.Should().Be("statusValues");
     }
 }

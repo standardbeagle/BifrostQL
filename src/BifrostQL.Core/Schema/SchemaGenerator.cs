@@ -102,20 +102,11 @@ namespace BifrostQL.Core.Schema
             {
                 foreach (var kv in model.EnumColumns.EnumTables)
                 {
-                    var matches = model.Tables
-                        .Where(t => string.Equals(t.DbName, kv.Key, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                    if (matches.Count == 0)
+                    // The map is keyed by schema-qualified table, so the lookup resolves
+                    // exactly one table: same-named enum tables in two schemas each emit
+                    // their own enum type, bound to their own rows.
+                    if (!model.TryGetTableFromDbName(kv.Key.Schema, kv.Key.DbName, out var table))
                         continue; // enum-table metadata references a table that no longer exists in the model; skip silently
-                    if (matches.Count > 1)
-                        // Fail fast, same rule as DbModel.GetTableFromDbName: picking either
-                        // table silently binds the enum type to the wrong schema's rows and
-                        // filter surface. Schema build time, so this is an operator-facing
-                        // configuration error, not a request-time condition.
-                        throw new Resolvers.BifrostExecutionError(
-                            $"Enum table name '{kv.Key}' is ambiguous: more than one schema defines a table named " +
-                            $"'{kv.Key}'. Qualify or rename the enum table so the metadata resolves to exactly one table.");
-                    var table = matches[0];
                     var cfg = EnumTableConfig.FromTable(table)!;
                     var gen = new EnumTableSchemaGenerator(cfg, kv.Value.Entries);
                     builder.AppendLine(gen.GetEnumTypeDefinition());

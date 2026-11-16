@@ -7,11 +7,10 @@ using Xunit;
 namespace BifrostQL.Core.Test.Schema;
 
 /// <summary>
-/// Enum-table metadata addresses its lookup table by BARE DbName. When two schemas both
-/// define a table with that name, the pre-fix FirstOrDefault silently bound the GraphQL
-/// enum type to whichever table enumerated first — the wrong schema's rows and filter
-/// surface. Schema generation must fail fast instead, the same rule as
-/// <see cref="DbModel.GetTableFromDbName(string)"/>.
+/// Two schemas may each define an enum lookup table with the same bare name. The enum
+/// map is keyed by schema-qualified table identity, so each table emits its own enum
+/// type built from its own rows. (Before the map was schema-qualified, the bare name
+/// could only bind one of them, and schema generation failed fast instead of guessing.)
 /// </summary>
 public sealed class EnumTableAmbiguityTests
 {
@@ -35,30 +34,41 @@ public sealed class EnumTableAmbiguityTests
         };
     }
 
+    private static string EnumBlock(string schemaText, string enumName)
+    {
+        var start = schemaText.IndexOf($"enum {enumName} {{", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"enum type {enumName} must be emitted");
+        var end = schemaText.IndexOf('}', start);
+        return schemaText[start..end];
+    }
+
     [Fact]
-    public void SchemaText_DuplicateEnumTableNameAcrossSchemas_FailsFastInsteadOfGuessing()
+    public void SchemaText_EnumTablesSharingNameAcrossSchemas_EachEmitsItsOwnEnumType()
     {
         var tables = new[] { EnumTable("dbo"), EnumTable("sales") };
-        var entries = EnumValueSanitizer.SanitizeAll(new[] { "open", "closed" });
         var model = new DbModel
         {
             Tables = tables,
             Metadata = new Dictionary<string, object?>(),
             EnumColumns = EnumColumnMap.Build(
                 new DbModel { Tables = tables, Metadata = new Dictionary<string, object?>() },
-                new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+                new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>
                 {
-                    ["OrderStatus"] = entries,
+                    [new EnumTableKey("dbo", "OrderStatus")] = EnumValueSanitizer.SanitizeAll(new[] { "open", "closed" }),
+                    [new EnumTableKey("sales", "OrderStatus")] = EnumValueSanitizer.SanitizeAll(new[] { "paid", "shipped" }),
                 },
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                new Dictionary<EnumTableKey, string>
                 {
-                    ["OrderStatus"] = "Code",
+                    [new EnumTableKey("dbo", "OrderStatus")] = "Code",
+                    [new EnumTableKey("sales", "OrderStatus")] = "Code",
                 }),
         };
 
-        var act = () => SchemaGenerator.SchemaTextFromModel(model);
+        var schemaText = SchemaGenerator.SchemaTextFromModel(model);
 
-        act.Should().Throw<BifrostExecutionError>().WithMessage("*ambiguous*",
-            "binding the enum type to an arbitrary schema's table silently mis-targets rows and filters");
+        var dbo = EnumBlock(schemaText, "OrderStatusValues");
+        dbo.Should().Contain("OPEN").And.Contain("CLOSED").And.NotContain("PAID");
+        var sales = EnumBlock(schemaText, "sales_OrderStatusValues");
+        sales.Should().Contain("PAID").And.Contain("SHIPPED").And.NotContain("OPEN");
     }
 }

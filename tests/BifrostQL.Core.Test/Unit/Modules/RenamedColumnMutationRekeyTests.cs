@@ -263,11 +263,11 @@ public sealed class RenamedColumnMutationRekeyTests
             .Build();
         model.EnumColumns = EnumColumnMap.Build(
             model,
-            new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+            new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>()
             {
-                [enumTable] = EnumValueSanitizer.SanitizeAll(new[] { "active", "on hold" }),
+                [new EnumTableKey("dbo", enumTable)] = EnumValueSanitizer.SanitizeAll(new[] { "active", "on hold" }),
             },
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [enumTable] = valueColumn });
+            new Dictionary<EnumTableKey, string>() { [new EnumTableKey("dbo", enumTable)] = valueColumn });
 
         var chain = Chain(new EnumValueMutationTransformer());
         var data = new Dictionary<string, object?>

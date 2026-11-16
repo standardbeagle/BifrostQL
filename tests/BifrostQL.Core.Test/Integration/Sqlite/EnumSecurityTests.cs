@@ -63,8 +63,8 @@ public sealed class EnumSecurityTests : IAsyncLifetime
     {
         var result = await _loader.LoadEnumValuesAsync(_model);
 
-        result.Values.Should().ContainKey("status");
-        var names = result.Values["status"].Select(e => e.GraphQlName).ToList();
+        result.Values.Should().ContainKey(new EnumTableKey("main", "status"));
+        var names = result.Values[new EnumTableKey("main", "status")].Select(e => e.GraphQlName).ToList();
 
         names.Should().Contain("ACTIVE");
         names.Should().Contain("INACTIVE");

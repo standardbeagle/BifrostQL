@@ -45,13 +45,13 @@ public class EnumFilterRewriteTests
     private static EnumColumnMap BuildMap(IDbModel model)
     {
         var entries = EnumValueSanitizer.SanitizeAll(new[] { "active", "pending", "on hold" });
-        var enumValues = new Dictionary<string, IReadOnlyList<EnumValueEntry>>(StringComparer.OrdinalIgnoreCase)
+        var enumValues = new Dictionary<EnumTableKey, IReadOnlyList<EnumValueEntry>>()
         {
-            [EnumTable] = entries,
+            [new EnumTableKey("dbo", EnumTable)] = entries,
         };
-        var resolvedValueColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var resolvedValueColumns = new Dictionary<EnumTableKey, string>()
         {
-            [EnumTable] = ValueColumn,
+            [new EnumTableKey("dbo", EnumTable)] = ValueColumn,
         };
         return EnumColumnMap.Build(model, enumValues, resolvedValueColumns);
     }
@@ -140,11 +140,11 @@ public class EnumFilterRewriteTests
     public void EnumColumns_Wiring_RewriteContract_NameToValue()
     {
         // Validates the contract the manager relies on: the map keyed by the
-        // table DbName translates the GraphQL field's enum-name operand in place.
+        // schema-qualified table translates the GraphQL field's enum-name operand in place.
         var model = BuildModel();
         var filter = StatusEq("ACTIVE");
 
-        model.EnumColumns!.RewriteFilterValues(filter, "Orders");
+        model.EnumColumns!.RewriteFilterValues(filter, model.GetTableFromDbName("Orders"));
 
         filter.Next!.Value.Should().Be("active");
     }

@@ -33,7 +33,9 @@ When a referencing column has no foreign key (or you want to override detection)
 dbo.orders.status_col { enum-ref: dbo.status }
 ```
 
-`enum-ref` makes `status_col` render as the `status` enum even without an FK. The optional `schema.` prefix is stripped, so `dbo.status` and `status` resolve the same.
+`enum-ref` makes `status_col` render as the `status` enum even without an FK. A qualified `schema.table` value names exactly that table. A bare `status` resolves to the `status` table in the column's own schema; when the column's schema has no such table, it resolves to the one `status` table in the database. If two other schemas both define `status`, the bare name is ambiguous and schema build fails: qualify it.
+
+Enum tables are identified by schema and name together. `sales.status` (an enum) and `hr.status` (a plain table) can coexist: columns that reference `hr.status` stay plain scalars, and same-named enum tables in two schemas each emit their own enum type (named from each table's GraphQL name).
 
 ## How a column becomes an enum
 
@@ -42,7 +44,7 @@ A column resolves to an enum table when, in priority order:
 1. it carries `enum-ref` metadata naming an enum table, **or**
 2. it has a foreign key whose target table is an enum table **and** whose targeted column is that enum table's resolved value column.
 
-The enum's members are the **sanitized distinct values** of the value column, read once at schema-build time. Sanitization upper-cases the value and replaces invalid characters with underscores to form a valid GraphQL enum name — e.g. `on hold` → `ON_HOLD`, `high-priority` → `HIGH_PRIORITY`. Values that cannot be represented (empty after sanitization) are dropped. A table whose value set sanitizes to nothing does not participate as an enum and its columns stay plain scalars.
+The enum's members are the **sanitized distinct values** of the value column, read once at schema-build time. Sanitization upper-cases the value and replaces invalid characters with underscores to form a valid GraphQL enum name — e.g. `on hold` → `ON_HOLD`, `high-priority` → `HIGH_PRIORITY`. Values that cannot be represented (empty after sanitization) are dropped. A table whose value set sanitizes to nothing does not participate as an enum and its columns stay plain scalars. The same applies when reading a table's values fails with a database error; the failure is logged as a warning naming the table and value column, through the `BifrostErrorSink` logger (the HTTP middleware attaches it; with no logger attached the warning is dropped).
 
 ## Read, filter, and write
 

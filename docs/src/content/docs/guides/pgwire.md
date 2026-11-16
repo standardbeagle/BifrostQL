@@ -108,7 +108,7 @@ a parameter, so a hostile string is data, never SQL.
 | Operators | `=`, `<>`, `!=`, `<`, `<=`, `>`, `>=`, `LIKE`, `IN (…)`, `BETWEEN … AND …`, `IS NULL`, `IS NOT NULL`. |
 | Literals | Quoted strings, numbers (incl. a leading `+`/`-` sign), `TRUE`/`FALSE`/`NULL`. |
 | `ORDER BY` | One or more columns, `ASC`/`DESC`. |
-| `LIMIT` / `OFFSET` | Non-negative integers. |
+| `LIMIT` / `OFFSET` | Non-negative integers. No `LIMIT` means every row, up to the server row ceiling (see [Row limit](#row-limit)). |
 | Parameters | Extended-protocol `$1`, `$2`, … placeholders in value positions (prepared statements). |
 
 **Rejected** — each with an honest error so the client can tell an unsupported feature
@@ -141,6 +141,26 @@ format code in a `Bind` message is rejected honestly with a clean
 `0A000 feature_not_supported` ErrorResponse (binary format is a documented follow-up),
 never silently misinterpreted. `CancelRequest` is honored, and the connection cap
 returns `53300 too_many_connections`.
+
+### Row limit
+
+A `SELECT` without `LIMIT` means every row, as it does in PostgreSQL. The endpoint's
+[`max-query-rows`](/BifrostQL/reference/configuration/) ceiling (default 10000) still
+bounds every read, and pgwire never cuts a result short quietly:
+
+- **No `LIMIT`:** you get every row while the result fits under the ceiling. A single
+  statement returns at most `max-query-rows` − 1 rows, because the server fetches one
+  extra row to detect a result the ceiling would cut.
+- **`LIMIT n`:** you get at most `n` rows. A `LIMIT` at or above the ceiling behaves
+  like no `LIMIT`.
+- **Over the ceiling:** when the table has more rows than the ceiling allows, the query
+  fails with `54000 program_limit_exceeded` ("result exceeds the server row limit; add
+  a LIMIT clause") and sends no rows. The session stays usable. Narrow the query with
+  `WHERE`, or page it with `LIMIT`/`OFFSET`.
+
+The check runs on the whole result before the first `DataRow`, in both the simple and
+the extended protocol. An extended-protocol `Execute` with a `max_rows` count pages
+through a result that already passed the check; it never sees a partial one.
 
 ## The honest-error contract
 

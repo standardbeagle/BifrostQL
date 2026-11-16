@@ -1,4 +1,5 @@
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using Grpc.Core;
 using Microsoft.Extensions.Logging;
@@ -19,6 +20,7 @@ namespace BifrostQL.Server.Grpc
     /// </summary>
     internal sealed class BifrostDynamicGrpcService
     {
+
         private readonly IQueryIntentExecutor _executor;
         private readonly IMutationIntentExecutor _mutations;
         private readonly IBifrostAuthContextFactory _authFactory;
@@ -67,11 +69,12 @@ namespace BifrostQL.Server.Grpc
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
                 var userContext = ResolveIdentity(context);
-                var compiled = Compile(table, requestMessage, request, userContext);
+                var compiled = await CompileAsync(table, requestMessage, request, userContext);
                 var rows = await GrpcReadDispatcher.RunAsync(
                     _executor, compiled.Query, userContext, _options.Endpoint, context.CancellationToken);
 
-                return GrpcMessageCodec.EncodeListResponse(rowMessage, rows, NextPageToken(rows.Count, compiled));
+                return GrpcMessageCodec.EncodeListResponse(
+                    rowMessage, PageOf(rows, compiled.Window), NextPageToken(rows.Count, compiled));
             });
 
         public Task StreamAsync(
@@ -83,13 +86,14 @@ namespace BifrostQL.Server.Grpc
 
                 // Stream shares the SAME compiler as List, so the same filter/sort/page yields the same
                 // ordered rows (criterion 4). The compiled query's Limit (page size, itself clamped to
-                // MaxStreamRows) hard-bounds the stream, so a full-table stream can never emit unbounded
-                // rows (invariant 6). WriteAsync provides HTTP/2 flow-control backpressure.
-                var compiled = Compile(table, requestMessage, request, userContext);
+                // MaxStreamRows and max-query-rows, plus the sentinel row) hard-bounds the stream, so a
+                // full-table stream can never emit unbounded rows (invariant 6). WriteAsync provides
+                // HTTP/2 flow-control backpressure.
+                var compiled = await CompileAsync(table, requestMessage, request, userContext);
                 var rows = await GrpcReadDispatcher.RunAsync(
                     _executor, compiled.Query, userContext, _options.Endpoint, context.CancellationToken);
 
-                foreach (var row in rows)
+                foreach (var row in PageOf(rows, compiled.Window))
                 {
                     context.CancellationToken.ThrowIfCancellationRequested();
                     await responseStream.WriteAsync(GrpcMessageCodec.EncodeRow(rowMessage, row));
@@ -147,13 +151,14 @@ namespace BifrostQL.Server.Grpc
         /// and maximum page size are the endpoint's own bounds, so a caller can never widen the cap and
         /// a Stream stays bounded by MaxStreamRows.
         /// </summary>
-        private GrpcCompiledRead Compile(
+        private async Task<GrpcCompiledRead> CompileAsync(
             IDbTable table, GrpcMessage requestMessage, byte[] request, IDictionary<string, object?> userContext)
         {
             var values = GrpcMessageCodec.DecodeRequest(requestMessage, request);
             var visibleColumns = GrpcSchemaVisibility.VisibleReadColumns(table, userContext);
+            var model = await _executor.GetModelAsync(_options.Endpoint);
             return GrpcReadRequestCompiler.Compile(
-                table, visibleColumns, values,
+                model, table, visibleColumns, values,
                 defaultPageSize: _options.ListPageSize,
                 maxPageSize: _options.MaxStreamRows,
                 identity: userContext,
@@ -162,18 +167,26 @@ namespace BifrostQL.Server.Grpc
                 ttl: _pageTokenKey.Ttl);
         }
 
+        /// <summary>The rows a List page or a Stream returns: at most the window's page, sentinel dropped.</summary>
+        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> PageOf(
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, RowProbeWindow window)
+            => window.HasMore(rows.Count) ? rows.Take(window.Page).ToList() : rows;
+
         /// <summary>
-        /// Mints the next-page cursor ONLY when the page came back full (another page may follow); a
-        /// short page is the last page and carries no token. The token encodes POSITION only
-        /// (offset + page size) bound to this table/query/identity — a forged or replayed token still
-        /// re-runs through the live pipeline, so it can at most reposition within the caller's own
-        /// visible rows (criterion 3).
+        /// Mints the next-page cursor ONLY when the sentinel row came back (more rows exist); a page
+        /// that ends exactly at the last row carries no token, so a client never pays a round trip
+        /// for an empty final page. The offset advances by the window's page, which the
+        /// max-query-rows ceiling may have narrowed below the requested size, so no row is skipped.
+        /// An empty page (a ceiling of 1) never advances, so it carries no token either. The token
+        /// encodes POSITION only, bound to this table/query/identity — a forged or replayed token
+        /// still re-runs through the live pipeline, so it can at most reposition within the caller's
+        /// own visible rows (criterion 3).
         /// </summary>
         private string? NextPageToken(int rowCount, GrpcCompiledRead compiled)
-            => rowCount < compiled.PageSize
-                ? null
-                : GrpcPageCursor.Issue(
-                    compiled.Offset + compiled.PageSize, DateTimeOffset.UtcNow, compiled.Binding, _pageTokenKey.Secret);
+            => compiled.Window.HasMore(rowCount) && compiled.Window.Page > 0
+                ? GrpcPageCursor.Issue(
+                    compiled.Offset + compiled.Window.Page, DateTimeOffset.UtcNow, compiled.Binding, _pageTokenKey.Secret)
+                : null;
 
         /// <summary>
         /// Resolves the caller through <see cref="GrpcIdentityGate"/> — the ONE identity gate every

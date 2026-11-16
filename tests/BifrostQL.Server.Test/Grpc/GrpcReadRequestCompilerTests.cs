@@ -26,7 +26,9 @@ namespace BifrostQL.Server.Test.Grpc
             var compiled = Compile(Request());
 
             compiled.Query.Filter.Should().BeNull();
-            compiled.Query.Limit.Should().Be(25); // clamp(defaultPageSize=25, maxPageSize=100)
+            // Page clamp(defaultPageSize=25, maxPageSize=100); the query fetches one sentinel row past it.
+            compiled.Window.Page.Should().Be(25);
+            compiled.Query.Limit.Should().Be(26);
             compiled.Query.Offset.Should().BeNull();
             // A total order even with no caller sort: the full primary key ascending.
             compiled.Query.Sort.Should().Equal("id_asc");
@@ -175,8 +177,10 @@ namespace BifrostQL.Server.Test.Grpc
         {
             table ??= SimpleTable();
             var visible = table.Columns.ToList();
+            // No max-query-rows metadata: the default ceiling (10,000) sits far above maxPageSize.
+            var model = new DbModel { Tables = [], Metadata = new Dictionary<string, object?>() };
             return GrpcReadRequestCompiler.Compile(
-                table, visible, request,
+                model, table, visible, request,
                 defaultPageSize: 25, maxPageSize: 100,
                 identity: new Dictionary<string, object?> { ["user_id"] = "u1" },
                 tokenSecret: Secret, now: DateTimeOffset.UtcNow, ttl: Ttl);

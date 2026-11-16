@@ -47,6 +47,7 @@ namespace BifrostQL.Server.Grpc
         private static readonly JsonDocumentOptions JsonOptions = new() { MaxDepth = 2 * GrpcReadCaps.MaxFilterDepth + 4 };
 
         public static GrpcCompiledRead Compile(
+            IDbModel model,
             IDbTable table,
             IReadOnlyList<ColumnDto> visibleColumns,
             IReadOnlyDictionary<string, object?> request,
@@ -57,6 +58,7 @@ namespace BifrostQL.Server.Grpc
             DateTimeOffset now,
             TimeSpan ttl)
         {
+            ArgumentNullException.ThrowIfNull(model);
             ArgumentNullException.ThrowIfNull(table);
             ArgumentNullException.ThrowIfNull(visibleColumns);
             ArgumentNullException.ThrowIfNull(request);
@@ -73,10 +75,15 @@ namespace BifrostQL.Server.Grpc
             var sort = CompileSort(table, byGraphQlName, orderByText);
             var offset = ResolveOffset(request, table, filterText, orderByText, pageSize, identity, tokenSecret, now, ttl);
 
+            // One row past the page, through the same max-query-rows clamp SQL generation applies:
+            // the sentinel row tells a complete answer from one the page or the ceiling cut, so List
+            // mints a token only when more rows exist and Stream can say it stopped early.
+            var window = RowProbeWindow.For(model, pageSize);
+
             var query = BuildRowQuery(table);
             query.Filter = filter;
             query.Sort = sort;
-            query.Limit = pageSize;
+            query.Limit = window.Fetch;
             if (offset > 0)
                 query.Offset = offset;
 
@@ -86,7 +93,7 @@ namespace BifrostQL.Server.Grpc
                 pageSize,
                 GrpcPageCursor.FingerprintIdentity(identity));
 
-            return new GrpcCompiledRead(query, offset, pageSize, binding);
+            return new GrpcCompiledRead(query, offset, window, binding);
         }
 
         // ---- page size -------------------------------------------------------------------------
@@ -454,10 +461,11 @@ namespace BifrostQL.Server.Grpc
     }
 
     /// <summary>
-    /// A compiled List/Stream read: the programmatic <see cref="GqlObjectQuery"/> to execute, the
-    /// resolved page <see cref="Offset"/> and <see cref="PageSize"/>, and the
+    /// A compiled List/Stream read: the programmatic <see cref="GqlObjectQuery"/> to execute (its
+    /// Limit is <see cref="Window"/>'s Fetch), the resolved page <see cref="Offset"/>, the
+    /// <see cref="RowProbeWindow"/> deciding how many rows to return and whether more exist, and the
     /// <see cref="GrpcPageBinding"/> to mint the next page's cursor against.
     /// </summary>
     internal sealed record GrpcCompiledRead(
-        GqlObjectQuery Query, int Offset, int PageSize, GrpcPageBinding Binding);
+        GqlObjectQuery Query, int Offset, RowProbeWindow Window, GrpcPageBinding Binding);
 }

@@ -39,6 +39,22 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Changed — the binary transport runs requests concurrently
+
+- One `/bifrost-ws` connection served one request at a time: a slow query held up every request
+  behind it, and a request sent while a chunked response was in transit was refused with "A
+  chunked response is in transit". The connection now has one reader, which routes each
+  `ChunkAck`/`ChunkNack` to the transfer its `request_id` names, and one serialized writer, so
+  requests run concurrently and their frames interleave. A connection runs at most
+  `BifrostBinaryMiddleware.MaxConcurrentRequestsPerConnection` (16) requests; one past that, or one
+  reusing the `request_id` of a request still in flight, is refused with an `Error` frame. Each
+  message now runs in its own DI scope instead of the upgrade request's, so a scoped service (a
+  grant resolver and the `DbContext` it reads) is no longer shared across a connection's requests.
+  A client `Close` lets requests still executing send their answers before the server closes.
+- Breaking: `ChunkSender.SendChunkedAsync` is removed. `ChunkSender.StartTransfer` returns a
+  `ChunkTransfer`, whose `RunAsync` sends the chunks and waits for the acks handed to it through
+  `AcknowledgeAsync`; it never reads the socket.
+
 ### Fixed — unique violations recognized by driver code
 
 - A database error whose text quoted a uniqueness phrase was reported as `CONFLICT`. Drivers quote

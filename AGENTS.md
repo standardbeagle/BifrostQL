@@ -67,7 +67,7 @@ Undeclared means `loopback`. Widening (loopback → lan → public) is the opera
 | LDAP / LDAPS | 389 / `LdapsPort` (null = off) | loopback (`LdapWireOptions.BindAddress`) | 100 shared across both | `AuthenticationTimeout` 30 s, `TlsHandshakeTimeout` 30 s | `IdleTimeout` 5 min (credentialed only) | 1 MiB |
 | gRPC | 5090 | loopback (`GrpcWireOptions.BindAddress`) | `MaxConcurrentConnections` 100 | Kestrel HTTP/2 | Kestrel | Kestrel |
 | HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host Kestrel | host's | host | host | host | host |
-| Binary WS `/bifrost-ws` | host Kestrel | host's | `UseBifrostBinary(maxConnections:)` 100 per mount | `firstFrameTimeout` 30 s | `idleTimeout` 10 min | frame 4 MiB; reassembly 64 MiB/session, 128 MiB/connection (received bytes) |
+| Binary WS `/bifrost-ws` | host Kestrel | host's | `UseBifrostBinary(maxConnections:)` 100 per mount; 16 concurrent requests per connection (`MaxConcurrentRequestsPerConnection`) | `firstFrameTimeout` 30 s | `idleTimeout` 10 min | frame 4 MiB; reassembly 64 MiB/session, 128 MiB/connection (received bytes) |
 | LLM chat `/_chat` | host Kestrel | host's | host | identity gate before body read | one SSE stream per conversation | `MaxMessageLength` 32768 chars; body 4×that + 1 KiB (received bytes) |
 | Desktop UI `bifrostui` | `--port` | loopback `127.0.0.1`; `--expose` widens to LAN | host | none: loopback is the only gate | host | host |
 

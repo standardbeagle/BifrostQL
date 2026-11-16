@@ -82,6 +82,23 @@ connects and then says nothing cannot hold an admission slot; later frames get
 `idleTimeout`, which is generous because an established session is a pooled client that may
 sit quiet between queries. A connection past its deadline is closed with `PolicyViolation`.
 
+### Concurrent requests
+
+Requests on one connection run concurrently. One reader takes every frame off the socket and
+hands each `ChunkAck` or `ChunkNack` to the transfer whose `request_id` it names; every frame
+the server sends goes through one serialized writer. A slow query or a large chunked response
+does not hold up the requests behind it: their frames interleave, and the client matches them
+by `request_id`.
+
+A connection runs at most 16 requests at once
+(`BifrostBinaryMiddleware.MaxConcurrentRequestsPerConnection`). A request past that is refused
+with an `Error` frame rather than queued, so resend it when one completes. A `request_id` must
+be unique among the requests in flight; a request reusing one is refused the same way. Once the
+client has acked every chunk of a response, that id is free again.
+
+Each request runs in its own DI scope, so scoped services are not shared between the requests
+of one connection.
+
 Chunked uploads grow from the bytes that actually arrive. The `total_bytes` a client
 declares bounds the transfer and feeds the admission caps (64 MB per transfer, 128 MB
 across one connection), but the server never allocates from it: a transfer that declares
@@ -187,7 +204,9 @@ Chunks arrive in sequence even if the wire delivered them out of order — the c
 
 ## Auto-resume
 
-When the WebSocket drops mid-transfer, the client snapshots the highest contiguous chunk sequence it has received for each in-flight request, opens a fresh socket using an exponential backoff (100 ms → 30 s with 25% jitter), and sends a `Resume` frame asking the server to retransmit only the chunks that are still missing. CRC32 verification on every chunk means partial retransmits are safe — bytes that already arrived intact are kept, and the tail is appended once it shows up.
+When the WebSocket drops mid-transfer, the client snapshots the highest contiguous chunk sequence it has received for each in-flight request, opens a fresh socket using an exponential backoff (100 ms → 30 s with 25% jitter), and sends a `Resume` frame asking the server to retransmit only the chunks that are still missing.
+
+The server keeps sent chunks per connection, so another connection can never replay them, and a fresh socket has none of the old one's. It therefore answers a `Resume` after a reconnect with a `ResumeAck` carrying zero chunks. The client then re-sends a query from the start, rejects a mutation that had already returned chunks (re-running it could apply it twice), and fails a stream whose consumer has already seen chunks. Only a `Resume` on the connection that is still carrying the transfer retransmits the missing tail.
 
 Reconnect behavior is controlled through `BifrostClientOptions`:
 

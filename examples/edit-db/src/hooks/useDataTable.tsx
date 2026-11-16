@@ -15,7 +15,7 @@ import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
-import { columnFormatter, formatDateCellValue } from "../lib/format-value";
+import { columnFormatter } from "../lib/format-value";
 import { detectContentKind, isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
@@ -228,7 +228,7 @@ function buildJoinColumn(
 
 /**
  * Column def for a non-anchor column: a composite-FK member (scalar value with
- * FK header context), a DateTime, a long-text/
+ * FK header context), a long-text/
  * binary/JSON content viewer, or a plain scalar.
  */
 function buildScalarColumn(
@@ -265,21 +265,6 @@ function buildScalarColumn(
                 isCompositeFk: true,
                 isCompositeFkMember: true,
             }),
-        };
-    }
-
-    if (c?.paramType === "DateTime") {
-        return {
-            id: c.name,
-            accessorFn: (row) => formatDateCellValue(row?.[c.name] as string),
-            cell: ({ row }) => {
-                const raw = row.original[c.name];
-                if (raw === null || raw === undefined || raw === "") return <EmptyValue kind={raw === "" ? "empty" : "null"} />;
-                return formatDateCellValue(raw as string);
-            },
-            header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
-            enableSorting: true,
-            meta: columnMeta(c, operators, { dbType: c.dbType }),
         };
     }
 
@@ -337,7 +322,8 @@ function buildScalarColumn(
     };
 }
 
-const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): ColumnDef<DataTableFeatures, RowData, unknown>[] => {
+/** Exported for tests: the grid's column defs for a table. */
+export const getTableColumns = (table: Table, schema: SchemaContextValue, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): ColumnDef<DataTableFeatures, RowData, unknown>[] => {
     if (!table || !schema) return [];
 
     const dataColumns: ColumnDef<DataTableFeatures, RowData, unknown>[] = table.columns

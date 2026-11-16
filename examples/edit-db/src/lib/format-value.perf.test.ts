@@ -1,5 +1,5 @@
 import { describe, it } from 'vitest';
-import { formatColumnValue, formatDateCellValue } from './format-value';
+import { formatColumnValue } from './format-value';
 import type { Column } from '../types/schema';
 
 /**
@@ -29,7 +29,6 @@ const enumColumn = col({
 const stringColumn = col({ paramType: 'String', dbType: 'nvarchar' });
 
 const cases: [string, () => void][] = [
-    ['DateTime grid cell (formatDateCellValue)', () => { for (const v of dates) formatDateCellValue(v); }],
     ['datetime column', () => { for (const v of dates) formatColumnValue(v, datetimeColumn); }],
     ['number column', () => { for (const v of ints) formatColumnValue(v, numberColumn); }],
     ['percent column', () => { for (const v of ints) formatColumnValue(v / 100000, percentColumn); }],

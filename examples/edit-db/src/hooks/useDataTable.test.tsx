@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { getMultiJoinRows, getSingleJoinRow, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl, resolveConfiguredSort } from './useDataTable';
+import { render } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { getMultiJoinRows, getSingleJoinRow, clampPageIndex, getJoinedRowPkValue, reconcileColumnFiltersFromUrl, resolveConfiguredSort, getTableColumns } from './useDataTable';
+import type { SchemaContextValue } from '../types/schema';
 import { serializeColumnFilters } from '../lib/query-builder';
 import { encodeRouteParts } from '../lib/row-id';
 import type { ColumnFiltersState } from '@tanstack/react-table';
@@ -242,5 +245,44 @@ describe('resolveConfiguredSort', () => {
     it('is empty with no table or no config', () => {
         expect(resolveConfiguredSort(null, { '*': { column: 'id' } })).toEqual([]);
         expect(resolveConfiguredSort(workshops, undefined)).toEqual([]);
+    });
+});
+
+describe('getTableColumns: type-based cell rendering', () => {
+    const col = (name: string, paramType: string, metadata: Column['metadata'] = {}): Column => ({
+        dbName: name, graphQlName: name, name, label: name, paramType,
+        dbType: paramType.startsWith('Boolean') ? 'bit' : 'datetime2', isPrimaryKey: false, isIdentity: false,
+        isNullable: !paramType.endsWith('!'), isReadOnly: false, metadata,
+    });
+    const relative = { 'display-format': 'relative' };
+    const table: Table = {
+        dbName: 'events', graphQlName: 'events', name: 'events', label: 'events', labelColumn: 'id',
+        primaryKeys: ['id'], isEditable: true, metadata: {},
+        columns: [col('maybeAt', 'DateTime', relative), col('at', 'DateTime!', relative)],
+        multiJoins: [], singleJoins: [],
+    };
+    // Scalar columns never consult the schema; a join column would.
+    const columns = getTableColumns(table, {} as SchemaContextValue);
+    const def = (id: string) => columns.find((c) => c.id === id)! as unknown as {
+        cell: (ctx: { row: { original: Record<string, unknown>; index: number } }) => ReactNode;
+        accessorFn: (row: Record<string, unknown>) => unknown;
+    };
+    const cellText = (id: string, value: unknown) =>
+        render(<>{def(id).cell({ row: { original: { [id]: value }, index: 0 } })}</>).container;
+
+    it('honors display-format on a nullable DateTime column exactly as on a NOT NULL one', () => {
+        const threeHoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
+        expect(cellText('maybeAt', threeHoursAgo).textContent).toBe('3 hours ago');
+        expect(cellText('at', threeHoursAgo).textContent).toBe('3 hours ago');
+    });
+
+    it('sorts and filters a nullable DateTime on its stored value, not localized text', () => {
+        expect(def('maybeAt').accessorFn({ maybeAt: '2024-06-15T10:30:00Z' })).toBe('2024-06-15T10:30:00Z');
+    });
+
+    it('shows a sentinel instant in a nullable DateTime as unset, not a blank cell', () => {
+        const container = cellText('maybeAt', '0001-01-01T00:00:00');
+        expect(container.textContent).toBe('unset');
+        expect(container.querySelector('[title]')!.getAttribute('title')).toBe('0001-01-01T00:00:00');
     });
 });

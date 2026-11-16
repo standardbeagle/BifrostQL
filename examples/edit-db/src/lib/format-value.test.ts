@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
-    resolveDisplayFormat, formatRelative, formatDateCellValue, abbreviateNumber,
+    resolveDisplayFormat, formatRelative, abbreviateNumber,
     columnFormatter, formatColumnValue, enumLabelFor,
 } from './format-value';
 import type { Column } from '../types/schema';
@@ -56,43 +56,6 @@ describe('formatRelative', () => {
     });
 });
 
-describe('formatDateCellValue', () => {
-    it('returns empty for empty string', () => {
-        expect(formatDateCellValue('')).toBe('');
-    });
-
-    it('returns empty for invalid date', () => {
-        expect(formatDateCellValue('not-a-date')).toBe('');
-    });
-
-    it('returns empty only for exact sentinel/placeholder instants', () => {
-        // Unix epoch (timestamp 0) and year-0001 min-value are "unset" markers.
-        expect(formatDateCellValue('1970-01-01')).toBe('');
-        expect(formatDateCellValue('0001-01-01')).toBe('');
-    });
-
-    it('formats legitimate historical dates (no 1973 cutoff)', () => {
-        // Previously blanked by the broad "before 1973" cutoff; these are real dates.
-        expect(formatDateCellValue('1900-06-15')).toBeTruthy();
-        expect(formatDateCellValue('1969-07-20')).toBeTruthy();
-    });
-
-    it('formats valid modern dates', () => {
-        const result = formatDateCellValue('2024-06-15T10:30:00');
-        expect(result).toBeTruthy();
-        expect(result.length).toBeGreaterThan(5);
-    });
-
-    it('handles ISO date strings', () => {
-        expect(formatDateCellValue('2024-01-01')).toBeTruthy();
-    });
-
-    it('handles null-like values', () => {
-        expect(formatDateCellValue(null as unknown as string)).toBe('');
-        expect(formatDateCellValue(undefined as unknown as string)).toBe('');
-    });
-});
-
 describe('abbreviateNumber', () => {
   it('returns em dash for null', () => {
     expect(abbreviateNumber(null)).toBe('—');
@@ -143,15 +106,21 @@ describe('cell formatting cost', () => {
         expect(ctor).not.toHaveBeenCalled();
     });
 
-    it('formats a DateTime grid cell without Date.toLocaleString, to the same text', () => {
-        const values = ['2024-06-15T10:30:00', '1999-12-31T23:59:59Z', '1900-06-15', '2026-05-11T22:17:47.7636626'];
-        const expected = values.map((v) => new Date(v).toLocaleString());
+    it('formats date cells without building an Intl.DateTimeFormat per cell', () => {
+        const nullable = col({ paramType: 'DateTime', dbType: 'datetime2' });
+        const notNull = col({ paramType: 'DateTime!', dbType: 'datetime2' });
+        columnFormatter(nullable);
+        columnFormatter(notNull);
+        const ctor = vi.spyOn(Intl, 'DateTimeFormat');
         const toLocale = vi.spyOn(Date.prototype, 'toLocaleString');
 
-        const actual = values.map(formatDateCellValue);
+        for (const v of ['2024-06-15T10:30:00', '1999-12-31T23:59:59Z', '1900-06-15', '2026-05-11T22:17:47.7636626']) {
+            formatColumnValue(v, nullable);
+            formatColumnValue(v, notNull);
+        }
 
+        expect(ctor).not.toHaveBeenCalled();
         expect(toLocale).not.toHaveBeenCalled();
-        expect(actual).toEqual(expected);
     });
 
     it('builds a column formatter once and reuses it', () => {

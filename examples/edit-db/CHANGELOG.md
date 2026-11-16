@@ -7,9 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Performance
-- Grid cells format through one compiled formatter per column (`columnFormatter`): no `Intl.NumberFormat` built per number/percent cell, no `toLocaleString` per `DateTime` cell. Output is unchanged; number cells go from ~273 to ~7 µs each.
+- Grid cells format through one compiled formatter per column (`columnFormatter`): no `Intl.NumberFormat` built per number/percent cell, no `toLocaleString` per `DateTime` cell. Number cells go from ~273 to ~7 µs each.
 
 ### Fixed
+- Nullable `DateTime` grid columns render like every other date column: `display-format` (`relative`, `date`, `time`, …) applies, the exact instant shows on hover, and the column sorts and filters on the stored value instead of localized text. Before, only NOT NULL and `DateTimeOffset` columns got this; nullable ones fell to a separate `toLocaleString` path
+- A placeholder instant (Unix epoch, year 0001) in a date column shows a muted `unset` with the stored value on hover. Nullable columns used to blank it to an empty-looking cell and NOT NULL ones printed it (`Dec 31, 1, …`); an unparseable date now shows its raw text instead of a blank
 - The form runner and its subforms (`FormRunner`, `FormRunnerView`, `FormSubformPanel`) style with the theme tokens instead of hard-coded light colors, so they follow dark mode and host themes like the rest of the editor
 - Select menus open directly beneath their trigger (`position="popper"` default); the item-aligned mode drifted long FK lists away from their label inside the scrolling edit dialog
 

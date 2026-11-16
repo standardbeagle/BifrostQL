@@ -84,6 +84,15 @@ function toDate(value: unknown): Date | null {
     return null;
 }
 
+/**
+ * The two instants a date column stores to mean "not set": the Unix epoch
+ * (timestamp 0) and .NET/SQL DateTime.MinValue (year 0001). Only these exact
+ * markers count; real historical dates (1900, 1969) are real data.
+ */
+function isUnsetSentinel(date: Date): boolean {
+    return date.getTime() === 0 || date.getUTCFullYear() <= 1;
+}
+
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 const dateTimeFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const timeFmt = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
@@ -157,6 +166,7 @@ function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode 
             return (value) => {
                 const date = toDate(value);
                 if (!date) return String(value); // unparseable → show raw rather than hide it
+                if (isUnsetSentinel(date)) return <EmptyValue kind="unset" title={String(value)} />;
                 return <span title={exactFmt.format(date)}>{display.format(date)}</span>;
             };
         }
@@ -164,6 +174,7 @@ function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode 
             return (value) => {
                 const date = toDate(value);
                 if (!date) return String(value);
+                if (isUnsetSentinel(date)) return <EmptyValue kind="unset" title={String(value)} />;
                 return (
                     <span title={exactFmt.format(date)} className="cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
                         {formatRelative(date)}
@@ -229,32 +240,6 @@ export function columnFormatter(column: Column, formatKey?: string): CellFormatt
  */
 export function formatColumnValue(value: unknown, column: Column, options?: FormatOptions): ReactNode {
     return columnFormatter(column, options?.formatKey)(value);
-}
-
-// Date.prototype.toLocaleString() with no arguments formats these fields; a cached
-// formatter with the same fields renders the same text without building one per call.
-const localeDateTimeFmt = new Intl.DateTimeFormat(undefined, {
-    year: 'numeric', month: 'numeric', day: 'numeric',
-    hour: 'numeric', minute: 'numeric', second: 'numeric',
-});
-
-/**
- * Format a raw date/datetime string for grid-cell display as toLocaleString does,
- * blanking sentinel "unset" instants.
- *
- * Only exact placeholder/sentinel instants are blanked, not legitimate
- * historical dates. A broad "before 1973" cutoff hid real dates (e.g. a 1900
- * birthdate or a 1969 record). The two markers that actually mean "unset":
- * the Unix epoch (timestamp 0, i.e. 1970-01-01T00:00:00Z) and .NET/SQL
- * DateTime.MinValue (year 0001-01-01).
- */
-export function formatDateCellValue(value: string): string {
-    if (!value) return "";
-    const parsed = new Date(value);
-    if (parsed.toString() === "Invalid Date") return "";
-    if (parsed.getTime() === 0) return "";
-    if (parsed.getUTCFullYear() <= 1) return "";
-    return localeDateTimeFmt.format(parsed);
 }
 
 /**

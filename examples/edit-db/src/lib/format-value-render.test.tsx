@@ -80,4 +80,33 @@ describe('formatColumnValue (render)', () => {
         const { container } = render(<>{formatColumnValue('not-a-date', col({ dbType: 'datetime2' }))}</>);
         expect(container.textContent).toBe('not-a-date');
     });
+
+    // Placeholder instants mean "not set". They render as a visible placeholder,
+    // never as a blank cell, and the stored value stays reachable on hover.
+    it.each([
+        ['epoch, nullable DateTime', '1970-01-01T00:00:00Z', 'DateTime'],
+        ['year 0001, NOT NULL DateTime', '0001-01-01T00:00:00', 'DateTime!'],
+        ['year 0001, DateTimeOffset', '0001-01-01T00:00:00+00:00', 'DateTimeOffset'],
+    ])('shows an unset placeholder for the %s sentinel', (_name, value, paramType) => {
+        const { container } = render(<>{formatColumnValue(value, col({ paramType, dbType: 'datetime2' }))}</>);
+        const span = container.querySelector('span')!;
+        expect(span.textContent).toBe('unset');
+        expect(span.getAttribute('title')).toBe(value);
+    });
+
+    it('formats real historical dates near the sentinels', () => {
+        for (const value of ['1900-06-15T00:00:00Z', '1969-07-20T20:17:00Z', '1970-01-02T00:00:00Z']) {
+            const { container } = render(<>{formatColumnValue(value, col({ paramType: 'DateTime' }))}</>);
+            expect(container.textContent).not.toBe('unset');
+            expect(container.textContent).not.toBe('');
+        }
+    });
+
+    it('honors display-format on a nullable DateTime column the same as a NOT NULL one', () => {
+        const now = new Date(Date.now() - 3 * 3600_000).toISOString();
+        for (const paramType of ['DateTime', 'DateTime!']) {
+            const { container } = render(<>{formatColumnValue(now, col({ paramType, metadata: { 'display-format': 'relative' } }))}</>);
+            expect(container.textContent).toBe('3 hours ago');
+        }
+    });
 });

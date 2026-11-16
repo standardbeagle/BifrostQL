@@ -5,11 +5,13 @@
  * differently:
  *   - `null` / `undefined`  -> `NULL`
  *   - empty string `""`     -> `empty`
+ *   - a placeholder instant (epoch, year 0001) a date column stores to mean
+ *     "not set" -> `unset`, with the stored value in `title`
  */
-export function EmptyValue({ kind }: { kind: 'null' | 'empty' }) {
+export function EmptyValue({ kind, title }: { kind: 'null' | 'empty' | 'unset'; title?: string }) {
     return (
-        <span className="text-muted-foreground/60 italic select-none">
-            {kind === 'null' ? 'NULL' : 'empty'}
+        <span className="text-muted-foreground/60 italic select-none" title={title}>
+            {kind === 'null' ? 'NULL' : kind}
         </span>
     );
 }

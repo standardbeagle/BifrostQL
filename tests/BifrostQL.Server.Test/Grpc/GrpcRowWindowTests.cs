@@ -11,11 +11,12 @@ namespace BifrostQL.Server.Test.Grpc
     /// end over the real pipeline and seeded SQLite. List mints a token only when a sentinel row
     /// proves more rows exist (a page ending exactly at the last row carries none), and under a
     /// max-query-rows ceiling below the page it narrows the page and keeps paging instead of
-    /// silently dropping rows.
+    /// silently dropping rows. A Stream that stops while rows remain says so in the
+    /// <c>bifrost-truncated</c> trailer; a complete one carries no such trailer.
     /// </summary>
     public sealed class GrpcRowWindowTests
     {
-        // Five rows: page sizes 5 (exact fit) and 4 (one more page) each bind.
+        // Five rows: page sizes 5 (exact fit), 4 (one more page) and 3 (a cut stream) each bind.
         private static readonly string[] SeedSql =
         {
             "DROP TABLE IF EXISTS widgets",
@@ -79,6 +80,41 @@ namespace BifrostQL.Server.Test.Grpc
                 token = next.NextPageToken;
             }
             seen.Should().Equal(1, 2, 3, 4, 5);
+        }
+
+        // ---- Stream: an explicit trailer when it stopped early ---------------------------
+
+        [Fact]
+        public async Task A_stream_cut_by_its_page_size_sets_the_truncated_trailer()
+        {
+            await using var harness = await GrpcRealDbHarness.StartAsync("window-stream-cut", NoMetadata, SeedSql);
+            var client = new GrpcWireTestClient(harness.Invoker, harness.Contract);
+
+            var cut = await client.StreamWithTrailersAsync("widgets", User(), orderBy: "id asc", pageSize: 3);
+            Ids(cut.Rows).Should().Equal(1, 2, 3);
+            cut.Trailers.GetValue(BifrostDynamicGrpcService.TruncatedTrailer).Should().Be("true");
+
+            // Control: the same stream with room for every row ends complete and carries no trailer.
+            var whole = await client.StreamWithTrailersAsync("widgets", User(), orderBy: "id asc", pageSize: 5);
+            Ids(whole.Rows).Should().Equal(1, 2, 3, 4, 5);
+            whole.Trailers.Get(BifrostDynamicGrpcService.TruncatedTrailer).Should().BeNull();
+        }
+
+        [Fact]
+        public async Task A_stream_cut_by_the_ceiling_sets_the_truncated_trailer()
+        {
+            await using var harness = await GrpcRealDbHarness.StartAsync("window-stream-ceiling", CeilingMetadata, SeedSql);
+            var client = new GrpcWireTestClient(harness.Invoker, harness.Contract);
+
+            var cut = await client.StreamWithTrailersAsync("widgets", User(), orderBy: "id asc");
+            cut.Trailers.GetValue(BifrostDynamicGrpcService.TruncatedTrailer).Should().Be("true");
+            Ids(cut.Rows).Should().Equal(1, 2);
+
+            // Control: a filter that fits under the ceiling streams complete with no trailer.
+            var fits = await client.StreamWithTrailersAsync(
+                "widgets", User(), filter: """{ "id": { "_lte": "2" } }""", orderBy: "id asc");
+            Ids(fits.Rows).Should().Equal(1, 2);
+            fits.Trailers.Get(BifrostDynamicGrpcService.TruncatedTrailer).Should().BeNull();
         }
     }
 }

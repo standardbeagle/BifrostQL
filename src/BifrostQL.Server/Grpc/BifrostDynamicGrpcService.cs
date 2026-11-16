@@ -20,6 +20,12 @@ namespace BifrostQL.Server.Grpc
     /// </summary>
     internal sealed class BifrostDynamicGrpcService
     {
+        /// <summary>
+        /// Response trailer a <c>Stream</c> sets to <c>true</c> when it stopped at its page size (or
+        /// the endpoint's max-query-rows ceiling) while more matching rows existed. A complete
+        /// stream carries no such trailer.
+        /// </summary>
+        internal const string TruncatedTrailer = "bifrost-truncated";
 
         private readonly IQueryIntentExecutor _executor;
         private readonly IMutationIntentExecutor _mutations;
@@ -98,6 +104,11 @@ namespace BifrostQL.Server.Grpc
                     context.CancellationToken.ThrowIfCancellationRequested();
                     await responseStream.WriteAsync(GrpcMessageCodec.EncodeRow(rowMessage, row));
                 }
+
+                // A stream has no continuation, so a cut is reported explicitly rather than ending
+                // like a complete answer (protocol-adapter-security: never truncate silently).
+                if (compiled.Window.HasMore(rows.Count))
+                    context.ResponseTrailers.Add(TruncatedTrailer, "true");
             });
 
         /// <summary>

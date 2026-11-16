@@ -79,6 +79,15 @@ namespace BifrostQL.Server.Test.Grpc
         public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> StreamAsync(
             string table, Metadata? headers = null, CancellationToken cancellationToken = default,
             string? filter = null, string? orderBy = null, int? pageSize = null, string? pageToken = null)
+            => (await StreamWithTrailersAsync(table, headers, cancellationToken, filter, orderBy, pageSize, pageToken)).Rows;
+
+        /// <summary>A completed Stream: the decoded rows plus the response trailers the server sent.</summary>
+        public sealed record StreamResult(
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows, Metadata Trailers);
+
+        public async Task<StreamResult> StreamWithTrailersAsync(
+            string table, Metadata? headers = null, CancellationToken cancellationToken = default,
+            string? filter = null, string? orderBy = null, int? pageSize = null, string? pageToken = null)
         {
             var request = EncodeReadRequest($"Stream{table}Request", filter, orderBy, pageSize, pageToken);
             var method = new Method<byte[], byte[]>(MethodType.ServerStreaming, ServiceName, $"Stream{table}", Bytes, Bytes);
@@ -88,7 +97,8 @@ namespace BifrostQL.Server.Test.Grpc
             var rows = new List<IReadOnlyDictionary<string, object?>>();
             await foreach (var msg in call.ResponseStream.ReadAllAsync(cancellationToken))
                 rows.Add(DecodeRow(rowMessage, msg));
-            return rows;
+            // Trailers are readable only once the response stream has completed.
+            return new StreamResult(rows, call.GetTrailers());
         }
 
         /// <summary>The decoded mutation result: the affected row count and (insert only) the generated identity.</summary>

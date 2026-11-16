@@ -50,6 +50,75 @@ namespace BifrostQL.Server.Test
             restored.LastSequence.Should().Be(42);
         }
 
+        public static TheoryData<string> EncoderShapes() => new() { "empty", "all-max", "unicode", "large-payload", "errors-only" };
+
+        /// <summary>
+        /// ToBytes sizes its buffer up front. This pins it byte-for-byte to a streaming encoder
+        /// (the pre-sizing implementation), so a field the size pass miscounts fails here.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(EncoderShapes))]
+        public void ToBytes_MatchesTheStreamingEncoder(string shape)
+        {
+            var msg = shape switch
+            {
+                "empty" => new BifrostMessage(),
+                "all-max" => new BifrostMessage
+                {
+                    RequestId = uint.MaxValue,
+                    Type = (BifrostMessageType)int.MaxValue,
+                    Query = "q",
+                    VariablesJson = "{}",
+                    Payload = new byte[] { 0 },
+                    Errors = { "", "e" },
+                    ChunkSequence = uint.MaxValue,
+                    ChunkTotal = uint.MaxValue,
+                    ChunkOffset = ulong.MaxValue,
+                    TotalBytes = ulong.MaxValue,
+                    ChunkChecksum = uint.MaxValue,
+                    LastSequence = uint.MaxValue,
+                },
+                "unicode" => new BifrostMessage
+                {
+                    RequestId = 1,
+                    Type = BifrostMessageType.Error,
+                    Query = "{ naïve { 名前 } }",
+                    VariablesJson = "{\"e\":\"\U0001F600\"}",
+                    Errors = { "Ünïcödé", "日本語" },
+                },
+                "large-payload" => new BifrostMessage
+                {
+                    RequestId = 300,
+                    Type = BifrostMessageType.Result,
+                    Payload = Enumerable.Range(0, 70_000).Select(i => (byte)i).ToArray(),
+                },
+                "errors-only" => new BifrostMessage { Type = BifrostMessageType.Error, Errors = { new string('x', 200) } },
+                _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+            };
+
+            msg.ToBytes().Should().Equal(StreamingEncode(msg));
+        }
+
+        private static byte[] StreamingEncode(BifrostMessage m)
+        {
+            using var ms = new MemoryStream();
+            var o = new CodedOutputStream(ms, leaveOpen: true);
+            if (m.RequestId != 0) { o.WriteTag(1, WireType.Varint); o.WriteUInt32(m.RequestId); }
+            if (m.Type != BifrostMessageType.Query) { o.WriteTag(2, WireType.Varint); o.WriteInt32((int)m.Type); }
+            if (m.Query.Length > 0) { o.WriteTag(3, WireType.LengthDelimited); o.WriteString(m.Query); }
+            if (m.VariablesJson.Length > 0) { o.WriteTag(4, WireType.LengthDelimited); o.WriteString(m.VariablesJson); }
+            if (m.Payload.Length > 0) { o.WriteTag(5, WireType.LengthDelimited); o.WriteBytes(ByteString.CopyFrom(m.Payload)); }
+            foreach (var e in m.Errors) { o.WriteTag(6, WireType.LengthDelimited); o.WriteString(e); }
+            if (m.ChunkSequence != 0) { o.WriteTag(7, WireType.Varint); o.WriteUInt32(m.ChunkSequence); }
+            if (m.ChunkTotal != 0) { o.WriteTag(8, WireType.Varint); o.WriteUInt32(m.ChunkTotal); }
+            if (m.ChunkOffset != 0) { o.WriteTag(9, WireType.Varint); o.WriteUInt64(m.ChunkOffset); }
+            if (m.TotalBytes != 0) { o.WriteTag(10, WireType.Varint); o.WriteUInt64(m.TotalBytes); }
+            if (m.ChunkChecksum != 0) { o.WriteTag(11, WireType.Varint); o.WriteUInt32(m.ChunkChecksum); }
+            if (m.LastSequence != 0) { o.WriteTag(12, WireType.Varint); o.WriteUInt32(m.LastSequence); }
+            o.Flush();
+            return ms.ToArray();
+        }
+
         [Fact]
         public void FromBytes_FieldsInReverseOrder_Parses()
         {

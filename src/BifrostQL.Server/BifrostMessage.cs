@@ -123,12 +123,15 @@ namespace BifrostQL.Server
         private const int LastSequenceTag = (12 << 3) | 0;     // varint
 
         /// <summary>
-        /// Serializes this message to protobuf wire format.
+        /// Serializes this message to protobuf wire format: one array of exactly the frame's size,
+        /// with the payload written straight into it (never copied into an intermediate buffer).
         /// </summary>
         public byte[] ToBytes()
         {
-            using var memStream = new MemoryStream();
-            var output = new CodedOutputStream(memStream, leaveOpen: true);
+            // UnsafeWrap shares Payload without copying; the ByteString lives only for this call.
+            var payload = Payload.Length > 0 ? UnsafeByteOperations.UnsafeWrap(Payload) : ByteString.Empty;
+            var bytes = new byte[CalculateSize(payload)];
+            var output = new CodedOutputStream(bytes);
 
             if (RequestId != 0)
             {
@@ -157,7 +160,7 @@ namespace BifrostQL.Server
             if (Payload.Length > 0)
             {
                 output.WriteTag(PayloadTag);
-                output.WriteBytes(ByteString.CopyFrom(Payload));
+                output.WriteBytes(payload);
             }
 
             foreach (var error in Errors)
@@ -202,8 +205,40 @@ namespace BifrostQL.Server
                 output.WriteUInt32(LastSequence);
             }
 
-            output.Flush();
-            return memStream.ToArray();
+            // A size/write mismatch would leave trailing zero bytes the reader parses as field 0.
+            output.CheckNoSpaceLeft();
+            return bytes;
+        }
+
+        /// <summary>The serialized size of this message, field for field as <see cref="ToBytes"/> writes it.</summary>
+        private int CalculateSize(ByteString payload)
+        {
+            var size = 0;
+            if (RequestId != 0)
+                size += CodedOutputStream.ComputeTagSize(RequestIdTag >> 3) + CodedOutputStream.ComputeUInt32Size(RequestId);
+            if (Type != BifrostMessageType.Query)
+                size += CodedOutputStream.ComputeTagSize(TypeTag >> 3) + CodedOutputStream.ComputeInt32Size((int)Type);
+            if (Query.Length > 0)
+                size += CodedOutputStream.ComputeTagSize(QueryTag >> 3) + CodedOutputStream.ComputeStringSize(Query);
+            if (VariablesJson.Length > 0)
+                size += CodedOutputStream.ComputeTagSize(VariablesTag >> 3) + CodedOutputStream.ComputeStringSize(VariablesJson);
+            if (Payload.Length > 0)
+                size += CodedOutputStream.ComputeTagSize(PayloadTag >> 3) + CodedOutputStream.ComputeBytesSize(payload);
+            foreach (var error in Errors)
+                size += CodedOutputStream.ComputeTagSize(ErrorsTag >> 3) + CodedOutputStream.ComputeStringSize(error);
+            if (ChunkSequence != 0)
+                size += CodedOutputStream.ComputeTagSize(ChunkSequenceTag >> 3) + CodedOutputStream.ComputeUInt32Size(ChunkSequence);
+            if (ChunkTotal != 0)
+                size += CodedOutputStream.ComputeTagSize(ChunkTotalTag >> 3) + CodedOutputStream.ComputeUInt32Size(ChunkTotal);
+            if (ChunkOffset != 0)
+                size += CodedOutputStream.ComputeTagSize(ChunkOffsetTag >> 3) + CodedOutputStream.ComputeUInt64Size(ChunkOffset);
+            if (TotalBytes != 0)
+                size += CodedOutputStream.ComputeTagSize(TotalBytesTag >> 3) + CodedOutputStream.ComputeUInt64Size(TotalBytes);
+            if (ChunkChecksum != 0)
+                size += CodedOutputStream.ComputeTagSize(ChunkChecksumTag >> 3) + CodedOutputStream.ComputeUInt32Size(ChunkChecksum);
+            if (LastSequence != 0)
+                size += CodedOutputStream.ComputeTagSize(LastSequenceTag >> 3) + CodedOutputStream.ComputeUInt32Size(LastSequence);
+            return size;
         }
 
         /// <summary>

@@ -149,13 +149,11 @@ namespace BifrostQL.Core.QueryModel
         /// True when this ROOT field names a table row query — the only shape
         /// <see cref="ToSqlData"/> can build. Fail-closed: a field counts as a table query
         /// only when the model resolves its normalized name to a table, so an unrecognized
-        /// root field is skipped by the SQL context rather than executed as one.
+        /// root field is skipped by the SQL context rather than executed as one. Asks the
+        /// same lookup <see cref="ResolveTable"/> later uses, so both agree on the table.
         /// </summary>
         public static bool IsTableRootField(IDbModel model, IQueryField field)
-        {
-            var name = NormalizeColumnName(field.Name);
-            return model.Tables.Any(t => t.MatchName(name));
-        }
+            => model.TryGetTableByFullGraphQlName(NormalizeColumnName(field.Name), out _);
 
         /// <summary>
         /// Resolves the table backing a query node via a positive lookup. A miss is a

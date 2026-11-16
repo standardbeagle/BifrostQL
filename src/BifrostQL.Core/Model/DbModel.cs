@@ -58,7 +58,10 @@ namespace BifrostQL.Core.Model
         /// </summary>
         bool TryGetTableByFullGraphQlName(string fullName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
         {
-            table = Tables.FirstOrDefault(t => t.MatchName(fullName));
+            // Same precedence as DbModel's index: an emitted GraphQL name beats any
+            // table's schema-qualified alias.
+            table = Tables.FirstOrDefault(t => string.Equals(t.GraphQlName, fullName, StringComparison.InvariantCultureIgnoreCase))
+                ?? Tables.FirstOrDefault(t => t.MatchName(fullName));
             return table is not null;
         }
 
@@ -180,20 +183,39 @@ namespace BifrostQL.Core.Model
 
         private static string QualifiedDbNameKey(string? schema, string dbName) => $"{schema}.{dbName}";
 
+        /// <summary>
+        /// The schema whose tables have no schema-qualified GraphQL alias, taken from
+        /// <see cref="SchemaPrefixOptions"/> at model build (its default when prefixing is off).
+        /// </summary>
+        public string DefaultSchema { get; init; } = SchemaPrefixOptions.Disabled.DefaultSchema;
+
+        /// <summary>
+        /// GraphQL name → table. Every table's own <see cref="IDbTable.GraphQlName"/> (the
+        /// field name the schema emits, unique after <see cref="DeduplicateTableGraphQlNames"/>)
+        /// is registered first and always wins. A table outside <see cref="DefaultSchema"/> is
+        /// also reachable by its schema-qualified alias <c>{schema}_{GraphQlName}</c>, but only
+        /// when that alias names no emitted field and no other table's alias: otherwise
+        /// <c>a.orders</c> (alias <c>a_orders</c>) would capture the root field
+        /// <c>a_orders</c> that <c>public.a_orders</c> emits, and run its SQL on the wrong table.
+        /// </summary>
         private IReadOnlyDictionary<string, IDbTable> BuildGraphQlNameIndex()
         {
+            var tables = Tables ?? Array.Empty<IDbTable>();
             var dict = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
-            foreach (var t in Tables ?? Array.Empty<IDbTable>())
-            {
-                // MatchName accepts either the schema-qualified full name or the bare
-                // GraphQL name, so both are registered. FullName mirrors
-                // DbTable.FullName; kept in sync there.
-                var fullName = string.Equals(t.TableSchema, "dbo", StringComparison.Ordinal)
-                    ? t.GraphQlName
-                    : $"{t.TableSchema}_{t.GraphQlName}";
-                dict.TryAdd(fullName, t);
+            foreach (var t in tables)
                 dict.TryAdd(t.GraphQlName, t);
+
+            // null marks an alias two tables share: neither gets it.
+            var aliases = new Dictionary<string, IDbTable?>(StringComparer.InvariantCultureIgnoreCase);
+            foreach (var t in tables)
+            {
+                var alias = DbTable.SchemaQualifiedGraphQlName(t.TableSchema, t.GraphQlName, DefaultSchema);
+                if (alias is null || dict.ContainsKey(alias)) continue;
+                aliases[alias] = aliases.ContainsKey(alias) ? null : t;
             }
+            foreach (var (alias, t) in aliases)
+                if (t is not null)
+                    dict.Add(alias, t);
             return dict;
         }
 
@@ -532,6 +554,7 @@ namespace BifrostQL.Core.Model
                     HiddenTables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden)).ToList(),
                     StoredProcedures = filteredProcs,
                     Metadata = dbMetadata,
+                    DefaultSchema = schemaPrefixOptions.DefaultSchema,
                 };
 
             // Detect or parse prefix groups for name-based linking

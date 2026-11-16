@@ -36,9 +36,23 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// The graphql name of the table, including the schema if it is not dbo
+        /// The graphql name of the table, prefixed with its schema unless that is
+        /// <see cref="SchemaPrefixOptions"/>' default schema. Model-free, so it cannot see the
+        /// model's configured default schema or other tables' names: resolve a client-supplied
+        /// name through <see cref="IDbModel.TryGetTableByFullGraphQlName"/>, whose index applies
+        /// both.
         /// </summary>
-        public string FullName => $"{(TableSchema == "dbo" ? "" : $"{TableSchema}_")}{GraphQlName}";
+        public string FullName =>
+            SchemaQualifiedGraphQlName(TableSchema, GraphQlName, SchemaPrefixOptions.Disabled.DefaultSchema) ?? GraphQlName;
+
+        /// <summary>
+        /// The schema-qualified GraphQL alias <c>{schema}_{graphQlName}</c>, or null for a table
+        /// in <paramref name="defaultSchema"/>, whose alias would be its bare name.
+        /// </summary>
+        internal static string? SchemaQualifiedGraphQlName(string tableSchema, string graphQlName, string defaultSchema) =>
+            string.Equals(tableSchema, defaultSchema, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : $"{tableSchema}_{graphQlName}";
 
         public string ColumnEnumTypeName => $"{GraphQlName}Enum";
         public string ColumnFilterTypeName => $"FilterType{GraphQlName}EnumInput";

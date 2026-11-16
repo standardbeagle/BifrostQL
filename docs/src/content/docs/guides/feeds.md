@@ -69,6 +69,9 @@ A feed is served at `<prefix>/<table>`, with an optional format suffix:
 | `/feeds/posts` | Format-negotiated (see below), default RSS 2.0. |
 | `/feeds/posts.rss` | RSS 2.0 explicitly. |
 | `/feeds/posts.atom` | Atom 1.0 explicitly. |
+| `/feeds/public.posts.rss` | The `posts` table of schema `public`. |
+
+`<table>` is the table's DB name or GraphQL name, case-insensitive. Qualify it as `schema.name` when two schemas define a table with that name: a bare name two schemas share names neither table and is a not-found.
 
 **Format negotiation** is deterministic: an explicit `.rss`/`.atom` suffix wins; otherwise an `Accept` header naming `application/atom+xml` selects Atom; otherwise RSS 2.0 is the default. An unrecognized `Accept` falls through to RSS, never a 406.
 
@@ -93,6 +96,8 @@ The feed authenticates **before** any model lookup, planning, cache evaluation, 
 :::caution[A query-string token leaks into access logs]
 A `?token=` value is recorded by intermediaries and access logs. **Prefer `Authorization: Bearer`**, which takes precedence when both are present. Every response to a query-token request is served `Cache-Control: private, no-store` so a shared cache never retains it; Bearer responses are `Cache-Control: private`.
 :::
+
+A scoped token's allow-list entries use the same names as the route, and they are checked against the table the route **resolves to**, not the route text. An entry naming a bare name two schemas share covers neither table, and a token for `public.posts` reaches `public.posts` by any spelling of it but never `internal.posts`.
 
 Every auth-failure class — no credential, unknown table, unknown/revoked token, token scoped to another table — is **byte-identical on the wire**: a bare `401` with a `WWW-Authenticate: Bearer` challenge and no body, across `GET`/`HEAD` and every format variant. There is no existence or credential-validity oracle. A read denied by policy (or any Bifrost-internal read error) maps to the same sanitized `404` an unknown table gives; full detail is logged server-side only.
 

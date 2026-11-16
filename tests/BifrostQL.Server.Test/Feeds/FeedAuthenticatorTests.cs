@@ -1,9 +1,11 @@
 using System.Security.Claims;
+using BifrostQL.Core.Model;
 using BifrostQL.Server.Auth;
 using BifrostQL.Server.Feeds;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Feeds
@@ -13,7 +15,7 @@ namespace BifrostQL.Server.Test.Feeds
     /// and a scoped feed token resolves through the host-supplied <see cref="IFeedCredentialStore"/>
     /// into a candidate principal + table allow-list — both projected through the SAME
     /// <see cref="IBifrostAuthContextFactory"/>. Every failure class (missing, unknown,
-    /// disabled/revoked, expired, table-mismatched, unmapped principal) fails closed with ONE
+    /// disabled/revoked, expired, empty-scope, unmapped principal) fails closed with ONE
     /// uniform 401 and mints no user context.
     /// </summary>
     public sealed class FeedAuthenticatorTests
@@ -42,10 +44,9 @@ namespace BifrostQL.Server.Test.Feeds
         private static ClaimsPrincipal SubjectlessPrincipal()
             => new(new ClaimsIdentity(Array.Empty<Claim>(), authenticationType: "feed"));
 
-        private static async Task<FeedAuthException> AuthShouldThrow(
-            FeedAuthenticator auth, HttpContext ctx, string table = Table)
+        private static async Task<FeedAuthException> AuthShouldThrow(FeedAuthenticator auth, HttpContext ctx)
         {
-            var act = () => auth.AuthenticateAsync(ctx, table, CancellationToken.None);
+            var act = () => auth.AuthenticateAsync(ctx, CancellationToken.None);
             return (await act.Should().ThrowAsync<FeedAuthException>()).Which;
         }
 
@@ -57,7 +58,7 @@ namespace BifrostQL.Server.Test.Feeds
             // A Bearer token's principal is already on HttpContext.User (host auth middleware ran).
             var ctx = new DefaultHttpContext { User = Principal("bearer-sub") };
 
-            var userContext = await Build().AuthenticateAsync(ctx, Table, CancellationToken.None);
+            var userContext = (await Build().AuthenticateAsync(ctx, CancellationToken.None)).UserContext;
 
             userContext.Should().NotBeEmpty("a verified request must yield a projected identity");
             userContext.Should().ContainKey(ClaimTypes.NameIdentifier);
@@ -72,7 +73,7 @@ namespace BifrostQL.Server.Test.Feeds
             var store = new FakeFeedCredentialStore().Add("tok", Principal("scoped-sub"), Table);
             var ctx = ContextWithToken("tok");
 
-            var userContext = await Build(store).AuthenticateAsync(ctx, Table, CancellationToken.None);
+            var userContext = (await Build(store).AuthenticateAsync(ctx, CancellationToken.None)).UserContext;
 
             userContext.Should().NotBeEmpty();
             userContext.Should().ContainKey(ClaimTypes.NameIdentifier);
@@ -87,7 +88,7 @@ namespace BifrostQL.Server.Test.Feeds
             var store = new FakeFeedCredentialStore().Add("tok", Principal("scoped-sub", tenant: "tenant-42"), Table);
             var ctx = ContextWithToken("tok");
 
-            var userContext = await Build(store).AuthenticateAsync(ctx, Table, CancellationToken.None);
+            var userContext = (await Build(store).AuthenticateAsync(ctx, CancellationToken.None)).UserContext;
 
             userContext.Should().ContainKey("tenant_id");
             userContext["tenant_id"].Should().Be("tenant-42");
@@ -102,7 +103,7 @@ namespace BifrostQL.Server.Test.Feeds
             var ctx = new DefaultHttpContext();
             ctx.Request.Headers.Authorization = "Bearer tok";
 
-            var userContext = await Build(store).AuthenticateAsync(ctx, Table, CancellationToken.None);
+            var userContext = (await Build(store).AuthenticateAsync(ctx, CancellationToken.None)).UserContext;
 
             userContext.Should().ContainKey(ClaimTypes.NameIdentifier);
         }
@@ -171,14 +172,46 @@ namespace BifrostQL.Server.Test.Feeds
         }
 
         [Fact]
-        public async Task Table_not_in_the_allow_list_is_denied()
+        public async Task Table_not_in_the_allow_list_is_not_permitted()
         {
             // The token is valid and enabled but scoped to a different table than the one requested.
+            // The scope is decided against the RESOLVED table; the middleware maps a refusal to the
+            // same uniform 401 (FeedMiddlewareTests pins the wire).
             var store = new FakeFeedCredentialStore().Add("tok", Principal(), OtherTable);
             var ctx = ContextWithToken("tok");
+            var posts = ScopeTable("public", "posts");
+            var model = ScopeModel(posts, ScopeTable("public", "secrets"));
 
-            var ex = await AuthShouldThrow(Build(store), ctx, table: Table);
-            ex.HttpStatus.Should().Be(401);
+            var authentication = await Build(store).AuthenticateAsync(ctx, CancellationToken.None);
+
+            authentication.Permits(model, posts).Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task A_bearer_principal_is_unscoped()
+        {
+            var ctx = new DefaultHttpContext { User = Principal("bearer-sub") };
+            var posts = ScopeTable("public", "posts");
+
+            var authentication = await Build().AuthenticateAsync(ctx, CancellationToken.None);
+
+            authentication.Permits(ScopeModel(posts), posts).Should().BeTrue();
+        }
+
+        private static IDbTable ScopeTable(string schema, string name)
+        {
+            var table = Substitute.For<IDbTable>();
+            table.DbName.Returns(name);
+            table.GraphQlName.Returns(name);
+            table.TableSchema.Returns(schema);
+            return table;
+        }
+
+        private static IDbModel ScopeModel(params IDbTable[] tables)
+        {
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(tables);
+            return model;
         }
 
         [Fact]
@@ -224,7 +257,7 @@ namespace BifrostQL.Server.Test.Feeds
             var store = new FakeFeedCredentialStore()
                 .Add("revoked", Principal(), Table, enabled: false)
                 .Add("expired", Principal(), Table, expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1))
-                .Add("wrong-table", Principal(), OtherTable)
+                .Add("no-table", Principal())
                 .Add("subjectless", SubjectlessPrincipal(), Table);
             var auth = Build(store);
 
@@ -233,7 +266,7 @@ namespace BifrostQL.Server.Test.Feeds
                 await AuthShouldThrow(auth, ContextWithToken("unknown")),
                 await AuthShouldThrow(auth, ContextWithToken("revoked")),
                 await AuthShouldThrow(auth, ContextWithToken("expired")),
-                await AuthShouldThrow(auth, ContextWithToken("wrong-table")),
+                await AuthShouldThrow(auth, ContextWithToken("no-table")),
                 await AuthShouldThrow(auth, ContextWithToken("subjectless")),
                 await AuthShouldThrow(auth, new DefaultHttpContext()),
             };

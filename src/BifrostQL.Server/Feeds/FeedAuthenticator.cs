@@ -57,21 +57,22 @@ namespace BifrostQL.Server.Feeds
         }
 
         /// <summary>
-        /// Authenticates the request for <paramref name="requestedTable"/> and returns the projected
-        /// Bifrost user context on success. Throws <see cref="FeedAuthException"/> (uniform 401) on
-        /// any failure, minting no user context.
+        /// Authenticates the request and returns the projected Bifrost user context plus the
+        /// credential's table scope. Throws <see cref="FeedAuthException"/> (uniform 401) on any
+        /// failure, minting no user context. The table scope is checked by the caller against the
+        /// RESOLVED table (<see cref="FeedAuthentication.Permits"/>), never against the raw route
+        /// string: one route spelling can name different tables, and different spellings one table.
         /// </summary>
-        public async Task<IDictionary<string, object?>> AuthenticateAsync(
-            HttpContext context, string requestedTable, CancellationToken cancellationToken)
+        public async Task<FeedAuthentication> AuthenticateAsync(
+            HttpContext context, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(context);
-            ArgumentNullException.ThrowIfNull(requestedTable);
 
             // Bearer path: the host's authentication middleware already validated the token and put
             // the principal on HttpContext.User. Project it as-is through the shared seam — a full
             // identity the pipeline scopes; no per-token table allow-list applies here.
             if (context.User?.Identity?.IsAuthenticated == true)
-                return ProjectCandidate(context, context.User);
+                return FeedAuthentication.Unscoped(ProjectCandidate(context, context.User));
 
             // Scoped feed-token path. Read the token from the request (Bearer header the host did NOT
             // validate as a JWT, or the ?token= query param feed readers can carry), resolve it
@@ -94,10 +95,11 @@ namespace BifrostQL.Server.Feeds
                 throw FeedAuthException.Unauthorized();
             }
 
-            if (!IsUsable(credential, requestedTable))
+            if (!IsUsable(credential))
                 throw FeedAuthException.Unauthorized();
 
-            return ProjectCandidate(context, credential!.Principal);
+            return FeedAuthentication.Scoped(
+                ProjectCandidate(context, credential!.Principal), credential.AllowedTables);
         }
 
         /// <summary>
@@ -120,19 +122,21 @@ namespace BifrostQL.Server.Feeds
         }
 
         /// <summary>
-        /// Whether a resolved credential authorizes a read of <paramref name="requestedTable"/>: it
-        /// must be non-null, enabled, unexpired, and scoped to the table (ordinal match). An empty
-        /// allow-list matches nothing. Cheap boolean checks only — the variable-time token
-        /// lookup/compare lives entirely behind the store (invariant 2), and every negative branch
-        /// yields the same uniform 401 at the call site so no branch is a wire oracle (invariants 9/10).
+        /// Whether a resolved credential is usable at all: non-null, enabled, unexpired, and scoped
+        /// to at least one table (an empty allow-list matches nothing, so it fails here, before
+        /// projection). Whether it covers the REQUESTED table is decided after the table resolves
+        /// (<see cref="FeedAuthentication.Permits"/>). Cheap boolean checks only — the variable-time
+        /// token lookup/compare lives entirely behind the store (invariant 2), and every negative
+        /// branch yields the same uniform 401 at the call site so no branch is a wire oracle
+        /// (invariants 9/10).
         /// </summary>
-        private static bool IsUsable(FeedCredential? credential, string requestedTable)
+        private static bool IsUsable(FeedCredential? credential)
         {
             if (credential is not { Enabled: true })
                 return false;
             if (credential.ExpiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow)
                 return false;
-            return credential.AllowedTables.Contains(requestedTable, StringComparer.Ordinal);
+            return credential.AllowedTables.Count > 0;
         }
 
         /// <summary>

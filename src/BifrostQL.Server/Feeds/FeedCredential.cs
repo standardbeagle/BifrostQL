@@ -20,9 +20,11 @@ namespace BifrostQL.Server.Feeds
     /// </summary>
     /// <param name="Principal">The authenticated identity this token maps to when usable.</param>
     /// <param name="AllowedTables">
-    /// The feed tables this token may read, matched by ordinal equality against the requested table.
-    /// An empty set matches nothing (fail closed): a token scoped to no table authenticates for no
-    /// feed. The names must use the same convention the endpoint passes as its requested table.
+    /// The feed tables this token may read. Each entry resolves by the same rule as the route
+    /// (DB or GraphQL name, <c>schema.name</c> exact, a bare name only when one schema defines it),
+    /// and the token covers a request only when an entry resolves to the SAME table the route does.
+    /// An entry naming a bare name two schemas share covers neither table. An empty set matches
+    /// nothing (fail closed): a token scoped to no table authenticates for no feed.
     /// </param>
     /// <param name="Enabled">
     /// Whether the credential is currently usable. A disabled/revoked credential must fail the same

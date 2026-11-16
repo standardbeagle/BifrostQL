@@ -374,6 +374,103 @@ namespace BifrostQL.Server.Test.Feeds
             poll.Response.StatusCode.Should().Be(304);
         }
 
+        // ================= table identity: two schemas, one bare name =================
+        //
+        // internal.posts is listed FIRST so a first-match resolver lands on it — the bug: a token scoped
+        // to `posts` reached internal.posts while the allow-list check, run on the raw route string,
+        // still passed.
+
+        private static readonly IDbTable PublicPosts = FeedTableFixture.PostsIn("public", "posts");
+        private static readonly IDbTable InternalPosts = FeedTableFixture.PostsIn("internal", "internal_posts");
+
+        private static (FakeReads Reads, List<QueryIntent> Executed) TwoSchemaReads()
+        {
+            var executed = new List<QueryIntent>();
+            var reads = new FakeReads(ModelWith(InternalPosts, PublicPosts), Rows())
+            {
+                OnExecute = (intent, _) => { executed.Add(intent); return ResultTask(Rows()); },
+            };
+            return (reads, executed);
+        }
+
+        [Fact]
+        public async Task A_token_scoped_to_an_ambiguous_bare_name_reads_neither_schemas_table()
+        {
+            var store = new FakeStore().Add("tok", Principal(), "posts").Add("other", Principal(), "elsewhere");
+            var (reads, executed) = TwoSchemaReads();
+
+            var ambiguous = await Run(Path: "/posts.rss", queryToken: "tok", store: store, reads: reads);
+            var wrongTable = await Run(Path: "/posts.rss", queryToken: "other", store: store, reads: TwoSchemaReads().Reads);
+
+            ambiguous.Response.StatusCode.Should().Be(401);
+            executed.Should().BeEmpty("no table may be read for a name two schemas share");
+            ambiguous.Response.Headers.WWWAuthenticate.ToString().Should().Be(wrongTable.Response.Headers.WWWAuthenticate.ToString());
+            wrongTable.Response.StatusCode.Should().Be(401);
+            BodyOf(ambiguous).Should().Be(BodyOf(wrongTable)).And.BeEmpty();
+        }
+
+        [Theory]
+        [InlineData("public.posts", "/public.posts.rss", "public")]
+        [InlineData("internal.posts", "/internal.posts.rss", "internal")]
+        [InlineData("internal.posts", "/internal_posts.rss", "internal")]
+        [InlineData("internal_posts", "/INTERNAL.posts.rss", "internal")]
+        public async Task A_qualified_scope_reads_exactly_that_schemas_table_by_any_spelling_of_it(
+            string scope, string path, string schema)
+        {
+            var store = new FakeStore().Add("tok", Principal(), scope);
+            var (reads, executed) = TwoSchemaReads();
+
+            var ctx = await Run(Path: path, queryToken: "tok", store: store, reads: reads);
+
+            ctx.Response.StatusCode.Should().Be(200);
+            executed.Should().ContainSingle().Which.Query.DbTable.TableSchema.Should().Be(schema);
+        }
+
+        [Fact]
+        public async Task A_qualified_scope_does_not_cover_the_other_schemas_table()
+        {
+            var store = new FakeStore().Add("tok", Principal(), "public.posts");
+            var (reads, executed) = TwoSchemaReads();
+
+            var ctx = await Run(Path: "/internal.posts.rss", queryToken: "tok", store: store, reads: reads);
+
+            ctx.Response.StatusCode.Should().Be(401);
+            executed.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task A_malformed_query_on_an_uncovered_route_is_the_tokens_401_not_a_400()
+        {
+            var store = new FakeStore().Add("tok", Principal(), "public.posts");
+
+            var uncovered = NewContext("GET", "/internal.posts.rss");
+            uncovered.Request.QueryString = new QueryString("?token=tok&limit=99999999999999999999999999999");
+            await Middleware(store, TwoSchemaReads().Reads).InvokeAsync(uncovered);
+
+            var covered = NewContext("GET", "/public.posts.rss");
+            covered.Request.QueryString = new QueryString("?token=tok&limit=99999999999999999999999999999");
+            await Middleware(store, TwoSchemaReads().Reads).InvokeAsync(covered);
+
+            uncovered.Response.StatusCode.Should().Be(401,
+                "an uncovered route must answer like every other token failure, before the query parse");
+            covered.Response.StatusCode.Should().Be(400, "control: the same query on a covered route is a 400");
+        }
+
+        [Fact]
+        public async Task A_bearer_request_for_an_ambiguous_bare_name_is_the_same_404_as_an_unknown_table()
+        {
+            var (reads, executed) = TwoSchemaReads();
+
+            var ambiguous = await Run(Path: "/posts.rss", bearer: Principal(), reads: reads);
+            var unknown = await Run(Path: "/no_such_feed.rss", bearer: Principal(), reads: TwoSchemaReads().Reads);
+
+            ambiguous.Response.StatusCode.Should().Be(404);
+            unknown.Response.StatusCode.Should().Be(404);
+            executed.Should().BeEmpty();
+            BodyOf(ambiguous).Should().Be(BodyOf(unknown));
+            ambiguous.Response.ContentLength.Should().Be(unknown.Response.ContentLength);
+        }
+
         // ================= harness =================
 
         private static readonly DateTime Ts = new(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc);

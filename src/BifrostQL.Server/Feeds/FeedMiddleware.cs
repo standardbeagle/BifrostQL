@@ -107,20 +107,31 @@ namespace BifrostQL.Server.Feeds
 
                 var (tableName, explicitFormat) = ParseRoute(context.Request.Path.Value);
 
-                // Authenticate FIRST — before model lookup, planning, cache, or rendering. The requested
-                // table name gates a scoped feed token's allow-list; a Bearer principal is projected as-is.
-                var userContext = await _authenticator.AuthenticateAsync(context, tableName, context.RequestAborted);
+                // Authenticate FIRST — before model lookup, planning, cache, or rendering. A Bearer
+                // principal is projected as-is; a scoped feed token's allow-list is checked below,
+                // against the table the route RESOLVES to.
+                var authentication = await _authenticator.AuthenticateAsync(context, context.RequestAborted);
+                var userContext = authentication.UserContext;
+
+                // Resolve the requested table against the cached model AFTER auth — an unauthenticated
+                // request never reaches a model lookup, so table existence cannot leak before the gate.
+                var model = await _reads.GetModelAsync(_options.Endpoint);
+                var table = ResolveFeedTable(model, tableName);
+                // A scoped token answers every route it does not cover — unknown, ambiguous, non-feed
+                // or another table — with its uniform 401, so the token is not an oracle for which
+                // other tables exist. Only an unscoped (Bearer) caller sees the not-found. This runs
+                // before the query parse, so a malformed since/limit on an uncovered route is still
+                // the 401 every other failure class of the token gets, never a 400.
+                if (authentication.IsScoped && (table is null || !authentication.Permits(model, table)))
+                    throw FeedAuthException.Unauthorized();
 
                 var format = Negotiate(explicitFormat, context.Request.Headers.Accept.ToString());
                 // Bounded parse: a malformed/overflowing since/limit collapses to a clean 400 (invariant 5).
                 var request = FeedRequest.Parse(
                     context.Request.Query["since"].ToString(), context.Request.Query["limit"].ToString());
 
-                // Resolve the requested table against the cached model AFTER auth — an unauthenticated
-                // request never reaches a model lookup, so table existence cannot leak before the gate.
-                var model = await _reads.GetModelAsync(_options.Endpoint);
-                var table = ResolveFeedTable(model, tableName)
-                    ?? throw FeedProtocolException.NotFound();
+                if (table is null)
+                    throw FeedProtocolException.NotFound();
 
                 var document = await _planner.BuildAsync(
                     table, request, userContext, _feed, _options.Endpoint, context.RequestAborted);
@@ -210,23 +221,14 @@ namespace BifrostQL.Server.Feeds
         /// <summary>
         /// Resolves the requested table to a FEED (a table declaring a feed timestamp) from the cached
         /// model, or <c>null</c> when the name is unknown OR the table is not a feed — both collapse to
-        /// the same not-found so a non-feed table is never distinguishable from a missing one. The name is
-        /// matched against the GraphQL name, the schema-qualified GraphQL name, and the raw db name so the
-        /// route can use whichever convention a scoped token's allow-list uses.
+        /// the same not-found so a non-feed table is never distinguishable from a missing one. The name
+        /// resolves through <see cref="FeedTableResolver"/>: schema-qualified exactly, bare only when
+        /// unique, ambiguous never.
         /// </summary>
         private static IDbTable? ResolveFeedTable(IDbModel model, string name)
         {
-            foreach (var table in model.Tables)
-            {
-                var qualified = $"{table.TableSchema}.{table.GraphQlName}";
-                if (string.Equals(table.GraphQlName, name, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(qualified, name, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(table.DbName, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return FeedConfig.FromTable(table).IsEnabled ? table : null;
-                }
-            }
-            return null;
+            var table = FeedTableResolver.Resolve(model.Tables, name);
+            return table is not null && FeedConfig.FromTable(table).IsEnabled ? table : null;
         }
 
         private async Task WriteFeedAsync(

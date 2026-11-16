@@ -379,7 +379,13 @@ namespace BifrostQL.Server.Test.Feeds
         public static IDbTable CompositeKeyPosts()
             => Build(keyOrder: new[] { "tenant_id", "id" });
 
-        private static IDbTable Build(string[] keyOrder, string titleTemplate = "Post: {title}")
+        /// <summary>A single-key posts feed table in <paramref name="schema"/>. The DB name stays
+        /// <c>posts</c>, so two of these in different schemas share a bare name.</summary>
+        public static IDbTable PostsIn(string schema, string graphQlName)
+            => Build(keyOrder: new[] { "id" }, schema: schema, graphQlName: graphQlName);
+
+        private static IDbTable Build(
+            string[] keyOrder, string titleTemplate = "Post: {title}", string schema = "dbo", string graphQlName = "posts")
         {
             var keySet = new HashSet<string>(keyOrder, StringComparer.Ordinal);
             var columns = new List<ColumnDto>
@@ -404,8 +410,8 @@ namespace BifrostQL.Server.Test.Feeds
 
             var table = Substitute.For<IDbTable>();
             table.DbName.Returns("posts");
-            table.GraphQlName.Returns("posts");
-            table.TableSchema.Returns("dbo");
+            table.GraphQlName.Returns(graphQlName);
+            table.TableSchema.Returns(schema);
             table.Columns.Returns(columns);
             table.ColumnLookup.Returns(columns.ToDictionary(c => c.ColumnName, c => c));
             table.GraphQlLookup.Returns(columns.ToDictionary(c => c.GraphQlName, c => c));

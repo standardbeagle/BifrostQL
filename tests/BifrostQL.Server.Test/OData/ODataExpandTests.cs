@@ -238,6 +238,42 @@ namespace BifrostQL.Server.Test.OData
             ErrorCode(body).Should().Be("BadRequest");
         }
 
+        // Ceiling fixture: max-query-rows 3 sits below the default fan-out bound (1000). Customer 1
+        // owns 5 orders (more than the ceiling), customer 2 owns 2 (fits beside the sentinel).
+        private static readonly string[] CeilingSeed =
+        {
+            "CREATE TABLE Customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+            "INSERT INTO Customers(id, name) VALUES (1,'alice'),(2,'bob');",
+            "CREATE TABLE Orders (id INTEGER PRIMARY KEY, customer_id INTEGER, amount INTEGER NOT NULL, " +
+                "FOREIGN KEY (customer_id) REFERENCES Customers(id));",
+            "INSERT INTO Orders(id, customer_id, amount) VALUES " +
+                "(10,1,1),(11,1,2),(12,1,3),(13,1,4),(14,1,5),(20,2,6),(21,2,7);",
+        };
+
+        private static readonly string[] CeilingMetadata =
+        {
+            $":root {{ {BifrostQL.Core.Model.MetadataKeys.Model.MaxQueryRows}: 3 }}",
+        };
+
+        [Fact]
+        public async Task A_ceiling_below_the_fanout_bound_refuses_the_expand_instead_of_cutting_it()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("expand-ceiling", CeilingMetadata, CeilingSeed);
+            var nav = await ToManyNav(harness);
+
+            // Control: bob's 2 orders fit under the ceiling and expand in full.
+            var (okStatus, _, okBody) = await Run(harness, "/customers", $"?$filter=id eq 2&$expand={nav}");
+            okStatus.Should().Be(200);
+            var bob = JsonDocument.Parse(okBody).RootElement.GetProperty("value").EnumerateArray().Single();
+            AmountsOf(bob, nav).Should().BeEquivalentTo(new[] { 6, 7 });
+
+            // alice's 5 orders exceed the ceiling: the expand is refused, never a 3-row collection
+            // that reads as her complete order list.
+            var (status, _, body) = await Run(harness, "/customers", $"?$filter=id eq 1&$expand={nav}");
+            status.Should().Be(400, "a cut expansion must be refused, not returned short: {0}", body);
+            ErrorCode(body).Should().Be("BadRequest");
+        }
+
         // ---- helpers ------------------------------------------------------------------------
 
         private static async Task<string> ToOneNav(ODataRealDbHarness harness)

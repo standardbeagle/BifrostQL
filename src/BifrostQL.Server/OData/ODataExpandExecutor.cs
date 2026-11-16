@@ -34,7 +34,7 @@ namespace BifrostQL.Server.OData
     /// <c>_in</c> predicate over the plan's schema-resolved target key column (the mirror of the
     /// root key column), never a hand-rolled join and never a composite first-column guess (those
     /// are rejected during planning). Fan-out is bounded BEFORE materialization: the child intent is
-    /// capped at <c>maxFanout + 1</c> rows and a breach is a deterministic 400, so an expand can
+    /// capped one row past the fan-out bound (<see cref="RowProbeWindow"/>) and a breach is a deterministic 400, so an expand can
     /// never explode the response past the configured bound (invariant 6).</para>
     /// </summary>
     internal static class ODataExpandExecutor
@@ -43,6 +43,7 @@ namespace BifrostQL.Server.OData
             IReadOnlyList<ODataExpandItem> plan,
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rootRows,
             IQueryIntentExecutor reads,
+            IDbModel model,
             IDictionary<string, object?> userContext,
             string? endpoint,
             int maxFanout,
@@ -51,13 +52,14 @@ namespace BifrostQL.Server.OData
             if (plan is null) throw new ArgumentNullException(nameof(plan));
             if (rootRows is null) throw new ArgumentNullException(nameof(rootRows));
             if (reads is null) throw new ArgumentNullException(nameof(reads));
+            if (model is null) throw new ArgumentNullException(nameof(model));
 
             if (plan.Count == 0)
                 return Array.Empty<ODataExpansion>();
 
             var expansions = new List<ODataExpansion>(plan.Count);
             foreach (var item in plan)
-                expansions.Add(await ExpandOneAsync(item, rootRows, reads, userContext, endpoint, maxFanout, cancellationToken));
+                expansions.Add(await ExpandOneAsync(item, rootRows, reads, model, userContext, endpoint, maxFanout, cancellationToken));
             return expansions;
         }
 
@@ -65,6 +67,7 @@ namespace BifrostQL.Server.OData
             ODataExpandItem item,
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rootRows,
             IQueryIntentExecutor reads,
+            IDbModel model,
             IDictionary<string, object?> userContext,
             string? endpoint,
             int maxFanout,
@@ -85,7 +88,7 @@ namespace BifrostQL.Server.OData
 
             var byTargetKey = keyValues.Count == 0
                 ? new Dictionary<object, List<IReadOnlyDictionary<string, object?>>>()
-                : await FetchAndGroupAsync(item, keyValues, reads, userContext, endpoint, maxFanout, cancellationToken);
+                : await FetchAndGroupAsync(item, keyValues, reads, model, userContext, endpoint, maxFanout, cancellationToken);
 
             var targetKeyDb = item.TargetKeyColumn.DbName;
             var perRow = new List<IReadOnlyList<IReadOnlyDictionary<string, object?>>>(rootRows.Count);
@@ -106,6 +109,7 @@ namespace BifrostQL.Server.OData
             ODataExpandItem item,
             IReadOnlyList<object?> keyValues,
             IQueryIntentExecutor reads,
+            IDbModel model,
             IDictionary<string, object?> userContext,
             string? endpoint,
             int maxFanout,
@@ -130,10 +134,13 @@ namespace BifrostQL.Server.OData
                             new Dictionary<string, object?> { ["_in"] = keyValues.ToList() },
                     },
                     target),
-                // Bound the fan-out BEFORE materializing: fetch at most one row past the cap so a
-                // breach is detectable and rejected, never an unbounded expansion.
-                Limit = maxFanout + 1,
             };
+            // Bound the fan-out BEFORE materializing: fetch at most one row past the cap so a
+            // breach is detectable and rejected, never an unbounded expansion. The window passes
+            // through the same max-query-rows clamp SQL generation applies, so a ceiling below the
+            // fan-out cap is still a detectable breach rather than a silently cut expansion.
+            var window = RowProbeWindow.For(model, maxFanout);
+            query.Limit = window.Fetch;
 
             var projected = ProjectTargetColumns(item);
             foreach (var column in projected)
@@ -143,9 +150,9 @@ namespace BifrostQL.Server.OData
                 new QueryIntent { Query = query, UserContext = userContext, Endpoint = endpoint },
                 cancellationToken);
 
-            if (result.Rows.Count > maxFanout)
+            if (window.HasMore(result.Rows.Count))
                 throw ODataProtocolException.BadRequest(
-                    $"$expand of '{item.Name}' exceeds the maximum of {maxFanout} related rows.");
+                    $"$expand of '{item.Name}' exceeds the maximum of {window.Page} related rows.");
 
             var targetKeyDb = item.TargetKeyColumn.DbName;
             var grouped = new Dictionary<object, List<IReadOnlyDictionary<string, object?>>>();

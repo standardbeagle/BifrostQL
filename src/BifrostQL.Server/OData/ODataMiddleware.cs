@@ -227,7 +227,7 @@ namespace BifrostQL.Server.OData
             // the rows actually returned. Each expansion is an independent, fully-scoped intent, so
             // the expanded entity gets its own tenant/soft-delete/policy pass (criterion 2).
             var expansions = await ODataExpandExecutor.ExpandAsync(
-                expandPlan, pageRows, _reads, userContext, _options.Endpoint,
+                expandPlan, pageRows, _reads, model, userContext, _options.Endpoint,
                 _options.MaxExpandFanout, context.RequestAborted);
 
             string? nextLink = null;

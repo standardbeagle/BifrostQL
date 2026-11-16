@@ -45,9 +45,9 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
   const { data, isLoading, error } = useQuery({ queryKey: key, queryFn: () => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(query!, plan!.variables), enabled: !!query });
   const definition = useMemo(() => childFormDefinition(child), [child]);
   const prefill = useMemo(() => childPrefill(join, row), [join, row]);
-  if (!plan) return <p style={styles.notice}>Related records unavailable: this relationship is incomplete.</p>;
-  if (isLoading) return <p style={styles.notice}>Loading {subform.label}…</p>;
-  if (error) return <p role="alert" style={styles.error}>Failed to load {subform.label}: {(error as Error).message}</p>;
+  if (!plan) return <p className={classes.notice}>Related records unavailable: this relationship is incomplete.</p>;
+  if (isLoading) return <p className={classes.notice}>Loading {subform.label}…</p>;
+  if (error) return <p role="alert" className={classes.error}>Failed to load {subform.label}: {(error as Error).message}</p>;
   const rows = data?.[child.name]?.data ?? [];
   const deleteRow = async (childRow: Record<string, unknown>) => {
     const pk = pkFilterFor(childRow, child);
@@ -59,10 +59,10 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
     setActiveForm(null);
     await queryClient.invalidateQueries({ queryKey: key });
   };
-  return <section style={styles.root} aria-label={subform.label}>
-    <h3 style={styles.title}>{subform.label}</h3>
+  return <section className={classes.root} aria-label={subform.label}>
+    <h3 className={classes.title}>{subform.label}</h3>
     <button type="button" onClick={() => setActiveForm({ kind: 'create' })}>Add {subform.label}</button>
-    {activeForm ? <div style={styles.childForm}>
+    {activeForm ? <div className={classes.childForm}>
       <FormRunnerView
         key={activeForm.kind === 'create' ? 'create' : rowIdOf(activeForm.row!, child, activeForm.index ?? 0)}
         table={child}
@@ -73,9 +73,19 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
         initialPkRoute={activeForm.kind === 'edit' ? rowIdOf(activeForm.row!, child, activeForm.index ?? 0) : undefined}
         onClose={() => { void closeChildForm(); }}
       />
-    </div> : rows.length === 0 ? <p style={styles.notice}>No related records.</p> : subform.mode === 'grid' ? (
-      <table style={styles.table}><thead><tr>{child.columns.map((c) => <th key={c.name} style={styles.cell}>{c.label}</th>)}<th /></tr></thead><tbody>{rows.map((r, index) => <tr key={rowIdOf(r, child, index)}>{child.columns.map((c) => <td key={c.name} style={styles.cell}>{String(r[c.name] ?? '')}</td>)}<td><button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => deleteRow(r)} disabled={remove.isPending}>Delete</button></td></tr>)}</tbody></table>
-    ) : <div>{rows.map((r, index) => <article key={rowIdOf(r, child, index)} style={styles.card}>{child.columns.map((c) => <div key={c.name}><strong>{c.label}: </strong>{String(r[c.name] ?? '')}</div>)}<button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => deleteRow(r)} disabled={remove.isPending}>Delete</button></article>)}</div>}
+    </div> : rows.length === 0 ? <p className={classes.notice}>No related records.</p> : subform.mode === 'grid' ? (
+      <table className={classes.table}><thead><tr>{child.columns.map((c) => <th key={c.name} className={classes.cell}>{c.label}</th>)}<th /></tr></thead><tbody>{rows.map((r, index) => <tr key={rowIdOf(r, child, index)}>{child.columns.map((c) => <td key={c.name} className={classes.cell}>{String(r[c.name] ?? '')}</td>)}<td><button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => deleteRow(r)} disabled={remove.isPending}>Delete</button></td></tr>)}</tbody></table>
+    ) : <div>{rows.map((r, index) => <article key={rowIdOf(r, child, index)} className={classes.card}>{child.columns.map((c) => <div key={c.name}><strong>{c.label}: </strong>{String(r[c.name] ?? '')}</div>)}<button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => deleteRow(r)} disabled={remove.isPending}>Delete</button></article>)}</div>}
   </section>;
 }
-const styles: Record<string, React.CSSProperties> = { root: { marginTop: 20, borderTop: '1px solid #d1d5db', paddingTop: 12 }, title: { margin: '0 0 8px', fontSize: 15 }, notice: { color: '#6b7280', fontSize: 13 }, error: { color: '#b91c1c', fontSize: 13 }, table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 }, cell: { textAlign: 'left', padding: 5, borderBottom: '1px solid #e5e7eb' }, card: { border: '1px solid #e5e7eb', borderRadius: 6, padding: 8, marginBottom: 8, fontSize: 13 }, childForm: { minHeight: 420, border: '1px solid #e5e7eb', borderRadius: 6, marginTop: 8 } };
+// Theme-token classes (see form-runner.tsx): follows light/dark mode.
+const classes = {
+  root: 'mt-5 pt-3 border-t border-border',
+  title: 'mb-2 text-[15px]',
+  notice: 'text-[13px] text-muted-foreground',
+  error: 'text-[13px] text-destructive',
+  table: 'w-full border-collapse text-[13px]',
+  cell: 'p-[5px] text-left border-b border-border',
+  card: 'mb-2 p-2 border border-border rounded-md text-[13px]',
+  childForm: 'min-h-[420px] mt-2 border border-border rounded-md',
+} as const;

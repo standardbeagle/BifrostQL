@@ -410,7 +410,7 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   }, [currentRow, table, del, currentIndex, queryClient]);
 
   if (bound.length === 0) {
-    return <div style={styles.notice}>This form has no fields that match the current schema.</div>;
+    return <div className={classes.notice}>This form has no fields that match the current schema.</div>;
   }
 
   const positionText =
@@ -418,47 +418,47 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   const noRecords = !isNew && location.kind === 'offset' && total === 0 && !isLoading;
 
   return (
-    <div style={styles.root}>
-      <div style={styles.toolbar} role="toolbar" aria-label="Record navigation">
-        <button type="button" style={styles.btn} onClick={() => navigate('first')} disabled={isNew || !canNavigate(currentIndex, total, 'first')} aria-label="First record">⏮</button>
-        <button type="button" style={styles.btn} onClick={() => navigate('prev')} disabled={isNew || !canNavigate(currentIndex, total, 'prev')} aria-label="Previous record">◀</button>
-        <span style={styles.position} aria-label="Record position">{isNew ? 'New record' : positionText}</span>
-        <button type="button" style={styles.btn} onClick={() => navigate('next')} disabled={isNew || !canNavigate(currentIndex, total, 'next')} aria-label="Next record">▶</button>
-        <button type="button" style={styles.btn} onClick={() => navigate('last')} disabled={isNew || !canNavigate(currentIndex, total, 'last')} aria-label="Last record">⏭</button>
-        <span style={styles.spacer} />
+    <div className={classes.root}>
+      <div className={classes.toolbar} role="toolbar" aria-label="Record navigation">
+        <button type="button" className={classes.btn} onClick={() => navigate('first')} disabled={isNew || !canNavigate(currentIndex, total, 'first')} aria-label="First record">⏮</button>
+        <button type="button" className={classes.btn} onClick={() => navigate('prev')} disabled={isNew || !canNavigate(currentIndex, total, 'prev')} aria-label="Previous record">◀</button>
+        <span className={classes.position} aria-label="Record position">{isNew ? 'New record' : positionText}</span>
+        <button type="button" className={classes.btn} onClick={() => navigate('next')} disabled={isNew || !canNavigate(currentIndex, total, 'next')} aria-label="Next record">▶</button>
+        <button type="button" className={classes.btn} onClick={() => navigate('last')} disabled={isNew || !canNavigate(currentIndex, total, 'last')} aria-label="Last record">⏭</button>
+        <span className={classes.spacer} />
         <input
-          style={styles.jump}
+          className={classes.jump}
           value={jump}
           onChange={(e) => setJump(e.target.value)}
           placeholder="Jump to key…"
           aria-label="Jump to key"
         />
-        <button type="button" style={styles.btn} onClick={doJump} aria-label="Go to key">Go</button>
-        <button type="button" style={styles.btn} onClick={startNew} aria-label="New record">New</button>
-        {onClose && <button type="button" style={styles.btn} onClick={onClose} aria-label="Close form">✕</button>}
+        <button type="button" className={classes.btn} onClick={doJump} aria-label="Go to key">Go</button>
+        <button type="button" className={classes.btn} onClick={startNew} aria-label="New record">New</button>
+        {onClose && <button type="button" className={classes.btn} onClick={onClose} aria-label="Close form">✕</button>}
       </div>
 
-      <div style={styles.body}>
-        <h2 style={styles.title}>{definition.title}</h2>
-        {formError && <div role="alert" style={styles.formError}>{formError}</div>}
-        {rowError && <div role="alert" style={styles.formError}>Failed to load record: {(rowError as Error).message}</div>}
+      <div className={classes.body}>
+        <h2 className={classes.title}>{definition.title}</h2>
+        {formError && <div role="alert" className={classes.formError}>{formError}</div>}
+        {rowError && <div role="alert" className={classes.formError}>Failed to load record: {(rowError as Error).message}</div>}
         {noRecords ? (
-          <p style={styles.notice}>No records. Use “New” to create one.</p>
+          <p className={classes.notice}>No records. Use “New” to create one.</p>
         ) : (
-          <div style={{ ...styles.grid, gridTemplateColumns: `repeat(${definition.columns}, minmax(0, 1fr))` }}>
+          <div className={classes.grid} style={{ gridTemplateColumns: `repeat(${definition.columns}, minmax(0, 1fr))` }}>
             {bound.filter((b) => !hiddenFields.includes(b.column.name)).map((b) => {
               const editable = isEditable(b);
               const value = draft[b.column.name];
               const err = fieldErrors[b.column.name];
               const required = b.field.required || !b.column.isNullable;
               return (
-                <label key={b.column.name} style={styles.field}>
-                  <span style={styles.label}>
+                <label key={b.column.name} className={classes.field}>
+                  <span className={classes.label}>
                     {b.field.label}
-                    {required && <span style={styles.req}> *</span>}
+                    {required && <span className={classes.req}> *</span>}
                   </span>
                   {renderControl(b, value, editable, required, setField)}
-                  {err && <span role="alert" style={styles.fieldError}>{err}</span>}
+                  {err && <span role="alert" className={classes.fieldError}>{err}</span>}
                 </label>
               );
             })}
@@ -466,16 +466,16 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
         )}
         {!isNew && currentRow && schema && (definition.subforms ?? []).map((subform) => {
           const child = resolveDefinitionTable(schema, subform.childTable);
-          return child ? <FormSubformPanel key={subform.relationship} parent={table} child={child} subform={subform} row={currentRow} /> : <p key={subform.relationship} style={styles.notice}>{subform.label} is not available in this schema.</p>;
+          return child ? <FormSubformPanel key={subform.relationship} parent={table} child={child} subform={subform} row={currentRow} /> : <p key={subform.relationship} className={classes.notice}>{subform.label} is not available in this schema.</p>;
         })}
       </div>
 
-      <div style={styles.footer}>
-        <button type="button" style={styles.primaryBtn} onClick={save} disabled={mutation.isPending || (noRecords && !isNew)}>
+      <div className={classes.footer}>
+        <button type="button" className={classes.primaryBtn} onClick={save} disabled={mutation.isPending || (noRecords && !isNew)}>
           {isNew ? 'Create' : 'Save'}
         </button>
         {!isNew && !noRecords && (
-          <button type="button" style={styles.btn} onClick={remove} disabled={del.isPending}>Delete</button>
+          <button type="button" className={classes.btn} onClick={remove} disabled={del.isPending}>Delete</button>
         )}
       </div>
     </div>
@@ -495,7 +495,7 @@ function renderControl(
     id: name,
     'aria-label': b.field.label,
     disabled: !editable,
-    style: styles.control,
+    className: classes.control,
   } as const;
 
   if (render.kind === 'checkbox') {
@@ -559,32 +559,35 @@ interface FormRunnerProps {
  */
 export function FormRunner({ definition, fieldMetadata, onClose }: FormRunnerProps) {
   const schema = useSchema();
-  if (schema.loading) return <div style={styles.notice}>Loading schema…</div>;
-  if (schema.error) return <div style={styles.notice}>Could not load schema: {schema.error.message}</div>;
+  if (schema.loading) return <div className={classes.notice}>Loading schema…</div>;
+  if (schema.error) return <div className={classes.notice}>Could not load schema: {schema.error.message}</div>;
   const table = resolveDefinitionTable(schema, definition.table);
   if (!table) {
-    return <div style={styles.notice}>Table “{definition.table}” is not in the current schema.</div>;
+    return <div className={classes.notice}>Table “{definition.table}” is not in the current schema.</div>;
   }
   return <FormRunnerView table={table} definition={definition} fieldMetadata={fieldMetadata} onClose={onClose} schema={schema} />;
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
-  toolbar: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--border, #d1d5db)', flexWrap: 'wrap' },
-  position: { fontSize: 13, color: '#374151', minWidth: 80, textAlign: 'center' },
-  spacer: { flex: 1 },
-  jump: { padding: '4px 6px', border: '1px solid var(--border, #d1d5db)', borderRadius: 6, font: 'inherit', fontSize: 13, width: 120 },
-  body: { flex: 1, minHeight: 0, overflow: 'auto', padding: 16 },
-  title: { margin: '0 0 16px', fontSize: 18 },
-  grid: { display: 'grid', gap: 14, maxWidth: 720 },
-  field: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
-  label: { fontSize: 12, fontWeight: 600, color: '#374151' },
-  control: { padding: '6px 8px', border: '1px solid var(--border, #d1d5db)', borderRadius: 6, font: 'inherit', fontSize: 13 },
-  footer: { display: 'flex', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--border, #d1d5db)' },
-  btn: { border: '1px solid var(--border, #d1d5db)', background: 'transparent', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', font: 'inherit' },
-  primaryBtn: { border: '1px solid #2563eb', background: '#2563eb', color: '#fff', borderRadius: 6, padding: '6px 16px', cursor: 'pointer', font: 'inherit' },
-  req: { color: '#dc2626' },
-  formError: { background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 6, padding: '8px 10px', marginBottom: 12, fontSize: 13 },
-  fieldError: { color: '#dc2626', fontSize: 12 },
-  notice: { padding: 24, color: '#6b7280' },
-};
+// Theme-token classes, so the form follows light/dark mode like the rest of the
+// editor. Inline style objects hard-coded light-theme colors, and every inline
+// style property costs a CSS parse + serialize in jsdom-based tests.
+const classes = {
+  root: 'flex flex-col h-full min-h-0',
+  toolbar: 'flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border',
+  position: 'min-w-20 text-center text-[13px] text-muted-foreground',
+  spacer: 'flex-1',
+  jump: 'w-[120px] px-1.5 py-1 border border-input rounded-md bg-transparent text-[13px]',
+  body: 'flex-1 min-h-0 overflow-auto p-4',
+  title: 'mb-4 text-lg',
+  grid: 'grid gap-3.5 max-w-[720px]',
+  field: 'flex flex-col gap-1 min-w-0',
+  label: 'text-xs font-semibold text-foreground',
+  control: 'px-2 py-1.5 border border-input rounded-md bg-transparent text-[13px]',
+  footer: 'flex gap-2 px-3 py-2 border-t border-border',
+  btn: 'px-3 py-1.5 border border-border rounded-md bg-transparent cursor-pointer',
+  primaryBtn: 'px-4 py-1.5 border border-primary rounded-md bg-primary text-primary-foreground cursor-pointer',
+  req: 'text-destructive',
+  formError: 'mb-3 px-2.5 py-2 border border-destructive/40 rounded-md bg-destructive/10 text-destructive text-[13px]',
+  fieldError: 'text-xs text-destructive',
+  notice: 'p-6 text-muted-foreground',
+} as const;

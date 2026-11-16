@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using BifrostQL.Core.Resolvers;
@@ -14,13 +15,13 @@ namespace BifrostQL.Server
     /// BifrostMessage envelopes from binary frames, executes them via IBifrostEngine,
     /// and sends protobuf-encoded responses back as binary frames.
     ///
-    /// Processing is strictly serial per connection: <see cref="HandleConnectionAsync"/>
-    /// fully processes one message (including sending any chunked response) before reading
-    /// the next frame. The request_id on each message identifies which request a response
-    /// or control frame (ChunkAck/ChunkNack/Resume) belongs to; it does NOT enable
-    /// concurrent in-flight requests. A Query/Mutation frame that arrives while a chunked
-    /// response is still being sent cannot be serviced and is rejected with an Error rather
-    /// than silently dropped.
+    /// Requests on one connection run concurrently, up to
+    /// <see cref="MaxConcurrentRequestsPerConnection"/>. A single reader owns the receive side
+    /// and routes each ChunkAck/ChunkNack to the transfer of the request_id it names; every
+    /// send goes through one serialized writer, so the frames of different requests interleave
+    /// and the client matches them by request_id. A slow or large response no longer blocks the
+    /// requests behind it. A request_id must be unique among the requests in flight; a reused
+    /// one is refused with an Error frame.
     ///
     /// Large responses exceeding the chunk threshold are automatically split into
     /// Chunk messages with CRC32 integrity checksums and backpressure via ChunkAck.
@@ -271,46 +272,219 @@ namespace BifrostQL.Server
         /// the connection-scoped chunk receiver/sender/buffer. Bundled so the processing
         /// methods take one context instead of a six-argument parameter list.
         /// </summary>
-        private sealed class BinaryConnectionContext
+        /// <summary>
+        /// Most requests one connection executes at once. A request past the cap is refused
+        /// with an Error frame naming it, never queued: the reader must stay free to route the
+        /// acks that let running transfers finish. The HTTP endpoint's counterpart is Kestrel's
+        /// per-connection HTTP/2 stream limit.
+        /// </summary>
+        public const int MaxConcurrentRequestsPerConnection = 16;
+
+        /// <summary>
+        /// How long the reader waits for the peer to echo a close frame the server sent after a
+        /// request-side failure, before it drops the connection.
+        /// </summary>
+        public static readonly TimeSpan CloseHandshakeTimeout = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// One binary connection's runtime. A single reader (<see cref="HandleConnectionAsync"/>)
+        /// owns the socket's receive side; every request runs as its own task and every frame
+        /// goes out through <see cref="SendAsync"/>, which serializes writes. A chunked response
+        /// is a <see cref="ChunkTransfer"/> registered under its request id, so the reader hands
+        /// it the acks the client sends for it.
+        /// </summary>
+        private sealed class BinaryConnection : IDisposable
         {
-            public BinaryConnectionContext(
-                WebSocket webSocket,
-                HttpContext httpContext,
-                byte[] receiveBuffer,
-                ChunkReceiver chunkReceiver,
-                ChunkSender chunkSender,
-                ChunkBuffer chunkBuffer)
+            private readonly SemaphoreSlim _sendLock = new(1, 1);
+            private readonly ConcurrentDictionary<Task, byte> _running = new();
+
+            // Request ids executing or transferring on this connection.
+            private readonly ConcurrentDictionary<uint, InFlightRequest> _inFlight = new();
+
+            private sealed class InFlightRequest
+            {
+                /// <summary>Set once the response is being chunked.</summary>
+                public volatile ChunkTransfer? Transfer;
+
+                /// <summary>The request's task; it releases the id as its last step.</summary>
+                public Task? Work;
+            }
+
+            public BinaryConnection(WebSocket webSocket, HttpContext httpContext, ChunkSender chunkSender, ChunkBuffer chunkBuffer)
             {
                 WebSocket = webSocket;
                 HttpContext = httpContext;
-                ReceiveBuffer = receiveBuffer;
-                ChunkReceiver = chunkReceiver;
                 ChunkSender = chunkSender;
                 ChunkBuffer = chunkBuffer;
+                Closing = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+                InputEnded = CancellationTokenSource.CreateLinkedTokenSource(Closing.Token);
+                ReaderStop = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
             }
 
             public WebSocket WebSocket { get; }
             public HttpContext HttpContext { get; }
-            public byte[] ReceiveBuffer { get; }
-            public ChunkReceiver ChunkReceiver { get; }
+            public ChunkReceiver ChunkReceiver { get; } = new();
             public ChunkSender ChunkSender { get; }
             public ChunkBuffer ChunkBuffer { get; }
-            public CancellationToken RequestAborted => HttpContext.RequestAborted;
+
+            /// <summary>Cancelled when the connection ends: stops every request and transfer on it.</summary>
+            public CancellationTokenSource Closing { get; }
+
+            public CancellationToken Token => Closing.Token;
+
+            /// <summary>
+            /// Cancelled when the reader stops, including on the client's Close frame. A
+            /// transfer waits on acks the reader routes, so it stops here; a request still
+            /// executing keeps <see cref="Token"/> and sends its answer, which a peer that
+            /// sent Close may still receive.
+            /// </summary>
+            public CancellationTokenSource InputEnded { get; }
+
+            /// <summary>
+            /// Ends the reader's wait for the peer's close echo after a request-side failure
+            /// sent the close frame. Never cancelled otherwise: cancelling a pending receive
+            /// aborts a real WebSocket without the close frame.
+            /// </summary>
+            public CancellationTokenSource ReaderStop { get; }
+
+            /// <summary>The status the connection ends with: a fault's, else a normal closure.</summary>
+            public (WebSocketCloseStatus Status, string Reason) CloseWith { get; private set; }
+                = (WebSocketCloseStatus.NormalClosure, "Connection closed");
+
+            public int InFlightCount => _inFlight.Count;
+
+            /// <summary>
+            /// Claims <paramref name="requestId"/> and starts <paramref name="work"/> for it on the
+            /// thread pool. False when the id is already in flight. An id whose transfer the client
+            /// has fully acked counts as finished: its task only has queued acks left, so it is
+            /// awaited and the id reused, which a client may do as soon as it has every chunk.
+            /// </summary>
+            public async Task<bool> TryStartAsync(uint requestId, Func<Task> work)
+            {
+                var entry = new InFlightRequest();
+                if (!_inFlight.TryAdd(requestId, entry))
+                {
+                    if (!_inFlight.TryGetValue(requestId, out var prior)
+                        || prior.Transfer is not { AckedByClient: true }
+                        || prior.Work is not { } priorWork)
+                        return false;
+                    await priorWork;
+                    if (!_inFlight.TryAdd(requestId, entry))
+                        return false;
+                }
+
+                var task = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await work();
+                    }
+                    finally
+                    {
+                        _inFlight.TryRemove(new KeyValuePair<uint, InFlightRequest>(requestId, entry));
+                    }
+                });
+                entry.Work = task;
+                _running[task] = 0;
+                _ = task.ContinueWith(static (t, state) => ((ConcurrentDictionary<Task, byte>)state!).TryRemove(t, out _),
+                    _running, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                return true;
+            }
+
+            public void SetTransfer(uint requestId, ChunkTransfer transfer)
+            {
+                if (_inFlight.TryGetValue(requestId, out var entry))
+                    entry.Transfer = transfer;
+            }
+
+            public ChunkTransfer? TransferFor(uint requestId)
+                => _inFlight.TryGetValue(requestId, out var entry) ? entry.Transfer : null;
+
+            /// <summary>Waits for every request task. Each catches its own faults.</summary>
+            public Task DrainAsync() => Task.WhenAll(_running.Keys);
+
+            /// <summary>
+            /// Sends one frame. Serialization happens outside the lock; the lock only orders the
+            /// writes, which a WebSocket allows one at a time.
+            /// </summary>
+            public async Task SendAsync(BifrostMessage message, CancellationToken cancellationToken)
+            {
+                var bytes = message.ToBytes();
+                await _sendLock.WaitAsync(cancellationToken);
+                try
+                {
+                    await WebSocket.SendAsync(bytes, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+                }
+                finally
+                {
+                    _sendLock.Release();
+                }
+            }
+
+            /// <summary>
+            /// A fault the reader found (deadline, malformed or non-binary frame): stops every
+            /// request. The reader breaks out of its loop and closes with this status once the
+            /// requests have unwound.
+            /// </summary>
+            public void FailFromReader(WebSocketCloseStatus status, string reason)
+            {
+                CloseWith = (status, reason);
+                Closing.Cancel();
+            }
+
+            /// <summary>
+            /// A fault a request task found (ack timeout, retransmit cap, a failed send): sends
+            /// the close frame after any frame being written, and stops every request. The
+            /// reader keeps its receive, sees the peer echo the close and ends; a peer that
+            /// never echoes is cut off after <see cref="CloseHandshakeTimeout"/>.
+            /// </summary>
+            public async Task FailFromRequestAsync(WebSocketCloseStatus status, string reason)
+            {
+                CloseWith = (status, reason);
+                try
+                {
+                    await _sendLock.WaitAsync(CancellationToken.None);
+                    try
+                    {
+                        if (WebSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                            await WebSocket.CloseOutputAsync(status, reason, CancellationToken.None);
+                    }
+                    finally
+                    {
+                        _sendLock.Release();
+                    }
+                }
+                catch (WebSocketException) { }
+                catch (OperationCanceledException) { }
+                catch (ObjectDisposedException) { }
+                Closing.Cancel();
+                try
+                {
+                    ReaderStop.CancelAfter(CloseHandshakeTimeout);
+                }
+                catch (ObjectDisposedException) { }
+            }
+
+            public void Dispose()
+            {
+                ReaderStop.Dispose();
+                InputEnded.Dispose();
+                Closing.Dispose();
+                _sendLock.Dispose();
+            }
         }
 
         private async Task HandleConnectionAsync(WebSocket webSocket, HttpContext httpContext)
         {
             var buffer = new byte[MaxFrameSize];
-            var chunkReceiver = new ChunkReceiver();
 
             // Chunk buffering is connection-scoped. request_id values are chosen by the
             // client, so a shared buffer would let one connection replay another
             // connection's buffered results via Resume/ChunkNack (cross-principal leak)
             // or corrupt an entry by reusing the same request_id concurrently.
             var chunkBuffer = new ChunkBuffer();
-            var chunkSender = new ChunkSender(_chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout, _logger);
-            var connection = new BinaryConnectionContext(
-                webSocket, httpContext, buffer, chunkReceiver, chunkSender, chunkBuffer);
+            var chunkSender = new ChunkSender(_chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout);
+            using var connection = new BinaryConnection(webSocket, httpContext, chunkSender, chunkBuffer);
 
             try
             {
@@ -325,7 +499,7 @@ namespace BifrostQL.Server
                     // would otherwise pin a slot and a 4 MB buffer for nothing. Later reads get
                     // the idle deadline — an established session is a pooled client that may
                     // legitimately sit quiet between queries.
-                    using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted);
+                    using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(connection.ReaderStop.Token);
                     readTimeout.CancelAfter(isFirstFrame ? _firstFrameTimeout : _idleTimeout);
                     isFirstFrame = false;
 
@@ -333,10 +507,16 @@ namespace BifrostQL.Server
                     {
                         (messageBytes, messageType) = await ReadFullMessageAsync(webSocket, buffer, readTimeout.Token);
                     }
+                    catch (OperationCanceledException) when (connection.ReaderStop.IsCancellationRequested
+                        && !httpContext.RequestAborted.IsCancellationRequested)
+                    {
+                        _logger.LogDebug("Binary peer did not echo the close frame; dropping the connection");
+                        break;
+                    }
                     catch (OperationCanceledException) when (!httpContext.RequestAborted.IsCancellationRequested)
                     {
                         _logger.LogDebug("Binary connection exceeded its read deadline; closing");
-                        await TryCloseAsync(webSocket, WebSocketCloseStatus.PolicyViolation, "Read deadline exceeded");
+                        connection.FailFromReader(WebSocketCloseStatus.PolicyViolation, "Read deadline exceeded");
                         break;
                     }
                     catch (InvalidOperationException ex)
@@ -345,7 +525,7 @@ namespace BifrostQL.Server
                         // message. A single garbage frame must not kill the connection with an
                         // unhandled exception and no close handshake — send an error frame and
                         // close the connection cleanly instead.
-                        await CloseWithErrorAsync(webSocket, ex, "Invalid or oversized frame");
+                        await FailFromReaderWithErrorAsync(connection, ex, "Invalid or oversized frame");
                         break;
                     }
 
@@ -354,16 +534,13 @@ namespace BifrostQL.Server
 
                     if (messageType != WebSocketMessageType.Binary)
                     {
-                        await webSocket.CloseAsync(
-                            WebSocketCloseStatus.InvalidMessageType,
-                            "Only binary frames are supported",
-                            CancellationToken.None);
+                        connection.FailFromReader(WebSocketCloseStatus.InvalidMessageType, "Only binary frames are supported");
                         break;
                     }
 
                     try
                     {
-                        await ProcessMessageAsync(messageBytes, connection);
+                        await ReceiveFrameAsync(messageBytes, connection);
                     }
                     catch (Exception ex) when (
                         ex is not OperationCanceledException
@@ -373,7 +550,7 @@ namespace BifrostQL.Server
                         // other processing fault for THIS message must not escape the loop and
                         // tear the connection down without a close handshake. Report it as an
                         // error frame and close cleanly.
-                        await CloseWithErrorAsync(webSocket, ex, "Message processing failed");
+                        await FailFromReaderWithErrorAsync(connection, ex, "Message processing failed");
                         break;
                     }
                 }
@@ -388,36 +565,45 @@ namespace BifrostQL.Server
             }
             finally
             {
+                // The reader is done, so nothing can route acks any more: stop the transfers,
+                // let requests still executing send their answers, then close. A fault or an
+                // abort has already cancelled Closing, which stops the requests too.
+                connection.InputEnded.Cancel();
+                await connection.DrainAsync();
+                // Every request has ended, so nothing else writes: the full close handshake
+                // is safe here.
                 if (webSocket.State == WebSocketState.Open || webSocket.State == WebSocketState.CloseReceived)
                 {
                     try
                     {
                         await webSocket.CloseAsync(
-                            WebSocketCloseStatus.NormalClosure,
-                            "Connection closed",
-                            CancellationToken.None);
+                            connection.CloseWith.Status, connection.CloseWith.Reason, CancellationToken.None);
                     }
                     catch (WebSocketException)
                     {
                         // Already closed, ignore
                     }
+                    catch (OperationCanceledException)
+                    {
+                        // Aborted by a cancelled receive, ignore
+                    }
                 }
             }
         }
 
+        private const string MalformedFrameMessage = "Malformed or unprocessable frame; closing connection.";
+
         /// <summary>
-        /// Sends a generic Error frame (no internal detail) and closes the connection with a
-        /// protocol close frame. Used when a single frame cannot be processed (malformed,
-        /// oversized, or a garbage control frame) so the failure surfaces to the client as a
-        /// clean close rather than an unhandled exception with error-level log noise.
+        /// The reader could not process a frame (malformed, oversized, a garbage control
+        /// frame): sends a generic Error frame (no internal detail) and ends the connection
+        /// with a protocol close, so the client sees a clean close rather than an unhandled
+        /// exception.
         /// </summary>
-        private async Task CloseWithErrorAsync(WebSocket webSocket, Exception ex, string reason)
+        private async Task FailFromReaderWithErrorAsync(BinaryConnection connection, Exception ex, string reason)
         {
             _logger.LogWarning(ex, "Closing binary connection: {Reason}", reason);
-
-            await TrySendErrorFrameAsync(
-                webSocket, "Malformed or unprocessable frame; closing connection.", null, CancellationToken.None);
-            await TryCloseAsync(webSocket, WebSocketCloseStatus.ProtocolError, "Malformed frame");
+            await TrySendErrorFrameAsync(connection, MalformedFrameMessage, null);
+            connection.FailFromReader(WebSocketCloseStatus.ProtocolError, "Malformed frame");
         }
 
         /// <summary>
@@ -425,8 +611,7 @@ namespace BifrostQL.Server
         /// the socket is already tearing down. Used on the abort paths where a best-effort
         /// notification is wanted but the connection is about to close regardless.
         /// </summary>
-        private async Task TrySendErrorFrameAsync(
-            WebSocket webSocket, string message, uint? requestId, CancellationToken cancellationToken)
+        private static async Task TrySendErrorFrameAsync(BinaryConnection connection, string message, uint? requestId)
         {
             try
             {
@@ -434,15 +619,18 @@ namespace BifrostQL.Server
                 if (requestId.HasValue)
                     errorResponse.RequestId = requestId.Value;
                 errorResponse.Errors.Add(message);
-                await SendResponseAsync(webSocket, errorResponse, cancellationToken);
+                await connection.SendAsync(errorResponse, CancellationToken.None);
             }
             catch (WebSocketException) { }
             catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
         }
 
         /// <summary>
         /// Closes the socket with the given status/reason, swallowing the WebSocket/cancellation
-        /// faults that arise when the socket was already aborted by a cancelled receive.
+        /// faults that arise when the socket was already aborted. Only for a socket no reader is
+        /// receiving on (the pre-loop identity refusal); a running connection uses
+        /// <see cref="BinaryConnection.FailFromRequestAsync"/>.
         /// </summary>
         private static async Task TryCloseAsync(WebSocket webSocket, WebSocketCloseStatus status, string reason)
         {
@@ -454,12 +642,17 @@ namespace BifrostQL.Server
             catch (OperationCanceledException) { }
         }
 
-        private async Task ProcessMessageAsync(byte[] messageBytes, BinaryConnectionContext connection)
+        /// <summary>
+        /// Handles one frame on the reader. Control frames (acks, NACKs, upload chunks) are
+        /// handled here, in order; a Query, Mutation or Resume starts its own task so the
+        /// reader is free for the next frame at once.
+        /// </summary>
+        private async Task ReceiveFrameAsync(byte[] messageBytes, BinaryConnection connection)
         {
-            BifrostMessage request;
+            BifrostMessage frame;
             try
             {
-                request = BifrostMessage.FromBytes(messageBytes);
+                frame = BifrostMessage.FromBytes(messageBytes);
             }
             catch (Exception ex)
             {
@@ -469,44 +662,85 @@ namespace BifrostQL.Server
                     Type = BifrostMessageType.Error,
                     Errors = { "Server error occurred" },
                 };
-                await SendResponseAsync(connection.WebSocket, errorResponse, connection.RequestAborted);
+                await connection.SendAsync(errorResponse, connection.Token);
                 return;
             }
 
-            // A chunked send drains the tail ACK window before completing; if the client
-            // pipelined its next request during that drain, the send returns it as a
-            // "leftover" frame. Process each in turn until none remain (serial semantics).
-            BifrostMessage? next = request;
-            while (next != null)
-                next = await DispatchAsync(next, connection);
+            // Client chunks carry fragments of a full serialized BifrostMessage; the
+            // assembled bytes are deserialized to recover the original Query/Mutation.
+            if (frame.Type == BifrostMessageType.Chunk)
+            {
+                var reassembled = await HandleChunkAsync(frame, connection);
+                if (reassembled == null)
+                    return; // More chunks expected, or reassembly failed.
+                frame = reassembled;
+            }
+
+            switch (frame.Type)
+            {
+                case BifrostMessageType.ChunkAck:
+                    // An ack for no running transfer (late, or for a finished one) is noise.
+                    if (connection.TransferFor(frame.RequestId) is { } acked)
+                        await acked.AcknowledgeAsync(frame, connection.Token);
+                    return;
+                case BifrostMessageType.ChunkNack:
+                    if (connection.TransferFor(frame.RequestId) is { } transfer)
+                        await transfer.AcknowledgeAsync(frame, connection.Token);
+                    else
+                        await HandleNackAsync(frame, connection);
+                    return;
+                default:
+                    await StartRequestAsync(frame, connection);
+                    return;
+            }
         }
 
         /// <summary>
-        /// Processes a single already-parsed request frame. Returns a leftover frame the
-        /// client pipelined (surfaced by the chunked-send tail drain) that must be processed
-        /// next, or null when nothing further is pending.
+        /// Starts a Query, Mutation or Resume on its own task, or refuses it with an Error
+        /// frame when its request id is already in flight (acks could not be routed) or the
+        /// connection is at <see cref="MaxConcurrentRequestsPerConnection"/>.
         /// </summary>
-        private async Task<BifrostMessage?> DispatchAsync(BifrostMessage request, BinaryConnectionContext connection)
+        private async Task StartRequestAsync(BifrostMessage request, BinaryConnection connection)
         {
-            // Handle incoming chunk messages from client (large request reassembly).
-            // Client chunks carry fragments of a full serialized BifrostMessage;
-            // the assembled bytes are deserialized to recover the original Query/Mutation.
-            if (request.Type == BifrostMessageType.Chunk)
+            if (connection.InFlightCount >= MaxConcurrentRequestsPerConnection)
             {
-                var reassembled = await HandleChunkAsync(request, connection);
-                if (reassembled == null)
-                    return null; // More chunks expected, or reassembly failed.
-                request = reassembled;
+                await SendErrorResponseAsync(connection, request.RequestId,
+                    $"Too many concurrent requests: a connection runs at most {MaxConcurrentRequestsPerConnection} at once. " +
+                    "Resend this request when one completes.");
+                return;
             }
 
-            return request.Type switch
+            var started = await connection.TryStartAsync(request.RequestId, async () =>
             {
-                // ChunkAck messages are only meaningful during SendChunkedAsync; ignore at top level.
-                BifrostMessageType.ChunkAck => null,
-                BifrostMessageType.ChunkNack => await HandleNackAsync(request, connection),
-                BifrostMessageType.Resume => await HandleResumeAsync(request, connection),
-                _ => await HandleQueryAsync(request, connection),
-            };
+                try
+                {
+                    if (request.Type == BifrostMessageType.Resume)
+                        await HandleResumeAsync(request, connection);
+                    else
+                        await HandleQueryAsync(request, connection);
+                }
+                catch (OperationCanceledException) when (connection.InputEnded.IsCancellationRequested)
+                {
+                    // The connection ended under the request.
+                }
+                catch (WebSocketException ex)
+                {
+                    _logger.LogDebug(ex, "Binary request {RequestId} lost its socket", request.RequestId);
+                    await connection.FailFromRequestAsync(WebSocketCloseStatus.EndpointUnavailable, "Send failed");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Binary request {RequestId} failed; closing connection", request.RequestId);
+                    await TrySendErrorFrameAsync(connection, MalformedFrameMessage, request.RequestId);
+                    await connection.FailFromRequestAsync(WebSocketCloseStatus.ProtocolError, "Malformed frame");
+                }
+            });
+
+            if (!started)
+            {
+                await SendErrorResponseAsync(connection, request.RequestId,
+                    $"Request id {request.RequestId} is already in flight on this connection.");
+            }
         }
 
         /// <summary>
@@ -514,10 +748,10 @@ namespace BifrostQL.Server
         /// the reconstructed original request once the final chunk arrives, or null when more
         /// chunks are still expected or reassembly failed (an Error frame is sent in that case).
         /// </summary>
-        private async Task<BifrostMessage?> HandleChunkAsync(BifrostMessage request, BinaryConnectionContext connection)
+        private async Task<BifrostMessage?> HandleChunkAsync(BifrostMessage request, BinaryConnection connection)
         {
             var ack = ChunkReceiver.CreateAck(request.RequestId, request.ChunkSequence);
-            await SendResponseAsync(connection.WebSocket, ack, connection.RequestAborted);
+            await connection.SendAsync(ack, connection.Token);
 
             byte[]? assembledBytes;
             try
@@ -538,10 +772,10 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// ChunkNack at top level: retransmit the requested chunk from this connection's
-        /// buffer (never another connection's transfers).
+        /// ChunkNack for no running transfer: retransmit the requested chunk from this
+        /// connection's buffer (never another connection's transfers).
         /// </summary>
-        private async Task<BifrostMessage?> HandleNackAsync(BifrostMessage request, BinaryConnectionContext connection)
+        private async Task HandleNackAsync(BifrostMessage request, BinaryConnection connection)
         {
             var retransmitChunk = connection.ChunkBuffer.TryGet(request.RequestId, request.ChunkSequence);
             if (retransmitChunk != null)
@@ -549,7 +783,7 @@ namespace BifrostQL.Server
                 _logger.LogDebug(
                     "Retransmitting chunk {Sequence} for request {RequestId} (NACK)",
                     request.ChunkSequence, request.RequestId);
-                await SendResponseAsync(connection.WebSocket, retransmitChunk, connection.RequestAborted);
+                await connection.SendAsync(retransmitChunk, connection.Token);
             }
             else
             {
@@ -557,7 +791,6 @@ namespace BifrostQL.Server
                     connection, request.RequestId,
                     $"Chunk {request.ChunkSequence} not available for retransmission");
             }
-            return null;
         }
 
         /// <summary>
@@ -565,7 +798,7 @@ namespace BifrostQL.Server
         /// retransmitted from last_sequence + 1. The buffer is connection-scoped, so
         /// transfers from other (or previous) connections are never resumable here.
         /// </summary>
-        private async Task<BifrostMessage?> HandleResumeAsync(BifrostMessage request, BinaryConnectionContext connection)
+        private async Task HandleResumeAsync(BifrostMessage request, BinaryConnection connection)
         {
             var remainingChunks = connection.ChunkBuffer.GetChunksAfter(request.RequestId, request.LastSequence);
             if (remainingChunks.Count > 0)
@@ -582,11 +815,10 @@ namespace BifrostQL.Server
                     ChunkTotal = (uint)remainingChunks.Count,
                     LastSequence = request.LastSequence,
                 };
-                await SendResponseAsync(connection.WebSocket, resumeAck, connection.RequestAborted);
+                await connection.SendAsync(resumeAck, connection.Token);
 
-                return await SendChunksWithAbortAsync(connection, request.RequestId,
-                    () => connection.ChunkSender.SendChunksAsync(
-                        connection.WebSocket, remainingChunks, 0, connection.ReceiveBuffer, connection.RequestAborted));
+                await RunTransferAsync(connection, request.RequestId, remainingChunks);
+                return;
             }
 
             // Transfer expired or unknown: send ResumeAck with 0 chunks
@@ -600,59 +832,64 @@ namespace BifrostQL.Server
                 ChunkTotal = 0,
                 LastSequence = request.LastSequence,
             };
-            await SendResponseAsync(connection.WebSocket, emptyResumeAck, connection.RequestAborted);
-            return null;
+            await connection.SendAsync(emptyResumeAck, connection.Token);
         }
 
         /// <summary>
         /// Executes a Query/Mutation request and sends the response, chunking it when it
         /// exceeds the chunk threshold.
         /// </summary>
-        private async Task<BifrostMessage?> HandleQueryAsync(BifrostMessage request, BinaryConnectionContext connection)
+        private async Task HandleQueryAsync(BifrostMessage request, BinaryConnection connection)
         {
-            var response = await ExecuteRequestAsync(request, connection.HttpContext);
+            var response = await ExecuteRequestAsync(request, connection.HttpContext, connection.Token);
 
             if (connection.ChunkSender.RequiresChunking(response))
             {
                 _logger.LogDebug(
                     "Chunking response for request {RequestId}: {PayloadSize} bytes",
                     response.RequestId, response.Payload.Length);
-                return await SendChunksWithAbortAsync(connection, response.RequestId,
-                    () => connection.ChunkSender.SendChunkedAsync(
-                        connection.WebSocket, response, connection.ReceiveBuffer, connection.RequestAborted));
+                await RunTransferAsync(connection, response.RequestId, connection.ChunkSender.SplitIntoChunks(response));
+                return;
             }
 
-            await SendResponseAsync(connection.WebSocket, response, connection.RequestAborted);
-            return null;
+            await connection.SendAsync(response, connection.Token);
         }
 
         /// <summary>
-        /// Runs a chunked send, releasing the buffered chunks on full delivery (tail window
-        /// drained) instead of letting the whole payload linger until TTL expiry, and aborting
-        /// the transfer on an ack timeout or a per-sequence retransmit-limit breach. Returns any
-        /// leftover pipelined frame surfaced by the send, or null when the transfer aborted.
+        /// Runs a chunked send registered under its request id, so the reader routes its acks.
+        /// Releases the buffered chunks on full delivery instead of letting the payload linger
+        /// until TTL expiry, and ends the connection on an ack timeout or a per-sequence
+        /// retransmit-limit breach.
         /// </summary>
-        private async Task<BifrostMessage?> SendChunksWithAbortAsync(
-            BinaryConnectionContext connection, uint requestId, Func<Task<BifrostMessage?>> send)
+        private async Task RunTransferAsync(BinaryConnection connection, uint requestId, IReadOnlyList<BifrostMessage> chunks)
         {
+            var transfer = connection.ChunkSender.StartTransfer(chunks, connection.SendAsync);
+            connection.SetTransfer(requestId, transfer);
             try
             {
-                var leftover = await send();
+                await transfer.RunAsync(connection.InputEnded.Token);
                 connection.ChunkBuffer.Complete(requestId);
-                return leftover;
             }
             catch (TimeoutException ex)
             {
-                await AbortOnAckTimeoutAsync(connection.WebSocket, requestId, ex);
+                // The client stopped acking mid-transfer: end the connection rather than let
+                // the transfer pin its buffered chunks indefinitely.
+                _logger.LogWarning(
+                    ex, "Chunk acknowledgement timeout for request {RequestId}; closing connection", requestId);
+                await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Chunk acknowledgement timeout");
             }
             catch (ChunkRetransmitLimitExceededException ex)
             {
-                await AbortOnRetransmitLimitAsync(connection.WebSocket, requestId, ex, connection.RequestAborted);
+                // A client that perpetually NACKs the same chunk. It is told why before the
+                // connection closes, so it surfaces a real failure instead of hanging.
+                _logger.LogWarning(
+                    ex, "Chunk retransmission limit exceeded for request {RequestId}; aborting transfer", requestId);
+                await TrySendErrorFrameAsync(connection, "Chunk retransmission limit exceeded; transfer aborted.", requestId);
+                await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Chunk retransmission limit exceeded");
             }
-            return null;
         }
 
-        private static Task SendErrorResponseAsync(BinaryConnectionContext connection, uint requestId, string message)
+        private static Task SendErrorResponseAsync(BinaryConnection connection, uint requestId, string message)
         {
             var errorResponse = new BifrostMessage
             {
@@ -660,43 +897,11 @@ namespace BifrostQL.Server
                 Type = BifrostMessageType.Error,
             };
             errorResponse.Errors.Add(message);
-            return SendResponseAsync(connection.WebSocket, errorResponse, connection.RequestAborted);
+            return connection.SendAsync(errorResponse, connection.Token);
         }
 
-        /// <summary>
-        /// Handles a chunk-acknowledgement timeout: the client stopped acking mid-transfer,
-        /// so the transfer is aborted and the connection closed rather than letting the
-        /// send loop pin the connection indefinitely.
-        /// </summary>
-        private async Task AbortOnAckTimeoutAsync(WebSocket webSocket, uint requestId, TimeoutException ex)
-        {
-            _logger.LogWarning(
-                ex, "Chunk acknowledgement timeout for request {RequestId}; closing connection", requestId);
-            // Socket may already be aborted by the cancelled receive; TryCloseAsync swallows that.
-            await TryCloseAsync(webSocket, WebSocketCloseStatus.PolicyViolation, "Chunk acknowledgement timeout");
-        }
-
-        /// <summary>
-        /// Handles a per-sequence retransmit-limit breach: a client that perpetually NACKs
-        /// the same chunk. The transfer is aborted; the client is told why via an Error
-        /// frame before the connection is closed, so it surfaces a real failure instead of
-        /// hanging.
-        /// </summary>
-        private async Task AbortOnRetransmitLimitAsync(
-            WebSocket webSocket,
-            uint requestId,
-            ChunkRetransmitLimitExceededException ex,
-            CancellationToken cancellationToken)
-        {
-            _logger.LogWarning(
-                ex, "Chunk retransmission limit exceeded for request {RequestId}; aborting transfer", requestId);
-
-            await TrySendErrorFrameAsync(
-                webSocket, "Chunk retransmission limit exceeded; transfer aborted.", requestId, cancellationToken);
-            await TryCloseAsync(webSocket, WebSocketCloseStatus.PolicyViolation, "Chunk retransmission limit exceeded");
-        }
-
-        private async Task<BifrostMessage> ExecuteRequestAsync(BifrostMessage request, HttpContext httpContext)
+        private async Task<BifrostMessage> ExecuteRequestAsync(
+            BifrostMessage request, HttpContext httpContext, CancellationToken cancellationToken)
         {
             var response = new BifrostMessage
             {
@@ -718,10 +923,18 @@ namespace BifrostQL.Server
                 return response;
             }
 
+            // Each message gets its own DI scope. A connection runs several messages at once
+            // and lives for many, so the upgrade request's scope would share scoped services
+            // (a host's grant resolver and the DbContext it reads) across concurrent requests
+            // and memoize them for the whole session. Outside the catch-all below: a host with
+            // no request services is a wiring fault, not a failed query.
+            await using var scope = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>()
+                .CreateAsyncScope();
+
             IReadOnlyDictionary<string, object?>? variables;
             try
             {
-                variables = ParseVariables(request.VariablesJson, httpContext);
+                variables = ParseVariables(request.VariablesJson, scope.ServiceProvider);
             }
             catch (JsonException)
             {
@@ -749,8 +962,8 @@ namespace BifrostQL.Server
                     Query = request.Query,
                     Variables = variables,
                     UserContext = userContext,
-                    RequestServices = httpContext.RequestServices,
-                    CancellationToken = httpContext.RequestAborted,
+                    RequestServices = scope.ServiceProvider,
+                    CancellationToken = cancellationToken,
                 };
 
                 var result = await _engine.ExecuteAsync(bifrostRequest, _endpointPath);
@@ -778,7 +991,7 @@ namespace BifrostQL.Server
 
                 if (result.Data != null)
                 {
-                    response.Payload = await SerializeResultPayloadAsync(result, httpContext);
+                    response.Payload = await SerializeResultPayloadAsync(result, scope.ServiceProvider, cancellationToken);
                 }
             }
             catch (Exception ex)
@@ -806,9 +1019,10 @@ namespace BifrostQL.Server
         /// Falls back to System.Text.Json only when no serializer is resolvable (e.g. a unit
         /// test with no DI container), where the data is already a plain object graph.
         /// </summary>
-        private static async Task<byte[]> SerializeResultPayloadAsync(BifrostResult result, HttpContext httpContext)
+        private static async Task<byte[]> SerializeResultPayloadAsync(
+            BifrostResult result, IServiceProvider services, CancellationToken cancellationToken)
         {
-            var serializer = httpContext.RequestServices?.GetService<IGraphQLSerializer>();
+            var serializer = services.GetService<IGraphQLSerializer>();
             if (serializer == null)
                 // Same {"data":...} envelope as the serializer path below: the client
                 // unwraps exactly one envelope level unconditionally, so the wire shape
@@ -827,11 +1041,11 @@ namespace BifrostQL.Server
             }
 
             using var ms = new MemoryStream();
-            await serializer.WriteAsync(ms, executionResult, httpContext.RequestAborted);
+            await serializer.WriteAsync(ms, executionResult, cancellationToken);
             return ms.ToArray();
         }
 
-        private static IReadOnlyDictionary<string, object?>? ParseVariables(string variablesJson, HttpContext httpContext)
+        private static IReadOnlyDictionary<string, object?>? ParseVariables(string variablesJson, IServiceProvider services)
         {
             if (string.IsNullOrEmpty(variablesJson))
                 return null;
@@ -847,20 +1061,10 @@ namespace BifrostQL.Server
             // Malformed variables JSON must surface as an error rather than silently
             // executing the operation with no variables (which would run against
             // wrong/default inputs). The caller maps JsonException to an Error reply.
-            var serializer = httpContext.RequestServices?.GetService<IGraphQLTextSerializer>();
+            var serializer = services.GetService<IGraphQLTextSerializer>();
             if (serializer != null)
                 return serializer.Deserialize<Inputs>(variablesJson);
             return JsonSerializer.Deserialize<Dictionary<string, object?>>(variablesJson);
-        }
-
-        private static async Task SendResponseAsync(WebSocket webSocket, BifrostMessage response, CancellationToken cancellationToken)
-        {
-            var bytes = response.ToBytes();
-            await webSocket.SendAsync(
-                new ArraySegment<byte>(bytes),
-                WebSocketMessageType.Binary,
-                endOfMessage: true,
-                cancellationToken);
         }
 
         /// <summary>

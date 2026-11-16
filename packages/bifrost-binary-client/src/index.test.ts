@@ -1323,7 +1323,7 @@ describe("BifrostBinaryClient", () => {
       });
       const frames = buildChunkFrames(sentId, inner, 8);
       // More chunks than the server's default ack window (8): without acks the
-      // server's ChunkSender would block in WaitForAckAsync forever.
+      // server's ChunkTransfer would wait for them until its ack timeout.
       expect(frames.length).toBeGreaterThan(8);
 
       for (const frame of frames) {

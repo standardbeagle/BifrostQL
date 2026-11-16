@@ -352,7 +352,7 @@ namespace BifrostQL.Server.Test
 
             var chunks = sender.SplitIntoChunks(msg);
 
-            // Manually store chunks in buffer (simulating what SendChunksAsync does)
+            // Manually store chunks in buffer (simulating what ChunkTransfer.RunAsync does)
             foreach (var chunk in chunks)
                 buffer.Add(chunk.RequestId, chunk.ChunkSequence, chunk);
 

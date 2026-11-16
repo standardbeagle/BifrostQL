@@ -7,6 +7,7 @@ using GraphQL;
 using GraphQL.SystemTextJson;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
@@ -148,7 +149,7 @@ public sealed class BinaryMiddlewareErrorScrubTests
             ackTimeout: ChunkSender.DefaultAckTimeout,
             requireAuthenticatedIdentity: false);
 
-        var context = new DefaultHttpContext();
+        var context = new DefaultHttpContext { RequestServices = new ServiceCollection().BuildServiceProvider() };
         // Install a fake IHttpWebSocketFeature so IsWebSocketRequest returns true
         // and AcceptWebSocketAsync returns our scriptable FakeWebSocket.
         context.Features.Set<IHttpWebSocketFeature>(new FakeWebSocketFeature(fakeWs));

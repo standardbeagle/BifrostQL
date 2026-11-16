@@ -3,32 +3,48 @@ using System.Net.WebSockets;
 namespace BifrostQL.Server.Test
 {
     /// <summary>
-    /// Scriptable WebSocket test double for exercising the binary transport send path
-    /// (ChunkSender.SendChunksAsync / SendChunkedAsync) without a real network connection.
+    /// Scriptable WebSocket test double for driving the binary transport middleware without a
+    /// real network connection. It is safe for the middleware's one reader and one serialized
+    /// writer to use at once.
     ///
-    /// Outgoing frames (SendAsync) are recorded in <see cref="SentFrames"/>.
-    /// Incoming frames (ReceiveAsync) are pulled from a scripted queue; when the queue is
-    /// drained, a default ChunkAck is returned so the sender never blocks indefinitely.
+    /// Outgoing frames (SendAsync) are recorded in <see cref="SentFrames"/>. Incoming frames
+    /// (ReceiveAsync) come from a scripted queue. Once the queue is drained the fake acts like
+    /// a client: it acks every chunk it was sent (by that chunk's request id and sequence),
+    /// and sends Close once every Query, Mutation and Resume it delivered has a final answer.
+    /// It echoes a close frame the server sends, as a real peer does.
     /// </summary>
     internal sealed class FakeWebSocket : WebSocket
     {
         private readonly Queue<(WebSocketMessageType type, byte[] data)> _incoming = new();
-        private WebSocketState _state = WebSocketState.Open;
+        private readonly Queue<BifrostMessage> _chunksToAck = new();
+        private readonly HashSet<uint> _awaitingAnswer = new();
+        private readonly object _gate = new();
+        private readonly SemaphoreSlim _changed = new(0);
+        private volatile WebSocketState _state = WebSocketState.Open;
+        private bool _closeEchoPending;
 
-        /// <summary>Every binary frame the sender pushed, in send order.</summary>
+        /// <summary>Every binary frame the server pushed, in send order.</summary>
         public List<byte[]> SentFrames { get; } = new();
 
-        /// <summary>Number of times ReceiveAsync was invoked (ACK reads).</summary>
+        /// <summary>Number of times ReceiveAsync was invoked.</summary>
         public int ReceiveCount { get; private set; }
 
-        /// <summary>Default frame returned once the scripted queue is empty (defaults to a ChunkAck).</summary>
-        public BifrostMessageType DefaultIncomingType { get; set; } = BifrostMessageType.ChunkAck;
-
         /// <summary>
-        /// When true, ReceiveAsync never completes once the scripted queue is drained
-        /// (honouring cancellation). Simulates a client that stops acknowledging.
+        /// When true, the drained fake never answers (no acks, no Close), honouring
+        /// cancellation. Simulates a client that stops acknowledging.
         /// </summary>
         public bool HangWhenDrained { get; set; }
+
+        /// <summary>
+        /// When false (the default) the fake is a serial client: it delivers the next scripted
+        /// frame only once every request it delivered has its final answer and every chunk is
+        /// acked. When true it delivers the whole script at once, the way a pipelining client
+        /// does.
+        /// </summary>
+        public bool Pipelined { get; init; }
+
+        /// <summary>Raised with every frame the server sends, after it is recorded.</summary>
+        public event Action<BifrostMessage>? Sent;
 
         /// <summary>
         /// When set, SendAsync throws ConnectionClosedPrematurely once this many frames
@@ -66,7 +82,7 @@ namespace BifrostQL.Server.Test
             _incoming.Enqueue((WebSocketMessageType.Close, Array.Empty<byte>()));
         }
 
-        /// <summary>Queues a non-binary (text) frame, which the ack reader treats as "no ack".</summary>
+        /// <summary>Queues a non-binary (text) frame.</summary>
         public void EnqueueText()
         {
             _incoming.Enqueue((WebSocketMessageType.Text, new byte[] { 1 }));
@@ -82,7 +98,10 @@ namespace BifrostQL.Server.Test
 
         /// <summary>Re-deserializes the recorded frames into messages for assertions.</summary>
         public List<BifrostMessage> SentMessages()
-            => SentFrames.Select(BifrostMessage.FromBytes).ToList();
+        {
+            lock (_gate)
+                return SentFrames.Select(BifrostMessage.FromBytes).ToList();
+        }
 
         public override Task SendAsync(
             ArraySegment<byte> buffer,
@@ -90,52 +109,115 @@ namespace BifrostQL.Server.Test
             bool endOfMessage,
             CancellationToken cancellationToken)
         {
-            if (FailAfterSends.HasValue && SentFrames.Count >= FailAfterSends.Value)
+            lock (_gate)
             {
-                _state = WebSocketState.Aborted;
-                throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
-            }
+                if (FailAfterSends.HasValue && SentFrames.Count >= FailAfterSends.Value)
+                {
+                    _state = WebSocketState.Aborted;
+                    _changed.Release();
+                    throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
+                }
 
-            var copy = new byte[buffer.Count];
-            Buffer.BlockCopy(buffer.Array!, buffer.Offset, copy, 0, buffer.Count);
-            SentFrames.Add(copy);
+                var copy = buffer.AsSpan().ToArray();
+                SentFrames.Add(copy);
+                var sent = BifrostMessage.FromBytes(copy);
+                switch (sent.Type)
+                {
+                    case BifrostMessageType.Chunk:
+                        _chunksToAck.Enqueue(sent);
+                        break;
+                    case BifrostMessageType.Result:
+                    case BifrostMessageType.Error:
+                        _awaitingAnswer.Remove(sent.RequestId);
+                        break;
+                    case BifrostMessageType.ResumeAck when sent.ChunkTotal == 0:
+                        _awaitingAnswer.Remove(sent.RequestId);
+                        break;
+                }
+                _changed.Release();
+                Sent?.Invoke(sent);
+            }
             return Task.CompletedTask;
         }
 
-        public override Task<WebSocketReceiveResult> ReceiveAsync(
+        public override async Task<WebSocketReceiveResult> ReceiveAsync(
             ArraySegment<byte> buffer,
             CancellationToken cancellationToken)
         {
             ReceiveCount++;
-
-            if (_incoming.Count == 0 && HangWhenDrained)
+            while (true)
             {
-                var tcs = new TaskCompletionSource<WebSocketReceiveResult>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-                cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
-                return tcs.Task;
+                (WebSocketMessageType type, byte[] data)? next = null;
+                lock (_gate)
+                {
+                    if (_state == WebSocketState.Aborted)
+                        throw new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
+                    if (_closeEchoPending)
+                    {
+                        _closeEchoPending = false;
+                        _state = WebSocketState.Closed;
+                        next = (WebSocketMessageType.Close, Array.Empty<byte>());
+                    }
+                    else if (_incoming.Count > 0
+                        && (Pipelined || HangWhenDrained || (_awaitingAnswer.Count == 0 && _chunksToAck.Count == 0)))
+                    {
+                        next = _incoming.Dequeue();
+                        TrackDelivered(next.Value);
+                    }
+                    else if (!HangWhenDrained && _chunksToAck.Count > 0)
+                    {
+                        next = (WebSocketMessageType.Binary, AckFor(_chunksToAck.Dequeue()).ToBytes());
+                    }
+                    else if (!HangWhenDrained && _awaitingAnswer.Count == 0)
+                    {
+                        next = (WebSocketMessageType.Close, Array.Empty<byte>());
+                    }
+                }
+
+                if (next is { } frame)
+                {
+                    if (frame.type == WebSocketMessageType.Close)
+                    {
+                        if (_state == WebSocketState.Open)
+                            _state = WebSocketState.CloseReceived;
+                        return new WebSocketReceiveResult(
+                            0, WebSocketMessageType.Close, true, WebSocketCloseStatus.NormalClosure, "closed");
+                    }
+                    frame.data.CopyTo(buffer.AsSpan());
+                    return new WebSocketReceiveResult(frame.data.Length, frame.type, true);
+                }
+
+                // Nothing to answer yet: wait for the server to send something.
+                await _changed.WaitAsync(cancellationToken);
             }
-
-            var (type, data) = _incoming.Count > 0
-                ? _incoming.Dequeue()
-                : DefaultFrame();
-
-            if (type == WebSocketMessageType.Close)
-            {
-                _state = WebSocketState.CloseReceived;
-                return Task.FromResult(new WebSocketReceiveResult(
-                    0, WebSocketMessageType.Close, true,
-                    WebSocketCloseStatus.NormalClosure, "closed"));
-            }
-
-            Buffer.BlockCopy(data, 0, buffer.Array!, buffer.Offset, data.Length);
-            return Task.FromResult(new WebSocketReceiveResult(data.Length, type, true));
         }
 
-        private (WebSocketMessageType, byte[]) DefaultFrame()
+        /// <summary>
+        /// Acks a chunk, and marks its request answered once the final chunk is acked.
+        /// Caller holds the gate.
+        /// </summary>
+        private BifrostMessage AckFor(BifrostMessage chunk)
         {
-            var msg = new BifrostMessage { Type = DefaultIncomingType };
-            return (WebSocketMessageType.Binary, msg.ToBytes());
+            if (chunk.ChunkSequence + 1 == chunk.ChunkTotal)
+                _awaitingAnswer.Remove(chunk.RequestId);
+            return ChunkReceiver.CreateAck(chunk.RequestId, chunk.ChunkSequence);
+        }
+
+        private void TrackDelivered((WebSocketMessageType type, byte[] data) frame)
+        {
+            if (frame.type != WebSocketMessageType.Binary)
+                return;
+            BifrostMessage delivered;
+            try
+            {
+                delivered = BifrostMessage.FromBytes(frame.data);
+            }
+            catch (Exception)
+            {
+                return; // a garbage frame a test sends on purpose
+            }
+            if (delivered.Type is BifrostMessageType.Query or BifrostMessageType.Mutation or BifrostMessageType.Resume)
+                _awaitingAnswer.Add(delivered.RequestId);
         }
 
         public override WebSocketState State => _state;
@@ -164,7 +246,15 @@ namespace BifrostQL.Server.Test
         public override Task CloseOutputAsync(
             WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
         {
-            _state = WebSocketState.CloseSent;
+            lock (_gate)
+            {
+                ClosedWith = closeStatus;
+                ClosedReason = statusDescription;
+                _state = _state == WebSocketState.CloseReceived ? WebSocketState.Closed : WebSocketState.CloseSent;
+                // A peer answers a close frame with its own.
+                _closeEchoPending = _state == WebSocketState.CloseSent;
+                _changed.Release();
+            }
             return Task.CompletedTask;
         }
     }

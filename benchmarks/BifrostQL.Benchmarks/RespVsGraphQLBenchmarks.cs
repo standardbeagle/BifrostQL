@@ -317,7 +317,7 @@ public class RespVsGraphQLBenchmarks
 
     /// <summary>
     /// Minimal blocking client for the binary WebSocket transport: one persistent
-    /// socket (the transport is strictly serial per connection), protobuf
+    /// socket used one request at a time (this client's choice, to time one round trip), protobuf
     /// <see cref="BifrostMessage"/> envelopes out, one Result envelope in. Errors
     /// throw — a rejection must never be measured as a result. Payloads here stay
     /// far below the 64 KB chunk threshold, so a Chunk frame is a setup bug.

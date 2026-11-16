@@ -1396,10 +1396,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   }
 
   /**
-   * Acknowledges receipt of a chunk. The server's ChunkSender pauses after
-   * `ackWindow` (default 8) unacknowledged chunks and blocks in
-   * WaitForAckAsync until an ack arrives, so a client that never acks
-   * deadlocks every response larger than ackWindow × chunkThreshold
+   * Acknowledges receipt of a chunk. The server's ChunkTransfer pauses after
+   * `ackWindow` (default 8) unacknowledged chunks until an ack arrives, and
+   * closes the connection when none comes within its ack timeout, so a client
+   * that never acks fails every response larger than ackWindow × chunkThreshold
    * (~512 KB with defaults). One ChunkAck per received chunk keeps the
    * sender's window moving; the frame shape mirrors ChunkReceiver.CreateAck
    * (request_id + type + chunk_sequence).

@@ -60,7 +60,54 @@ namespace BifrostQL.Server.Test
         [MemberData(nameof(EncoderShapes))]
         public void ToBytes_MatchesTheStreamingEncoder(string shape)
         {
-            var msg = shape switch
+            var msg = EncoderShape(shape);
+            msg.ToBytes().Should().Equal(StreamingEncode(msg));
+        }
+
+        /// <summary>
+        /// The connection sends a large payload as a second WebSocket fragment after the
+        /// envelope; the two must be exactly the frame ToBytes encodes.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(EncoderShapes))]
+        public void EncodeEnvelope_FollowedByPayload_IsTheFrame(string shape)
+        {
+            var msg = EncoderShape(shape);
+            msg.EncodeEnvelope().Concat(msg.Payload).Should().Equal(msg.ToBytes());
+        }
+
+        /// <summary>
+        /// SplitIntoChunks copies from the envelope and the payload without building the frame.
+        /// The chunk sizes put a boundary inside the envelope, exactly at its end, one past it,
+        /// and well inside the payload; the chunks must concatenate to the frame every time.
+        /// </summary>
+        [Theory]
+        [InlineData(1)]
+        [InlineData(3)]
+        [InlineData(0)]   // 0 = exactly the envelope length
+        [InlineData(-1)]  // -1 = envelope length + 1
+        [InlineData(4096)]
+        public void SplitIntoChunks_ConcatenatedChunks_AreTheFrame(int chunkSize)
+        {
+            var msg = new BifrostMessage
+            {
+                RequestId = 77,
+                Type = BifrostMessageType.Result,
+                Errors = { "a warning that makes the envelope longer than a few bytes" },
+                Payload = Enumerable.Range(0, 10_000).Select(i => (byte)(i * 7)).ToArray(),
+            };
+            var envelopeLength = msg.EncodeEnvelope().Length;
+            var threshold = chunkSize switch { 0 => envelopeLength, -1 => envelopeLength + 1, _ => chunkSize };
+
+            var chunks = new ChunkSender(chunkThreshold: threshold).SplitIntoChunks(msg);
+
+            chunks.SelectMany(c => c.Payload).Should().Equal(msg.ToBytes());
+            chunks.Should().AllSatisfy(c => c.ChunkChecksum.Should().Be(ChunkSender.ComputeCrc32(c.Payload)));
+        }
+
+        private static BifrostMessage EncoderShape(string shape)
+        {
+            return shape switch
             {
                 "empty" => new BifrostMessage(),
                 "all-max" => new BifrostMessage
@@ -95,8 +142,6 @@ namespace BifrostQL.Server.Test
                 "errors-only" => new BifrostMessage { Type = BifrostMessageType.Error, Errors = { new string('x', 200) } },
                 _ => throw new ArgumentOutOfRangeException(nameof(shape)),
             };
-
-            msg.ToBytes().Should().Equal(StreamingEncode(msg));
         }
 
         private static byte[] StreamingEncode(BifrostMessage m)
@@ -107,7 +152,6 @@ namespace BifrostQL.Server.Test
             if (m.Type != BifrostMessageType.Query) { o.WriteTag(2, WireType.Varint); o.WriteInt32((int)m.Type); }
             if (m.Query.Length > 0) { o.WriteTag(3, WireType.LengthDelimited); o.WriteString(m.Query); }
             if (m.VariablesJson.Length > 0) { o.WriteTag(4, WireType.LengthDelimited); o.WriteString(m.VariablesJson); }
-            if (m.Payload.Length > 0) { o.WriteTag(5, WireType.LengthDelimited); o.WriteBytes(ByteString.CopyFrom(m.Payload)); }
             foreach (var e in m.Errors) { o.WriteTag(6, WireType.LengthDelimited); o.WriteString(e); }
             if (m.ChunkSequence != 0) { o.WriteTag(7, WireType.Varint); o.WriteUInt32(m.ChunkSequence); }
             if (m.ChunkTotal != 0) { o.WriteTag(8, WireType.Varint); o.WriteUInt32(m.ChunkTotal); }
@@ -115,6 +159,8 @@ namespace BifrostQL.Server.Test
             if (m.TotalBytes != 0) { o.WriteTag(10, WireType.Varint); o.WriteUInt64(m.TotalBytes); }
             if (m.ChunkChecksum != 0) { o.WriteTag(11, WireType.Varint); o.WriteUInt32(m.ChunkChecksum); }
             if (m.LastSequence != 0) { o.WriteTag(12, WireType.Varint); o.WriteUInt32(m.LastSequence); }
+            // The payload goes last, so a frame is its envelope followed by the payload bytes.
+            if (m.Payload.Length > 0) { o.WriteTag(5, WireType.LengthDelimited); o.WriteBytes(ByteString.CopyFrom(m.Payload)); }
             o.Flush();
             return ms.ToArray();
         }

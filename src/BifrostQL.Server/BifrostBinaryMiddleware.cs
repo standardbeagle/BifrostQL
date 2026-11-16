@@ -295,6 +295,13 @@ namespace BifrostQL.Server
         /// </summary>
         private sealed class BinaryConnection : IDisposable
         {
+            /// <summary>
+            /// Below this payload size, copying the payload into one frame array costs less than a
+            /// second WebSocket send (an extra frame header and flush). An estimate, not a measured
+            /// crossover; it sits well under the 64 KiB default chunk so every full chunk splits.
+            /// </summary>
+            internal const int FragmentedSendMinPayload = 16 * 1024;
+
             private readonly SemaphoreSlim _sendLock = new(1, 1);
             private readonly ConcurrentDictionary<Task, byte> _running = new();
 
@@ -404,16 +411,22 @@ namespace BifrostQL.Server
             public Task DrainAsync() => Task.WhenAll(_running.Keys);
 
             /// <summary>
-            /// Sends one frame. Serialization happens outside the lock; the lock only orders the
-            /// writes, which a WebSocket allows one at a time.
+            /// Sends one frame as one WebSocket message. Serialization happens outside the lock;
+            /// the lock only orders the writes, which a WebSocket allows one at a time. A payload
+            /// of at least <see cref="FragmentedSendMinPayload"/> bytes goes out as a second
+            /// fragment after the envelope, so it is never copied into a frame-sized array.
             /// </summary>
             public async Task SendAsync(BifrostMessage message, CancellationToken cancellationToken)
             {
-                var bytes = message.ToBytes();
+                var payload = message.Payload;
+                var fragmented = payload.Length >= FragmentedSendMinPayload;
+                var head = fragmented ? message.EncodeEnvelope() : message.ToBytes();
                 await _sendLock.WaitAsync(cancellationToken);
                 try
                 {
-                    await WebSocket.SendAsync(bytes, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+                    await WebSocket.SendAsync(head, WebSocketMessageType.Binary, endOfMessage: !fragmented, cancellationToken);
+                    if (fragmented)
+                        await WebSocket.SendAsync(payload, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
                 }
                 finally
                 {

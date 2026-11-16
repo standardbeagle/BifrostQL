@@ -1,3 +1,4 @@
+import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
@@ -165,6 +166,29 @@ describe("encodeMessage / decodeMessage", () => {
 
     const decoded = decodeMessage(combined);
     expect(decoded.requestId).toBe(5);
+  });
+
+  it("decodes a server frame that writes the payload after every other field", () => {
+    // The server encodes the payload last so it can send a large payload as a
+    // second WebSocket fragment after the envelope, never copied into one frame.
+    const payload = new Uint8Array(20_000).map((_, i) => (i * 7) & 0xff);
+    const frame = new BinaryWriter()
+      .tag(1, WireType.Varint).uint32(9)
+      .tag(2, WireType.Varint).int32(BifrostMessageType.Chunk)
+      .tag(6, WireType.LengthDelimited).string("warning")
+      .tag(7, WireType.Varint).uint32(2)
+      .tag(8, WireType.Varint).uint32(3)
+      .tag(5, WireType.LengthDelimited).bytes(payload)
+      .finish();
+
+    const decoded = decodeMessage(frame);
+
+    expect(decoded.requestId).toBe(9);
+    expect(decoded.type).toBe(BifrostMessageType.Chunk);
+    expect(decoded.errors).toEqual(["warning"]);
+    expect(decoded.chunkInfo.sequence).toBe(2);
+    expect(decoded.chunkInfo.total).toBe(3);
+    expect(decoded.payload).toEqual(payload);
   });
 });
 

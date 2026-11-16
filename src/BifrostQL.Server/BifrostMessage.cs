@@ -124,15 +124,41 @@ namespace BifrostQL.Server
         private const int LastSequenceTag = (12 << 3) | 0;     // varint
 
         /// <summary>
-        /// Serializes this message to protobuf wire format: one array of exactly the frame's size,
-        /// with the payload written straight into it (never copied into an intermediate buffer).
+        /// Serializes this message to protobuf wire format: one array of exactly the frame's size.
+        /// The payload is the last field, so the frame is <see cref="EncodeEnvelope"/> followed by
+        /// the payload bytes.
         /// </summary>
         public byte[] ToBytes()
         {
-            // UnsafeWrap shares Payload without copying; the ByteString lives only for this call.
-            var payload = Payload.Length > 0 ? UnsafeByteOperations.UnsafeWrap(Payload) : ByteString.Empty;
-            var bytes = new byte[CalculateSize(payload)];
-            var output = new CodedOutputStream(bytes);
+            var envelopeSize = CalculateEnvelopeSize();
+            var bytes = new byte[envelopeSize + Payload.Length];
+            WriteEnvelope(bytes, envelopeSize);
+            Payload.CopyTo(bytes, envelopeSize);
+            return bytes;
+        }
+
+        /// <summary>
+        /// Every byte of the frame except the payload's own bytes: all other fields, then (when
+        /// there is a payload) the payload's tag and length prefix. Sending this and then
+        /// <see cref="Payload"/> as one WebSocket message puts <see cref="ToBytes"/>'s bytes on
+        /// the wire without copying the payload into a frame-sized array.
+        /// </summary>
+        internal byte[] EncodeEnvelope()
+        {
+            var envelopeSize = CalculateEnvelopeSize();
+            var bytes = new byte[envelopeSize];
+            WriteEnvelope(bytes, envelopeSize);
+            return bytes;
+        }
+
+        /// <summary>
+        /// Writes the envelope into the first <paramref name="envelopeSize"/> bytes of
+        /// <paramref name="destination"/>. Fields go in tag order except the payload, which goes
+        /// last; protobuf readers accept fields in any order.
+        /// </summary>
+        private void WriteEnvelope(byte[] destination, int envelopeSize)
+        {
+            var output = new CodedOutputStream(destination);
 
             if (RequestId != 0)
             {
@@ -156,12 +182,6 @@ namespace BifrostQL.Server
             {
                 output.WriteTag(VariablesTag);
                 output.WriteString(VariablesJson);
-            }
-
-            if (Payload.Length > 0)
-            {
-                output.WriteTag(PayloadTag);
-                output.WriteBytes(payload);
             }
 
             foreach (var error in Errors)
@@ -206,13 +226,21 @@ namespace BifrostQL.Server
                 output.WriteUInt32(LastSequence);
             }
 
-            // A size/write mismatch would leave trailing zero bytes the reader parses as field 0.
-            output.CheckNoSpaceLeft();
-            return bytes;
+            if (Payload.Length > 0)
+            {
+                output.WriteTag(PayloadTag);
+                output.WriteLength(Payload.Length);
+            }
+
+            // A size/write mismatch would leave zero bytes the reader parses as field 0, or cut
+            // into the payload that follows.
+            if (destination.Length - output.SpaceLeft != envelopeSize)
+                throw new InvalidOperationException(
+                    $"Envelope wrote {destination.Length - output.SpaceLeft} bytes; sized {envelopeSize}.");
         }
 
-        /// <summary>The serialized size of this message, field for field as <see cref="ToBytes"/> writes it.</summary>
-        private int CalculateSize(ByteString payload)
+        /// <summary>The envelope's size, field for field as <see cref="WriteEnvelope"/> writes it.</summary>
+        private int CalculateEnvelopeSize()
         {
             var size = 0;
             if (RequestId != 0)
@@ -223,8 +251,6 @@ namespace BifrostQL.Server
                 size += CodedOutputStream.ComputeTagSize(QueryTag >> 3) + CodedOutputStream.ComputeStringSize(Query);
             if (VariablesJson.Length > 0)
                 size += CodedOutputStream.ComputeTagSize(VariablesTag >> 3) + CodedOutputStream.ComputeStringSize(VariablesJson);
-            if (Payload.Length > 0)
-                size += CodedOutputStream.ComputeTagSize(PayloadTag >> 3) + CodedOutputStream.ComputeBytesSize(payload);
             foreach (var error in Errors)
                 size += CodedOutputStream.ComputeTagSize(ErrorsTag >> 3) + CodedOutputStream.ComputeStringSize(error);
             if (ChunkSequence != 0)
@@ -239,6 +265,8 @@ namespace BifrostQL.Server
                 size += CodedOutputStream.ComputeTagSize(ChunkChecksumTag >> 3) + CodedOutputStream.ComputeUInt32Size(ChunkChecksum);
             if (LastSequence != 0)
                 size += CodedOutputStream.ComputeTagSize(LastSequenceTag >> 3) + CodedOutputStream.ComputeUInt32Size(LastSequence);
+            if (Payload.Length > 0)
+                size += CodedOutputStream.ComputeTagSize(PayloadTag >> 3) + CodedOutputStream.ComputeLengthSize(Payload.Length);
             return size;
         }
 

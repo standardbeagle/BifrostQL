@@ -34,10 +34,16 @@ A SQLite column declared `BOOLEAN` or `BIT` stores 0/1 and the driver returns it
 - A binary response used to be copied about four times on its way to the socket, and a received
   payload twice. `BifrostMessage.ToBytes` now sizes the frame first and writes into one array,
   wrapping the payload without copying it. `FromBytes` keeps the array the parser already made.
-  Result JSON is serialized through a pooled buffer instead of a growing `MemoryStream`. Output is
-  byte-for-byte unchanged. Measured allocation per `ToBytes` of a 1,000-row result: 1,549 KB to
-  262 KB. Per end-to-end 10,000-row query (transport bench, process-wide): 62 MB to 34 MB (HTTP
-  allocates 23 MB).
+  Result JSON is serialized through a pooled buffer instead of a growing `MemoryStream`. Measured
+  allocation per `ToBytes` of a 1,000-row result: 1,549 KB to 262 KB.
+- The server now writes the payload as the last field of a frame. A payload of 16 KiB or more goes
+  out as a second fragment of the same WebSocket message, after the other fields, so it is never
+  copied into a frame-sized array. Chunked results are cut straight from those two parts instead of
+  from a serialized copy of the whole result. Protobuf readers accept fields in any order, and both
+  shipped decoders (.NET `BifrostMessage.FromBytes`, `@bifrostql/binary-client`) already did; a
+  custom client that reads one `ReceiveAsync` as one message must loop until `EndOfMessage`.
+- Transport bench allocation per end-to-end 10,000-row query (process-wide, client included): 62 MB
+  to 30 MB (HTTP allocates 23 MB); 1,000 rows: 3.4 MB to 3.0 MB.
 
 ### Changed — edit-db formats grid cells from a per-column formatter
 

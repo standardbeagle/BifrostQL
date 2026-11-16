@@ -317,6 +317,48 @@ namespace BifrostQL.Server.Test
             ids.Should().BeInDescendingOrder("the $sort variable must actually reach the executor");
         }
 
+        /// <summary>
+        /// A result payload of at least 16 KiB leaves the server as two fragments of one WebSocket
+        /// message: the envelope (every field but the payload bytes), then the payload itself, so
+        /// the payload is never copied into a frame-sized array. The client must read one message
+        /// whose bytes decode to the full result. 1500 aliased __typename fields give a ~30 KiB
+        /// payload without depending on fixture data, and stay under the 64 KiB chunk threshold.
+        /// </summary>
+        [Fact]
+        public async Task LargeResult_ArrivesAsOneFragmentedMessage_ThatDecodesWhole()
+        {
+            const int aliasCount = 1500;
+            var query = "{ " + string.Join(" ", Enumerable.Range(0, aliasCount).Select(i => $"a{i}: __typename")) + " }";
+
+            var client = Host.GetTestServer().CreateWebSocketClient();
+            var uri = new UriBuilder(Host.GetTestServer().BaseAddress) { Scheme = "ws", Path = SocketPath }.Uri;
+            using var socket = await client.ConnectAsync(uri, CancellationToken.None);
+            var request = new BifrostMessage { RequestId = 1, Type = BifrostMessageType.Query, Query = query };
+            await socket.SendAsync(request.ToBytes(), WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+
+            using var message = new MemoryStream();
+            var buffer = new byte[8 * 1024];
+            WebSocketReceiveResult received;
+            do
+            {
+                received = await socket.ReceiveAsync(buffer, CancellationToken.None);
+                message.Write(buffer, 0, received.Count);
+            } while (!received.EndOfMessage);
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+
+            var response = BifrostMessage.FromBytes(message.ToArray());
+            response.Type.Should().Be(BifrostMessageType.Result);
+            response.Errors.Should().BeEmpty();
+            response.Payload.Length.Should().BeInRange(16 * 1024, ChunkSender.DefaultChunkThreshold,
+                "the payload must take the fragmented send path without being chunked");
+            using var document = JsonDocument.Parse(response.Payload);
+            var data = document.RootElement.GetProperty("data");
+            data.EnumerateObject().Should().HaveCount(aliasCount);
+            var rootTypeName = data.GetProperty("a0").GetString();
+            rootTypeName.Should().NotBeNullOrEmpty();
+            data.EnumerateObject().Should().AllSatisfy(p => p.Value.GetString().Should().Be(rootTypeName));
+        }
+
         // ---- principal transport over the upgrade request -------------------
 
         private static string EncodePrincipal(ClaimsPrincipal principal) =>

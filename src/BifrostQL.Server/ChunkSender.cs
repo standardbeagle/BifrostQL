@@ -84,24 +84,26 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Serializes the message to bytes and splits those bytes into chunk messages.
-        /// Each chunk carries a fragment of the full serialized message with its CRC32
-        /// checksum, sequence number, byte offset, and total metadata.
-        /// The receiver reassembles the fragments and deserializes via BifrostMessage.FromBytes.
+        /// Splits the message's serialized bytes into chunk messages. Each chunk carries a
+        /// fragment of the full serialized message with its CRC32 checksum, sequence number,
+        /// byte offset, and total metadata. The receiver reassembles the fragments and
+        /// deserializes via BifrostMessage.FromBytes. The serialized message is the envelope
+        /// followed by the payload, so chunks copy from those two arrays and the whole frame is
+        /// never materialized.
         /// </summary>
         public IReadOnlyList<BifrostMessage> SplitIntoChunks(BifrostMessage response)
         {
-            var serialized = response.ToBytes();
-            var totalBytes = (ulong)serialized.Length;
-            var chunkCount = (int)((serialized.Length + _chunkThreshold - 1) / _chunkThreshold);
+            var envelope = response.EncodeEnvelope();
+            var payload = response.Payload;
+            var serializedLength = envelope.Length + payload.Length;
+            var chunkCount = (int)(((long)serializedLength + _chunkThreshold - 1) / _chunkThreshold);
             var chunks = new List<BifrostMessage>(chunkCount);
 
             for (var i = 0; i < chunkCount; i++)
             {
                 var offset = i * _chunkThreshold;
-                var length = Math.Min(_chunkThreshold, serialized.Length - offset);
-                var chunkData = new byte[length];
-                Buffer.BlockCopy(serialized, offset, chunkData, 0, length);
+                var chunkData = new byte[Math.Min(_chunkThreshold, serializedLength - offset)];
+                CopySerializedRange(envelope, payload, offset, chunkData);
 
                 chunks.Add(new BifrostMessage
                 {
@@ -111,12 +113,31 @@ namespace BifrostQL.Server
                     ChunkSequence = (uint)i,
                     ChunkTotal = (uint)chunkCount,
                     ChunkOffset = (ulong)offset,
-                    TotalBytes = totalBytes,
+                    TotalBytes = (ulong)serializedLength,
                     ChunkChecksum = ComputeCrc32(chunkData),
                 });
             }
 
             return chunks;
+        }
+
+        /// <summary>
+        /// Fills <paramref name="destination"/> with the serialized message's bytes from
+        /// <paramref name="offset"/>, reading the envelope and then the payload as one sequence.
+        /// </summary>
+        private static void CopySerializedRange(byte[] envelope, byte[] payload, int offset, byte[] destination)
+        {
+            var written = 0;
+            if (offset < envelope.Length)
+            {
+                var fromEnvelope = Math.Min(envelope.Length - offset, destination.Length);
+                envelope.AsSpan(offset, fromEnvelope).CopyTo(destination);
+                written = fromEnvelope;
+            }
+            if (written == destination.Length)
+                return;
+            var payloadStart = offset + written - envelope.Length;
+            payload.AsSpan(payloadStart, destination.Length - written).CopyTo(destination.AsSpan(written));
         }
 
         /// <summary>

@@ -231,6 +231,26 @@ namespace BifrostQL.Core.QueryModel
         }
 
         /// <summary>
+        /// The page of this node's rows: <c>SELECT {projection} FROM {table}{filter}</c>
+        /// windowed by the caller's sort plus the primary-key tie-break
+        /// (<see cref="RenderPagedSortColumns"/>), <see cref="Offset"/>, and the clamped
+        /// <see cref="ResolveRowWindow"/> limit. The root row SELECT and every statement
+        /// that must touch only the rows on that page (the link join-id window in
+        /// <see cref="GetRestrictedSqlParameterized"/>) build their window here, so they
+        /// all select the same rows by construction. <paramref name="projection"/> is
+        /// rendered against the unaliased table.
+        /// </summary>
+        internal ParameterizedSql PagedRowWindowSql(IDbModel dbModel, ISqlDialect dialect, string projection, ParameterizedSql filter)
+        {
+            var tableRef = dialect.TableReference(SchemaName, TableName);
+            var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
+            var pagination = dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
+            return new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
+                .Append(filter)
+                .Append(pagination);
+        }
+
+        /// <summary>
         /// Fails fast when an aggregate selection cannot be correlated back to its
         /// parent rows. A keyless table (view / no PK) has nothing to correlate on;
         /// a composite PK would silently group by only the first key column and hand
@@ -323,16 +343,7 @@ namespace BifrostQL.Core.QueryModel
             if (fullColumns.Count > 0)
             {
                 var columnSql = string.Join(",", fullColumns.Select(n => n.ToSelectSql(dbModel, DbTable, dialect, parameters)));
-                var cmdText = $"SELECT {columnSql} FROM {tableRef}";
-
-                var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
-                var pagination = dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
-
-                var baseSql = new ParameterizedSql(cmdText, Array.Empty<SqlParameterInfo>())
-                    .Append(filter)
-                    .Append(pagination);
-
-                sqls[sqlKeyName] = baseSql;
+                sqls[sqlKeyName] = PagedRowWindowSql(dbModel, dialect, columnSql, filter);
             }
 
             if (IncludeResult)
@@ -526,7 +537,6 @@ namespace BifrostQL.Core.QueryModel
             {
                 var filter = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters);
                 var projection = query.Join.EmitJoinIdProjection(dialect);
-                var tableRef = dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName);
 
                 // Forward the parent table's pagination into the linked sub-query so the
                 // joined rows stay aligned with the paged parent set. Page the parent rows
@@ -545,18 +555,10 @@ namespace BifrostQL.Core.QueryModel
                 // ORDER BY {pk}` is rejected by SQL Server because the sort (pk) columns
                 // aren't in the DISTINCT projection. A non-DISTINCT inner can ORDER BY any
                 // column, and the outer wrap then de-duplicates the join-id set.
-                // Must match the parent SELECT's ORDER BY exactly (see
-                // RenderPagedSortColumns) — this window and the parent's window have
-                // to land on the same rows.
-                var sortCols = RenderPagedSortColumns(dialect, query.FromTable.DbTable, query.FromTable.Sort);
-                // Clamped identically to the parent SELECT so this window and the parent's
-                // window land on the same rows.
-                var clampedLimit = ResolveRowWindow(dbModel, query.FromTable.Limit);
-                var pagination = dialect.Pagination(sortCols, query.FromTable.Offset, clampedLimit);
-
-                var inner = new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
-                    .Append(filter)
-                    .Append(pagination);
+                // The inner window is the parent SELECT's own window (same ORDER BY,
+                // offset and clamped limit, see PagedRowWindowSql), so the two land on
+                // the same rows by construction.
+                var inner = query.FromTable.PagedRowWindowSql(dbModel, dialect, projection, filter);
 
                 var joinIdNames = string.Join(", ", Enumerable.Range(0, query.Join.FromColumns.Count)
                     .Select(i => dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, query.Join.FromColumns.Count))));

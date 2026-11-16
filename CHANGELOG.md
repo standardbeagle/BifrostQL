@@ -39,6 +39,20 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Fixed — every front door reports a read the row ceiling cut, instead of truncating it
+
+`max-query-rows` clamps every LIMIT inside SQL generation. Adapters that paged or capped a read set `Limit = page + 1` themselves and compared the row count with their own page, so they never saw that clamp: under a ceiling at or below the page, the database returned the ceiling, the count never passed the page, and a cut answer read as complete. Each surface now takes its LIMIT, page and "more" test from one shared window that applies the same clamp the SQL does, and reports a cut in its own envelope. The page is at most one below the ceiling, so the probe row still fits; a surface with a fixed cap therefore refuses one row earlier than before at the defaults.
+
+- **pgwire:** a `SELECT` with no `LIMIT` now returns up to the ceiling instead of 100 rows. A result the ceiling cuts fails with SQLSTATE `54000` and `result exceeds the server row limit; add a LIMIT clause`, on both the simple and extended protocols.
+- **OData:** under a ceiling below `$top`, the page narrows and still carries a `@odata.nextLink`. `$top=0` no longer emits a nextLink that resumed at the same offset forever; `$top=0&$count=true` still counts. A `$expand` collection the ceiling cut is refused with the existing fan-out 400.
+- **gRPC:** `List` mints a page token from a probe row instead of "the page came back full", so a ceiling no longer ends paging early or hands out a token to an empty page. A `Stream` cut by its page size or the ceiling sets the response trailer `bifrost-truncated: true`; a complete stream carries none.
+- **RESP:** `MGET` and `EXISTS` with more keys for one table than the default window no longer answer nil / uncounted for the keys past row 100. A batch over the ceiling is refused: `ERR too many keys for one table: <n> requested, at most <ceiling> per command`. `SCAN` pages under a ceiling below `COUNT` instead of returning cursor `0` after the first page; a ceiling of 1 is refused.
+- **LDAP:** under a ceiling below `SearchBatchSize`, a search no longer ends each family after one short batch (unpaged: partial result with `success`; paged: the empty last-page cookie). A ceiling of 1 is refused with `adminLimitExceeded`. `SearchBatchSize` now means rows consumed per round trip; each fetch reads one more.
+- **S3:** a listing over the scan cap is refused instead of reporting `IsTruncated=false` on the first 10,000 keys. The effective cap is `min(MaxListMaterialize, max-query-rows - 1)`.
+- **Prometheus:** grouped aggregates carried no LIMIT and were cut to 100 groups before the cardinality check, so a metric over its bound was emitted partially and never marked capped. The collector now probes one past the bound and caps the metric; the effective cap is `min(cap, max-query-rows - 1)`.
+- **GraphQL `_agg`:** the per-row aggregate statement read the parent table under its filter but not its window, so `orders(limit: 100) { data { _agg(...) } }` grouped every matching order. It now reads the same paged window as the root select (filter, sort, offset, limit). Root aggregates gain the window's ORDER BY.
+- **MCP:** `aggregate` and declarative query tools take their truncation flag from the same window.
+
 ### Fixed — SQLite BOOLEAN and BIT columns read as booleans
 
 A SQLite column declared `BOOLEAN` or `BIT` stores 0/1 and the driver returns it as an integer. The schema advertises it as `Boolean`, and the stock scalar rejected the integer, so every read of such a column failed with `Unable to convert '1' value of type 'Int64' to the scalar type 'Boolean'`. The `Boolean` scalar now maps 0 and 1 to `false` and `true`. Any other integer still fails the field rather than being coerced.

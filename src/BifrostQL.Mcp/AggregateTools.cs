@@ -149,8 +149,8 @@ namespace BifrostQL.Mcp
             // same clamp the SQL applies decides that here — one rule, not two — so a
             // full window is recognised as truncation rather than reported as the
             // complete answer.
-            var windowLimit = GqlObjectQuery.ResolveRowWindow(model, MaxGroups + 1);
-            query.Limit = windowLimit;
+            var window = RowProbeWindow.For(model, MaxGroups);
+            query.Limit = window.Fetch;
             if (GetArgument(args, "filter") is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } filterElement)
                 query.Filter = QueryToolCompiler.CompileFilter(table, filterElement, visibleColumnNames);
 
@@ -164,9 +164,9 @@ namespace BifrostQL.Mcp
             // A full window means the group set is at least as large as the window,
             // so the answer is partial — say so. A partial result that looks complete
             // is worse than an explicit partial one.
-            var truncated = result.Rows.Count >= windowLimit;
+            var truncated = window.HasMore(result.Rows.Count);
             var groups = new JsonArray();
-            foreach (var row in result.Rows.Take(Math.Min(MaxGroups, windowLimit)))
+            foreach (var row in result.Rows.Take(window.Page))
             {
                 var group = new JsonObject();
                 foreach (var groupColumn in groupColumns)

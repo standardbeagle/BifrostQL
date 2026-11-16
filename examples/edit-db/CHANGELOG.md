@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Performance
+- Grid cells format through one compiled formatter per column (`columnFormatter`): no `Intl.NumberFormat` built per number/percent cell, no `toLocaleString` per `DateTime` cell. Output is unchanged; number cells go from ~273 to ~7 µs each.
+
 ### Fixed
 - Select menus open directly beneath their trigger (`position="popper"` default); the item-aligned mode drifted long FK lists away from their label inside the scrolling edit dialog
 

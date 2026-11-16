@@ -15,7 +15,7 @@ import { Button } from "../components/ui/button";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "../components/ui/hover-card";
 import { ContentViewer } from "../components/content-viewer";
 import { EmptyValue } from "../components/empty-value";
-import { formatColumnValue, formatDateCellValue } from "../lib/format-value";
+import { columnFormatter, formatDateCellValue } from "../lib/format-value";
 import { detectContentKind, isLargeValueColumn, isJsonColumn } from "../lib/content-detect";
 import {
     getFilterOperators,
@@ -239,6 +239,9 @@ function buildScalarColumn(
     operators: string[],
     onExpandContent?: (rowIndex: number, columnName: string) => void,
 ): ColumnDef<DataTableFeatures, RowData, unknown> {
+    // Resolved once per column: the cells below only look it up and format.
+    const format = columnFormatter(c);
+
     if (memberJoin) {
         // Secondary composite-FK column — value renders as a scalar but the
         // header should advertise the FK relation so users can hover for context.
@@ -248,7 +251,7 @@ function buildScalarColumn(
         return {
             id: c.name,
             accessorFn: (row) => (c.name ? String(row?.[c.name] ?? "") : ""),
-            cell: ({ row }) => formatColumnValue(row.original[c.name], c),
+            cell: ({ row }) => format(row.original[c.name]),
             header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
             enableSorting: true,
             meta: columnMeta(c, operators, {
@@ -326,7 +329,7 @@ function buildScalarColumn(
                     );
                 }
             }
-            return formatColumnValue(raw, c);
+            return format(raw);
         },
         header: ({ column, table: t }) => <DataTableColumnHeader column={column} table={t} title={c.label} />,
         enableSorting: true,

@@ -39,6 +39,15 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Changed — edit-db formats grid cells from a per-column formatter
+
+- edit-db built a new `Intl.NumberFormat` for every number and percent cell, called
+  `Date.toLocaleString` for every `DateTime` grid cell, and re-resolved each column's display
+  format and enum labels per cell. Each column now gets one compiled formatter (`columnFormatter`),
+  cached on the column object, and the grid's cells call it. Output is unchanged. Measured median
+  per cell over a 1,000-cell page (`EDITDB_PERF=1` timing test, jsdom): number 273 → 7.2 µs,
+  percent 603 → 9.3 µs, datetime column 65 → 28 µs, `DateTime` grid cell 26 → 12.6 µs.
+
 ### Changed — the binary transport runs requests concurrently
 
 - One `/bifrost-ws` connection served one request at a time: a slow query held up every request

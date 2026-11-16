@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { resolveDisplayFormat, formatRelative, formatDateCellValue, abbreviateNumber } from './format-value';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import {
+    resolveDisplayFormat, formatRelative, formatDateCellValue, abbreviateNumber,
+    columnFormatter, formatColumnValue, enumLabelFor,
+} from './format-value';
 import type { Column } from '../types/schema';
 
 function col(partial: Partial<Column>): Column {
@@ -120,4 +123,58 @@ describe('abbreviateNumber', () => {
   it('handles exact millions without decimal', () => {
     expect(abbreviateNumber(1000000)).toBe('1M');
   });
+});
+
+describe('cell formatting cost', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('builds no Intl.NumberFormat per number or percent cell', () => {
+        const number = col({ paramType: 'Int', metadata: { 'display-format': 'number' } });
+        const percent = col({ paramType: 'Float', metadata: { 'display-format': 'percent' } });
+        columnFormatter(number);
+        columnFormatter(percent);
+        const ctor = vi.spyOn(Intl, 'NumberFormat');
+
+        for (let i = 0; i < 50; i++) {
+            formatColumnValue(i * 1000, number);
+            formatColumnValue(i / 100, percent);
+        }
+
+        expect(ctor).not.toHaveBeenCalled();
+    });
+
+    it('formats a DateTime grid cell without Date.toLocaleString, to the same text', () => {
+        const values = ['2024-06-15T10:30:00', '1999-12-31T23:59:59Z', '1900-06-15', '2026-05-11T22:17:47.7636626'];
+        const expected = values.map((v) => new Date(v).toLocaleString());
+        const toLocale = vi.spyOn(Date.prototype, 'toLocaleString');
+
+        const actual = values.map(formatDateCellValue);
+
+        expect(toLocale).not.toHaveBeenCalled();
+        expect(actual).toEqual(expected);
+    });
+
+    it('builds a column formatter once and reuses it', () => {
+        const c = col({ paramType: 'Int', metadata: { 'display-format': 'number' } });
+        expect(columnFormatter(c)).toBe(columnFormatter(c));
+        expect(columnFormatter(c, 'display-format-preview')).not.toBe(columnFormatter(c));
+    });
+});
+
+describe('enumLabelFor', () => {
+    const status = (labels: string[]) =>
+        col({ enumValues: ['0', '1', '0'], enumLabels: labels } as Partial<Column>);
+
+    it('takes the first occurrence of a repeated value', () => {
+        expect(enumLabelFor(0, status(['Draft', 'Active', 'Other']))).toBe('Draft');
+    });
+
+    it('treats an empty label as no label, even when a repeat has one', () => {
+        expect(enumLabelFor(0, status(['', 'Active', 'Other']))).toBeNull();
+        expect(enumLabelFor(1, status(['', 'Active', 'Other']))).toBe('Active');
+    });
+
+    it('has no labels when the counts disagree', () => {
+        expect(enumLabelFor(1, col({ enumValues: ['0', '1'], enumLabels: ['Draft'] } as Partial<Column>))).toBeNull();
+    });
 });

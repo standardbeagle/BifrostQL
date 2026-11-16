@@ -119,12 +119,106 @@ export function usableEnumLabels(column: Column): string[] | null {
     return labels;
 }
 
-/** The label for one enum value, or null when the column has no usable labels or the value is not one of them. */
-export function enumLabelFor(value: unknown, column: Column): string | null {
+/**
+ * Value-to-label lookup for an enum column, or null when it has no usable labels.
+ * The first occurrence of a repeated value wins, and an empty label is no label.
+ */
+function enumLabelMap(column: Column): ReadonlyMap<string, string> | null {
     const labels = usableEnumLabels(column);
     if (!labels) return null;
-    const index = column.enumValues!.indexOf(String(value));
-    return index < 0 ? null : labels[index] || null;
+    const map = new Map<string, string>();
+    column.enumValues!.forEach((value, index) => {
+        if (!map.has(value)) map.set(value, labels[index]);
+    });
+    for (const [value, label] of map) if (!label) map.delete(value);
+    return map;
+}
+
+/** The label for one enum value, or null when the column has no usable labels or the value is not one of them. */
+export function enumLabelFor(value: unknown, column: Column): string | null {
+    return enumLabelMap(column)?.get(String(value)) ?? null;
+}
+
+// Intl formatters are expensive to construct (hundreds of µs) and cheap to call, so
+// every one a cell uses is built once here.
+const numberFmt = new Intl.NumberFormat(undefined);
+const percentFmt = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 2 });
+
+/** Renders one cell value of a column. Built once per column by {@link columnFormatter}. */
+export type CellFormatter = (value: unknown) => ReactNode;
+
+/** Renders a non-empty value that is not an enum label, for one resolved format. */
+function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode {
+    switch (fmt) {
+        case 'date':
+        case 'datetime':
+        case 'time': {
+            const display = fmt === 'date' ? dateFmt : fmt === 'time' ? timeFmt : dateTimeFmt;
+            return (value) => {
+                const date = toDate(value);
+                if (!date) return String(value); // unparseable → show raw rather than hide it
+                return <span title={exactFmt.format(date)}>{display.format(date)}</span>;
+            };
+        }
+        case 'relative':
+            return (value) => {
+                const date = toDate(value);
+                if (!date) return String(value);
+                return (
+                    <span title={exactFmt.format(date)} className="cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
+                        {formatRelative(date)}
+                    </span>
+                );
+            };
+        case 'number':
+        case 'percent': {
+            const display = fmt === 'percent' ? percentFmt : numberFmt;
+            return (value) => {
+                const num = typeof value === 'number' ? value : Number(value);
+                if (isNaN(num)) return String(value);
+                return <span title={String(value)}>{display.format(num)}</span>;
+            };
+        }
+        default:
+            return (value) => String(value);
+    }
+}
+
+function compileColumnFormatter(column: Column, formatKey: string | undefined): CellFormatter {
+    // Enum columns often store codes (0, 1, 2) whose meaning lives in the labels.
+    const labels = enumLabelMap(column);
+    const format = formatterFor(resolveDisplayFormat(column, formatKey));
+    return (value) => {
+        if (value === null || value === undefined) return <EmptyValue kind="null" />;
+        if (value === '') return <EmptyValue kind="empty" />;
+        const label = labels?.get(String(value));
+        if (label !== undefined) return <span title={String(value)}>{label}</span>;
+        return format(value);
+    };
+}
+
+// Keyed by the column object: schema columns are rebuilt, never mutated, when the
+// schema reloads, so a stale formatter cannot outlive the column it was built from.
+const formatters = new WeakMap<Column, Map<string, CellFormatter>>();
+
+/**
+ * The cell formatter for a column: resolves its display format, enum labels and Intl
+ * formatters once, so rendering a cell is a lookup and one format call. See
+ * {@link formatColumnValue} for what it renders.
+ */
+export function columnFormatter(column: Column, formatKey?: string): CellFormatter {
+    let byKey = formatters.get(column);
+    if (!byKey) {
+        byKey = new Map();
+        formatters.set(column, byKey);
+    }
+    const key = formatKey ?? '';
+    let formatter = byKey.get(key);
+    if (!formatter) {
+        formatter = compileColumnFormatter(column, formatKey);
+        byKey.set(key, formatter);
+    }
+    return formatter;
 }
 
 /**
@@ -134,45 +228,18 @@ export function enumLabelFor(value: unknown, column: Column): string | null {
  * a `title` revealing the exact value), or the plain string otherwise.
  */
 export function formatColumnValue(value: unknown, column: Column, options?: FormatOptions): ReactNode {
-    if (value === null || value === undefined) return <EmptyValue kind="null" />;
-    if (value === '') return <EmptyValue kind="empty" />;
-
-    // Enum columns often store codes (0, 1, 2) whose meaning lives in the labels.
-    const enumLabel = enumLabelFor(value, column);
-    if (enumLabel !== null) return <span title={String(value)}>{enumLabel}</span>;
-
-    const fmt = resolveDisplayFormat(column, options?.formatKey);
-    if (fmt === null || fmt === 'raw') return String(value);
-
-    if (fmt === 'date' || fmt === 'datetime' || fmt === 'time' || fmt === 'relative') {
-        const date = toDate(value);
-        if (!date) return String(value); // unparseable → show raw rather than hide it
-        const exact = exactFmt.format(date);
-        if (fmt === 'relative') {
-            return (
-                <span title={exact} className="cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
-                    {formatRelative(date)}
-                </span>
-            );
-        }
-        const text = (fmt === 'date' ? dateFmt : fmt === 'time' ? timeFmt : dateTimeFmt).format(date);
-        return <span title={exact}>{text}</span>;
-    }
-
-    if (fmt === 'number' || fmt === 'percent') {
-        const num = typeof value === 'number' ? value : Number(value);
-        if (isNaN(num)) return String(value);
-        const text = fmt === 'percent'
-            ? new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 2 }).format(num)
-            : new Intl.NumberFormat(undefined).format(num);
-        return <span title={String(value)}>{text}</span>;
-    }
-
-    return String(value);
+    return columnFormatter(column, options?.formatKey)(value);
 }
 
+// Date.prototype.toLocaleString() with no arguments formats these fields; a cached
+// formatter with the same fields renders the same text without building one per call.
+const localeDateTimeFmt = new Intl.DateTimeFormat(undefined, {
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: 'numeric', second: 'numeric',
+});
+
 /**
- * Format a raw date/datetime string for grid-cell display via toLocaleString,
+ * Format a raw date/datetime string for grid-cell display as toLocaleString does,
  * blanking sentinel "unset" instants.
  *
  * Only exact placeholder/sentinel instants are blanked, not legitimate
@@ -187,7 +254,7 @@ export function formatDateCellValue(value: string): string {
     if (parsed.toString() === "Invalid Date") return "";
     if (parsed.getTime() === 0) return "";
     if (parsed.getUTCFullYear() <= 1) return "";
-    return parsed.toLocaleString();
+    return localeDateTimeFmt.format(parsed);
 }
 
 /**

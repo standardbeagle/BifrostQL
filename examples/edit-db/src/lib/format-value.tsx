@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Check, X } from 'lucide-react';
 import { EmptyValue } from '../components/empty-value';
 import type { Column } from '../types/schema';
 
@@ -195,10 +196,30 @@ function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode 
     }
 }
 
+/**
+ * A check or a cross for a boolean value, with the value itself as hover text and
+ * screen-reader text. Anything that is not a JSON boolean renders raw, so a
+ * mistyped value stays visible instead of reading as false.
+ */
+function formatBoolean(value: unknown): ReactNode {
+    if (typeof value !== 'boolean') return String(value);
+    const Icon = value ? Check : X;
+    return (
+        <span title={String(value)} className={value ? 'inline-flex text-foreground' : 'inline-flex text-muted-foreground'}>
+            <Icon className="size-3.5" aria-hidden="true" />
+            <span className="sr-only">{String(value)}</span>
+        </span>
+    );
+}
+
 function compileColumnFormatter(column: Column, formatKey: string | undefined): CellFormatter {
     // Enum columns often store codes (0, 1, 2) whose meaning lives in the labels.
     const labels = enumLabelMap(column);
-    const format = formatterFor(resolveDisplayFormat(column, formatKey));
+    const displayFormat = resolveDisplayFormat(column, formatKey);
+    // A boolean column with no explicit format renders as a glyph.
+    const format = displayFormat === null && baseType(column).param === 'boolean'
+        ? formatBoolean
+        : formatterFor(displayFormat);
     return (value) => {
         if (value === null || value === undefined) return <EmptyValue kind="null" />;
         if (value === '') return <EmptyValue kind="empty" />;

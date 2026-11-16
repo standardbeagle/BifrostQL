@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The form runner and its subforms (`FormRunner`, `FormRunnerView`, `FormSubformPanel`) style with the theme tokens instead of hard-coded light colors, so they follow dark mode and host themes like the rest of the editor
 - Select menus open directly beneath their trigger (`position="popper"` default); the item-aligned mode drifted long FK lists away from their label inside the scrolling edit dialog
 
+### Changed
+- Boolean cells (grid, FK previews, many-to-many panels) render a check or a cross with the value as hover and screen-reader text, instead of the words `true`/`false`. A non-boolean value in a Boolean column still shows raw
+
 ### Added
 - `defaultSort` editor prop: the sort each grid opens with, per table or `"*"` for all (e.g. newest-first); an entry naming a missing or non-orderable column falls back to the built-in default
 - `defaultSearchColumns` editor prop: the column the header quick-search starts on, per table, for tables people navigate by a business key

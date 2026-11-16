@@ -27,12 +27,14 @@ const enumColumn = col({
     enumValues: ['0', '1', '2', '3'], enumLabels: ['Draft', 'Active', 'Archived', 'Deleted'],
 } as Partial<Column>);
 const stringColumn = col({ paramType: 'String', dbType: 'nvarchar' });
+const booleanColumn = col({ paramType: 'Boolean', dbType: 'bit' });
 
 const cases: [string, () => void][] = [
     ['datetime column', () => { for (const v of dates) formatColumnValue(v, datetimeColumn); }],
     ['number column', () => { for (const v of ints) formatColumnValue(v, numberColumn); }],
     ['percent column', () => { for (const v of ints) formatColumnValue(v / 100000, percentColumn); }],
     ['labelled enum column', () => { for (const v of codes) formatColumnValue(v, enumColumn); }],
+    ['boolean column', () => { for (const v of codes) formatColumnValue(v % 2 === 0, booleanColumn); }],
     ['plain string column', () => { for (const v of strings) formatColumnValue(v, stringColumn); }],
 ];
 

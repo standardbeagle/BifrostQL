@@ -258,7 +258,7 @@ describe('getTableColumns: type-based cell rendering', () => {
     const table: Table = {
         dbName: 'events', graphQlName: 'events', name: 'events', label: 'events', labelColumn: 'id',
         primaryKeys: ['id'], isEditable: true, metadata: {},
-        columns: [col('maybeAt', 'DateTime', relative), col('at', 'DateTime!', relative)],
+        columns: [col('maybeAt', 'DateTime', relative), col('at', 'DateTime!', relative), col('done', 'Boolean')],
         multiJoins: [], singleJoins: [],
     };
     // Scalar columns never consult the schema; a join column would.
@@ -284,5 +284,11 @@ describe('getTableColumns: type-based cell rendering', () => {
         const container = cellText('maybeAt', '0001-01-01T00:00:00');
         expect(container.textContent).toBe('unset');
         expect(container.querySelector('[title]')!.getAttribute('title')).toBe('0001-01-01T00:00:00');
+    });
+
+    it('renders a Boolean cell as a glyph that still reads as the value', () => {
+        const container = cellText('done', false);
+        expect(container.querySelector('svg')).not.toBeNull();
+        expect(container.querySelector('.sr-only')!.textContent).toBe('false');
     });
 });

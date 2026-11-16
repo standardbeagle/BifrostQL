@@ -109,4 +109,21 @@ describe('formatColumnValue (render)', () => {
             expect(container.textContent).toBe('3 hours ago');
         }
     });
+
+    it.each([
+        [true, 'true'],
+        [false, 'false'],
+    ])('renders boolean %s as a glyph with the value as hover and screen-reader text', (value, text) => {
+        const { container } = render(<>{formatColumnValue(value, col({ paramType: 'Boolean!' }))}</>);
+        const outer = container.firstElementChild!;
+        expect(outer.getAttribute('title')).toBe(text);
+        expect(outer.querySelector('svg')).not.toBeNull();
+        expect(outer.querySelector('.sr-only')!.textContent).toBe(text);
+    });
+
+    it('renders a non-boolean value in a Boolean column raw, not as false', () => {
+        const { container } = render(<>{formatColumnValue(2, col({ paramType: 'Boolean' }))}</>);
+        expect(container.textContent).toBe('2');
+        expect(container.querySelector('svg')).toBeNull();
+    });
 });

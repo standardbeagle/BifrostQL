@@ -168,10 +168,8 @@ namespace BifrostQL.Core.Modules.Cdc
 
         private static string? ResolveTenant(IDbModel model, IDictionary<string, object?> userContext)
         {
-            var key = model.GetMetadataValue(MetadataKeys.Security.TenantContextKey);
-            if (string.IsNullOrWhiteSpace(key))
-                key = MetadataKeys.Auth.DefaultTenantContextKey;
-
+            // The tenant the write was scoped by: the one resolver the tenant filter uses.
+            var key = TenantFilterTransformer.ResolveTenantContextKey(model);
             return userContext.TryGetValue(key, out var value) ? value?.ToString() : null;
         }
     }

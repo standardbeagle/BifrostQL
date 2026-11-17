@@ -147,8 +147,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
             return active;
         }
 
-        var tenantKey = context.Model!.GetMetadataValue(MetadataKeys.Security.TenantContextKey)
-            ?? MetadataKeys.Auth.DefaultTenantContextKey;
+        var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(context.Model!);
         context.UserContext.TryGetValue(tenantKey, out var tenant);
         var tableName = $"{context.Table.TableSchema}.{context.Table.DbName}";
         var changeSet = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)

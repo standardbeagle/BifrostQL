@@ -85,7 +85,7 @@ namespace BifrostQL.Core.Resolvers
 
         /// <summary>
         /// DB names of the columns the caller's <c>filter</c> argument references.
-        /// Unknown names are left out; <see cref="BuildWhereClause"/> raises its own
+        /// Unknown names are left out; <see cref="BuildFilter"/> raises its own
         /// error for those, so this never invents a column for a guard to judge.
         /// </summary>
         private static IReadOnlyList<string> ResolveFilterColumns(
@@ -165,67 +165,50 @@ namespace BifrostQL.Core.Resolvers
             }).ToList();
         }
 
-        public static (string whereSql, List<(string name, object? value)> parameters) BuildWhereClause(
-            IDbTable table, ISqlDialect dialect, Dictionary<string, object?>? filter)
+        /// <summary>
+        /// The caller's <c>filter</c> argument as a <see cref="TableFilter"/>, so it renders
+        /// through the same operator vocabulary, dialect parameter casts (a PostgreSQL
+        /// <c>uuid</c> or <c>timestamp</c> column compared to a bound string) and NULL
+        /// handling (<c>_eq: null</c> is <c>IS NULL</c>) as every other read. <c>_table</c>
+        /// filters are flat: each key must name a column of this table, so no
+        /// relationship traversal reaches another table past the column guards.
+        /// </summary>
+        public static TableFilter? BuildFilter(IDbTable table, Dictionary<string, object?>? filter)
         {
             if (filter == null || filter.Count == 0)
-                return ("", new List<(string, object?)>());
+                return null;
 
-            var conditions = new List<string>();
-            var parameters = new List<(string name, object? value)>();
-            var paramIndex = 0;
-
+            // One `{ column: { _op: value } }` term per operator, ANDed: a column with two
+            // operators (`{ _gt: 1, _lt: 9 }`) is two leaf predicates, and an unknown
+            // operator fails in the dialect's GetOperator instead of being dropped.
+            var terms = new List<object?>();
             foreach (var (columnName, filterValue) in filter)
             {
                 // A malformed filter entry must fail rather than be silently
                 // skipped: dropping a predicate here widens the result set and
                 // over-exposes rows the caller meant to filter out.
-                if (filterValue is not Dictionary<string, object?> ops)
+                if (filterValue is not Dictionary<string, object?> ops || ops.Count == 0)
                     throw new BifrostExecutionError(
                         $"Filter for '{columnName}' must be an object of operators (e.g. {{ _eq: ... }}).");
 
-                var column = table.Columns.FirstOrDefault(c =>
-                    string.Equals(c.GraphQlName, columnName, StringComparison.OrdinalIgnoreCase));
-                if (column == null)
-                    throw new BifrostExecutionError(
+                var column = FindColumn(table, columnName)
+                    ?? throw new BifrostExecutionError(
                         $"Filter references unknown column '{columnName}' on table '{table.GraphQlName}'.");
-
                 foreach (var (op, value) in ops)
                 {
-                    var paramName = $"@gp{paramIndex++}";
-                    var (condition, param) = BuildCondition(dialect, column.DbName, op, paramName, value);
-                    conditions.Add(condition);
-                    if (param != null)
-                        parameters.Add(param.Value);
+                    terms.Add(new Dictionary<string, object?>
+                    {
+                        [column.GraphQlName] = new Dictionary<string, object?> { [op] = value },
+                    });
                 }
             }
 
-            if (conditions.Count == 0)
-                return ("", new List<(string, object?)>());
-
-            return ($" WHERE {string.Join(" AND ", conditions)}", parameters);
+            return TableFilter.FromObject(new Dictionary<string, object?> { ["and"] = terms }, table);
         }
 
-        private static (string condition, (string name, object? value)? parameter) BuildCondition(
-            ISqlDialect dialect, string dbColumnName, string op, string paramName, object? value)
-        {
-            var escapedColumn = dialect.EscapeIdentifier(dbColumnName);
-            return op switch
-            {
-                "_eq" => ($"{escapedColumn} = {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                "_neq" => ($"{escapedColumn} <> {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                "_gt" => ($"{escapedColumn} > {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                "_gte" => ($"{escapedColumn} >= {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                "_lt" => ($"{escapedColumn} < {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                "_lte" => ($"{escapedColumn} <= {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                "_like" => ($"{escapedColumn} LIKE {paramName}", (paramName, value ?? (object)DBNull.Value)),
-                // An unrecognized operator must throw, not silently drop the
-                // predicate — the same fail-fast rule as SqlDialectBase.GetOperator.
-                _ => throw new BifrostExecutionError(
-                    $"Unsupported filter operator '{op}'. Valid operators: " +
-                    $"_eq, _neq, _gt, _gte, _lt, _lte, _like."),
-            };
-        }
+        private static ColumnDto? FindColumn(IDbTable table, string columnName)
+            => table.Columns.FirstOrDefault(c =>
+                string.Equals(c.GraphQlName, columnName, StringComparison.OrdinalIgnoreCase));
 
         private static bool HasRoleClaim(ClaimsPrincipal principal, string role)
         {
@@ -247,53 +230,56 @@ namespace BifrostQL.Core.Resolvers
             TableReadChain chain)
         {
             var dialect = connFactory.Dialect;
-            var (whereSql, filterParams) = BuildWhereClause(table, dialect, filter);
 
             // AND the table's own tenant/soft-delete/policy filter onto the
-            // client-supplied WHERE. This must never be optional out from under a
+            // client-supplied filter. This must never be optional out from under a
             // caller — the generic-table role only controls whether the feature is
             // reachable at all.
             //
             // A relationship-shaped security filter (policy row-scope through a
             // related table) contributes an INNER JOIN that belongs in the FROM
-            // clause, plus a WHERE predicate. Render the two parts separately so the
-            // join is spliced before WHERE — wrapping the whole rendering in
-            // `WHERE (...)` produced `WHERE ( INNER JOIN ... )`, invalid SQL. The
-            // relationship sub-join selects DISTINCT parent ids, so it narrows without
-            // multiplying rows (COUNT(*) stays accurate).
-            var securityParams = new SqlParameterCollection();
-            string securityJoins = "";
-            string securityWhere = "";
-            if (securityFilter != null)
+            // clause, plus a WHERE predicate; RenderParts returns the two apart so the
+            // join is spliced before WHERE. The relationship sub-join selects DISTINCT
+            // parent ids, so it narrows without multiplying rows (COUNT(*) stays accurate).
+            var clientFilter = BuildFilter(table, filter);
+            var combined = (clientFilter, securityFilter) switch
             {
-                var parts = securityFilter.RenderParts(model, dialect, securityParams, table.DbName);
-                securityJoins = parts.Joins ?? "";
-                securityWhere = parts.Where ?? "";
-            }
-
-            var combinedWhereSql = (whereSql, securityWhere) switch
-            {
-                ("", "") => "",
-                ("", _) => $" WHERE ({securityWhere})",
-                (_, "") => whereSql,
-                _ => $"{whereSql} AND ({securityWhere})",
+                (null, null) => null,
+                (null, _) => securityFilter,
+                (_, null) => clientFilter,
+                _ => TableFilter.CombineAnd(clientFilter, securityFilter),
             };
+            var parameters = new SqlParameterCollection();
+            var joins = "";
+            var whereSql = "";
+            if (combined != null)
+            {
+                var parts = combined.RenderParts(model, dialect, parameters, table.DbName);
+                joins = parts.Joins ?? "";
+                whereSql = string.IsNullOrEmpty(parts.Where) ? "" : $" WHERE {parts.Where}";
+            }
 
             // Project the readable columns EXPLICITLY. `SELECT *` returned every column
             // including any the caller's policy denies — the column read guards can only
             // bind if the projection is derived from them. Qualify with the base table
             // name when a security join is present so the joined table's columns can't
             // widen the result either.
-            var fromClause = $"{table.DbTableRef}{securityJoins}";
-            var qualifier = string.IsNullOrEmpty(securityJoins)
+            var fromClause = $"{table.DbTableRef}{joins}";
+            var qualifier = string.IsNullOrEmpty(joins)
                 ? ""
                 : $"{dialect.EscapeIdentifier(table.DbName)}.";
             var selectList = string.Join(
                 ", ", readableColumns.Select(c => $"{qualifier}{dialect.EscapeIdentifier(c.DbName)}"));
 
-            var countSql = $"SELECT COUNT(*) FROM {fromClause}{combinedWhereSql}";
-            var pagination = dialect.Pagination(null, offset, limit);
-            var dataSql = $"SELECT {selectList} FROM {fromClause}{combinedWhereSql}{pagination}";
+            // Page in key order: LIMIT/OFFSET (or OFFSET/FETCH) without an ORDER BY lets the
+            // engine return rows in any order, so consecutive pages could repeat or skip rows.
+            // A keyless table has no stable order to offer, the same as the table query path.
+            var keyOrder = table.KeyColumns
+                .Select(c => $"{qualifier}{dialect.EscapeIdentifier(c.DbName)} asc")
+                .ToList();
+            var countSql = $"SELECT COUNT(*) FROM {fromClause}{whereSql}";
+            var pagination = dialect.Pagination(keyOrder.Count > 0 ? keyOrder : null, offset, limit);
+            var dataSql = $"SELECT {selectList} FROM {fromClause}{whereSql}{pagination}";
 
             await using var conn = connFactory.GetConnection();
             try
@@ -304,8 +290,7 @@ namespace BifrostQL.Core.Resolvers
                 {
                     await using var countCmd = conn.CreateCommand();
                     countCmd.CommandText = countSql;
-                    AddFilterParameters(countCmd, filterParams);
-                    AddSecurityParameters(countCmd, securityParams);
+                    AddParameters(countCmd, parameters);
                     var countResult = await countCmd.ExecuteScalarAsync();
                     totalCount = Convert.ToInt32(countResult);
                 }
@@ -314,8 +299,7 @@ namespace BifrostQL.Core.Resolvers
                 {
                     await using var dataCmd = conn.CreateCommand();
                     dataCmd.CommandText = dataSql;
-                    AddFilterParameters(dataCmd, filterParams);
-                    AddSecurityParameters(dataCmd, securityParams);
+                    AddParameters(dataCmd, parameters);
 
                     // Rows are materialized THROUGH the chain, which is where the
                     // decrypt/mask projection lives. Reading the reader directly is
@@ -338,20 +322,9 @@ namespace BifrostQL.Core.Resolvers
             }
         }
 
-        private static void AddFilterParameters(DbCommand cmd, List<(string name, object? value)> filterParams)
+        private static void AddParameters(DbCommand cmd, SqlParameterCollection parameters)
         {
-            foreach (var (name, value) in filterParams)
-            {
-                var p = cmd.CreateParameter();
-                p.ParameterName = name;
-                BifrostQL.Core.Resolvers.DbParameterBinder.SetValue(p, value);
-                cmd.Parameters.Add(p);
-            }
-        }
-
-        private static void AddSecurityParameters(DbCommand cmd, SqlParameterCollection securityParams)
-        {
-            foreach (var parameter in securityParams.Parameters)
+            foreach (var parameter in parameters.Parameters)
             {
                 var p = cmd.CreateParameter();
                 p.ParameterName = parameter.Name;

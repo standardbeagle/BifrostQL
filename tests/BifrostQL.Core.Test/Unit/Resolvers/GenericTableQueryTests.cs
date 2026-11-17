@@ -458,194 +458,143 @@ public sealed class GenericTableQueryTests
 
     #endregion
 
-    #region BuildWhereClause Tests
+    #region BuildFilter Tests
 
-    [Fact]
-    public void BuildWhereClause_NullFilter_ReturnsEmpty()
+    // The rendered WHERE of BuildFilter's TableFilter, qualified by the table name the
+    // resolver passes, plus the bound parameters.
+    private static (string Where, IReadOnlyList<SqlParameterInfo> Parameters) RenderFilter(
+        IDbModel model, string tableName, Dictionary<string, object?>? filter)
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, null);
-
-        whereSql.Should().BeEmpty();
-        parameters.Should().BeEmpty();
+        var table = model.GetTableByFullGraphQlName(tableName);
+        var tableFilter = GenericTableQueryResolver.BuildFilter(table, filter);
+        if (tableFilter == null)
+            return ("", Array.Empty<SqlParameterInfo>());
+        var parameters = new SqlParameterCollection();
+        var parts = tableFilter.RenderParts(model, SqlServerDialect.Instance, parameters, table.DbName);
+        parts.Joins.Should().BeEmpty("a _table filter is flat: it never joins another table");
+        return (parts.Where, parameters.Parameters);
     }
 
+    private static IDbModel UsersModel() => DbModelTestFixture.Create()
+        .WithTable("Users", t => t
+            .WithPrimaryKey("Id")
+            .WithColumn("Name", "nvarchar", isNullable: true)
+            .WithColumn("Age", "int"))
+        .Build();
+
     [Fact]
-    public void BuildWhereClause_EmptyFilter_ReturnsEmpty()
+    public void BuildFilter_NullOrEmptyFilter_ReturnsNull()
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
+        var table = UsersModel().GetTableByFullGraphQlName("Users");
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, new Dictionary<string, object?>());
-
-        whereSql.Should().BeEmpty();
-        parameters.Should().BeEmpty();
+        GenericTableQueryResolver.BuildFilter(table, null).Should().BeNull();
+        GenericTableQueryResolver.BuildFilter(table, new Dictionary<string, object?>()).Should().BeNull();
     }
 
-    [Fact]
-    public void BuildWhereClause_EqFilter_GeneratesCorrectSql()
+    [Theory]
+    [InlineData("_eq", "John", "[Users].[Name] = @p0")]
+    [InlineData("_neq", "John", "[Users].[Name] != @p0")]
+    [InlineData("_like", "%John%", "[Users].[Name] LIKE @p0")]
+    public void BuildFilter_ComparisonOnOneColumn_BindsTheValue(string op, string value, string expected)
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
+        var (where, parameters) = RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
         {
-            ["Name"] = new Dictionary<string, object?> { ["_eq"] = "John" },
-        };
+            ["Name"] = new Dictionary<string, object?> { [op] = value },
+        });
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("WHERE");
-        whereSql.Should().Contain("[Name] = @gp0");
-        parameters.Should().HaveCount(1);
-        parameters[0].name.Should().Be("@gp0");
-        parameters[0].value.Should().Be("John");
+        where.Should().Be(expected);
+        parameters.Select(p => p.Value).Should().Equal(value);
     }
 
     [Fact]
-    public void BuildWhereClause_LikeFilter_GeneratesCorrectSql()
+    public void BuildFilter_TwoOperatorsOnOneColumn_AreAnded()
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
+        var (where, parameters) = RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
         {
-            ["Name"] = new Dictionary<string, object?> { ["_like"] = "%John%" },
-        };
+            ["Age"] = new Dictionary<string, object?> { ["_gte"] = 18, ["_lt"] = 65 },
+        });
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("[Name] LIKE @gp0");
-        parameters[0].value.Should().Be("%John%");
+        where.Should().Be("(([Users].[Age] >= @p0) AND ([Users].[Age] < @p1))");
+        parameters.Select(p => p.Value).Should().Equal(18, 65);
     }
 
     [Fact]
-    public void BuildWhereClause_MultipleFilters_CombinesWithAnd()
+    public void BuildFilter_TwoColumns_AreAnded()
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t
-                .WithPrimaryKey("Id")
-                .WithColumn("Name", "nvarchar")
-                .WithColumn("Age", "int"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
+        var (where, parameters) = RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
         {
             ["Name"] = new Dictionary<string, object?> { ["_eq"] = "John" },
             ["Age"] = new Dictionary<string, object?> { ["_gt"] = 18 },
-        };
+        });
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("AND");
-        parameters.Should().HaveCount(2);
+        where.Should().Be("(([Users].[Name] = @p0) AND ([Users].[Age] > @p1))");
+        parameters.Select(p => p.Value).Should().Equal("John", 18);
     }
 
-    [Fact]
-    public void BuildWhereClause_ComparisonOperators_GenerateCorrectSql()
+    [Theory]
+    [InlineData("_eq", "[Users].[Name] IS NULL")]
+    [InlineData("_neq", "[Users].[Name] IS NOT NULL")]
+    public void BuildFilter_NullValue_RendersANullTest(string op, string expected)
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Age", "int"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
+        // `col = NULL` matches no row on any engine; the shared renderer tests for NULL.
+        var (where, parameters) = RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
         {
-            ["Age"] = new Dictionary<string, object?>
-            {
-                ["_gte"] = 18,
-                ["_lt"] = 65,
-            },
-        };
+            ["Name"] = new Dictionary<string, object?> { [op] = null },
+        });
 
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("[Age] >= @gp0");
-        whereSql.Should().Contain("[Age] < @gp1");
-        parameters.Should().HaveCount(2);
+        where.Should().Be(expected);
+        parameters.Should().BeEmpty();
     }
 
     [Fact]
-    public void BuildWhereClause_UnknownColumn_Throws()
+    public void BuildFilter_ColumnKeyIsCaseInsensitive_RendersTheColumnsName()
+    {
+        var (where, _) = RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
+        {
+            ["name"] = new Dictionary<string, object?> { ["_eq"] = "John" },
+        });
+
+        where.Should().Be("[Users].[Name] = @p0");
+    }
+
+    [Fact]
+    public void BuildFilter_UnknownColumn_Throws()
     {
         // Silently dropping the predicate would return rows the caller filtered
         // out — an unknown column must fail, not widen the result set.
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
+        var act = () => RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
         {
             ["NonExistentColumn"] = new Dictionary<string, object?> { ["_eq"] = "value" },
-        };
-
-        var act = () => GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
+        });
 
         act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
             .WithMessage("*unknown column*");
     }
 
     [Fact]
-    public void BuildWhereClause_UnknownOperator_Throws()
+    public void BuildFilter_UnknownOperator_Throws()
     {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
+        var act = () => RenderFilter(UsersModel(), "Users", new Dictionary<string, object?>
         {
             ["Name"] = new Dictionary<string, object?> { ["_unknown_op"] = "value" },
-        };
-
-        var act = () => GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
+        });
 
         act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
-            .WithMessage("*Unsupported filter operator*");
+            .WithMessage("*Unknown filter operator*");
     }
 
-    [Fact]
-    public void BuildWhereClause_MalformedFilterShape_Throws()
+    [Theory]
+    [InlineData("scalar")]
+    [InlineData("empty")]
+    public void BuildFilter_MalformedFilterShape_Throws(string shape)
     {
-        // A scalar where an operator object is expected must fail rather than be
-        // silently skipped (which would drop the intended predicate).
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
-        {
-            ["Name"] = "John",
-        };
-
-        var act = () => GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
+        // A scalar or an empty operator object where operators are expected must fail
+        // rather than be silently skipped (which would drop the intended predicate).
+        object? entry = shape == "scalar" ? "John" : new Dictionary<string, object?>();
+        var act = () => RenderFilter(UsersModel(), "Users", new Dictionary<string, object?> { ["Name"] = entry });
 
         act.Should().Throw<BifrostQL.Core.Resolvers.BifrostExecutionError>()
             .WithMessage("*must be an object of operators*");
-    }
-
-    [Fact]
-    public void BuildWhereClause_NullValue_UsesDbNull()
-    {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar", isNullable: true))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
-        {
-            ["Name"] = new Dictionary<string, object?> { ["_eq"] = null },
-        };
-
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("[Name] = @gp0");
-        parameters[0].value.Should().Be(DBNull.Value);
     }
 
     #endregion
@@ -799,46 +748,6 @@ public sealed class GenericTableQueryTests
         col.DataType.Should().Be("int");
         col.IsNullable.Should().BeFalse();
         col.IsPrimaryKey.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region NeqFilter Tests
-
-    [Fact]
-    public void BuildWhereClause_NeqFilter_GeneratesCorrectSql()
-    {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Status", "nvarchar"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
-        {
-            ["Status"] = new Dictionary<string, object?> { ["_neq"] = "inactive" },
-        };
-
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("[Status] <> @gp0");
-        parameters[0].value.Should().Be("inactive");
-    }
-
-    [Fact]
-    public void BuildWhereClause_LteFilter_GeneratesCorrectSql()
-    {
-        var model = DbModelTestFixture.Create()
-            .WithTable("Users", t => t.WithPrimaryKey("Id").WithColumn("Age", "int"))
-            .Build();
-        var table = model.GetTableByFullGraphQlName("Users");
-        var filter = new Dictionary<string, object?>
-        {
-            ["Age"] = new Dictionary<string, object?> { ["_lte"] = 100 },
-        };
-
-        var (whereSql, parameters) = GenericTableQueryResolver.BuildWhereClause(table, SqlServerDialect.Instance, filter);
-
-        whereSql.Should().Contain("[Age] <= @gp0");
-        parameters[0].value.Should().Be(100);
     }
 
     #endregion

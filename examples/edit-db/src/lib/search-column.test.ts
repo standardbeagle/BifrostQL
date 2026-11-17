@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickDefaultSearchColumn } from './search-column';
+import { pickDefaultSearchColumn, quickSearchUrl } from './search-column';
 
 describe('pickDefaultSearchColumn', () => {
     const options = [
@@ -27,5 +27,32 @@ describe('pickDefaultSearchColumn', () => {
     it('is empty when the table has no searchable columns', () => {
         expect(pickDefaultSearchColumn([], 'number')).toBe('');
         expect(pickDefaultSearchColumn(undefined, 'number')).toBe('');
+    });
+});
+
+describe('quickSearchUrl', () => {
+    const current = new URLSearchParams({ cf: '[["status","_eq","open"]]', gb: 'status', gs: 'amount' });
+
+    it('keeps column filters and grouping, replacing only the header filter', () => {
+        const url = quickSearchUrl(current, 'name', 'String', 'ann')!;
+        const params = new URLSearchParams(url.slice(1));
+        expect(params.get('cf')).toBe('[["status","_eq","open"]]');
+        expect(params.get('gb')).toBe('status');
+        expect(params.get('gs')).toBe('amount');
+        expect(JSON.parse(params.get('filter')!)).toEqual(['name', '_contains', 'ann', 'String']);
+    });
+
+    it('carries URL-reserved characters in the search term intact', () => {
+        for (const term of ['R&D', 'a+b', 'x#y', '50%', 'a=b']) {
+            const url = quickSearchUrl(new URLSearchParams(), 'name', 'String', term)!;
+            expect(JSON.parse(new URLSearchParams(url.slice(1)).get('filter')!)[2]).toBe(term);
+            expect(url).not.toContain('#');
+        }
+    });
+
+    it('keeps a bigint term as its digits and refuses non-numeric input on a numeric column', () => {
+        const url = quickSearchUrl(new URLSearchParams(), 'id', 'BigInt!', '9007199254740993')!;
+        expect(JSON.parse(new URLSearchParams(url.slice(1)).get('filter')!)).toEqual(['id', '_eq', '9007199254740993', 'BigInt!']);
+        expect(quickSearchUrl(new URLSearchParams(), 'id', 'Int!', 'abc')).toBeNull();
     });
 });

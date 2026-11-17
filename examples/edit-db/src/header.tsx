@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useSchema } from './hooks/useSchema';
 import { useColumnNav } from './hooks/useColumnNav';
 import { useEditorConfig } from './hooks/useEditorConfig';
-import { pickDefaultSearchColumn } from './lib/search-column';
+import { pickDefaultSearchColumn, quickSearchUrl } from './lib/search-column';
 import { useNavigate, useNavigation, useParams, useSearchParams } from './hooks/usePath';
 import { Table, Column } from './types/schema';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,7 @@ import {
 import { ChevronLeft, Filter, Plus, Search, X, Loader2, Home } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { humanizeName } from './lib/humanize';
-import { isNumericScalar, isStringScalar, parseScalarNumber } from './lib/scalar-types';
+import { isNumericScalar, isStringScalar } from './lib/scalar-types';
 
 interface HeaderRouteParams {
     table?: string;
@@ -70,20 +70,8 @@ export function Header() {
         const [columnName, type] = column.split(",");
         // No column selected (e.g. table has no searchable column) — nothing to do.
         if (!type) return;
-        const base = type.replace("!", "");
-        if (isNumericScalar(base)) {
-            // Guard against interpolating non-numeric input straight into the
-            // filter JSON (which produced a malformed param). parseScalarNumber
-            // also keeps a bigint/decimal search term as its digits — through a
-            // JS number it would round and search for a different value.
-            const parsed = parseScalarNumber(searchVal, base);
-            if (parsed === null) return;
-            navigate(`?filter=["${columnName}", "_eq", ${JSON.stringify(parsed)}, "${type}"]`);
-        } else if (base === "String") {
-            // JSON.stringify escapes quotes/backslashes so a search term can't
-            // break out of the filter string.
-            navigate(`?filter=["${columnName}", "_contains", ${JSON.stringify(searchVal)}, "${type}"]`);
-        }
+        const url = quickSearchUrl(search, columnName, type, searchVal);
+        if (url) navigate(url);
     }
     // Clear only the header filter param, preserving the current table/route and
     // any column filters (cf). The adjacent "Clear" button below goes home instead.

@@ -7,6 +7,7 @@ import { useToast } from './hooks/useToast';
 import { DataEditDialog } from './data-edit';
 import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
+import { isUnchangedCellValue } from './lib/cell-commit';
 import { BulkEditDialog } from './components/bulk-edit-dialog';
 import { buildStagedUpdatePayloads } from './lib/mutation-payload';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
@@ -410,10 +411,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
             const next = new Map(prev);
             const entry = next.get(rowId);
             const changes: Record<string, unknown> = { ...(entry?.changes ?? {}) };
-            const originalValue = original?.[columnId];
-            const unchanged = original !== undefined
-                && (originalValue == null) === (value == null)
-                && String(originalValue ?? '') === String(value ?? '');
+            const unchanged = original !== undefined && isUnchangedCellValue(original[columnId], value);
             if (unchanged) delete changes[columnId];
             else changes[columnId] = value;
             if (Object.keys(changes).length === 0) next.delete(rowId);

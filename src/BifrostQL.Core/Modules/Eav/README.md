@@ -35,13 +35,14 @@ parent table **exactly** — there is no name-based detection or inference.
 - `EavConfigCollector` reads the `eav-*` metadata at model build into `model.EavConfigs`.
 - `EavMetaProvider` (an `IComputedColumnProvider`, name `eav-meta`) synthesizes the
   read-only `_meta` field on each EAV-parent table via the standard
-  provider-computed-column pipeline. Per row, it reads the parent's single primary key,
-  queries the meta table (`SELECT key,value WHERE fk=@pk`), and returns the attributes as
-  a JSON object string that the `JSON` scalar serializes into a real object.
+  provider-computed-column pipeline as an `IBatchComputedColumnProvider`. Per result page,
+  it collects the parents' single primary keys, queries the meta table once
+  (`SELECT fk,key,value WHERE fk IN (...)`, 500 keys per query), and returns each row's
+  attributes as a JSON object string that the `JSON` scalar serializes into a real object.
 
 ## Scope / limits
 
 - Read-only. Single-PK parents only (composite PK → `null`).
-- One per-row query per parent row (N+1); batch later if needed.
+- One meta-table query per result page, not per parent row. No per-parent attribute cap.
 - No SQL-level filter/sort **by** an attribute — `_meta` is an opaque object. Richer
   attribute querying is intentionally out of scope.

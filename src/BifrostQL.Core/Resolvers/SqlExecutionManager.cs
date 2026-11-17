@@ -1185,28 +1185,10 @@ namespace BifrostQL.Core.Resolvers
                 var newIndex = tableData.index.Count;
                 tableData.index[column.GraphQlDbName] = newIndex;
 
-                // The provider contract is per-row, so a large result set would
-                // otherwise mean one sequential await per row (N+1). Compute rows
-                // with bounded parallelism instead: a fixed pool of workers pulls
-                // row indexes off a shared counter, capping concurrent provider/DB
-                // calls while keeping every worker busy. Values land in a side
-                // array (rows stay untouched during compute), then all rows are
-                // expanded in one pass.
                 var rowCount = tableData.data.Count;
-                var values = await ComputeColumnValuesAsync(rowCount, async rowIndex =>
-                {
-                    var rowMap = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
-                    return await provider.ComputeAsync(new ComputedColumnContext
-                    {
-                        Model = _dbModel,
-                        Table = query.DbTable,
-                        Column = column.ComputedColumn,
-                        Row = rowMap,
-                        UserContext = context.UserContext,
-                        Services = context.RequestServices,
-                        ConnFactory = connFactory,
-                    }, context.CancellationToken);
-                }, context.CancellationToken);
+                var values = provider is IBatchComputedColumnProvider batch
+                    ? await ComputeBatchColumnValuesAsync(batch, query, column, tableData, context, connFactory)
+                    : await ComputeRowColumnValuesAsync(provider, query, column, tableData, context, connFactory);
 
                 for (var rowIndex = 0; rowIndex < rowCount; rowIndex++)
                 {
@@ -1217,6 +1199,67 @@ namespace BifrostQL.Core.Resolvers
                     tableData.data[rowIndex] = expanded;
                 }
             }
+        }
+
+        /// <summary>
+        /// A batch provider sees the whole result set at once, so a value that needs its own
+        /// read (EAV <c>_meta</c>) costs one query for the page rather than one per row.
+        /// </summary>
+        private async Task<IReadOnlyList<object?>> ComputeBatchColumnValuesAsync(
+            IBatchComputedColumnProvider provider,
+            GqlObjectQuery query,
+            GqlObjectColumn column,
+            (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            IBifrostFieldContext context,
+            IDbConnFactory connFactory)
+        {
+            var rows = new IReadOnlyDictionary<string, object?>[tableData.data.Count];
+            for (var rowIndex = 0; rowIndex < rows.Length; rowIndex++)
+                rows[rowIndex] = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
+            var values = await provider.ComputeBatchAsync(new ComputedColumnBatchContext
+            {
+                Model = _dbModel,
+                Table = query.DbTable,
+                Column = column.ComputedColumn!,
+                Rows = rows,
+                UserContext = context.UserContext,
+                Services = context.RequestServices,
+                ConnFactory = connFactory,
+            }, context.CancellationToken);
+            if (values.Count != rows.Length)
+                throw new BifrostExecutionError(
+                    $"Computed column provider '{provider.Name}' returned {values.Count} values for {rows.Length} rows.");
+            return values;
+        }
+
+        private async Task<object?[]> ComputeRowColumnValuesAsync(
+            IComputedColumnProvider provider,
+            GqlObjectQuery query,
+            GqlObjectColumn column,
+            (IDictionary<string, int> index, IList<object?[]> data) tableData,
+            IBifrostFieldContext context,
+            IDbConnFactory connFactory)
+        {
+            // The provider contract is per-row, so a large result set would
+            // otherwise mean one sequential await per row (N+1). Compute rows
+            // with bounded parallelism instead: a fixed pool of workers pulls
+            // row indexes off a shared counter, capping concurrent provider/DB
+            // calls while keeping every worker busy. Values land in a side
+            // array, so rows stay untouched during compute.
+            return await ComputeColumnValuesAsync(tableData.data.Count, async rowIndex =>
+            {
+                var rowMap = ToRowMap(tableData.data[rowIndex], tableData.index, skipColumn: column.GraphQlDbName);
+                return await provider.ComputeAsync(new ComputedColumnContext
+                {
+                    Model = _dbModel,
+                    Table = query.DbTable,
+                    Column = column.ComputedColumn!,
+                    Row = rowMap,
+                    UserContext = context.UserContext,
+                    Services = context.RequestServices,
+                    ConnFactory = connFactory,
+                }, context.CancellationToken);
+            }, context.CancellationToken);
         }
 
         /// <summary>

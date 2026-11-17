@@ -140,37 +140,10 @@ public sealed class TreeSyncStateLoader
         }
     }
 
-    // The largest number of parent keys bound into one IN list. SQL Server caps a command at
-    // 2100 parameters, and the row filter adds its own.
-    private const int MaxParentKeysPerQuery = 500;
-
-    // A parent key as a grouping key. The parent's key and the child's FK come back from the
-    // provider as possibly different CLR types (int vs long, decimal), so numbers compare by value.
-    // The children placed under one parent key. A text parent key matched against a uuid FK
-    // (Postgres casts the bound text to uuid) comes back as a Guid, not the parent's string, so
-    // an exact miss on a string that parses as a uuid retries under the Guid. Text children
-    // group under string keys, so the retry never places one under another parent.
+    // The children placed under one parent key (ParentKey.TryGetGroup carries the text-vs-uuid retry).
     private static List<Dictionary<string, object?>> ChildrenOf(
         Dictionary<ParentKey, List<Dictionary<string, object?>>> childrenByParent, object pk)
-    {
-        if (childrenByParent.TryGetValue(ParentKey.Of(pk), out var found))
-            return found;
-        if (pk is string text && Guid.TryParse(text, out var uuid)
-            && childrenByParent.TryGetValue(ParentKey.Of(uuid), out found))
-            return found;
-        return new List<Dictionary<string, object?>>();
-    }
-
-    private readonly record struct ParentKey(object Value)
-    {
-        public static ParentKey Of(object value) => new(value switch
-        {
-            byte or sbyte or short or ushort or int or uint or long or ulong or decimal
-                => Convert.ToDecimal(value, System.Globalization.CultureInfo.InvariantCulture),
-            byte[] bytes => Convert.ToBase64String(bytes),
-            _ => value,
-        });
-    }
+        => ParentKey.TryGetGroup(childrenByParent, pk, out var found) ? found : new List<Dictionary<string, object?>>();
 
     private async Task<Dictionary<string, object?>?> LoadRowAsync(
         IDbTable table, ColumnDto keyCol, object pk, DbConnection conn, CancellationToken cancellationToken)
@@ -189,9 +162,9 @@ public sealed class TreeSyncStateLoader
     {
         var grouped = new Dictionary<ParentKey, List<Dictionary<string, object?>>>();
         var fkDataType = childTable.ColumnLookup[fkColumn].DataType;
-        for (var offset = 0; offset < parentPks.Count; offset += MaxParentKeysPerQuery)
+        for (var offset = 0; offset < parentPks.Count; offset += ParentKey.MaxKeysPerQuery)
         {
-            var chunk = parentPks.Skip(offset).Take(MaxParentKeysPerQuery).ToList();
+            var chunk = parentPks.Skip(offset).Take(ParentKey.MaxKeysPerQuery).ToList();
             var parameters = new Dictionary<string, object?>();
             var placeholders = new List<string>(chunk.Count);
             for (var i = 0; i < chunk.Count; i++)

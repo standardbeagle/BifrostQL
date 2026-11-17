@@ -130,6 +130,23 @@ public sealed class EavMetaProviderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task APage_OfParents_ReadsTheirAttributesInOneMetaQuery()
+    {
+        var model = await LoadModelAsync(EavRules);
+        var log = new List<string>();
+
+        var result = await ExecuteQueryAsync(model, "{ posts(sort: [id_asc]) { data { id _meta } } }", log);
+
+        result.Errors.Should().BeNullOrEmpty();
+        var first = ExtractMeta(result, postIndex: 0);
+        first.GetProperty("color").GetString().Should().Be("red");
+        first.GetProperty("size").GetString().Should().Be("L");
+        ExtractMeta(result, postIndex: 1).EnumerateObject().Should().BeEmpty("post 2's attributes are not post 1's");
+        log.Count(sql => sql.Contains("postmeta", StringComparison.OrdinalIgnoreCase))
+            .Should().Be(1, "the page's parents share one meta-table read, not one per row");
+    }
+
+    [Fact]
     public async Task NonEavTable_DoesNotExposeMetaField()
     {
         var model = await LoadModelAsync(EavRules);
@@ -161,10 +178,12 @@ public sealed class EavMetaProviderTests : IAsyncLifetime
             .Clone();
     }
 
-    private async Task<ExecutionResult> ExecuteQueryAsync(IDbModel model, string query)
+    private async Task<ExecutionResult> ExecuteQueryAsync(IDbModel model, string query, List<string>? sqlLog = null)
     {
         var schema = DbSchema.FromModel(model);
-        var factory = new SqliteDbConnFactory(ConnString);
+        IDbConnFactory factory = sqlLog is null
+            ? new SqliteDbConnFactory(ConnString)
+            : new SqlLoggingConnFactory(new SqliteDbConnFactory(ConnString), sqlLog);
 
         var services = new ServiceCollection();
         services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();

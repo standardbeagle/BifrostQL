@@ -47,10 +47,10 @@ dbo.wp_postmeta {
 
 ## How it works
 
-At model build, `EavConfigCollector` reads the `eav-*` metadata. `EavMetaProvider` (an `IComputedColumnProvider`) then synthesizes the read-only `_meta` field on each EAV-parent table through the standard [provider computed-column](/BifrostQL/concepts/computed-columns-and-validation/) pipeline: per row it reads the parent's primary key, queries the meta table, and returns the attributes as JSON that the `JSON` scalar serializes into a real object.
+At model build, `EavConfigCollector` reads the `eav-*` metadata. `EavMetaProvider` (an `IBatchComputedColumnProvider`) then synthesizes the read-only `_meta` field on each EAV-parent table through the standard [provider computed-column](/BifrostQL/concepts/computed-columns-and-validation/) pipeline: for each result page it collects the parents' primary keys, reads their attribute rows in one `WHERE fk IN (...)` query, and returns each row's attributes as JSON that the `JSON` scalar serializes into a real object.
 
 ## Scope & limits
 
 - **Read-only**, single-primary-key parents only (composite PK resolves to `null`).
-- One query per parent row (N+1) — fine for detail views; batch upstream for large lists.
+- One meta-table query per result page (500 parent keys per query), not one per parent row. The attribute rows of the page's parents are read in full: there is no per-parent attribute cap.
 - `_meta` is **opaque to SQL** — you can't filter or sort *by* an attribute. Richer attribute querying is intentionally out of scope; if you need it, model the attributes as real columns or extend the GraphQL surface. The `_meta` object is enough for the read-and-display case it targets.

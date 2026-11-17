@@ -28,6 +28,31 @@ public interface IComputedColumnProvider
     ValueTask<object?> ComputeAsync(ComputedColumnContext context, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// A provider that computes a whole result set's values in one call, for a value that
+/// needs its own read: one query for the page instead of one per row. The execution
+/// manager calls <see cref="ComputeBatchAsync"/> instead of the per-row
+/// <see cref="IComputedColumnProvider.ComputeAsync"/> when a provider implements it.
+/// </summary>
+public interface IBatchComputedColumnProvider : IComputedColumnProvider
+{
+    /// <summary>
+    /// One value per row of <see cref="ComputedColumnBatchContext.Rows"/>, in the same order.
+    /// </summary>
+    ValueTask<IReadOnlyList<object?>> ComputeBatchAsync(ComputedColumnBatchContext context, CancellationToken cancellationToken = default);
+}
+
+public sealed class ComputedColumnBatchContext
+{
+    public required IDbModel Model { get; init; }
+    public required IDbTable Table { get; init; }
+    public required ComputedColumnDefinition Column { get; init; }
+    public required IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows { get; init; }
+    public required IDictionary<string, object?> UserContext { get; init; }
+    public IServiceProvider? Services { get; init; }
+    public IDbConnFactory? ConnFactory { get; init; }
+}
+
 public interface IComputedColumnProviders : IReadOnlyCollection<IComputedColumnProvider>
 {
     bool TryGet(string name, out IComputedColumnProvider provider);

@@ -39,6 +39,7 @@ export function PivotPane({ fetcher, initialDefinition, store = pivotStore }: { 
   const [tables, setTables] = useState<Table[]>([]);
   const [saved, setSaved] = useState<SavedObject[]>([]);
   const [name, setName] = useState("Untitled pivot");
+  const [activePivot, setActivePivot] = useState<SavedObject | null>(null);
   const [result, setResult] = useState<PivotPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const savedQueries = useMemo(() => saved.flatMap((object) => {
@@ -61,7 +62,7 @@ export function PivotPane({ fetcher, initialDefinition, store = pivotStore }: { 
 
   useEffect(() => { void fetcher.query<{ _dbSchema: Table[] }>("query PivotSchema { _dbSchema { graphQlName columns { graphQlName } } }").then((data) => setTables(data._dbSchema ?? [])).catch((reason) => setError(String(reason))); }, [fetcher]);
   useEffect(() => { void store.list(PIVOT_SAVED_OBJECT_TYPE).then(setSaved).catch((reason) => setError(String(reason))); }, [store]);
-  useEffect(() => { if (initialDefinition) setDefinition(initialDefinition); }, [initialDefinition]);
+  useEffect(() => { if (initialDefinition) { setDefinition(initialDefinition); setActivePivot(null); } }, [initialDefinition]);
   useEffect(() => {
     if (!ready || !active) return;
     let live = true;
@@ -81,8 +82,9 @@ export function PivotPane({ fetcher, initialDefinition, store = pivotStore }: { 
   const chooseTable = (table: string) => update({ source: { kind: "table", table }, rowKeys: [], pivotColumn: "", valueColumn: "" });
   const addRow = (field: string) => { if (field && field !== definition.pivotColumn) update({ rowKeys: [...definition.rowKeys.filter((key) => key !== field), field] }); };
   const removeRow = (field: string) => update({ rowKeys: definition.rowKeys.filter((key) => key !== field) });
-  const save = async () => { try { const object = await savePivot(store, { id: crypto.randomUUID?.() ?? `pivot-${Date.now()}`, name: name || "Untitled pivot", definition, version: 0 }); setSaved((items) => [...items.filter((item) => item.id !== object.id), object]); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } };
-  const load = (id: string) => { const object = saved.find((item) => item.id === id); const parsed = object && openPivot(object); if (parsed) { setDefinition(parsed); setName(object.name); } };
+  // Re-saving a loaded pivot updates it (same id + version) instead of minting a duplicate.
+  const save = async () => { try { const object = await savePivot(store, { id: activePivot?.id ?? crypto.randomUUID?.() ?? `pivot-${Date.now()}`, name: name || "Untitled pivot", definition, version: activePivot?.version ?? 0 }); setActivePivot(object); setSaved((items) => [...items.filter((item) => item.id !== object.id), object]); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const load = (id: string) => { const object = saved.find((item) => item.id === id); const parsed = object && openPivot(object); if (parsed) { setDefinition(parsed); setName(object.name); setActivePivot(object); } };
   const exportMatrix = async () => { if (!result) return; try { downloadTextFile(await buildPivotCsv(result), filenameFor("pivot", "csv"), mimeFor("csv")); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } };
   const sourceKind = definition.source.kind;
   const visibleError = error ?? resolved.error;

@@ -91,4 +91,15 @@ describe("PivotPane", () => {
     fireEvent.change(screen.getByLabelText("Open saved pivot"), { target: { value: objects[0].id } });
     expect((screen.getByLabelText("Pivot aggregate") as HTMLSelectElement).value).toBe("sum");
   });
+
+  it("re-saves an opened pivot in place instead of duplicating it", async () => {
+    const objects: any[] = [{ id: "pivot-1", type: "query", name: "Quarterly", version: 4, definition }];
+    const store = { list: vi.fn().mockResolvedValue(objects), put: vi.fn(async (item) => ({ ...item, version: item.version + 1 })) };
+    render(<PivotPane fetcher={fetcher() as never} store={store as never} />);
+    await screen.findByRole("option", { name: "Quarterly" });
+    fireEvent.change(screen.getByLabelText("Open saved pivot"), { target: { value: "pivot-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save pivot" }));
+    await waitFor(() => expect(store.put).toHaveBeenCalledTimes(1));
+    expect(store.put.mock.calls[0][0]).toMatchObject({ id: "pivot-1", version: 4 });
+  });
 });

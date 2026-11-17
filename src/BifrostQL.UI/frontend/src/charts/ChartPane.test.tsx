@@ -89,4 +89,40 @@ describe("ChartPane", () => {
     expect((screen.getByLabelText("Chart type") as HTMLSelectElement).value).toBe("line");
     expect((screen.getByLabelText("Chart dimension") as HTMLSelectElement).value).toBe("region");
   });
+
+  it("re-saves an opened chart in place instead of duplicating it", async () => {
+    const saved: any[] = [{ id: "chart-1", type: "query", name: "Regional", version: 3, definition: initial }];
+    const store = {
+      list: vi.fn().mockImplementation(async () => saved),
+      put: vi.fn().mockImplementation(async (object) => ({ ...object, version: (object.version ?? 0) + 1 })),
+    };
+    render(<ChartPane fetcher={fetcher() as never} store={store as never} />);
+    await screen.findByRole("option", { name: "Regional" });
+    fireEvent.change(screen.getByLabelText("Open saved chart"), { target: { value: "chart-1" } });
+    fireEvent.change(screen.getByLabelText("Chart type"), { target: { value: "bar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save chart" }));
+    await waitFor(() => expect(store.put).toHaveBeenCalledTimes(1));
+    expect(store.put.mock.calls[0][0]).toMatchObject({ id: "chart-1", version: 3 });
+  });
+
+  it("drops a Visualize-seeded filter when the table changes", async () => {
+    const seeded: ChartDefinition = { ...initial, source: { kind: "table", table: "orders", filter: { region: { _eq: "north" } }, filterType: "TableFilterordersInput" } };
+    const live = { query: vi.fn((query: string) => Promise.resolve(query.includes("ChartSchema")
+      ? { _dbSchema: [...schema._dbSchema, { graphQlName: "customers", columns: [{ graphQlName: "city" }] }] }
+      : { ordersAggregate: [], customersAggregate: [{ city: "Oslo", _count: 1 }] })) };
+    render(<ChartPane fetcher={live as never} initialDefinition={seeded} store={{ list: vi.fn().mockResolvedValue([]) } as never} />);
+    await screen.findByRole("option", { name: "customers" });
+    fireEvent.change(screen.getByLabelText("Chart table"), { target: { value: "customers" } });
+    fireEvent.change(screen.getByLabelText("Chart dimension"), { target: { value: "city" } });
+    await waitFor(() => expect(live.query.mock.calls.some(([q]) => String(q).includes("customersAggregate"))).toBe(true));
+    const call = (live.query.mock.calls as unknown as Array<[string, Record<string, unknown>?]>).find(([q]) => String(q).includes("customersAggregate"))!;
+    expect(call[0]).not.toContain("TableFilterordersInput");
+    expect(call[1]?.filter).toBeUndefined();
+  });
+
+  it("shows a schema load failure instead of empty pickers", async () => {
+    const live = { query: vi.fn(() => Promise.reject(new Error("schema offline"))) };
+    render(<ChartPane fetcher={live as never} store={{ list: vi.fn().mockResolvedValue([]) } as never} />);
+    expect((await screen.findByRole("alert")).textContent).toContain("schema offline");
+  });
 });

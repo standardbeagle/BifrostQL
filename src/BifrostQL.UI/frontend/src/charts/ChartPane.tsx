@@ -13,18 +13,22 @@ export function ChartPane({ fetcher, initialDefinition, onInitialDefinitionConsu
   const [tables, setTables] = useState<Array<{ graphQlName: string; columns: Array<{ graphQlName: string }> }>>([]);
   const [savedCharts, setSavedCharts] = useState<SavedObject[]>([]);
   const [chartName, setChartName] = useState("Untitled chart");
+  // The saved chart being edited: re-saving updates it (same id + version)
+  // instead of minting a duplicate. Null for a chart not saved yet.
+  const [activeChart, setActiveChart] = useState<SavedObject | null>(null);
   const [data, setData] = useState<ChartData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const columns = useMemo(() => definition.dimensions, [definition.dimensions]);
   const selectedTable = tables.find((table) => table.graphQlName === definition.source.table);
   // These are the field names declared by MetadataSchemaGenerator's _dbSchema
   // surface. Labels are a client projection and are deliberately not queried.
-  useEffect(() => { void fetcher.query<{ _dbSchema: typeof tables }>("query ChartSchema { _dbSchema { graphQlName columns { graphQlName } } }").then((value) => setTables(value._dbSchema ?? [])); }, [fetcher]);
-  useEffect(() => { void store.list(CHART_SAVED_OBJECT_TYPE).then((objects) => setSavedCharts(objects.filter((object) => openChart(object) !== null))); }, [store]);
+  const fail = (reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason));
+  useEffect(() => { void fetcher.query<{ _dbSchema: typeof tables }>("query ChartSchema { _dbSchema { graphQlName columns { graphQlName } } }").then((value) => setTables(value._dbSchema ?? [])).catch(fail); }, [fetcher]);
+  useEffect(() => { void store.list(CHART_SAVED_OBJECT_TYPE).then((objects) => setSavedCharts(objects.filter((object) => openChart(object) !== null))).catch(fail); }, [store]);
   // Consuming the seed lets the shell clear it (mirrors the query builder's
   // onOpenHandled) — otherwise a later visit to the Charts pane re-seeds the
   // stale definition from the last Visualize.
-  useEffect(() => { if (initialDefinition) { setDefinition(initialDefinition); onInitialDefinitionConsumed?.(); } }, [initialDefinition]);
+  useEffect(() => { if (initialDefinition) { setDefinition(initialDefinition); setActiveChart(null); onInitialDefinitionConsumed?.(); } }, [initialDefinition]);
   useEffect(() => {
     if (!definition.source.table || !definition.dimensions.length) return;
     if (definition.chartType === "sankey" && definition.dimensions.length < 2) return;
@@ -43,22 +47,23 @@ export function ChartPane({ fetcher, initialDefinition, onInitialDefinitionConsu
   const addMeasure = () => update({ measures: [...definition.measures, { op: "count" }] });
   const save = async () => {
     try {
-      const object = await saveChart(store, { id: crypto.randomUUID?.() ?? `chart-${Date.now()}`, name: chartName || "Untitled chart", definition, version: 0 });
+      const object = await saveChart(store, { id: activeChart?.id ?? crypto.randomUUID?.() ?? `chart-${Date.now()}`, name: chartName || "Untitled chart", definition, version: activeChart?.version ?? 0 });
+      setActiveChart(object);
       setSavedCharts((current) => [...current.filter((item) => item.id !== object.id), object]);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   const load = (id: string) => {
     const chart = savedCharts.find((object) => object.id === id);
     const parsed = chart && openChart(chart);
-    if (parsed) { setDefinition(parsed); setChartName(chart.name); }
+    if (parsed) { setDefinition(parsed); setChartName(chart.name); setActiveChart(chart); }
   };
   return <section className="bifrost-chart-pane" aria-label="Chart panel">
-    <header><h2>Chart</h2><label>Table <select aria-label="Chart table" value={definition.source.table} onChange={(e) => update({ source: { ...definition.source, table: e.target.value }, dimensions: [] })}><option value="">Choose a table</option>{tables.map((table) => <option key={table.graphQlName} value={table.graphQlName}>{table.graphQlName}</option>)}</select></label>
+    <header><h2>Chart</h2><label>Table <select aria-label="Chart table" value={definition.source.table} onChange={(e) => update({ source: { kind: "table", table: e.target.value }, dimensions: [], measures: [{ op: "count" }] })}><option value="">Choose a table</option>{tables.map((table) => <option key={table.graphQlName} value={table.graphQlName}>{table.graphQlName}</option>)}</select></label>
       <label>Dimension <select aria-label="Chart dimension" value={columns[0] ?? ""} onChange={(e) => update({ dimensions: e.target.value ? [e.target.value, ...columns.slice(1)] : [] })}><option value="">Choose a column</option>{selectedTable?.columns.map((column) => <option key={column.graphQlName} value={column.graphQlName}>{column.graphQlName}</option>)}</select></label>
       {definition.chartType === "sankey" && <label>Flow to <select aria-label="Sankey target dimension" value={columns[1] ?? ""} onChange={(e) => update({ dimensions: e.target.value ? [columns[0] ?? "", e.target.value] : columns.slice(0, 1) })}><option value="">Choose a column</option>{selectedTable?.columns.map((column) => <option key={column.graphQlName} value={column.graphQlName}>{column.graphQlName}</option>)}</select></label>}
       <label>Type <select aria-label="Chart type" value={definition.chartType} onChange={(e) => update({ chartType: e.target.value as ChartType })}><option value="bar">Bar</option><option value="line">Line</option><option value="pie">Pie</option><option value="area">Area</option><option value="sankey">Sankey</option></select></label>
       <button type="button" onClick={addMeasure}>Add measure</button></header>
-    <div className="bifrost-chart-save"><label>Chart name <input aria-label="Chart name" value={chartName} onChange={(e) => setChartName(e.target.value)} /></label><button type="button" onClick={() => void save()}>Save chart</button><label>Open saved chart <select aria-label="Open saved chart" defaultValue="" onChange={(e) => load(e.target.value)}><option value="">Open a saved chart</option>{savedCharts.map((chart) => <option key={chart.id} value={chart.id}>{chart.name}</option>)}</select></label></div>
+    <div className="bifrost-chart-save"><label>Chart name <input aria-label="Chart name" value={chartName} onChange={(e) => setChartName(e.target.value)} /></label><button type="button" onClick={() => void save()}>Save chart</button><button type="button" onClick={() => { setDefinition(emptyDefinition("")); setChartName("Untitled chart"); setActiveChart(null); }}>New chart</button><label>Open saved chart <select aria-label="Open saved chart" defaultValue="" onChange={(e) => load(e.target.value)}><option value="">Open a saved chart</option>{savedCharts.map((chart) => <option key={chart.id} value={chart.id}>{chart.name}</option>)}</select></label></div>
     <div className="bifrost-chart-measures">{definition.measures.map((measure, index) => <MeasureEditor key={index} measure={measure} columns={selectedTable?.columns ?? []} onChange={(next) => update({ measures: definition.measures.map((m, i) => i === index ? next : m) })} />)}</div>
     {error && <p role="alert">{error}</p>}
     {!error && data === null && <p>Choose a table and dimension to preview a server aggregate.</p>}

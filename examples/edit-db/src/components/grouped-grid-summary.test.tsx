@@ -66,7 +66,9 @@ describe('GroupedGridSummary', () => {
         expect(screen.queryByText(/More than \d+ groups match/)).not.toBeInTheDocument();
         rerender(view(true));
         expect(screen.getByText('First 1 groups')).toBeInTheDocument();
-        expect(screen.getByRole('note')).toHaveTextContent(/More than 1000 groups match/);
+        // The count is the window the server returned, not a client constant:
+        // under a lower max-query-rows the cut lands below GROUPING_BUCKET_CAP.
+        expect(screen.getByRole('note')).toHaveTextContent(/More than 1 groups match\. Only the first 1 by Status/);
     });
 
     it('defines explicit aggregate key/count ordering controls', () => {

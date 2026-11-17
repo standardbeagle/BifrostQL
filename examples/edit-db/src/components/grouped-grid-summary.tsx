@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useFetcher } from '@/common/fetcher';
-import { GROUPING_BUCKET_CAP, type GridGroupMemberRequest, type GroupingRow, type GroupingSort } from '@/lib/grid-grouping';
+import type { GridGroupMemberRequest, GroupingRow, GroupingSort } from '@/lib/grid-grouping';
 
 interface GroupedGridSummaryProps {
     label: string;
     rows: readonly GroupingRow[];
-    /** The server had more buckets than GROUPING_BUCKET_CAP; `rows` is the first cap in key order. */
+    /** The server had more buckets than it returned (the cap or its row ceiling); `rows` is the first window in key order. */
     truncated?: boolean;
     loading?: boolean;
     error?: Error | null;
@@ -70,7 +70,7 @@ export function GroupedGridSummary({ label, rows, truncated, loading, error, sum
             </label>
             <span className="text-muted-foreground">{truncated ? `First ${rows.length} groups` : `${rows.length} groups`}</span>
         </div>
-        {truncated && <p role="note" className="mb-1 text-xs text-muted-foreground">More than {GROUPING_BUCKET_CAP} groups match. Only the first {GROUPING_BUCKET_CAP} by {label} are shown and ordered; narrow the filter to see the rest.</p>}
+        {truncated && <p role="note" className="mb-1 text-xs text-muted-foreground">More than {rows.length} groups match. Only the first {rows.length} by {label} are shown and ordered; narrow the filter to see the rest.</p>}
         <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 text-sm">
             {visible.map((row, index) => <div key={`${String(row.value)}-${index}`} className="contents">
                 <button type="button" className="text-left underline-offset-2 hover:underline" aria-expanded={expanded === row} onClick={() => setExpanded(expanded === row ? null : row)}>{row.value === null || row.value === undefined ? '(null)' : String(row.value)}</button>

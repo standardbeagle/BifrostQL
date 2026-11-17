@@ -45,7 +45,18 @@ export const DEFAULT_GROUPING_SORT: GroupingSort = { field: 'key', desc: false }
  */
 export const GROUPING_BUCKET_CAP = 1000;
 
-/** Aggregate buckets plus whether the server had more than the cap. */
+/**
+ * Response alias of the truncation probe: the same aggregate shifted by one
+ * bucket (`offset: 1`). The server clamps the requested window to its
+ * `max-query-rows` ceiling, which the client cannot read; under a ceiling of
+ * 500 the main field returns 500 buckets and the cap+1 sentinel never fires.
+ * The probe answers "is there a bucket after the last one shown?" against the
+ * server's own window: a complete answer of N buckets leaves N-1 after the
+ * first, a cut one leaves at least N.
+ */
+export const GROUPING_PROBE_FIELD = 'groupsAfterFirst';
+
+/** Aggregate buckets plus whether the server had more than it returned. */
 export interface GroupingResult {
     rows: GroupingRow[];
     truncated: boolean;
@@ -154,8 +165,11 @@ export function buildGridGroupingRequest(
     }
     const active = activePredicate(table, columnFilters, headerFilter);
     const args = [active.clauses.length > 0 ? `filter: ${andAll(active.clauses)}` : '', `groupBy: [${groupBy.graphQlName}]`, `limit: ${GROUPING_BUCKET_CAP + 1}`].filter(Boolean).join(', ');
+    // The probe selects only the key: it is counted, never displayed. It costs a
+    // second GROUP BY in the same request, the price of knowing the server's window.
+    const probe = `${GROUPING_PROBE_FIELD}: ${table.name}Aggregate(${args}, offset: 1) { ${groupBy.graphQlName} }`;
     return {
-        query: `query GridGrouping${declarations(active.params)} { ${table.name}Aggregate(${args}) { ${groupBy.graphQlName} _count${sumBy ? ` _sum { ${sumBy.graphQlName} }` : ''} } }`,
+        query: `query GridGrouping${declarations(active.params)} { ${table.name}Aggregate(${args}) { ${groupBy.graphQlName} _count${sumBy ? ` _sum { ${sumBy.graphQlName} }` : ''} } ${probe} }`,
         variables: active.variables,
         groupBy,
         sumBy,
@@ -197,15 +211,28 @@ export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort:
 }
 
 /**
+ * Whether the server holds buckets past the ones it returned: the cap+1
+ * sentinel came back, or the probe shifted by one bucket is as long as the
+ * main answer (see GROUPING_PROBE_FIELD), which happens only when the server's
+ * own window, not the bucket count, ended the main answer.
+ */
+export function isGroupingTruncated(returned: number, probeReturned: number): boolean {
+    return returned > GROUPING_BUCKET_CAP || (returned > 0 && probeReturned >= returned);
+}
+
+/**
  * Reads the aggregate buckets (with the configured measure, never derived from
- * page rows), dropping the cap+1 sentinel and reporting it as `truncated`.
- * The server windows buckets in key order, so a truncated count sort ranks
- * only the first GROUPING_BUCKET_CAP keys; the summary says so.
+ * page rows), dropping the cap+1 sentinel and reporting a cut — by the cap or
+ * by the server's row ceiling — as `truncated`. The server windows buckets in
+ * key order, so a truncated count sort ranks only the buckets shown; the
+ * summary says so.
  */
 export function readGroupingResult(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sumBy: Column | null, sort: GroupingSort = DEFAULT_GROUPING_SORT): GroupingResult {
     const raw = data?.[`${table.name}Aggregate`];
     if (!Array.isArray(raw)) return { rows: [], truncated: false };
-    const truncated = raw.length > GROUPING_BUCKET_CAP;
+    const probe = data?.[GROUPING_PROBE_FIELD];
+    if (!Array.isArray(probe)) throw new Error('The grouping response is missing its truncation probe.');
+    const truncated = isGroupingTruncated(raw.length, probe.length);
     const integerKeys = isIntegerScalar(groupBy.paramType);
     // Couple each server row to its configured sum before ordering; never
     // calculate a measure from the current flat page.

@@ -124,4 +124,25 @@ public sealed class GroupedAggregateGroupCapTests : IAsyncLifetime
         Ids(first).Should().Equal(1, 2, 3);
         Ids(second).Should().Equal(4, 5, 6);
     }
+
+    /// <summary>
+    /// The contract edit-db's grouped grid reads truncation from
+    /// (<c>examples/edit-db/src/lib/grid-grouping.ts</c>, <c>GROUPING_PROBE_FIELD</c>):
+    /// the client cannot read <c>max-query-rows</c>, so beside the displayed
+    /// aggregate it sends an aliased copy shifted by <c>offset: 1</c>. A cut answer
+    /// leaves the probe as long as the main field; a complete one leaves it one short.
+    /// </summary>
+    [Fact]
+    public async Task AliasedOffsetProbe_TellsACeilingCutFromACompleteAnswer()
+    {
+        const string probe = "groupsAfterFirst: eventsAggregate(groupBy: [id], limit: 1001, offset: 1) { id }";
+        using var cut = await RunAsync($"{{ eventsAggregate(groupBy: [id], limit: 1001) {{ id _count }} {probe} }}");
+        Ids(cut).Should().HaveCount(Ceiling, "the ceiling, not the 1001 the client asked for, ends the answer");
+        cut.RootElement.GetProperty("data").GetProperty("groupsAfterFirst").GetArrayLength().Should().Be(Ceiling);
+
+        const string narrowProbe = "groupsAfterFirst: eventsAggregate(filter: {id: {_lte: 4}}, groupBy: [id], limit: 1001, offset: 1) { id }";
+        using var complete = await RunAsync($"{{ eventsAggregate(filter: {{id: {{_lte: 4}}}}, groupBy: [id], limit: 1001) {{ id _count }} {narrowProbe} }}");
+        Ids(complete).Should().Equal(1, 2, 3, 4);
+        complete.RootElement.GetProperty("data").GetProperty("groupsAfterFirst").GetArrayLength().Should().Be(3);
+    }
 }

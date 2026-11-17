@@ -39,6 +39,59 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Breaking — second review pass
+
+- **`BigInt` is sent as a decimal string.** The scalar now writes every value as a string; input still accepts a number or a string. A JSON number past 2^53 rounds in every browser's `JSON.parse`, so a bigint key shown or sent back could name a different row. Clients that read `BigInt` fields as numbers must accept strings. `Decimal` is unchanged. `@bifrostql/codegen` maps 64-bit proto integers to `string` to match.
+- **SQL Server `numeric`, `money` and `smallmoney` map to `Decimal`** (were `String`). Clients sending string literals for these columns must send numbers.
+- **`UseBifrostHttp3` binds `127.0.0.1` by default.** Set `BifrostHttp3Options.ListenAddress` (Host key `BifrostQL:Http3:ListenAddress`) to widen it.
+- **NATS CDC publishes through JetStream** and waits for the ack. It needs a stream bound to `bifrostql.>`; without one the publish fails as transient.
+- **Validation patterns** run on the linear-time regex engine, fully anchored, compiled once. Patterns with lookaround or backreferences are rejected as invalid.
+- **Removed options:** LDAP `MaxOutstandingOperations` (it was never enforced); the unused logging options `EnableConsole`, `EnableFile`, `MinimumLevel`, `FilePath`.
+- **Implementers:** `IWorkflowDataExecutor` gains `TransitionAsync` and cancellation tokens; `IWorkflowRunner.RunAsync` takes an optional token. `BifrostEngine`'s constructor drops its transformer and observer parameters, and `BifrostRequest.RequestServices` is required.
+- **`_rawQuery` past `raw-sql-max-rows` fails** instead of returning a cut list. The field is a bare list with no place for a truncation flag.
+- **`max-query-rows` below 2 is rejected at model load.** A ceiling of 1 made OData and gRPC `List` return empty pages with no continuation.
+- **Refused instead of answered wrong:** relationship filters, `_agg` paths and many-to-many collections over a composite key (they joined on one column pair); `_agg` below a nested link; a query intent with two single links to the same table (the second overwrote the first); tables whose generated GraphQL names collide (`orders_aggregate` next to `orders`).
+- **`DbSavedObjectStore`** creates `NVARCHAR(128)`/`VARCHAR(128)` key columns so it works on SQL Server and MySQL; ids over 128 characters are refused. Existing tables are not migrated. Saved objects are capped at 1000 per owner (507) and 512 KiB per PUT (413).
+- **Continuation tokens** (gRPC, OData, S3, RESP, LDAP, feeds) issued before this release are invalid once: the identity fingerprint they bind changed.
+- **`@bifrostql/react`** (experimental): the query cache key includes the endpoint; `buildGraphqlQuery` returns `{ query, variables }` and sends filters as a typed `$filter` variable; diff refuses a key change; `useBifrostSubscription` is marked unsupported.
+
+### Security — second review pass
+
+- **`_rawQuery` is read-only.** It runs in a transaction that is always rolled back: read-only on PostgreSQL and MySQL, `query_only` on SQLite. SQL Server also parses the text and accepts one batch with one `SELECT` and no `INTO`. The lexer follows each engine's quoting (`$tag$`, MySQL backslash escapes).
+- **Four-eyes approval** compares one identity (the policy subject) on both sides; `user-audit-key` no longer changes who counts as the requester.
+- **Deferred `undo`** is scoped to the caller's tenant; another tenant's change set answers not found. The approval queue shows a change only to its requester and the table's approvers.
+- **Local login** is throttled per source IP and per account before the password is checked. Sessions end 8 hours after login, and role, tenant and deletion changes apply within a minute. Weak hashes are upgraded on login.
+- **pgwire** cleartext password auth and **OData** Basic auth are rate-limited per source and per account (OData: `MaxBasicAuthAttemptsPerSource` / `MaxBasicAuthAttemptsPerAccount` 100, `BasicAuthAttemptWindow` 1 min, 429 over the cap). Every limiter stores account keys hashed.
+- **`bifrost serve`** no longer sends any-origin CORS headers and accepts only loopback Host names.
+- **`BifrostQL:DevIdentity`** refuses to start outside Development and ChatDemo.
+- **gRPC** Get, List and Stream return only columns the caller may read. RESP and pgwire shape errors on a read-denied table answer exactly like the denial. `_dbSchema` hides a many-to-many bridge that names a hidden column. `@skip`/`@include` are honoured, so an excluded field is neither projected nor policy-checked.
+- **`/_app-metadata`** with `RequireAuth` refuses a principal that projects to an empty identity, like `/_blob` and `/_saved-objects`. `/_blob` checks `MaxBlobBytes` before decoding base64; chat media is capped at `MaxMediaBytes` (16 MiB, 413).
+- **Binary WebSocket:** grants resolve per message; the reassembly cap counts received bytes; a corrupt client chunk is not acked. Endpoint and connection faults return the same constant text as HTTP.
+- **Prometheus** no longer shares scrape-cache entries between identities that differ only in a list claim. The `EngineMetrics` scrape marker can't be forged.
+- **Desktop UI:** WordPress discovery errors no longer echo `wp config list` output, including `DB_PASSWORD`.
+- Declared frame lengths (pgwire, LDAP, RESP) no longer pre-allocate before the bytes arrive; pgwire refuses `$N` above 32767.
+
+### Fixed — second review pass
+
+- **Writes:** post-commit observers and workflows fire only when a row changed, on single, batch and filtered updates. A client abort during a batch rolls back and surfaces as cancellation. In-transaction hooks and workflow runs get the request token; a workflow is cancelled on client disconnect.
+- **Workflow `transition`** writes only the key and the state column, and only while the row still holds `from`; a concurrent change fails with `conflict`. Tables with computed or blind-index columns no longer fail every transition.
+- **Encrypted columns:** declared validation rules run on the plaintext; the re-encryption sweep no longer overwrites a value written after it read the row.
+- **Deferred changes:** timestamps read as UTC on every host time zone; the review queue works without tenants. A blank `tenant-context-key` fails fast in the outbox and deferred hooks.
+- **Retention** skips and counts poison rows (`RowsFailed`, `SweepsFailed`) and drains its backlog in one pass (up to 10,000 rows). **TreeSync** honours client aborts.
+- **Reads:** one link or `_agg` under two aliases returns each alias's own data; nested collections page with a primary-key tie-break; `_table` filters support `_eq: null`, share the table fields' operators and casts, and page by key.
+- **SQL Server:** PIVOT over `bit` and other non-text columns; tables whose names need quoting (`report.v2`) load identity and computed flags. **SQLite:** schema PRAGMAs bind the table name.
+- **Model:** links are named clear of columns; bad relationship keys are reported, not dropped; the metadata many-to-many reverse link works and two junctions between one pair both produce links. `policy-row-scope` and `ldap-base-dn` are validated with the runtime parse. Feed, LDAP, retention and chat timestamps share one date/time type list.
+- **gRPC** delete reports the real affected-row count. **RESP** `RESET` re-arms the pre-auth deadline; an ambiguous bare name in `SCAN MATCH` is refused. **S3** ranged GETs fetch only the range and unranged GETs stream (`IStorageProvider.OpenReadRangeAsync`, default member).
+- **Binary client:** a request over 4 MiB is refused before sending; a 1002 close no longer replays in a loop; requests past 16 per connection queue; `stream()` yields payload bytes only and acks on consume. The never-supported cross-reconnect resume is removed: after a reconnect, queries are re-sent, mutations are refused.
+- **Desktop UI:** opening a SQLite file connects the server to it; Quick Start offers every schema the host serves; SQL batches keep `BEGIN…END` bodies and stop on error; bridge requests run concurrently and a timeout cancels the query on the host; vault SSH tunnels stop when their connect fails or is replaced; designer saved queries map DB names to GraphQL names, so a second schema's table is no longer queried by mistake.
+- **edit-db CSV export** leaves a numeric literal (`-5`, `+12.50`) alone instead of prefixing an apostrophe.
+- **`@bifrostql/react`:** BigInt columns sort and aggregate exactly; edits made during a save are kept; composite keys identify rows; URL page size is clamped to the configured options.
+- Removed the unreachable stored-procedure and cross-database resolvers.
+
+### Changed — second review pass
+
+- pgwire flushes once per result and parses each statement once. LDAP resolves `member`/`memberOf` only for returned entries. The outbox drains a backlog without waiting, held events release in bounded set-based batches, and the mutation transformer chain stops at the first refusal (only its errors come back). The binary receive buffer is pooled. Chat connector tools are built once per model.
+
 ### Fixed — tables with the same name in two schemas
 
 Several places looked a table up by its bare DB name, so a database with the same table name in two schemas crashed at load, bound to the wrong table, or could not address one of them.

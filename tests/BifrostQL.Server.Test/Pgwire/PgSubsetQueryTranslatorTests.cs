@@ -269,20 +269,21 @@ namespace BifrostQL.Server.Test.Pgwire
         [Theory]
         [InlineData("SELECT o.id FROM orders o JOIN users u ON o.user_id = u.id")] // right ON
         [InlineData("SELECT o.id FROM orders o JOIN users u ON o.id = u.id")]      // wrong ON
-        public async Task Join_FromWhollyReadDeniedTable_StillResolves_SoThePipelineDenies(string sql)
+        public async Task Join_FromWhollyReadDeniedTable_IsDenied_WhateverTheOnClause(string sql)
         {
-            // Table-level read deny on orders: the join must resolve on the RAW model and
-            // build the intent, so the caller gets the pipeline's authoritative
-            // "permission denied." — the same signal a plain SELECT on orders gets
-            // (invariant 10). Rejecting as "no schema relationship" would give the same
+            // Table-level read deny on orders: the caller gets the access-denied code that maps
+            // to the pipeline's "permission denied." — the same signal a plain SELECT on orders
+            // gets (invariant 10). Rejecting as "no schema relationship" would give the same
             // condition a second wire signal, and validating the ON clause would make
             // right-vs-wrong ON an oracle over the denied table's key columns.
             var model = OrdersAndUsersModel(ordersPolicyActions: "create");
 
-            var plan = await Translate(sql, model);
+            var ex = await Rejected(sql, model);
+            var plain = await Rejected("SELECT id FROM orders", model);
 
-            plan.Intent.Query.Links.Should().HaveCount(1,
-                "the denied table's join resolves so the pipeline can issue the denial");
+            ex.Should().BeOfType<BifrostExecutionError>()
+                .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
+            ex!.Message.Should().Be(plain.Message, "right and wrong ON answer like a plain read of the table");
         }
 
         [Fact]

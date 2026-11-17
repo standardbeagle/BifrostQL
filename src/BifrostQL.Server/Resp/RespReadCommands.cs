@@ -33,7 +33,7 @@ namespace BifrostQL.Server.Resp
                 var executor = context.Services.GetRequiredService<IQueryIntentExecutor>();
                 var model = await executor.GetModelAsync(context.Endpoint);
 
-                var keys = ParseKeys(model, context.Arguments, TrailingNonKeyArgumentCount, out var parseError);
+                var keys = ParseKeys(model, context.Arguments, TrailingNonKeyArgumentCount, context.Session.UserContext, out var parseError);
                 if (parseError is not null)
                     return RespValue.Err(parseError);
 
@@ -73,13 +73,14 @@ namespace BifrostQL.Server.Resp
             argumentCount >= 2 ? null : RespValue.Err(RespProtocol.WrongArgCount(command));
 
         private static IReadOnlyList<RespKey> ParseKeys(
-            IDbModel model, IReadOnlyList<string> arguments, int trailingNonKeyArgumentCount, out string? error)
+            IDbModel model, IReadOnlyList<string> arguments, int trailingNonKeyArgumentCount,
+            IDictionary<string, object?> readerContext, out string? error)
         {
             var keyEnd = arguments.Count - trailingNonKeyArgumentCount;
             var keys = new List<RespKey>(Math.Max(0, keyEnd - 1));
             for (var i = 1; i < keyEnd; i++)
             {
-                var parse = RespReadEngine.ParseKey(model, arguments[i]);
+                var parse = RespReadEngine.ParseKey(model, arguments[i], readerContext);
                 if (!parse.Ok)
                 {
                     // Fail fast on the first malformed key: honest, and never executes any key.

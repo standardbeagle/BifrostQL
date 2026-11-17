@@ -131,6 +131,10 @@ coerced to its key column's type (an unparseable integer/decimal segment is a cl
 concatenated into SQL. A key value that itself contains `:` cannot be addressed (it
 splits into the wrong segment count); callers must encode such values.
 
+On a read, a key naming a table the caller may not read answers the same `NOPERM`
+whether or not the rest of the key is well formed, so the segment-count and
+segment-type errors never describe a denied table's key.
+
 ### Reads
 
 | Command | Behavior |

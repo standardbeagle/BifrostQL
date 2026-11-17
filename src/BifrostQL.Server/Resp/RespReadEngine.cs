@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -62,6 +63,33 @@ namespace BifrostQL.Server.Resp
 
         private static readonly ConditionalWeakTable<IDbModel, RespTableIndex> TableIndexCache = new();
 
+        /// <summary>
+        /// The one rule that turns a RESP table token (a key's first segment, a SCAN MATCH prefix)
+        /// into an <see cref="IDbTable"/>: DB or GraphQL name, case-insensitive. A token naming
+        /// more than one table (same name in two schemas) resolves to nothing, never to whichever
+        /// enumerates first.
+        /// </summary>
+        public static bool TryResolveTable(
+            IDbModel model, string token, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+        {
+            var index = GetTableIndex(model);
+            if (index.Ambiguous.Contains(token))
+            {
+                table = null;
+                error = $"{RespProtocol.ErrPrefix}table name '{token}' is ambiguous: more than one table matches; " +
+                        "give the tables distinct names to address them over RESP";
+                return false;
+            }
+            if (!index.ByName.TryGetValue(token, out table))
+            {
+                error = $"{RespProtocol.ErrPrefix}unknown table '{token}'";
+                return false;
+            }
+            error = null;
+            return true;
+        }
+
         private static RespTableIndex GetTableIndex(IDbModel model) =>
             TableIndexCache.GetValue(model, static m =>
             {
@@ -105,17 +133,21 @@ namespace BifrostQL.Server.Resp
         /// error). Coerced values bind as query-intent parameters — a segment is never concatenated
         /// into SQL.
         /// </summary>
-        public static RespKeyParse ParseKey(IDbModel model, string rawKey)
+        /// <param name="readerContext">
+        /// The reading caller's identity, for a READ command. When the caller may not read the
+        /// resolved table the parse fails with the pipeline's own denial (<c>NOPERM</c>) before
+        /// any shape check runs, so a malformed key on a denied table answers exactly like a
+        /// well-formed one (invariant 9) and its key arity and types stay hidden. Writes pass
+        /// null: write-path resolution uses the full schema and the pipeline decides
+        /// (invariant 7).
+        /// </param>
+        public static RespKeyParse ParseKey(IDbModel model, string rawKey, IDictionary<string, object?>? readerContext = null)
         {
             var segments = rawKey.Split(RespProtocol.KeySeparator);
-            var tableName = segments[0];
-            var index = GetTableIndex(model);
-            if (index.Ambiguous.Contains(tableName))
-                return RespKeyParse.Failure(
-                    $"{RespProtocol.ErrPrefix}table name '{tableName}' is ambiguous: more than one table matches; " +
-                    "give the tables distinct names to address them over RESP");
-            if (!index.ByName.TryGetValue(tableName, out var table))
-                return RespKeyParse.Failure($"{RespProtocol.ErrPrefix}unknown table '{tableName}'");
+            if (!TryResolveTable(model, segments[0], out var table, out var tableError))
+                return RespKeyParse.Failure(tableError);
+            if (readerContext is not null && SchemaReadVisibility.ProjectTable(table, readerContext) is null)
+                return RespKeyParse.Failure(RespProtocol.AccessDeniedError);
 
             // Every diagnostic below is built from the CALLER'S OWN key and from counts — never from
             // the resolved model. Parsing runs against the raw model, ahead of any policy filter, so

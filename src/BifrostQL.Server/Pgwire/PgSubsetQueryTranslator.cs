@@ -17,11 +17,12 @@ namespace BifrostQL.Server.Pgwire
     /// injection attempt in a literal is data, not SQL. This replaces the slice-2
     /// thin recognizer with no change to the protocol loop or result encoders.
     ///
-    /// <para>Table and column names resolve against the RAW model on purpose: a
-    /// policy-denied object must still build an intent so the caller receives the
-    /// pipeline's authoritative "permission denied." (invariant 10 — the conformance
-    /// kit pins it; resolving through the visibility projection would substitute an
-    /// adapter-local "does not exist" for it). The one place that rule does NOT cover
+    /// <para>Table names resolve against the RAW model on purpose: a policy-denied table
+    /// must answer "permission denied." (42501), never an adapter-local "does not exist"
+    /// (invariant 10 — the conformance kit pins it). Once a named table resolves and the
+    /// caller may not read it, the statement is refused with that same denial before any
+    /// COLUMN is resolved, so a wrong column guess and a right one answer identically
+    /// (invariant 9). The one place that rule does NOT cover
     /// is relationship METADATA the caller never supplied: a rejection message built
     /// from a link's own FK/PK column names is describing schema, not routing a data
     /// request, so join-edge resolution is gated by <see cref="SchemaReadVisibility"/>
@@ -30,6 +31,9 @@ namespace BifrostQL.Server.Pgwire
     /// </summary>
     internal sealed class PgSubsetQueryTranslator : IPgQueryTranslator
     {
+        // Log-side text only: PgQueryError maps AccessDeniedCode to the fixed "permission denied."
+        private const string DeniedTableMessage = "pgwire: statement names a table the caller may not read.";
+
         public Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
             string sql,
@@ -55,6 +59,14 @@ namespace BifrostQL.Server.Pgwire
             // single-column FK link on the FROM table. A join that does not map to a
             // known single-link relationship is rejected — never guessed.
             var joinLink = stmt.Join is null ? null : ResolveJoin(model, fromTable, stmt, userContext);
+
+            // A statement over a table the caller may not read is answered with the pipeline's
+            // own denial BEFORE any column is resolved: resolving them against the raw model
+            // first answered "column ... does not exist" for a wrong guess and "permission
+            // denied." for a right one, a column-name oracle over the denied table (invariant 9).
+            if (SchemaReadVisibility.ProjectTable(fromTable, userContext) is null
+                || (joinLink is not null && SchemaReadVisibility.ProjectTable(joinLink.ConnectedTable, userContext) is null))
+                throw new BifrostExecutionError(DeniedTableMessage) { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
             var scope = new QualifierScope(stmt.From, fromTable, stmt.Join, joinLink?.ConnectedTable);
 

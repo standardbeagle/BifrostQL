@@ -961,8 +961,9 @@ namespace BifrostQL.Server
                 // Per-message projection through the SAME shared gate as the upgrade-time
                 // check: one identity decision per mount, and a projection fault (unmapped
                 // OIDC issuer, subject-less principal) becomes an error frame here instead
-                // of escaping the message loop (M13).
-                var outcome = BifrostIdentityGate.Project(httpContext, out var userContext);
+                // of escaping the message loop (M13). It projects against this message's scope,
+                // so a scoped grant resolver is never shared by two concurrent messages.
+                var outcome = BifrostIdentityGate.Project(httpContext, scope.ServiceProvider, out var userContext);
                 if (outcome == BifrostIdentityOutcome.Unprojectable)
                 {
                     response.Type = BifrostMessageType.Error;

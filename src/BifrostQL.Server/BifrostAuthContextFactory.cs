@@ -52,15 +52,28 @@ namespace BifrostQL.Server
         /// full AddBifrostQL registration.
         /// </summary>
         internal static IBifrostAuthContextFactory Resolve(HttpContext context)
-            => context.RequestServices?.GetService<IBifrostAuthContextFactory>() ?? Instance;
+            => Resolve(context.RequestServices);
+
+        /// <summary>The factory registered in <paramref name="services"/>, else the shared default.</summary>
+        internal static IBifrostAuthContextFactory Resolve(IServiceProvider? services)
+            => services?.GetService<IBifrostAuthContextFactory>() ?? Instance;
 
         public IDictionary<string, object?> CreateUserContext(HttpContext context)
+            => CreateUserContext(context, context.RequestServices);
+
+        /// <summary>
+        /// Projects the caller with scoped services (the grant resolver and the DbContext it
+        /// reads) taken from <paramref name="services"/> rather than the request's own scope.
+        /// The binary transport passes each message's scope: the upgrade request's scope lives
+        /// for the whole socket and is shared by its concurrent messages.
+        /// </summary>
+        internal IDictionary<string, object?> CreateUserContext(HttpContext context, IServiceProvider? services)
         {
             var user = context.User;
             if (user?.Identity?.IsAuthenticated == true)
             {
                 var userContext = new BifrostContext(context);
-                ApplyGrantResolver(context, userContext);
+                ApplyGrantResolver(context, services, userContext);
                 return userContext;
             }
 
@@ -82,9 +95,10 @@ namespace BifrostQL.Server
         /// naming the identity id; the exception never escapes. A null result is an
         /// empty grant set: nothing is unioned, the identity's own permissions remain.
         /// </summary>
-        private static void ApplyGrantResolver(HttpContext context, IDictionary<string, object?> userContext)
+        private static void ApplyGrantResolver(
+            HttpContext context, IServiceProvider? services, IDictionary<string, object?> userContext)
         {
-            var resolver = context.RequestServices?.GetService<IGrantResolver>();
+            var resolver = services?.GetService<IGrantResolver>();
             if (resolver is null)
                 return;
 
@@ -100,7 +114,7 @@ namespace BifrostQL.Server
             }
             catch (Exception ex)
             {
-                context.RequestServices?.GetService<ILoggerFactory>()
+                services?.GetService<ILoggerFactory>()
                     ?.CreateLogger("BifrostQL.Server.BifrostAuthContextFactory")
                     .LogWarning(ex,
                         "Grant resolver failed for identity '{IdentityId}'; continuing with an empty permission set.",

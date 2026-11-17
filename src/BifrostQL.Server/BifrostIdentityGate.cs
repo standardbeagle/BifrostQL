@@ -54,6 +54,15 @@ namespace BifrostQL.Server
         /// </summary>
         internal static BifrostIdentityOutcome Project(
             HttpContext context, out IDictionary<string, object?> userContext)
+            => Project(context, context.RequestServices, out userContext);
+
+        /// <summary>
+        /// <see cref="Project(HttpContext, out IDictionary{string, object?})"/> with the factory
+        /// and the default factory's scoped services (grant resolver) taken from
+        /// <paramref name="services"/>: the binary transport passes each message's own scope.
+        /// </summary>
+        internal static BifrostIdentityOutcome Project(
+            HttpContext context, IServiceProvider? services, out IDictionary<string, object?> userContext)
         {
             userContext = new Dictionary<string, object?>();
 
@@ -63,7 +72,10 @@ namespace BifrostQL.Server
             IDictionary<string, object?> projected;
             try
             {
-                projected = BifrostAuthContextFactory.Resolve(context).CreateUserContext(context);
+                var factory = BifrostAuthContextFactory.Resolve(services);
+                projected = factory is BifrostAuthContextFactory shared
+                    ? shared.CreateUserContext(context, services)
+                    : factory.CreateUserContext(context);
             }
             catch (Exception ex)
             {

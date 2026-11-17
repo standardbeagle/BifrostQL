@@ -28,6 +28,19 @@ namespace BifrostQL.Server
             set => throw new NotSupportedException();
         }
 
+        /// <summary>
+        /// The bytes written so far, as a view of the pooled buffer: valid until the next write
+        /// or until the stream is disposed.
+        /// </summary>
+        public ArraySegment<byte> Written
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return new ArraySegment<byte>(_buffer, 0, _length);
+            }
+        }
+
         /// <summary>A new array holding exactly the bytes written so far.</summary>
         public byte[] ToArray()
         {

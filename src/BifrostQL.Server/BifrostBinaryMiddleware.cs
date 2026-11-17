@@ -59,6 +59,14 @@ namespace BifrostQL.Server
         /// </summary>
         private const int MaxFrameSize = 4 * 1024 * 1024;
 
+        /// <summary>
+        /// The per-connection receive buffer, rented from the shared pool. A message larger than
+        /// this arrives over several receives and is accumulated in a pooled stream up to
+        /// <see cref="MaxFrameSize"/>, so an idle connection holds 64 KiB, not a 4 MiB
+        /// large-object-heap array.
+        /// </summary>
+        internal const int ReceiveBufferSize = 64 * 1024;
+
         /// <summary>Default concurrent-connection cap for one binary mount.</summary>
         public const int DefaultMaxConnections = 100;
 
@@ -500,7 +508,19 @@ namespace BifrostQL.Server
 
         private async Task HandleConnectionAsync(WebSocket webSocket, HttpContext httpContext)
         {
-            var buffer = new byte[MaxFrameSize];
+            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(ReceiveBufferSize);
+            try
+            {
+                await HandleConnectionAsync(webSocket, httpContext, buffer);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        private async Task HandleConnectionAsync(WebSocket webSocket, HttpContext httpContext, byte[] buffer)
+        {
 
             // Chunk buffering is connection-scoped. request_id values are chosen by the
             // client, so a shared buffer would let one connection replay another
@@ -515,12 +535,13 @@ namespace BifrostQL.Server
                 var isFirstFrame = true;
                 while (webSocket.State == WebSocketState.Open)
                 {
-                    byte[] messageBytes;
+                    ArraySegment<byte> messageBytes;
                     WebSocketMessageType messageType;
+                    PooledBufferStream? fragments;
 
                     // Every read carries a deadline. The first one is short: the admission slot
                     // is already held at that point, so a peer that connects and never speaks
-                    // would otherwise pin a slot and a 4 MB buffer for nothing. Later reads get
+                    // would otherwise pin a slot and a receive buffer for nothing. Later reads get
                     // the idle deadline — an established session is a pooled client that may
                     // legitimately sit quiet between queries.
                     using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(connection.ReaderStop.Token);
@@ -529,7 +550,7 @@ namespace BifrostQL.Server
 
                     try
                     {
-                        (messageBytes, messageType) = await ReadFullMessageAsync(webSocket, buffer, readTimeout.Token);
+                        (messageBytes, messageType, fragments) = await ReadFullMessageAsync(webSocket, buffer, readTimeout.Token);
                     }
                     catch (OperationCanceledException) when (connection.ReaderStop.IsCancellationRequested
                         && !httpContext.RequestAborted.IsCancellationRequested)
@@ -552,6 +573,8 @@ namespace BifrostQL.Server
                         await FailFromReaderWithErrorAsync(connection, ex, "Invalid or oversized frame");
                         break;
                     }
+
+                    using var ownedFragments = fragments;
 
                     if (messageType == WebSocketMessageType.Close)
                         break;
@@ -671,12 +694,14 @@ namespace BifrostQL.Server
         /// handled here, in order; a Query, Mutation or Resume starts its own task so the
         /// reader is free for the next frame at once.
         /// </summary>
-        private async Task ReceiveFrameAsync(byte[] messageBytes, BinaryConnection connection)
+        private async Task ReceiveFrameAsync(ArraySegment<byte> messageBytes, BinaryConnection connection)
         {
+            // Parsed straight from the receive buffer: the parser copies every field it keeps,
+            // and the reader does not receive again until this returns.
             BifrostMessage frame;
             try
             {
-                frame = BifrostMessage.FromBytes(messageBytes);
+                frame = BifrostMessage.FromBytes(messageBytes.Array!, messageBytes.Offset, messageBytes.Count);
             }
             catch (Exception ex)
             {
@@ -1094,43 +1119,50 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Reads a complete WebSocket message, handling multi-fragment messages.
-        /// Returns the assembled message bytes and the message type.
+        /// Reads a complete WebSocket message. A message that fits one receive is returned as a
+        /// view of <paramref name="buffer"/> with no copy. A longer one is accumulated in a pooled
+        /// stream, returned as the third element for the caller to dispose once the message is
+        /// handled; the size cap is checked before each fragment is retained, so an oversized
+        /// message is refused holding at most <see cref="MaxFrameSize"/> bytes.
         /// </summary>
-        private static async Task<(byte[] data, WebSocketMessageType type)> ReadFullMessageAsync(
+        internal static async Task<(ArraySegment<byte> Data, WebSocketMessageType Type, PooledBufferStream? Owner)> ReadFullMessageAsync(
             WebSocket webSocket, byte[] buffer, CancellationToken cancellationToken)
         {
-            var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+            var segment = new ArraySegment<byte>(buffer, 0, Math.Min(buffer.Length, ReceiveBufferSize));
+            var result = await webSocket.ReceiveAsync(segment, cancellationToken);
 
             if (result.MessageType == WebSocketMessageType.Close)
-                return (Array.Empty<byte>(), WebSocketMessageType.Close);
+                return (ArraySegment<byte>.Empty, WebSocketMessageType.Close, null);
 
             if (result.EndOfMessage)
+                return (new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, null);
+
+            var fragments = new PooledBufferStream();
+            try
             {
-                // Single-frame message (common case): avoid allocation of a second buffer
-                var data = new byte[result.Count];
-                Buffer.BlockCopy(buffer, 0, data, 0, result.Count);
-                return (data, result.MessageType);
+                fragments.Write(buffer, 0, result.Count);
+                while (!result.EndOfMessage)
+                {
+                    result = await webSocket.ReceiveAsync(segment, cancellationToken);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        fragments.Dispose();
+                        return (ArraySegment<byte>.Empty, WebSocketMessageType.Close, null);
+                    }
+
+                    if (fragments.Length + result.Count > MaxFrameSize)
+                        throw new InvalidOperationException("Message exceeds maximum size of " + MaxFrameSize + " bytes");
+                    fragments.Write(buffer, 0, result.Count);
+                }
+
+                return (fragments.Written, result.MessageType, fragments);
             }
-
-            // Multi-frame message: accumulate into a MemoryStream
-            using var ms = new MemoryStream();
-            ms.Write(buffer, 0, result.Count);
-
-            while (!result.EndOfMessage)
+            catch
             {
-                result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
-
-                if (result.MessageType == WebSocketMessageType.Close)
-                    return (Array.Empty<byte>(), WebSocketMessageType.Close);
-
-                ms.Write(buffer, 0, result.Count);
-
-                if (ms.Length > MaxFrameSize)
-                    throw new InvalidOperationException("Message exceeds maximum size of " + MaxFrameSize + " bytes");
+                fragments.Dispose();
+                throw;
             }
-
-            return (ms.ToArray(), result.MessageType);
         }
     }
 }

@@ -22,6 +22,7 @@ namespace BifrostQL.Server.Test
         private readonly SemaphoreSlim _changed = new(0);
         private volatile WebSocketState _state = WebSocketState.Open;
         private bool _closeEchoPending;
+        private (WebSocketMessageType type, byte[] data, int sent)? _partial;
 
         /// <summary>Every binary frame the server pushed, in send order.</summary>
         public List<byte[]> SentFrames { get; } = new();
@@ -145,6 +146,8 @@ namespace BifrostQL.Server.Test
             CancellationToken cancellationToken)
         {
             ReceiveCount++;
+            if (_partial is { } rest)
+                return DeliverPart(rest.type, rest.data, rest.sent, buffer);
             while (true)
             {
                 (WebSocketMessageType type, byte[] data)? next = null;
@@ -183,13 +186,26 @@ namespace BifrostQL.Server.Test
                         return new WebSocketReceiveResult(
                             0, WebSocketMessageType.Close, true, WebSocketCloseStatus.NormalClosure, "closed");
                     }
-                    frame.data.CopyTo(buffer.AsSpan());
-                    return new WebSocketReceiveResult(frame.data.Length, frame.type, true);
+                    return DeliverPart(frame.type, frame.data, 0, buffer);
                 }
 
                 // Nothing to answer yet: wait for the server to send something.
                 await _changed.WaitAsync(cancellationToken);
             }
+        }
+
+        /// <summary>
+        /// Copies as much of a scripted message as the receive buffer holds, as a real socket
+        /// does: a message larger than the buffer arrives over several receives.
+        /// </summary>
+        private WebSocketReceiveResult DeliverPart(
+            WebSocketMessageType type, byte[] data, int sent, ArraySegment<byte> buffer)
+        {
+            var count = Math.Min(buffer.Count, data.Length - sent);
+            data.AsSpan(sent, count).CopyTo(buffer.AsSpan());
+            var end = sent + count == data.Length;
+            _partial = end ? null : (type, data, sent + count);
+            return new WebSocketReceiveResult(count, type, end);
         }
 
         /// <summary>

@@ -80,7 +80,7 @@ namespace BifrostQL.Server.Grpc
             // mints a token only when more rows exist and Stream can say it stopped early.
             var window = RowProbeWindow.For(model, pageSize);
 
-            var query = BuildRowQuery(table);
+            var query = GrpcReadDispatcher.BuildRowQuery(table, GrpcSchemaVisibility.ReadSelection(table, identity));
             query.Filter = filter;
             query.Sort = sort;
             query.Limit = window.Fetch;
@@ -442,21 +442,6 @@ namespace BifrostQL.Server.Grpc
                 return null;
             var text = raw as string ?? Convert.ToString(raw, CultureInfo.InvariantCulture);
             return string.IsNullOrWhiteSpace(text) ? null : text;
-        }
-
-        private static GqlObjectQuery BuildRowQuery(IDbTable table)
-        {
-            var query = new GqlObjectQuery
-            {
-                DbTable = table,
-                SchemaName = table.TableSchema,
-                TableName = table.DbName,
-                GraphQlName = table.GraphQlName,
-                Path = table.GraphQlName,
-            };
-            foreach (var column in table.Columns.OrderBy(c => c.OrdinalPosition))
-                query.ScalarColumns.Add(new GqlObjectColumn(column.DbName));
-            return query;
         }
     }
 

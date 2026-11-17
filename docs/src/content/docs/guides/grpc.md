@@ -210,7 +210,10 @@ Because the shape is discovered from the live database, there is no checked-in
 
 Because reflection is identity-filtered, the exported descriptor set contains
 **only the tables and columns that credential may read** — the generated client
-cannot even name a column its caller is denied.
+cannot even name a column its caller is denied. The data RPCs match that shape:
+`Get`, `List` and `Stream` select only the columns the caller may read, so a
+column under `policy-read-deny` is left out of each row instead of refusing the
+whole read.
 
 [Postman]: https://learning.postman.com/docs/sending-requests/grpc/grpc-request-interface/
 [Kreya]: https://kreya.app/

@@ -40,7 +40,7 @@ namespace BifrostQL.Server.Grpc
                 keyValues[i] = value;
             }
 
-            var query = BuildRowQuery(table);
+            var query = BuildRowQuery(table, GrpcSchemaVisibility.ReadSelection(table, userContext));
             query.Filter = TableFilter.FromPrimaryKey(keyValues, keyColumns, table);
             query.Limit = 1;
 
@@ -76,7 +76,12 @@ namespace BifrostQL.Server.Grpc
                 Endpoint = endpoint,
             };
 
-        private static GqlObjectQuery BuildRowQuery(IDbTable table)
+        /// <summary>
+        /// The row query every gRPC read starts from (Get here, List/Stream in
+        /// <see cref="GrpcReadRequestCompiler"/>): the table plus <paramref name="selection"/>,
+        /// which is <see cref="GrpcSchemaVisibility.ReadSelection"/> — never the raw column list.
+        /// </summary>
+        internal static GqlObjectQuery BuildRowQuery(IDbTable table, IEnumerable<ColumnDto> selection)
         {
             var query = new GqlObjectQuery
             {
@@ -86,7 +91,7 @@ namespace BifrostQL.Server.Grpc
                 GraphQlName = table.GraphQlName,
                 Path = table.GraphQlName,
             };
-            foreach (var column in table.Columns.OrderBy(c => c.OrdinalPosition))
+            foreach (var column in selection.OrderBy(c => c.OrdinalPosition))
                 query.ScalarColumns.Add(new GqlObjectColumn(column.DbName));
             return query;
         }

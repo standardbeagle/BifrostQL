@@ -36,5 +36,16 @@ namespace BifrostQL.Server.Grpc
         public static IReadOnlyList<ColumnDto> VisibleReadColumns(
             IDbTable table, IDictionary<string, object?> userContext) =>
             SchemaReadVisibility.ProjectTable(table, userContext)?.Columns ?? Array.Empty<ColumnDto>();
+
+        /// <summary>
+        /// The columns a Get/List/Stream row SELECTS. A gRPC read names no columns, so it returns
+        /// every column the caller may read: selecting the whole table made one
+        /// <c>policy-read-deny</c> column refuse the entire read. A table the caller may not read
+        /// at all keeps its full column list, so the intent still reaches the pipeline for the
+        /// authoritative table-level denial (invariant 10) rather than an adapter-local empty read.
+        /// </summary>
+        internal static IReadOnlyList<ColumnDto> ReadSelection(
+            IDbTable table, IDictionary<string, object?> userContext) =>
+            SchemaReadVisibility.ProjectTable(table, userContext)?.Columns ?? table.Columns.ToList();
     }
 }

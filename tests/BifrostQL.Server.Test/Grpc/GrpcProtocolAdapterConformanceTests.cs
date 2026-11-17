@@ -111,10 +111,10 @@ namespace BifrostQL.Server.Test.Grpc
         protected override string ExpectedWriteRejectionFragment(string canonicalServerFragment)
             => "The request was denied by policy.";
 
-        // Reject: a List read resolves the row's fields through the shared read pipeline, whose
-        // column guard throws on the denied field; the single funnel sanitizes that to the generic
-        // PERMISSION_DENIED text above — the wire never serves a partial row.
-        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+        // Omit: a gRPC read names no columns, and the generated message type already leaves the
+        // denied field out (GrpcSchemaVisibility), so Get/List/Stream select exactly the caller's
+        // readable columns. Selecting the whole table made one denied column refuse every read.
+        protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Omit;
 
         public override async Task InitializeAsync()
         {
@@ -301,11 +301,11 @@ namespace BifrostQL.Server.Test.Grpc
         /// Cross-op-class denial parity for a POLICY write-deny (the residual instance the gRPC
         /// epic-close security review flagged: TableMutationPipeline threw a CODELESS
         /// BifrostExecutionError on a policy-denied write, which fell to the GrpcStatusMapper funnel's
-        /// default → generic INTERNAL, while a policy-denied READ of the same column surfaces
-        /// PERMISSION_DENIED). PolicyMutationTransformer now tags its denial with AccessDeniedCode
-        /// (mirroring the read-side PolicyFilterTransformer), so the single funnel maps the policy WRITE
-        /// deny to the SAME PERMISSION_DENIED status as the read deny — mapping by CONDITION, not op
-        /// class. Both fail closed (nothing is written); the reconciled write status stays sanitized
+        /// default → generic INTERNAL, while a read access denial surfaces PERMISSION_DENIED).
+        /// PolicyMutationTransformer now tags its denial with AccessDeniedCode (mirroring the
+        /// read-side filters), so the single funnel maps the policy WRITE deny to the SAME
+        /// PERMISSION_DENIED status and text as a read access denial — mapping by CONDITION, not op
+        /// class. (A read of the policy-denied column itself is no longer a denial: gRPC omits it.) Both fail closed (nothing is written); the reconciled write status stays sanitized
         /// (invariant 3 — the transformer's internal "authorization policy" text must not reach the wire).
         /// </summary>
         [Fact]
@@ -313,9 +313,11 @@ namespace BifrostQL.Server.Test.Grpc
         {
             var headers = GrpcRealDbHarness.Identity("user-a", "tenant-a");
 
-            // READ path: selecting the policy-read-denied column surfaces PERMISSION_DENIED.
+            // READ path: a read denial through the same funnel. A gRPC read of documents no longer
+            // selects the denied body column (it is omitted, see DeniedColumnSelection), so the read
+            // reference is the pipeline's other access denial: a tenant-scoped read with no tenant.
             var readFault = await Assert.ThrowsAsync<RpcException>(
-                () => _client.ListAsync("documents", headers));
+                () => _client.ListAsync("orders", GrpcRealDbHarness.Identity("user-no-tenant")));
 
             // WRITE path: inserting the policy-write-denied column is rejected by the policy mutation
             // transformer — the condition this task tags so it stops mapping to a generic INTERNAL.
@@ -329,7 +331,7 @@ namespace BifrostQL.Server.Test.Grpc
             readFault.StatusCode.Should().Be(StatusCode.PermissionDenied);
             writeFault.StatusCode.Should().Be(
                 readFault.StatusCode,
-                "a policy WRITE deny must surface the same status as the policy READ deny for one condition");
+                "a policy WRITE deny must surface the same status as a READ access denial: one condition, one code");
             writeFault.Status.Detail.Should().Be(readFault.Status.Detail);
 
             // The reconciled write status stays sanitized: the transformer's internal reason

@@ -100,6 +100,17 @@ keeps running it. A `request_id` must
 be unique among the requests in flight; a request reusing one is refused the same way. Once the
 client has acked every chunk of a response, that id is free again.
 
+The transport's own refusals carry a machine-readable code in the `Error` frame's `error_code`
+field (protobuf field 13, a string). Branch on the code, never on the frame's text:
+
+| `error_code` | Meaning |
+|---|---|
+| `TOO_MANY_CONCURRENT_REQUESTS` | The connection already runs 16 requests. The request never ran; resend it when one completes. |
+| `REQUEST_ID_IN_FLIGHT` | The `request_id` names a request still in flight. The request never ran; resend it under a fresh id. |
+
+The codes are public as `BinaryErrorCode` in both `BifrostQL.Server` and `@bifrostql/binary-client`.
+GraphQL execution errors carry no frame code; they arrive in `errors` as on the HTTP endpoint.
+
 Each request runs in its own DI scope, so scoped services are not shared between the requests
 of one connection.
 

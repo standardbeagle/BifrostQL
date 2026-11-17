@@ -108,6 +108,7 @@ for (let i = 0; i < ITERATIONS; i++) {
     errors: [],
     chunkInfo: EMPTY_CHUNK_INFO,
     lastSequence: 0,
+    errorCode: "",
   });
   const decoded = decodeMessage(frame); // client frame decode
   const parsed = JSON.parse(decoder.decode(decoded.payload)); // client JSON decode

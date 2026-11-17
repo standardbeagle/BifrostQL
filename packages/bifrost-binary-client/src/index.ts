@@ -73,12 +73,24 @@ export const MAX_REQUEST_FRAME_BYTES = 4 * 1024 * 1024;
 export const MAX_CONCURRENT_REQUESTS_PER_CONNECTION = 16;
 
 /**
- * Leading text of the server's refusal of a request past the concurrency cap
- * (`BifrostBinaryMiddleware.StartRequestAsync`). The refusal carries no code,
- * so the client recognizes it by this prefix. A refused request never ran, so
- * it is put back at the head of the queue instead of being reported.
+ * Machine-readable codes the server puts in an Error frame's `errorCode`
+ * (wire field 13; `BinaryErrorCode` in BifrostQL.Server). Branch on these,
+ * never on the frame's text. An Error frame without a code carries an empty
+ * string.
  */
-const CONCURRENCY_REFUSAL_PREFIX = "Too many concurrent requests";
+export const BinaryErrorCode = {
+  /**
+   * The connection already runs MAX_CONCURRENT_REQUESTS_PER_CONNECTION
+   * requests. The request never ran, so the client puts it back at the head of
+   * its queue instead of reporting it.
+   */
+  TooManyConcurrentRequests: "TOO_MANY_CONCURRENT_REQUESTS",
+  /** The request_id names a request still in flight on the connection. */
+  RequestIdInFlight: "REQUEST_ID_IN_FLIGHT",
+} as const;
+
+/** Protobuf field number of `error_code` on BifrostMessage. */
+const ERROR_CODE_FIELD = 13;
 
 /**
  * Delay before resending a refused request when the client has no request of
@@ -168,6 +180,7 @@ export const enum BifrostMessageType {
  *   field 10: total_bytes     (uint64, varint)
  *   field 11: chunk_checksum  (uint32, varint)
  *   field 12: last_sequence   (uint32, varint) — Resume only
+ *   field 13: error_code      (string, length-delimited) — Error frames only
  */
 export interface BifrostMessage {
   requestId: number;
@@ -189,6 +202,11 @@ export interface BifrostMessage {
    * field is decoded so the codec mirrors the server's message shape.
    */
   lastSequence: number;
+  /**
+   * Wire field 13 (`error_code`): the machine-readable code of a server Error
+   * frame (see `BinaryErrorCode`), or "" when the frame carries none.
+   */
+  errorCode: string;
 }
 
 export function encodeMessage(msg: BifrostMessage): Uint8Array {
@@ -240,6 +258,9 @@ export function encodeMessage(msg: BifrostMessage): Uint8Array {
   if (msg.lastSequence !== 0) {
     writer.tag(CHUNK_FIELD.LastSequence, WireType.Varint).uint32(msg.lastSequence);
   }
+  if (msg.errorCode.length > 0) {
+    writer.tag(ERROR_CODE_FIELD, WireType.LengthDelimited).string(msg.errorCode);
+  }
 
   return writer.finish();
 }
@@ -255,6 +276,7 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
     errors: [],
     chunkInfo: emptyChunkInfo(),
     lastSequence: 0,
+    errorCode: "",
   };
 
   while (reader.pos < reader.len) {
@@ -295,6 +317,9 @@ export function decodeMessage(data: Uint8Array): BifrostMessage {
         break;
       case CHUNK_FIELD.LastSequence:
         msg.lastSequence = reader.uint32();
+        break;
+      case ERROR_CODE_FIELD:
+        msg.errorCode = reader.string();
         break;
       default:
         reader.skip(wireType);
@@ -1046,6 +1071,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       errors: partial.errors ?? [],
       chunkInfo: partial.chunkInfo ?? emptyChunkInfo(),
       lastSequence: partial.lastSequence ?? 0,
+      errorCode: partial.errorCode ?? "",
     };
   }
 
@@ -1440,15 +1466,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * True for the server's refusal of a request past its concurrency cap: a
-   * single Error frame for a request this client has on the wire, whose text
-   * starts with CONCURRENCY_REFUSAL_PREFIX.
+   * single Error frame for a request this client has on the wire, coded
+   * `TOO_MANY_CONCURRENT_REQUESTS`. The text is never consulted.
    */
   private isConcurrencyRefusal(response: BifrostMessage): boolean {
     return (
       response.type === BifrostMessageType.Error &&
       this.wireSlots.has(response.requestId) &&
-      response.errors.length > 0 &&
-      response.errors[0]!.startsWith(CONCURRENCY_REFUSAL_PREFIX)
+      response.errorCode === BinaryErrorCode.TooManyConcurrentRequests
     );
   }
 

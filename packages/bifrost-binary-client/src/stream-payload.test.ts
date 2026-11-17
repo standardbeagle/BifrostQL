@@ -17,6 +17,7 @@ function resultFrame(payload: Uint8Array): Uint8Array {
     errors: [],
     chunkInfo: emptyChunkInfo(),
     lastSequence: 0,
+    errorCode: "",
   };
   return encodeMessage(msg);
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
   BifrostMessageType,
+  BinaryErrorCode,
   MAX_CONCURRENT_REQUESTS_PER_CONNECTION,
   decodeMessage,
   emptyChunkInfo,
@@ -29,6 +30,7 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
     errors: [],
     chunkInfo: emptyChunkInfo(),
     lastSequence: 0,
+    errorCode: "",
     ...overrides,
   };
 }
@@ -572,15 +574,15 @@ describe("BifrostBinaryClient", () => {
       }
 
       function refuse(ws: FakeWebSocket, requestId: number): void {
-        // Text copied from BifrostBinaryMiddleware.StartRequestAsync.
+        // The text is deliberately not the server's: the client must act on
+        // the code alone.
         ws.receive(
           encodeMessage(
             emptyMessage({
               requestId,
               type: BifrostMessageType.Error,
-              errors: [
-                `Too many concurrent requests: a connection runs at most ${MAX_CONCURRENT_REQUESTS_PER_CONNECTION} at once. Resend this request when one completes.`,
-              ],
+              errorCode: BinaryErrorCode.TooManyConcurrentRequests,
+              errors: ["reworded refusal"],
             })
           )
         );
@@ -713,6 +715,7 @@ describe("BifrostBinaryClient", () => {
             emptyMessage({
               requestId: 1,
               type: BifrostMessageType.Error,
+              errorCode: BinaryErrorCode.RequestIdInFlight,
               errors: ["Request id 1 is already in flight on this connection."],
             })
           )
@@ -721,6 +724,25 @@ describe("BifrostBinaryClient", () => {
           data: null,
           errors: ["Request id 1 is already in flight on this connection."],
         });
+        expect(sentIds(ws)).toEqual([1]);
+      });
+
+      it("reports an uncoded Error frame whose text reads like a refusal", async () => {
+        // The refusal is recognized by its code only; text matching is gone.
+        const ws = tracker.last;
+        const p = client.query("{ a }");
+        const text = `Too many concurrent requests: a connection runs at most ${MAX_CONCURRENT_REQUESTS_PER_CONNECTION} at once. Resend this request when one completes.`;
+        ws.receive(
+          encodeMessage(
+            emptyMessage({
+              requestId: 1,
+              type: BifrostMessageType.Error,
+              errors: [text],
+            })
+          )
+        );
+        await expect(p).resolves.toEqual({ data: null, errors: [text] });
+        expect(client.queuedCount).toBe(0);
         expect(sentIds(ws)).toEqual([1]);
       });
     });

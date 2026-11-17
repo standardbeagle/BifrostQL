@@ -512,6 +512,7 @@ export function createChunkStream(
     errors: [],
     chunkInfo: emptyChunkInfo(),
     lastSequence: 0,
+    errorCode: "",
   };
   const bytes = encodeMessage(frame);
   if (bytes.length > MAX_REQUEST_FRAME_BYTES) {

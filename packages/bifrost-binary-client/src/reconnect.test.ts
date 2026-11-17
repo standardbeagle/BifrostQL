@@ -33,6 +33,7 @@ function emptyMessage(overrides: Partial<BifrostMessage> = {}): BifrostMessage {
     errors: [],
     chunkInfo: emptyChunkInfo(),
     lastSequence: 0,
+    errorCode: "",
     ...overrides,
   };
 }

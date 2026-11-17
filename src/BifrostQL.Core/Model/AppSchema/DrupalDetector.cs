@@ -125,8 +125,9 @@ public sealed class DrupalDetector : IAppSchemaDetector
         var additionalMetadata = new Dictionary<string, IDictionary<string, object?>>();
         var explicitForeignKeys = new List<SyntheticForeignKey>();
 
-        // Build table schema lookup for metadata key generation
-        var tableSchemaLookup = tables.ToDictionary(t => t.DbName, t => t.TableSchema, StringComparer.OrdinalIgnoreCase);
+        // Every schema that holds each table name. One name can live in several schemas, so
+        // metadata is keyed once per schema, never by the bare name.
+        var schemasByDbName = tables.ToLookup(t => t.DbName, t => t.TableSchema ?? "", StringComparer.OrdinalIgnoreCase);
 
         // Inject metadata: hidden tables
         foreach (var dbName in tableDbNames)
@@ -135,9 +136,8 @@ public sealed class DrupalDetector : IAppSchemaDetector
             {
                 if (dbName.StartsWith(pattern, StringComparison.OrdinalIgnoreCase))
                 {
-                    var schema = tableSchemaLookup.GetValueOrDefault(dbName, "");
-                    var key = string.IsNullOrEmpty(schema) ? dbName : $"{schema}.{dbName}";
-                    additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden };
+                    foreach (var key in WordPressDetector.TableMetadataKeys(schemasByDbName, dbName))
+                        additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden };
                     break;
                 }
             }
@@ -148,12 +148,13 @@ public sealed class DrupalDetector : IAppSchemaDetector
         {
             if (tableDbNames.Contains(baseName))
             {
-                var schema = tableSchemaLookup.GetValueOrDefault(baseName, "");
-                var key = string.IsNullOrEmpty(schema) ? baseName : $"{schema}.{baseName}";
-                if (additionalMetadata.TryGetValue(key, out var existing))
-                    existing[MetadataKeys.Ui.Label] = label;
-                else
-                    additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Label] = label };
+                foreach (var key in WordPressDetector.TableMetadataKeys(schemasByDbName, baseName))
+                {
+                    if (additionalMetadata.TryGetValue(key, out var existing))
+                        existing[MetadataKeys.Ui.Label] = label;
+                    else
+                        additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Label] = label };
+                }
             }
         }
 

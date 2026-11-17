@@ -673,4 +673,26 @@ public class WordPressDetectorTests
     }
 
     #endregion
+
+    #region Same table names in two schemas
+
+    [Fact]
+    public void Detect_SameSiteInTwoSchemas_KeysMetadataForEachSchema()
+    {
+        // Two WordPress sites side by side: every wp_* name exists in both schemas. Keying
+        // metadata by the bare DbName threw on the duplicate before any metadata was built.
+        var tables = MakeTablesWithSchema("site_a", StandardWpTables)
+            .Concat(MakeTablesWithSchema("site_b", StandardWpTables))
+            .ToList();
+
+        var result = _detector.Detect(tables, Array.Empty<string>());
+
+        result.Should().NotBeNull();
+        var meta = result!.SchemaResult.AdditionalMetadata;
+        meta["site_a.wp_posts"]["label"].Should().Be("Posts");
+        meta["site_b.wp_posts"]["label"].Should().Be("Posts");
+        meta.Keys.Should().NotContain("wp_posts", "a name shared by two schemas never keys metadata bare");
+    }
+
+    #endregion
 }

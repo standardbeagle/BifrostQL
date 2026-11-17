@@ -290,4 +290,26 @@ public class DrupalDetectorTests
     }
 
     #endregion
+
+    #region Same table names in two schemas
+
+    [Fact]
+    public void Detect_SameSiteInTwoSchemas_KeysMetadataForEachSchema()
+    {
+        var names = SignatureTables.Concat(CommonSupportingTables).Append("cache_config").ToArray();
+        var tables = names.Select(n => MakeTable(n, "site_a"))
+            .Concat(names.Select(n => MakeTable(n, "site_b")))
+            .ToList();
+
+        var result = _detector.Detect(tables, Array.Empty<string>());
+
+        result.Should().NotBeNull();
+        var meta = result!.SchemaResult.AdditionalMetadata;
+        meta["site_a.cache_config"]["visibility"].Should().Be("hidden");
+        meta["site_b.cache_config"]["visibility"].Should().Be("hidden");
+        meta["site_a.node"]["label"].Should().Be("Nodes");
+        meta["site_b.node"]["label"].Should().Be("Nodes");
+    }
+
+    #endregion
 }

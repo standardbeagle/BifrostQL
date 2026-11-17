@@ -114,8 +114,9 @@ public sealed class WordPressDetector : IAppSchemaDetector
         var explicitForeignKeys = new List<SyntheticForeignKey>();
         var columnMetadata = new Dictionary<string, IDictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
 
-        // Build table schema lookup for metadata key generation
-        var tableSchemaLookup = tables.ToDictionary(t => t.DbName, t => t.TableSchema, StringComparer.Ordinal);
+        // Every schema that holds each table name. One name can live in several schemas (two
+        // sites side by side), so metadata is keyed once per schema, never by the bare name.
+        var schemasByDbName = tables.ToLookup(t => t.DbName, t => t.TableSchema ?? "", StringComparer.Ordinal);
 
         // Track total tables and supporting tables found for confidence calculation
         var totalTablesFound = 0;
@@ -159,9 +160,8 @@ public sealed class WordPressDetector : IAppSchemaDetector
                 var fullName = prefix + pattern;
                 if (groupTableNames.Contains(fullName))
                 {
-                    var schema = tableSchemaLookup.GetValueOrDefault(fullName, "");
-                    var key = string.IsNullOrEmpty(schema) ? fullName : $"{schema}.{fullName}";
-                    additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden };
+                    foreach (var key in TableMetadataKeys(schemasByDbName, fullName))
+                        additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Visibility] = MetadataKeys.Ui.Hidden };
                 }
             }
 
@@ -171,12 +171,13 @@ public sealed class WordPressDetector : IAppSchemaDetector
                 var fullName = prefix + baseName;
                 if (groupTableNames.Contains(fullName))
                 {
-                    var schema = tableSchemaLookup.GetValueOrDefault(fullName, "");
-                    var key = string.IsNullOrEmpty(schema) ? fullName : $"{schema}.{fullName}";
-                    if (additionalMetadata.TryGetValue(key, out var existing))
-                        existing[MetadataKeys.Ui.Label] = label;
-                    else
-                        additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Label] = label };
+                    foreach (var key in TableMetadataKeys(schemasByDbName, fullName))
+                    {
+                        if (additionalMetadata.TryGetValue(key, out var existing))
+                            existing[MetadataKeys.Ui.Label] = label;
+                        else
+                            additionalMetadata[key] = new Dictionary<string, object?> { [MetadataKeys.Ui.Label] = label };
+                    }
                 }
             }
 
@@ -188,17 +189,18 @@ public sealed class WordPressDetector : IAppSchemaDetector
                 if (!groupTableNames.Contains(metaFull) || !groupTableNames.Contains(parentFull))
                     continue;
 
-                var schema = tableSchemaLookup.GetValueOrDefault(metaFull, "");
-                var metadataKey = string.IsNullOrEmpty(schema) ? metaFull : $"{schema}.{metaFull}";
-                if (!additionalMetadata.TryGetValue(metadataKey, out var metaDict))
+                foreach (var metadataKey in TableMetadataKeys(schemasByDbName, metaFull))
                 {
-                    metaDict = new Dictionary<string, object?>();
-                    additionalMetadata[metadataKey] = metaDict;
+                    if (!additionalMetadata.TryGetValue(metadataKey, out var metaDict))
+                    {
+                        metaDict = new Dictionary<string, object?>();
+                        additionalMetadata[metadataKey] = metaDict;
+                    }
+                    metaDict[MetadataKeys.Eav.Parent] = parentFull;
+                    metaDict[MetadataKeys.Eav.ForeignKey] = fk;
+                    metaDict[MetadataKeys.Eav.Key] = keyCol;
+                    metaDict[MetadataKeys.Eav.Value] = valueCol;
                 }
-                metaDict[MetadataKeys.Eav.Parent] = parentFull;
-                metaDict[MetadataKeys.Eav.ForeignKey] = fk;
-                metaDict[MetadataKeys.Eav.Key] = keyCol;
-                metaDict[MetadataKeys.Eav.Value] = valueCol;
             }
 
             // Inject column metadata: serialized PHP columns
@@ -208,26 +210,24 @@ public sealed class WordPressDetector : IAppSchemaDetector
                 if (!groupTableNames.Contains(fullTableName))
                     continue;
 
-                var schema = tableSchemaLookup.GetValueOrDefault(fullTableName, "");
-                // Check if the column actually exists in the table
-                var table = tables.FirstOrDefault(t =>
-                    string.Equals(t.DbName, fullTableName, StringComparison.Ordinal));
-                if (table == null)
-                    continue;
-
-                var columnExists = table.Columns.Any(c =>
-                    string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
-                if (!columnExists)
-                    continue;
-
-                var columnKey = string.IsNullOrEmpty(schema)
-                    ? $"{fullTableName}.{columnName}"
-                    : $"{schema}.{fullTableName}.{columnName}";
-                columnMetadata[columnKey] = new Dictionary<string, object?>
+                // Each schema's table is checked on its own: same name, possibly different columns.
+                foreach (var table in tables.Where(t => string.Equals(t.DbName, fullTableName, StringComparison.Ordinal)))
                 {
-                    [MetadataKeys.DataType.Type] = MetadataKeys.DataType.PhpSerialized,
-                    [MetadataKeys.DataType.Format] = "php",
-                };
+                    var columnExists = table.Columns.Any(c =>
+                        string.Equals(c.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+                    if (!columnExists)
+                        continue;
+
+                    var schema = table.TableSchema ?? "";
+                    var columnKey = string.IsNullOrEmpty(schema)
+                        ? $"{fullTableName}.{columnName}"
+                        : $"{schema}.{fullTableName}.{columnName}";
+                    columnMetadata[columnKey] = new Dictionary<string, object?>
+                    {
+                        [MetadataKeys.DataType.Type] = MetadataKeys.DataType.PhpSerialized,
+                        [MetadataKeys.DataType.Format] = "php",
+                    };
+                }
             }
         }
 
@@ -331,4 +331,12 @@ public sealed class WordPressDetector : IAppSchemaDetector
 
     private static string GroupNameFromPrefix(string prefix) =>
         prefix.EndsWith('_') ? prefix[..^1] : prefix;
+
+    /// <summary>
+    /// The metadata keys for <paramref name="dbName"/>: <c>schema.name</c> for every schema that
+    /// holds a table of that name, or the bare name for a table with no schema.
+    /// </summary>
+    internal static IEnumerable<string> TableMetadataKeys(ILookup<string, string> schemasByDbName, string dbName)
+        => schemasByDbName[dbName].Distinct(StringComparer.Ordinal)
+            .Select(schema => string.IsNullOrEmpty(schema) ? dbName : $"{schema}.{dbName}");
 }

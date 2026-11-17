@@ -10,6 +10,7 @@ import {
   type SavedObjectsClient,
 } from "@standardbeagle/edit-db";
 import { newSavedObjectId } from "../lib/saved-object-id";
+import { SAVED_QUERY_KIND } from "./saved-query";
 
 export const SAVED_QUERY_TYPE = "query" as const;
 
@@ -49,7 +50,24 @@ export function describeSavedQueryLoadFailure(cause: unknown): string {
 }
 
 /**
- * Lists the saved queries, mapping any failure onto
+ * True for a `type: 'query'` object that belongs to another pane: charts
+ * (`bifrost.chart`) and pivots (`bifrost.pivot`) are saved under the same type
+ * and carry their own definition `kind`. The designer cannot open them, so the
+ * saved-query rail must not list them.
+ */
+function isOtherQuerySubKind(object: SavedObject): boolean {
+  const definition = object.definition as { kind?: unknown } | null;
+  return (
+    typeof definition === "object" &&
+    definition !== null &&
+    typeof definition.kind === "string" &&
+    definition.kind !== SAVED_QUERY_KIND
+  );
+}
+
+/**
+ * Lists the saved visual queries (charts and pivots, which share the
+ * `query` type, are left out), mapping any failure onto
  * {@link describeSavedQueryLoadFailure}. Aborts propagate untouched so a caller
  * that cancelled its own request can tell that apart from a real failure.
  */
@@ -58,7 +76,8 @@ export async function listSavedQueries(
   onSkipped?: (skipped: number) => void,
 ): Promise<SavedObject[]> {
   try {
-    return await savedQueryStore.list(SAVED_QUERY_TYPE, signal, onSkipped);
+    const objects = await savedQueryStore.list(SAVED_QUERY_TYPE, signal, onSkipped);
+    return objects.filter((object) => !isOtherQuerySubKind(object));
   } catch (cause) {
     if (isAbortError(cause)) throw cause;
     const error = new Error(describeSavedQueryLoadFailure(cause));

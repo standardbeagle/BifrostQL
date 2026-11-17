@@ -100,6 +100,22 @@ describe("SavedQueryList", () => {
 
     await waitFor(() => expect(screen.getByText("Alpha")).toBeTruthy());
   });
+
+  it("leaves saved charts and pivots (same 'query' type) out of the rail", async () => {
+    // Charts and pivots share type 'query'; clicking one used to say "… is not a
+    // saved visual query this version can open."
+    fetchMock.mockResolvedValue(json([
+      { id: "query:v", type: "query", name: "Visual", version: 1, definition: { kind: "bifrost.visual-query", version: 1 } },
+      { id: "query:c", type: "query", name: "Sales chart", version: 1, definition: { kind: "bifrost.chart", version: 1 } },
+      { id: "query:p", type: "query", name: "Region pivot", version: 1, definition: { kind: "bifrost.pivot", version: 1 } },
+    ]));
+
+    render(<SavedQueryList activeId={null} reloadToken={0} onOpen={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Visual")).toBeTruthy());
+    expect(screen.queryByText("Sales chart")).toBeNull();
+    expect(screen.queryByText("Region pivot")).toBeNull();
+  });
 });
 
 describe("describeSavedQueryLoadFailure", () => {

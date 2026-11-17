@@ -1,4 +1,5 @@
 import { detectContentKind, truncateForCell, formatBinaryPreview, type ContentKind } from '@/lib/content-detect';
+import { reformatJsonText } from '@/lib/json-text';
 import {
     HoverCard,
     HoverCardContent,
@@ -40,11 +41,7 @@ interface ContentViewerProps {
 
 function formatForPreview(value: string, kind: ContentKind): string {
     if (kind === 'json') {
-        try {
-            return JSON.stringify(JSON.parse(value), null, 2);
-        } catch {
-            return value;
-        }
+        return reformatJsonText(value, 2) ?? value;
     }
     return value;
 }

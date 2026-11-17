@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { binaryDataUrl, detectContentKind, isBinaryDbType, isLongTextDbType, sniffBinaryContent } from '@/lib/content-detect';
+import { reformatJsonText } from '@/lib/json-text';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -54,11 +55,9 @@ export function ContentEditor({
     const handleFormat = () => {
         setFormatError(null);
         if (kind === 'json') {
-            try {
-                onChange(JSON.stringify(JSON.parse(value), null, 2));
-            } catch {
-                setFormatError('Invalid JSON');
-            }
+            const formatted = reformatJsonText(value, 2);
+            if (formatted === null) setFormatError('Invalid JSON');
+            else onChange(formatted);
         } else if (kind === 'xml') {
             // Simple XML formatting: add newlines after closing tags
             try {
@@ -76,11 +75,9 @@ export function ContentEditor({
     const handleMinify = () => {
         setFormatError(null);
         if (kind === 'json') {
-            try {
-                onChange(JSON.stringify(JSON.parse(value)));
-            } catch {
-                setFormatError('Invalid JSON');
-            }
+            const minified = reformatJsonText(value, 0);
+            if (minified === null) setFormatError('Invalid JSON');
+            else onChange(minified);
         } else if (kind === 'xml') {
             onChange(value.replace(/\n\s*/g, '').trim());
         }

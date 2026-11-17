@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useToast } from '../hooks/useToast';
 import { binaryDataUrl, detectContentKind, formatBinaryPreview, sniffBinaryContent, type ContentKind } from '@/lib/content-detect';
 import { downloadBinaryFile } from '../lib/export';
+import { reformatJsonText } from '../lib/json-text';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -55,11 +56,9 @@ const kindLabels: Record<ContentKind, string> = {
 
 function formatContent(value: string, kind: ContentKind): string {
     if (kind === 'json') {
-        try {
-            return JSON.stringify(JSON.parse(value), null, 2);
-        } catch {
-            return value;
-        }
+        // Token-preserving: a parse/stringify round-trip rounds integers past
+        // 2^53 and rewrites `1.50` as `1.5`, and the editor is seeded from this.
+        return reformatJsonText(value, 2) ?? value;
     }
     if (kind === 'xml') {
         return value.replace(/>\s*</g, '>\n<').trim();
@@ -204,9 +203,8 @@ export function ContentPanel({
 
     const handleFormat = useCallback(() => {
         if (kind === 'json') {
-            try {
-                setEditValue(JSON.stringify(JSON.parse(editValue), null, 2));
-            } catch { /* leave as-is */ }
+            const reformatted = reformatJsonText(editValue, 2);
+            if (reformatted !== null) setEditValue(reformatted);
         } else if (kind === 'xml') {
             setEditValue(editValue.replace(/>\s*</g, '>\n<').trim());
         }

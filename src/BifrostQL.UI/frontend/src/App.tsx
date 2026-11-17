@@ -24,6 +24,7 @@ import './erd/erd.css';
 import { runFormsMigrationOnce } from './forms/forms-migration-boot';
 import { isSqlBridgeAvailable, probeSqlBridge } from './lib/sql-bridge';
 import { getTableDdl, isNativeSaveAvailable, saveTextFileNative } from './lib/file-bridge';
+import { qualifiedDbName } from './lib/table-identity';
 import {
   fetchProfiles,
   resolveActiveProfile,
@@ -180,8 +181,8 @@ export default function App() {
         label: 'Edit as query',
         onSelect: (table: EditDbTable) => {
           // The builder's name space is the qualified db name; edit-db's dbName
-          // carries "schema.table" where the database qualifies tables.
-          setBuilderSeedTable(table.dbName || table.name);
+          // is bare, so qualify it with the table's schema.
+          setBuilderSeedTable(qualifiedDbName(table));
           setEditorPane('builder');
         },
       });
@@ -190,7 +191,7 @@ export default function App() {
         label: 'Copy DDL',
         onSelect: async (table: EditDbTable) => {
           try {
-            const result = await getTableDdl(table.dbName || table.name);
+            const result = await getTableDdl(qualifiedDbName(table));
             await navigator.clipboard.writeText(result.ddl);
             notify(`CREATE TABLE for ${result.table} copied to the clipboard`);
           } catch (e: unknown) {

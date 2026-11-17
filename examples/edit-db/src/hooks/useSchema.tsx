@@ -38,6 +38,8 @@ interface DbColumnItem {
 }
 
 interface DbSchemaItem {
+    // Carried onto Table by the `...s` spread below.
+    schema: string;
     graphQlName: string;
     dbName: string;
     labelColumn: string;

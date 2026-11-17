@@ -12,4 +12,8 @@ describe('GET_DB_SCHEMA', () => {
         expect(GET_DB_SCHEMA).toMatch(/manyToManyJoins\s*{[^}]*junctionTargetField/s);
         expect(GET_DB_SCHEMA).toMatch(/manyToManyJoins\s*{[^}]*hasPayload/s);
     });
+
+    it('requests the owning schema of each table, so a bare dbName two schemas share stays tellable apart', () => {
+        expect(GET_DB_SCHEMA).toMatch(/_dbSchema\s*{\s*schema\s/);
+    });
 });

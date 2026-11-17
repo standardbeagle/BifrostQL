@@ -80,21 +80,7 @@ namespace BifrostQL.UI.NativeBridge
             };
         }
 
-        // Resolves the cached model for the active connection. Throws the same way
-        // exec-sql does when there is no connection or the schema has not loaded.
-        // GetFirstValueAsync() lazily loads the model on first access.
-        private async Task<IDbModel> ResolveModelAsync()
-        {
-            if (string.IsNullOrEmpty(_state.ConnectionString) || _state.Provider is null)
-                throw new InvalidOperationException("No active database connection. Connect to a database first.");
-
-            var pathCache = _services.GetService<PathCache<GraphQL.Inputs>>();
-            var inputs = pathCache is null ? null : await pathCache.GetFirstValueAsync();
-            if (inputs is null || !inputs.TryGetValue("model", out var modelObj) || modelObj is not IDbModel model)
-                throw new InvalidOperationException("Database schema is not loaded yet.");
-
-            return model;
-        }
+        private Task<IDbModel> ResolveModelAsync() => LoadedBridgeModel.ResolveAsync(_state, _services);
 
         // Resolves the cached model + active dialect for the build handlers.
         private async Task<(IDbModel Model, ISqlDialect Dialect)> ResolveModelAndDialectAsync()

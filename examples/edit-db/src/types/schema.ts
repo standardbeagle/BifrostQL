@@ -159,8 +159,14 @@ export interface ManyToManyJoin {
  * @interface Table
  */
 export interface Table {
-  /** Original database table name */
+  /** Original database table name, unqualified: two schemas can share it. */
   dbName: string;
+  /**
+   * Database schema that owns the table (`_dbSchema.schema`). `schema.dbName` is the
+   * table's unambiguous DB identity; send that, never the bare `dbName`, to a host
+   * that resolves DB names. Optional only because hand-built fixtures omit it.
+   */
+  schema?: string;
   /** GraphQL type name for the table */
   graphQlName: string;
   /** Alias for graphQlName */

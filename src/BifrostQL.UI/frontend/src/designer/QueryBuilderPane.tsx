@@ -11,6 +11,7 @@ import {
   type BuildAndExecResult,
 } from "../lib/builder-bridge";
 import type { VisualFilterOperator, VisualJoin, VisualJoinType, VisualSort } from "../lib/visual-query";
+import { findBuilderTable } from "../lib/table-identity";
 import { ResultGrid } from "../ResultGrid";
 import { TablePalette } from "./TablePalette";
 import { DesignCanvas } from "./DesignCanvas";
@@ -186,13 +187,11 @@ export function QueryBuilderPane({
   // Consumed one-shot exactly like openRequest; unsaved edits are confirmed
   // before being discarded, and an unknown table is an explicit error — the
   // grid's GraphQL-flavored name and the builder's qualified name are different
-  // name spaces, so a silent miss here would read as a dead click.
+  // name spaces, so a silent miss here would read as a dead click. A bare name
+  // two schemas share is a miss too, never the first listed table.
   useEffect(() => {
     if (!seedTable || !schema) return;
-    const wanted = seedTable.toLowerCase();
-    const match = schema.tables.find(
-      (t) => t.qualified.toLowerCase() === wanted || t.name.toLowerCase() === wanted,
-    );
+    const match = findBuilderTable(schema.tables, seedTable);
     if (!match) {
       setError(`Table '${seedTable}' was not found in the query builder schema.`);
       onSeedHandled?.();

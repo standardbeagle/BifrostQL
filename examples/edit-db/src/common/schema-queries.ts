@@ -1,6 +1,7 @@
 export const GET_DB_SCHEMA = `
 query dbSchema {
   _dbSchema {
+    schema
     dbName
     graphQlName
     labelColumn

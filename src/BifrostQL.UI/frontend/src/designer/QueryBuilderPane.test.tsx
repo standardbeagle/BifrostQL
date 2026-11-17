@@ -263,6 +263,29 @@ describe("edit-as-query seed", () => {
     expect(screen.queryByText(/was not found in the query builder schema/)).toBeNull();
   });
 
+  it("refuses a bare name two schemas share, like an unknown table, and seeds the qualified one", async () => {
+    // dbo.orders is listed first, so a first-match lookup would silently seed it.
+    const twoSchemas = (): BuilderSchema => {
+      const s = schema();
+      s.tables = [...s.tables, { schema: "sales", name: "orders", qualified: "sales.orders" }];
+      s.columns = [...s.columns, { table: "sales.orders", name: "region", type: "varchar", nullable: true, isPrimaryKey: false }];
+      return s;
+    };
+    bridge.getBuilderSchema.mockResolvedValue(twoSchemas());
+    const bareHandled = vi.fn();
+    render(<QueryBuilderPane seedTable="orders" onSeedHandled={bareHandled} />);
+    await waitFor(() =>
+      expect(screen.getByText(/'orders' was not found in the query builder schema/)).toBeTruthy());
+    expect(bareHandled).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    bridge.getBuilderSchema.mockResolvedValue(twoSchemas());
+    const qualifiedHandled = vi.fn();
+    render(<QueryBuilderPane seedTable="sales.orders" onSeedHandled={qualifiedHandled} />);
+    await waitFor(() => expect(qualifiedHandled).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/was not found in the query builder schema/)).toBeNull();
+  });
+
   it("reports an unknown table as an explicit error, never a silent no-op", async () => {
     bridge.getBuilderSchema.mockResolvedValue(schema());
     const onSeedHandled = vi.fn();

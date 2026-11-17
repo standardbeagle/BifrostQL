@@ -15,27 +15,33 @@ describe('runSqlStatements', () => {
       columns: [{ name: sql, type: 'text' }],
     }));
     // Act
-    const outcomes = await runSqlStatements([stmt('SELECT 1'), stmt('SELECT 2')], exec);
+    const { outcomes, skipped } = await runSqlStatements(
+      [stmt('SELECT 1'), stmt('SELECT 2')],
+      exec,
+    );
     // Assert — order preserved, each statement executed once.
     expect(exec.mock.calls.map((c) => c[0])).toEqual(['SELECT 1', 'SELECT 2']);
     expect(outcomes.map((o) => o.result?.columns[0].name)).toEqual(['SELECT 1', 'SELECT 2']);
+    expect(skipped).toEqual([]);
   });
 
-  it('captures a per-statement error without aborting the batch', async () => {
-    // Arrange — the middle statement throws.
+  it('stops at the first failing statement and never runs the rest', async () => {
+    // Arrange — the middle statement throws; the third must not reach the database.
     const exec = vi.fn(async (sql: string): Promise<SqlResult> => {
       if (sql === 'BOOM') throw new Error('syntax error near BOOM');
       return emptyResult;
     });
+    const tail = stmt('UPDATE c SET y = 2', 15);
     // Act
-    const outcomes = await runSqlStatements(
-      [stmt('SELECT 1'), stmt('BOOM', 9), stmt('SELECT 2', 15)],
+    const { outcomes, skipped } = await runSqlStatements(
+      [stmt('SELECT 1'), stmt('BOOM', 9), tail],
       exec,
     );
-    // Assert — all three ran; the failure is pinned to its statement/offset.
-    expect(outcomes).toHaveLength(3);
+    // Assert — the failure is pinned to its statement/offset and the tail is skipped.
+    expect(exec.mock.calls.map((c) => c[0])).toEqual(['SELECT 1', 'BOOM']);
+    expect(outcomes).toHaveLength(2);
     expect(outcomes[1].error).toMatch(/BOOM/);
     expect(outcomes[1].statement.from).toBe(9);
-    expect(outcomes[2].result).toBeDefined();
+    expect(skipped).toEqual([tail]);
   });
 });

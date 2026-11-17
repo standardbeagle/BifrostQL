@@ -23,8 +23,13 @@ introspected schema the shell already loads.
   profile (SQLite / SQL Server / PostgreSQL / MySQL).
 - **Execution** runs the whole buffer or the current selection. Statements are
   split on `;` using the language tree (not a regex), so semicolons inside
-  strings and comments are respected. Each statement produces its own result
-  block or error, with the offending statement's offset on error.
+  strings, quoted identifiers, comments and Postgres `$$` bodies are respected.
+  A `BEGIN … END` block (trigger and procedure bodies) stays one statement, and
+  on SQL Server a `GO` line ends the batch: `CREATE PROCEDURE`/`FUNCTION`/
+  `TRIGGER`/`VIEW` runs to the end of its batch, and `GO` itself is never sent.
+  Each statement produces its own result block. The batch stops at the first
+  error: that block shows the error with the statement's offset in the editor
+  buffer, and the statements after it are reported as not run.
 - **DDL** (`CREATE TABLE`, `DROP`, …) still works — full parity with the old
   console.
 - Executed statements can be kept as saved-object `query` entries flagged as

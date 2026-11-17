@@ -88,6 +88,7 @@ export function SqlConsole({ provider }: SqlConsoleProps) {
   const [value, setValue] = useState('');
   const [schema, setSchema] = useState<BuilderSchema | null>(null);
   const [outcomes, setOutcomes] = useState<StatementOutcome[]>([]);
+  const [skippedCount, setSkippedCount] = useState(0);
   const [runError, setRunError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -121,19 +122,22 @@ export function SqlConsole({ provider }: SqlConsoleProps) {
       ? view.state.doc.toString()
       : view.state.sliceDoc(sel.from, sel.to);
 
-    const statements = splitSqlStatements(source, activeProvider);
+    // Offsets are reported against the whole buffer, not the selection.
+    const statements = splitSqlStatements(source, activeProvider, sel.empty ? 0 : sel.from);
     if (statements.length === 0) return;
 
     setRunning(true);
     setRunError(null);
     try {
-      const next = await runSqlStatements(statements, (s) => execSql(s));
-      setOutcomes(next);
-      for (const outcome of next) recordSqlStatement(outcome.statement.text);
+      const batch = await runSqlStatements(statements, (s) => execSql(s));
+      setOutcomes(batch.outcomes);
+      setSkippedCount(batch.skipped.length);
+      for (const outcome of batch.outcomes) recordSqlStatement(outcome.statement.text);
     } catch (err) {
       // A throw here is a bridge-level failure (transport/timeout), not a per-statement
       // SQL error — those are captured inside runSqlStatements as outcomes.
       setOutcomes([]);
+      setSkippedCount(0);
       setRunError(err instanceof BridgeError || err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(false);
@@ -223,6 +227,11 @@ export function SqlConsole({ provider }: SqlConsoleProps) {
         {outcomes.map((outcome, i) => (
           <StatementResult key={i} index={i} outcome={outcome} />
         ))}
+        {skippedCount > 0 && (
+          <div className="sql-console__statement sql-console__statement--skipped" role="status">
+            Stopped at the error: {skippedCount} later statement(s) were not run.
+          </div>
+        )}
       </div>
     </div>
   );

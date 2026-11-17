@@ -52,6 +52,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Local password hashes use PBKDF2-HMAC-SHA512 at 210,000 iterations** (2.1× the work per login). Existing hashes upgrade at the next sign-in.
 - **OData refuses Basic credentials on plain HTTP** with 403 ("Basic credentials are accepted only over HTTPS.") before reading them. Set `ODataOptions.AllowCleartextBasicAuth` to opt out (off by default; a startup warning when on). `X-Forwarded-Proto` counts only when the host configures ForwardedHeaders.
 - **A read-denied table answers like a missing one** on RESP (`-ERR unknown table`, was `-NOPERM`), pgwire (42601 `relation "<name>" does not exist.`, was 42501), LDAP (`noSuchObject`, and subtree searches skip denied families; was `insufficientAccessRights`) and gRPC (UNIMPLEMENTED "Method is unimplemented.", was INVALID_ARGUMENT / PERMISSION_DENIED). OData, MCP, S3 and feeds already matched and are now pinned. GraphQL and the binary transport still differ: the schema is not filtered per identity.
+- **SQL Server `timestamp` / `rowversion` columns are row versions, not date-times.** They are exposed as base64 binary, left out of insert input, and usable as a `concurrency-token`. Postgres, MySQL and SQLite `timestamp` keep their date-time meaning.
+- **Field-encryption key APIs are async.** `IDataEncryptionKeyStore` has only `LoadAsync`/`StoreAsync`, so custom key stores must implement them. `EnvelopeKeyManager` key methods are `*Async` (`GetDataKeyAsync`, `RotateAsync`, …), `CryptoReadProjector` is built with `CreateAsync`, and `TableReadChain.For` is `ForAsync`. A key version minted by another process is picked up within about a second.
+- **`RowScopeCompiler.Compile` takes an `ITypeMapper`**, so row-scope comparisons convert context values by the column's dialect type.
 
 ### Security — third review pass
 
@@ -65,6 +68,10 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Fixed — third review pass
 
+- Two concurrent resumes of the same deferred undo no longer both run: one claims the change set under a lease and the other gets `CONFLICT`.
+- Tenant, row-scope and writable-values comparisons convert context values by the dialect's column type, so Postgres `int4` or SQL Server `money` bind as numbers instead of strings.
+- The MCP bearer token exchange is awaited and honours the tool call's cancellation; `CreateServerOptions` accepts an async `userContextProviderAsync`.
+- Field-encryption keys load once at the start of a request on the async path, so a DB- or KMS-backed key store no longer blocks request threads. The wire adapters' pipe stream no longer offers blocking sync reads and writes.
 - gRPC insert reports the real `AffectedRows` (0 when a trigger drops the row), and write events fire only when rows land.
 - Numbers inside native JSON columns (Postgres json/jsonb, MySQL json) keep their exact text on read and write.
 - Tree-sync reads the existing rows under an update lock inside its write transaction, so a concurrent writer can no longer change the diff between load and write.

@@ -47,7 +47,7 @@ namespace BifrostQL.Server.Resp
                 var executor = context.Services.GetRequiredService<IQueryIntentExecutor>();
                 var model = await executor.GetModelAsync(context.Endpoint);
 
-                var table = ResolveTable(model, parsed.MatchPattern, out var matchError, out var keyPrefix);
+                var table = ResolveTable(model, parsed.MatchPattern, context.Session.UserContext, out var matchError, out var keyPrefix);
                 if (table is null)
                     return RespValue.Err(matchError!);
 
@@ -163,7 +163,8 @@ namespace BifrostQL.Server.Resp
         /// returns that table plus the exact prefix token the caller used (so emitted keys round-trip into the
         /// same namespace). A pattern that is not <c>&lt;table&gt;:*</c>, or an unknown table, is a clean error.
         /// </summary>
-        private static IDbTable? ResolveTable(IDbModel model, string? pattern, out string? error, out string? keyPrefix)
+        private static IDbTable? ResolveTable(
+            IDbModel model, string? pattern, IDictionary<string, object?> readerContext, out string? error, out string? keyPrefix)
         {
             error = null;
             keyPrefix = null;
@@ -183,8 +184,9 @@ namespace BifrostQL.Server.Resp
 
             // The same resolution GET uses: a name shared by two schemas' tables is ambiguous,
             // never "whichever table enumerates first", so SCAN cannot page a different table
-            // than GET would address with the same token.
-            if (!RespReadEngine.TryResolveTable(model, token, out var table, out error))
+            // than GET would address with the same token; and a table the caller may not read
+            // answers like a missing one (invariant 9).
+            if (!RespReadEngine.TryResolveReadableTable(model, token, readerContext, out var table, out error))
                 return null;
 
             keyPrefix = token;

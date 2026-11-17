@@ -123,6 +123,41 @@ namespace BifrostQL.Server.Test.Resp
         }
 
         /// <summary>Starts a loopback RESP front door bound to the base fixture's real executors, writes enabled.</summary>
+        // ---- (c2) table existence probe -------------------------------------
+        //
+        // Every table-addressed read verb, raw reply bytes re-encoded with the real writer: GET and
+        // HGETALL on a key, and a SCAN over the table's key space.
+
+        protected override bool AdapterSupportsTableExistenceProbe => true;
+
+        protected override async Task<string> ProbeTableReadAsync(string table, ClaimsPrincipal principal)
+        {
+            await using var fixture = await StartFixtureAsync(principal, EndpointPath);
+            await RespWire.AuthenticateAsync(fixture.Client, LoginUser, LoginSecret);
+
+            var commands = new[]
+            {
+                new[] { RespProtocol.Get, $"{table}:1" },
+                new[] { RespProtocol.HGetAll, $"{table}:1" },
+                new[]
+                {
+                    RespProtocol.Scan, RespProtocol.ScanStartCursor, RespProtocol.ScanMatchOption,
+                    $"{table}{RespProtocol.ScanWildcardSuffix}",
+                },
+            };
+            var transcript = new StringBuilder();
+            foreach (var command in commands)
+            {
+                await fixture.Client.SendCommandAsync(command);
+                var reply = await fixture.Client.ReadReplyAsync();
+                using var raw = new MemoryStream();
+                if (reply is not null)
+                    await RespWriter.WriteAsync(raw, reply, default);
+                transcript.Append(command[0]).Append(" => ").Append(Encoding.UTF8.GetString(raw.ToArray())).Append('\n');
+            }
+            return transcript.ToString();
+        }
+
         private Task<RespFixture> StartFixtureAsync(ClaimsPrincipal principal, string endpoint)
         {
             var store = new FakeRespCredentialStore().Add(LoginUser, LoginSecret, principal);

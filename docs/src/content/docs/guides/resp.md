@@ -131,9 +131,11 @@ coerced to its key column's type (an unparseable integer/decimal segment is a cl
 concatenated into SQL. A key value that itself contains `:` cannot be addressed (it
 splits into the wrong segment count); callers must encode such values.
 
-On a read, a key naming a table the caller may not read answers the same `NOPERM`
-whether or not the rest of the key is well formed, so the segment-count and
-segment-type errors never describe a denied table's key.
+On a read (`GET`, `MGET`, `EXISTS`, `TYPE`, `HGET`, `HGETALL`, `SCAN … MATCH`), a table
+the caller may not read answers `-ERR unknown table '<name>'`, byte for byte what a
+table that does not exist gets, whether or not the rest of the key is well formed. So
+a read never reveals that a denied table exists, and the segment-count and segment-type
+errors never describe its key.
 
 ### Reads
 

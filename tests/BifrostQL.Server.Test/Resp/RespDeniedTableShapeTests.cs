@@ -8,7 +8,8 @@ namespace BifrostQL.Server.Test.Resp
     /// Invariant 9: a pre-pipeline key-shape check on a table the caller may not read answers
     /// exactly like the pipeline's denial. Keys parse against the raw model, so before the fix a
     /// wrong-arity GET on a denied table answered "supplies 2 value segment(s) but 1 are expected"
-    /// — its primary-key arity — while a well-formed GET answered NOPERM.
+    /// — its primary-key arity — while a well-formed GET answered NOPERM. Both now answer the
+    /// unknown-table error a missing table gets.
     /// </summary>
     public sealed class RespDeniedTableShapeTests : IAsyncLifetime
     {
@@ -49,7 +50,8 @@ namespace BifrostQL.Server.Test.Resp
         public async Task Malformed_key_on_a_denied_table_answers_like_the_denial(string probe)
         {
             var denial = await GetErrorAsync("secrets:1");
-            denial.Should().Contain("NOPERM","the fixture must deny the table through the pipeline");
+            denial.Should().Be((await GetErrorAsync("missing:1")).Replace("missing", "secrets"),
+                "a denied table answers like a missing one");
 
             (await GetErrorAsync(probe)).Should().Be(denial);
         }

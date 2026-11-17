@@ -83,12 +83,35 @@ namespace BifrostQL.Server.Resp
             }
             if (!index.ByName.TryGetValue(token, out table))
             {
-                error = $"{RespProtocol.ErrPrefix}unknown table '{token}'";
+                error = UnknownTableError(token);
                 return false;
             }
             error = null;
             return true;
         }
+
+        /// <summary>
+        /// <see cref="TryResolveTable"/> for a READ: a table the caller may not read
+        /// (<see cref="SchemaReadVisibility.ProjectTable"/>) answers the unknown-table error, byte for
+        /// byte, so a read cannot tell a denied table from a missing one (invariant 9). Writes resolve
+        /// against the full schema through <see cref="TryResolveTable"/> and let the pipeline decide
+        /// (invariant 7).
+        /// </summary>
+        public static bool TryResolveReadableTable(
+            IDbModel model, string token, IDictionary<string, object?> readerContext,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+        {
+            if (!TryResolveTable(model, token, out table, out error))
+                return false;
+            if (SchemaReadVisibility.ProjectTable(table, readerContext) is not null)
+                return true;
+            table = null;
+            error = UnknownTableError(token);
+            return false;
+        }
+
+        private static string UnknownTableError(string token) => $"{RespProtocol.ErrPrefix}unknown table '{token}'";
 
         private static RespTableIndex GetTableIndex(IDbModel model) =>
             TableIndexCache.GetValue(model, static m =>
@@ -135,19 +158,20 @@ namespace BifrostQL.Server.Resp
         /// </summary>
         /// <param name="readerContext">
         /// The reading caller's identity, for a READ command. When the caller may not read the
-        /// resolved table the parse fails with the pipeline's own denial (<c>NOPERM</c>) before
-        /// any shape check runs, so a malformed key on a denied table answers exactly like a
-        /// well-formed one (invariant 9) and its key arity and types stay hidden. Writes pass
+        /// resolved table the parse fails with the unknown-table error before any shape check
+        /// runs, so a denied table answers exactly like a missing one and a malformed key on it
+        /// exactly like a well-formed one (invariant 9); its key arity and types stay hidden. Writes pass
         /// null: write-path resolution uses the full schema and the pipeline decides
         /// (invariant 7).
         /// </param>
         public static RespKeyParse ParseKey(IDbModel model, string rawKey, IDictionary<string, object?>? readerContext = null)
         {
             var segments = rawKey.Split(RespProtocol.KeySeparator);
-            if (!TryResolveTable(model, segments[0], out var table, out var tableError))
-                return RespKeyParse.Failure(tableError);
-            if (readerContext is not null && SchemaReadVisibility.ProjectTable(table, readerContext) is null)
-                return RespKeyParse.Failure(RespProtocol.AccessDeniedError);
+            var resolved = readerContext is null
+                ? TryResolveTable(model, segments[0], out var table, out var tableError)
+                : TryResolveReadableTable(model, segments[0], readerContext, out table, out tableError);
+            if (!resolved || table is null)
+                return RespKeyParse.Failure(tableError!);
 
             // Every diagnostic below is built from the CALLER'S OWN key and from counts — never from
             // the resolved model. Parsing runs against the raw model, ahead of any policy filter, so

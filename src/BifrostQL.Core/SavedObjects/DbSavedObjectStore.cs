@@ -12,6 +12,10 @@ namespace BifrostQL.Core.SavedObjects;
 /// <c>WHERE version = @expected</c> so a lost update is caught race-free at the
 /// database, not by a read-then-write window.
 ///
+/// <para>The table holds every owner's objects, so it must never be served. Its name always starts
+/// with <see cref="BifrostSystemTables.SavedObjectsPrefix"/>, which <c>DbModel</c> hides from every
+/// served model; a configured name outside that prefix is refused at construction.</para>
+///
 /// <para><c>owner</c> is the FIRST primary-key column and appears in the WHERE clause of every
 /// read, update and delete, so no statement this class issues can span owners. It is supplied by
 /// the caller from <see cref="SavedObjectOwner"/> and validated before it reaches a parameter.</para>
@@ -24,7 +28,7 @@ namespace BifrostQL.Core.SavedObjects;
 /// </summary>
 public sealed class DbSavedObjectStore : ISavedObjectStore
 {
-    public const string DefaultTableName = "_bifrost_saved_objects";
+    public const string DefaultTableName = BifrostSystemTables.SavedObjectsPrefix;
 
     /// <summary>The most objects one list returns; a list with more is refused, never cut short.</summary>
     public const int DefaultMaxListRows = 100_000;
@@ -68,6 +72,10 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
         _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
         _dialect = connFactory.Dialect;
         _tableName = string.IsNullOrWhiteSpace(tableName) ? DefaultTableName : tableName;
+        if (!_tableName.StartsWith(BifrostSystemTables.SavedObjectsPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(
+                $"The saved-object table name must start with '{BifrostSystemTables.SavedObjectsPrefix}', " +
+                "the prefix every served model hides.", nameof(tableName));
         _maxDefinitionBytes = maxDefinitionBytes;
         _timeoutSeconds = timeoutSeconds;
         _maxListRows = maxListRows;

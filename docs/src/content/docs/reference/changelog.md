@@ -41,11 +41,13 @@ On `main` after v0.4.28; not yet on NuGet.
 - **SQL Server `timestamp` / `rowversion` columns are row versions, not date-times.** They are exposed as base64 binary, left out of insert input, and usable as a `concurrency-token`. Postgres, MySQL and SQLite `timestamp` keep their date-time meaning.
 - **Field-encryption key APIs are async.** `IDataEncryptionKeyStore` has only `LoadAsync`/`StoreAsync`, so custom key stores must implement them. `EnvelopeKeyManager` key methods are `*Async` (`GetDataKeyAsync`, `RotateAsync`, …), `CryptoReadProjector` is built with `CreateAsync`, and `TableReadChain.For` is `ForAsync`. A key version minted by another process is picked up within about a second.
 - **`RowScopeCompiler.Compile` takes an `ITypeMapper`**, so row-scope comparisons convert context values by the column's dialect type.
+- **A `DbSavedObjectStore` table name must start with `_bifrost_saved_objects`.** Any other configured name throws `ArgumentException` at construction. Rename a custom table, for example `_bifrost_saved_objects_tenant_a`.
 
 ### Security — third review pass
 
 - Credential rate limits are reserved atomically. The shared per-source and per-account limiter (pgwire, RESP, LDAP, OData Basic, local login) read and incremented each window as two steps, so concurrent attempts overshot the cap; 32 simultaneous guesses against an account cap of 2 were all admitted.
 - Local auth: password history orders by insertion, not by timestamp, so the last-four reuse check holds when changes share a clock tick.
+- The saved-object table is never served. `_bifrost_saved_objects` (and any configured name with that prefix) was exposed as a GraphQL table when the store shared the served database, so every owner's saved objects were readable through it. It is now hidden from every served model, like the `_bifrost_auth_*` tables.
 - LDAP: new `MaxMembershipValuesPerSearch` (default 10,000) caps member/memberOf values across one search; over it the search ends with `adminLimitExceeded` instead of cutting values.
 - Local auth: logout, password change, disable, delete and admin action (`POST /auth/admin/revoke-sessions`) revoke sessions server-side; `MaxConcurrentSessions` caps them.
 - Local auth: an account locks after 10 consecutive failed logins for 30 minutes (`LockoutThreshold`, `LockoutDuration`; null waits for `/auth/admin/unlock`). This is separate from the rate limiter.

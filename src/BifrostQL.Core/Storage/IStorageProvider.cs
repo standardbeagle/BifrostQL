@@ -63,6 +63,71 @@ namespace BifrostQL.Core.Storage
         }
 
         /// <summary>
+        /// Opens a readable stream whose first byte is the object's byte at
+        /// <paramref name="offset"/>. It yields at least <paramref name="count"/> bytes when
+        /// the object has them, and may yield more: the caller copies exactly the count it
+        /// wants. The returned stream is the caller's to dispose.
+        ///
+        /// <para>The default opens <see cref="OpenReadAsync"/> and positions it: a seekable
+        /// stream seeks, a forward-only one reads and discards the prefix. A provider whose
+        /// backing store serves ranges natively (S3 <c>Range</c>) overrides this so a
+        /// 1 KiB read of a 2 GiB object transfers 1 KiB.</para>
+        /// </summary>
+        async Task<Stream> OpenReadRangeAsync(
+            StorageBucketConfig bucketConfig,
+            string fileKey,
+            long offset,
+            long count,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            ArgumentOutOfRangeException.ThrowIfNegative(count);
+            var stream = await OpenReadAsync(bucketConfig, fileKey, cancellationToken);
+            try
+            {
+                await AdvanceToOffsetAsync(stream, offset, cancellationToken);
+                return stream;
+            }
+            catch
+            {
+                await stream.DisposeAsync();
+                throw;
+            }
+        }
+
+        // A seekable stream seeks; a forward-only one reads and discards exactly 'offset'
+        // bytes, never relying on a seek it cannot honor and never reading past the offset.
+        private static async Task AdvanceToOffsetAsync(Stream source, long offset, CancellationToken cancellationToken)
+        {
+            if (offset == 0)
+                return;
+
+            if (source.CanSeek)
+            {
+                source.Seek(offset, SeekOrigin.Begin);
+                return;
+            }
+
+            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(64 * 1024);
+            try
+            {
+                var remaining = offset;
+                while (remaining > 0)
+                {
+                    var toRead = (int)Math.Min(buffer.Length, remaining);
+                    var read = await source.ReadAsync(buffer.AsMemory(0, toRead), cancellationToken);
+                    if (read == 0)
+                        break; // source shorter than the offset: nothing left to skip
+                    remaining -= read;
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
+        /// <summary>
         /// Deletes a file from storage
         /// </summary>
         /// <param name="bucketConfig">The bucket configuration</param>

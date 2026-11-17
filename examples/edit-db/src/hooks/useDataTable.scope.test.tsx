@@ -82,3 +82,18 @@ describe('useDataTable drill grid filter scope', () => {
         expect(result.current.columnFilters).toEqual([{ id: 'status', value: { operator: '_eq', value: 'open' } }]);
     });
 });
+
+describe('useDataTable grouping identity', () => {
+    it('returns the same grouping object across re-renders with unchanged inputs', async () => {
+        // The grouped summary and grid read this object; a fresh one (and a fresh
+        // memberRequest closure) per render re-rendered them on every parent render.
+        currentQuery = new URLSearchParams({ gb: 'status' }).toString();
+        const { result, rerender } = renderHook(() => useDataTable(orders), { wrapper });
+        await waitFor(() => expect(result.current.grouping?.loading).toBe(false));
+        const first = result.current.grouping;
+        expect(first).not.toBeNull();
+        rerender();
+        expect(result.current.grouping).toBe(first);
+        expect(result.current.grouping?.memberRequest).toBe(first?.memberRequest);
+    });
+});

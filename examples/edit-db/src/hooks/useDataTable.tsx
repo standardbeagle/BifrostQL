@@ -909,6 +909,28 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         });
     }, [exportQuery, table, queryVariables, fetcher, drill]);
 
+    // One object per real change, not per render: the grouped summary and the
+    // grid read it, and a fresh object (and memberRequest closure) every render
+    // re-rendered them on each keystroke elsewhere in the page.
+    const groupingData = groupingQuery.data;
+    const groupingLoading = groupingQuery.isLoading;
+    const groupingError = groupingQuery.error as Error | null;
+    const grouping = useMemo<UseDataTableResult['grouping']>(
+        () => groupingRequest && table
+            ? {
+                column: groupingRequest.groupBy,
+                sumColumn: groupingRequest.sumBy,
+                ...readGroupingResult(groupingData, table, groupingRequest.groupBy, groupingRequest.sumBy, groupingRequest.sort),
+                loading: groupingLoading,
+                error: groupingError,
+                sort: groupingRequest.sort,
+                onSortChange: setGroupingSort,
+                memberRequest: (value) => buildGridGroupMemberRequest(table, groupingRequest.groupBy, value, effectiveColumnFilters, filterString, appliedSort),
+            }
+            : null,
+        [groupingRequest, table, groupingData, groupingLoading, groupingError, effectiveColumnFilters, filterString, appliedSort],
+    );
+
     return {
         columns,
         sorting,
@@ -919,18 +941,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         pageCount,
         rows,
         totalRows,
-        grouping: groupingRequest
-            ? {
-                column: groupingRequest.groupBy,
-                sumColumn: groupingRequest.sumBy,
-                ...readGroupingResult(groupingQuery.data, table!, groupingRequest.groupBy, groupingRequest.sumBy, groupingRequest.sort),
-                loading: groupingQuery.isLoading,
-                error: groupingQuery.error as Error | null,
-                sort: groupingRequest.sort,
-                onSortChange: setGroupingSort,
-                memberRequest: (value) => buildGridGroupMemberRequest(table!, groupingRequest.groupBy, value, effectiveColumnFilters, filterString, appliedSort),
-            }
-            : null,
+        grouping,
         exportRows,
         loading: isLoading,
         // In flight while previous rows are shown as placeholder (page turn,

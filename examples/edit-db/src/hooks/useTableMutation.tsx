@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useFetcher } from "../common/fetcher";
 import { Table, Column } from "../types/schema";
 import { parsePkRoute } from "../lib/row-id";
@@ -71,13 +71,19 @@ export function useTableMutation(
     // through exactly the same banner as a server error.
     const [preflightError, setPreflightError] = useState<Error | null>(null);
 
-    const rejectPreflight = (e: unknown) => {
+    const rejectPreflight = useCallback((e: unknown) => {
         const err = e instanceof Error ? e : new Error(String(e));
         setPreflightError(err);
         return Promise.reject(err);
-    };
+    }, []);
 
-    const update = (detail: Record<string, unknown>) => {
+    // mutateAsync is stable across renders; the mutation result objects are not.
+    const updateAsync = updateMutation.mutateAsync;
+    const insertAsync = insertMutation.mutateAsync;
+
+    // Stable for unchanged inputs, so memoized consumers of a save handler built
+    // on these do not re-render on every parent render.
+    const update = useCallback((detail: Record<string, unknown>) => {
         setPreflightError(null);
         // An UPDATE with no primary-key columns has no WHERE clause — it would rewrite
         // every row. A null pkFilter (malformed/stale editId) or a table with no PK
@@ -100,10 +106,10 @@ export function useTableMutation(
         } catch (e) {
             return rejectPreflight(e);
         }
-        return updateMutation.mutateAsync(coerced);
-    };
+        return updateAsync(coerced);
+    }, [pkFilter, idColumns, table, editColumns, updateAsync, rejectPreflight]);
 
-    const insert = (detail: Record<string, unknown>) => {
+    const insert = useCallback((detail: Record<string, unknown>) => {
         setPreflightError(null);
         const validationErrors = validateRowValues(editColumns.map(c => c.column), detail);
         if (validationErrors.length > 0) {
@@ -115,8 +121,8 @@ export function useTableMutation(
         } catch (e) {
             return rejectPreflight(e);
         }
-        return insertMutation.mutateAsync(coerced);
-    };
+        return insertAsync(coerced);
+    }, [idColumns, editColumns, insertAsync, rejectPreflight]);
 
     // Pre-flight first: it is the reason no request was sent, so it describes the
     // current attempt while the react-query errors may still hold a previous one.

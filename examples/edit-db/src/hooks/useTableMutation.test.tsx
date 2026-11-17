@@ -63,6 +63,22 @@ describe('useTableMutation', () => {
         vi.clearAllMocks();
     });
 
+    it('keeps update and insert stable across re-renders with the same inputs', () => {
+        // A fresh closure per render re-rendered every memoized consumer of the
+        // save handler (handlePanelSave) on each parent render.
+        const { wrapper } = createHarness();
+        const idCol = col('id', 'Int!', true);
+        const nameCol = col('name', 'String');
+        const table = tbl('users', ['id'], [idCol, nameCol]);
+        const edit = editCols(nameCol);
+        const ids = [idCol];
+        const { result, rerender } = renderHook(() => useTableMutation(table, edit, ids, '1'), { wrapper });
+        const first = result.current;
+        rerender();
+        expect(result.current.update).toBe(first.update);
+        expect(result.current.insert).toBe(first.insert);
+    });
+
     it('rejects unsafe table names before building mutation text', () => {
         const { wrapper } = createHarness();
         const idCol = col('id', 'Int!', true);

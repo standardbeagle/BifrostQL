@@ -255,4 +255,23 @@ public sealed class WpConfigParsingTests
             .WithInnerException<InvalidOperationException>()
             .WithMessage("*format*");
     }
+
+    // wp config list output carries DB_PASSWORD. A PHP notice after the array
+    // (or before it) makes it unparseable, and the parse errors used to echo the
+    // first 100/200 characters of that output, password and all, into a message
+    // that /api/vault/connect returned to the renderer.
+    [Theory]
+    [InlineData("""[{"name":"DB_PASSWORD","value":"hunter2"},{"name":"DB_NAME","value":"wp"}] PHP Notice: x""")]
+    [InlineData("""PHP Notice: x [{"name":"DB_PASSWORD","value":"hunter2"}]""")]
+    public void ParseWpConfig_UnparseableOutput_NeverEchoesIt(string output)
+    {
+        var method = typeof(SshTunnelManager).GetMethod("ParseWpConfigOutput",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+        var act = () => method.Invoke(null, [output]);
+
+        var thrown = act.Should().Throw<System.Reflection.TargetInvocationException>().Which.InnerException;
+        thrown.Should().BeOfType<InvalidOperationException>();
+        thrown!.Message.Should().Contain("WP-CLI").And.NotContain("hunter2").And.NotContain("DB_PASSWORD");
+    }
 }

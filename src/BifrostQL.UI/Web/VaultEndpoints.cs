@@ -123,7 +123,8 @@ namespace BifrostQL.UI.Web
                             if (discovered is null)
                             {
                                 var rootList = string.Join(", ", WordPressDiscovery.DefaultRoots);
-                                var detail = lastError?.Message ?? "no installations found";
+                                // wp-cli stderr and parse errors can carry wp-config values.
+                                var detail = SecretScrubber.Scrub(lastError?.Message) ?? "no installations found";
                                 return Results.BadRequest(new
                                 {
                                     success = false,

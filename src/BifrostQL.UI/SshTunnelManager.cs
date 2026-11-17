@@ -201,8 +201,10 @@ public sealed class SshTunnelManager : IAsyncDisposable
         
         // Check if output starts with [ (expected JSON array). Anything else
         // is the wrong format even if it parses as JSON (e.g. a bare object).
+        // Neither parse error quotes the output: it is `wp config list`, so it carries
+        // DB_PASSWORD, and these messages reach the vault-connect response.
         if (!trimmed.StartsWith("["))
-            throw new InvalidOperationException($"WP-CLI returned wrong format (expected JSON array): {trimmed[..Math.Min(100, trimmed.Length)]}");
+            throw new InvalidOperationException($"WP-CLI returned wrong format (expected a JSON array; got {trimmed.Length} characters starting with something else)");
         
         JsonElement entries;
         try
@@ -211,7 +213,8 @@ public sealed class SshTunnelManager : IAsyncDisposable
         }
         catch (JsonException ex)
         {
-            throw new InvalidOperationException($"Failed to parse WP-CLI JSON output: {ex.Message}. Output: {trimmed[..Math.Min(200, trimmed.Length)]}");
+            // JsonException text names a position, never the value there.
+            throw new InvalidOperationException($"Failed to parse WP-CLI JSON output ({trimmed.Length} characters): {ex.Message}");
         }
         
         if (entries.ValueKind != JsonValueKind.Array)

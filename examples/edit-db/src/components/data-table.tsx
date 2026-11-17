@@ -162,7 +162,7 @@ interface DataTableProps<TData extends RowData> {
     onVisualize?: () => void;
     /** Schema columns offered by the URL-backed server grouping selector. */
     groupableColumns?: readonly Column[];
-    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; sort: GroupingSort; onSortChange: (sort: GroupingSort) => void; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
+    grouping?: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; truncated: boolean; loading: boolean; error: Error | null; sort: GroupingSort; onSortChange: (sort: GroupingSort) => void; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
     onGroupingChange?: (columnName: string | null) => void;
     onGroupingSumChange?: (columnName: string | null) => void;
 }
@@ -617,6 +617,7 @@ export function DataTable<TData extends RowData>({
                 <GroupedGridSummary
                     label={grouping.column.label}
                     rows={grouping.rows}
+                    truncated={grouping.truncated}
                     loading={grouping.loading}
                     error={grouping.error}
                     sumLabel={grouping.sumColumn?.label}

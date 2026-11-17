@@ -55,6 +55,20 @@ describe('GroupedGridSummary', () => {
         expect(screen.getByText('Group page 2 of 2')).toBeInTheDocument();
     });
 
+    it('says when the server had more groups than were fetched', () => {
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const rows = [{ value: 'a', count: 1, sum: undefined }];
+        const view = (truncated: boolean) => <QueryClientProvider client={client}><FetcherProvider value={{ query: vi.fn() }}>
+            <GroupedGridSummary label="Status" rows={rows} truncated={truncated} pageSize={20} sort={{ field: 'key', desc: false }} onSortChange={() => { /* unused */ }} memberRequest={() => ({ query: '', variables: {}, responseKey: 'orders' })} />
+        </FetcherProvider></QueryClientProvider>;
+        const { rerender } = render(view(false));
+        expect(screen.getByText('1 groups')).toBeInTheDocument();
+        expect(screen.queryByText(/More than \d+ groups match/)).not.toBeInTheDocument();
+        rerender(view(true));
+        expect(screen.getByText('First 1 groups')).toBeInTheDocument();
+        expect(screen.getByRole('note')).toHaveTextContent(/More than 1000 groups match/);
+    });
+
     it('defines explicit aggregate key/count ordering controls', () => {
         const onSortChange = vi.fn();
         const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

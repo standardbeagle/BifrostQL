@@ -239,6 +239,7 @@ describe('DataTable server grouping mode', () => {
                     column: { name: 'grade', graphQlName: 'grade', label: 'Grade', paramType: 'String' } as never,
                     sumColumn: null,
                     rows: [{ value: 'A', count: 2, sum: undefined }],
+                    truncated: false,
                     loading: false,
                     error: null,
                     sort: { field: 'key', desc: false },

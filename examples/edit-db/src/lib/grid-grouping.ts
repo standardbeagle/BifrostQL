@@ -37,6 +37,19 @@ export type GroupingSort = { field: 'key' | 'count'; desc: boolean };
 
 export const DEFAULT_GROUPING_SORT: GroupingSort = { field: 'key', desc: false };
 
+/**
+ * Most buckets one grouping request shows. The aggregate is asked for one more
+ * (the cap+1 sentinel) so a cut is reported instead of passing as the whole set;
+ * without an explicit limit the server's default row window (100) cut silently.
+ */
+export const GROUPING_BUCKET_CAP = 1000;
+
+/** Aggregate buckets plus whether the server had more than the cap. */
+export interface GroupingResult {
+    rows: GroupingRow[];
+    truncated: boolean;
+}
+
 export interface GridGroupingRequest {
     query: string;
     variables: Record<string, unknown>;
@@ -133,7 +146,7 @@ export function buildGridGroupingRequest(
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
     }
     const active = activePredicate(table, columnFilters, headerFilter);
-    const args = [active.clauses.length > 0 ? `filter: ${andAll(active.clauses)}` : '', `groupBy: [${groupBy.graphQlName}]`].filter(Boolean).join(', ');
+    const args = [active.clauses.length > 0 ? `filter: ${andAll(active.clauses)}` : '', `groupBy: [${groupBy.graphQlName}]`, `limit: ${GROUPING_BUCKET_CAP + 1}`].filter(Boolean).join(', ');
     return {
         query: `query GridGrouping${declarations(active.params)} { ${table.name}Aggregate(${args}) { ${groupBy.graphQlName} _count${sumBy ? ` _sum { ${sumBy.graphQlName} }` : ''} } }`,
         variables: active.variables,
@@ -141,15 +154,6 @@ export function buildGridGroupingRequest(
         sumBy,
         sort,
     };
-}
-
-export function readGroupingRows(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sort: GroupingSort = DEFAULT_GROUPING_SORT): GroupingRow[] {
-    const rows = data?.[`${table.name}Aggregate`];
-    if (!Array.isArray(rows)) return [];
-    return rows.map((row) => {
-        const record = row as Record<string, unknown>;
-        return { value: record[groupBy.graphQlName], count: Number(record._count ?? 0), sum: undefined };
-    }).sort((left, right) => compareGroupingRows(left, right, sort));
 }
 
 /** Defined aggregate ordering for the server-grouped replacement surface. */
@@ -172,13 +176,19 @@ export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort:
     return sort.desc ? -byKey : byKey;
 }
 
-/** Reads a selected configured measure without ever deriving it from page rows. */
-export function readGroupingRowsWithSum(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sumBy: Column | null, sort: GroupingSort = DEFAULT_GROUPING_SORT): GroupingRow[] {
+/**
+ * Reads the aggregate buckets (with the configured measure, never derived from
+ * page rows), dropping the cap+1 sentinel and reporting it as `truncated`.
+ * The server windows buckets in key order, so a truncated count sort ranks
+ * only the first GROUPING_BUCKET_CAP keys; the summary says so.
+ */
+export function readGroupingResult(data: Record<string, unknown> | undefined, table: Table, groupBy: Column, sumBy: Column | null, sort: GroupingSort = DEFAULT_GROUPING_SORT): GroupingResult {
     const raw = data?.[`${table.name}Aggregate`];
-    if (!Array.isArray(raw)) return [];
+    if (!Array.isArray(raw)) return { rows: [], truncated: false };
+    const truncated = raw.length > GROUPING_BUCKET_CAP;
     // Couple each server row to its configured sum before ordering; never
     // calculate a measure from the current flat page.
-    return raw.map((source) => {
+    const rows = raw.slice(0, GROUPING_BUCKET_CAP).map((source) => {
         const record = source as Record<string, unknown>;
         return {
             value: record[groupBy.graphQlName],
@@ -186,6 +196,7 @@ export function readGroupingRowsWithSum(data: Record<string, unknown> | undefine
             sum: sumBy ? (record._sum as Record<string, unknown> | undefined)?.[sumBy.graphQlName] : undefined,
         };
     }).sort((left, right) => compareGroupingRows(left, right, sort));
+    return { rows, truncated };
 }
 
 /** Schema-derived member query for a single aggregate key. It merges, never replaces, active filters. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, readGroupingRows, readGroupingRowsWithSum, withGroupingUrlParam, withoutGroupingUrlParams } from './grid-grouping';
+import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, GROUPING_BUCKET_CAP, readGroupingResult, withGroupingUrlParam, withoutGroupingUrlParams } from './grid-grouping';
 import type { Table } from '../types/schema';
 
 const orders = {
@@ -40,7 +40,7 @@ describe('grid grouping request', () => {
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'status', value: { operator: '_null', value: true } },
         ], '');
-        expect(request.query).toContain('ordersAggregate(filter: {status: {_null: true}}, groupBy: [status])');
+        expect(request.query).toContain('ordersAggregate(filter: {status: {_null: true}}, groupBy: [status], limit: 1001)');
         expect(request.query).toContain('_count');
         expect(request.variables).toEqual({});
     });
@@ -51,11 +51,11 @@ describe('grid grouping request', () => {
             { status: 'cancelled', _count: 4 },
             { status: null, _count: 2 },
         ] };
-        expect(readGroupingRows(fixture, orders, orders.columns[0], { field: 'key', desc: true }))
+        expect(readGroupingResult(fixture, orders, orders.columns[0], null, { field: 'key', desc: true }).rows)
             .toEqual([{ value: 'paid', count: 2, sum: undefined }, { value: 'cancelled', count: 4, sum: undefined }, { value: null, count: 2, sum: undefined }]);
         // Equal counts have a key-ascending tie-breaker, so pagination cannot
         // shuffle aggregate buckets between requests.
-        expect(readGroupingRows(fixture, orders, orders.columns[0], { field: 'count', desc: true }))
+        expect(readGroupingResult(fixture, orders, orders.columns[0], null, { field: 'count', desc: true }).rows)
             .toEqual([{ value: 'cancelled', count: 4, sum: undefined }, { value: null, count: 2, sum: undefined }, { value: 'paid', count: 2, sum: undefined }]);
         expect(buildGridGroupingRequest(orders, orders.columns[0], [], '', null, { field: 'count', desc: false }).sort)
             .toEqual({ field: 'count', desc: false });
@@ -85,11 +85,11 @@ describe('grid grouping request', () => {
                 { status: 'paid', _count: 2, _sum: { amount: '19.25' } },
             ],
         };
-        expect(readGroupingRowsWithSum(aggregateFixture, orders, orders.columns[0], sum)).toEqual([
+        expect(readGroupingResult(aggregateFixture, orders, orders.columns[0], sum)).toEqual({ rows: [
             { value: null, count: 1, sum: '3.50' },
             { value: 'cancelled', count: 1, sum: '2.00' },
             { value: 'paid', count: 2, sum: '19.25' },
-        ]);
+        ], truncated: false });
         expect(groupingSumColumnFromUrl('status', orders)).toBeNull();
     });
 
@@ -106,8 +106,21 @@ describe('grid grouping request', () => {
     });
 
     it('maps aggregate result rows rather than summing page rows and defines key-ascending group order', () => {
-        expect(readGroupingRows({ ordersAggregate: [{ status: 'paid', _count: 42 }, { status: null, _count: 3 }] }, orders, orders.columns[0]))
+        expect(readGroupingResult({ ordersAggregate: [{ status: 'paid', _count: 42 }, { status: null, _count: 3 }] }, orders, orders.columns[0], null).rows)
             .toEqual([{ value: null, count: 3 }, { value: 'paid', count: 42 }]);
+    });
+
+    it('asks for one bucket past the cap and reports the cut instead of showing a partial set as whole', () => {
+        const buckets = (n: number) => ({ ordersAggregate: Array.from({ length: n }, (_, i) => ({ status: `s${String(i).padStart(5, '0')}`, _count: 1 })) });
+        const atCap = readGroupingResult(buckets(GROUPING_BUCKET_CAP), orders, orders.columns[0], null);
+        expect(atCap.truncated).toBe(false);
+        expect(atCap.rows).toHaveLength(GROUPING_BUCKET_CAP);
+        const over = readGroupingResult(buckets(GROUPING_BUCKET_CAP + 1), orders, orders.columns[0], null);
+        expect(over.truncated).toBe(true);
+        expect(over.rows).toHaveLength(GROUPING_BUCKET_CAP);
+        expect(over.rows.map((row) => row.value)).not.toContain(`s${String(GROUPING_BUCKET_CAP).padStart(5, '0')}`);
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '');
+        expect(request.query).toContain(`groupBy: [status], limit: ${GROUPING_BUCKET_CAP + 1})`);
     });
 });
 

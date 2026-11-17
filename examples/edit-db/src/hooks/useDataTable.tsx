@@ -37,7 +37,7 @@ import {
 import { rowIdOf, encodeRouteParts } from "../lib/row-id";
 import { isComposite, fkDestinationColumnFor } from "../lib/fk";
 import { exportAllRows, type ExportRunner } from "../lib/export";
-import { buildGridGroupingRequest, buildGridGroupMemberRequest, DEFAULT_GROUPING_SORT, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingRowsWithSum, withGroupingUrlParam, withoutGroupingUrlParams, type GridGroupMemberRequest, type GroupingRow, type GroupingSort } from "../lib/grid-grouping";
+import { buildGridGroupingRequest, buildGridGroupMemberRequest, DEFAULT_GROUPING_SORT, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, groupingColumnFromUrl, groupingSumColumnFromUrl, readGroupingResult, withGroupingUrlParam, withoutGroupingUrlParams, type GridGroupMemberRequest, type GroupingRow, type GroupingSort } from "../lib/grid-grouping";
 
 // Re-export for existing filter component imports.
 export { getFilterOperators } from "../lib/query-builder";
@@ -489,7 +489,7 @@ interface UseDataTableResult {
     /** Total matching rows for the active filter/sort (across all pages). */
     totalRows: number;
     /** Server aggregate rows for URL-selected grouping; never derived from the page. */
-    grouping: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; loading: boolean; error: Error | null; sort: GroupingSort; onSortChange: (sort: GroupingSort) => void; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
+    grouping: { column: Column; sumColumn: Column | null; rows: GroupingRow[]; truncated: boolean; loading: boolean; error: Error | null; sort: GroupingSort; onSortChange: (sort: GroupingSort) => void; memberRequest: (value: unknown) => GridGroupMemberRequest } | null;
     /**
      * Export the FULL result set for the current filters + sort, paging through
      * the same fetcher/query — not just the visible page. Null when there is no
@@ -917,7 +917,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
             ? {
                 column: groupingRequest.groupBy,
                 sumColumn: groupingRequest.sumBy,
-                rows: readGroupingRowsWithSum(groupingQuery.data, table!, groupingRequest.groupBy, groupingRequest.sumBy, groupingRequest.sort),
+                ...readGroupingResult(groupingQuery.data, table!, groupingRequest.groupBy, groupingRequest.sumBy, groupingRequest.sort),
                 loading: groupingQuery.isLoading,
                 error: groupingQuery.error as Error | null,
                 sort: groupingRequest.sort,

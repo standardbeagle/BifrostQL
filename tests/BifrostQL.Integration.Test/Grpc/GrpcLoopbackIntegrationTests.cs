@@ -157,10 +157,12 @@ namespace BifrostQL.Integration.Test.Grpc
         {
             // Filtering a policy-denied column is a hidden/unknown field on BOTH read op classes; the
             // SAME condition must map to the SAME status (no read-vs-read op-class oracle).
-            const string filter = """{ "body": { "_eq": "secret body" } }""";
+            // profiles is readable but its ssn column is read-denied. (documents is the wholly denied
+            // table: it answers like a missing table, UNIMPLEMENTED, and never reaches a filter.)
+            const string filter = """{ "ssn": { "_eq": "111-22-3333" } }""";
 
-            var listStatus = await StatusOf(() => _client.ListAsync("documents", Tenant("tenant-a"), filter: filter));
-            var streamStatus = await StatusOf(() => _client.StreamAsync("documents", Tenant("tenant-a"), default, filter: filter));
+            var listStatus = await StatusOf(() => _client.ListAsync("profiles", Tenant("tenant-a"), filter: filter));
+            var streamStatus = await StatusOf(() => _client.StreamAsync("profiles", Tenant("tenant-a"), default, filter: filter));
 
             listStatus.Should().Be(StatusCode.InvalidArgument);
             streamStatus.Should().Be(listStatus, "the same denied-column condition must surface identically across op classes");

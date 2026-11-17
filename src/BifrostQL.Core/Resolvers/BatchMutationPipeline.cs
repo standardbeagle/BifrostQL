@@ -121,34 +121,15 @@ namespace BifrostQL.Core.Resolvers
             }
             else
             {
-                await using var conn = ctx.ConnFactory.GetConnection();
-                DbTransaction? transaction = null;
-                try
-                {
-                    await conn.OpenAsync(ct);
-                    transaction = await conn.BeginTransactionAsync(ct);
-                    // One per-transaction bag for the whole batch; each action gets its own
-                    // per-action bag when its hook context is built.
-                    await RunActionsAsync(conn, transaction, MutationObserverContext.NewMutationState());
-                    await transaction.CommitAsync(ct);
-                }
-                catch (BifrostExecutionError)
-                {
-                    if (transaction != null)
-                        await transaction.RollbackAsync(ct);
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    if (transaction != null)
-                        await transaction.RollbackAsync(ct);
-                    throw BifrostExecutionError.FromDatabaseException(ex);
-                }
-                finally
-                {
-                    if (transaction != null)
-                        await transaction.DisposeAsync();
-                }
+                // The one transaction primitive: a client abort rolls back without the request
+                // token (a rollback on a cancelled token never runs, leaving the transaction to
+                // the pool) and propagates as cancellation, not as a database fault. One
+                // per-transaction bag for the whole batch; each action gets its own per-action
+                // bag when its hook context is built.
+                await MutationCommandExecutor.RunInTransactionAsync(
+                    ctx.ConnFactory,
+                    (conn, transaction) => RunActionsAsync(conn, transaction, MutationObserverContext.NewMutationState()),
+                    ct);
             }
 
             // The approval gate diverted at least one action into a pending change (enqueued on

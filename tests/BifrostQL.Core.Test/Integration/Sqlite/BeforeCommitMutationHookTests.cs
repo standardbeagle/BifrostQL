@@ -179,8 +179,42 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
             .Which.Data["name"].Should().Be("real");
     }
 
+    // A client abort mid-batch rolls the whole batch back and surfaces as cancellation, the
+    // same way the single-row pipeline's shared transaction primitive reports it.
+    [Fact]
+    public async Task Batch_ClientAbortMidBatch_RollsBack_AndPropagatesCancellation()
+    {
+        using var abort = new CancellationTokenSource();
+        var transformer = new AbortOnSecondAction(abort);
+
+        var run = async () => await ExecuteMutationAsync(
+            "mutation { widgets_batch(actions: [{ update: { id: 1, name: \"first\" } }, { insert: { name: \"second\" } }]) }",
+            new VetoHook(veto: false), observer: null, transformer, abort.Token);
+
+        await run.Should().ThrowAsync<OperationCanceledException>();
+        (await CountAsync("id = 1 AND name = 'original'")).Should().Be(1, "the first action is rolled back");
+        (await CountAsync("name = 'second'")).Should().Be(0);
+    }
+
+    private sealed class AbortOnSecondAction : IMutationTransformer
+    {
+        private readonly CancellationTokenSource _abort;
+        private int _calls;
+        public AbortOnSecondAction(CancellationTokenSource abort) => _abort = abort;
+        public int Priority => 200;
+        public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) => true;
+        public ValueTask<MutationTransformResult> TransformAsync(IDbTable table, MutationType mutationType,
+            Dictionary<string, object?> data, MutationTransformContext context)
+        {
+            if (++_calls == 2)
+                _abort.Cancel();
+            return ValueTask.FromResult(new MutationTransformResult { MutationType = mutationType, Data = data });
+        }
+    }
+
     private async Task<ExecutionResult> ExecuteMutationAsync(
-        string mutation, IBeforeCommitMutationHook hook, IMutationObserver? observer)
+        string mutation, IBeforeCommitMutationHook hook, IMutationObserver? observer,
+        IMutationTransformer? transformer = null, CancellationToken cancellationToken = default)
     {
         var schema = DbSchema.FromModel(_model);
         var factory = new SqliteDbConnFactory(ConnString);
@@ -188,7 +222,7 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
         var services = new ServiceCollection();
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
-            Transformers = Array.Empty<IMutationTransformer>(),
+            Transformers = transformer is null ? Array.Empty<IMutationTransformer>() : new[] { transformer },
         });
         // Register the before-commit hook composite exactly as the host DI does:
         // built from every registered IBeforeCommitMutationHook.
@@ -209,6 +243,7 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
             options.Schema = schema;
             options.Query = mutation;
             options.RequestServices = provider;
+            options.CancellationToken = cancellationToken;
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = factory,

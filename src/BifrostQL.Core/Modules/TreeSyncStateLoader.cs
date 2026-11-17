@@ -132,9 +132,7 @@ public sealed class TreeSyncStateLoader
             var level = new List<Dictionary<string, object?>>();
             foreach (var (row, pk) in parents)
             {
-                var children = childrenByParent.TryGetValue(ParentKey.Of(pk), out var found)
-                    ? found
-                    : new List<Dictionary<string, object?>>();
+                var children = ChildrenOf(childrenByParent, pk);
                 row[linkKey] = children;
                 level.AddRange(children);
             }
@@ -148,6 +146,21 @@ public sealed class TreeSyncStateLoader
 
     // A parent key as a grouping key. The parent's key and the child's FK come back from the
     // provider as possibly different CLR types (int vs long, decimal), so numbers compare by value.
+    // The children placed under one parent key. A text parent key matched against a uuid FK
+    // (Postgres casts the bound text to uuid) comes back as a Guid, not the parent's string, so
+    // an exact miss on a string that parses as a uuid retries under the Guid. Text children
+    // group under string keys, so the retry never places one under another parent.
+    private static List<Dictionary<string, object?>> ChildrenOf(
+        Dictionary<ParentKey, List<Dictionary<string, object?>>> childrenByParent, object pk)
+    {
+        if (childrenByParent.TryGetValue(ParentKey.Of(pk), out var found))
+            return found;
+        if (pk is string text && Guid.TryParse(text, out var uuid)
+            && childrenByParent.TryGetValue(ParentKey.Of(uuid), out found))
+            return found;
+        return new List<Dictionary<string, object?>>();
+    }
+
     private readonly record struct ParentKey(object Value)
     {
         public static ParentKey Of(object value) => new(value switch

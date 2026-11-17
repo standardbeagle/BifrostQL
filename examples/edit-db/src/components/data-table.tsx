@@ -67,6 +67,7 @@ import { useFitMode, FIT_SENTINEL } from '@/hooks/useFitMode';
 import { useEditorConfig } from '@/hooks/useEditorConfig';
 import { orderColumns } from '@/lib/column-order';
 import { GroupedGridSummary } from './grouped-grid-summary';
+import { EmptyValue } from './empty-value';
 import type { Column } from '@/types/schema';
 import { isSummableColumn, type GridGroupMemberRequest, type GroupingRow, type GroupingSort } from '@/lib/grid-grouping';
 
@@ -133,6 +134,8 @@ interface DataTableProps<TData extends RowData> {
     inlineEditableColumns?: ReadonlySet<string>;
     /** Column ids whose inline editor is a boolean toggle instead of a text input. */
     inlineBooleanColumns?: ReadonlySet<string>;
+    /** Inline-editable columns whose editor offers "Set NULL" (nullable text, see offersExplicitNull). */
+    inlineNullableColumns?: ReadonlySet<string>;
     /** Staged (unsaved) cell edits keyed by row id; rendered dirty and shown in place of the stored value. */
     pendingEdits?: ReadonlyMap<string, Record<string, unknown>>;
     /** Commits one edited cell into the staged set (owned by the caller so edits survive refetches). */
@@ -222,6 +225,7 @@ export function DataTable<TData extends RowData>({
     onBulkEditSelected,
     inlineEditableColumns,
     inlineBooleanColumns,
+    inlineNullableColumns,
     pendingEdits,
     onCellCommit,
     onSaveAllEdits,
@@ -715,6 +719,7 @@ export function DataTable<TData extends RowData>({
                                     editingColumnId={editingCell?.rowId === row.id ? editingCell.columnId : null}
                                     inlineEditableColumns={onCellCommit && !savingEdits ? inlineEditableColumns : undefined}
                                     inlineBooleanColumns={inlineBooleanColumns}
+                                    inlineNullableColumns={inlineNullableColumns}
                                     onStartEditCell={onCellCommit && !savingEdits ? startEditCell : undefined}
                                     onCommitCell={commitCell}
                                     onCancelEditCell={cancelEditCell}
@@ -835,6 +840,8 @@ interface DataTableRowProps<TData extends RowData> {
     editingColumnId?: string | null;
     inlineEditableColumns?: ReadonlySet<string>;
     inlineBooleanColumns?: ReadonlySet<string>;
+    /** Inline-editable columns whose editor offers "Set NULL" (nullable text, see offersExplicitNull). */
+    inlineNullableColumns?: ReadonlySet<string>;
     onStartEditCell?: (rowId: string, columnId: string) => void;
     onCommitCell?: (rowId: string, columnId: string, value: unknown) => void;
     onCancelEditCell?: () => void;
@@ -866,6 +873,7 @@ function DataTableRowInner<TData extends RowData>({
     editingColumnId,
     inlineEditableColumns,
     inlineBooleanColumns,
+    inlineNullableColumns,
     onStartEditCell,
     onCommitCell,
     onCancelEditCell,
@@ -936,11 +944,12 @@ function DataTableRowInner<TData extends RowData>({
                             <InlineCellEditor
                                 initialValue={hasPending ? pending![columnId] : (row.original as Record<string, unknown>)[columnId]}
                                 boolean={!!inlineBooleanColumns?.has(columnId)}
+                                nullable={!!inlineNullableColumns?.has(columnId)}
                                 onCommit={(value) => onCommitCell(row.id, columnId, value)}
                                 onCancel={onCancelEditCell}
                             />
                         ) : hasPending ? (
-                            <span title="Unsaved change">{pending![columnId] == null ? '' : String(pending![columnId])}</span>
+                            <span title="Unsaved change">{pending![columnId] == null ? <EmptyValue kind="null" /> : pending![columnId] === '' ? <EmptyValue kind="empty" /> : String(pending![columnId])}</span>
                         ) : (
                             flexRender(cell.column.columnDef.cell, cell.getContext())
                         )}
@@ -956,6 +965,8 @@ const DataTableRow = memo(DataTableRowInner) as typeof DataTableRowInner;
 interface InlineCellEditorProps {
     initialValue: unknown;
     boolean: boolean;
+    /** Offer a "Set NULL" button: clearing the text commits '', a real value. */
+    nullable: boolean;
     onCommit: (value: unknown) => void;
     onCancel: () => void;
 }
@@ -965,7 +976,7 @@ interface InlineCellEditorProps {
  * commits (into the STAGED set — nothing hits the server until Save all),
  * Escape cancels. Booleans toggle-and-commit in one click.
  */
-function InlineCellEditor({ initialValue, boolean, onCommit, onCancel }: InlineCellEditorProps) {
+function InlineCellEditor({ initialValue, boolean, nullable, onCommit, onCancel }: InlineCellEditorProps) {
     const [value, setValue] = useState(initialValue == null ? '' : String(initialValue));
     if (boolean) {
         return (
@@ -980,7 +991,7 @@ function InlineCellEditor({ initialValue, boolean, onCommit, onCancel }: InlineC
             />
         );
     }
-    return (
+    const input = (
         <input
             autoFocus
             className="w-full bg-background border border-primary rounded px-1 py-0.5 text-sm outline-none"
@@ -991,10 +1002,36 @@ function InlineCellEditor({ initialValue, boolean, onCommit, onCancel }: InlineC
                 else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
                 e.stopPropagation();
             }}
-            onBlur={() => onCommit(value)}
+            onBlur={(e) => {
+                // Focus moving to the NULL button is not a commit of the text.
+                if (nullable && (e.relatedTarget as HTMLElement | null)?.dataset.cellNull === 'true') return;
+                onCommit(value);
+            }}
             onClick={(e) => e.stopPropagation()}
             onDoubleClick={(e) => e.stopPropagation()}
             aria-label="Edit cell value"
         />
+    );
+    if (!nullable) return input;
+    return (
+        <span className="flex items-center gap-1">
+            {input}
+            <button
+                type="button"
+                data-cell-null="true"
+                className="shrink-0 rounded border border-border px-1 text-[10px] leading-4 text-muted-foreground hover:bg-accent"
+                // Keep the input focused through the press so its blur does not
+                // commit the text first; the click then commits NULL alone.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => { e.stopPropagation(); onCommit(null); }}
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onCancel(); } e.stopPropagation(); }}
+                onBlur={onCancel}
+                onDoubleClick={(e) => e.stopPropagation()}
+                aria-label="Set cell to NULL"
+                title="Set to NULL"
+            >
+                NULL
+            </button>
+        </span>
     );
 }

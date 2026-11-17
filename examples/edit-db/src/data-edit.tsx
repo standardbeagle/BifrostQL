@@ -12,7 +12,7 @@ import { parsePkRoute, buildPkEqFilter, encodeRouteParts, pkColumnsOf } from "./
 import { validateFieldValue } from "./lib/field-validation";
 import { isComposite } from "./lib/fk";
 import { isDateColumn, isDateTimeColumn, toDateInputValue, preserveUntouchedDateValues } from "./lib/date-input";
-import { restoreBlankNulls } from "./lib/mutation-payload";
+import { offersExplicitNull, restoreBlankNulls } from "./lib/mutation-payload";
 import { matchesLabel } from "./lib/label-match";
 import { usableEnumLabels } from "./lib/format-value";
 import {
@@ -238,7 +238,9 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: stri
                 const raw = value[c.name];
                 values[c.name] = raw === null || raw === undefined ? null : raw;
             } else {
-                values[c.name] = value[c.name] ?? '';
+                // Nullable text holds NULL as null: its "Set NULL" control and
+                // the '' a user clears to are two different values.
+                values[c.name] = value[c.name] ?? (offersExplicitNull(c) ? null : '');
             }
         }
         return values;
@@ -639,17 +641,16 @@ function EditField({ column, join, fkRole, form, schema }: EditFieldProps) {
             validators={fieldValidators(column, isRequired)}
             children={(field: AnyFieldApi) => {
                 const { ariaProps } = fieldA11y(field, errorId);
+                const explicitNull = offersExplicitNull(column);
                 return (
                 <div className="grid gap-1">
-                    <Label htmlFor={name} className="text-xs text-muted-foreground">
-                        {column.label}
-                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
-                    </Label>
+                    <FieldLabelRow column={column} isRequired={isRequired} field={explicitNull ? field : undefined} />
                     <Input
                         id={name}
                         type={inputType}
                         inputMode={inputMode}
                         value={(field.state.value as string | number) ?? ''}
+                        placeholder={explicitNull && field.state.value === null ? 'NULL' : undefined}
                         onChange={(e) => field.handleChange(e.target.value)}
                         onBlur={field.handleBlur}
                         required={isRequired}
@@ -792,6 +793,38 @@ function BooleanField({ column, form }: { column: Column; form: AnyReactFormApi 
     );
 }
 
+/**
+ * A field's label, plus — when `field` is given (nullable text, see
+ * offersExplicitNull) — the explicit "Set NULL" control. Clearing the input
+ * writes '', a real value; this button is the only way to write NULL, and it is
+ * disabled while the field already holds NULL.
+ */
+function FieldLabelRow({ column, isRequired, field }: { column: Column; isRequired: boolean; field?: AnyFieldApi }) {
+    const isNull = field?.state.value === null;
+    return (
+        <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={column.name} className="text-xs text-muted-foreground">
+                {column.label}
+                {isRequired && <span className="text-destructive ml-0.5">*</span>}
+            </Label>
+            {field && (
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-1.5 text-[11px] text-muted-foreground"
+                    aria-label={`Set ${column.label} to NULL`}
+                    title={isNull ? `${column.label} is NULL` : `Set ${column.label} to NULL`}
+                    disabled={isNull}
+                    onClick={() => field.handleChange(null)}
+                >
+                    {isNull ? 'NULL' : 'Set NULL'}
+                </Button>
+            )}
+        </div>
+    );
+}
+
 function ContentField({ column, form }: { column: Column; form: AnyReactFormApi }) {
     const name = column.name;
     const isRequired = !column.isNullable;
@@ -804,10 +837,7 @@ function ContentField({ column, form }: { column: Column; form: AnyReactFormApi 
                 const { hasError } = fieldA11y(field, errorId);
                 return (
                 <div className="grid gap-1">
-                    <Label htmlFor={name} className="text-xs text-muted-foreground">
-                        {column.label}
-                        {isRequired && <span className="text-destructive ml-0.5">*</span>}
-                    </Label>
+                    <FieldLabelRow column={column} isRequired={isRequired} field={offersExplicitNull(column) ? field : undefined} />
                     <ContentEditor
                         name={name}
                         label={column.label}

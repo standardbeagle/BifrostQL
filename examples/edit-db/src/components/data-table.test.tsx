@@ -419,6 +419,7 @@ describe('DataTable inline cell editing', () => {
         onSaveAllEdits?: () => void;
         onDiscardAllEdits?: () => void;
         savingEdits?: boolean;
+        inlineNullableColumns?: ReadonlySet<string>;
     } = {}) {
         return render(
             <DataTable<EnrollmentRow>
@@ -435,6 +436,7 @@ describe('DataTable inline cell editing', () => {
                 onPageIndexChange={() => { /* noop */ }}
                 onPageSizeChange={() => { /* noop */ }}
                 inlineEditableColumns={new Set(['grade'])}
+                inlineNullableColumns={overrides.inlineNullableColumns}
                 onCellCommit={overrides.onCellCommit ?? (() => { /* noop */ })}
                 pendingEdits={overrides.pendingEdits}
                 onSaveAllEdits={overrides.onSaveAllEdits}
@@ -458,6 +460,40 @@ describe('DataTable inline cell editing', () => {
 
         // Composite row id: BOTH key parts, so the edit targets the exact row.
         expect(onCellCommit).toHaveBeenCalledWith('1::cs-101', 'grade', 'C-');
+    });
+
+    it('a nullable text cell offers Set NULL, which commits null rather than the text', () => {
+        // Clearing the text commits '' (a real value); NULL needs its own control.
+        const onCellCommit = vi.fn();
+        renderEditable({ onCellCommit, inlineNullableColumns: new Set(['grade']) });
+
+        fireEvent.doubleClick(screen.getByTestId('grade-1-cs-101').closest('td')!);
+        const editor = screen.getByLabelText('Edit cell value');
+        fireEvent.change(editor, { target: { value: '' } });
+        const setNull = screen.getByRole('button', { name: 'Set cell to NULL' });
+        fireEvent.mouseDown(setNull);
+        fireEvent.click(setNull);
+
+        expect(onCellCommit).toHaveBeenCalledTimes(1);
+        expect(onCellCommit).toHaveBeenCalledWith('1::cs-101', 'grade', null);
+    });
+
+    it('clearing a nullable text cell still commits the empty string', () => {
+        const onCellCommit = vi.fn();
+        renderEditable({ onCellCommit, inlineNullableColumns: new Set(['grade']) });
+
+        fireEvent.doubleClick(screen.getByTestId('grade-1-cs-101').closest('td')!);
+        const editor = screen.getByLabelText('Edit cell value');
+        fireEvent.change(editor, { target: { value: '' } });
+        fireEvent.keyDown(editor, { key: 'Enter' });
+
+        expect(onCellCommit).toHaveBeenCalledWith('1::cs-101', 'grade', '');
+    });
+
+    it('a cell without the nullable flag offers no Set NULL control', () => {
+        renderEditable();
+        fireEvent.doubleClick(screen.getByTestId('grade-1-cs-101').closest('td')!);
+        expect(screen.queryByRole('button', { name: 'Set cell to NULL' })).toBeNull();
     });
 
     it('Escape cancels without committing', () => {

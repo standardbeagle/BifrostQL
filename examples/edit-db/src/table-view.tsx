@@ -9,7 +9,7 @@ import { DataTable } from './components/data-table';
 import { ConfirmDialog } from './components/confirm-dialog';
 import { isUnchangedCellValue } from './lib/cell-commit';
 import { BulkEditDialog } from './components/bulk-edit-dialog';
-import { buildStagedUpdatePayloads } from './lib/mutation-payload';
+import { buildStagedUpdatePayloads, offersExplicitNull } from './lib/mutation-payload';
 import { ContentPanel, type ContentPanelTarget } from './components/content-panel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useQuery } from '@tanstack/react-query';
@@ -393,6 +393,10 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
             .map((c: Column) => c.name)),
         [table],
     );
+    const inlineNullableColumns = useMemo(
+        () => new Set(table.columns.filter((c: Column) => inlineEditableColumns.has(c.name) && offersExplicitNull(c)).map((c: Column) => c.name)),
+        [table, inlineEditableColumns],
+    );
     const inlineBooleanColumns = useMemo(
         () => new Set(table.columns.filter((c: Column) => c.paramType.startsWith('Boolean')).map((c: Column) => c.name)),
         [table],
@@ -519,6 +523,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 onBulkEditSelected={isEditable && !grouping ? handleBulkEditSelected : undefined}
                 inlineEditableColumns={inlineEditableColumns}
                 inlineBooleanColumns={inlineBooleanColumns}
+                inlineNullableColumns={inlineNullableColumns}
                 pendingEdits={pendingEdits}
                 onCellCommit={isEditable && !grouping ? handleCellCommit : undefined}
                 onSaveAllEdits={handleSaveAllEdits}

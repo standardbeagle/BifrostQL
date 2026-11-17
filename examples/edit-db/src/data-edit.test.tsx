@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Column } from './types/schema';
@@ -775,5 +775,84 @@ describe('isFkOrEnumColumn', () => {
     expect(isFkOrEnumColumn(column({ enumValues: null }), 'anchor-single')).toBe(true);
     expect(isFkOrEnumColumn(column({ enumValues: null }), 'anchor-composite')).toBe(true);
     expect(isFkOrEnumColumn(column({ enumValues: null }), 'member-composite')).toBe(true);
+  });
+});
+
+describe('DataEditDialog explicit NULL for nullable text', () => {
+  function column(name: string, over: Record<string, unknown> = {}) {
+    return {
+      dbName: name, graphQlName: name, name, label: name,
+      paramType: 'String', dbType: 'nvarchar',
+      isPrimaryKey: false, isIdentity: false, isNullable: true, isReadOnly: false,
+      metadata: {}, ...over,
+    };
+  }
+
+  function notesTable() {
+    return {
+      name: 'memos', graphQlName: 'memos', dbName: 'memos',
+      label: 'Memo', labelColumn: 'title', primaryKeys: ['id'],
+      singleJoins: [], multiJoins: [],
+      columns: [
+        column('id', { paramType: 'Int!', dbType: 'int', isPrimaryKey: true, isNullable: false }),
+        column('title', { paramType: 'String!', isNullable: false }),
+        column('notes'),
+      ],
+    };
+  }
+
+  async function renderWithRow(row: Record<string, unknown>) {
+    const table = notesTable();
+    schemaMock.schema.data = [table];
+    schemaMock.schema.findTable.mockReturnValue(table);
+    fetcherQuery.mockReset();
+    fetcherQuery.mockImplementation(async (q: string) => {
+      if (q.includes('GetSingleEdit')) return { value: { data: [row] } };
+      return 1;
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <DataEditDialog table="memos" editId="1" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(document.getElementById('notes')).not.toBeNull());
+  }
+
+  function updateDetail(): Record<string, unknown> | undefined {
+    const call = fetcherQuery.mock.calls.find(([q]) => String(q).includes('updateSingle'));
+    return (call?.[1] as { detail?: Record<string, unknown> } | undefined)?.detail;
+  }
+
+  it('Set NULL writes null over text the column held', async () => {
+    await renderWithRow({ id: 1, title: 't', notes: 'was here' });
+    fireEvent.click(screen.getByRole('button', { name: 'Set notes to NULL' }));
+    expect((document.getElementById('notes') as HTMLInputElement).placeholder).toBe('NULL');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateDetail()).toBeDefined());
+    expect(updateDetail()!.notes).toBeNull();
+  });
+
+  it('clearing the text writes the empty string, still a legal value', async () => {
+    await renderWithRow({ id: 1, title: 't', notes: 'was here' });
+    fireEvent.change(document.getElementById('notes')!, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateDetail()).toBeDefined());
+    expect(updateDetail()!.notes).toBe('');
+  });
+
+  it('a NULL the user did not touch saves as NULL and shows the control as already NULL', async () => {
+    await renderWithRow({ id: 1, title: 't', notes: null });
+    const control = screen.getByRole('button', { name: 'Set notes to NULL' });
+    expect(control).toBeDisabled();
+    fireEvent.change(document.getElementById('title')!, { target: { value: 'renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateDetail()).toBeDefined());
+    expect(updateDetail()).toMatchObject({ title: 'renamed', notes: null });
+  });
+
+  it('offers no Set NULL control on a NOT NULL text column', async () => {
+    await renderWithRow({ id: 1, title: 't', notes: 'x' });
+    expect(screen.queryByRole('button', { name: 'Set title to NULL' })).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBulkUpdatePayloads, buildStagedUpdatePayloads, coerceDetail, restoreBlankNulls } from './mutation-payload';
+import { buildBulkUpdatePayloads, buildStagedUpdatePayloads, coerceDetail, offersExplicitNull, restoreBlankNulls } from './mutation-payload';
 import type { Column } from '../types/schema';
 
 function col(name: string, paramType: string, opts: Partial<Column> = {}): Column {
@@ -108,10 +108,18 @@ describe('restoreBlankNulls', () => {
     const dueOn = col('dueOn', 'DateTime', { isNullable: true, dbType: 'date' });
     const columns = [notes, title, dueOn];
 
+    const qty = col('qty', 'Int', { isNullable: true, dbType: 'int' });
+
     it('sends NULL back for a nullable field the form showed as blank', () => {
-        // Editing only `title` used to write '' over the NULL notes and dueOn.
-        expect(restoreBlankNulls({ notes: '', title: 'renamed', dueOn: '' }, { notes: null, title: 'old', dueOn: null }, columns))
-            .toEqual({ notes: null, title: 'renamed', dueOn: null });
+        // Editing only `title` used to write '' over the NULL qty and dueOn.
+        // Nullable text (notes) is seeded as null, so it arrives as null.
+        expect(restoreBlankNulls({ notes: null, title: 'renamed', dueOn: '', qty: '' }, { notes: null, title: 'old', dueOn: null, qty: null }, [...columns, qty]))
+            .toEqual({ notes: null, title: 'renamed', dueOn: null, qty: null });
+    });
+
+    it('keeps the empty string a user typed into nullable text that was NULL', () => {
+        // With an explicit Set NULL control, '' in nullable text is a value.
+        expect(restoreBlankNulls({ notes: '' }, { notes: null }, columns)).toEqual({ notes: '' });
     });
 
     it('treats a cleared nullable date as NULL, never as an empty string', () => {
@@ -125,7 +133,20 @@ describe('restoreBlankNulls', () => {
     });
 
     it('sends NULL for blank nullable fields on an insert', () => {
-        expect(restoreBlankNulls({ notes: '', title: 'x' }, {}, columns)).toEqual({ notes: null, title: 'x' });
+        // The insert form seeds nullable text as null; a blank date maps to null.
+        expect(restoreBlankNulls({ notes: null, title: 'x', dueOn: '' }, {}, columns)).toEqual({ notes: null, title: 'x', dueOn: null });
+    });
+});
+
+describe('offersExplicitNull', () => {
+    it('is true only for nullable plain text', () => {
+        expect(offersExplicitNull(col('notes', 'String', { isNullable: true, dbType: 'nvarchar' }))).toBe(true);
+        expect(offersExplicitNull(col('notes', 'String!', { isNullable: false, dbType: 'nvarchar' }))).toBe(false);
+        expect(offersExplicitNull(col('dueOn', 'DateTime', { isNullable: true, dbType: 'date' }))).toBe(false);
+        expect(offersExplicitNull(col('qty', 'Int', { isNullable: true, dbType: 'int' }))).toBe(false);
+        expect(offersExplicitNull(col('doc', 'String', { isNullable: true, dbType: 'json' }))).toBe(false);
+        expect(offersExplicitNull(col('blob', 'String', { isNullable: true, dbType: 'varbinary' }))).toBe(false);
+        expect(offersExplicitNull(col('state', 'String', { isNullable: true, dbType: 'nvarchar', enumValues: ['a', 'b'] }))).toBe(false);
     });
 });
 

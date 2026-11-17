@@ -2,7 +2,7 @@ import { Column, Table } from "../types/schema";
 import { pkFilterFor, type PkFilter } from "./row-id";
 import { coerceForGql } from "./fk";
 import { validateRowValues } from "./field-validation";
-import { isJsonColumn } from "./content-detect";
+import { isBinaryDbType, isJsonColumn } from "./content-detect";
 import { isDateColumn } from "./date-input";
 import { baseParamType, isBooleanScalar, isExactScalar, isIntegerScalar, isNumericScalar } from "./scalar-types";
 
@@ -181,13 +181,30 @@ export function buildStagedUpdatePayloads(
 }
 
 /**
- * The edit form shows NULL as an empty field: text and date inputs cannot hold
- * null, so the form seeds them with ''. Saving an unrelated field then sent ''
- * over every NULL it had shown. Map that '' back to null for a nullable column
- * when the stored value was NULL (or absent, as on an insert), and for any
- * nullable date column (an empty string is never a date). A nullable text
- * column that held text and was cleared keeps '': an empty string is a real
- * value there, and the form has no separate "set NULL" control.
+ * Whether a column is nullable text where '' and NULL are both real values, so
+ * the form and the inline cell editor offer an explicit "Set NULL" control and
+ * hold NULL as null rather than as ''. Dates (never ''), JSON and binary
+ * content, enums and FK pickers (their own "(none)") are excluded.
+ */
+export function offersExplicitNull(column: Column): boolean {
+    return column.isNullable
+        && baseParamType(column.paramType) === 'String'
+        && !isDateColumn(column)
+        && !isJsonColumn(column)
+        && !isBinaryDbType(column.dbType)
+        && !(column.enumValues && column.enumValues.length > 0);
+}
+
+/**
+ * The edit form shows NULL as an empty field wherever its input cannot hold
+ * null (dates, numbers, JSON text), seeding it with ''. Saving an unrelated
+ * field then sent '' over every NULL it had shown. Map that '' back to null for
+ * a nullable column when the stored value was NULL (or absent, as on an
+ * insert), and for any nullable date column (an empty string is never a date).
+ *
+ * Columns with an explicit NULL control ({@link offersExplicitNull}) are left
+ * alone: the form seeds their NULL as null and "Set NULL" writes null, so a ''
+ * there is text the user cleared, a real value.
  */
 export function restoreBlankNulls(
     formValues: Record<string, unknown>,
@@ -196,7 +213,7 @@ export function restoreBlankNulls(
 ): Record<string, unknown> {
     const out = { ...formValues };
     for (const column of columns) {
-        if (!column.isNullable || out[column.name] !== '') continue;
+        if (!column.isNullable || out[column.name] !== '' || offersExplicitNull(column)) continue;
         const original = originalRow[column.name];
         if (original === null || original === undefined || isDateColumn(column)) out[column.name] = null;
     }

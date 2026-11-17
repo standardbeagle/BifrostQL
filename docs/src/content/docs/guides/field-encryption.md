@@ -112,7 +112,11 @@ For each row, the sweep:
 3. Issues an **Update** through `IMutationIntentExecutor` carrying only the row's
    positional primary key plus the decrypted plaintext. The
    `EncryptOnWriteMutationTransformer` in the pipeline re-encrypts that plaintext
-   under the **current** version.
+   under the **current** version. The update matches only while the column still
+   holds the ciphertext step 1 read: a value someone wrote after your read is left
+   alone (it counts in `RowsReEncrypted` but not in `RowsAffected`) rather than being
+   overwritten with the old plaintext. Re-run the sweep over a fresh read to pick up
+   any such row that is still on an old key.
 
 The sweep has **no batching, cursor, or checkpoint** of its own: the caller
 hands it the rows as an `IEnumerable`, and "resumable" means idempotent — a
@@ -125,8 +129,9 @@ and feed the rows in batches yourself.
   full `TableMutationPipeline` (tenant scoping, soft-delete, audit, concurrency),
   exactly like any other write. The sweep has no code path that reaches the
   database without it.
-- **No tenant-scope bypass.** The sweep supplies only the primary key and the new
-  value — it builds **no predicate of its own**. The pipeline narrows the update
+- **No tenant-scope bypass.** The sweep supplies only the primary key, the new
+  value and the ciphertext it read. The ciphertext only narrows the update (it is
+  ANDed onto the pipeline's own predicate); the sweep has no way to widen it. The pipeline narrows the update
   from the supplied `userContext`, so an out-of-scope row matches zero rows. Run
   with no tenant context on a tenant-filtered table and the sweep re-encrypts
   **nothing** (fail-closed), never a global cross-tenant rewrite. To sweep a
@@ -238,6 +243,6 @@ The envelope is opaque binary — a random nonce, tag, and ciphertext plus the
 embedded key version. It round-trips verbatim through each dialect's binary
 column type (SQL Server `VARBINARY`, Postgres `BYTEA`, MySQL `VARBINARY`, SQLite
 `BLOB`) and through the base64-text form used in text columns, and still decrypts
-after the round-trip. Do not put a `pattern` / `min-length` validator on an
-encrypted column: encryption runs before format validation, so the validator
-would see ciphertext, not plaintext.
+after the round-trip. A `pattern` / `min-length` validator on an encrypted column
+checks the plaintext: the encrypt transformer runs the column's declared rules before
+it encrypts the value.

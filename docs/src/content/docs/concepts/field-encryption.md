@@ -75,10 +75,13 @@ throwaway dev. Production must register a durable `IDataEncryptionKeyStore` (a D
 table or the KMS). BifrostQL deliberately does not auto-register an in-memory store.
 :::
 
-Because encryption runs early (priority 40) and server-side format validation runs
-late, a `pattern` / `min-length` validator on an *encrypted* column would validate
-the ciphertext, not the plaintext — so do not put format validators on encrypted
-columns; validate the plaintext at the application layer instead.
+Encryption runs early (priority 40) and server-side validation runs late (199), so the
+encrypt transformer checks an encrypted column's declared rules (`required`, `pattern`,
+`min-length`/`max-length`, `min`/`max`/`step`, `input-type`) against the plaintext the
+caller sent, before it encrypts it. The `server-validation` opt-outs apply as usual.
+The late validator then skips those declared rules for the column, because it only sees
+the ciphertext. A custom `IMutationTransformer` that runs after priority 40 still sees
+ciphertext.
 
 ## Reading: decrypt or mask
 

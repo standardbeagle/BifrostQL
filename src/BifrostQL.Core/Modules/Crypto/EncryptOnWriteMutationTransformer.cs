@@ -65,6 +65,17 @@ namespace BifrostQL.Core.Modules.Crypto
                 }
             }
 
+            // Declared validation rules describe the plaintext. Server validation runs after
+            // this transformer and sees only the envelope, so an encrypted column's rules run
+            // here, before encryption. An approved replay carries ciphertext validated at enqueue.
+            if (!ApprovalInterceptMutationHook.IsApprovedReplay(context.UserContext))
+            {
+                foreach (var column in table.Columns)
+                    if (IsEncrypted(column))
+                        Validation.ExtendedServerValidationTransformer.ValidatePlaintext(
+                            table, column, mutationType, data, errors);
+            }
+
             foreach (var (key, value) in data)
             {
                 var column = ResolveColumn(table, key);
@@ -125,7 +136,7 @@ namespace BifrostQL.Core.Modules.Crypto
             });
         }
 
-        private static bool IsEncrypted(ColumnDto column)
+        internal static bool IsEncrypted(ColumnDto column)
             => !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt));
 
         // The transformer chain rekeys its input to database column names before the

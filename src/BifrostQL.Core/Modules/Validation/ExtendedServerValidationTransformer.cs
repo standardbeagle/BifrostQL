@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Modules.Crypto;
 
 namespace BifrostQL.Core.Modules.Validation;
 
@@ -126,19 +127,16 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
 
             var rules = ValidationRules.ForColumn(column);
 
-            if (rules.RequiredExplicit && (mutationType == MutationType.Insert || valuePresent))
-            {
-                if (!valuePresent || IsMissing(value))
-                    errors.Add($"{column.GraphQlName} is required.");
-            }
+            // An encrypted column holds a ciphertext envelope by now (encryption runs at
+            // priority 40): its declared rules ran on the plaintext there, through
+            // ValidatePlaintext. The schema-derived checks below still run here, on the
+            // stored value, so an envelope too long for the column is refused.
+            if (!EncryptOnWriteMutationTransformer.IsEncrypted(column))
+                ValidateDeclaredRules(column, rules, mutationType, valuePresent, value, errors);
 
             if (!valuePresent || IsMissing(value))
                 continue;
 
-            ValidateLength(column, rules, value, errors);
-            ValidateRange(column, rules, value, errors);
-            ValidatePattern(column, rules, value, errors);
-            ValidateInputType(column, rules, value, errors);
             // Schema-derived checks: Bifrost read the schema, so anything the
             // engine would reject on type grounds is refused here with a clear
             // message instead of surfacing as a wrapped database error. Shared
@@ -149,6 +147,42 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         }
 
         return unreadableValues;
+    }
+
+    /// <summary>
+    /// Runs an encrypted column's declared rules (required, length, range, pattern, input
+    /// type) on its plaintext. Called by <see cref="EncryptOnWriteMutationTransformer"/>
+    /// before it replaces the value with a ciphertext envelope; honours the same
+    /// table- and column-level <c>server-validation</c> opt-outs as the transformer.
+    /// </summary>
+    internal static void ValidatePlaintext(IDbTable table, ColumnDto column, MutationType mutationType,
+        IReadOnlyDictionary<string, object?> data, List<string> errors)
+    {
+        if (mutationType is not (MutationType.Insert or MutationType.Update)
+            || IsValidationDisabled(table.GetMetadataValue(MetadataKeys.Validation.Server))
+            || IsValidationDisabled(column.GetMetadataValue(MetadataKeys.Validation.Server)))
+            return;
+        var valuePresent = data.TryGetValue(column.ColumnName, out var value)
+            || data.TryGetValue(column.GraphQlName, out value);
+        ValidateDeclaredRules(column, ValidationRules.ForColumn(column), mutationType, valuePresent, value, errors);
+    }
+
+    private static void ValidateDeclaredRules(ColumnDto column, ValidationRules rules, MutationType mutationType,
+        bool valuePresent, object? value, List<string> errors)
+    {
+        if (rules.RequiredExplicit && (mutationType == MutationType.Insert || valuePresent))
+        {
+            if (!valuePresent || IsMissing(value))
+                errors.Add($"{column.GraphQlName} is required.");
+        }
+
+        if (!valuePresent || IsMissing(value))
+            return;
+
+        ValidateLength(column, rules, value, errors);
+        ValidateRange(column, rules, value, errors);
+        ValidatePattern(column, rules, value, errors);
+        ValidateInputType(column, rules, value, errors);
     }
 
     private static void ValidateLength(ColumnDto column, ValidationRules rules, object? value, List<string> errors)

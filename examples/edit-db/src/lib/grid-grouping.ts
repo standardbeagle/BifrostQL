@@ -2,6 +2,7 @@ import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Column, Table } from '../types/schema';
 import { buildColumnFilters, getGraphQlType, parseTableFilterString } from './query-builder';
 import { coerceForGql } from './fk';
+import { isNumericScalar } from './scalar-types';
 
 /** URL parameter that owns the selected grouping field. */
 export const GRID_GROUP_BY_PARAM = 'gb';
@@ -65,12 +66,18 @@ export interface GridGroupMemberRequest {
     responseKey: string;
 }
 
+/**
+ * Columns the grouped grid can sum: every numeric scalar, BigInt and Decimal
+ * included (the usual types for amounts and counters).
+ */
+export function isSummableColumn(column: Column): boolean {
+    return isNumericScalar(column.paramType);
+}
+
 export function groupingSumColumnFromUrl(value: string | null, table: Table | null): Column | null {
     if (!value || !table) return null;
     const column = groupingColumnFromUrl(value, table);
-    return column && /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[![\]]/g, ''))
-        ? column
-        : null;
+    return column && isSummableColumn(column) ? column : null;
 }
 
 /**

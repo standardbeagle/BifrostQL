@@ -68,7 +68,7 @@ import { useEditorConfig } from '@/hooks/useEditorConfig';
 import { orderColumns } from '@/lib/column-order';
 import { GroupedGridSummary } from './grouped-grid-summary';
 import type { Column } from '@/types/schema';
-import type { GridGroupMemberRequest, GroupingRow, GroupingSort } from '@/lib/grid-grouping';
+import { isSummableColumn, type GridGroupMemberRequest, type GroupingRow, type GroupingSort } from '@/lib/grid-grouping';
 
 /**
  * Props for the DataTable component.
@@ -572,7 +572,7 @@ export function DataTable<TData extends RowData>({
                         <SelectTrigger size="sm" className="w-40" aria-label="Group sum column"><SelectValue placeholder="Sum column" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="__none">Count only</SelectItem>
-                            {groupableColumns.filter((column) => /^(byte|short|int|long|float|double|decimal|numeric|money|real)/i.test(column.paramType.replace(/[![\]]/g, ''))).map((column) => (
+                            {groupableColumns.filter(isSummableColumn).map((column) => (
                                 <SelectItem key={column.name} value={column.name}>Sum {column.label}</SelectItem>
                             ))}
                         </SelectContent>

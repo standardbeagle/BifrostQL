@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, GROUPING_BUCKET_CAP, readGroupingResult, withGroupingUrlParam, withoutGroupingUrlParams } from './grid-grouping';
+import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, GROUPING_BUCKET_CAP, isSummableColumn, readGroupingResult, withGroupingUrlParam, withoutGroupingUrlParams } from './grid-grouping';
 import type { Table } from '../types/schema';
 
 const orders = {
@@ -237,5 +237,23 @@ describe('grid grouping documents validate against the generated schema', () => 
         const preFix = 'query GridGroupMembers($filter: ordersFilter, $limit: Int) { orders { total } }';
 
         expect(unknownTypeErrors(preFix, ORDERS_SDL)).toEqual(["Unknown type 'ordersFilter'."]);
+    });
+});
+
+describe('grouping sum columns', () => {
+    const ledger = {
+        name: 'ledger', graphQlName: 'ledger', columns: [
+            { name: 'total', graphQlName: 'total', label: 'Total', paramType: 'BigInt!' },
+            { name: 'small', graphQlName: 'small', label: 'Small', paramType: 'Short' },
+            { name: 'rate', graphQlName: 'rate', label: 'Rate', paramType: 'Decimal' },
+            { name: 'memo', graphQlName: 'memo', label: 'Memo', paramType: 'String' },
+            { name: 'at', graphQlName: 'at', label: 'At', paramType: 'DateTime' },
+        ],
+    } as unknown as Table;
+
+    it('offers every numeric scalar, BigInt included, and nothing else', () => {
+        expect(ledger.columns.filter(isSummableColumn).map((c) => c.name)).toEqual(['total', 'small', 'rate']);
+        expect(groupingSumColumnFromUrl('total', ledger)?.name).toBe('total');
+        expect(groupingSumColumnFromUrl('memo', ledger)).toBeNull();
     });
 });

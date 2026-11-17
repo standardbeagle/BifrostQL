@@ -1717,7 +1717,7 @@ namespace BifrostQL.Core.Model
                 errors.Add(Problem(table, MetadataKeys.Feed.Timestamp, config.TimestampColumn,
                     "column does not exist"));
             }
-            else if (!IsDateTimeType(timestampColumn.EffectiveDataType))
+            else if (!TemporalColumnTypes.IsTimestamp(timestampColumn.EffectiveDataType))
             {
                 errors.Add(Problem(table, MetadataKeys.Feed.Timestamp, config.TimestampColumn,
                     $"column '{timestampColumn.ColumnName}' has type '{timestampColumn.EffectiveDataType}'; feed timestamps must be date/time-typed"));
@@ -1807,11 +1807,6 @@ namespace BifrostQL.Core.Model
 
         private static bool TryGetSchemaColumn(IDbTable table, string name, out ColumnDto column)
             => table.ColumnLookup.TryGetValue(name, out column!) || table.GraphQlLookup.TryGetValue(name, out column!);
-
-        private static bool IsDateTimeType(string dataType)
-            => StringNormalizer.NormalizeType(dataType) is
-                "date" or "datetime" or "datetime2" or "smalldatetime" or
-                "datetimeoffset" or "time" or "timestamp";
 
         private static void ValidateCrypto(IDbTable table, ColumnDto column, List<string> errors)
         {

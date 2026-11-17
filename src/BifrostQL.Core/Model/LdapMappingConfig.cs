@@ -314,7 +314,7 @@ namespace BifrostQL.Core.Model
             var type = StringNormalizer.NormalizeType(dataType);
             if (IntegerTypes.Contains(type)) return LdapSyntax.Integer;
             if (BooleanTypes.Contains(type)) return LdapSyntax.Boolean;
-            if (TimestampTypes.Contains(type)) return LdapSyntax.GeneralizedTime;
+            if (TemporalColumnTypes.IsUnambiguousTimestamp(type)) return LdapSyntax.GeneralizedTime;
             if (BinaryTypes.Contains(type)) return LdapSyntax.OctetString;
             return LdapSyntax.DirectoryString;
         }
@@ -329,13 +329,6 @@ namespace BifrostQL.Core.Model
 
         private static readonly IReadOnlySet<string> BooleanTypes =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bit", "bool", "boolean" };
-
-        private static readonly IReadOnlySet<string> TimestampTypes =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset",
-                "time", "timestamptz",
-            };
 
         // SQL Server 'timestamp' is a synonym for 'rowversion' — an opaque binary row-version
         // token, not a datetime — so it classifies as an octet-string, never GeneralizedTime.

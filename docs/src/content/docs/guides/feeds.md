@@ -20,7 +20,7 @@ main.posts { feed-link: https://feeds.example.test/posts/{slug} }
 
 | Metadata key | Required | Purpose |
 |---|---|---|
-| `feed-timestamp` | **yes** | The date/time column that dates each item and orders the feed newest-first. Declaring it opts the table into feed publication. |
+| `feed-timestamp` | **yes** | The date/time column that dates each item and orders the feed newest-first. Declaring it opts the table into feed publication. It must hold a point in time: `date`, `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset`, `timestamp`, `timestamptz`, or Postgres's `timestamp with time zone` / `timestamp without time zone`. A `time` column (time of day only) is refused. |
 | `feed-title` | no | A title column, or a `{column}` template (e.g. `Post: {title}`). A bare name with no `{…}` is the column shorthand. |
 | `feed-body` | no | The column whose value becomes the item body / Atom `content`. |
 | `feed-link` | no | A per-item link, usually an absolute-URL template such as `https://site/posts/{slug}`. A template with no `{…}` is literal text. |

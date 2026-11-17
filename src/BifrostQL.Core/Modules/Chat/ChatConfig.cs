@@ -74,15 +74,10 @@ namespace BifrostQL.Core.Modules.Chat
 
         /// <summary>
         /// Database types accepted for the date/time-typed <c>chat-created-at</c>
-        /// column across the supported dialects.
+        /// column across the supported dialects: the shared point-in-time list
+        /// (<see cref="Model.TemporalColumnTypes"/>), not a copy.
         /// </summary>
-        public static readonly IReadOnlySet<string> DateTimeColumnTypes =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "datetime", "datetime2", "smalldatetime", "datetimeoffset", "date",
-                "timestamp", "timestamptz",
-                "timestamp with time zone", "timestamp without time zone",
-            };
+        public static readonly IReadOnlySet<string> DateTimeColumnTypes = Model.TemporalColumnTypes.Timestamp;
 
         private ChatConfig(
             ChatTableKind kind,

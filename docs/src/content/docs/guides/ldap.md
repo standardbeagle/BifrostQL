@@ -146,7 +146,11 @@ publishing the wrong directory:
 - **Attribute syntax must match the column.** A well-known attribute carries a
   required LDAP syntax — mapping `description` (a DirectoryString) onto an INTEGER
   column is rejected. Attributes outside the well-known registry are unconstrained,
-  which is the escape hatch for mapping arbitrary columns.
+  which is the escape hatch for mapping arbitrary columns. A column is a GeneralizedTime
+  when it holds a point in time (`date`, `datetime`, `datetime2`, `smalldatetime`,
+  `datetimeoffset`, `timestamptz`, `timestamp with/without time zone`). A bare `timestamp`
+  is SQL Server's rowversion and classifies as binary; a `time` column has no date and is a
+  DirectoryString.
 - **No two tables may share a DN namespace.** Templates that normalize to the same
   shape are a rejected collision, not a silent overlap.
 

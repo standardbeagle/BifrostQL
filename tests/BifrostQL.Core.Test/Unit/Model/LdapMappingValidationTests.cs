@@ -294,6 +294,12 @@ public class LdapMappingValidationTests
     [InlineData("datetime", LdapSyntax.GeneralizedTime)]
     [InlineData("datetime2", LdapSyntax.GeneralizedTime)]
     [InlineData("datetimeoffset", LdapSyntax.GeneralizedTime)]
+    // Postgres reports information_schema.data_type, the long spellings; all three are instants.
+    [InlineData("timestamp with time zone", LdapSyntax.GeneralizedTime)]
+    [InlineData("timestamp without time zone", LdapSyntax.GeneralizedTime)]
+    [InlineData("timestamptz", LdapSyntax.GeneralizedTime)]
+    // A time of day has no date, so it cannot be rendered as a GeneralizedTime.
+    [InlineData("time", LdapSyntax.DirectoryString)]
     public void ColumnSyntax_ClassifiesTimestampAsBinary(string dataType, LdapSyntax expected)
     {
         LdapMappingConfig.ColumnSyntax(dataType).Should().Be(expected);

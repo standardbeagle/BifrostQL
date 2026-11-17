@@ -143,6 +143,34 @@ public class FeedConfigTests
             .Should().Contain(MetadataKeys.Feed.Timestamp);
     }
 
+    // Feed timestamps take the shared point-in-time list: Postgres's information_schema
+    // spellings are accepted, and a time of day (no date, so no order across days) is refused.
+    [Theory]
+    [InlineData("timestamp with time zone", true)]
+    [InlineData("timestamp without time zone", true)]
+    [InlineData("timestamptz", true)]
+    [InlineData("datetime2", true)]
+    [InlineData("time", false)]
+    public void Validate_TimestampColumnType_FollowsTheSharedTemporalList(string dataType, bool accepted)
+    {
+        var model = DbModelTestFixture.Create().WithTable("posts", t => t
+            .WithSchema("public").WithPrimaryKey("id")
+            .WithColumn("published_at", dataType)
+            .WithColumn("title", "text")
+            .WithMetadata(MetadataKeys.Feed.Timestamp, "published_at")
+            .WithMetadata(MetadataKeys.Feed.Title, "{title}")
+            .WithMetadata(MetadataKeys.Feed.Body, "title"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        if (accepted)
+            act.Should().NotThrow();
+        else
+            act.Should().Throw<InvalidOperationException>().Which.Message
+                .Should().Contain("feed timestamps must be date/time-typed");
+    }
+
     [Fact]
     public void Validate_CompositePrimaryKey_IsSupported()
     {

@@ -101,16 +101,10 @@ namespace BifrostQL.Core.Modules.Retention
         /// <summary>
         /// Database types accepted for a retention anchor column across the supported dialects.
         /// The anchor is compared against a cutoff instant, so it must be a timestamp; anchoring
-        /// a purge on a non-timestamp column is a configuration error. Mirrors
-        /// <c>ChatConfig.DateTimeColumnTypes</c>.
+        /// a purge on a non-timestamp column is a configuration error. The shared point-in-time
+        /// list (<see cref="Model.TemporalColumnTypes"/>), not a copy.
         /// </summary>
-        public static readonly IReadOnlySet<string> TimestampColumnTypes =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "datetime", "datetime2", "smalldatetime", "datetimeoffset", "date",
-                "timestamp", "timestamptz",
-                "timestamp with time zone", "timestamp without time zone",
-            };
+        public static readonly IReadOnlySet<string> TimestampColumnTypes = Model.TemporalColumnTypes.Timestamp;
 
         // Cached per table instance for the same reason as HistoryConfig/FtsConfig: schema
         // generation and ModelConfigValidator both ask for it, and the model is immutable after

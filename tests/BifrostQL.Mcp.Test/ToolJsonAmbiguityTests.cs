@@ -6,8 +6,8 @@ using Xunit;
 namespace BifrostQL.Mcp.Test
 {
     /// <summary>
-    /// MCP tools address tables by BARE name, so a name two schemas both define cannot
-    /// be resolved by guessing. The pre-fix FirstOrDefault silently bound the caller's
+    /// A bare name two schemas both define cannot be resolved by guessing; the caller
+    /// addresses it as <c>schema.name</c> instead. The pre-fix FirstOrDefault silently bound the caller's
     /// operation to whichever schema's table enumerated first — with THAT table's
     /// policy/tenant scope — the same silent mis-binding DbModel.GetTableFromDbName
     /// fails fast on. Every ToolJson resolver must answer the ambiguity instead.
@@ -111,6 +111,37 @@ namespace BifrostQL.Mcp.Test
 
             ToolJson.ResolveTable(model, new Dictionary<string, object?>(), "orders").Should().BeSameAs(only);
             ToolJson.ResolveVisibleTable(model, visible, "orders").Table.Should().BeSameAs(only);
+        }
+
+        [Fact]
+        public void QualifiedName_ResolvesTheExactTable_OnEveryResolver()
+        {
+            // The unknown-table list and resource URIs offer 'sales.items' for a shared name
+            // (SchemaReadVisibility.ClientName). The data tools must accept what they list, or
+            // the caller is sent a name that never resolves.
+            var dbo = Table("dbo", "items");
+            var sales = Table("sales", "items");
+            var model = new DbModel { Tables = [dbo, sales], Metadata = new Dictionary<string, object?>() };
+            var userContext = new Dictionary<string, object?>();
+            var visible = SchemaReadVisibility.Project(model, userContext);
+
+            ToolJson.ResolveTable(model, userContext, "sales.items").Should().BeSameAs(sales);
+            ToolJson.ResolveTable(model, visible, "dbo.items").Should().BeSameAs(dbo);
+            ToolJson.ResolveVisibleTable(model, visible, "sales.items").Table.Should().BeSameAs(sales);
+
+            foreach (var listed in visible.Select(v => SchemaReadVisibility.ClientName(visible, v.Table)))
+                ToolJson.ResolveVisibleTable(model, visible, listed).Should().NotBeNull();
+        }
+
+        [Fact]
+        public void AmbiguousBareName_NamesTheQualifiedFormToUse()
+        {
+            var model = ModelWithDuplicateName();
+            var visible = SchemaReadVisibility.Project(model, new Dictionary<string, object?>());
+
+            var act = () => ToolJson.ResolveVisibleTable(model, visible, "items");
+
+            act.Should().Throw<ToolPromptException>().WithMessage("*'schema.name'*");
         }
     }
 }

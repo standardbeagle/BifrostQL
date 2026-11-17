@@ -40,10 +40,10 @@ namespace BifrostQL.Mcp
             ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
 
         /// <summary>
-        /// Bare-name lookup that never guesses between schemas. MCP tools address tables by
-        /// bare name only, so when a name two schemas both define cannot be narrowed, the
-        /// first-match pick (the prior behavior) silently bound the caller's operation to an
-        /// arbitrary schema's table, with THAT table's policy/tenant scope.
+        /// Table lookup that never guesses between schemas. A <c>schema.name</c> argument
+        /// resolves exactly. A bare name two schemas both define cannot be narrowed by its
+        /// text, and the first-match pick (the prior behavior) silently bound the caller's
+        /// operation to an arbitrary schema's table, with THAT table's policy/tenant scope.
         ///
         /// <para>A cross-schema duplicate is first narrowed by the caller's READABLE set:
         /// exactly one readable candidate is the only table this caller can mean (and keeps
@@ -56,6 +56,10 @@ namespace BifrostQL.Mcp
         private static IDbTable? FindUnambiguous(
             IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName)
         {
+            var qualified = FindQualified(model, tableName);
+            if (qualified is not null)
+                return qualified;
+
             var matches = model.Tables
                 .Where(t => string.Equals(t.DbName, tableName, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -70,10 +74,32 @@ namespace BifrostQL.Mcp
             if (readable.Count == 0)
                 return null; // caller's unknown-table prompt — same answer as nonexistent
 
-            throw new ToolPromptException(
-                $"Table name '{tableName}' is ambiguous: more than one schema defines a table " +
-                "with this name, and MCP tools address tables by bare name. Ask the operator " +
-                "to expose an unambiguous name for the table you need.");
+            throw Ambiguous(tableName);
+        }
+
+        /// <summary>
+        /// The refusal for a bare name two READABLE tables share. It names the qualified form
+        /// the unknown-table list already offers (<see cref="SchemaReadVisibility.ClientName"/>),
+        /// so the caller can send back a name that resolves.
+        /// </summary>
+        private static ToolPromptException Ambiguous(string tableName) =>
+            new($"Table name '{tableName}' is ambiguous: more than one schema defines a table " +
+                "with this name. Address it as 'schema.name'.");
+
+        /// <summary>
+        /// The exact table a <c>schema.name</c> argument names, split on the FIRST dot like
+        /// <see cref="SchemaReadVisibility.FindByClientName"/>, or null for a bare or unmatched name.
+        /// </summary>
+        private static IDbTable? FindQualified(IDbModel model, string tableName)
+        {
+            var dot = tableName.IndexOf('.');
+            if (dot <= 0 || dot >= tableName.Length - 1)
+                return null;
+            var schema = tableName[..dot];
+            var dbName = tableName[(dot + 1)..];
+            return model.Tables.FirstOrDefault(t =>
+                string.Equals(t.TableSchema, schema, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(t.DbName, dbName, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -90,22 +116,14 @@ namespace BifrostQL.Mcp
         internal static VisibleTable ResolveVisibleTable(
             IDbModel model, IReadOnlyList<VisibleTable> visible, string tableName)
         {
-            // Same no-guessing rule as FindUnambiguous, over the caller's readable set:
-            // two visible tables sharing the bare name cannot be told apart by an MCP
-            // caller, so answer with the ambiguity rather than an arbitrary pick. Both
-            // candidates are readable here, so the message discloses nothing hidden.
-            VisibleTable? found = null;
-            foreach (var candidate in visible)
-            {
-                if (!string.Equals(candidate.Table.DbName, tableName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (found is not null)
-                    throw new ToolPromptException(
-                        $"Table name '{tableName}' is ambiguous: more than one schema defines a table " +
-                        "with this name, and MCP tools address tables by bare name. Ask the operator " +
-                        "to expose an unambiguous name for the table you need.");
-                found = candidate;
-            }
+            // Same rule as describe_table: schema.name resolves exactly, a bare name only when
+            // one readable table carries it. A bare name two readable tables share is refused
+            // with the qualified form to use; both candidates are readable, so the message
+            // discloses nothing hidden.
+            var found = SchemaReadVisibility.FindByClientName(visible, tableName);
+            if (found is null && visible.Count(v =>
+                    string.Equals(v.Table.DbName, tableName, StringComparison.OrdinalIgnoreCase)) > 1)
+                throw Ambiguous(tableName);
             return found
                 ?? throw new ToolPromptException(SchemaDescriber.UnknownTableMessage(visible, tableName));
         }

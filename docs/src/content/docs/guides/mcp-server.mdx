@@ -225,6 +225,10 @@ The server exposes a fixed set of tools. The four read tools plus the two schema
 tools are always present; the three write tools appear only when writes are
 enabled. Every argument name below matches the tool's input schema verbatim.
 
+Every `table` argument takes the table's DB name. When two schemas define a table
+with the same name and you can read both, send it as `schema.name`: the bare name is refused as
+ambiguous, and the table lists in error prompts show the qualified form.
+
 ### Schema tools
 
 | Tool | Arguments | Returns |

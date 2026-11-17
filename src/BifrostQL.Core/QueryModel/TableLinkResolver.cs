@@ -60,8 +60,8 @@ namespace BifrostQL.Core.QueryModel
                 || (multiLink = table.MultiLinks.Values.FirstOrDefault(l => string.Equals(l.ChildFieldName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
                 return new ResolvedLink(ResolvedLinkKind.Multi, multiLink, null);
 
-            if (table.ManyToManyLinks.TryGetValue(fieldName, out var manyToMany)
-                || (manyToMany = table.ManyToManyLinks.Values.FirstOrDefault(l => string.Equals(l.TargetTable.GraphQlName, fieldName, StringComparison.OrdinalIgnoreCase))) != null)
+            // A many-to-many link's key is its emitted field name.
+            if (table.ManyToManyLinks.TryGetValue(fieldName, out var manyToMany))
                 return new ResolvedLink(ResolvedLinkKind.ManyToMany, null, manyToMany);
 
             return ResolvedLink.None;

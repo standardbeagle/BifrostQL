@@ -14,81 +14,116 @@ namespace BifrostQL.Core.Model.Relationships
         /// </summary>
         public void DetectFromMetadata(IDbModel model)
         {
-            var tablesByGraphQl = new Dictionary<string, IDbTable>(StringComparer.InvariantCultureIgnoreCase);
-            foreach (var table in model.Tables)
-            {
-                tablesByGraphQl.TryAdd(table.GraphQlName, table);
-            }
-
             foreach (var sourceTable in model.Tables)
             {
-                var m2mValue = sourceTable.GetMetadataValue(MetadataKeys.Relationships.ManyToMany);
-                if (string.IsNullOrWhiteSpace(m2mValue))
-                    continue;
-
-                var entries = m2mValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                foreach (var entry in entries)
+                foreach (var link in ParseMetadata(model, sourceTable).Links)
                 {
-                    // A negated entry (e.g. "!Roles:UserRoles") is a suppression, not a
-                    // declaration — it prunes an auto-detected link (handled in AutoDetect
-                    // via IsM2MSuppressed), so there is nothing to add here.
-                    if (MetadataSwitch.IsNegated(entry))
-                        continue;
-
-                    var parts = entry.Split(':', StringSplitOptions.TrimEntries);
-                    if (parts.Length != 2)
-                        continue;
-
-                    var targetTableName = parts[0];
-                    var junctionTableName = parts[1];
-
-                    if (!tablesByGraphQl.TryGetValue(targetTableName, out var targetTable))
-                        continue;
-
-                    var junctionTable = model.Tables.FirstOrDefault(t =>
-                        string.Equals(t.DbName, junctionTableName, StringComparison.OrdinalIgnoreCase));
-
-                    if (junctionTable == null)
-                        continue;
-
-                    // Try to find junction columns via SingleLinks
-                    if (!TryFindJunctionColumns(sourceTable, junctionTable, targetTable,
-                            out var sourceCol, out var junctionSourceCol, out var junctionTargetCol, out var targetCol,
-                            out var isComposite))
-                        continue;
-
-                    // Payload = junction columns that are neither a primary key nor one
-                    // of the two foreign keys to source/target.
-                    var hasPayload = junctionTable.Columns
-                        .Where(c => !c.IsPrimaryKey)
-                        .Where(c => !string.Equals(c.ColumnName, junctionSourceCol.ColumnName, StringComparison.OrdinalIgnoreCase))
-                        .Where(c => !string.Equals(c.ColumnName, junctionTargetCol.ColumnName, StringComparison.OrdinalIgnoreCase))
-                        .Any();
-
-                    var link = new ManyToManyLink
-                    {
-                        SourceTable = sourceTable,
-                        TargetTable = targetTable,
-                        JunctionTable = junctionTable,
-                        SourceColumn = sourceCol,
-                        JunctionSourceColumn = junctionSourceCol,
-                        JunctionTargetColumn = junctionTargetCol,
-                        TargetColumn = targetCol,
-                        HasPayload = hasPayload,
-                        // Recorded, not rejected: a composite bridge stays navigable for the
-                        // consumers that tolerate a first-column join, while a consumer that
-                        // needs the join to be EXACT can refuse it (see ManyToManyLink.IsComposite).
-                        IsComposite = isComposite
-                    };
-
-                    sourceTable.ManyToManyLinks.TryAdd(targetTable.GraphQlName, link);
+                    AddLink(link);
                     // The target side walks the same bridge the other way round: its field
                     // returns source rows and joins from the target's own key, as AutoDetect
-                    // builds it. Storing the forward link here named the field after the
-                    // target and joined source keys against target rows.
-                    targetTable.ManyToManyLinks.TryAdd(sourceTable.GraphQlName, Reverse(link));
+                    // builds it.
+                    AddLink(Reverse(link));
                 }
             }
+        }
+
+        /// <summary>The parse of one table's <c>many-to-many</c> metadata.</summary>
+        internal sealed record ParsedMetadata(
+            IReadOnlyList<ManyToManyLink> Links, IReadOnlyList<RelationshipMetadataProblem> Problems);
+
+        /// <summary>
+        /// The one reading of <paramref name="sourceTable"/>'s <c>many-to-many</c> entries
+        /// (<c>Target:Junction</c>): discovery links what resolves, and <c>ModelConfigValidator</c>
+        /// reports what does not, so a typo fails model load instead of dropping the field.
+        /// Negated entries (<c>!Target[:Junction]</c>) prune an auto-detected bridge and declare
+        /// nothing here.
+        /// </summary>
+        internal static ParsedMetadata ParseMetadata(IDbModel model, IDbTable sourceTable)
+        {
+            var links = new List<ManyToManyLink>();
+            var problems = new List<RelationshipMetadataProblem>();
+            var m2mValue = sourceTable.GetMetadataValue(MetadataKeys.Relationships.ManyToMany);
+            if (string.IsNullOrWhiteSpace(m2mValue))
+                return new ParsedMetadata(links, problems);
+
+            const string key = MetadataKeys.Relationships.ManyToMany;
+            foreach (var entry in m2mValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (MetadataSwitch.IsNegated(entry))
+                    continue;
+
+                var parts = entry.Split(':', StringSplitOptions.TrimEntries);
+                if (parts.Length != 2 || parts[0].Length == 0 || parts[1].Length == 0)
+                {
+                    problems.Add(new RelationshipMetadataProblem(key, entry,
+                        "entries must have the form 'TargetTable:JunctionTable'"));
+                    continue;
+                }
+
+                var targetTable = model.Tables.FirstOrDefault(t =>
+                    string.Equals(t.GraphQlName, parts[0], StringComparison.InvariantCultureIgnoreCase));
+                if (targetTable is null)
+                {
+                    problems.Add(new RelationshipMetadataProblem(key, parts[0], "names no table"));
+                    continue;
+                }
+
+                var junctionTable = model.Tables.FirstOrDefault(t =>
+                    string.Equals(t.DbName, parts[1], StringComparison.OrdinalIgnoreCase));
+                if (junctionTable is null)
+                {
+                    problems.Add(new RelationshipMetadataProblem(key, parts[1], "names no junction table"));
+                    continue;
+                }
+
+                if (!TryFindJunctionColumns(sourceTable, junctionTable, targetTable,
+                        out var sourceCol, out var junctionSourceCol, out var junctionTargetCol, out var targetCol,
+                        out var isComposite))
+                {
+                    problems.Add(new RelationshipMetadataProblem(key, parts[1],
+                        $"the junction table has no foreign key to both {sourceTable.DbName} and {targetTable.DbName}"));
+                    continue;
+                }
+
+                // Payload = junction columns that are neither a primary key nor one
+                // of the two foreign keys to source/target.
+                var hasPayload = junctionTable.Columns
+                    .Where(c => !c.IsPrimaryKey)
+                    .Where(c => !string.Equals(c.ColumnName, junctionSourceCol.ColumnName, StringComparison.OrdinalIgnoreCase))
+                    .Where(c => !string.Equals(c.ColumnName, junctionTargetCol.ColumnName, StringComparison.OrdinalIgnoreCase))
+                    .Any();
+
+                links.Add(new ManyToManyLink
+                {
+                    SourceTable = sourceTable,
+                    TargetTable = targetTable,
+                    JunctionTable = junctionTable,
+                    SourceColumn = sourceCol,
+                    JunctionSourceColumn = junctionSourceCol,
+                    JunctionTargetColumn = junctionTargetCol,
+                    TargetColumn = targetCol,
+                    HasPayload = hasPayload,
+                    // Recorded, not rejected: a composite bridge stays navigable for the
+                    // consumers that tolerate a first-column join, while a consumer that
+                    // needs the join to be EXACT can refuse it (see ManyToManyLink.IsComposite).
+                    IsComposite = isComposite
+                });
+            }
+            return new ParsedMetadata(links, problems);
+        }
+
+        /// <summary>
+        /// Adds <paramref name="link"/> to its source under the next free field name, unless the
+        /// source already bridges to the same target through the same junction. The key is the
+        /// emitted field: a link named after its target would duplicate a same-named column.
+        /// </summary>
+        private static void AddLink(ManyToManyLink link)
+        {
+            var source = link.SourceTable;
+            if (source.ManyToManyLinks.Values.Any(l =>
+                    ReferenceEquals(l.TargetTable, link.TargetTable) && ReferenceEquals(l.JunctionTable, link.JunctionTable)))
+                return;
+            source.ManyToManyLinks.Add(LinkFieldNames.Unique(source, link.TargetTable.GraphQlName), link);
         }
 
         /// <summary>
@@ -182,19 +217,12 @@ namespace BifrostQL.Core.Model.Relationships
                 if (IsM2MSuppressed(tableA, tableB) || IsM2MSuppressed(tableB, tableA))
                     continue;
 
-                // A -> junction -> B
-                if (!tableA.ManyToManyLinks.ContainsKey(tableB.GraphQlName))
-                {
-                    AddManyToManyLink(tableA, junctionTable, tableB,
-                        parentColA, junctionColA, junctionColB, parentColB, hasPayload);
-                }
-
-                // B -> junction -> A
-                if (!tableB.ManyToManyLinks.ContainsKey(tableA.GraphQlName))
-                {
-                    AddManyToManyLink(tableB, junctionTable, tableA,
-                        parentColB, junctionColB, junctionColA, parentColA, hasPayload);
-                }
+                // A -> junction -> B, then B -> junction -> A. A pair metadata already bridged
+                // (or an earlier junction did) keeps that link.
+                AddAutoDetectedLink(tableA, junctionTable, tableB,
+                    parentColA, junctionColA, junctionColB, parentColB, hasPayload);
+                AddAutoDetectedLink(tableB, junctionTable, tableA,
+                    parentColB, junctionColB, junctionColA, parentColA, hasPayload);
             }
         }
 
@@ -346,12 +374,14 @@ namespace BifrostQL.Core.Model.Relationships
             IsComposite = link.IsComposite,
         };
 
-        private static void AddManyToManyLink(
+        private static void AddAutoDetectedLink(
             IDbTable sourceTable, IDbTable junctionTable, IDbTable targetTable,
             ColumnDto sourceCol, ColumnDto junctionSourceCol,
             ColumnDto junctionTargetCol, ColumnDto targetCol, bool hasPayload)
         {
-            var link = new ManyToManyLink
+            if (sourceTable.ManyToManyLinks.Values.Any(l => ReferenceEquals(l.TargetTable, targetTable)))
+                return;
+            AddLink(new ManyToManyLink
             {
                 SourceTable = sourceTable,
                 TargetTable = targetTable,
@@ -361,8 +391,7 @@ namespace BifrostQL.Core.Model.Relationships
                 JunctionTargetColumn = junctionTargetCol,
                 TargetColumn = targetCol,
                 HasPayload = hasPayload
-            };
-            sourceTable.ManyToManyLinks[targetTable.GraphQlName] = link;
+            });
         }
     }
 }

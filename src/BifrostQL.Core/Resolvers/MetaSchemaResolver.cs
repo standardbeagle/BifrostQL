@@ -268,10 +268,12 @@ namespace BifrostQL.Core.Resolvers
                                 name = m.JunctionTable.GraphQlName,
                                 targetTable = m.TargetTable.GraphQlName,
                                 junctionTable = m.JunctionTable.GraphQlName,
-                                junctionTargetField =
-                                    m.JunctionTable.SingleLinks.TryGetValue(m.TargetTable.GraphQlName, out var tl)
-                                        ? tl.ParentFieldName
-                                        : m.TargetTable.GraphQlName,
+                                // The junction's own link for the target leg; its key may not
+                                // be the target's name (a same-named column takes that).
+                                junctionTargetField = m.JunctionTable.SingleLinks.Values
+                                    .FirstOrDefault(l => ReferenceEquals(l.ParentTable, m.TargetTable)
+                                        && string.Equals(l.ChildId.ColumnName, m.JunctionTargetColumn.ColumnName, StringComparison.OrdinalIgnoreCase))
+                                    ?.ParentFieldName ?? m.TargetTable.GraphQlName,
                                 sourceColumnNames = new[] { m.SourceColumn.GraphQlName },
                                 junctionSourceColumnNames = new[] { m.JunctionSourceColumn.GraphQlName },
                                 junctionTargetColumnNames = new[] { m.JunctionTargetColumn.GraphQlName },

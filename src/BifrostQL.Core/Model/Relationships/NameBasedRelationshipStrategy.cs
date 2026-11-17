@@ -94,52 +94,40 @@ namespace BifrostQL.Core.Model.Relationships
             // Create links for matches
             foreach (var idMatch in idMatches)
             {
-                if (idMatch.table.SingleLinks.ContainsKey(idMatch.parent.GraphQlName))
+                // A child already linked to this parent (by a foreign key or an earlier name
+                // match) keeps that link; a name match never adds a second one.
+                if (idMatch.table.SingleLinks.Values.Any(l => ReferenceEquals(l.ParentTable, idMatch.parent)))
                     continue;
 
-                idMatch.table.SingleLinks.Add(idMatch.parent.GraphQlName,
+                var parentFieldName = LinkFieldNames.Unique(idMatch.table, idMatch.parent.GraphQlName);
+                idMatch.table.SingleLinks.Add(parentFieldName,
                     new TableLinkDto
                     {
                         Name = idMatch.parent.GraphQlName,
                         RelationshipKind = TableLinkRelationshipKind.NameBased,
+                        ParentFieldNameOverride =
+                            string.Equals(parentFieldName, idMatch.parent.GraphQlName, StringComparison.Ordinal)
+                                ? null
+                                : parentFieldName,
                         ChildId = idMatch.column,
                         ParentId = idMatch.parent.KeyColumns.First(),
                         ChildTable = idMatch.table,
                         ParentTable = idMatch.parent
                     });
 
-                var childFieldName = UniqueChildFieldName(idMatch.parent, idMatch.table);
-                if (!idMatch.parent.MultiLinks.ContainsKey(childFieldName))
-                {
-                    idMatch.parent.MultiLinks.Add(childFieldName,
-                        new TableLinkDto
-                        {
-                            Name = idMatch.table.GraphQlName,
-                            RelationshipKind = TableLinkRelationshipKind.NameBased,
-                            ChildFieldNameOverride = childFieldName,
-                            ChildId = idMatch.column,
-                            ParentId = idMatch.parent.KeyColumns.First(),
-                            ChildTable = idMatch.table,
-                            ParentTable = idMatch.parent
-                        });
-                }
+                var childFieldName = LinkFieldNames.ChildCollection(idMatch.parent, idMatch.table);
+                idMatch.parent.MultiLinks.Add(childFieldName,
+                    new TableLinkDto
+                    {
+                        Name = idMatch.table.GraphQlName,
+                        RelationshipKind = TableLinkRelationshipKind.NameBased,
+                        ChildFieldNameOverride = childFieldName,
+                        ChildId = idMatch.column,
+                        ParentId = idMatch.parent.KeyColumns.First(),
+                        ChildTable = idMatch.table,
+                        ParentTable = idMatch.parent
+                    });
             }
-        }
-
-        private static string UniqueChildFieldName(IDbTable parentTable, IDbTable childTable)
-        {
-            var baseName = string.Equals(parentTable.GraphQlName, childTable.GraphQlName, StringComparison.OrdinalIgnoreCase)
-                ? $"{childTable.GraphQlName}_children"
-                : childTable.GraphQlName;
-            var name = baseName;
-            var i = 2;
-            while (parentTable.SingleLinks.ContainsKey(name)
-                || parentTable.MultiLinks.ContainsKey(name)
-                || parentTable.ManyToManyLinks.ContainsKey(name))
-            {
-                name = $"{baseName}_{i++}";
-            }
-            return name;
         }
 
         private HashSet<(string TableSchema, string TableName, string ColumnName)> GetFkLinkedColumns(

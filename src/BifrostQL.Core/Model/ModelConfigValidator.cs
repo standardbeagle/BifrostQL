@@ -112,6 +112,7 @@ namespace BifrostQL.Core.Model
             ValidatePrometheusMetrics(model, errors);
             ValidateLdap(model, errors);
             ValidateOperations(model, errors);
+            ValidateRelationshipMetadata(model, errors);
             ValidateGeneratedNames(model, errors);
 
             if (errors.Count > 0)
@@ -153,6 +154,24 @@ namespace BifrostQL.Core.Model
                         "cannot define it twice. Rename one of the tables (or disable the feature that " +
                         "generates the name).");
                 }
+            }
+        }
+
+        /// <summary>
+        /// The polymorphic-* keys and the metadata form of many-to-many, read by the strategies'
+        /// own parses (<see cref="Relationships.PolymorphicRelationshipStrategy"/>,
+        /// <see cref="Relationships.ManyToManyDetectionStrategy"/>). Discovery skips an entry it
+        /// cannot resolve; this reports it, so a typo fails model load instead of leaving the
+        /// relationship silently absent.
+        /// </summary>
+        private static void ValidateRelationshipMetadata(IDbModel model, List<string> errors)
+        {
+            foreach (var table in model.Tables)
+            {
+                var problems = Relationships.PolymorphicRelationshipStrategy.Parse(model, table).Problems
+                    .Concat(Relationships.ManyToManyDetectionStrategy.ParseMetadata(model, table).Problems);
+                foreach (var problem in problems)
+                    errors.Add(Problem(table, problem.Key, problem.Value, problem.Message));
             }
         }
 

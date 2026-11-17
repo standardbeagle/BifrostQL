@@ -44,15 +44,12 @@ namespace BifrostQL.Core.Model.Relationships
 
                 foreach (var fk in links)
                 {
+                    // The field shares the child's namespace with its columns: a FK column
+                    // named after its parent (invoice.customer -> customer) takes the bare
+                    // name, so the link gets the next free one.
                     var parentFieldName = needsRoleNames
                         ? UniqueParentFieldName(fk)
-                        : fk.ParentTable.GraphQlName;
-
-                    // A duplicate here means two constraints that resolve to the same
-                    // field name even after disambiguation; skip rather than throw, so
-                    // one odd constraint cannot make the whole model unloadable.
-                    if (fk.ChildTable.SingleLinks.ContainsKey(parentFieldName))
-                        continue;
+                        : LinkFieldNames.Unique(fk.ChildTable, fk.ParentTable.GraphQlName);
 
                     // ChildId/ParentId remain the first column for back-compat; the
                     // full ordered lists power multi-column ON-clauses in SQL emission.
@@ -61,7 +58,10 @@ namespace BifrostQL.Core.Model.Relationships
                         {
                             Name = fk.ParentTable.GraphQlName,
                             RelationshipKind = TableLinkRelationshipKind.ForeignKey,
-                            ParentFieldNameOverride = needsRoleNames ? parentFieldName : null,
+                            ParentFieldNameOverride =
+                                string.Equals(parentFieldName, fk.ParentTable.GraphQlName, StringComparison.Ordinal)
+                                    ? null
+                                    : parentFieldName,
                             ChildId = fk.ChildColumns[0],
                             ParentId = fk.ParentColumns[0],
                             ChildIds = fk.ChildColumns,
@@ -76,24 +76,21 @@ namespace BifrostQL.Core.Model.Relationships
                     // would merge them.
                     var childFieldName = needsRoleNames
                         ? UniqueChildRoleFieldName(fk, parentFieldName)
-                        : UniqueChildFieldName(fk.ParentTable, fk.ChildTable);
+                        : LinkFieldNames.ChildCollection(fk.ParentTable, fk.ChildTable);
 
-                    if (!fk.ParentTable.MultiLinks.ContainsKey(childFieldName))
-                    {
-                        fk.ParentTable.MultiLinks.Add(childFieldName,
-                            new TableLinkDto
-                            {
-                                Name = fk.ChildTable.GraphQlName,
-                                RelationshipKind = TableLinkRelationshipKind.ForeignKey,
-                                ChildFieldNameOverride = childFieldName,
-                                ChildId = fk.ChildColumns[0],
-                                ParentId = fk.ParentColumns[0],
-                                ChildIds = fk.ChildColumns,
-                                ParentIds = fk.ParentColumns,
-                                ChildTable = fk.ChildTable,
-                                ParentTable = fk.ParentTable
-                            });
-                    }
+                    fk.ParentTable.MultiLinks.Add(childFieldName,
+                        new TableLinkDto
+                        {
+                            Name = fk.ChildTable.GraphQlName,
+                            RelationshipKind = TableLinkRelationshipKind.ForeignKey,
+                            ChildFieldNameOverride = childFieldName,
+                            ChildId = fk.ChildColumns[0],
+                            ParentId = fk.ParentColumns[0],
+                            ChildIds = fk.ChildColumns,
+                            ParentIds = fk.ParentColumns,
+                            ChildTable = fk.ChildTable,
+                            ParentTable = fk.ParentTable
+                        });
                 }
             }
         }
@@ -128,7 +125,7 @@ namespace BifrostQL.Core.Model.Relationships
         }
 
         internal static string ResolveChildFieldNameForTest(IDbTable parentTable, IDbTable childTable) =>
-            UniqueChildFieldName(parentTable, childTable);
+            LinkFieldNames.ChildCollection(parentTable, childTable);
 
         /// <summary>
         /// Names a child -> parent field after the foreign key's own columns, e.g.
@@ -142,11 +139,7 @@ namespace BifrostQL.Core.Model.Relationships
                 .Trim('_');
             var baseName = stem.Length > 0 ? stem : fk.ParentTable.GraphQlName;
 
-            var name = baseName;
-            var i = 2;
-            while (IsTaken(fk.ChildTable, name))
-                name = $"{baseName}_{i++}";
-            return name;
+            return LinkFieldNames.Unique(fk.ChildTable, baseName);
         }
 
         /// <summary>
@@ -155,20 +148,7 @@ namespace BifrostQL.Core.Model.Relationships
         /// <c>orders_by_shipping_address</c> rather than two fields both called orders.
         /// </summary>
         private static string UniqueChildRoleFieldName(ResolvedForeignKey fk, string role)
-        {
-            var baseName = $"{fk.ChildTable.GraphQlName}_by_{role}";
-            var name = baseName;
-            var i = 2;
-            while (IsTaken(fk.ParentTable, name))
-                name = $"{baseName}_{i++}";
-            return name;
-        }
-
-        private static bool IsTaken(IDbTable table, string name) =>
-            table.SingleLinks.ContainsKey(name)
-            || table.MultiLinks.ContainsKey(name)
-            || table.ManyToManyLinks.ContainsKey(name)
-            || table.Columns.Any(c => string.Equals(c.GraphQlName, name, StringComparison.OrdinalIgnoreCase));
+            => LinkFieldNames.Unique(fk.ParentTable, $"{fk.ChildTable.GraphQlName}_by_{role}");
 
         /// <summary>Trims the trailing key marker from a FK column name (<c>customer_id</c> -> <c>customer</c>).</summary>
         private static string StripKeySuffix(string columnName)
@@ -180,22 +160,6 @@ namespace BifrostQL.Core.Model.Relationships
                     return columnName[..^suffix.Length].TrimEnd('_');
             }
             return columnName;
-        }
-
-        private static string UniqueChildFieldName(IDbTable parentTable, IDbTable childTable)
-        {
-            var baseName = string.Equals(parentTable.GraphQlName, childTable.GraphQlName, StringComparison.OrdinalIgnoreCase)
-                ? $"{childTable.GraphQlName}_children"
-                : childTable.GraphQlName;
-            var name = baseName;
-            var i = 2;
-            while (parentTable.SingleLinks.ContainsKey(name)
-                || parentTable.MultiLinks.ContainsKey(name)
-                || parentTable.ManyToManyLinks.ContainsKey(name))
-            {
-                name = $"{baseName}_{i++}";
-            }
-            return name;
         }
 
         private sealed record ResolvedForeignKey(

@@ -354,11 +354,13 @@ namespace BifrostQL.Core.Schema
             }
             foreach (var link in _table.ManyToManyLinks)
             {
-                if (!emittedLinkFields.Add(link.Value.TargetTable.GraphQlName))
+                // The key is the field name: ManyToManyDetectionStrategy keeps it clear of
+                // the table's columns and other links.
+                if (!emittedLinkFields.Add(link.Key))
                     continue;
                 var target = link.Value.TargetTable;
                 var targetModuleArgs = Modules.ModuleApiRegistry.QueryArgumentsSdl(target);
-                builder.AppendLine($"\t{target.GraphQlName}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]{targetModuleArgs}) : {target.GraphQlName}_paged");
+                builder.AppendLine($"\t{link.Key}(filter: {target.TableFilterTypeName}, limit: Int, offset: Int, sort: [{target.TableColumnSortEnumName}!]{targetModuleArgs}) : {target.GraphQlName}_paged");
             }
 
             // The EAV-parent _meta field is now emitted through the ComputedColumns

@@ -129,7 +129,11 @@ You can declare one manually when automatic detection is not enough:
 "dbo.posts { many-to-many: tags:post_tags; }"
 ```
 
+Model load checks every `many-to-many` entry. An entry that is not `Target:Junction`, names a table that does not exist, or names a junction without a foreign key to both tables fails startup with the offending value. The same applies to the `polymorphic-type-column`, `polymorphic-id-column` and `polymorphic-map` keys: a missing column, a malformed `discriminator=table` entry, an unknown parent, or a parent without a single-column primary key fails startup. A negated entry (`!tags`) only prunes an auto-detected bridge and declares nothing.
+
 ## Relationship field names
+
+A relationship field is named after the related table (`customer`, `orders`, `tags`). A relationship field shares the table's field namespace with its columns. When a column already has that name (an `invoice.customer` foreign-key column next to the `customer` link), the relationship takes the next free name: `customer_2`, then `customer_3`. A self-reference's child list is `<table>_children`.
 
 Model load also refuses two tables whose generated GraphQL names collide. A rollup table named `orders_aggregate` clashes with the aggregate row type of `orders`. Other clashes are `posts_paged`, `posts_batch` and `ordersAggregate`. The error names the generated name and both tables.
 

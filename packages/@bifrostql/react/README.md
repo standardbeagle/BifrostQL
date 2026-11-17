@@ -187,9 +187,15 @@ const { data, fetchNextPage, hasNextPage, isFetchingNextPage, invalidate } =
 const allUsers = data?.pages.flatMap((page) => page.users) ?? [];
 ```
 
-### `useBifrostSubscription`
+### `useBifrostSubscription` (unsupported, deprecated)
 
-Real-time data via WebSocket (graphql-transport-ws protocol) or Server-Sent Events.
+> **Unsupported.** The BifrostQL server has no GraphQL `Subscription` root, no
+> `graphql-transport-ws` endpoint and no subscription SSE stream, so this hook
+> cannot connect and never delivers data. It is kept only so existing
+> imports compile and will be removed. Poll with `useBifrost`'s
+> `refetchInterval` instead.
+
+Client side, it speaks WebSocket (graphql-transport-ws protocol) or Server-Sent Events.
 
 ```tsx
 import { useBifrostSubscription } from '@bifrostql/react';

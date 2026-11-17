@@ -251,6 +251,12 @@ function createSSEConnection<T>(
 /**
  * Hook for real-time data via WebSocket or Server-Sent Events.
  *
+ * @deprecated Unsupported: no BifrostQL server serves a GraphQL `Subscription`
+ * root, a `graphql-transport-ws` socket or a subscription SSE stream, so this
+ * hook has nothing to connect to and never delivers data. It
+ * stays exported only so existing imports compile; it will be removed. For
+ * fresh data, poll with `useBifrost`'s `refetchInterval`.
+ *
  * Manages the connection lifecycle including automatic reconnection with
  * exponential backoff (capped at 30 seconds). The reconnect counter resets
  * on successful connection.

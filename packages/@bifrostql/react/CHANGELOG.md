@@ -28,6 +28,14 @@ the call-site update it requires.
   for callers that build their own documents. One document now serves every
   filter value, so the query cache keys on the variables instead of the text.
 
+### Deprecated
+
+- **`useBifrostSubscription` is unsupported.** No BifrostQL server serves a
+  GraphQL `Subscription` root, a `graphql-transport-ws` socket or a
+  subscription SSE stream, so the hook has nothing to connect to. It stays
+  exported so existing imports compile and will be removed; poll with
+  `useBifrost`'s `refetchInterval` instead.
+
 ## 0.4.0 — 2026-11-09
 
 ### Breaking changes

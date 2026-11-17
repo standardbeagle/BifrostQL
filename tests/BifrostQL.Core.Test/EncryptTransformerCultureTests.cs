@@ -88,7 +88,7 @@ public class EncryptTransformerCultureTests
             var result = await transformer.TransformAsync(table, MutationType.Insert, data, ctx);
 
             result.Errors.Should().BeEmpty();
-            var dek = manager.GetDataKey("config:pii");
+            var dek = (await manager.GetDataKeyAsync("config:pii"));
             var aad = CryptoAad.Build("dbo", "accounts", "balance");
             // Decrypts to the invariant-formatted decimal regardless of the host culture.
             FieldCipher.Decrypt(dek, (string)result.Data["balance"]!, aad).Should().Be("1234.5");

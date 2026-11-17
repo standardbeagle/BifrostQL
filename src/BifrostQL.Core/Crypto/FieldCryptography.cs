@@ -272,13 +272,10 @@ namespace BifrostQL.Core.Crypto
         /// does NOT collide — closing the cross-column equality oracle. Write and read pass
         /// the SAME triple (it is the physical column being indexed), so tokens still match.
         /// </summary>
-        public static string ComputeSearchToken(
-            EnvelopeKeyManager keyManager, string keyRef, string schema, string table, string column, object? value)
+        public static string ComputeSearchToken(byte[] indexKey, object? value)
         {
-            ArgumentNullException.ThrowIfNull(keyManager);
-            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            ArgumentNullException.ThrowIfNull(indexKey);
             var serialized = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-            var indexKey = keyManager.GetBlindIndexKey(keyRef, CryptoAad.Build(schema, table, column));
             return Compute(indexKey, serialized);
         }
     }

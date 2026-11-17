@@ -112,7 +112,7 @@ namespace BifrostQL.Core.Modules.Crypto
                             $"Encrypted column '{table.TableSchema}.{table.DbName}.{column.ColumnName}' has no key-ref.");
 
                     var storedVersion = FieldCipher.PeekKeyVersion(envelope); // null == legacy format
-                    var currentVersion = _keyManager.GetCurrentVersion(keyRef);
+                    var currentVersion = await _keyManager.GetCurrentVersionAsync(keyRef, cancellationToken);
                     // Already on the current version ⇒ nothing to do (idempotent / half-swept safe).
                     if (storedVersion == currentVersion)
                         continue;
@@ -120,8 +120,8 @@ namespace BifrostQL.Core.Modules.Crypto
                     // Version-directed decrypt of the stale value, then hand the PLAINTEXT to the
                     // update so EncryptOnWrite re-encrypts it under the current version.
                     var dek = storedVersion is null
-                        ? _keyManager.GetDataKey(keyRef)
-                        : _keyManager.GetDataKey(keyRef, storedVersion.Value);
+                        ? await _keyManager.GetDataKeyAsync(keyRef, cancellationToken)
+                        : await _keyManager.GetDataKeyAsync(keyRef, storedVersion.Value, cancellationToken);
                     var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
                     setData[column.GraphQlName] = FieldCipher.Decrypt(dek, envelope, aad);
                     expectedEnvelopes[column.ColumnName] = envelope;

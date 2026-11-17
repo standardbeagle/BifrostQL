@@ -62,14 +62,14 @@ that can open it.
 
 ```csharp
 // Mint a new DEK version and make it current for new writes.
-int newVersion = keyManager.Rotate("config:pii");   // e.g. returns 2
+int newVersion = await keyManager.RotateAsync("config:pii");   // e.g. returns 2
 
-int current = keyManager.GetCurrentVersion("config:pii");   // 2
-byte[] v1 = keyManager.GetDataKey("config:pii", 1);  // old DEK — still resolvable
-byte[] v2 = keyManager.GetDataKey("config:pii", 2);  // new DEK
+int current = await keyManager.GetCurrentVersionAsync("config:pii");   // 2
+byte[] v1 = await keyManager.GetDataKeyAsync("config:pii", 1);  // old DEK — still resolvable
+byte[] v2 = await keyManager.GetDataKeyAsync("config:pii", 2);  // new DEK
 ```
 
-After `Rotate`:
+After `RotateAsync`:
 
 - New writes encrypt under the new version and stamp it into the envelope.
 - **Every prior version stays durably resolvable** so already-written rows keep
@@ -80,7 +80,7 @@ After `Rotate`:
   equality-search hashes stay stable across rotation and rows written under
   different DEK versions still hash-match.
 
-`Rotate` is safe under a concurrent race: two rotations that compute the same
+`RotateAsync` is safe under a concurrent race: two rotations that compute the same
 next version converge on one persisted DEK (first-writer-wins in the store),
 never two divergent keys.
 

@@ -84,12 +84,12 @@ public sealed class EncryptOnWriteTests : IAsyncLifetime
         ssn.Should().NotBeNull().And.NotBe(plaintext, "the column stores ciphertext, never the plaintext");
 
         // The stored value is a decryptable AES-256-GCM envelope bound to this cell.
-        var dek = manager.GetDataKey(KeyRef);
+        var dek = (await manager.GetDataKeyAsync(KeyRef));
         var aad = CryptoAad.Build("main", "secrets", "ssn");
         FieldCipher.Decrypt(dek, ssn!, aad).Should().Be(plaintext);
 
         // The blind index is the deterministic keyed hash of the plaintext.
-        var expectedBidx = BlindIndexComputer.Compute(manager.GetBlindIndexKey(KeyRef, aad), plaintext);
+        var expectedBidx = BlindIndexComputer.Compute((await manager.GetBlindIndexKeyAsync(KeyRef, aad)), plaintext);
         bidx.Should().Be(expectedBidx);
     }
 

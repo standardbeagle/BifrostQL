@@ -96,7 +96,7 @@ public sealed class TableReadChain
     /// returning the envelope, so a missing registration can never turn into a
     /// ciphertext leak.
     /// </summary>
-    public static TableReadChain For(
+    public static async ValueTask<TableReadChain> ForAsync(
         IServiceProvider? services,
         IDbModel model,
         IDbTable table,
@@ -104,7 +104,8 @@ public sealed class TableReadChain
         ReadProjection projection,
         QueryType queryType = QueryType.Standard,
         string path = "",
-        bool isNestedQuery = false)
+        bool isNestedQuery = false,
+        CancellationToken cancellationToken = default)
     {
         if (model is null) throw new ArgumentNullException(nameof(model));
         if (table is null) throw new ArgumentNullException(nameof(table));
@@ -125,8 +126,8 @@ public sealed class TableReadChain
         // Client projections use the caller's real roles.
         var keyManager = services?.GetService<EnvelopeKeyManager>();
         var crypto = projection == ReadProjection.InternalDiff
-            ? CryptoReadProjector.Unmasked(model, keyManager)
-            : new CryptoReadProjector(model, keyManager, PolicyIdentity.ExtractRoles(context));
+            ? await CryptoReadProjector.CreateUnmaskedAsync(model, keyManager, cancellationToken)
+            : await CryptoReadProjector.CreateAsync(model, keyManager, PolicyIdentity.ExtractRoles(context), cancellationToken);
 
         return new TableReadChain(table, filterTransformers, transformContext, crypto, projection);
     }

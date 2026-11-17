@@ -710,10 +710,10 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         (await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", approver)).Errors.Should().BeNullOrEmpty();
         var (secret, blindIndex) = await ReadSecretAsync("encrypted");
         secret.Should().NotBe("approval-secret");
-        FieldCipher.Decrypt(KeyManager.GetDataKey("config:approval"), secret!, CryptoAad.Build("main", "orders", "secret"))
+        FieldCipher.Decrypt((await KeyManager.GetDataKeyAsync("config:approval")), secret!, CryptoAad.Build("main", "orders", "secret"))
             .Should().Be("approval-secret", "approved replay preserves the queued ciphertext for normal one-decrypt reads");
         blindIndex.Should().Be(BlindIndexComputer.Compute(
-            KeyManager.GetBlindIndexKey("config:approval", CryptoAad.Build("main", "orders", "secret")), "approval-secret"));
+            (await KeyManager.GetBlindIndexKeyAsync("config:approval", CryptoAad.Build("main", "orders", "secret"))), "approval-secret"));
 
         Func<Task> enqueueDelete = async () => await executor.ExecuteAsync(new MutationIntent
         {

@@ -183,6 +183,7 @@ namespace BifrostQL.Core.Resolvers
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
 
             var transformStart = Stopwatch.GetTimestamp();
+            await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(table, _dbModel, scopedContext);
             RecordReadTransformerDuration(userContext, transformStart);
 
@@ -218,10 +219,11 @@ namespace BifrostQL.Core.Resolvers
             // column's unmask-role grants them. Absent key manager ⇒ encrypted columns
             // read as redacted (never ciphertext). No-op for models with no encrypted
             // columns (Project passes non-encrypted columns through).
-            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
+            var cryptoRead = await Modules.Crypto.CryptoReadProjector.CreateAsync(
                 _dbModel,
                 context.RequestServices?.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>(),
-                ExtractRoles(userContext));
+                ExtractRoles(userContext),
+                context.CancellationToken);
 
             if (table.IncludeResult)
             {
@@ -249,6 +251,7 @@ namespace BifrostQL.Core.Resolvers
             // constrains the grouped rows before aggregation.
             var scopedContext = new Dictionary<string, object?>(context.UserContext);
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
+            await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
             ApplyEnumFilterRewrite(query);
 
@@ -331,6 +334,7 @@ namespace BifrostQL.Core.Resolvers
             // UserContext is not thread-safe).
             var scopedContext = new Dictionary<string, object?>(context.UserContext);
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, target, scopedContext);
+            await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
             ApplyEnumFilterRewrite(query);
 
@@ -339,10 +343,11 @@ namespace BifrostQL.Core.Resolvers
 
             // Decrypt/mask projector — same construction as base-table reads, so a
             // trail row's columns obey the identical per-caller policy.
-            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
+            var cryptoRead = await Modules.Crypto.CryptoReadProjector.CreateAsync(
                 _dbModel,
                 context.RequestServices?.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>(),
-                ExtractRoles(context.UserContext));
+                ExtractRoles(context.UserContext),
+                context.CancellationToken);
 
             // The before/after images carry the TRACKED table's column values as
             // stored — for an encrypted column, the ciphertext envelope. Route each
@@ -536,6 +541,7 @@ namespace BifrostQL.Core.Resolvers
                 Filter = request.Filter,
                 PredicateColumns = request.ReferencedColumns.ToList(),
             };
+            await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
             ApplyEnumFilterRewrite(query);
 
@@ -606,7 +612,7 @@ namespace BifrostQL.Core.Resolvers
             // generated SQL result-set column names, so rewriting them would break the
             // label→cell mapping — the filter guard is what keeps ciphertext out of
             // that position.
-            var readChain = TableReadChain.For(
+            var readChain = await TableReadChain.ForAsync(
                 context.RequestServices, _dbModel, table, scopedContext, ReadProjection.Client);
 
             return BuildPivotPayload(config, request, labels, pivotIndex, pivotRows, readChain);
@@ -771,6 +777,7 @@ namespace BifrostQL.Core.Resolvers
             // per-call overlay so a shared caller context is never mutated.
             var scopedContext = new Dictionary<string, object?>(userContext);
             var transformStart = Stopwatch.GetTimestamp();
+            await _transformerService.PrepareAsync(_dbModel, cancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
             RecordReadTransformerDuration(userContext, transformStart);
             ApplyEnumFilterRewrite(query);
@@ -796,8 +803,8 @@ namespace BifrostQL.Core.Resolvers
             // so an adapter intent obeys the identical per-caller crypto policy: the
             // unmask role (or admin) sees plaintext, everyone else the column's mask,
             // and raw ciphertext never leaves the seam (no key manager ⇒ redaction).
-            var cryptoRead = new Modules.Crypto.CryptoReadProjector(
-                _dbModel, keyManager, ExtractRoles(userContext));
+            var cryptoRead = await Modules.Crypto.CryptoReadProjector.CreateAsync(
+                _dbModel, keyManager, ExtractRoles(userContext), cancellationToken);
 
             var rows = new List<IReadOnlyDictionary<string, object?>>(tableData.data.Count);
             foreach (var row in tableData.data)

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Crypto;
 using FluentAssertions;
@@ -44,30 +45,84 @@ public class DurableKeyStoreTests
 
         public LostRaceStore(byte[] winner) => _winner = winner;
 
-        public byte[]? Load(string keyRef)
+        public ValueTask<byte[]?> LoadAsync(string keyRef, CancellationToken cancellationToken = default)
         {
-            if (!_firstLoadDone) { _firstLoadDone = true; return null; }
-            return (byte[])_winner.Clone();
+            if (!_firstLoadDone) { _firstLoadDone = true; return ValueTask.FromResult<byte[]?>(null); }
+            return ValueTask.FromResult<byte[]?>((byte[])_winner.Clone());
         }
 
         // persist-if-absent: the winner is already persisted, so this is a no-op.
-        public void Store(string keyRef, byte[] wrappedDek) { }
+        public ValueTask StoreAsync(string keyRef, byte[] wrappedDek, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// A store whose load is in flight until the test releases it — a database or KMS round
+    /// trip. The manager must await it, never park the calling thread on it.
+    /// </summary>
+    private sealed class GatedLoadStore : IDataEncryptionKeyStore
+    {
+        private readonly InMemoryDataEncryptionKeyStore _inner = new();
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken ReceivedToken { get; private set; }
+
+        public async ValueTask<byte[]?> LoadAsync(string keyRef, CancellationToken cancellationToken = default)
+        {
+            ReceivedToken = cancellationToken;
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            return await _inner.LoadAsync(keyRef, cancellationToken);
+        }
+
+        public ValueTask StoreAsync(string keyRef, byte[] wrappedDek, CancellationToken cancellationToken = default)
+            => _inner.StoreAsync(keyRef, wrappedDek, cancellationToken);
+    }
+
+    // The DEK path used to read the key store with synchronous file I/O from inside async
+    // resolvers. Now the manager awaits the store end to end and forwards the caller's token,
+    // so a slow store costs a pending task, not a blocked thread-pool thread.
+    [Fact]
+    public async Task GetDataKeyAsync_AwaitsTheStoreLoad_InsteadOfBlockingTheCaller()
+    {
+        var store = new GatedLoadStore();
+        var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(5)), store);
+        using var call = new CancellationTokenSource();
+        var returned = new TaskCompletionSource<Task<byte[]>>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Start the call on its own thread so a blocking manager cannot hang the test itself.
+        _ = Task.Run(() => returned.TrySetResult(manager.GetDataKeyAsync("config:pii", call.Token).AsTask()));
+        try
+        {
+            await store.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var pending = await returned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            pending.IsCompleted.Should().BeFalse("the store load is still in flight");
+            store.ReceivedToken.Should().Be(call.Token, "the caller's cancellation reaches the store");
+
+            store.Release.SetResult();
+            (await pending.WaitAsync(TimeSpan.FromSeconds(30))).Should().HaveCount(FieldCipher.KeySize);
+        }
+        finally
+        {
+            store.Release.TrySetResult();
+        }
     }
 
     [Fact]
-    public void GetDataKey_LostStoreRace_AdoptsPersistedWinnerDek()
+    public async Task GetDataKey_LostStoreRace_AdoptsPersistedWinnerDek()
     {
         var root = Key(7);
         const string keyRef = "config:pii";
 
         // Produce a real wrapped winner DEK via a manager over an in-memory store.
         var winnerStore = new InMemoryDataEncryptionKeyStore();
-        var winnerDek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), winnerStore).GetDataKey(keyRef);
-        var winnerWrapped = winnerStore.Load(keyRef)!;
+        var winnerDek = (await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), winnerStore).GetDataKeyAsync(keyRef));
+        var winnerWrapped = (await winnerStore.LoadAsync(keyRef))!;
 
         // A manager that loses the persist race must still return the persisted winner DEK.
         var loser = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), new LostRaceStore(winnerWrapped));
-        var loserDek = loser.GetDataKey(keyRef);
+        var loserDek = (await loser.GetDataKeyAsync(keyRef));
 
         loserDek.Should().Equal(winnerDek);
     }
@@ -82,24 +137,27 @@ public class DurableKeyStoreTests
     /// </summary>
     private sealed class NonPersistingStore : IDataEncryptionKeyStore
     {
-        public byte[]? Load(string keyRef) => null;   // never persists, never returns anything
-        public void Store(string keyRef, byte[] wrappedDek) { }
+        // never persists, never returns anything
+        public ValueTask<byte[]?> LoadAsync(string keyRef, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<byte[]?>(null);
+        public ValueTask StoreAsync(string keyRef, byte[] wrappedDek, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
     }
 
     [Fact]
-    public void GetDataKey_StoreSilentlyPersistsNothing_FailsFast_NoUnpersistedDek()
+    public async Task GetDataKey_StoreSilentlyPersistsNothing_FailsFast_NoUnpersistedDek()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new NonPersistingStore());
 
         // Must throw — never return a DEK the store did not persist.
-        var act = () => manager.GetDataKey("config:pii");
+        Func<Task> act = async () => await manager.GetDataKeyAsync("config:pii");
 
-        act.Should().Throw<System.Security.Cryptography.CryptographicException>(
+        await act.Should().ThrowAsync<System.Security.Cryptography.CryptographicException>(
             "a DEK the store failed to persist would orphan all data encrypted under it on restart");
     }
 
     [Fact]
-    public void FileStore_PersistsWrappedBytesVerbatim_PlaintextDekNeverAtRest()
+    public async Task FileStore_PersistsWrappedBytesVerbatim_PlaintextDekNeverAtRest()
     {
         var dir = TempDir();
         try
@@ -110,11 +168,11 @@ public class DurableKeyStoreTests
             // Wrap a known plaintext DEK using a manager over an in-memory store, then
             // persist those exact wrapped bytes via the file store.
             var stage = new InMemoryDataEncryptionKeyStore();
-            var plaintextDek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), stage).GetDataKey(keyRef);
-            var wrapped = stage.Load(keyRef)!;
+            var plaintextDek = (await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), stage).GetDataKeyAsync(keyRef));
+            var wrapped = (await stage.LoadAsync(keyRef))!;
 
             var store = new FileDataEncryptionKeyStore(dir);
-            store.Store(keyRef, wrapped);
+            await store.StoreAsync(keyRef, wrapped);
 
             // Exactly one file was written and it holds the wrapped bytes verbatim.
             var files = Directory.GetFiles(dir);
@@ -129,7 +187,7 @@ public class DurableKeyStoreTests
     }
 
     [Fact]
-    public void FileStore_SurvivesRestart_FreshInstanceLoadsAndUnwraps()
+    public async Task FileStore_SurvivesRestart_FreshInstanceLoadsAndUnwraps()
     {
         var dir = TempDir();
         try
@@ -138,35 +196,35 @@ public class DurableKeyStoreTests
             const string keyRef = "config:pii";
 
             var stage = new InMemoryDataEncryptionKeyStore();
-            var originalDek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), stage).GetDataKey(keyRef);
-            var wrapped = stage.Load(keyRef)!;
+            var originalDek = (await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), stage).GetDataKeyAsync(keyRef));
+            var wrapped = (await stage.LoadAsync(keyRef))!;
 
-            new FileDataEncryptionKeyStore(dir).Store(keyRef, wrapped);
+            await new FileDataEncryptionKeyStore(dir).StoreAsync(keyRef, wrapped);
 
             // A FRESH store over the SAME directory (simulated restart) returns the same bytes.
             var reopened = new FileDataEncryptionKeyStore(dir);
-            reopened.Load(keyRef).Should().Equal(wrapped);
+            (await reopened.LoadAsync(keyRef)).Should().Equal(wrapped);
 
             // And a manager over the reopened store unwraps to the original plaintext DEK.
-            var dek = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), reopened).GetDataKey(keyRef);
+            var dek = (await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), reopened).GetDataKeyAsync(keyRef));
             dek.Should().Equal(originalDek);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]
-    public void FileStore_Load_ReturnsNull_WhenAbsent()
+    public async Task FileStore_Load_ReturnsNull_WhenAbsent()
     {
         var dir = TempDir();
         try
         {
-            new FileDataEncryptionKeyStore(dir).Load("config:missing").Should().BeNull();
+            (await new FileDataEncryptionKeyStore(dir).LoadAsync("config:missing")).Should().BeNull();
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]
-    public void FileStore_Store_IsFirstWriterWins_DoesNotClobber()
+    public async Task FileStore_Store_IsFirstWriterWins_DoesNotClobber()
     {
         var dir = TempDir();
         try
@@ -176,17 +234,17 @@ public class DurableKeyStoreTests
             var wrappedB = MakeWrappedBytes(0xB2);
 
             var store = new FileDataEncryptionKeyStore(dir);
-            store.Store(keyRef, wrappedA);
-            store.Store(keyRef, wrappedB); // must NOT replace wrappedA
+            await store.StoreAsync(keyRef, wrappedA);
+            await store.StoreAsync(keyRef, wrappedB); // must NOT replace wrappedA
 
-            store.Load(keyRef).Should().Equal(wrappedA);
+            (await store.LoadAsync(keyRef)).Should().Equal(wrappedA);
             Directory.GetFiles(dir).Should().HaveCount(1, "no temp file should be left behind");
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]
-    public void FileStore_ArbitraryKeyRef_CannotEscapeDirectory_OrCollide()
+    public async Task FileStore_ArbitraryKeyRef_CannotEscapeDirectory_OrCollide()
     {
         var dir = TempDir();
         try
@@ -197,12 +255,12 @@ public class DurableKeyStoreTests
 
             // Path-hostile key-refs with dots/slashes must stay inside the directory and
             // must not collide with each other.
-            store.Store("../escape:pii", a);
-            store.Store("config:../../etc/passwd", b);
+            await store.StoreAsync("../escape:pii", a);
+            await store.StoreAsync("config:../../etc/passwd", b);
 
             Directory.GetFiles(dir).Should().HaveCount(2);
-            store.Load("../escape:pii").Should().Equal(a);
-            store.Load("config:../../etc/passwd").Should().Equal(b);
+            (await store.LoadAsync("../escape:pii")).Should().Equal(a);
+            (await store.LoadAsync("config:../../etc/passwd")).Should().Equal(b);
             // Nothing was written outside the directory.
             Directory.GetFiles(dir).All(f => Path.GetDirectoryName(f) == dir.TrimEnd(Path.DirectorySeparatorChar)
                                              || Path.GetFullPath(Path.GetDirectoryName(f)!) == Path.GetFullPath(dir))
@@ -224,8 +282,8 @@ public class DurableKeyStoreTests
             // ONE durable store shared by N independent managers (each its own cache + lock).
             var store = new FileDataEncryptionKeyStore(dir);
 
-            var tasks = Enumerable.Range(0, n).Select(_ => Task.Run(() =>
-                new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKey(keyRef))).ToArray();
+            var tasks = Enumerable.Range(0, n).Select(_ => Task.Run(async () =>
+                await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKeyAsync(keyRef))).ToArray();
             var deks = await Task.WhenAll(tasks);
 
             // Every returned DEK is byte-identical: the persist-if-absent store picks one

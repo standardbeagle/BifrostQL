@@ -3,6 +3,10 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace BifrostQL.Core.Crypto
 {
@@ -58,10 +62,10 @@ namespace BifrostQL.Core.Crypto
     public interface IDataEncryptionKeyStore
     {
         /// <summary>Returns the wrapped DEK for <paramref name="keyRef"/>, or null if none exists yet.</summary>
-        byte[]? Load(string keyRef);
+        ValueTask<byte[]?> LoadAsync(string keyRef, CancellationToken cancellationToken = default);
 
         /// <summary>Stores the wrapped DEK for <paramref name="keyRef"/>, overwriting any prior value.</summary>
-        void Store(string keyRef, byte[] wrappedDek);
+        ValueTask StoreAsync(string keyRef, byte[] wrappedDek, CancellationToken cancellationToken = default);
     }
 
     /// <summary>Process-memory wrapped-DEK store. Thread-safe. Not durable across restarts.</summary>
@@ -69,11 +73,14 @@ namespace BifrostQL.Core.Crypto
     {
         private readonly ConcurrentDictionary<string, byte[]> _wrapped = new(StringComparer.Ordinal);
 
-        public byte[]? Load(string keyRef)
-            => _wrapped.TryGetValue(keyRef, out var v) ? (byte[])v.Clone() : null;
+        public ValueTask<byte[]?> LoadAsync(string keyRef, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(_wrapped.TryGetValue(keyRef, out var v) ? (byte[]?)v.Clone() : null);
 
-        public void Store(string keyRef, byte[] wrappedDek)
-            => _wrapped[keyRef] = (byte[])wrappedDek.Clone();
+        public ValueTask StoreAsync(string keyRef, byte[] wrappedDek, CancellationToken cancellationToken = default)
+        {
+            _wrapped[keyRef] = (byte[])wrappedDek.Clone();
+            return ValueTask.CompletedTask;
+        }
     }
 
     /// <summary>
@@ -86,7 +93,7 @@ namespace BifrostQL.Core.Crypto
     /// raw key-ref is never used as a path segment.
     /// </para>
     /// <para>
-    /// <see cref="Store"/> is persist-if-absent / first-writer-wins: it writes to a unique
+    /// <see cref="StoreAsync"/> is persist-if-absent / first-writer-wins: it writes to a unique
     /// temp file in the same directory then atomically renames it into place with
     /// fail-if-exists semantics. If the destination already exists (another writer/process
     /// won), the temp file is deleted and the existing value is left intact — overwriting
@@ -97,7 +104,7 @@ namespace BifrostQL.Core.Crypto
     public sealed class FileDataEncryptionKeyStore : IDataEncryptionKeyStore
     {
         private readonly string _rootDir;
-        private readonly object _sync = new();
+        private readonly SemaphoreSlim _sync = new(1, 1);
 
         public FileDataEncryptionKeyStore(string rootDirectory)
         {
@@ -106,15 +113,16 @@ namespace BifrostQL.Core.Crypto
             Directory.CreateDirectory(_rootDir);
         }
 
-        public byte[]? Load(string keyRef)
+        public async ValueTask<byte[]?> LoadAsync(string keyRef, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
             var path = PathFor(keyRef);
-            // First-writer-wins means the live file is only ever fully-written wrapped bytes.
-            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+            // First-writer-wins means the live file is only ever fully-written wrapped bytes,
+            // and a key file is never deleted, so an existing path stays readable.
+            return File.Exists(path) ? await File.ReadAllBytesAsync(path, cancellationToken) : null;
         }
 
-        public void Store(string keyRef, byte[] wrappedDek)
+        public async ValueTask StoreAsync(string keyRef, byte[] wrappedDek, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
             ArgumentNullException.ThrowIfNull(wrappedDek);
@@ -125,15 +133,16 @@ namespace BifrostQL.Core.Crypto
             if (File.Exists(path))
                 return;
 
-            // Serialize same-process writers so two threads don't both pass the pre-check and
+            // Serialize same-process writers so two callers don't both pass the pre-check and
             // both attempt the rename; cross-process safety comes from the O_EXCL-style rename.
-            lock (_sync)
+            await _sync.WaitAsync(cancellationToken);
+            try
             {
                 if (File.Exists(path))
                     return;
 
                 var temp = Path.Combine(_rootDir, "." + Guid.NewGuid().ToString("N") + ".tmp");
-                File.WriteAllBytes(temp, wrappedDek);
+                await File.WriteAllBytesAsync(temp, wrappedDek, cancellationToken);
                 try
                 {
                     // Atomic, fail-if-destination-exists — the cross-process first-writer-wins gate.
@@ -157,6 +166,10 @@ namespace BifrostQL.Core.Crypto
                     TryDelete(temp);
                     throw;
                 }
+            }
+            finally
+            {
+                _sync.Release();
             }
         }
 
@@ -183,7 +196,7 @@ namespace BifrostQL.Core.Crypto
         private readonly IRootKeyProvider _rootKeys;
         private readonly IDataEncryptionKeyStore _store;
         private readonly ConcurrentDictionary<string, byte[]> _dekCache = new(StringComparer.Ordinal);
-        private readonly object _generateLock = new();
+        private readonly SemaphoreSlim _generateLock = new(1, 1);
 
         public EnvelopeKeyManager(IRootKeyProvider rootKeys, IDataEncryptionKeyStore store)
         {
@@ -197,7 +210,7 @@ namespace BifrostQL.Core.Crypto
         /// unit-separator + <c>v</c> + N, so versioned slots never collide with the base slot
         /// and the durable file store hex-encodes the whole thing safely.
         /// </summary>
-        private const string VersionSeparator = "v";
+        private const string VersionSeparator = "v";
 
         /// <summary>
         /// Returns the 32-byte plaintext DEK for <paramref name="keyRef"/>'s ORIGINAL
@@ -205,40 +218,42 @@ namespace BifrostQL.Core.Crypto
         /// use — as needed. This is the DEK legacy (unversioned-format) ciphertext was
         /// written under. The returned array is a copy the caller may use freely.
         /// </summary>
-        public byte[] GetDataKey(string keyRef)
+        public ValueTask<byte[]> GetDataKeyAsync(string keyRef, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
-            return ResolveDek(keyRef);
+            return ResolveDekAsync(keyRef, cancellationToken);
         }
 
         /// <summary>
         /// Returns the 32-byte plaintext DEK for a SPECIFIC <paramref name="version"/> of
-        /// <paramref name="keyRef"/> — the version-directed resolution the read path uses so
-        /// a value written under an old DEK still decrypts after rotation. Version 1 is the
-        /// original/unversioned slot; higher versions are created by <see cref="Rotate"/>.
+        /// <paramref name="keyRef"/> — the version-directed resolution a value written under an
+        /// old DEK needs to decrypt after rotation. Version 1 is the original/unversioned slot;
+        /// higher versions are created by <see cref="RotateAsync"/>.
         /// </summary>
-        public byte[] GetDataKey(string keyRef, int version)
+        public ValueTask<byte[]> GetDataKeyAsync(string keyRef, int version, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
             if (version < 1)
                 throw new ArgumentOutOfRangeException(nameof(version), version, "DEK version must be >= 1.");
-            return ResolveDek(StoreKeyFor(keyRef, version));
+            return ResolveDekAsync(StoreKeyFor(keyRef, version), cancellationToken);
         }
 
         /// <summary>
         /// Returns the current (highest) DEK version for <paramref name="keyRef"/> — the
         /// version new writes must encrypt under. Ensures version 1 exists (generating it on
-        /// first use), then probes contiguous higher versions created by <see cref="Rotate"/>.
+        /// first use), then probes contiguous higher versions created by <see cref="RotateAsync"/>.
         /// </summary>
-        public int GetCurrentVersion(string keyRef)
+        public async ValueTask<int> GetCurrentVersionAsync(string keyRef, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
             // Ensure the base (v1) slot exists so a fresh key-ref reports version 1.
-            ResolveDek(keyRef);
+            await ResolveDekAsync(keyRef, cancellationToken);
             var version = 1;
             // Rotation always mints current+1, so persisted versions are contiguous: probe
-            // upward until a slot is absent. Versions are few (one per rotation), so this is cheap.
-            while (_store.Load(StoreKeyFor(keyRef, version + 1)) is not null)
+            // upward until a slot is absent. A version already unwrapped in this process is
+            // known to exist, so only the slot past it costs a store read.
+            while (_dekCache.ContainsKey(StoreKeyFor(keyRef, version + 1))
+                   || await _store.LoadAsync(StoreKeyFor(keyRef, version + 1), cancellationToken) is not null)
                 version++;
             return version;
         }
@@ -250,18 +265,68 @@ namespace BifrostQL.Core.Crypto
         /// Returns the new current version. Idempotent under a concurrent race: two rotations
         /// computing the same next version converge on one persisted DEK (first-writer-wins).
         /// </summary>
-        public int Rotate(string keyRef)
+        public async ValueTask<int> RotateAsync(string keyRef, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
-            lock (_generateLock)
+            var next = await GetCurrentVersionAsync(keyRef, cancellationToken) + 1;
+            // Materialize (generate + persist) the new version's slot so GetCurrentVersionAsync
+            // sees it as the new highest. Resolution is first-writer-wins, so a lost race adopts
+            // the winner's DEK rather than orphaning data.
+            await ResolveDekAsync(StoreKeyFor(keyRef, next), cancellationToken);
+            return next;
+        }
+
+        /// <summary>
+        /// Brings every DEK version of each key-ref into the in-process cache — version 1
+        /// through the current one — so the synchronous per-row read paths
+        /// (<see cref="TryGetCachedDataKey"/>, <see cref="GetCachedBlindIndexKey"/>) can run
+        /// without I/O. Call it from the async edge of a request before projecting rows.
+        /// </summary>
+        public async ValueTask WarmAsync(IEnumerable<string> keyRefs, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(keyRefs);
+            foreach (var keyRef in keyRefs.Distinct(StringComparer.Ordinal))
             {
-                var next = GetCurrentVersion(keyRef) + 1;
-                // Materialize (generate + persist) the new version's slot so GetCurrentVersion
-                // sees it as the new highest. ResolveDek is first-writer-wins, so a lost race
-                // adopts the winner's DEK rather than orphaning data.
-                ResolveDek(StoreKeyFor(keyRef, next));
-                return next;
+                // A version newer than the cached ones exists only after a rotation, which this
+                // process caches as it mints it. Another process's rotation is found by probing
+                // the store for the next slot, at most once per VersionProbeInterval per key-ref,
+                // so a read request costs no store I/O in the steady state.
+                var now = Environment.TickCount64;
+                if (_lastVersionProbe.TryGetValue(keyRef, out var probedAt)
+                    && now - probedAt < VersionProbeInterval.TotalMilliseconds)
+                    continue;
+
+                var current = await GetCurrentVersionAsync(keyRef, cancellationToken);
+                for (var version = 2; version <= current; version++)
+                    await ResolveDekAsync(StoreKeyFor(keyRef, version), cancellationToken);
+                _lastVersionProbe[keyRef] = now;
             }
+        }
+
+        /// <summary>
+        /// How long <see cref="WarmAsync"/> trusts the cached versions of a key-ref before it
+        /// probes the store again for a version another process minted. A value written under
+        /// such a version reads as redacted until the next probe.
+        /// </summary>
+        internal static readonly TimeSpan VersionProbeInterval = TimeSpan.FromSeconds(1);
+
+        private readonly ConcurrentDictionary<string, long> _lastVersionProbe = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The cached DEK for <paramref name="keyRef"/> at <paramref name="version"/> (null =
+        /// the original/unversioned slot), without I/O. False when <see cref="WarmAsync"/> has not
+        /// brought that version in; the caller treats it as an undecryptable value.
+        /// </summary>
+        public bool TryGetCachedDataKey(string keyRef, int? version, out byte[] dek)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(keyRef);
+            if (_dekCache.TryGetValue(StoreKeyFor(keyRef, version ?? 1), out var cached))
+            {
+                dek = (byte[])cached.Clone();
+                return true;
+            }
+            dek = Array.Empty<byte>();
+            return false;
         }
 
         private static string StoreKeyFor(string keyRef, int version)
@@ -272,7 +337,7 @@ namespace BifrostQL.Core.Crypto
         /// a store key. The store key doubles as the wrap AAD, so a wrapped DEK cannot be
         /// relocated to another key-ref OR another version. Cached in memory per store key.
         /// </summary>
-        private byte[] ResolveDek(string storeKey)
+        private async ValueTask<byte[]> ResolveDekAsync(string storeKey, CancellationToken cancellationToken)
         {
             if (_dekCache.TryGetValue(storeKey, out var cached))
                 return (byte[])cached.Clone();
@@ -280,34 +345,33 @@ namespace BifrostQL.Core.Crypto
             // Serialize the load-or-generate so two concurrent first-uses of the same
             // store key cannot each generate (and store) a different DEK — that would
             // orphan data encrypted under the loser's key.
-            lock (_generateLock)
+            await _generateLock.WaitAsync(cancellationToken);
+            try
             {
                 if (_dekCache.TryGetValue(storeKey, out cached))
                     return (byte[])cached.Clone();
 
                 var rootKey = _rootKeys.GetRootKey();
-                var wrapped = _store.Load(storeKey);
+                var wrapped = await _store.LoadAsync(storeKey, cancellationToken);
                 byte[] dek;
                 if (wrapped is null)
                 {
                     // Generate + persist. The store is persist-if-absent (first-writer-wins)
-                    // for a durable/cross-process backend, so our Store may be a no-op if
-                    // another manager already won the race. We therefore re-Load and adopt
+                    // for a durable/cross-process backend, so our store call may be a no-op if
+                    // another manager already won the race. We therefore re-load and adopt
                     // the AUTHORITATIVE persisted bytes instead of trusting our own freshly
                     // generated DEK: otherwise the losing manager would cache and return a
                     // DEK that no writer persisted, orphaning anything it then encrypts.
-                    // With the in-memory store (Store overwrites) the re-Load returns exactly
-                    // what we just stored, so behavior is identical and no test regresses.
+                    // With the in-memory store (store overwrites) the re-load returns exactly
+                    // what we just stored.
                     var justWrapped = Wrap(rootKey, RandomNumberGenerator.GetBytes(FieldCipher.KeySize), storeKey);
-                    _store.Store(storeKey, justWrapped);
-                    // After a successful Store (or a lost race the store swallowed only because
-                    // the winner's value is now persisted), Load MUST return the authoritative
-                    // bytes. A null here means the store failed to persist AND holds nothing —
-                    // fail fast rather than fall back to our own un-persisted DEK, which would
-                    // cache a key no writer stored and orphan everything encrypted under it on
-                    // restart. (No silent fallback data — the durable store's contract is that
-                    // a returned DEK is a persisted DEK.)
-                    var authoritative = _store.Load(storeKey)
+                    await _store.StoreAsync(storeKey, justWrapped, cancellationToken);
+                    // A null here means the store failed to persist AND holds nothing — fail
+                    // fast rather than fall back to our own un-persisted DEK, which would cache
+                    // a key no writer stored and orphan everything encrypted under it on
+                    // restart. (The durable store's contract is that a returned DEK is a
+                    // persisted DEK.)
+                    var authoritative = await _store.LoadAsync(storeKey, cancellationToken)
                         ?? throw new CryptographicException(
                             $"Data-encryption key for '{storeKey}' was not persisted by the key store; " +
                             "refusing to use an unpersisted key that would make encrypted data unrecoverable.");
@@ -320,6 +384,10 @@ namespace BifrostQL.Core.Crypto
 
                 _dekCache[storeKey] = dek;
                 return (byte[])dek.Clone();
+            }
+            finally
+            {
+                _generateLock.Release();
             }
         }
 
@@ -338,9 +406,26 @@ namespace BifrostQL.Core.Crypto
         /// The binding is column IDENTITY, never row data or DEK version, so the derived key stays
         /// constant across rotation — equality search still matches rows written under earlier DEKs.</para>
         /// </summary>
-        public byte[] GetBlindIndexKey(string keyRef, ReadOnlySpan<byte> columnBinding)
+        public async ValueTask<byte[]> GetBlindIndexKeyAsync(string keyRef, ReadOnlyMemory<byte> columnBinding,
+            CancellationToken cancellationToken = default)
+            => DeriveBlindIndexKey(await GetDataKeyAsync(keyRef, cancellationToken), columnBinding.Span);
+
+        /// <summary>
+        /// <see cref="GetBlindIndexKeyAsync"/> from the cache, for the synchronous query rewrite.
+        /// Version 1 never changes once persisted, so one <see cref="WarmAsync"/> per manager
+        /// suffices. Throws when the key-ref was never warmed: no token can be derived.
+        /// </summary>
+        public byte[] GetCachedBlindIndexKey(string keyRef, ReadOnlySpan<byte> columnBinding)
         {
-            var dek = GetDataKey(keyRef);
+            if (!TryGetCachedDataKey(keyRef, null, out var dek))
+                throw new InvalidOperationException(
+                    $"The data-encryption key for '{keyRef}' was not loaded before the query rewrite; " +
+                    "warm the key manager on the request's async path first.");
+            return DeriveBlindIndexKey(dek, columnBinding);
+        }
+
+        private static byte[] DeriveBlindIndexKey(byte[] dek, ReadOnlySpan<byte> columnBinding)
+        {
             var info = new byte[BlindIndexInfo.Length + columnBinding.Length];
             BlindIndexInfo.CopyTo(info, 0);
             columnBinding.CopyTo(info.AsSpan(BlindIndexInfo.Length));

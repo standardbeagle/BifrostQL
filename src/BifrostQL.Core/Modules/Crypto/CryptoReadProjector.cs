@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using BifrostQL.Core.Crypto;
 using BifrostQL.Core.Model;
 
@@ -28,9 +30,43 @@ namespace BifrostQL.Core.Modules.Crypto
         private readonly HashSet<string> _roles;
         private readonly bool _isAdmin;
 
-        public CryptoReadProjector(IDbModel model, EnvelopeKeyManager? keyManager, IEnumerable<string> callerRoles)
-            : this(model, keyManager, callerRoles, unmaskAll: false)
+        /// <summary>
+        /// Builds a projector for a caller's roles after loading every DEK version the model's
+        /// encrypted columns can name, so <see cref="Project"/> decrypts per row without I/O.
+        /// </summary>
+        public static async ValueTask<CryptoReadProjector> CreateAsync(IDbModel model, EnvelopeKeyManager? keyManager,
+            IEnumerable<string> callerRoles, CancellationToken cancellationToken = default)
         {
+            await WarmAsync(model, keyManager, cancellationToken);
+            return new CryptoReadProjector(model, keyManager, callerRoles, unmaskAll: false);
+        }
+
+        /// <summary>
+        /// A projector that decrypts every column for the engine's own reads (the change
+        /// diff), whose rows never leave the process. Not reachable from a caller's roles.
+        /// </summary>
+        internal static async ValueTask<CryptoReadProjector> CreateUnmaskedAsync(IDbModel model,
+            EnvelopeKeyManager? keyManager, CancellationToken cancellationToken = default)
+        {
+            await WarmAsync(model, keyManager, cancellationToken);
+            return new CryptoReadProjector(model, keyManager, Array.Empty<string>(), unmaskAll: true);
+        }
+
+        private static async ValueTask WarmAsync(IDbModel model, EnvelopeKeyManager? keyManager,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(model);
+            if (keyManager is null)
+                return;
+            var keyRefs = model.Tables
+                .SelectMany(table => table.Columns)
+                .Where(column => !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt)))
+                .Select(column => column.GetMetadataValue(MetadataKeys.Crypto.KeyRef))
+                .Where(keyRef => !string.IsNullOrWhiteSpace(keyRef))
+                .Select(keyRef => keyRef!)
+                .ToList();
+            if (keyRefs.Count > 0)
+                await keyManager.WarmAsync(keyRefs, cancellationToken);
         }
 
         private CryptoReadProjector(IDbModel model, EnvelopeKeyManager? keyManager, IEnumerable<string> callerRoles, bool unmaskAll)
@@ -40,13 +76,6 @@ namespace BifrostQL.Core.Modules.Crypto
             _roles = new HashSet<string>(callerRoles ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             _isAdmin = unmaskAll || Auth.PolicyEvaluator.AdminRoleOf(model) is { } adminRole && _roles.Contains(adminRole);
         }
-
-        /// <summary>
-        /// A projector that decrypts every column for the engine's own reads (the change
-        /// diff), whose rows never leave the process. Not reachable from a caller's roles.
-        /// </summary>
-        internal static CryptoReadProjector Unmasked(IDbModel model, EnvelopeKeyManager? keyManager)
-            => new(model, keyManager, Array.Empty<string>(), unmaskAll: true);
 
         /// <summary>
         /// Projects <paramref name="raw"/> for the column identified by
@@ -100,9 +129,12 @@ namespace BifrostQL.Core.Modules.Crypto
                 // Version-directed: resolve the EXACT DEK version stamped in the envelope so a
                 // value written under an old key still decrypts after rotation. A legacy
                 // (unversioned-format) envelope has no version and uses the original DEK. We
-                // never trial-decrypt across candidate keys.
+                // never trial-decrypt across candidate keys. The DEKs were loaded when the
+                // projector was created; a version minted after that (a rotation elsewhere
+                // mid-request) is not in the cache and redacts.
                 var version = FieldCipher.PeekKeyVersion(envelope);
-                var dek = version is null ? _keyManager.GetDataKey(keyRef) : _keyManager.GetDataKey(keyRef, version.Value);
+                if (!_keyManager.TryGetCachedDataKey(keyRef, version, out var dek))
+                    return null;
                 var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
                 return FieldCipher.Decrypt(dek, envelope, aad);
             }

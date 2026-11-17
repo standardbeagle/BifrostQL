@@ -68,6 +68,12 @@ registering an `IRootKeyProvider` (e.g. `ConfigRootKeyProvider`) and an
 `IDataEncryptionKeyStore` in DI; BifrostQL composes the `EnvelopeKeyManager` from
 them.
 
+`IDataEncryptionKeyStore` is asynchronous (`LoadAsync` / `StoreAsync`), so a store
+backed by a table or a KMS awaits its round trip instead of blocking a request thread.
+A read request loads the DEK versions it needs before it projects rows, then decrypts
+each row from the in-process cache. A DEK version that another process minted is
+picked up within about a second; until then, a value written under it reads as redacted.
+
 :::danger
 The `InMemoryDataEncryptionKeyStore` loses its wrapped DEKs on restart, which makes
 all data encrypted under them **permanently unreadable**. Use it only for tests or

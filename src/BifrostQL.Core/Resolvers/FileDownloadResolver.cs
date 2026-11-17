@@ -63,7 +63,7 @@ namespace BifrostQL.Core.Resolvers
             // (tenant isolation, soft-delete, row-scope policy) so a caller
             // cannot download another tenant's or a soft-deleted row's file by
             // guessing/supplying its primary key.
-            var additionalFilter = GetRowScopeFilter(context, table, column, model);
+            var additionalFilter = await GetRowScopeFilterAsync(context, table, column, model);
 
             // Get file metadata from database
             var metadataJson = await GetFileMetadataFromDatabase(
@@ -128,10 +128,10 @@ namespace BifrostQL.Core.Resolvers
         /// columns it filters by. Guard decisions belong to the guards, in one place
         /// (protocol-adapter-security invariant 4 / invariant 10's single funnel).
         /// </summary>
-        private static TableFilter? GetRowScopeFilter(
+        private static async ValueTask<TableFilter?> GetRowScopeFilterAsync(
             IBifrostFieldContext context, IDbTable table, ColumnDto column, IDbModel model)
         {
-            var chain = TableReadChain.For(
+            var chain = await TableReadChain.ForAsync(
                 context.RequestServices, model, table, context.UserContext,
                 ReadProjection.Client, QueryType.Single);
 

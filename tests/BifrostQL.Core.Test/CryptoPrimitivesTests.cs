@@ -118,60 +118,60 @@ public class CryptoPrimitivesTests
     }
 
     [Fact]
-    public void EnvelopeKeyManager_GeneratesWrapsAndUnwraps_StableDek()
+    public async Task EnvelopeKeyManager_GeneratesWrapsAndUnwraps_StableDek()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
 
-        var first = manager.GetDataKey("config:pii");
-        var second = manager.GetDataKey("config:pii");
+        var first = (await manager.GetDataKeyAsync("config:pii"));
+        var second = (await manager.GetDataKeyAsync("config:pii"));
 
         first.Should().HaveCount(FieldCipher.KeySize);
         second.Should().Equal(first, "the same key-ref resolves to the same DEK across calls");
     }
 
     [Fact]
-    public void EnvelopeKeyManager_WrappedDek_UnwrapsAcrossManagerInstances_SameRoot()
+    public async Task EnvelopeKeyManager_WrappedDek_UnwrapsAcrossManagerInstances_SameRoot()
     {
         var store = new InMemoryDataEncryptionKeyStore();
         var root = Key(9);
-        var dek1 = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKey("config:pii");
+        var dek1 = (await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKeyAsync("config:pii"));
         // A fresh manager over the same store + root must unwrap the persisted DEK.
-        var dek2 = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKey("config:pii");
+        var dek2 = (await new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store).GetDataKeyAsync("config:pii"));
         dek2.Should().Equal(dek1);
     }
 
     [Fact]
-    public void EnvelopeKeyManager_WrongRootKey_FailsToUnwrap()
+    public async Task EnvelopeKeyManager_WrongRootKey_FailsToUnwrap()
     {
         var store = new InMemoryDataEncryptionKeyStore();
-        new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), store).GetDataKey("config:pii");
+        await new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), store).GetDataKeyAsync("config:pii");
 
-        var act = () => new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(8)), store).GetDataKey("config:pii");
-        act.Should().Throw<CryptographicException>("a different root key cannot unwrap the DEK");
+        Func<Task> act = async () => await new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(8)), store).GetDataKeyAsync("config:pii");
+        await act.Should().ThrowAsync<CryptographicException>("a different root key cannot unwrap the DEK");
     }
 
     [Fact]
-    public void EnvelopeKeyManager_DistinctKeyRefs_HaveDistinctDeks()
+    public async Task EnvelopeKeyManager_DistinctKeyRefs_HaveDistinctDeks()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
-        manager.GetDataKey("config:pii").Should().NotEqual(manager.GetDataKey("config:hr"));
+        (await manager.GetDataKeyAsync("config:pii")).Should().NotEqual((await manager.GetDataKeyAsync("config:hr")));
     }
 
     [Fact]
-    public void EnvelopeKeyManager_BlindIndexKey_IsDerived_DistinctFromDek()
+    public async Task EnvelopeKeyManager_BlindIndexKey_IsDerived_DistinctFromDek()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
         var binding = CryptoAad.Build("main", "people", "ssn");
-        var dek = manager.GetDataKey("config:pii");
-        var idx = manager.GetBlindIndexKey("config:pii", binding);
+        var dek = (await manager.GetDataKeyAsync("config:pii"));
+        var idx = (await manager.GetBlindIndexKeyAsync("config:pii", binding));
 
         idx.Should().HaveCount(32);
         idx.Should().NotEqual(dek, "the blind-index key is HKDF-derived, not the DEK itself");
-        manager.GetBlindIndexKey("config:pii", binding).Should().Equal(idx, "derivation is deterministic");
+        (await manager.GetBlindIndexKeyAsync("config:pii", binding)).Should().Equal(idx, "derivation is deterministic");
     }
 
     [Fact]
-    public void EnvelopeKeyManager_BlindIndexKey_DiffersPerColumn_UnderTheSameKeyRef()
+    public async Task EnvelopeKeyManager_BlindIndexKey_DiffersPerColumn_UnderTheSameKeyRef()
     {
         // Two columns SHARING a key-ref must derive DISTINCT blind-index keys, or equal plaintext
         // in different columns hashes identically — a cross-column equality oracle (correlate, or
@@ -179,9 +179,9 @@ public class CryptoPrimitivesTests
         // binding (schema, table, column) is folded into the derivation to break the collision.
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
 
-        var ssn = manager.GetBlindIndexKey("config:pii", CryptoAad.Build("main", "people", "ssn"));
-        var dob = manager.GetBlindIndexKey("config:pii", CryptoAad.Build("main", "people", "dob"));
-        var ssnOtherTable = manager.GetBlindIndexKey("config:pii", CryptoAad.Build("main", "staff", "ssn"));
+        var ssn = (await manager.GetBlindIndexKeyAsync("config:pii", CryptoAad.Build("main", "people", "ssn")));
+        var dob = (await manager.GetBlindIndexKeyAsync("config:pii", CryptoAad.Build("main", "people", "dob")));
+        var ssnOtherTable = (await manager.GetBlindIndexKeyAsync("config:pii", CryptoAad.Build("main", "staff", "ssn")));
 
         ssn.Should().NotEqual(dob, "a different column under the same key-ref gets a different index key");
         ssn.Should().NotEqual(ssnOtherTable, "the same column name in another table is a distinct binding");
@@ -229,80 +229,80 @@ public class CryptoPrimitivesTests
     }
 
     [Fact]
-    public void EnvelopeKeyManager_FreshKeyRef_IsVersionOne()
+    public async Task EnvelopeKeyManager_FreshKeyRef_IsVersionOne()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
-        manager.GetCurrentVersion("config:pii").Should().Be(1, "a never-rotated key-ref is version 1");
+        (await manager.GetCurrentVersionAsync("config:pii")).Should().Be(1, "a never-rotated key-ref is version 1");
     }
 
     [Fact]
-    public void EnvelopeKeyManager_Rotate_MintsHigherVersion_KeepingOldResolvable()
+    public async Task EnvelopeKeyManager_Rotate_MintsHigherVersion_KeepingOldResolvable()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
-        var v1Dek = manager.GetDataKey("config:pii", 1);
+        var v1Dek = (await manager.GetDataKeyAsync("config:pii", 1));
 
-        var newVersion = manager.Rotate("config:pii");
+        var newVersion = (await manager.RotateAsync("config:pii"));
 
         newVersion.Should().Be(2);
-        manager.GetCurrentVersion("config:pii").Should().Be(2, "rotation makes the new version current for writes");
-        manager.GetDataKey("config:pii", 1).Should().Equal(v1Dek, "the old DEK stays durably resolvable for reads");
-        manager.GetDataKey("config:pii", 2).Should().NotEqual(v1Dek, "the new version is a fresh, distinct DEK");
+        (await manager.GetCurrentVersionAsync("config:pii")).Should().Be(2, "rotation makes the new version current for writes");
+        (await manager.GetDataKeyAsync("config:pii", 1)).Should().Equal(v1Dek, "the old DEK stays durably resolvable for reads");
+        (await manager.GetDataKeyAsync("config:pii", 2)).Should().NotEqual(v1Dek, "the new version is a fresh, distinct DEK");
     }
 
     [Fact]
-    public void EnvelopeKeyManager_Version1_EqualsUnversionedSlot_ForBackwardCompat()
+    public async Task EnvelopeKeyManager_Version1_EqualsUnversionedSlot_ForBackwardCompat()
     {
         // Legacy stored ciphertext resolves via the unversioned slot; version 1 must be that
         // same DEK so pre-rotation data still decrypts.
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
-        manager.GetDataKey("config:pii", 1).Should().Equal(manager.GetDataKey("config:pii"));
+        (await manager.GetDataKeyAsync("config:pii", 1)).Should().Equal((await manager.GetDataKeyAsync("config:pii")));
     }
 
     [Fact]
-    public void EnvelopeKeyManager_ValueWrittenUnderOldVersion_DecryptsAfterRotation()
+    public async Task EnvelopeKeyManager_ValueWrittenUnderOldVersion_DecryptsAfterRotation()
     {
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
         var aad = CryptoAad.Build("dbo", "customers", "ssn");
 
         // Write under the current (v1) DEK, stamping v1 into the envelope.
-        var v1 = manager.GetCurrentVersion("config:pii");
-        var envelope = FieldCipher.Encrypt(manager.GetDataKey("config:pii", v1), "old-value", aad, v1);
+        var v1 = (await manager.GetCurrentVersionAsync("config:pii"));
+        var envelope = FieldCipher.Encrypt((await manager.GetDataKeyAsync("config:pii", v1)), "old-value", aad, v1);
 
         // Rotate: current becomes v2, but the envelope still names v1.
-        manager.Rotate("config:pii").Should().Be(2);
+        (await manager.RotateAsync("config:pii")).Should().Be(2);
 
         // Version-directed read: resolve the version named in the envelope, not the current one.
         var version = FieldCipher.PeekKeyVersion(envelope)!.Value;
-        FieldCipher.Decrypt(manager.GetDataKey("config:pii", version), envelope, aad)
+        FieldCipher.Decrypt((await manager.GetDataKeyAsync("config:pii", version)), envelope, aad)
             .Should().Be("old-value", "an old-DEK value stays decryptable after rotation");
     }
 
     [Fact]
-    public void EnvelopeKeyManager_Rotation_PersistsAcrossManagerInstances_SameStore()
+    public async Task EnvelopeKeyManager_Rotation_PersistsAcrossManagerInstances_SameStore()
     {
         var store = new InMemoryDataEncryptionKeyStore();
         var root = Key(9);
         var m1 = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store);
-        m1.Rotate("config:pii"); // -> v2
+        await m1.RotateAsync("config:pii"); // -> v2
 
         // A fresh manager over the same durable store must see the rotated version and resolve
         // the same v2 DEK — versions are durably resolvable across the sweep / restarts.
         var m2 = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), store);
-        m2.GetCurrentVersion("config:pii").Should().Be(2);
-        m2.GetDataKey("config:pii", 2).Should().Equal(m1.GetDataKey("config:pii", 2));
-        m2.GetDataKey("config:pii", 1).Should().Equal(m1.GetDataKey("config:pii", 1));
+        (await m2.GetCurrentVersionAsync("config:pii")).Should().Be(2);
+        (await m2.GetDataKeyAsync("config:pii", 2)).Should().Equal((await m1.GetDataKeyAsync("config:pii", 2)));
+        (await m2.GetDataKeyAsync("config:pii", 1)).Should().Equal((await m1.GetDataKeyAsync("config:pii", 1)));
     }
 
     [Fact]
-    public void EnvelopeKeyManager_BlindIndexKey_IsStableAcrossRotation()
+    public async Task EnvelopeKeyManager_BlindIndexKey_IsStableAcrossRotation()
     {
         // Blind-index hashes must keep matching across rotation, so the index key must NOT
         // change when the DEK rotates (it is bound to version 1).
         var manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(Key(9)), new InMemoryDataEncryptionKeyStore());
         var binding = CryptoAad.Build("main", "people", "ssn");
-        var before = manager.GetBlindIndexKey("config:pii", binding);
-        manager.Rotate("config:pii");
-        manager.GetBlindIndexKey("config:pii", binding).Should().Equal(before, "the blind-index key survives rotation");
+        var before = (await manager.GetBlindIndexKeyAsync("config:pii", binding));
+        await manager.RotateAsync("config:pii");
+        (await manager.GetBlindIndexKeyAsync("config:pii", binding)).Should().Equal(before, "the blind-index key survives rotation");
     }
 
 }

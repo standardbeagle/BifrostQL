@@ -128,7 +128,7 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
         // TableReadChain is the single seam that applies all of it; guard decisions
         // stay with the guards (protocol-adapter-security invariant 4). One chain
         // serves the whole page.
-        var readChain = TableReadChain.For(
+        var readChain = await TableReadChain.ForAsync(
             context.Services, context.Model, metaTable, context.UserContext,
             ReadProjection.Client, QueryType.Standard, metaTable.GraphQlName, isNestedQuery: true);
 

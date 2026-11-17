@@ -131,14 +131,16 @@ public class BlindIndexColumnReadGuardTests
     }
 
     [Fact]
-    public void EqualityOnEncryptedColumn_StillRewrites_WithGuardRegistered()
+    public async Task EqualityOnEncryptedColumn_StillRewrites_WithGuardRegistered()
     {
         // The server's own rewrite injects a ServerDerived node targeting the
         // shadow column; the guard must not fire on it.
         var model = SecretsModel();
         var query = Query(model, new[] { "id" }, f => f.WhereEquals("ssn", "123-45-6789"));
 
-        Service(NewManager()).ApplyTransformers(query, model, UserContext());
+        var service = Service(NewManager());
+        await service.PrepareAsync(model);
+        service.ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
         var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
@@ -147,7 +149,7 @@ public class BlindIndexColumnReadGuardTests
     }
 
     [Fact]
-    public void PolicyReadDenyOnEncryptedColumn_DeniesEqualityProbe()
+    public async Task PolicyReadDenyOnEncryptedColumn_DeniesEqualityProbe()
     {
         // The rewrite replaces `ssn` with `ssn_bidx` in the filter, which used to
         // remove the ORIGINAL column from the guard sets entirely — a policy
@@ -157,7 +159,9 @@ public class BlindIndexColumnReadGuardTests
         var model = SecretsModel(readDenyColumn: "ssn");
         var query = Query(model, new[] { "id" }, f => f.WhereEquals("ssn", "123-45-6789"));
 
-        var act = () => Service(NewManager()).ApplyTransformers(query, model, UserContext());
+        var service = Service(NewManager());
+        await service.PrepareAsync(model);
+        var act = () => service.ApplyTransformers(query, model, UserContext());
 
         act.Should().Throw<BifrostExecutionError>();
     }

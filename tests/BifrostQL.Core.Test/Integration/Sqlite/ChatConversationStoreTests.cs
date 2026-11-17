@@ -353,7 +353,7 @@ public sealed class ChatConversationStoreTests : IAsyncLifetime
         // At rest: the column holds a decryptable envelope, never the plaintext.
         var stored = await ScalarAsync("SELECT content FROM messages");
         stored.Should().NotBeNull().And.NotBe(plaintext);
-        FieldCipher.Decrypt(_keyManager.GetDataKey(KeyRef), stored!, CryptoAad.Build("main", "messages", "content"))
+        FieldCipher.Decrypt(await _keyManager.GetDataKeyAsync(KeyRef), stored!, CryptoAad.Build("main", "messages", "content"))
             .Should().Be(plaintext);
 
         // Authorized read (unmask role): plaintext through the intent seam.

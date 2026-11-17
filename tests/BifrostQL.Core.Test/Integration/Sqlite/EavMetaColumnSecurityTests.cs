@@ -77,7 +77,7 @@ public sealed class EavMetaColumnSecurityTests : IAsyncLifetime
 
         // Seed the attribute value as a REAL envelope, produced by the same cipher the
         // write path uses — this is exactly the bytes a naive read hands to the client.
-        var dek = _manager.GetDataKey("config:pii");
+        var dek = (await _manager.GetDataKeyAsync("config:pii"));
         var aad = CryptoAad.Build("main", "postmeta", "meta_value");
         Ciphertext = FieldCipher.Encrypt(dek, SecretValue, aad);
 

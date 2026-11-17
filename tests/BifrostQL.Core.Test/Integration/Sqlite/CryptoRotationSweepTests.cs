@@ -112,7 +112,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
     {
         var exec = BuildExecutor();
         await InsertAsync(exec, Plain1);   // written under v1
-        _manager.Rotate(KeyRef);           // now v2 is current
+        await _manager.RotateAsync(KeyRef);           // now v2 is current
         await InsertAsync(exec, Plain2);   // written under v2
 
         var raw = await ReadRawAsync();
@@ -121,12 +121,12 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
         FieldCipher.PeekKeyVersion(raw[1].ssn!).Should().Be(2, "the second row is on the new key");
 
         // An unmask-role caller decrypts BOTH rows across the version boundary.
-        var unmask = new CryptoReadProjector(_model, _manager, new[] { "compliance" });
+        var unmask = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "compliance" }));
         unmask.Project("secrets", "ssn", raw[0].ssn).Should().Be(Plain1);
         unmask.Project("secrets", "ssn", raw[1].ssn).Should().Be(Plain2);
 
         // A denied caller gets the mask for BOTH — never the plaintext, never the ciphertext.
-        var denied = new CryptoReadProjector(_model, _manager, new[] { "viewer" });
+        var denied = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "viewer" }));
         foreach (var (row, plain) in new[] { (raw[0], Plain1), (raw[1], Plain2) })
         {
             var masked = denied.Project("secrets", "ssn", row.ssn)?.ToString();
@@ -141,7 +141,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
         var exec = BuildExecutor();
         var id1 = await InsertAsync(exec, Plain1); // v1
         var id2 = await InsertAsync(exec, Plain2); // v1
-        _manager.Rotate(KeyRef);                    // -> v2 current
+        await _manager.RotateAsync(KeyRef);                    // -> v2 current
         var id3 = await InsertAsync(exec, Plain3); // v2
 
         // Sweep ONLY row 1 => half-re-encrypted table.
@@ -160,7 +160,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
         FieldCipher.PeekKeyVersion(raw[id3]!).Should().Be(2);
 
         // Every row — swept, un-swept, natively-new — still decrypts to its original plaintext.
-        var unmask = new CryptoReadProjector(_model, _manager, new[] { "compliance" });
+        var unmask = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "compliance" }));
         unmask.Project("secrets", "ssn", raw[id1]).Should().Be(Plain1);
         unmask.Project("secrets", "ssn", raw[id2]).Should().Be(Plain2);
         unmask.Project("secrets", "ssn", raw[id3]).Should().Be(Plain3);
@@ -171,7 +171,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
     {
         var exec = BuildExecutor();
         var id = await InsertAsync(exec, Plain1); // v1
-        _manager.Rotate(KeyRef);                   // -> v2 current
+        await _manager.RotateAsync(KeyRef);                   // -> v2 current
         var snapshot = (await ReadRawAsync()).Single(r => r.id == id).ssn;
 
         // A user rewrites the value between the sweep's read and its write.
@@ -186,7 +186,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
 
         result.RowsReEncrypted.Should().Be(1);
         result.RowsAffected.Should().Be(0, "the stored envelope no longer matches the snapshot");
-        var unmask = new CryptoReadProjector(_model, _manager, new[] { "compliance" });
+        var unmask = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "compliance" }));
         unmask.Project("secrets", "ssn", (await ReadRawAsync()).Single(r => r.id == id).ssn)
             .Should().Be(Plain2, "the user's newer value must not be overwritten with the snapshot's plaintext");
     }
@@ -196,7 +196,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
     {
         var exec = BuildExecutor();
         var id1 = await InsertAsync(exec, Plain1);
-        _manager.Rotate(KeyRef);
+        await _manager.RotateAsync(KeyRef);
         var table = _model.GetTableFromDbName("secrets");
 
         // First sweep advances row 1 to the current version.
@@ -219,7 +219,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
         var exec = BuildExecutor();
         var id = await InsertAsync(exec, Plain1);
         await Exec($"UPDATE secrets SET ssn = NULL WHERE id = {id}");
-        _manager.Rotate(KeyRef);
+        await _manager.RotateAsync(KeyRef);
 
         var table = _model.GetTableFromDbName("secrets");
         var result = await new CryptoReEncryptionSweep(exec, _manager)

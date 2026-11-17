@@ -237,7 +237,7 @@ public sealed class HistoryTrailShapeTests : IAsyncLifetime
         recorded.Should().NotBeNull().And.NotBe(plaintext, "the trail records the value as stored: ciphertext");
 
         // And it is the very envelope stored in the column — decryptable, not garbage.
-        FieldCipher.Decrypt(manager.GetDataKey(KeyRef), recorded!, CryptoAad.Build("main", "secrets", "ssn"))
+        FieldCipher.Decrypt((await manager.GetDataKeyAsync(KeyRef)), recorded!, CryptoAad.Build("main", "secrets", "ssn"))
             .Should().Be(plaintext);
     }
 

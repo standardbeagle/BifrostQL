@@ -80,7 +80,7 @@ public sealed class TreeSyncStateLoaderColumnSecurityTests : IDisposable
             "CREATE TABLE people (person_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, salary INTEGER, ssn TEXT)",
             null, 30, 1000);
 
-        var dek = _manager.GetDataKey("config:pii");
+        var dek = (await _manager.GetDataKeyAsync("config:pii"));
         var aad = CryptoAad.Build(table.TableSchema, table.DbName, "ssn");
         var envelope = FieldCipher.Encrypt(dek, Secret, aad);
 

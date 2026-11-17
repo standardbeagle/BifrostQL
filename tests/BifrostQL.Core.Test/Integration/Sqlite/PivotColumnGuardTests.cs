@@ -70,7 +70,7 @@ public sealed class PivotColumnGuardTests : IAsyncLifetime
         for (var i = 0; i < root.Length; i++) root[i] = (byte)(i + 31);
         _manager = new EnvelopeKeyManager(new ConfigRootKeyProvider(root), new InMemoryDataEncryptionKeyStore());
 
-        var dek = _manager.GetDataKey("config:pii");
+        var dek = (await _manager.GetDataKeyAsync("config:pii"));
         var aad = CryptoAad.Build("main", "people", "ssn");
         var envelope = FieldCipher.Encrypt(dek, "123-45-6789", aad);
 

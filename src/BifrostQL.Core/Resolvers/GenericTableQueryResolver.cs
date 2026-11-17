@@ -61,7 +61,7 @@ namespace BifrostQL.Core.Resolvers
             // column filter guard, crypto projection. `_table` previously hand-rolled
             // it (as three other read surfaces also did, each having drifted); see
             // TableReadChain for why the copies were collapsed.
-            var chain = TableReadChain.For(
+            var chain = await TableReadChain.ForAsync(
                 context.RequestServices, _model, table, context.UserContext, ReadProjection.Client);
 
             // Columns the caller names as predicates abort the query when denied —

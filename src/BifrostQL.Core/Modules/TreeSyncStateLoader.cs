@@ -219,7 +219,7 @@ public sealed class TreeSyncStateLoader
         // see ReadProjection.InternalDiff for why masking here would be actively
         // wrong: it would make every encrypted field compare unequal to the submitted
         // plaintext and be rewritten on every sync.
-        var chain = TableReadChain.For(
+        var chain = await TableReadChain.ForAsync(
             _services, _model, table, _userContext, ReadProjection.InternalDiff,
             QueryType.Standard, table.GraphQlName, isNestedQuery: true);
 

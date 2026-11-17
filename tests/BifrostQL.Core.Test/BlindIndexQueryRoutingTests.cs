@@ -64,6 +64,9 @@ public class BlindIndexQueryRoutingTests
         return new EnvelopeKeyManager(new ConfigRootKeyProvider(root), new InMemoryDataEncryptionKeyStore());
     }
 
+    private static Task<byte[]> SsnIndexKey(EnvelopeKeyManager manager) =>
+        manager.GetBlindIndexKeyAsync(KeyRef, CryptoAad.Build("main", "secrets", "ssn")).AsTask();
+
     private static QueryTransformerService Service(EnvelopeKeyManager? manager) =>
         new(new FilterTransformersWrap
         {
@@ -81,13 +84,15 @@ public class BlindIndexQueryRoutingTests
             .Build();
 
     [Fact]
-    public void EqualityOnEncryptedColumn_RewritesToBlindIndexSibling_SqlNeverTargetsCiphertext()
+    public async Task EqualityOnEncryptedColumn_RewritesToBlindIndexSibling_SqlNeverTargetsCiphertext()
     {
         var model = SecretsModel();
         var manager = NewManager();
         var query = Query(model, f => f.WhereEquals("ssn", "123-45-6789"));
 
-        Service(manager).ApplyTransformers(query, model, UserContext());
+        var service = Service(manager);
+        await service.PrepareAsync(model);
+        service.ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
         var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
@@ -96,12 +101,12 @@ public class BlindIndexQueryRoutingTests
         rendered.Joins.Should().BeEmpty();
         rendered.Where.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
         // The bound value is the write path's search token for the plaintext.
-        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "123-45-6789");
+        var expected = BlindIndexComputer.ComputeSearchToken(await SsnIndexKey(manager), "123-45-6789");
         parameters.Parameters.Should().ContainSingle().Which.Value.Should().Be(expected);
     }
 
     [Fact]
-    public void EqualityOnEncryptedColumn_ViaRelationshipWithSiblingPredicate_IsRewritten_NotRejected()
+    public async Task EqualityOnEncryptedColumn_ViaRelationshipWithSiblingPredicate_IsRewritten_NotRejected()
     {
         // The encrypted _eq sits inside a relationship filter next to a SIBLING predicate:
         // `secret: { ssn: {_eq}, id: {_eq} }`. That produces an AND wrapper whose Next is
@@ -126,7 +131,9 @@ public class BlindIndexQueryRoutingTests
             .Build();
 
         // Before the fix this threw (the guard rejected the unrewritten encrypted _eq).
-        Service(manager).ApplyTransformers(query, model, UserContext());
+        var service = Service(manager);
+        await service.PrepareAsync(model);
+        service.ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
         var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
@@ -134,18 +141,20 @@ public class BlindIndexQueryRoutingTests
         rendered.Joins.Should().Contain("ssn_bidx").And.NotContain("\"ssn\"");
         rendered.Where.Should().BeEmpty();
         // Its bound value is the write path's search token for the plaintext.
-        var expected = BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "123-45-6789");
+        var expected = BlindIndexComputer.ComputeSearchToken(await SsnIndexKey(manager), "123-45-6789");
         parameters.Parameters.Select(p => p.Value).Should().Contain(expected);
     }
 
     [Fact]
-    public void InOnEncryptedColumn_RewritesEachValueToBlindIndexTokens()
+    public async Task InOnEncryptedColumn_RewritesEachValueToBlindIndexTokens()
     {
         var model = SecretsModel();
         var manager = NewManager();
         var query = Query(model, f => f.WhereIn("ssn", "111-11-1111", "222-22-2222"));
 
-        Service(manager).ApplyTransformers(query, model, UserContext());
+        var service = Service(manager);
+        await service.PrepareAsync(model);
+        service.ApplyTransformers(query, model, UserContext());
 
         var parameters = new SqlParameterCollection();
         var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, parameters, null);
@@ -153,8 +162,8 @@ public class BlindIndexQueryRoutingTests
         rendered.Joins.Should().BeEmpty();
         rendered.Where.Should().Contain("\"ssn_bidx\"").And.NotContain("\"ssn\"");
         parameters.Parameters.Select(p => p.Value).Should().Equal(
-            BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "111-11-1111"),
-            BlindIndexComputer.ComputeSearchToken(manager, KeyRef, "main", "secrets", "ssn", "222-22-2222"));
+            BlindIndexComputer.ComputeSearchToken(await SsnIndexKey(manager), "111-11-1111"),
+            BlindIndexComputer.ComputeSearchToken(await SsnIndexKey(manager), "222-22-2222"));
     }
 
     [Theory]

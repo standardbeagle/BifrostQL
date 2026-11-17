@@ -31,7 +31,7 @@ namespace BifrostQL.Core.Modules.Crypto
             => (mutationType == MutationType.Insert || mutationType == MutationType.Update)
                && table.Columns.Any(IsEncrypted);
 
-        public ValueTask<MutationTransformResult> TransformAsync(
+        public async ValueTask<MutationTransformResult> TransformAsync(
             IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationTransformContext context)
         {
             // Resolve the key manager lazily from request services so encryption works
@@ -111,8 +111,8 @@ namespace BifrostQL.Core.Modules.Crypto
                 var plaintext = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
                 // Encrypt under the key-ref's CURRENT DEK version and stamp that version into
                 // the envelope, so the value stays decryptable after the key-ref is rotated.
-                var version = keyManager.GetCurrentVersion(keyRef);
-                var dek = keyManager.GetDataKey(keyRef, version);
+                var version = await keyManager.GetCurrentVersionAsync(keyRef);
+                var dek = await keyManager.GetDataKeyAsync(keyRef, version);
                 var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
                 result[key] = FieldCipher.Encrypt(dek, plaintext, aad, version);
 
@@ -124,18 +124,19 @@ namespace BifrostQL.Core.Modules.Crypto
                     // Single-definition derivation shared with the query-time equality
                     // rewrite (BlindIndexComputer.ComputeSearchToken) so write and read
                     // tokens can never drift.
-                    result[blindIndexColumn] = BlindIndexComputer.ComputeSearchToken(
-                        keyManager, keyRef, table.TableSchema, table.DbName, column.ColumnName, value);
+                    var indexKey = await keyManager.GetBlindIndexKeyAsync(
+                        keyRef, CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName));
+                    result[blindIndexColumn] = BlindIndexComputer.ComputeSearchToken(indexKey, value);
                 }
             }
 
-            return ValueTask.FromResult(new MutationTransformResult
+            return new MutationTransformResult
             {
                 MutationType = mutationType,
                 Data = result,
                 Errors = errors.ToArray(),
                 AdditionalFilter = mutationType == MutationType.Update ? ReEncryptionPredicate(table, context) : null,
-            });
+            };
         }
 
         /// <summary>

@@ -13,6 +13,13 @@ namespace BifrostQL.Core.Modules;
 public interface IQueryTransformerService
 {
     /// <summary>
+    /// Loads what <see cref="ApplyTransformers"/> needs from I/O before it runs
+    /// synchronously: the blind-index keys of the model's searchable encrypted columns.
+    /// Await it on the request's async path before every <see cref="ApplyTransformers"/>.
+    /// </summary>
+    ValueTask PrepareAsync(IDbModel model, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+    /// <summary>
     /// Applies all registered filter transformers to a query and its nested queries.
     /// </summary>
     void ApplyTransformers(
@@ -36,6 +43,29 @@ public sealed class QueryTransformerService : IQueryTransformerService
         _filterTransformers = filterTransformers;
         _keyManager = keyManager;
     }
+
+    /// <summary>
+    /// Loads the original (version 1) DEK of every key-ref a blind-indexed column names, so
+    /// the synchronous equality rewrite derives search tokens from the cache. Version 1 never
+    /// changes once persisted, so after the first request this is a cache hit per key-ref.
+    /// </summary>
+    public async ValueTask PrepareAsync(IDbModel model, CancellationToken cancellationToken = default)
+    {
+        if (_keyManager is null)
+            return;
+        foreach (var keyRef in BlindIndexedKeyRefs(model))
+            await _keyManager.GetDataKeyAsync(keyRef, cancellationToken);
+    }
+
+    private static IEnumerable<string> BlindIndexedKeyRefs(IDbModel model)
+        => model.Tables
+            .SelectMany(table => table.Columns)
+            .Where(column => !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.Encrypt))
+                && !string.IsNullOrWhiteSpace(column.GetMetadataValue(MetadataKeys.Crypto.BlindIndex)))
+            .Select(column => column.GetMetadataValue(MetadataKeys.Crypto.KeyRef))
+            .Where(keyRef => !string.IsNullOrWhiteSpace(keyRef))
+            .Select(keyRef => keyRef!)
+            .Distinct(StringComparer.Ordinal);
 
     public void ApplyTransformers(
         GqlObjectQuery query,
@@ -326,12 +356,13 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // Bind the token to THIS physical column (schema, table, column) — identical to the
         // write path's binding — so the derived index key is column-specific (no cross-column
         // oracle) yet write and read still agree.
+        // The key was loaded by PrepareAsync; a missing one is a wiring fault and throws.
+        var indexKey = _keyManager.GetCachedBlindIndexKey(
+            keyRef, CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName));
         object? routedValue = isRoutableEq
-            ? BlindIndexComputer.ComputeSearchToken(
-                _keyManager, keyRef, table.TableSchema, table.DbName, column.ColumnName, leaf.Next.Value)
+            ? BlindIndexComputer.ComputeSearchToken(indexKey, leaf.Next.Value)
             : ((leaf.Next.Value as IEnumerable<object?>) ?? Array.Empty<object?>())
-                .Select(v => (object?)BlindIndexComputer.ComputeSearchToken(
-                    _keyManager, keyRef, table.TableSchema, table.DbName, column.ColumnName, v))
+                .Select(v => (object?)BlindIndexComputer.ComputeSearchToken(indexKey, v))
                 .ToList();
 
         // Replace the predicate: target the blind-index sibling with the token(s).

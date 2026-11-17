@@ -81,7 +81,7 @@ The last rule is the whole ops story in one line:
 
 - `raw-sql: enabled` exposes a single extra query field, `_rawQuery(sql: String!, params: JSON, timeout: Int): [JSON]!`.
 - `raw-sql-role: oncall-engineer` — callers without that role get an authorization error, regardless of what UI they're using. (If you don't set it, the default required role is `bifrost-raw-sql`.)
-- `raw-sql-timeout: 30` and `raw-sql-max-rows: 5000` bound the blast radius of any query. No more accidental table-scan-at-2-a.m. holding locks for ten minutes.
+- `raw-sql-timeout: 30` and `raw-sql-max-rows: 5000` bound the blast radius of any query. No more accidental table-scan-at-2-a.m. holding locks for ten minutes. A query that matches more than `raw-sql-max-rows` rows fails with an error instead of returning a page that looks complete; add a `LIMIT`/`TOP` to page through it.
 - Raw SQL is **SELECT-only**. The server rejects text that is not a single `SELECT` (on SQL Server it parses the T-SQL to check), then runs it inside a transaction that is always rolled back. On PostgreSQL and MySQL that transaction is `READ ONLY`, and SQLite runs it with `PRAGMA query_only`, so the database itself refuses a write the text check cannot see, such as a `SELECT` calling a function that deletes rows. The engineers investigate through SQL; they *fix* through the application API like everyone else, which keeps every write inside the audit and soft-delete rules.
 
 `app_users.roles` holds a delimited list (e.g. `support` or `support,oncall-engineer`), which local auth parses into `AppIdentity.Roles`. No separate role system to run.

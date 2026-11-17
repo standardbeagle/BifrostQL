@@ -166,6 +166,29 @@ public sealed class RawSqlQueryResolverTests : IDisposable
         result[0]["name"].Should().Be("beta");
     }
 
+    [Theory]
+    [InlineData("1", false)]
+    [InlineData("2", true)]
+    public async Task RowsPastTheCap_AreRefused_NotSilentlyCut(string maxRows, bool fits)
+    {
+        await SeedAsync();
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(RawSqlQueryResolver.MaxRowsMetadataKey, maxRows)
+            .WithTable("widget", t => t.WithPrimaryKey("id").WithColumn("name", "text"))
+            .Build();
+        var resolver = new RawSqlQueryResolver(model);
+
+        var act = async () => (List<Dictionary<string, object?>>)(await resolver.ResolveAsync(
+            Context(model, PrincipalWithRole(Role), "SELECT id FROM widget ORDER BY id")))!;
+
+        // The field is a bare list: a page cut at the cap would look complete.
+        if (fits)
+            (await act()).Select(r => r["id"]).Should().Equal(1L, 2L);
+        else
+            (await act.Should().ThrowAsync<BifrostExecutionError>())
+                .Which.Message.Should().Contain("more than 1 rows");
+    }
+
     [Fact]
     public async Task CancelledRequest_StopsTheQuery()
     {

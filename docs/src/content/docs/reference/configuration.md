@@ -157,7 +157,7 @@ consistently.
 | `raw-sql` | `enabled`/`disabled` | model | Expose `_rawQuery(sql:, params:, timeout:)`: one `SELECT`, run in a rolled-back transaction (read-only on PostgreSQL and MySQL, `query_only` on SQLite) |
 | `raw-sql-role` | role name | model | Role required for `_rawQuery` (default: `bifrost-raw-sql`) |
 | `raw-sql-timeout` | seconds | model | Max raw SQL timeout |
-| `raw-sql-max-rows` | number | model | Max rows returned by raw SQL |
+| `raw-sql-max-rows` | number | model | Max rows returned by raw SQL; a query matching more fails instead of being cut |
 | `generic-table` | `enabled`/`disabled` | model | Expose `_table(name:, limit:, offset:, filter:)` |
 | `generic-table-role` | role name | model | Role required for `_table` (default: `bifrost-admin`) |
 | `generic-table-max-rows` | number | model | Max rows returned by `_table` |

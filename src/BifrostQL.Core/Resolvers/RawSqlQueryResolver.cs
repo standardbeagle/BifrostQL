@@ -111,6 +111,12 @@ namespace BifrostQL.Core.Resolvers
                 throw BifrostExecutionError.FromDatabaseException(ex);
             }
 
+            // The field is a bare list with no envelope to carry a truncation flag, and a
+            // cut list that looks complete is worse than an error: fail on the cap+1 row.
+            if (result.Truncated)
+                throw new BifrostExecutionError(
+                    $"The query returned more than {maxRows} rows ({MaxRowsMetadataKey}). Narrow it, or add a LIMIT/TOP.");
+
             // The executor returns a columnar result; the GraphQL field shape is a list
             // of name-keyed rows, so we adapt here. Duplicate column names collapse
             // (last wins) — unchanged from the original dictionary-based behavior.

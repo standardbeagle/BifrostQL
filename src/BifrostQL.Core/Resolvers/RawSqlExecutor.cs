@@ -124,7 +124,11 @@ namespace BifrostQL.Core.Resolvers
             {
                 if (rows.Count >= maxRows)
                 {
+                    // Disposing a reader with rows left drains them (SqlClient reads every
+                    // remaining TDS packet), so without Cancel the cap bounds memory only,
+                    // not server time or network traffic.
                     truncated = true;
+                    cmd.Cancel();
                     break;
                 }
 

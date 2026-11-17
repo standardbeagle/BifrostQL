@@ -159,6 +159,27 @@ public abstract class RawSqlReadOnlyExecutionTestsBase<TDatabase> : IClassFixtur
         (await NamesAsync(table)).Should().Equal("alpha", "beta");
     }
 
+    [SkippableFact]
+    public async Task Executor_RowCapHit_CancelsAndReportsTruncation()
+    {
+        // The cap cancels the command so the reader's dispose does not drain the rest;
+        // the cancelled command must still hand back the capped page, scoped or not.
+        Fixture.EnsureAvailable();
+        var table = await CreateVictimTableAsync();
+        var factory = Fixture.Database.ConnFactory;
+        var sql = $"SELECT id FROM {table} ORDER BY id";
+
+        var scoped = await RawSqlExecutor.ExecuteReadOnlyAsync(factory, sql, null, 30, 1, CancellationToken.None);
+        var unscoped = await RawSqlExecutor.ExecuteAsync(factory, sql, null, 30, 1);
+
+        foreach (var result in new[] { scoped, unscoped })
+        {
+            result.Truncated.Should().BeTrue();
+            result.Rows.Select(r => Convert.ToInt32(r[0])).Should().Equal(1);
+        }
+        (await NamesAsync(table)).Should().Equal("alpha", "beta");
+    }
+
     protected async Task<object?> ScalarAsync(string sql)
     {
         await using var conn = Fixture.Database.ConnFactory.GetConnection();

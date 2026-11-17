@@ -25,15 +25,20 @@ export async function fetchBifrostQuery<T = unknown>(
   options: FetchBifrostQueryOptions,
 ): Promise<T> {
   const { endpoint, headers = {}, table, staleTime, ...queryOptions } = options;
-  const query = buildGraphqlQuery(table, queryOptions);
-  const queryKey = bifrostQueryKey(endpoint, query);
+  const { query, variables } = buildGraphqlQuery(table, queryOptions);
+  const queryKey = bifrostQueryKey(endpoint, query, variables);
 
   // The cache stores the raw enveloped response — the same shape useBifrost
   // hydrates from — while the convenience return value is the unwrapped rows.
   await queryClient.prefetchQuery({
     queryKey,
     queryFn: () =>
-      executeGraphQL<{ [key: string]: PagedResult }>(endpoint, headers, query),
+      executeGraphQL<{ [key: string]: PagedResult }>(
+        endpoint,
+        headers,
+        query,
+        variables,
+      ),
     staleTime,
   });
 

@@ -69,11 +69,11 @@ export function useBifrostQuery<T = unknown>(
     ...queryOptions
   } = options;
 
-  const query = buildGraphqlQuery(table, queryOptions);
+  const { query, variables } = buildGraphqlQuery(table, queryOptions);
 
   const result = useBifrost<{ [key: string]: PagedResult<RowOf<T>> }>(
     query,
-    undefined,
+    variables,
     {
       enabled,
       retry,

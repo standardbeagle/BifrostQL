@@ -477,7 +477,7 @@ These are also exported from the main entry point for direct use.
 
 | Utility                                                | Purpose                                                  |
 | ------------------------------------------------------ | -------------------------------------------------------- |
-| `buildGraphqlQuery(table, options)`                    | Build a GraphQL query string from table name and options |
+| `buildGraphqlQuery(table, options)`                    | Build `{ query, variables }` for a table read; the filter travels as `$filter: TableFilter<table>Input` |
 | `executeGraphQL(endpoint, headers, query, variables?)` | Execute a GraphQL request via `fetch`                    |
 | `buildMutation(table, type)`                           | Build a mutation string for any operation type           |
 | `buildInsertMutation(table)`                           | Shorthand for insert mutations                           |

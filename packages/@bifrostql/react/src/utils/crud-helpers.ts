@@ -47,6 +47,8 @@ export interface CrudHelpersConfig {
 export interface TypedOperation<TResult> {
   /** The GraphQL query or mutation string, produced by the underlying builder. */
   readonly query: string;
+  /** The variables `query` declares; send them with it. */
+  readonly variables: Record<string, unknown>;
   /**
    * Phantom marker carrying the inferred result type. Always `undefined` at
    * runtime — present only so `typeof op.__result` resolves to `TResult` for
@@ -241,7 +243,7 @@ export function createCrudHelpers<
   return {
     list(options: ListOptions<TRow> = {}): TypedOperation<PagedResult<TRow>> {
       const { filter, sort, limit, offset, fields } = options;
-      const query = buildGraphqlQuery(table, {
+      const { query, variables } = buildGraphqlQuery(table, {
         filter,
         sort,
         pagination:
@@ -250,19 +252,19 @@ export function createCrudHelpers<
             : undefined,
         fields: fields ? [...fields] : undefined,
       });
-      return { query };
+      return { query, variables };
     },
 
     detail(
       key: RowKey,
       options: DetailOptions<TRow> = {},
     ): TypedOperation<PagedResult<TRow>> {
-      const query = buildGraphqlQuery(table, {
+      const { query, variables } = buildGraphqlQuery(table, {
         filter: keyFilter(resolveRowKey(table, primaryKeys, key)),
         pagination: { limit: 1 },
         fields: options.fields ? [...options.fields] : undefined,
       });
-      return { query };
+      return { query, variables };
     },
 
     create(input: TInsert): TypedCreateOperation<TRow, TInsert> {
@@ -292,12 +294,12 @@ export function createCrudHelpers<
       options: LookupOptions<TRow>,
     ): TypedOperation<PagedResult<{ value: unknown; label: unknown }>> {
       const { valueField, labelField, filter, limit } = options;
-      const query = buildGraphqlQuery(table, {
+      const { query, variables } = buildGraphqlQuery(table, {
         filter,
         pagination: limit !== undefined ? { limit } : undefined,
         fields: [valueField, labelField],
       });
-      return { query };
+      return { query, variables };
     },
   };
 }

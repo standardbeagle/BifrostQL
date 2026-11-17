@@ -18,6 +18,15 @@ the call-site update it requires.
   invalidates the cache by hand must add the endpoint after `'bifrost'`;
   `invalidateQueries` entries on the write hooks now reach only the provider's
   own endpoint, and now also reach infinite queries.
+- **`buildGraphqlQuery` returns `{ query, variables }` and sends filters as a
+  variable.** The filter is no longer inlined as GraphQL text: the document
+  declares `$filter: TableFilter<table>Input` and the translated filter object
+  travels in `variables.filter`. Callers of `buildGraphqlQuery` must send both
+  halves (`executeGraphQL(endpoint, headers, query, variables)`), and
+  `createCrudHelpers` `list`/`detail`/`lookup` operations now carry
+  `variables` too. `buildFilterInput` and `tableFilterTypeName` are exported
+  for callers that build their own documents. One document now serves every
+  filter value, so the query cache keys on the variables instead of the text.
 
 ## 0.4.0 — 2026-11-09
 

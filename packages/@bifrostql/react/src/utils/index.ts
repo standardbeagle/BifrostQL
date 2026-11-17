@@ -1,4 +1,9 @@
-export { buildGraphqlQuery } from './query-builder';
+export {
+  buildGraphqlQuery,
+  buildFilterInput,
+  tableFilterTypeName,
+} from './query-builder';
+export type { GraphqlRequest } from './query-builder';
 export {
   executeGraphQL,
   defaultRetryDelay,

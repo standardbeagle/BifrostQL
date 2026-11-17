@@ -131,6 +131,8 @@ export type {
 } from './hooks';
 export {
   buildGraphqlQuery,
+  buildFilterInput,
+  tableFilterTypeName,
   executeGraphQL,
   BifrostAuthError,
   BifrostGraphQLError,
@@ -150,6 +152,7 @@ export {
   readFromUrl,
 } from './utils';
 export type {
+  GraphqlRequest,
   MutationType,
   DiffStrategy,
   DiffResult,

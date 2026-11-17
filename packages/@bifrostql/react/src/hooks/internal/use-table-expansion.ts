@@ -93,7 +93,7 @@ export function useTableExpansion({
       const childFilterField = childQuery.childFilterField ?? parentKeyField;
       const parentValue = parentRow[parentKeyField];
 
-      const query = buildGraphqlQuery(childQuery.table, {
+      const { query, variables } = buildGraphqlQuery(childQuery.table, {
         fields: childQuery.fields,
         filter: { [childFilterField]: { _eq: parentValue as string | number } },
       });
@@ -102,7 +102,7 @@ export function useTableExpansion({
         bifrostConfig.endpoint,
         bifrostConfig.headers ?? {},
         query,
-        undefined,
+        variables,
         controller.signal,
         bifrostConfig.getToken,
         {

@@ -111,9 +111,9 @@ describe('useBifrostQuery', () => {
     const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock
       .calls[0];
     const body = JSON.parse(fetchOptions.body);
-    expect(body.query).toContain('filter:');
-    expect(body.query).toContain('status');
-    expect(body.query).toContain('_eq');
+    expect(body.query).toContain('filter: $filter');
+    expect(body.query).not.toContain('active');
+    expect(body.variables).toEqual({ filter: { status: { _eq: 'active' } } });
   });
 
   it('builds query with sort options', async () => {

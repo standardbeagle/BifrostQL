@@ -65,7 +65,10 @@ function createFetchMock(
  * data query. The policy document goes out alongside it, so "the last fetch"
  * is not a stable name for the data query.
  */
-function lastQueryBodySelecting(field: string): { query: string } {
+function lastQueryBodySelecting(field: string): {
+  query: string;
+  variables?: Record<string, unknown>;
+} {
   const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
   const bodies = calls.map((call) => JSON.parse(call[1].body));
   const match = bodies.filter((body) => body.query.includes(field)).pop();
@@ -534,8 +537,10 @@ describe('useBifrostTable', () => {
       const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>)
         .mock.calls[0];
       const body = JSON.parse(fetchOptions.body);
-      expect(body.query).toContain('filter:');
-      expect(body.query).toContain('_contains');
+      expect(body.query).toContain('filter: $filter');
+      expect(body.variables).toEqual({
+        filter: { name: { _contains: 'alice' } },
+      });
     });
 
     it('setColumnFilter adds a filter for a specific field', async () => {
@@ -3907,8 +3912,9 @@ describe('useBifrostTable', () => {
       await waitFor(
         () => {
           const lastBody = lastQueryBodySelecting('users');
-          expect(lastBody.query).toContain('_contains');
-          expect(lastBody.query).toContain('ali');
+          expect(lastBody.variables).toEqual({
+            filter: { name: { _contains: 'ali' } },
+          });
         },
         { timeout: 500 },
       );
@@ -4201,8 +4207,14 @@ describe('useBifrostTable', () => {
 
       await waitFor(() => {
         const lastBody = lastQueryBodySelecting('users');
-        expect(lastBody.query).toContain('and:');
-        expect(lastBody.query).not.toContain('_and');
+        expect(lastBody.variables).toEqual({
+          filter: {
+            and: [
+              { status: { _eq: 'active' } },
+              { created_at: { _gte: '2024-01-01' } },
+            ],
+          },
+        });
       });
     });
   });

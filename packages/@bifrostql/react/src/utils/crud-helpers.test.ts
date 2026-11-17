@@ -44,8 +44,8 @@ describe('createCrudHelpers — list', () => {
     expect(op.query).toContain('id');
     expect(op.query).toContain('name');
     expect(op.query).toContain('email');
-    expect(op.query).toContain('filter:');
-    expect(op.query).toContain('isActive');
+    expect(op.query).toContain('filter: $filter');
+    expect(op.variables).toEqual({ filter: { isActive: { _eq: true } } });
     expect(op.query).toContain('sort:');
     expect(op.query).toContain('limit: 25');
     expect(op.query).toContain('offset: 50');
@@ -79,9 +79,8 @@ describe('createCrudHelpers — detail', () => {
     const users = createCrudHelpers<UserRow>('users');
     const op = users.detail(42, { fields: ['id', 'name'] });
     expect(op.query).toContain('users');
-    expect(op.query).toContain('filter:');
-    expect(op.query).toContain('id');
-    expect(op.query).toContain('_eq: 42');
+    expect(op.query).toContain('filter: $filter');
+    expect(op.variables).toEqual({ filter: { id: { _eq: 42 } } });
     expect(op.query).toContain('limit: 1');
   });
 
@@ -166,7 +165,8 @@ describe('createCrudHelpers — lookup', () => {
     expect(op.query).toContain('users');
     expect(op.query).toContain('id');
     expect(op.query).toContain('name');
-    expect(op.query).toContain('filter:');
+    expect(op.query).toContain('filter: $filter');
+    expect(op.variables).toEqual({ filter: { isActive: { _eq: true } } });
     expect(op.query).toContain('limit: 10');
   });
 
@@ -206,8 +206,7 @@ describe('createCrudHelpers — primary key identity', () => {
     const op = orders.detail(42);
 
     // Assert: the configured key column, not a hardcoded `id`.
-    expect(op.query).toContain('order_no: { _eq: 42 }');
-    expect(op.query).not.toContain('id: { _eq: 42 }');
+    expect(op.variables).toEqual({ filter: { order_no: { _eq: 42 } } });
   });
 
   it('filters detail on every column of a composite primary key', () => {
@@ -218,9 +217,11 @@ describe('createCrudHelpers — primary key identity', () => {
     const op = items.detail({ order_id: 7, line_no: 3 });
 
     // Assert: an AND of per-column equalities, never just the first column.
-    expect(op.query).toContain('and: [');
-    expect(op.query).toContain('order_id: { _eq: 7 }');
-    expect(op.query).toContain('line_no: { _eq: 3 }');
+    expect(op.variables).toEqual({
+      filter: {
+        and: [{ order_id: { _eq: 7 } }, { line_no: { _eq: 3 } }],
+      },
+    });
   });
 
   it('carries every key column into update and delete variables', () => {
@@ -275,7 +276,9 @@ describe('createCrudHelpers — primary key identity', () => {
     const op = rows.detail('9007199254740993');
 
     // Assert
-    expect(op.query).toContain('9007199254740993');
+    expect(op.variables).toEqual({
+      filter: { id: { _eq: '9007199254740993' } },
+    });
   });
 
   it('keeps the single-`id` convenience path for tables that use it', () => {
@@ -283,7 +286,9 @@ describe('createCrudHelpers — primary key identity', () => {
     const users = createCrudHelpers<UserRow>('users');
 
     // Assert
-    expect(users.detail(42).query).toContain('id: { _eq: 42 }');
+    expect(users.detail(42).variables).toEqual({
+      filter: { id: { _eq: 42 } },
+    });
     expect(users.delete(42).variables.detail).toEqual({ id: 42 });
   });
 });

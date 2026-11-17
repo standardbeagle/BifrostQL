@@ -3,113 +3,141 @@ import { buildGraphqlQuery } from './query-builder';
 
 describe('buildGraphqlQuery', () => {
   it('builds a total-only paged query with no options', () => {
-    const result = buildGraphqlQuery('users');
-    expect(result).toContain('users');
-    expect(result).toContain('total');
-    expect(result).not.toContain('data');
+    const { query, variables } = buildGraphqlQuery('users');
+    expect(query).toContain('users');
+    expect(query).toContain('total');
+    expect(query).not.toContain('data');
+    expect(variables).toEqual({});
   });
 
   it('emits the paged data{} envelope around the field selection', () => {
     // BifrostQL types every top-level table field as the paged envelope
     // (data/total/offset/limit); a flat selection is rejected by the server.
-    const result = buildGraphqlQuery('users', { fields: ['id', 'name'] });
-    expect(result.replace(/\s+/g, ' ')).toBe(
+    const { query } = buildGraphqlQuery('users', { fields: ['id', 'name'] });
+    expect(query.replace(/\s+/g, ' ')).toBe(
       '{ users { total data { id name } } }',
     );
   });
 
   it('builds a query with specified fields', () => {
-    const result = buildGraphqlQuery('users', {
+    const { query } = buildGraphqlQuery('users', {
       fields: ['id', 'name', 'email'],
     });
-    expect(result).toContain('id');
-    expect(result).toContain('name');
-    expect(result).toContain('email');
-    expect(result).not.toContain('__typename');
-    expect(result).toContain('data {');
+    expect(query).toContain('id');
+    expect(query).toContain('name');
+    expect(query).toContain('email');
+    expect(query).not.toContain('__typename');
+    expect(query).toContain('data {');
   });
 
-  it('builds a query with equality filter', () => {
-    const result = buildGraphqlQuery('users', {
+  it('sends filter values as a typed $filter variable, never as document text', () => {
+    // Arrange: a value that would change the document if it were inlined.
+    const hostile = 'x" } } injected { "';
+
+    // Act
+    const { query, variables } = buildGraphqlQuery('users', {
+      filter: { status: hostile },
+      fields: ['id'],
+    });
+
+    // Assert: the document declares and passes the variable, the value is
+    // only in the variables.
+    expect(query.replace(/\s+/g, ' ')).toBe(
+      'query ($filter: TableFilterusersInput) { users(filter: $filter) { total data { id } } }',
+    );
+    expect(query).not.toContain('injected');
+    expect(variables).toEqual({ filter: { status: { _eq: hostile } } });
+  });
+
+  it('reuses one document for different filter values', () => {
+    const a = buildGraphqlQuery('users', {
       filter: { status: 'active' },
       fields: ['id'],
     });
-    expect(result).toContain('filter:');
-    expect(result).toContain('status');
-    expect(result).toContain('_eq');
-    expect(result).toContain('"active"');
+    const b = buildGraphqlQuery('users', {
+      filter: { status: 'banned' },
+      fields: ['id'],
+    });
+    expect(a.query).toBe(b.query);
+    expect(a.variables).not.toEqual(b.variables);
   });
 
-  it('builds a query with field filter operators', () => {
-    const result = buildGraphqlQuery('orders', {
+  it('passes field filter operators through', () => {
+    const { variables } = buildGraphqlQuery('orders', {
       filter: { total: { _gte: 100, _lt: 500 } },
       fields: ['id', 'total'],
     });
-    expect(result).toContain('_gte: 100');
-    expect(result).toContain('_lt: 500');
+    expect(variables).toEqual({ filter: { total: { _gte: 100, _lt: 500 } } });
   });
 
-  it('builds a query with null filter', () => {
-    const result = buildGraphqlQuery('users', {
+  it('maps a null filter value to _null: true', () => {
+    const { variables } = buildGraphqlQuery('users', {
       filter: { deleted_at: null },
       fields: ['id'],
     });
-    expect(result).toContain('_null: true');
+    expect(variables).toEqual({ filter: { deleted_at: { _null: true } } });
   });
 
   it('translates _nnull to _null: false (schema has no _nnull)', () => {
-    const result = buildGraphqlQuery('users', {
+    const { variables } = buildGraphqlQuery('users', {
       filter: { email: { _nnull: true } },
       fields: ['id'],
     });
-    expect(result).toContain('_null: false');
-    expect(result).not.toContain('_nnull');
+    expect(variables).toEqual({ filter: { email: { _null: false } } });
+  });
+
+  it('omits the variable for an empty filter', () => {
+    const { query, variables } = buildGraphqlQuery('users', {
+      filter: {},
+      fields: ['id'],
+    });
+    expect(query).not.toContain('$filter');
+    expect(variables).toEqual({});
   });
 
   it('builds a query with sort options', () => {
-    const result = buildGraphqlQuery('users', {
+    const { query } = buildGraphqlQuery('users', {
       sort: [{ field: 'name', direction: 'asc' }],
       fields: ['id', 'name'],
     });
-    expect(result).toContain('sort:');
-    expect(result).toContain('name_asc');
+    expect(query).toContain('sort:');
+    expect(query).toContain('name_asc');
   });
 
   it('builds a query with pagination', () => {
-    const result = buildGraphqlQuery('users', {
+    const { query } = buildGraphqlQuery('users', {
       pagination: { limit: 10, offset: 20 },
       fields: ['id'],
     });
-    expect(result).toContain('limit: 10');
-    expect(result).toContain('offset: 20');
+    expect(query).toContain('limit: 10');
+    expect(query).toContain('offset: 20');
   });
 
   it('combines filter, sort, and pagination', () => {
-    const result = buildGraphqlQuery('users', {
+    const { query, variables } = buildGraphqlQuery('users', {
       filter: { active: true },
       sort: [{ field: 'created_at', direction: 'desc' }],
       pagination: { limit: 25 },
       fields: ['id', 'name'],
     });
-    expect(result).toContain('filter:');
-    expect(result).toContain('sort:');
-    expect(result).toContain('limit: 25');
-    expect(result).toContain('id');
-    expect(result).toContain('name');
+    expect(query.replace(/\s+/g, ' ')).toContain(
+      'users(filter: $filter, sort: [created_at_desc], limit: 25)',
+    );
+    expect(variables).toEqual({ filter: { active: { _eq: true } } });
   });
 
-  it('builds a query with _between filter (expands to _gte + _lte)', () => {
-    const result = buildGraphqlQuery('orders', {
+  it('expands a _between filter to _gte + _lte', () => {
+    const { variables } = buildGraphqlQuery('orders', {
       filter: { amount: { _between: [100, 500] } },
       fields: ['id', 'amount'],
     });
-    expect(result).toContain('_gte: 100');
-    expect(result).toContain('_lte: 500');
-    expect(result).not.toContain('_between');
+    expect(variables).toEqual({
+      filter: { amount: { _gte: 100, _lte: 500 } },
+    });
   });
 
   it('serializes a public _and compound filter as the server and field', () => {
-    const result = buildGraphqlQuery('users', {
+    const { variables } = buildGraphqlQuery('users', {
       filter: {
         _and: [
           { status: { _eq: 'active' } },
@@ -118,27 +146,18 @@ describe('buildGraphqlQuery', () => {
       },
       fields: ['id', 'name'],
     });
-    expect(result).toContain('and:');
-    expect(result).not.toContain('_and');
-    expect(result).toContain('_eq');
-    expect(result).toContain('_gte');
-  });
-
-  it('serializes a public _or compound filter as the server or field', () => {
-    const result = buildGraphqlQuery('users', {
+    expect(variables).toEqual({
       filter: {
-        _or: [{ name: { _eq: 'Alice' } }, { name: { _eq: 'Bob' } }],
+        and: [
+          { status: { _eq: 'active' } },
+          { created_at: { _gte: '2024-01-01' } },
+        ],
       },
-      fields: ['id', 'name'],
     });
-    expect(result).toContain('or:');
-    expect(result).not.toContain('_or');
-    expect(result).toContain('"Alice"');
-    expect(result).toContain('"Bob"');
   });
 
-  it('builds a query with nested compound filters', () => {
-    const result = buildGraphqlQuery('users', {
+  it('serializes nested compound filters', () => {
+    const { variables } = buildGraphqlQuery('users', {
       filter: {
         _and: [
           { status: { _eq: 'active' } },
@@ -149,13 +168,14 @@ describe('buildGraphqlQuery', () => {
       },
       fields: ['id'],
     });
-    expect(result).toContain('and:');
-    expect(result).toContain('or:');
-    expect(result).not.toContain('_and');
-    expect(result).not.toContain('_or');
-    expect(result).toContain('"active"');
-    expect(result).toContain('"admin"');
-    expect(result).toContain('"editor"');
+    expect(variables).toEqual({
+      filter: {
+        and: [
+          { status: { _eq: 'active' } },
+          { or: [{ role: { _eq: 'admin' } }, { role: { _eq: 'editor' } }] },
+        ],
+      },
+    });
   });
 
   it('rejects unsafe table names', () => {

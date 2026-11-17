@@ -47,15 +47,21 @@ namespace BifrostQL.Core.Schema
         }
 
         /// <summary>
-        /// Returns the first cached value, or default if no loaders are registered.
-        /// Triggers lazy loading of the first entry if not yet loaded.
+        /// Returns the value of the first path in <see cref="Paths"/> order (ordinal), or default
+        /// if no loaders are registered. Triggers lazy loading of that entry if not yet loaded.
+        ///
+        /// <para>"First" is the ordinal-first path, never the dictionary's enumeration order:
+        /// that order is unspecified, so two callers that each take "the first endpoint" (the CDC
+        /// webhook-secret resolver and the outbox dispatcher, for one) could otherwise land on
+        /// different databases. A caller that must not guess between endpoints checks
+        /// <see cref="Count"/> first.</para>
         /// </summary>
         public async Task<T?> GetFirstValueAsync()
         {
-            var first = _schemas.Values.FirstOrDefault();
-            if (first is null)
+            var first = _schemas.Keys.Min(StringComparer.Ordinal);
+            if (first is null || !_schemas.TryGetValue(first, out var cache))
                 return default;
-            return await first.GetValueAsync();
+            return await cache.GetValueAsync();
         }
 
         /// <summary>

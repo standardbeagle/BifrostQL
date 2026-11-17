@@ -256,6 +256,7 @@ namespace BifrostQL.Core.Resolvers
                         MutationType = outcome.MutationType,
                         Data = outcome.Data,
                         Result = outcome.Affected,
+                        AffectedRows = outcome.Affected,
                         UserContext = userContext,
                         // Post-commit: no hook phase pairs with this notification, so the
                         // bag is fresh and empty (see MutationNotifier.NotifyMutationAsync).
@@ -325,7 +326,7 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         private static async Task<(T Result, string? PendingApproval)> RunHookedWriteAsync<T>(
             BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data,
-            Func<Task<T>> write, MutationType? logicalType = null)
+            Func<Task<T>> write, Func<T, int> affectedRows, MutationType? logicalType = null)
         {
             var hookContext = new MutationObserverContext
             {
@@ -354,7 +355,7 @@ namespace BifrostQL.Core.Resolvers
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
                 return (default!, divertMessage);
             var result = await write();
-            await MutationNotifier.RunInTransactionHooksAsync(ctx.TransformContext.Services, hookContext, result);
+            await MutationNotifier.RunInTransactionHooksAsync(ctx.TransformContext.Services, hookContext, result, affectedRows(result));
             return (result, null);
         }
 
@@ -391,7 +392,7 @@ namespace BifrostQL.Core.Resolvers
                 cmd.Transaction = ctx.Transaction;
                 AddParameters(cmd, data);
                 return await cmd.ExecuteScalarAsync(ctx.Ct);
-            });
+            }, affectedRows: _ => 1);
             if (insertPending is not null)
                 return new BatchActionOutcome(0, MutationType.Insert, data, null, insertPending);
             return new BatchActionOutcome(1, MutationType.Insert, data, transformResult.StateTransition);
@@ -469,7 +470,7 @@ namespace BifrostQL.Core.Resolvers
                     $"{table.TableSchema}.{table.DbName}");
 
                 return rows;
-            });
+            }, affectedRows: rows => rows);
             if (updatePending is not null)
                 return new BatchActionOutcome(0, MutationType.Update, updatedData, null, updatePending);
             return new BatchActionOutcome(affected, MutationType.Update, updatedData, transformResult.StateTransition);
@@ -538,7 +539,7 @@ namespace BifrostQL.Core.Resolvers
                     AddParameters(cmd, dbData);
                     AddExtraParameters(cmd, additionalFilter.Parameters);
                     return await cmd.ExecuteNonQueryAsync(ctx.Ct);
-                }, MutationType.Delete);
+                }, affectedRows: rows => rows, MutationType.Delete);
                 if (softPending is not null)
                     return new BatchActionOutcome(0, MutationType.Update, dbData, null, softPending);
                 return new BatchActionOutcome(softAffected, MutationType.Update, dbData, transformResult.StateTransition);
@@ -559,7 +560,7 @@ namespace BifrostQL.Core.Resolvers
                 AddParameters(deleteCmd, predicateData);
                 AddExtraParameters(deleteCmd, additionalFilter.Parameters);
                 return await deleteCmd.ExecuteNonQueryAsync(ctx.Ct);
-            });
+            }, affectedRows: rows => rows);
             if (deletePending is not null)
                 return new BatchActionOutcome(0, MutationType.Delete, predicateData, null, deletePending);
             return new BatchActionOutcome(deleteAffected, MutationType.Delete, predicateData, transformResult.StateTransition);

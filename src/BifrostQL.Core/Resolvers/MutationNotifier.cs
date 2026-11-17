@@ -68,7 +68,7 @@ namespace BifrostQL.Core.Resolvers
         /// recurse into workflow triggers the way an observer can.
         /// </summary>
         public static async ValueTask RunInTransactionHooksAsync(
-            IServiceProvider? services, MutationObserverContext context, object? result)
+            IServiceProvider? services, MutationObserverContext context, object? result, int affectedRows)
         {
             if (services is null)
                 return;
@@ -77,7 +77,7 @@ namespace BifrostQL.Core.Resolvers
             if (hooks is null)
                 return;
 
-            await hooks.RunAsync(context with { Result = result });
+            await hooks.RunAsync(context with { Result = result, AffectedRows = affectedRows });
         }
 
         public static async ValueTask NotifyStateTransitionAsync(
@@ -99,7 +99,8 @@ namespace BifrostQL.Core.Resolvers
             MutationType mutationType,
             IDictionary<string, object?> data,
             object? result,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            int? affectedRows = null)
         {
             if (services is null || IsWorkflowTriggerSuppressed(userContext))
                 return;
@@ -113,6 +114,7 @@ namespace BifrostQL.Core.Resolvers
                     MutationType = mutationType,
                     Data = data,
                     Result = result,
+                    AffectedRows = affectedRows,
                     UserContext = userContext,
                     // Post-commit: no hook phase pairs with this notification, so the bag
                     // is fresh and empty — readers see "not captured" and fail closed.

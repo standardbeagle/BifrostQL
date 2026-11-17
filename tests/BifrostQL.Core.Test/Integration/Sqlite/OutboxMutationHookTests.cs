@@ -203,6 +203,7 @@ public sealed class OutboxMutationHookTests : IAsyncLifetime
             MutationType = MutationType.Update,
             Data = new Dictionary<string, object?> { ["id"] = 1L, ["name"] = "renamed" },
             Result = 1,
+            AffectedRows = 1,
             UserContext = new Dictionary<string, object?>(),
             MutationState = MutationObserverContext.NewMutationState(),
             Connection = conn,

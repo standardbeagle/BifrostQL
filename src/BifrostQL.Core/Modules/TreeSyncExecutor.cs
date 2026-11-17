@@ -295,6 +295,7 @@ public sealed class TreeSyncExecutor
             }
 
             object? opResult;
+            int affectedRows;
             switch (mutationType)
             {
                 case MutationType.Insert:
@@ -304,12 +305,15 @@ public sealed class TreeSyncExecutor
                     if (op.Depth == 0)
                         rootId = id;
                     opResult = id;
+                    affectedRows = 1;
                     break;
                 case MutationType.Update:
-                    opResult = await ExecuteUpdateAsync(conn, transaction, op.Table, data, additionalFilter, cancellationToken);
+                    var updated = await ExecuteUpdateAsync(conn, transaction, op.Table, data, additionalFilter, cancellationToken);
                     MutationCommandExecutor.EnsureAffectedRows(
-                        (int)opResult, conflictOnNoRows, inferredTarget,
+                        updated, conflictOnNoRows, inferredTarget,
                         $"{op.Table.TableSchema}.{op.Table.DbName}");
+                    opResult = updated;
+                    affectedRows = updated;
                     break;
                 case MutationType.Delete:
                     var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
@@ -321,9 +325,11 @@ public sealed class TreeSyncExecutor
                         deleted, conflictOnNoRows, inferredTarget,
                         $"{op.Table.TableSchema}.{op.Table.DbName}");
                     opResult = deleted;
+                    affectedRows = deleted;
                     break;
                 default:
                     opResult = null;
+                    affectedRows = 0;
                     break;
             }
 
@@ -331,7 +337,7 @@ public sealed class TreeSyncExecutor
             // and the history row are written here, paired with this operation's
             // before-commit capture through the shared context's MutationState.
             if (hookContext != null)
-                await MutationNotifier.RunInTransactionHooksAsync(services, hookContext, opResult);
+                await MutationNotifier.RunInTransactionHooksAsync(services, hookContext, opResult, affectedRows);
         }
 
         return new TreeRun(rootId, pendingApproval);

@@ -17,6 +17,15 @@ public sealed record MutationObserverContext
     public required MutationType MutationType { get; init; }
     public required IDictionary<string, object?> Data { get; init; }
     public required object? Result { get; init; }
+
+    /// <summary>
+    /// The rows the write changed, set by the pipeline that ran it: 1 for an insert, the
+    /// database's count for an update or delete. Null in the before-commit phase (nothing has
+    /// run yet) and for a notification that is not one counted write (a tree save). A hook
+    /// or observer gates on this, never on <see cref="Result"/>: on an insert Result is the
+    /// generated key, which can be 0.
+    /// </summary>
+    public int? AffectedRows { get; init; }
     public required IDictionary<string, object?> UserContext { get; init; }
 
     /// <summary>

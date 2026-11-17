@@ -68,7 +68,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         if (!config.IsDeferrable)
             return;
 
-        if (IsUpdateOrDelete(context.MutationType) && AffectedZeroRows(context.Result))
+        if (context.AffectedRows == 0)
             return;
 
         if (context.Connection is null || context.Model is null || context.Dialect is null)
@@ -260,13 +260,4 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
 
     private static string InverseOperation(MutationType operation)
         => operation == MutationType.Insert ? "delete" : "restore";
-
-    private static bool IsUpdateOrDelete(MutationType mutationType)
-        => mutationType is MutationType.Update or MutationType.Delete;
-
-    private static bool AffectedZeroRows(object? result)
-        => result is not null
-           && (result is int i ? i == 0
-               : result is long l ? l == 0
-               : result is IConvertible c && Convert.ToInt64(c) == 0);
 }

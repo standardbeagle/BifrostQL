@@ -39,12 +39,10 @@ namespace BifrostQL.Core.Modules.Cdc
             if (!config.EmitsEvents || !config.Emits(context.MutationType))
                 return; // Table does not emit events for this operation.
 
-            // An UPDATE/DELETE that affected zero rows changed nothing (an out-of-scope
-            // tenant/policy no-op, or a predicate that matched nothing). Emitting an
-            // event for it would fabricate a change that never happened. INSERT's result
-            // is the generated identity, not a row count, so it is never treated as zero.
-            if ((context.MutationType == MutationType.Update || context.MutationType == MutationType.Delete)
-                && AffectedZeroRows(context.Result))
+            // A write that affected zero rows changed nothing (an out-of-scope tenant/policy
+            // no-op, or a predicate that matched nothing). Emitting an event for it would
+            // fabricate a change that never happened.
+            if (context.AffectedRows == 0)
                 return;
 
             // The in-transaction phase always supplies the connection, model and dialect.
@@ -112,15 +110,6 @@ namespace BifrostQL.Core.Modules.Cdc
             await MutationCommandExecutor.ExecuteNonQuery(
                 context.Connection, context.Transaction, sql, eventRow, cancellationToken: context.CancellationToken);
         }
-
-        // The write result of an UPDATE/DELETE is the affected-row count. Treat a
-        // numeric zero as "nothing changed". A non-numeric or null result is treated
-        // as non-zero (do not silently suppress an event we cannot classify).
-        private static bool AffectedZeroRows(object? result)
-            => result is not null
-               && (result is int i ? i == 0
-                   : result is long l ? l == 0
-                   : result is IConvertible c && Convert.ToInt64(c) == 0);
 
         /// <summary>
         /// Selects the columns captured into the event payload per the configured mode.

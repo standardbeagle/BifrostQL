@@ -224,14 +224,14 @@ namespace BifrostQL.Core.Resolvers
                 result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data, ctx.CancellationToken));
                 // After-write, still in-transaction: the outbox writer runs here so the
                 // event can name the generated identity (result) returned by the insert.
-                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result, affectedRows: 1);
             });
             // Thrown AFTER the commit so the enqueued pending row survives; never
             // reported as success-as-applied.
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
-                ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext));
+                ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext, affectedRows: 1));
             return result;
         }
 
@@ -352,9 +352,9 @@ namespace BifrostQL.Core.Resolvers
                     $"{table.TableSchema}.{table.DbName}");
 
                 // After the write and the conflict check: emit the event only if a row
-                // actually changed (the hook skips zero-row updates via the count result),
-                // so an out-of-scope tenant/policy no-op does not fabricate an event.
-                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
+                // actually changed (the hooks skip AffectedRows == 0), so an out-of-scope
+                // tenant/policy no-op does not fabricate an event.
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result, result);
 
                 // Same rule as the in-transaction hooks above: a state transition is only
                 // real if a row actually changed state. A tenant/policy-scoped-away update
@@ -371,7 +371,7 @@ namespace BifrostQL.Core.Resolvers
             if (result > 0)
                 await AfterCommitAsync(ctx, async () =>
                 {
-                    await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext);
+                    await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext, affectedRows: result);
                     await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
                 });
             // The update mutation field is typed `Int`, so its scalar return cannot
@@ -437,7 +437,7 @@ namespace BifrostQL.Core.Resolvers
                 throw ApprovalInterceptMutationHook.PendingApprovalError(outcome.PendingApproval);
             if (outcome.Affected > 0)
                 await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
-                    ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext));
+                    ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext, affectedRows: outcome.Affected));
             return outcome.Affected;
         }
 
@@ -506,7 +506,7 @@ namespace BifrostQL.Core.Resolvers
                 return new DeleteOutcome(0, divertMessage, MutationType.Update, dbData);
             var result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, dbData, additionalFilter.Parameters, ctx.CancellationToken);
             // Soft delete is modeled as an UPDATE; emit an update event (hook skips zero-row).
-            await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
+            await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result, result);
             return new DeleteOutcome(result, null, MutationType.Update, dbData);
         }
 
@@ -533,7 +533,7 @@ namespace BifrostQL.Core.Resolvers
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
                 return new DeleteOutcome(0, divertMessage, MutationType.Delete, deleteData);
             var result = await MutationCommandExecutor.ExecuteNonQuery(conn, transaction, sql, deleteData, additionalFilter.Parameters, ctx.CancellationToken);
-            await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result);
+            await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result, result);
             return new DeleteOutcome(result, null, MutationType.Delete, deleteData);
         }
     }

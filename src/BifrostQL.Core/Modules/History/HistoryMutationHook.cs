@@ -168,7 +168,7 @@ namespace BifrostQL.Core.Modules.History
             // simply discarded (and an erasure that removed nothing must not tombstone a
             // trail it never touched). An INSERT's result is the generated identity, not a
             // count.
-            if (IsUpdateOrDelete(context.MutationType) && AffectedZeroRows(context.Result))
+            if (context.AffectedRows == 0)
                 return;
 
             if (context.Connection is null || context.Model is null || context.Dialect is null)
@@ -463,17 +463,6 @@ namespace BifrostQL.Core.Modules.History
 
             return keyData.Count > 0 ? keyData : null;
         }
-
-        private static bool IsUpdateOrDelete(MutationType mutationType)
-            => mutationType is MutationType.Update or MutationType.Delete;
-
-        // The write result of an UPDATE/DELETE is the affected-row count. A non-numeric or
-        // null result is treated as non-zero: never suppress a record we cannot classify.
-        private static bool AffectedZeroRows(object? result)
-            => result is not null
-               && (result is int i ? i == 0
-                   : result is long l ? l == 0
-                   : result is IConvertible c && Convert.ToInt64(c) == 0);
 
         private static string Qualify(IDbTable table) => $"{table.TableSchema}.{table.DbName}";
     }

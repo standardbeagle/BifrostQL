@@ -1,3 +1,6 @@
+using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
 using BifrostQL.Server.Test.S3;
 using FluentAssertions;
@@ -205,6 +208,56 @@ namespace BifrostQL.Server.Test
 
             status.Should().Be(413);
             System.Text.Encoding.UTF8.GetString(body).Should().Contain("8-byte");
+        }
+
+        [Theory]
+        [InlineData(8, false)]
+        [InlineData(1024, true)]
+        public async Task TheByteCap_IsCheckedInTheDatabase_BeforeTheValueIsRead(int maxBlobBytes, bool served)
+        {
+            // An oversized value used to be read whole (as base64) and only then refused, so
+            // every refused fetch still cost its size in server memory. The size is now measured
+            // in the database first; the value column is selected only when it fits.
+            var recorder = new RecordingReads(_harness.Reads);
+            var options = new BifrostBlobOptions { MaxBlobBytes = maxBlobBytes };
+            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, options, requiresAuth: false);
+            var context = new DefaultHttpContext { RequestServices = new ReadsOverride(_harness.Services, recorder) };
+            context.Request.Method = "GET";
+            context.Request.Path = "/_blob/files/data";
+            context.Request.QueryString = new QueryString("?k.id=0");
+            context.Response.Body = new MemoryStream();
+
+            await middleware.InvokeAsync(context);
+
+            context.Response.StatusCode.Should().Be(served ? 200 : 413);
+            recorder.Selected.Should().NotBeEmpty().And.OnlyContain(c => c.Count == 1);
+            recorder.Selected[0].Single().ComputedColumn.Should().NotBeNull("the first read measures the size");
+            var valueReads = recorder.Selected.Count(c => c.Single().ComputedColumn is null && c.Single().DbDbName == "data");
+            valueReads.Should().Be(served ? 1 : 0,
+                served ? "control: a value under the cap is read and served" : "an oversized value is never selected");
+        }
+
+        /// <summary>Records every select list sent through the real read seam.</summary>
+        private sealed class RecordingReads : IQueryIntentExecutor
+        {
+            private readonly IQueryIntentExecutor _inner;
+            public RecordingReads(IQueryIntentExecutor inner) => _inner = inner;
+            public List<IReadOnlyList<GqlObjectColumn>> Selected { get; } = new();
+            public Task<IDbModel> GetModelAsync(string? endpoint = null) => _inner.GetModelAsync(endpoint);
+            public Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
+            {
+                Selected.Add(intent.Query.ScalarColumns.ToList());
+                return _inner.ExecuteAsync(intent, cancellationToken);
+            }
+        }
+
+        private sealed class ReadsOverride : IServiceProvider
+        {
+            private readonly IServiceProvider _inner;
+            private readonly IQueryIntentExecutor _reads;
+            public ReadsOverride(IServiceProvider inner, IQueryIntentExecutor reads) => (_inner, _reads) = (inner, reads);
+            public object? GetService(Type serviceType) =>
+                serviceType == typeof(IQueryIntentExecutor) ? _reads : _inner.GetService(serviceType);
         }
 
         [Theory]

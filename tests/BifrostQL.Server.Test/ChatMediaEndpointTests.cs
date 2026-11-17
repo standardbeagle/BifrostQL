@@ -1,6 +1,7 @@
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Chat;
 using FluentAssertions;
 using Xunit;
@@ -109,6 +110,40 @@ namespace BifrostQL.Server.Test
             {
                 over.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
                 (await over.Content.ReadAsStringAsync()).Should().Contain("media-too-large");
+            }
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Get_media_size_is_measured_in_the_database_before_the_value_is_read(bool fits)
+        {
+            // The route used to read the whole value (as base64) and only then compare it with
+            // the cap. Now one statement measures LENGTH(content) and the value is selected only
+            // when it fits: an oversized value runs exactly that one statement.
+            var sql = new DocumentsSqlCapture();
+            var client = await _h.StartAsync(extraMetadata: MediaMetadata, observers: new IQueryObserver[] { sql },
+                configureChat: o => o.MaxMediaBytes = fits ? PngBytes.Length : PngBytes.Length - 1);
+
+            using var response = await client.SendAsync(BuildGet("/_chat/media/documents/1", "tenant-a"));
+
+            response.StatusCode.Should().Be(fits ? HttpStatusCode.OK : HttpStatusCode.RequestEntityTooLarge);
+            sql.Statements.Should().HaveCount(fits ? 2 : 1,
+                fits ? "control: a value that fits is read after the probe" : "an oversized value is never selected");
+            sql.Statements[0].Should().Contain("LENGTH(", "the first statement measures the stored size");
+        }
+
+        private sealed class DocumentsSqlCapture : IQueryObserver
+        {
+            private readonly object _gate = new();
+            private readonly List<string> _statements = new();
+            public QueryPhase[] Phases { get; } = { QueryPhase.AfterExecute };
+            public IReadOnlyList<string> Statements { get { lock (_gate) return _statements.ToArray(); } }
+            public ValueTask OnQueryPhaseAsync(QueryPhase phase, QueryObserverContext context)
+            {
+                if (string.Equals(context.Table.DbName, "documents", StringComparison.OrdinalIgnoreCase))
+                    lock (_gate) _statements.Add(context.Sql ?? string.Empty);
+                return ValueTask.CompletedTask;
             }
         }
 

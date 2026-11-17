@@ -33,7 +33,7 @@ public abstract record SqlExpr
     /// text never enters the SQL string.</summary>
     public sealed record Lit(object? Value) : SqlExpr;
 
-    /// <summary>A function call over the closed allow-list (UPPER/LOWER/LEN/COALESCE/ABS/ROUND).
+    /// <summary>A function call over the closed allow-list (UPPER/LOWER/LEN/BYTE_LEN/COALESCE/ABS/ROUND).
     /// An unrecognized name fails fast at lowering — there is no pass-through.</summary>
     public sealed record Fn(string Name, IReadOnlyList<SqlExpr> Args) : SqlExpr;
 

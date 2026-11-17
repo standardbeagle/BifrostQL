@@ -22,7 +22,7 @@ lowering entry point are reachable from an external assembly with no `InternalsV
 | `SqlExpr.Col` | A reference to a table column, validated against the table's real columns. |
 | `SqlExpr.Param` | An explicitly bound parameter value with an optional provider DB type. |
 | `SqlExpr.Lit` | A literal value — lowers to a bound parameter, never interpolated text. |
-| `SqlExpr.Fn` | A function call over the closed allow-list (`UPPER`/`LOWER`/`LEN`/`ABS`/`ROUND`/`COALESCE`). |
+| `SqlExpr.Fn` | A function call over the closed allow-list (`UPPER`/`LOWER`/`LEN`/`BYTE_LEN`/`ABS`/`ROUND`/`COALESCE`). |
 | `SqlExpr.Case` | `CASE operand WHEN … THEN … [ELSE …] END`, with `SqlExpr.CaseBranch` per WHEN/THEN. |
 | `SqlExpr.Cast` | A CAST to a portable `SqlExprType` (`Text` / `Int`); the storage type is chosen per dialect. |
 | `SqlExpr.Concat` | String concatenation, rendered with each dialect's own concat form. |
@@ -103,6 +103,7 @@ node is genuinely unsupported.
 | Node / case | SQL Server | PostgreSQL | MySQL | SQLite |
 |-------------|-----------|-----------|-------|--------|
 | `Fn("LEN", …)` | `LEN` | `LENGTH` | `LENGTH` | `LENGTH` |
+| `Fn("BYTE_LEN", …)` (byte length of a binary value) | `DATALENGTH` | `LENGTH` | `LENGTH` | `LENGTH` |
 | `Concat` | `a + b` | `a \|\| b` | `CONCAT(a, b)` | `a \|\| b` |
 | `Cast(Text)` | `NVARCHAR(MAX)` | `TEXT` | `CHAR` | `TEXT` |
 | `Cast(Int)` | `INT` | `INTEGER` | `SIGNED` | `INTEGER` |

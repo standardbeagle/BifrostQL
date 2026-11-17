@@ -202,4 +202,23 @@ public sealed class SqlExprLoweringTest
         SqliteDialect.Instance.LowerExpression(expr, UsersTable(), new SqlParameterCollection())
             .Should().Be("LENGTH(\"Name\")");
     }
+
+    // --- BYTE_LEN: the stored byte size (blob/media cap probes) -------------------------
+
+    [Fact]
+    public void LowerExpression_ByteLenFunction_MapsPerDialect()
+    {
+        var expr = new SqlExpr.Fn("BYTE_LEN", new SqlExpr[] { new SqlExpr.Col("Name") });
+
+        // SQL Server's LEN counts characters and ignores trailing blanks; only DATALENGTH
+        // counts stored bytes. LENGTH counts bytes on a binary value on the other engines.
+        SqlServerDialect.Instance.LowerExpression(expr, UsersTable(), new SqlParameterCollection())
+            .Should().Be("DATALENGTH([Name])");
+        PostgresDialect.Instance.LowerExpression(expr, UsersTable(), new SqlParameterCollection())
+            .Should().Be("LENGTH(\"Name\")");
+        MySqlDialect.Instance.LowerExpression(expr, UsersTable(), new SqlParameterCollection())
+            .Should().Be("LENGTH(`Name`)");
+        SqliteDialect.Instance.LowerExpression(expr, UsersTable(), new SqlParameterCollection())
+            .Should().Be("LENGTH(\"Name\")");
+    }
 }

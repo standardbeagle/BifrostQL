@@ -37,12 +37,10 @@ namespace BifrostQL.Server
         /// Upper bound on a served blob, in decoded bytes. Over the cap is an explicit 413,
         /// never a truncated body; HTTP Range only windows the wire. Default 32 MiB.
         ///
-        /// <para>Known gap: this does NOT bound server memory for an oversized row. The read
-        /// seam has no DB-side length probe or windowed blob read, so the driver materializes
-        /// the whole column value (as a base64 string) before the cap is checked. What the cap
-        /// does avoid is the second copy: the decoded size is computed from the base64 length
-        /// and an oversized value is refused before it is decoded. A served value costs its
-        /// base64 string plus one decoded array.</para>
+        /// <para>The stored size is measured on the database side first (BlobByteLengthProbe), so
+        /// an oversized value is refused without being read into memory. A served value costs
+        /// its base64 string plus one decoded array. A row rewritten between the probe and the
+        /// read is caught by a second check on the decoded size before decoding.</para>
         /// </summary>
         public int MaxBlobBytes { get; set; } = 32 * 1024 * 1024;
     }
@@ -238,34 +236,54 @@ namespace BifrostQL.Server
                 filter[key.GraphQlName] = new Dictionary<string, object?> { ["_eq"] = keyValue };
             }
 
-            var query = new GqlObjectQuery
+            async Task<IReadOnlyDictionary<string, object?>?> ReadRowAsync(GqlObjectColumn selected)
             {
-                DbTable = table,
-                SchemaName = table.TableSchema,
-                TableName = table.DbName,
-                GraphQlName = table.GraphQlName,
-                Path = table.GraphQlName,
-                Filter = TableFilter.FromObject(filter, table),
-                Limit = 1,
-            };
-            query.ScalarColumns.Add(new GqlObjectColumn(column.DbName));
+                var query = new GqlObjectQuery
+                {
+                    DbTable = table,
+                    SchemaName = table.TableSchema,
+                    TableName = table.DbName,
+                    GraphQlName = table.GraphQlName,
+                    Path = table.GraphQlName,
+                    Filter = TableFilter.FromObject(filter, table),
+                    Limit = 1,
+                };
+                query.ScalarColumns.Add(selected);
+                var result = await executor.ExecuteAsync(new QueryIntent
+                {
+                    Query = query,
+                    UserContext = userContext,
+                    Endpoint = _options.Endpoint,
+                }, context.RequestAborted);
+                return result.Rows.Count == 1 ? result.Rows[0] : null;
+            }
 
-            var result = await executor.ExecuteAsync(new QueryIntent
+            // Measure first, on the database side: an oversized value is refused before a
+            // single byte of it is read (BlobByteLengthProbe). NULL, masked and missing rows
+            // are the same 404 the value read answers.
+            var probe = await ReadRowAsync(BlobByteLengthProbe.Column(column));
+            var storedSize = probe is null ? null : BlobByteLengthProbe.Read(probe);
+            if (storedSize is null)
             {
-                Query = query,
-                UserContext = userContext,
-                Endpoint = _options.Endpoint,
-            }, context.RequestAborted);
+                await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
+                return;
+            }
+            if (storedSize > _options.MaxBlobBytes)
+            {
+                await WriteTextAsync(context, StatusCodes.Status413PayloadTooLarge,
+                    $"The value exceeds the {_options.MaxBlobBytes}-byte blob limit.");
+                return;
+            }
 
-            var row = result.Rows.Count == 1 ? result.Rows[0] : null;
+            var row = await ReadRowAsync(new GqlObjectColumn(column.DbName));
             object? value = null;
             if (row is not null && !row.TryGetValue(column.GraphQlName, out value))
                 row.TryGetValue(column.DbName, out value);
 
             // The read seam materializes blobs as base64 (ReaderEnum.DbConvert);
             // byte[] is accepted for providers that hand bytes through untouched.
-            // The cap is checked on the decoded size BEFORE decoding, so an oversized
-            // value is refused without allocating its decoded copy.
+            // Backstop for a row rewritten between the probe and this read: the cap is
+            // checked again on the decoded size BEFORE decoding.
             long? size = value switch
             {
                 byte[] raw => raw.Length,

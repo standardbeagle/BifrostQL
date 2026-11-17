@@ -396,23 +396,24 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <summary>
     /// Maps a canonical allow-listed function name to this dialect's spelling. The allow-list
-    /// (UPPER/LOWER/LEN/COALESCE/ABS/ROUND) is closed: an unrecognized name throws a
+    /// (UPPER/LOWER/LEN/BYTE_LEN/COALESCE/ABS/ROUND) is closed: an unrecognized name throws a
     /// <see cref="BifrostExecutionError"/> naming the symbol rather than passing arbitrary
     /// text through as a function call. Most names are identical across engines; only
-    /// LEN differs (SQL Server overrides it), so the default maps LEN to the ANSI
-    /// <c>LENGTH</c> used by PostgreSQL, MySQL, and SQLite.
+    /// LEN and BYTE_LEN differ (SQL Server overrides them), so the default maps both to the
+    /// <c>LENGTH</c> used by PostgreSQL, MySQL, and SQLite, which counts bytes on a binary value.
     /// </summary>
     protected virtual string MapFunctionName(string name) => name switch
     {
         "UPPER" => "UPPER",
         "LOWER" => "LOWER",
         "LEN" => "LENGTH",
+        "BYTE_LEN" => "LENGTH",
         "COALESCE" => "COALESCE",
         "ABS" => "ABS",
         "ROUND" => "ROUND",
         _ => throw new BifrostExecutionError(
             $"Unknown SQL function '{name}' in expression tree. Allowed functions: " +
-            "UPPER, LOWER, LEN, COALESCE, ABS, ROUND.")
+            "UPPER, LOWER, LEN, BYTE_LEN, COALESCE, ABS, ROUND.")
     };
 
     /// <summary>

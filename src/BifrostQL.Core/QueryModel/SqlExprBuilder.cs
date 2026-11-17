@@ -42,6 +42,7 @@ public static class SqlExprFunctions
             ["UPPER"] = (1, 1),
             ["LOWER"] = (1, 1),
             ["LEN"] = (1, 1),
+            ["BYTE_LEN"] = (1, 1),
             ["ABS"] = (1, 1),
             ["ROUND"] = (2, 2),
             ["COALESCE"] = (2, null),
@@ -136,7 +137,7 @@ public sealed class SqlExprBuilder
     public Expr Param(object? value, string? dbType = null) => new(this, new SqlExpr.Param(value, dbType));
 
     /// <summary>
-    /// A function call over the closed allow-list (<c>UPPER/LOWER/LEN/ABS/ROUND/COALESCE</c>).
+    /// A function call over the closed allow-list (<c>UPPER/LOWER/LEN/BYTE_LEN/ABS/ROUND/COALESCE</c>).
     /// The name and arity are validated eagerly; an unknown function or a wrong-arity call throws
     /// <see cref="SqlExprBuildException"/> naming the function.
     /// </summary>

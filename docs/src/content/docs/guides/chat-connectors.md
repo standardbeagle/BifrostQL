@@ -202,8 +202,8 @@ it, weigh:
   for the model provider. With vision off, `view_image_id` does not exist in
   the tool schema and media bytes never leave the server — clients fetch
   them through the auth-gated media route instead. That route serves values up
-  to `BifrostChatOptions.MaxMediaBytes` (default 16 MiB, checked before
-  decoding); a larger stored value answers `413 media-too-large`.
+  to `BifrostChatOptions.MaxMediaBytes` (default 16 MiB, measured in the
+  database before the value is read); a larger stored value answers `413 media-too-large`.
 
 ## Custom connectors
 

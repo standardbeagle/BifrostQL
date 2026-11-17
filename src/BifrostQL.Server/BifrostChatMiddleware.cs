@@ -66,8 +66,9 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Largest stored media value the <c>GET {Path}/media/{table}/{id}</c> route serves, in
-        /// decoded bytes. The size is checked from the stored value's length before anything is
-        /// decoded; a larger value answers 413 <c>media-too-large</c>. Default: 16 MiB.
+        /// decoded bytes. The stored size is measured on the database side before the value is
+        /// read (BlobByteLengthProbe); a larger value answers 413 <c>media-too-large</c> without
+        /// entering memory. Default: 16 MiB.
         /// </summary>
         public int MaxMediaBytes { get; set; } = 16 * 1024 * 1024;
     }
@@ -458,30 +459,51 @@ namespace BifrostQL.Server
                 }
 
                 var mediaColumn = table.ColumnLookup[binding.Config.MediaColumn!];
-                var query = new GqlObjectQuery
+                async Task<IReadOnlyDictionary<string, object?>?> ReadRowAsync(GqlObjectColumn selected)
                 {
-                    DbTable = table,
-                    SchemaName = table.TableSchema,
-                    TableName = table.DbName,
-                    GraphQlName = table.GraphQlName,
-                    Path = table.GraphQlName,
-                    Filter = TableFilterFactory.Equals(table, key.ColumnName, rowId),
-                    Limit = 1,
-                };
-                query.ScalarColumns.Add(new GqlObjectColumn(mediaColumn.DbName, mediaColumn.GraphQlName));
+                    var query = new GqlObjectQuery
+                    {
+                        DbTable = table,
+                        SchemaName = table.TableSchema,
+                        TableName = table.DbName,
+                        GraphQlName = table.GraphQlName,
+                        Path = table.GraphQlName,
+                        Filter = TableFilterFactory.Equals(table, key.ColumnName, rowId),
+                        Limit = 1,
+                    };
+                    query.ScalarColumns.Add(selected);
+                    var result = await _reads.ExecuteAsync(new QueryIntent
+                    {
+                        Query = query,
+                        UserContext = userContext,
+                        Endpoint = _options.GraphQlEndpoint,
+                    }, context.RequestAborted);
+                    return result.Rows.Count == 1 ? result.Rows[0] : null;
+                }
 
-                var result = await _reads.ExecuteAsync(new QueryIntent
+                // Measure on the database side first, so an oversized value is refused before
+                // any of it is read (BlobByteLengthProbe).
+                var probe = await ReadRowAsync(BlobByteLengthProbe.Column(mediaColumn));
+                var storedSize = probe is null ? null : BlobByteLengthProbe.Read(probe);
+                if (storedSize is null)
                 {
-                    Query = query,
-                    UserContext = userContext,
-                    Endpoint = _options.GraphQlEndpoint,
-                }, context.RequestAborted);
+                    await WriteMediaNotFoundAsync(context);
+                    return;
+                }
+                if (storedSize > _options.MaxMediaBytes)
+                {
+                    await WriteErrorAsync(context, StatusCodes.Status413PayloadTooLarge, "media-too-large",
+                        $"The media value exceeds the {_options.MaxMediaBytes}-byte limit.");
+                    return;
+                }
 
                 // The read seam materializes blob columns as BASE64 (ReaderEnum.DbConvert);
-                // byte[] is accepted for providers that hand bytes through untouched. The cap
-                // is checked on the decoded size before decoding, and base64 decodes once into a
-                // pooled buffer rather than a fresh large-object-heap array per fetch.
-                var value = result.Rows.Count == 1 ? result.Rows[0][mediaColumn.GraphQlName] : null;
+                // byte[] is accepted for providers that hand bytes through untouched. The cap is
+                // checked again on the decoded size before decoding (a row rewritten after the
+                // probe), and base64 decodes once into a pooled buffer rather than a fresh
+                // large-object-heap array per fetch.
+                var row = await ReadRowAsync(new GqlObjectColumn(mediaColumn.DbName, mediaColumn.GraphQlName));
+                var value = row?[mediaColumn.GraphQlName];
                 long? size = value switch
                 {
                     byte[] raw => raw.Length,

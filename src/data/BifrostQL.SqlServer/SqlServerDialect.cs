@@ -91,10 +91,15 @@ public sealed class SqlServerDialect : SqlDialectBase
     };
 
     /// <inheritdoc />
-    /// <remarks>T-SQL spells string length <c>LEN</c>; the ANSI <c>LENGTH</c> the base uses
-    /// does not exist in SQL Server. All other allow-listed functions match the base.</remarks>
-    protected override string MapFunctionName(string name) =>
-        name == "LEN" ? "LEN" : base.MapFunctionName(name);
+    /// <remarks>T-SQL spells string length <c>LEN</c> and byte length <c>DATALENGTH</c>; the
+    /// <c>LENGTH</c> the base uses does not exist in SQL Server. All other allow-listed functions
+    /// match the base.</remarks>
+    protected override string MapFunctionName(string name) => name switch
+    {
+        "LEN" => "LEN",
+        "BYTE_LEN" => "DATALENGTH",
+        _ => base.MapFunctionName(name),
+    };
 
     /// <inheritdoc />
     /// <remarks>SQL Server CAST targets: <c>NVARCHAR(MAX)</c> for text, <c>INT</c> for integer

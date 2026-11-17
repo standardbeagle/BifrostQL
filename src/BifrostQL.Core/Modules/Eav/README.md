@@ -37,12 +37,15 @@ parent table **exactly** — there is no name-based detection or inference.
   read-only `_meta` field on each EAV-parent table via the standard
   provider-computed-column pipeline as an `IBatchComputedColumnProvider`. Per result page,
   it collects the parents' single primary keys, queries the meta table once
-  (`SELECT fk,key,value WHERE fk IN (...)`, 500 keys per query), and returns each row's
+  (`SELECT fk,key,value WHERE fk IN (...)` windowed per parent, 500 keys per query), and returns each row's
   attributes as a JSON object string that the `JSON` scalar serializes into a real object.
 
 ## Scope / limits
 
 - Read-only. Single-PK parents only (composite PK → `null`).
-- One meta-table query per result page, not per parent row. No per-parent attribute cap.
+- One meta-table query per result page, not per parent row. Each parent is windowed in SQL
+  (`ROW_NUMBER` per FK, ordered by key) to `max-query-rows - 1` attributes plus a sentinel
+  row; a cut parent carries `"__truncated": true` (`EavMetaProvider.TruncatedKey`). An
+  attribute keyed `__truncated` is refused.
 - No SQL-level filter/sort **by** an attribute — `_meta` is an opaque object. Richer
   attribute querying is intentionally out of scope.

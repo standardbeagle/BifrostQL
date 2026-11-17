@@ -38,6 +38,15 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
     /// </summary>
     public const string FieldType = "JSON";
 
+    /// <summary>
+    /// Reserved <c>_meta</c> key, present (value <c>true</c>) only when the parent has more
+    /// attribute rows than the row ceiling lets one parent return: the object then holds the
+    /// first <c>max-query-rows - 1</c> attributes in key order, and the rest were not read.
+    /// The <c>__</c> prefix is GraphQL's reserved-name prefix; an attribute row that uses
+    /// this key exactly is refused rather than confused with the marker.
+    /// </summary>
+    public const string TruncatedKey = "__truncated";
+
     public string Name => ProviderName;
 
     public async ValueTask<object?> ComputeAsync(ComputedColumnContext context, CancellationToken cancellationToken = default)
@@ -59,9 +68,10 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
     /// <summary>
     /// <c>_meta</c> for every row of the page in one read: the attribute rows of all the
     /// page's parents come back from <c>WHERE fk IN (...)</c> (chunked at
-    /// <see cref="ParentKey.MaxKeysPerQuery"/> keys) and are grouped by parent key. A row
-    /// without a key, or on a table with no parent configuration, gets null; a keyed row
-    /// with no attribute rows gets <c>"{}"</c>.
+    /// <see cref="ParentKey.MaxKeysPerQuery"/> keys), windowed per parent to the row ceiling
+    /// (<see cref="RowProbeWindow"/>), and grouped by parent key. A parent cut by the window
+    /// carries <see cref="TruncatedKey"/>. A row without a key, or on a table with no parent
+    /// configuration, gets null; a keyed row with no attribute rows gets <c>"{}"</c>.
     /// </summary>
     public async ValueTask<IReadOnlyList<object?>> ComputeBatchAsync(ComputedColumnBatchContext context, CancellationToken cancellationToken = default)
     {
@@ -157,8 +167,20 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
 
         var metaTableRef = dialect.TableReference(config.TableSchema, config.MetaTableDbName);
         var fkCol = dialect.EscapeIdentifier(config.ForeignKeyColumn);
-        var selectList = $"{fkCol},{dialect.EscapeIdentifier(config.KeyColumn)},{dialect.EscapeIdentifier(config.ValueColumn)}";
+        var keyCol = dialect.EscapeIdentifier(config.KeyColumn);
+        var selectList = $"{fkCol},{keyCol},{dialect.EscapeIdentifier(config.ValueColumn)}";
         var fkDataType = metaTable.ColumnLookup[config.ForeignKeyColumn].DataType;
+
+        // Each parent's attributes are windowed IN THE QUERY (ROW_NUMBER per parent key) to
+        // the row ceiling, plus one sentinel row that tells a complete set from a cut one.
+        // _meta takes no limit argument, so it reads "every row" the way a flat collection
+        // does, clamped by max-query-rows. The order (attribute key, then the meta table's
+        // primary key) makes the kept window deterministic.
+        var window = RowProbeWindow.For(context.Model, -1);
+        var windowOrder = new[] { keyCol }
+            .Concat(metaTable.KeyColumns.Select(c => dialect.EscapeIdentifier(c.DbName)))
+            .ToArray();
+        var truncatedParents = new Dictionary<ParentKey, bool>();
 
         var attributesByParent = new Dictionary<ParentKey, List<KeyValuePair<string, object?>>>();
         await using var conn = context.ConnFactory.GetConnection();
@@ -189,19 +211,36 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
             var whereClause = string.IsNullOrEmpty(securityWhere)
                 ? keyPredicate
                 : $"{keyPredicate} AND ({securityWhere})";
-            command.CommandText = $"SELECT {selectList} FROM {metaTableRef} WHERE {whereClause}";
+            command.CommandText = dialect.ConnectedPaging(
+                selectList,
+                $"FROM {metaTableRef} WHERE {whereClause}",
+                new[] { fkCol },
+                windowOrder,
+                PagedKeys.RowNumber,
+                PagedKeys.Total,
+                offset: 0,
+                limit: window.Fetch);
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var rowNumberOrdinal = reader.GetOrdinal(PagedKeys.RowNumber);
             while (await reader.ReadAsync(cancellationToken))
             {
                 if (reader.IsDBNull(0))
                     continue;
+                if (Convert.ToInt64(reader.GetValue(rowNumberOrdinal)) > window.Page)
+                {
+                    truncatedParents[ParentKey.Of(reader.GetValue(0))] = true;
+                    continue;
+                }
                 // Both cells are raw meta-table column values, so both go through the
                 // read chain's crypto projection before they reach the _meta JSON.
                 var rawKey = reader.IsDBNull(1) ? null : reader.GetValue(1);
                 var key = readChain.ProjectValue(config.KeyColumn, rawKey)?.ToString();
                 if (string.IsNullOrEmpty(key))
                     continue;
+                if (key == TruncatedKey)
+                    throw new BifrostExecutionError(
+                        $"An EAV attribute of '{context.Table.GraphQlName}' uses the reserved _meta key '{TruncatedKey}'.");
                 var rawValue = reader.IsDBNull(2) ? null : reader.GetValue(2);
                 var parentKey = ParentKey.Of(reader.GetValue(0));
                 if (!attributesByParent.TryGetValue(parentKey, out var attributes))
@@ -215,9 +254,11 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
         {
             if (rowKeys[i] is not { } pk)
                 continue;
-            values[i] = SerializeAttributes(ParentKey.TryGetGroup(attributesByParent, pk, out var attributes)
-                ? attributes
-                : Array.Empty<KeyValuePair<string, object?>>());
+            values[i] = SerializeAttributes(
+                ParentKey.TryGetGroup(attributesByParent, pk, out var attributes)
+                    ? attributes
+                    : Array.Empty<KeyValuePair<string, object?>>(),
+                truncated: ParentKey.TryGetGroup(truncatedParents, pk, out _));
         }
         return values;
     }
@@ -236,7 +277,7 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
         return null;
     }
 
-    private static string SerializeAttributes(IReadOnlyList<KeyValuePair<string, object?>> attributes)
+    private static string SerializeAttributes(IReadOnlyList<KeyValuePair<string, object?>> attributes, bool truncated)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -247,6 +288,8 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
                 writer.WritePropertyName(key);
                 WriteValue(writer, value);
             }
+            if (truncated)
+                writer.WriteBoolean(TruncatedKey, true);
             writer.WriteEndObject();
         }
         return System.Text.Encoding.UTF8.GetString(stream.ToArray());

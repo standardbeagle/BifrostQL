@@ -333,46 +333,19 @@ namespace BifrostQL.Core.Modules.Chat
             }, cancellationToken);
 
             var hasMore = result.Rows.Count > input.EffectiveLimit;
-            var kept = result.Rows.Take(input.EffectiveLimit).ToList();
-
-            var omittedForPayload = 0;
-            while (true)
+            var rows = result.Rows.Take(input.EffectiveLimit)
+                .Select(row => MediaRow(table, config, row, contentType: null)).ToList();
+            var (text, kept) = ChatRowPayload.Fit(rows.Select(r => (JsonNode?)r.Node).ToList(),
+                _options.ExplorePayloadCharCap, hasMore, input.EffectiveLimit + 1, "narrow with filters");
+            return new ChatToolResult
             {
-                var rows = kept.Select(row => MediaRow(table, config, row, contentType: null)).ToList();
-                var payload = new JsonObject
-                {
-                    ["rows"] = new JsonArray(rows.Select(r => (JsonNode)r.Node).ToArray()),
-                };
-                var note = BuildNote(hasMore, kept.Count, input.EffectiveLimit + 1, omittedForPayload);
-                if (note != null)
-                    payload["note"] = note;
-
-                var text = payload.ToJsonString();
-                if (text.Length <= _options.ExplorePayloadCharCap || kept.Count == 0)
-                    return new ChatToolResult
-                    {
-                        TextPayload = text,
-                        MediaReferences = rows
-                            .Where(r => r.Reference is not null)
-                            .Select(r => r.Reference!)
-                            .ToList(),
-                    };
-
-                kept.RemoveAt(kept.Count - 1);
-                omittedForPayload++;
-            }
-        }
-
-        // Every trim is reported in the payload — a silently truncated result would
-        // read as the complete answer.
-        private static string? BuildNote(bool hasMore, int shown, int lowerBound, int omittedForPayload)
-        {
-            var parts = new List<string>();
-            if (hasMore)
-                parts.Add($"showing {shown} of at least {lowerBound} rows; narrow with filters");
-            if (omittedForPayload > 0)
-                parts.Add($"{omittedForPayload} rows omitted to fit the payload cap; narrow with filters");
-            return parts.Count == 0 ? null : string.Join(". ", parts);
+                TextPayload = text,
+                // Only the rows the payload carries may be fetched.
+                MediaReferences = rows.Take(kept)
+                    .Where(r => r.Reference is not null)
+                    .Select(r => r.Reference!)
+                    .ToList(),
+            };
         }
 
         /// <summary>

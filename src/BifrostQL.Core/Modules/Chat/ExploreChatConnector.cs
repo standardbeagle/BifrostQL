@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.Modules.Chat
 {
@@ -220,9 +221,20 @@ namespace BifrostQL.Core.Modules.Chat
                 var effectiveLimit = Math.Min(limit ?? _options.ExploreRowCap, _options.ExploreRowCap);
                 return new ExploreInput(
                     filter, sortTokens,
-                    projection ?? ConnectorQuerySchema.VisibleColumns(table).ToList(), effectiveLimit, offset);
+                    projection ?? DefaultProjection(table), effectiveLimit, offset);
             }
         }
+
+        /// <summary>
+        /// Visible columns minus the binary family. A blob in every row turned a plain
+        /// <c>explore_&lt;table&gt;</c> call into up to ExploreRowCap+1 base64 payloads, almost
+        /// all trimmed away again by the payload cap; a model that wants one names it in
+        /// <c>columns</c>, and the media connector is the surface for binary content.
+        /// </summary>
+        internal static IReadOnlyList<ColumnDto> DefaultProjection(IDbTable table) =>
+            ConnectorQuerySchema.VisibleColumns(table)
+                .Where(c => !ChatConnectorConfig.BinaryColumnTypes.Contains(StringNormalizer.NormalizeType(c.DataType)))
+                .ToList();
 
         private static IReadOnlyList<ColumnDto> ParseColumns(IDbTable table, JsonElement columns)
         {
@@ -265,39 +277,10 @@ namespace BifrostQL.Core.Modules.Chat
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, int effectiveLimit)
         {
             var hasMore = rows.Count > effectiveLimit;
-            var kept = rows.Take(effectiveLimit).ToList();
-
-            var omittedForPayload = 0;
-            while (true)
-            {
-                var payload = new JsonObject
-                {
-                    ["rows"] = new JsonArray(kept.Select(RowNode).ToArray()),
-                };
-                var note = BuildNote(hasMore, kept.Count, effectiveLimit + 1, omittedForPayload);
-                if (note != null)
-                    payload["note"] = note;
-
-                var text = payload.ToJsonString();
-                if (text.Length <= _options.ExplorePayloadCharCap || kept.Count == 0)
-                    return new ChatToolResult { TextPayload = text };
-
-                kept.RemoveAt(kept.Count - 1);
-                omittedForPayload++;
-            }
-        }
-
-        // Every trim is reported in the payload — a silently truncated result would
-        // read as the complete answer.
-        private static string? BuildNote(bool hasMore, int shown, int lowerBound, int omittedForPayload)
-        {
-            var parts = new List<string>();
-            if (hasMore)
-                parts.Add($"showing {shown} of at least {lowerBound} rows; narrow with filters");
-            if (omittedForPayload > 0)
-                parts.Add($"{omittedForPayload} rows omitted to fit the payload cap; " +
-                    "narrow with filters or select fewer columns");
-            return parts.Count == 0 ? null : string.Join(". ", parts);
+            var nodes = rows.Take(effectiveLimit).Select(RowNode).ToList();
+            var (text, _) = ChatRowPayload.Fit(nodes, _options.ExplorePayloadCharCap,
+                hasMore, effectiveLimit + 1, "narrow with filters or select fewer columns");
+            return new ChatToolResult { TextPayload = text };
         }
 
         private static JsonNode? RowNode(IReadOnlyDictionary<string, object?> row)

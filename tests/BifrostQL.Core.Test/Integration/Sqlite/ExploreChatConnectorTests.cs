@@ -61,6 +61,8 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
         _keepAlive = new SqliteConnection(ConnString);
         await _keepAlive.OpenAsync();
         await Exec("DROP TABLE IF EXISTS orders");
+        await Exec("DROP TABLE IF EXISTS photos");
+        await Exec("CREATE TABLE photos (id INTEGER PRIMARY KEY, caption TEXT NULL, image BLOB NULL, thumb VARBINARY NULL)");
         await Exec(
             """
             CREATE TABLE orders (
@@ -344,6 +346,55 @@ public sealed class ExploreChatConnectorTests : IAsyncLifetime
 
         payload.RootElement.GetProperty("rows").GetArrayLength().Should().Be(3);
         Note(payload).Should().Be("showing 3 of at least 4 rows; narrow with filters");
+    }
+
+    [Fact]
+    public async Task DefaultProjection_LeavesOutBinaryColumns()
+    {
+        // A blob column in the select-all default turned every explore call into up to
+        // ExploreRowCap+1 base64 payloads, nearly all trimmed again by the payload cap.
+        var model = await _reads.GetModelAsync(EndpointPath);
+        var photos = model.GetTableFromDbName("photos");
+
+        ExploreChatConnector.DefaultProjection(photos).Select(c => c.ColumnName)
+            .Should().BeEquivalentTo("id", "caption");
+        ConnectorQuerySchema.VisibleColumns(photos).Select(c => c.ColumnName)
+            .Should().Contain(new[] { "image", "thumb" }, "control: the binary columns are visible, only the default drops them");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(5)]
+    public void PayloadFit_KeepsTheLongestPrefixThatFits_MatchingTheFullSerializer(int rowCount)
+    {
+        var rows = Enumerable.Range(0, rowCount)
+            .Select(i => (System.Text.Json.Nodes.JsonNode?)new System.Text.Json.Nodes.JsonObject { ["n"] = i, ["s"] = $"v\"<{i}>" })
+            .ToList();
+
+        // The reference payload for `shown` rows, built the way the connectors used to: one
+        // JsonObject serialized whole.
+        string Reference(int shown)
+        {
+            var expected = new System.Text.Json.Nodes.JsonObject
+            {
+                ["rows"] = new System.Text.Json.Nodes.JsonArray(rows.Take(shown).Select(r => r?.DeepClone()).ToArray()),
+            };
+            var noteParts = new List<string> { $"showing {shown} of at least 9 rows; narrow with filters" };
+            if (shown < rowCount) noteParts.Add($"{rowCount - shown} rows omitted to fit the payload cap; hint");
+            expected["note"] = string.Join(". ", noteParts);
+            return expected.ToJsonString();
+        }
+
+        for (var cap = 0; cap <= 200; cap++)
+        {
+            var (text, kept) = ChatRowPayload.Fit(rows, cap, hasMore: true, lowerBound: 9, "hint");
+
+            text.Should().Be(Reference(kept), "the concatenated text must equal the whole-object serialization");
+            if (kept > 0) text.Length.Should().BeLessThanOrEqualTo(cap);
+            for (var more = kept + 1; more <= rowCount; more++)
+                Reference(more).Length.Should().BeGreaterThan(cap, "a longer prefix would not have fit");
+        }
     }
 
     [Fact]

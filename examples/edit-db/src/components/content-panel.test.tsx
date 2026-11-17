@@ -2,8 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { ContentPanel, type ContentPanelTarget } from './content-panel';
+import { reformatJsonText } from '../lib/json-text';
 
 vi.mock('../hooks/useToast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
+vi.mock('../lib/json-text', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../lib/json-text')>();
+    return { reformatJsonText: vi.fn(actual.reformatJsonText) };
+});
 
 const target = (value: string): ContentPanelTarget => ({
     value,
@@ -38,5 +43,17 @@ describe('ContentPanel JSON precision', () => {
         expect(saved).toContain('9007199254740993');
         expect(saved).toContain('1.50');
         expect(saved).toContain('"y"');
+    });
+});
+
+describe('ContentPanel render cost', () => {
+    it('does not re-format the stored value on every keystroke in the editor', () => {
+        const onSave = vi.fn();
+        render(<ContentPanel target={target('{"a": 1, "b": [2, 3]}')} onClose={() => {}} onNavigate={() => {}} onSave={onSave} canNavigatePrev={false} canNavigateNext={false} />);
+        fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+        const textarea = document.querySelector('textarea')!;
+        vi.mocked(reformatJsonText).mockClear();
+        for (const ch of ['x', 'xy', 'xyz']) fireEvent.change(textarea, { target: { value: ch } });
+        expect(reformatJsonText).not.toHaveBeenCalled();
     });
 });

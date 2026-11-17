@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useToast } from '../hooks/useToast';
 import { binaryDataUrl, detectContentKind, formatBinaryPreview, sniffBinaryContent, type ContentKind } from '@/lib/content-detect';
 import { downloadBinaryFile } from '../lib/export';
@@ -104,13 +104,21 @@ export function ContentPanel({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     const value = target?.value ?? '';
-    const kind = detectContentKind(value, target?.dbType);
+    const dbType = target?.dbType;
+    // Memoized on the value: detection, formatting and sniffing each walk the
+    // whole (possibly multi-MB) value, and every editor keystroke re-renders.
+    const { kind, formatted, sniffed } = useMemo(() => {
+        const k = detectContentKind(value, dbType);
+        return {
+            kind: k,
+            formatted: formatContent(value, k),
+            // Binary values sniff to what they actually ARE (magic bytes, never a
+            // column name): an image renders inline, a PDF or unknown blob gets a
+            // size card — either way the value is downloadable as a real file.
+            sniffed: k === 'binary' && value ? sniffBinaryContent(value) : null,
+        };
+    }, [value, dbType]);
     const Icon = kindIcons[kind];
-    const formatted = formatContent(value, kind);
-    // Binary values sniff to what they actually ARE (magic bytes, never a
-    // column name): an image renders inline, a PDF or unknown blob gets a
-    // size card — either way the value is downloadable as a real file.
-    const sniffed = kind === 'binary' && value ? sniffBinaryContent(value) : null;
     const handleDownload = useCallback(() => {
         if (!target || !sniffed) return;
         downloadBinaryFile(value, `${target.columnName}${sniffed.extension}`, sniffed.mime);

@@ -158,6 +158,40 @@ namespace BifrostQL.Server.Auth
         internal DateTimeOffset LockoutEndsAt(DateTimeOffset now) =>
             LockoutDuration is { } duration ? now + duration : DateTimeOffset.MaxValue;
 
+        /// <summary>Password-change path for the local auth endpoint. Defaults to <c>/auth/password</c>.</summary>
+        public string PasswordChangePath { get; set; } = "/auth/password";
+
+        /// <summary>
+        /// Fewest characters (Unicode scalar values) a new password may have (PCI DSS 8.3.6 asks for
+        /// 12). Applies to passwords set through <see cref="PasswordChangePath"/>. Defaults to 12.
+        /// </summary>
+        public int MinPasswordLength { get; set; } = 12;
+
+        /// <summary>
+        /// A new password must contain at least one letter and one digit (PCI DSS 8.3.6). Defaults to
+        /// true; set false where a length-only policy (NIST SP 800-63B) governs instead.
+        /// </summary>
+        public bool PasswordRequiresLetterAndDigit { get; set; } = true;
+
+        /// <summary>Most characters a new password may have. Defaults to 256; at least <see cref="MinPasswordLength"/>.</summary>
+        public int MaxPasswordLength { get; set; } = 256;
+
+        /// <summary>
+        /// A new password may not equal the current one or any of this many most recent passwords
+        /// (PCI DSS 8.3.7 asks for 4). The store keeps that many hashes per user. 0 checks only the
+        /// current password. Defaults to 4; at most 24.
+        /// </summary>
+        public int PasswordHistoryCount { get; set; } = 4;
+
+        /// <summary>
+        /// Longest a password stays valid after it was set through <see cref="PasswordChangePath"/>
+        /// (PCI DSS 8.3.9 rotation). A sign-in past it answers 403 <c>password_expired</c> and issues
+        /// no session; the password-change endpoint still accepts it. An account whose password was
+        /// never changed through the endpoint has no recorded change date and counts as expired.
+        /// Null (the default) never expires a password.
+        /// </summary>
+        public TimeSpan? MaxPasswordAge { get; set; }
+
         /// <summary>
         /// PBKDF2 iteration count for password hashes this host writes (ASP.NET Core Identity V3:
         /// PBKDF2-HMAC-SHA512, 128-bit salt, 256-bit subkey). A stored hash below the count still
@@ -202,6 +236,13 @@ namespace BifrostQL.Server.Auth
                 "must be null or a role name");
             Require(LockoutThreshold >= 1, nameof(LockoutThreshold), LockoutThreshold, "must be at least 1");
             Require(LockoutDuration is null || LockoutDuration > TimeSpan.Zero, nameof(LockoutDuration), LockoutDuration,
+                "must be null or positive");
+            Require(MinPasswordLength >= 1, nameof(MinPasswordLength), MinPasswordLength, "must be at least 1");
+            Require(MaxPasswordLength >= MinPasswordLength, nameof(MaxPasswordLength), MaxPasswordLength,
+                "must be at least MinPasswordLength");
+            Require(PasswordHistoryCount is >= 0 and <= 24, nameof(PasswordHistoryCount), PasswordHistoryCount,
+                "must be between 0 and 24");
+            Require(MaxPasswordAge is null || MaxPasswordAge > TimeSpan.Zero, nameof(MaxPasswordAge), MaxPasswordAge,
                 "must be null or positive");
             _ = CreatePasswordHasher();
         }
@@ -474,6 +515,24 @@ namespace BifrostQL.Server.Auth
                     $"The disabled column holds a {other.GetType().Name} value that is not a recognised flag."),
             };
         }
+
+        /// <summary>
+        /// Hashes <paramref name="newPassword"/> at the configured work factor, stores it on the user
+        /// row, and returns the stored hash (for the password history).
+        /// </summary>
+        internal async Task<string> SetPasswordAsync(string userId, string login, string newPassword, CancellationToken cancellationToken)
+        {
+            var hash = _passwordHasher.HashPassword(login, newPassword);
+            var dialect = _connFactory.Dialect;
+            await using var conn = _connFactory.GetConnection();
+            await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await StorePasswordHashAsync(conn, dialect, userId, hash, cancellationToken).ConfigureAwait(false);
+            return hash;
+        }
+
+        /// <summary>Whether <paramref name="password"/> is the plaintext of <paramref name="hash"/>.</summary>
+        internal bool PasswordMatchesHash(string login, string hash, string password) =>
+            _passwordHasher.VerifyHashedPassword(login, hash, password) != PasswordVerificationResult.Failed;
 
         private async Task StorePasswordHashAsync(
             DbConnection conn, ISqlDialect dialect, string id, string hash, CancellationToken cancellationToken)

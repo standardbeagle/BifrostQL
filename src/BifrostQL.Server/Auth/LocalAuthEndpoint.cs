@@ -33,6 +33,7 @@ namespace BifrostQL.Server.Auth
             app.Map(options.LoginPath, branch => branch.Run(HandleLoginAsync));
             app.Map(options.LogoutPath, branch => branch.Run(HandleLogoutAsync));
             app.Map(options.SessionPath, branch => branch.Run(HandleSessionAsync));
+            app.Map(options.PasswordChangePath, branch => branch.Run(HandlePasswordChangeAsync));
             if (options.AdminRole is not null)
             {
                 app.Map(options.AdminPath + "/revoke-sessions", branch => branch.Run(HandleRevokeSessionsAsync));
@@ -152,6 +153,15 @@ namespace BifrostQL.Server.Auth
 
             await context.RequestServices.GetRequiredService<ILocalAuthStateStore>()
                 .ClearLockoutAsync(result.Account.UserId, ct).ConfigureAwait(false);
+            if (await PasswordExpiredAsync(context, result.Account.UserId, now).ConfigureAwait(false))
+            {
+                await audit.RecordAsync(now, AuthAuditKind.LoginFailed, AuthAuditOutcome.Failure,
+                    result.Account.UserId, null, sourceIp, AuthAuditReasons.PasswordExpired, ct).ConfigureAwait(false);
+                // The password was right, so saying it has expired reveals nothing a guesser lacks.
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(new { error = "password_expired" }, ct).ConfigureAwait(false);
+                return;
+            }
             var sessionId = await context.RequestServices.GetRequiredService<LocalSessionManager>()
                 .IssueAsync(result.Account, sourceIp, now, context.RequestAborted).ConfigureAwait(false);
             var principal = BuildPrincipal(result.Identity, now, sessionId);
@@ -344,6 +354,130 @@ namespace BifrostQL.Server.Auth
         }
 
         /// <summary>
+        /// True when <see cref="LocalAuthOptions.MaxPasswordAge"/> is set and the user's newest
+        /// recorded password change is older than it, or no change is recorded.
+        /// </summary>
+        private static async Task<bool> PasswordExpiredAsync(HttpContext context, string userId, DateTimeOffset now)
+        {
+            if (context.RequestServices.GetRequiredService<LocalAuthOptions>().MaxPasswordAge is not { } maxAge)
+                return false;
+            var newest = await context.RequestServices.GetRequiredService<ILocalAuthStateStore>()
+                .GetPasswordHistoryAsync(userId, 1, context.RequestAborted).ConfigureAwait(false);
+            return newest.Count == 0 || now - newest[0].ChangedAt >= maxAge;
+        }
+
+        /// <summary>
+        /// <c>POST {PasswordChangePath}</c> with <c>{"login", "currentPassword", "newPassword"}</c>.
+        /// The current password is checked like a login (rate windows, lockout, audit), so the
+        /// endpoint is no side door for guessing; an expired password is accepted here. The new
+        /// password must satisfy <see cref="LocalAuthOptions.MinPasswordLength"/>,
+        /// <see cref="LocalAuthOptions.MaxPasswordLength"/>, <see cref="LocalAuthOptions.PasswordRequiresLetterAndDigit"/> and differ from the current and the last
+        /// <see cref="LocalAuthOptions.PasswordHistoryCount"/> passwords, else 400 with the broken
+        /// rule. On success every session of the user is revoked and the caller's cookie cleared;
+        /// the user signs in again with the new password.
+        /// </summary>
+        private static async Task HandlePasswordChangeAsync(HttpContext context)
+        {
+            if (!HttpMethods.IsPost(context.Request.Method))
+            {
+                context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+                return;
+            }
+            var store = context.RequestServices.GetRequiredService<LocalUserStore>();
+            LocalPasswordChangeRequest? request;
+            try
+            {
+                request = await context.Request.ReadFromJsonAsync<LocalPasswordChangeRequest>(context.RequestAborted)
+                    .ConfigureAwait(false);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                request = null;
+            }
+            if (request == null || string.IsNullOrWhiteSpace(request.Login)
+                || string.IsNullOrEmpty(request.CurrentPassword) || string.IsNullOrEmpty(request.NewPassword))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            var limiter = context.RequestServices.GetRequiredService<LocalLoginRateLimiter>();
+            if (!limiter.TryLogin(ProtocolSourceKey.Of(RemoteEndPoint(context)), request.Login))
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                return;
+            }
+
+            var ct = context.RequestAborted;
+            var result = await store.VerifyCredentialsAsync(request.Login, request.CurrentPassword, ct).ConfigureAwait(false);
+            var now = Now(context);
+            var sourceIp = SourceIp(context);
+            if (await RefuseLockedAsync(context, result.Account, AuthAuditKind.PasswordChangeRejected, now, sourceIp)
+                    .ConfigureAwait(false))
+                return;
+            if (!result.Succeeded || result.Account == null)
+            {
+                await RecordFailedAttemptAsync(context, result.Account, AuthAuditKind.PasswordChangeRejected, now, sourceIp)
+                    .ConfigureAwait(false);
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            var userId = result.Account.UserId;
+            var options = context.RequestServices.GetRequiredService<LocalAuthOptions>();
+            var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
+            var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
+            await state.ClearLockoutAsync(userId, ct).ConfigureAwait(false);
+
+            var violation = await PasswordPolicyViolationAsync(
+                options, state, store, request.Login, userId, request.CurrentPassword, request.NewPassword, ct).ConfigureAwait(false);
+            if (violation is not null)
+            {
+                await audit.RecordAsync(now, AuthAuditKind.PasswordChangeRejected, AuthAuditOutcome.Failure,
+                    userId, null, sourceIp, AuthAuditReasons.PasswordPolicy, ct).ConfigureAwait(false);
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(new { error = "password_policy", rule = violation }, ct).ConfigureAwait(false);
+                return;
+            }
+
+            var hash = await store.SetPasswordAsync(userId, request.Login, request.NewPassword, ct).ConfigureAwait(false);
+            // Keep at least one entry so MaxPasswordAge has a change date even with no reuse check.
+            await state.AppendPasswordHistoryAsync(userId, hash, now, Math.Max(options.PasswordHistoryCount, 1), ct)
+                .ConfigureAwait(false);
+            await audit.RecordAsync(now, AuthAuditKind.PasswordChanged, AuthAuditOutcome.Success,
+                userId, null, sourceIp, null, ct).ConfigureAwait(false);
+            await context.RequestServices.GetRequiredService<LocalSessionManager>()
+                .RevokeAllAsync(userId, LocalSessionRevokeReasons.PasswordChanged, null, sourceIp, now, ct).ConfigureAwait(false);
+            await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>The broken password rule (<c>min_length</c>, <c>max_length</c>, <c>letter_and_digit</c>, <c>reused</c>), or null.</summary>
+        private static async Task<string?> PasswordPolicyViolationAsync(
+            LocalAuthOptions options, ILocalAuthStateStore state, LocalUserStore store,
+            string login, string userId, string currentPassword, string newPassword, CancellationToken ct)
+        {
+            var length = newPassword.EnumerateRunes().Count();
+            if (length < options.MinPasswordLength)
+                return "min_length";
+            if (length > options.MaxPasswordLength)
+                return "max_length";
+            if (options.PasswordRequiresLetterAndDigit
+                && !(newPassword.EnumerateRunes().Any(System.Text.Rune.IsLetter) && newPassword.EnumerateRunes().Any(System.Text.Rune.IsDigit)))
+                return "letter_and_digit";
+            if (string.Equals(newPassword, currentPassword, StringComparison.Ordinal))
+                return "reused";
+            if (options.PasswordHistoryCount == 0)
+                return null;
+            foreach (var entry in await state.GetPasswordHistoryAsync(userId, options.PasswordHistoryCount, ct).ConfigureAwait(false))
+            {
+                if (store.PasswordMatchesHash(login, entry.PasswordHash, newPassword))
+                    return "reused";
+            }
+            return null;
+        }
+
+        /// <summary>
         /// <c>POST {AdminPath}/revoke-sessions</c> with <c>{"userId": "..."}</c>: revokes every live
         /// session of that user. Mapped only when <see cref="LocalAuthOptions.AdminRole"/> is set, and
         /// served only to an authenticated caller holding that role. The JSON content type is required
@@ -493,6 +627,19 @@ namespace BifrostQL.Server.Auth
         /// The store keeps only its SHA-256.
         /// </summary>
         public const string SessionId = "bifrost:sid";
+    }
+
+    /// <summary>JSON body of the local-auth password-change endpoint.</summary>
+    public sealed record LocalPasswordChangeRequest
+    {
+        /// <summary>The login (email) of the account.</summary>
+        public string? Login { get; init; }
+
+        /// <summary>The password in force now, expired or not.</summary>
+        public string? CurrentPassword { get; init; }
+
+        /// <summary>The password to set.</summary>
+        public string? NewPassword { get; init; }
     }
 
     /// <summary>JSON body of the local-auth administration endpoints.</summary>

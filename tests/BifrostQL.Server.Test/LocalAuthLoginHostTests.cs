@@ -476,6 +476,140 @@ namespace BifrostQL.Server.Test
                 "a locked account must not be told apart from a missing one");
         }
 
+        private static async Task<HttpResponseMessage> ChangePasswordAsync(HttpClient client, string current, string next)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/password")
+            {
+                Content = JsonContent.Create(new { login = Login, currentPassword = current, newPassword = next }),
+            };
+            return await client.SendAsync(request);
+        }
+
+        private static async Task<string?> RuleOf(HttpResponseMessage response)
+        {
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return doc.RootElement.GetProperty("rule").GetString();
+        }
+
+        [Fact]
+        public async Task PasswordChange_EnforcesLengthAndTheLastFourPasswords()
+        {
+            var defaults = new LocalAuthOptions();
+            defaults.MinPasswordLength.Should().Be(12, "PCI DSS 8.3.6");
+            defaults.PasswordRequiresLetterAndDigit.Should().BeTrue("PCI DSS 8.3.6");
+            defaults.PasswordHistoryCount.Should().Be(4, "PCI DSS 8.3.7");
+            defaults.MaxPasswordAge.Should().BeNull("rotation is the deployment's choice");
+            var client = await StartForLockoutAsync();
+
+            (await RuleOf(await ChangePasswordAsync(client, Password, "short pass1"))).Should().Be("min_length");
+            (await RuleOf(await ChangePasswordAsync(client, Password, "no digits in this one"))).Should().Be("letter_and_digit");
+            (await RuleOf(await ChangePasswordAsync(client, Password, "1234567890123"))).Should().Be("letter_and_digit");
+
+            var used = new[] { "new passphrase no 1", "new passphrase no 2", "new passphrase no 3",
+                "new passphrase no 4", "new passphrase no 5" };
+            var current = Password;
+            foreach (var next in used)
+            {
+                (await ChangePasswordAsync(client, current, next)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+                current = next;
+            }
+
+            // used[4] is current; used[1..4] are the last four. used[0] is five back.
+            foreach (var recent in used.Skip(1))
+                (await RuleOf(await ChangePasswordAsync(client, current, recent))).Should().Be("reused",
+                    $"'{recent}' is one of the last four passwords");
+            (await ChangePasswordAsync(client, current, used[0])).StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "the first new password is now five changes back");
+
+            var audit = await AuditAsync();
+            audit.Count(e => e.Kind == AuthAuditKind.PasswordChanged).Should().Be(6);
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.PasswordChangeRejected && e.Reason == AuthAuditReasons.PasswordPolicy);
+        }
+
+        [Fact]
+        public async Task PasswordChange_RevokesEverySession_AndTheOldPasswordStopsWorking()
+        {
+            var client = await StartForLockoutAsync();
+            var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+
+            (await ChangePasswordAsync(client, Password, "a brand new passphrase 9")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "the change revokes sessions at once, not at the next revalidation");
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            using var fresh = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { login = Login, password = "a brand new passphrase 9" }),
+            };
+            SessionCookie(await client.SendAsync(fresh));
+        }
+
+        [Fact]
+        public async Task PasswordChange_WrongCurrentPassword_CountsTowardLockout()
+        {
+            var client = await StartForLockoutAsync(o => o.LockoutThreshold = 3);
+            for (var i = 0; i < 3; i++)
+                (await ChangePasswordAsync(client, "wrong", "a brand new passphrase 9")).StatusCode
+                    .Should().Be(HttpStatusCode.Unauthorized);
+
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "guesses through the change endpoint lock the account like login guesses");
+            (await ChangePasswordAsync(client, Password, "a brand new passphrase 9")).StatusCode
+                .Should().Be(HttpStatusCode.Unauthorized, "the change endpoint honours the lock too");
+        }
+
+        [Fact]
+        public async Task MaxPasswordAge_ExpiresThePassword_UntilItIsChanged()
+        {
+            var client = await StartForLockoutAsync(o => o.MaxPasswordAge = TimeSpan.FromDays(90));
+
+            using (var never = await PostLoginAsync(client, Password, "10.0.0.1"))
+            {
+                never.StatusCode.Should().Be(HttpStatusCode.Forbidden, "no recorded change date counts as expired");
+                (await never.Content.ReadAsStringAsync()).Should().Contain("password_expired");
+                never.Headers.Contains("Set-Cookie").Should().BeFalse("an expired password issues no session");
+            }
+
+            (await ChangePasswordAsync(client, Password, "a brand new passphrase 9")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+            using var fresh = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { login = Login, password = "a brand new passphrase 9" }),
+            };
+            SessionCookie(await client.SendAsync(fresh));
+
+            _clock.Advance(TimeSpan.FromDays(91));
+            using var stale = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { login = Login, password = "a brand new passphrase 9" }),
+            };
+            (await client.SendAsync(stale)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await AuditAsync()).Should().Contain(e => e.Reason == AuthAuditReasons.PasswordExpired);
+        }
+
+        [Fact]
+        public void PolicyOptions_OutOfRange_FailAtStartup()
+        {
+            var cases = new Action<LocalAuthOptions>[]
+            {
+                o => o.SessionIdleTimeout = TimeSpan.Zero,
+                o => o.SessionIdleTimeout = o.SessionLifetime + TimeSpan.FromSeconds(1),
+                o => o.MaxConcurrentSessions = 0,
+                o => o.LockoutThreshold = 0,
+                o => o.LockoutDuration = TimeSpan.Zero,
+                o => o.MinPasswordLength = 0,
+                o => o.MaxPasswordLength = 11,
+                o => o.PasswordHistoryCount = 25,
+                o => o.MaxPasswordAge = TimeSpan.Zero,
+            };
+            foreach (var configure in cases)
+            {
+                var services = new ServiceCollection();
+                var act = () => services.AddBifrostLocalAuth(ConnectionString, configure);
+                act.Should().Throw<ArgumentOutOfRangeException>();
+            }
+        }
+
         [Fact]
         public async Task LoginAudit_RecordsSuccessAndFailure_WithoutCredentials()
         {

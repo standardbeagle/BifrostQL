@@ -43,10 +43,6 @@ namespace BifrostQL.Core.Resolvers
             var bifrost = new BifrostContextAdapter(context);
             var conFactory = bifrost.ConnFactory;
 
-            var validationResult = conFactory.Dialect.ValidateReadOnlySql(sql);
-            if (!validationResult.IsValid)
-                throw new BifrostExecutionError($"SQL validation failed: {validationResult.ErrorMessage}");
-
             var maxTimeout = GetConfiguredTimeout();
             if (timeout > maxTimeout)
                 timeout = maxTimeout;
@@ -55,7 +51,7 @@ namespace BifrostQL.Core.Resolvers
 
             var maxRows = GetConfiguredMaxRows();
 
-            return await ExecuteQueryAsync(conFactory, sql, paramsArg, timeout, maxRows);
+            return await ExecuteQueryAsync(conFactory, sql, paramsArg, timeout, maxRows, context.CancellationToken);
         }
 
         ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
@@ -93,27 +89,15 @@ namespace BifrostQL.Core.Resolvers
                 _model.GetMetadataValue(MaxRowsMetadataKey), DefaultMaxRows, MaxRowsMetadataKey);
 
         private static async Task<List<Dictionary<string, object?>>> ExecuteQueryAsync(
-            IDbConnFactory connFactory, string sql, Dictionary<string, object?>? parameters, int timeoutSeconds, int maxRows)
+            IDbConnFactory connFactory, string sql, Dictionary<string, object?>? parameters, int timeoutSeconds, int maxRows,
+            CancellationToken cancellationToken)
         {
+            RawSqlResult result;
             try
             {
-                // Shared with the Photino SQL bridge. The executor returns a columnar
-                // result; the GraphQL field shape is a list of name-keyed rows, so we
-                // adapt here. Duplicate column names collapse (last wins) — unchanged
-                // from the original dictionary-based behavior.
-                var result = await RawSqlExecutor.ExecuteAsync(
-                    connFactory, sql, parameters, timeoutSeconds, maxRows);
-
-                var results = new List<Dictionary<string, object?>>(result.Rows.Count);
-                foreach (var row in result.Rows)
-                {
-                    var dict = new Dictionary<string, object?>(result.Columns.Count);
-                    for (var i = 0; i < result.Columns.Count; i++)
-                        dict[result.Columns[i].Name] = row[i];
-                    results.Add(dict);
-                }
-
-                return results;
+                // Validated by the dialect and run in its read-only scope (RawSqlExecutor).
+                result = await RawSqlExecutor.ExecuteReadOnlyAsync(
+                    connFactory, sql, parameters, timeoutSeconds, maxRows, cancellationToken);
             }
             catch (DbException ex)
             {
@@ -126,6 +110,20 @@ namespace BifrostQL.Core.Resolvers
                 // InnerException for server-side logging.
                 throw BifrostExecutionError.FromDatabaseException(ex);
             }
+
+            // The executor returns a columnar result; the GraphQL field shape is a list
+            // of name-keyed rows, so we adapt here. Duplicate column names collapse
+            // (last wins) — unchanged from the original dictionary-based behavior.
+            var results = new List<Dictionary<string, object?>>(result.Rows.Count);
+            foreach (var row in result.Rows)
+            {
+                var dict = new Dictionary<string, object?>(result.Columns.Count);
+                for (var i = 0; i < result.Columns.Count; i++)
+                    dict[result.Columns[i].Name] = row[i];
+                results.Add(dict);
+            }
+
+            return results;
         }
     }
 }

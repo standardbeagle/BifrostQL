@@ -43,6 +43,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public abstract RawSqlValidationResult ValidateReadOnlySql(string sql);
 
     /// <inheritdoc />
+    public abstract Task<ReadOnlySqlScope> BeginReadOnlyScopeAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken);
+
+    /// <inheritdoc />
     public virtual string ParameterPrefix => "@";
 
     /// <inheritdoc />

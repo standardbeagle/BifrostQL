@@ -35,7 +35,7 @@ introspected schema the shell already loads.
 The editor executes **only through the desktop Photino `exec-sql` bridge** — a
 local user against their own connection string. It does **not** open a
 server-side arbitrary-SQL execution path. The server's raw-SQL resolver keeps
-its `RawSqlValidator` gate; the desktop bridge is intentionally unvalidated
+its SELECT-only gate and read-only transaction; the desktop bridge is intentionally unvalidated
 local SQL and stays desktop-only. The completion cache is read-only and never
 mutates schema.
 

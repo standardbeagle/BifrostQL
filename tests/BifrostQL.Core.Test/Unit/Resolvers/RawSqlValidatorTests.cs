@@ -586,6 +586,35 @@ public sealed class RawSqlValidatorTests
         result.IsValid.Should().BeFalse();
     }
 
+    // T-SQL needs no separator between statements, so a second statement after a SELECT
+    // carries no `;` for the lexer to find. SQL Server's dialect also parses the text and
+    // requires exactly one SELECT. Each payload passes the T-SQL lexicon on its own.
+    [Theory]
+    [InlineData("SELECT 1 SELECT 2")]
+    [InlineData("SELECT 1 CHECKPOINT")]
+    [InlineData("SELECT 1 x FROM t SELECT 2")]
+    public void SqlServerDialect_SecondStatementWithoutSeparator_ReturnsFail(string sql)
+    {
+        new RawSqlValidator(RawSqlLexicon.SqlServer).Validate(sql).IsValid
+            .Should().BeTrue("the lexer alone cannot see this statement boundary");
+
+        var result = BifrostQL.SqlServer.SqlServerDialect.Instance.ValidateReadOnlySql(sql);
+
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("SELECT 1")]
+    [InlineData("SELECT id, name FROM [dbo].[Users] WHERE id = @id ORDER BY name")]
+    [InlineData("WITH c AS (SELECT 1 AS x) SELECT x FROM c")]
+    [InlineData("SELECT 1 UNION ALL SELECT 2")]
+    public void SqlServerDialect_SingleSelect_ReturnsValid(string sql)
+    {
+        var result = BifrostQL.SqlServer.SqlServerDialect.Instance.ValidateReadOnlySql(sql);
+
+        result.IsValid.Should().BeTrue(result.ErrorMessage);
+    }
+
     #endregion
 
     #region Schema Integration Tests

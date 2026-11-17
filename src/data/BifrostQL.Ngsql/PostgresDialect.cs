@@ -17,6 +17,28 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     /// <inheritdoc />
     public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
 
+    /// <inheritdoc />
+    /// <remarks><c>SET TRANSACTION READ ONLY</c>: PostgreSQL refuses every write, including
+    /// <c>nextval()</c> and writes inside a called function, for the rest of the transaction.</remarks>
+    public override async Task<ReadOnlySqlScope> BeginReadOnlyScopeAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+    {
+        var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var scope = new ReadOnlySqlScope(transaction);
+        try
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.Transaction = transaction;
+            cmd.CommandText = "SET TRANSACTION READ ONLY";
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            return scope;
+        }
+        catch
+        {
+            await scope.DisposeAsync();
+            throw;
+        }
+    }
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly PostgresDialect Instance = new();
 

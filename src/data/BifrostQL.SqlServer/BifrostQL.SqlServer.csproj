@@ -16,6 +16,8 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.2" />
+		<!-- Parses _rawQuery text: SQL Server has no read-only transaction to fall back on. -->
+		<PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="180.154.0" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -25,7 +25,10 @@ namespace BifrostQL.Core.Resolvers
     /// (optionally with a CTE) and name none of the verbs or functions that write,
     /// change the session or reach outside the database.
     ///
-    /// A lexical check cannot see a write made inside a function the SELECT calls.
+    /// It is the secondary guard. A lexical check cannot see a write made inside a
+    /// function the SELECT calls; <see cref="RawSqlExecutor.ExecuteReadOnlyAsync"/>
+    /// stops that by running the text inside the dialect's
+    /// <see cref="QueryModel.ISqlDialect.BeginReadOnlyScopeAsync"/>.
     ///
     /// The validator lexes the exact text that will be executed — it never
     /// validates a rewritten copy. String literals, quoted identifiers and

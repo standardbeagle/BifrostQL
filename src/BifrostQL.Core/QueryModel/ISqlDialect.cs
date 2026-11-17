@@ -125,6 +125,16 @@ public interface ISqlDialect
     Resolvers.RawSqlValidationResult ValidateReadOnlySql(string sql);
 
     /// <summary>
+    /// Opens the transaction client-authored SQL (<c>_rawQuery</c>) runs in on an open
+    /// <paramref name="connection"/>. Where the engine has one, the transaction is
+    /// read-only, so the database itself refuses a write the lexical check let through
+    /// (a SELECT calling a function that writes). Disposing the scope always rolls back,
+    /// which is SQL Server's whole guard: it has no read-only transaction, so its
+    /// <see cref="ValidateReadOnlySql"/> also parses the text with ScriptDom.
+    /// </summary>
+    Task<ReadOnlySqlScope> BeginReadOnlyScopeAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken);
+
+    /// <summary>
     /// The prefix character for parameterized query parameters. All dialects use "@".
     /// </summary>
     string ParameterPrefix { get; }

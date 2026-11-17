@@ -154,7 +154,7 @@ consistently.
 
 | Property | Values | Applies to | Description |
 |----------|--------|-----------|-------------|
-| `raw-sql` | `enabled`/`disabled` | model | Expose `_rawQuery(sql:, params:, timeout:)` |
+| `raw-sql` | `enabled`/`disabled` | model | Expose `_rawQuery(sql:, params:, timeout:)`: one `SELECT`, run in a rolled-back transaction (read-only on PostgreSQL and MySQL, `query_only` on SQLite) |
 | `raw-sql-role` | role name | model | Role required for `_rawQuery` (default: `bifrost-raw-sql`) |
 | `raw-sql-timeout` | seconds | model | Max raw SQL timeout |
 | `raw-sql-max-rows` | number | model | Max rows returned by raw SQL |

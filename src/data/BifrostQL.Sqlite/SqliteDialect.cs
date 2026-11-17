@@ -16,6 +16,39 @@ public sealed class SqliteDialect : StandardConcatDialectBase
     /// <inheritdoc />
     public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>PRAGMA query_only</c> makes SQLite refuse every change to the database file.
+    /// It is connection state, and pooled connections keep it, so the scope turns it
+    /// back off after the rollback. The transaction is deferred: <c>BEGIN IMMEDIATE</c>
+    /// takes a write lock a read-only scope has no use for.
+    /// </remarks>
+    public override async Task<ReadOnlySqlScope> BeginReadOnlyScopeAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+    {
+        var sqliteConnection = connection as Microsoft.Data.Sqlite.SqliteConnection
+            ?? throw new ArgumentException($"SqliteDialect needs a SqliteConnection, got {connection.GetType().Name}.", nameof(connection));
+        await SetQueryOnlyAsync(sqliteConnection, true, cancellationToken);
+        try
+        {
+            // No async overload takes `deferred`; a deferred BEGIN takes no lock and does
+            // no file I/O (the first read does), so this sync call never blocks.
+            var transaction = sqliteConnection.BeginTransaction(deferred: true);
+            return new ReadOnlySqlScope(transaction, c => SetQueryOnlyAsync(c, false, CancellationToken.None));
+        }
+        catch
+        {
+            await SetQueryOnlyAsync(sqliteConnection, false, CancellationToken.None);
+            throw;
+        }
+    }
+
+    private static async Task SetQueryOnlyAsync(System.Data.Common.DbConnection connection, bool on, CancellationToken cancellationToken)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = on ? "PRAGMA query_only = ON" : "PRAGMA query_only = OFF";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly SqliteDialect Instance = new();
 

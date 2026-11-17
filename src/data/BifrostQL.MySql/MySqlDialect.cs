@@ -16,6 +16,17 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
     /// <inheritdoc />
     public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
 
+    /// <inheritdoc />
+    /// <remarks><c>START TRANSACTION READ ONLY</c>: MySQL refuses writes to every
+    /// non-temporary table, including writes inside a called stored function.</remarks>
+    public override async Task<ReadOnlySqlScope> BeginReadOnlyScopeAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+    {
+        var mySqlConnection = connection as MySqlConnector.MySqlConnection
+            ?? throw new ArgumentException($"MySqlDialect needs a MySqlConnection, got {connection.GetType().Name}.", nameof(connection));
+        var transaction = await mySqlConnection.BeginTransactionAsync(System.Data.IsolationLevel.Unspecified, isReadOnly: true, cancellationToken);
+        return new ReadOnlySqlScope(transaction);
+    }
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly MySqlDialect Instance = new();
 

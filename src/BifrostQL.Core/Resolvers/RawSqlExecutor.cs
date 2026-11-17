@@ -32,9 +32,9 @@ namespace BifrostQL.Core.Resolvers
     /// name-keyed rows) and the Photino in-process SQL bridge (which forwards the
     /// columnar shape straight to the grid).
     ///
-    /// This executor performs no SQL validation — callers that need to restrict
-    /// statement kinds (e.g. SELECT-only) validate before calling. The desktop
-    /// bridge intentionally allows full DML/DDL.
+    /// <see cref="ExecuteAsync"/> runs the text unrestricted: the desktop bridge and
+    /// the saved-object store intentionally issue DML/DDL. Client-authored SQL goes
+    /// through <see cref="ExecuteReadOnlyAsync"/>.
     /// </summary>
     public static class RawSqlExecutor
     {
@@ -49,7 +49,47 @@ namespace BifrostQL.Core.Resolvers
         {
             await using var conn = connFactory.GetConnection();
             await conn.OpenAsync(ct);
+            return await RunAsync(conn, null, sql, parameters, timeoutSeconds, maxRows, ct, logger);
+        }
+
+        /// <summary>
+        /// Runs client-authored SQL: the dialect's <see cref="ISqlDialect.ValidateReadOnlySql"/>
+        /// must accept it, and it executes inside <see cref="ISqlDialect.BeginReadOnlyScopeAsync"/>,
+        /// whose transaction is read-only where the engine has one and is always rolled back.
+        /// The lexical check is the cheap first gate; the database's refusal is the one that
+        /// holds against a write the lexer cannot see (a SELECT calling a function that writes).
+        /// </summary>
+        public static async Task<RawSqlResult> ExecuteReadOnlyAsync(
+            IDbConnFactory connFactory,
+            string sql,
+            IReadOnlyDictionary<string, object?>? parameters,
+            int timeoutSeconds,
+            int maxRows,
+            CancellationToken ct,
+            ILogger? logger = null)
+        {
+            var validation = connFactory.Dialect.ValidateReadOnlySql(sql);
+            if (!validation.IsValid)
+                throw new BifrostExecutionError($"SQL validation failed: {validation.ErrorMessage}");
+
+            await using var conn = connFactory.GetConnection();
+            await conn.OpenAsync(ct);
+            await using var scope = await connFactory.Dialect.BeginReadOnlyScopeAsync(conn, ct);
+            return await RunAsync(conn, scope.Transaction, sql, parameters, timeoutSeconds, maxRows, ct, logger);
+        }
+
+        private static async Task<RawSqlResult> RunAsync(
+            DbConnection conn,
+            DbTransaction? transaction,
+            string sql,
+            IReadOnlyDictionary<string, object?>? parameters,
+            int timeoutSeconds,
+            int maxRows,
+            CancellationToken ct,
+            ILogger? logger)
+        {
             await using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText = sql;
             cmd.CommandTimeout = timeoutSeconds;
 

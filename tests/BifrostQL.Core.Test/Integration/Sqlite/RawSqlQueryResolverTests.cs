@@ -54,9 +54,9 @@ public sealed class RawSqlQueryResolverTests : IDisposable
         new(new ClaimsIdentity(new[] { new Claim(ClaimTypes.Role, role) }, "test"));
 
     private RawSqlContext Context(IDbModel model, object? user, string sql,
-        Dictionary<string, object?>? sqlParams = null)
+        Dictionary<string, object?>? sqlParams = null, CancellationToken cancellationToken = default)
     {
-        var ctx = new RawSqlContext(_factory, model, sql, sqlParams);
+        var ctx = new RawSqlContext(_factory, model, sql, sqlParams) { CancellationToken = cancellationToken };
         if (user != null)
             ctx.UserContext["user"] = user;
         return ctx;
@@ -166,6 +166,20 @@ public sealed class RawSqlQueryResolverTests : IDisposable
         result[0]["name"].Should().Be("beta");
     }
 
+    [Fact]
+    public async Task CancelledRequest_StopsTheQuery()
+    {
+        await SeedAsync();
+        var model = BuildModel();
+        var resolver = new RawSqlQueryResolver(model);
+
+        var act = async () => await resolver.ResolveAsync(
+            Context(model, PrincipalWithRole(Role), "SELECT id FROM widget",
+                cancellationToken: new CancellationToken(canceled: true)));
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     /// <summary>Minimal raw-SQL resolver context backed by a real connection factory.</summary>
     private sealed class RawSqlContext : IBifrostFieldContext
     {
@@ -187,7 +201,7 @@ public sealed class RawSqlQueryResolverTests : IDisposable
         public IDictionary<string, object?> UserContext { get; } = new Dictionary<string, object?>();
         public IServiceProvider? RequestServices => null;
         public IDictionary<string, object?> InputExtensions { get; }
-        public CancellationToken CancellationToken => CancellationToken.None;
+        public CancellationToken CancellationToken { get; init; }
         public string FieldName => "_rawQuery";
         public string? FieldAlias => null;
         public object? Source => null;

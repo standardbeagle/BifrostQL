@@ -16,7 +16,32 @@ public sealed class SqlServerDialect : SqlDialectBase
     private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.SqlServer);
 
     /// <inheritdoc />
-    public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
+    /// <remarks>
+    /// SQL Server has no read-only transaction, and T-SQL needs no separator between
+    /// statements, so after the lexical check the text is parsed with ScriptDom and must
+    /// be exactly one batch holding one <c>SELECT</c> with no <c>INTO</c>.
+    /// </remarks>
+    public override RawSqlValidationResult ValidateReadOnlySql(string sql)
+    {
+        var lexical = RawSqlValidator.Validate(sql);
+        if (!lexical.IsValid)
+            return lexical;
+
+        var parser = new Microsoft.SqlServer.TransactSql.ScriptDom.TSql160Parser(initialQuotedIdentifiers: true);
+        var fragment = parser.Parse(new StringReader(sql), out var errors);
+        if (errors.Count > 0)
+            return RawSqlValidationResult.Fail("SQL could not be parsed as T-SQL.");
+        if (fragment is not Microsoft.SqlServer.TransactSql.ScriptDom.TSqlScript { Batches: [{ Statements: [var statement] }] }
+            || statement is not Microsoft.SqlServer.TransactSql.ScriptDom.SelectStatement { Into: null })
+            return RawSqlValidationResult.Fail("Only a single SELECT statement is allowed.");
+        return RawSqlValidationResult.Ok();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>SQL Server has no read-only transaction: the scope's guard is that it always
+    /// rolls back, behind the single-SELECT parse in <see cref="ValidateReadOnlySql"/>.</remarks>
+    public override async Task<ReadOnlySqlScope> BeginReadOnlyScopeAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+        => new ReadOnlySqlScope(await connection.BeginTransactionAsync(cancellationToken));
 
     /// <summary>Shared singleton instance.</summary>
     public static readonly SqlServerDialect Instance = new();

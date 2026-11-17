@@ -171,6 +171,9 @@ namespace BifrostQL.Server.Resp
             // AUTH, a PING that answers NOAUTH) just before each read resets the timer forever and
             // holds an admission slot it never earned. The caller armed it; this loop only ever
             // reads the SHRINKING remainder, and a successful AUTH retires it below.
+            // Whether the previous iteration ran authenticated: the credentialed→anonymous edge
+            // (RESET) is the one transition that arms a fresh window (invariant 15).
+            var wasAuthenticated = false;
             try
             {
                 while (true)
@@ -193,6 +196,12 @@ namespace BifrostQL.Server.Resp
                         // deadline. Nothing a peer reaches for free (PING, a failed AUTH, HELLO)
                         // touches it.
                         deadline.RetireOnCredentialedAction();
+                    else if (wasAuthenticated)
+                        // RESET dropped a credentialed session back to anonymous. The deadline was
+                        // retired by its AUTH, so without a fresh window that state would read with
+                        // no timeout at all and hold its admission slot forever.
+                        deadline.ReArmOnReturnToAnonymous();
+                    wasAuthenticated = session.IsAuthenticated;
                     // A front door requiring no authentication never authenticates anyone, so its
                     // sessions would keep the pre-auth budget forever and be dropped one timeout
                     // after connect (H11). There is no pre-auth phase to bound there: such a

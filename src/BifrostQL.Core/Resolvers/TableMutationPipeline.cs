@@ -365,11 +365,14 @@ namespace BifrostQL.Core.Resolvers
             });
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-            await AfterCommitAsync(ctx, async () =>
-            {
-                await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext);
-                await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
-            });
+            // Observers fire only for a write that changed a row: a tenant/policy-scoped-away
+            // update affects none, and an on-mutation workflow must not start for it.
+            if (result > 0)
+                await AfterCommitAsync(ctx, async () =>
+                {
+                    await MutationNotifier.NotifyMutationAsync(ctx.Services, table, MutationType.Update, updatedData, result, ctx.UserContext);
+                    await MutationNotifier.NotifyStateTransitionAsync(ctx.Services, stateTransition, ctx.UserContext);
+                });
             // The update mutation field is typed `Int`, so its scalar return cannot
             // carry a composite key. For a single-key table we keep returning the key
             // value (identifies the affected row, back-compat). For a composite key
@@ -431,8 +434,9 @@ namespace BifrostQL.Core.Resolvers
             // Thrown AFTER the commit so the enqueued pending row survives.
             if (outcome.PendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(outcome.PendingApproval);
-            await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
-                ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext));
+            if (outcome.Affected > 0)
+                await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
+                    ctx.Services, table, outcome.NotifyType, outcome.Data, outcome.Affected, ctx.UserContext));
             return outcome.Affected;
         }
 

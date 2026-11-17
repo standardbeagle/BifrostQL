@@ -140,9 +140,10 @@ namespace BifrostQL.Core.Resolvers
 
             // Post-commit observers get ONE aggregate notification: the fieldset written and
             // the DB-reported affected count as Result (invariant 8b — the count IS the value
-            // here, there is no single key).
-            await MutationNotifier.NotifyMutationAsync(
-                ctx.Services, table, MutationType.Update, dbData, affected, ctx.UserContext);
+            // here, there is no single key). A filter that matched nothing notifies nobody.
+            if (affected > 0)
+                await MutationNotifier.NotifyMutationAsync(
+                    ctx.Services, table, MutationType.Update, dbData, affected, ctx.UserContext);
             return affected;
         }
 

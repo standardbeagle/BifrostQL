@@ -263,6 +263,10 @@ namespace BifrostQL.Core.Resolvers
 
             foreach (var outcome in outcomes)
             {
+                // A scoped-away action changed no row: no observer, workflow or transition
+                // hears about it (the single-row pipeline applies the same gate).
+                if (outcome.Affected <= 0)
+                    continue;
                 if (mutationObservers is not null && !triggersSuppressed)
                 {
                     await mutationObservers.NotifyAsync(new MutationObserverContext
@@ -277,10 +281,7 @@ namespace BifrostQL.Core.Resolvers
                         MutationState = MutationObserverContext.NewMutationState(),
                     });
                 }
-                // Affected > 0 gates the transition exactly as it does on the single-row
-                // pipeline: a scoped-away action affects no rows, so its transition
-                // describes a row the caller never touched and must not be published.
-                if (outcome.Transition is not null && outcome.Affected > 0 && transitionObservers is not null)
+                if (outcome.Transition is not null && transitionObservers is not null)
                 {
                     await transitionObservers.NotifyAsync(outcome.Transition, userContext);
                 }

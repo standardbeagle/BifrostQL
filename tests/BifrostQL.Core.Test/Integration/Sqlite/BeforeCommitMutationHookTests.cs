@@ -149,6 +149,36 @@ public sealed class BeforeCommitMutationHookTests : IAsyncLifetime
         observer.Contexts.Should().BeEmpty("the post-commit observer must not fire when the write fails");
     }
 
+    // A write that changes no row (a missing key here; a tenant/policy-scoped-away key takes the
+    // same zero-row path) must not reach post-commit observers: WorkflowTriggerHost is one, and
+    // it would start every on-mutation workflow for a change that never happened.
+    [Theory]
+    [InlineData("mutation { widgets(update: { id: 999, name: \"ghost\" }) }")]
+    [InlineData("mutation { widgets(delete: { id: 999 }) }")]
+    public async Task ZeroRowWrite_DoesNotNotifyPostCommitObservers(string mutation)
+    {
+        var observer = new CapturingObserver();
+
+        var result = await ExecuteMutationAsync(mutation, new VetoHook(veto: false), observer);
+
+        result.Errors.Should().BeNullOrEmpty();
+        observer.Contexts.Should().BeEmpty("no row changed");
+    }
+
+    [Fact]
+    public async Task Batch_NotifiesOnlyTheActionsThatChangedARow()
+    {
+        var observer = new CapturingObserver();
+
+        var result = await ExecuteMutationAsync(
+            "mutation { widgets_batch(actions: [{ update: { id: 999, name: \"ghost\" } }, { update: { id: 1, name: \"real\" } }]) }",
+            new VetoHook(veto: false), observer);
+
+        result.Errors.Should().BeNullOrEmpty();
+        observer.Contexts.Should().ContainSingle("only the update of id 1 changed a row")
+            .Which.Data["name"].Should().Be("real");
+    }
+
     private async Task<ExecutionResult> ExecuteMutationAsync(
         string mutation, IBeforeCommitMutationHook hook, IMutationObserver? observer)
     {

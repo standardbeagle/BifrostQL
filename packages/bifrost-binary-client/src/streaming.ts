@@ -116,13 +116,13 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
   }
 
   /**
-   * Highest contiguous chunk sequence that has been ingested so far, or -1 if
-   * no contiguous run has started yet. Used by the reconnect path to send a
-   * Resume frame asking the server to retransmit only the chunks the client
-   * is still missing.
+   * True once any chunk has been accepted, contiguous or not. The reconnect
+   * path fails such a stream instead of re-running it: the server cannot
+   * resume a transfer on a new socket, and a re-run would deliver the same
+   * chunks again.
    */
-  get lastContiguousSequence(): number {
-    return this.nextSequence - 1;
+  get receivedAnyChunk(): boolean {
+    return this.nextSequence > 0 || this.pendingChunks.size > 0;
   }
 
   /**
@@ -149,8 +149,8 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
     if (this.closed || this.errorValue !== null) {
       return;
     }
-    // Drop a chunk whose sequence was already consumed (a retransmit or
-    // duplicate after a resume). drainContiguous only ever pulls sequences at
+    // Drop a chunk whose sequence was already consumed (a duplicate or a
+    // server retransmit). drainContiguous only ever pulls sequences at
     // or above nextSequence, so a stale one parked in pendingChunks would sit
     // there forever — keeping pendingChunks.size > 0 so the auto-complete check
     // never fires and the consumer hangs until the idle timeout.

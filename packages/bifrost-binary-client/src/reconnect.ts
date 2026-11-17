@@ -1,33 +1,15 @@
 /**
- * Auto-reconnect with exponential backoff and RESUME protocol for
- * BifrostBinaryClient.
+ * Auto-reconnect with exponential backoff for BifrostBinaryClient.
  *
- * ## RESUME wire format
+ * ## No resume across a reconnect
  *
- * Discovered from `src/BifrostQL.Server/BifrostMessage.cs` and the Resume
- * handler in `src/BifrostQL.Server/BifrostBinaryMiddleware.cs` (the `if
- * (request.Type == BifrostMessageType.Resume)` branch).
- *
- * A Resume frame is a regular `BifrostMessage` envelope with:
- *   - field  1 (request_id, varint)   — the original request_id whose chunked
- *                                        transfer we want to resume.
- *   - field  2 (type, varint)         — 6 (BifrostMessageType.Resume).
- *   - field 12 (last_sequence, varint) — the highest contiguous chunk sequence
- *                                        the client has already received. The
- *                                        server retransmits everything strictly
- *                                        after this value (i.e. starting at
- *                                        `last_sequence + 1`).
- *
- * A sentinel value of `0xFFFFFFFF` (`uint.MaxValue` on the server) for
- * `last_sequence` means "no chunks received yet, retransmit from sequence 0".
- * `ChunkBuffer.GetChunksAfter` interprets the sentinel exactly that way.
- *
- * The server replies with a `ResumeAck` (type 7) frame whose `chunk_total`
- * field carries the count of remaining chunks it is about to retransmit
- * (0 if the entry has expired or is unknown). The actual retransmitted chunks
- * follow as ordinary `Chunk` frames addressed to the same `request_id`, so the
- * existing `handleChunkedFrame` path on the client picks them up without any
- * resume-specific code.
+ * The server's `Resume` frame retransmits from its `ChunkBuffer`, which lives
+ * and dies with one connection (`BifrostBinaryMiddleware.HandleConnectionAsync`
+ * creates it per socket, so one principal can never replay another's chunks).
+ * A reconnected socket therefore has nothing to resume, and the client never
+ * sends `Resume`. After a reconnect it re-sends queries from the start,
+ * rejects mutations, and fails streams that had already delivered chunks; see
+ * `BifrostBinaryClient.replayPendingAfterReconnect`.
  *
  * ## Reconnect lifecycle
  *

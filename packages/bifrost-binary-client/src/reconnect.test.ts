@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
   BifrostMessageType,
-  RESUME_NO_CHUNKS_RECEIVED,
   decodeMessage,
   emptyChunkInfo,
   encodeMessage,
@@ -488,7 +487,7 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     client.close();
   });
 
-  it("sends a Resume frame for a pending request that had received some chunks", async () => {
+  it("re-sends the original query (never Resume) for a request whose chunked response was cut off", async () => {
     const client = await makeConnectedClient();
     const firstWs = tracker.last;
 
@@ -508,9 +507,9 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     );
     const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
 
-    // Build a multi-chunk inner Result. The exact frame count depends on the
-    // serialized envelope size, so we deliver the first half before the
-    // disconnect and let the server retransmit the rest after reconnect.
+    // Build a multi-chunk inner Result and deliver the first half before the
+    // disconnect. The real server keeps sent chunks per connection, so the
+    // fresh socket can only re-run the query from the start.
     const inner = emptyMessage({
       requestId,
       type: BifrostMessageType.Result,
@@ -534,34 +533,35 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     secondWs.simulateOpen();
     await vi.advanceTimersByTimeAsync(0);
 
-    // Should send a Resume frame with last_sequence = (halfway - 1) (highest
-    // contiguous chunk that arrived before the disconnect).
+    // The only frame on the new socket is the original Query, same id.
     expect(secondWs.sentFrames).toHaveLength(1);
-    const resumeFrame = decodeMessage(secondWs.sentFrames[0]!);
-    expect(resumeFrame.type).toBe(BifrostMessageType.Resume);
-    expect(resumeFrame.requestId).toBe(requestId);
-    expect(resumeFrame.lastSequence).toBe(halfway - 1);
+    const replay = decodeMessage(secondWs.sentFrames[0]!);
+    expect(replay.type).toBe(BifrostMessageType.Query);
+    expect(replay.requestId).toBe(requestId);
+    expect(replay.query).toBe("{ big }");
 
-    // Server retransmits the remaining chunks; the existing per-request
-    // reassembler merges them with the chunks already buffered before the
-    // disconnect to produce the full message.
-    for (let i = halfway; i < total; i++) {
-      secondWs.receive(frames[i]!);
+    // The re-run answers with a fresh chunked response from sequence 0, laid
+    // out differently from the first one (the reassembler from the dead
+    // socket must be gone, or its stale half would corrupt this one).
+    const rerun = emptyMessage({
+      requestId,
+      type: BifrostMessageType.Result,
+      payload: jsonPayload({ rows: ["e", "f"], n: 2 }),
+    });
+    for (const frame of buildChunkFrames(requestId, rerun, 5)) {
+      secondWs.receive(frame);
     }
     await vi.advanceTimersByTimeAsync(0);
 
     expect(rejected).toBeUndefined();
     expect(resolved).toBeDefined();
-    expect(resolved!.data).toEqual({ rows: ["a", "b", "c", "d"], n: 4 });
+    expect(resolved!.data).toEqual({ rows: ["e", "f"], n: 2 });
     expect(client.pendingCount).toBe(0);
 
     client.close();
   });
 
-  it("uses the no-chunks sentinel when the first reconnect happens before any chunk arrives", async () => {
-    // A pending chunked request that never received chunk 0 should fall back
-    // to re-sending the original frame (because resumeFromByRequestId stays
-    // empty for it). This covers the "no partial chunks" branch end-to-end.
+  it("re-sends the original query when the drop happens before any chunk arrives", async () => {
     const client = await makeConnectedClient();
     const firstWs = tracker.last;
 
@@ -574,15 +574,11 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     secondWs.simulateOpen();
     await vi.advanceTimersByTimeAsync(0);
 
-    // No partial chunks → original Query frame is re-sent, NOT a Resume frame.
     expect(secondWs.sentFrames).toHaveLength(1);
     const replay = decodeMessage(secondWs.sentFrames[0]!);
     expect(replay.type).toBe(BifrostMessageType.Query);
     expect(replay.requestId).toBe(requestId);
     expect(replay.lastSequence).toBe(0);
-
-    // Sentinel constant exists for the inverse branch.
-    expect(RESUME_NO_CHUNKS_RECEIVED).toBe(0xffffffff);
 
     secondWs.receive(
       encodeMessage(
@@ -667,14 +663,13 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     client.close();
   });
 
-  it("resumes a streaming request mid-flight: server replays chunks 2-3, iterator yields all 4", async () => {
+  it("fails a stream that had delivered chunks before the drop, and sends nothing for it", async () => {
     const client = await makeConnectedClient();
     const firstWs = tracker.last;
 
     const stream = client.stream("{ download }");
     const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
 
-    // Build 4 chunks; deliver 0 and 1, then drop the connection.
     // Chunk-mechanics fixture: these assertions consume raw chunk sequence
     // numbers, never parsed content, so the payload only needs a fixed byte
     // length (26 bytes / chunk size 8 = exactly 4 chunks).
@@ -695,22 +690,25 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     secondWs.simulateOpen();
     await vi.advanceTimersByTimeAsync(0);
 
-    // Resume frame should ask for chunks after sequence 1.
-    const resumeFrame = decodeMessage(secondWs.sentFrames[0]!);
-    expect(resumeFrame.type).toBe(BifrostMessageType.Resume);
-    expect(resumeFrame.lastSequence).toBe(1);
+    // The server cannot resume a transfer on a new socket, and a re-run would
+    // hand the consumer chunks 0-1 a second time: nothing is sent, the
+    // iterator drains what it had and then throws.
+    expect(secondWs.sentFrames).toHaveLength(0);
 
-    // Server replays chunks 2 and 3 on the new socket.
-    secondWs.receive(frames[2]!);
-    secondWs.receive(frames[3]!);
-
-    // Iterator yields all 4 chunks in sequence order.
     const collected: number[] = [];
-    for await (const chunk of stream) {
-      collected.push(chunk.sequence);
-      if (chunk.isLast) break;
+    let caught: Error | null = null;
+    try {
+      for await (const chunk of stream) {
+        collected.push(chunk.sequence);
+      }
+    } catch (err) {
+      caught = err as Error;
     }
-    expect(collected).toEqual([0, 1, 2, 3]);
+    expect(collected).toEqual([0, 1]);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught!.message).toMatch(
+      /interrupted by a reconnect after it had delivered chunks/
+    );
 
     client.close();
   });
@@ -756,106 +754,17 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     client.close();
   });
 
-  it("ignores ResumeAck frames announcing retransmitted chunks (chunk_total > 0)", async () => {
-    const client = await makeConnectedClient();
-    const ws = tracker.last;
-    void client.query("{ a }").catch(() => {});
-    const framesBefore = ws.sentFrames.length;
-
-    // Inject a ResumeAck with a non-zero chunk_total: the server confirms the
-    // resume and the remaining chunks follow, so the client must neither
-    // settle the promise nor send anything in response.
-    ws.receive(
-      encodeMessage(
-        emptyMessage({
-          requestId: 1,
-          type: BifrostMessageType.ResumeAck,
-          chunkInfo: { ...emptyChunkInfo(), total: 2 },
-        })
-      )
-    );
-    expect(client.pendingCount).toBe(1);
-    expect(ws.sentFrames.length).toBe(framesBefore);
-
-    client.close();
-  });
-
-  it("re-sends the original query when the server cannot resume (ResumeAck chunk_total=0)", async () => {
-    const client = await makeConnectedClient();
-    const firstWs = tracker.last;
-
-    const promise = client.query("{ big }");
-    const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
-
-    // Deliver one chunk of a chunked response, then drop the connection so the
-    // reconnect path sends a Resume frame.
-    const inner = emptyMessage({
-      requestId,
-      type: BifrostMessageType.Result,
-      payload: jsonPayload({ rows: ["a", "b", "c", "d"], n: 4 }),
-    });
-    const frames = buildChunkFrames(requestId, inner, 8);
-    expect(frames.length).toBeGreaterThanOrEqual(2);
-    firstWs.receive(frames[0]!);
-
-    firstWs.simulateClose(1006, "drop");
-    await vi.advanceTimersByTimeAsync(100);
-    const secondWs = tracker.last;
-    secondWs.simulateOpen();
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(decodeMessage(secondWs.sentFrames[0]!).type).toBe(
-      BifrostMessageType.Resume
-    );
-
-    // Server's chunk buffer expired: ResumeAck with chunk_total = 0 and no
-    // frames to follow. The client must re-send the original Query (fresh
-    // execution) instead of hanging until the request timeout.
-    secondWs.receive(
-      encodeMessage(
-        emptyMessage({
-          requestId,
-          type: BifrostMessageType.ResumeAck,
-        })
-      )
-    );
-
-    const replay = decodeMessage(
-      secondWs.sentFrames[secondWs.sentFrames.length - 1]!
-    );
-    expect(replay.type).toBe(BifrostMessageType.Query);
-    expect(replay.requestId).toBe(requestId);
-    expect(replay.query).toBe("{ big }");
-
-    // The stale partial reassembly was dropped, so a plain (non-chunked)
-    // Result for the re-executed query resolves the original promise.
-    secondWs.receive(
-      encodeMessage(
-        emptyMessage({
-          requestId,
-          type: BifrostMessageType.Result,
-          payload: jsonPayload({ ok: true }),
-        })
-      )
-    );
-    await expect(promise).resolves.toMatchObject({ data: { ok: true } });
-    expect(client.pendingCount).toBe(0);
-
-    client.close();
-  });
-
-  it("rejects an interrupted mutation when the server cannot resume (ResumeAck chunk_total=0)", async () => {
+  it("rejects a mutation whose chunked response was cut off, and sends nothing for it", async () => {
     const client = await makeConnectedClient();
     const firstWs = tracker.last;
 
     const promise = client.mutate("mutation { bulkThing }");
     const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
     const assertion = expect(promise).rejects.toThrowError(
-      /could not resume request .* not automatically retried to avoid double execution/
+      /interrupted by a reconnect and was not automatically retried to avoid double execution/
     );
 
-    // The mutation's chunked response started arriving, so the reconnect path
-    // sends Resume (not the at-most-once rejection).
+    // Its response had started arriving, so it ran on the server.
     const inner = emptyMessage({
       requestId,
       type: BifrostMessageType.Result,
@@ -871,84 +780,9 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     secondWs.simulateOpen();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(decodeMessage(secondWs.sentFrames[0]!).type).toBe(
-      BifrostMessageType.Resume
-    );
-
-    // Server cannot resume. Re-executing a mutation that already ran risks
-    // applying it twice, so the promise must reject instead of re-sending.
-    const framesBefore = secondWs.sentFrames.length;
-    secondWs.receive(
-      encodeMessage(
-        emptyMessage({
-          requestId,
-          type: BifrostMessageType.ResumeAck,
-        })
-      )
-    );
-
     await assertion;
+    expect(secondWs.sentFrames).toHaveLength(0);
     expect(client.pendingCount).toBe(0);
-    expect(secondWs.sentFrames.length).toBe(framesBefore); // nothing re-sent
-
-    client.close();
-  });
-
-  it("errors a streaming iterator when the server cannot resume (ResumeAck chunk_total=0)", async () => {
-    const client = await makeConnectedClient();
-    const firstWs = tracker.last;
-
-    const stream = client.stream("{ download }");
-    const requestId = decodeMessage(firstWs.sentFrames[0]!).requestId;
-
-    // Chunk-mechanics fixture: these assertions consume raw chunk sequence
-    // numbers, never parsed content, so the payload only needs a fixed byte
-    // length (26 bytes / chunk size 8 = exactly 4 chunks).
-    const inner = emptyMessage({
-      requestId,
-      type: BifrostMessageType.Result,
-      payload: new TextEncoder().encode("01234567890123456789012345"),
-    });
-    const frames = buildChunkFrames(requestId, inner, 8);
-    expect(frames.length).toBe(4);
-
-    firstWs.receive(frames[0]!);
-    firstWs.receive(frames[1]!);
-
-    firstWs.simulateClose(1006, "drop");
-    await vi.advanceTimersByTimeAsync(100);
-    const secondWs = tracker.last;
-    secondWs.simulateOpen();
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(decodeMessage(secondWs.sentFrames[0]!).type).toBe(
-      BifrostMessageType.Resume
-    );
-
-    // Chunks 0-1 were already yielded to the consumer, so a from-scratch
-    // replay would emit duplicates. The iterator must throw instead of
-    // hanging forever waiting for chunks 2-3 that will never arrive.
-    secondWs.receive(
-      encodeMessage(
-        emptyMessage({
-          requestId,
-          type: BifrostMessageType.ResumeAck,
-        })
-      )
-    );
-
-    const collected: number[] = [];
-    let caught: Error | null = null;
-    try {
-      for await (const chunk of stream) {
-        collected.push(chunk.sequence);
-      }
-    } catch (err) {
-      caught = err as Error;
-    }
-    expect(collected).toEqual([0, 1]);
-    expect(caught).toBeInstanceOf(Error);
-    expect(caught!.message).toMatch(/could not resume streaming request/);
 
     client.close();
   });

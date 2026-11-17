@@ -47,13 +47,6 @@ export {
 } from "./reconnect.js";
 
 /**
- * Sentinel value for `lastSequence` on a Resume frame meaning "no chunks
- * received yet, retransmit from sequence 0". Mirrors `uint.MaxValue` on the
- * server's `BifrostMessage.LastSequence` (see ChunkBuffer.GetChunksAfter).
- */
-export const RESUME_NO_CHUNKS_RECEIVED = 0xffffffff;
-
-/**
  * Default upper bound for the declared `total_bytes` of a chunked response
  * (64 MB). A chunked frame whose header claims more than this limit rejects
  * the pending request instead of allocating the reassembly buffer, so a
@@ -143,10 +136,10 @@ export interface BifrostMessage {
    */
   chunkInfo: ChunkInfo;
   /**
-   * Last received chunk sequence on Resume frames. The sentinel
-   * `RESUME_NO_CHUNKS_RECEIVED` (0xFFFFFFFF) means no chunks were received yet;
-   * the server retransmits from sequence 0. On non-Resume frames this stays 0
-   * and is omitted from the wire format.
+   * Wire field 12 (`last_sequence`), carried only by the server's Resume /
+   * ResumeAck frames. The client never sends Resume: the server keeps sent
+   * chunks per connection, so a reconnected socket has nothing to resume. The
+   * field is decoded so the codec mirrors the server's message shape.
    */
   lastSequence: number;
 }
@@ -363,10 +356,10 @@ export interface BifrostClientOptions {
 }
 
 /**
- * Metadata captured at send-time so a request can be re-sent after a
- * reconnect that did not yield any partial chunks. We need the original
- * type/query/variables because the server has already lost the request when
- * the connection dropped. Stored on both `pending` and `streaming` entries.
+ * Metadata captured at send-time so a query can be re-sent after a reconnect.
+ * We need the original type/query/variables because the server loses every
+ * request (and every buffered chunk) with the connection. Stored on both
+ * `pending` and `streaming` entries.
  */
 export interface RequestMetadata {
   type: BifrostMessageType;
@@ -383,9 +376,9 @@ interface PendingRequest {
 
 /**
  * All per-request state for one in-flight unary (non-streaming) query or
- * mutation, consolidated into a single object so the promise settlers, the
- * chunk reassembler, and the resume high-water mark live together instead of
- * being scattered across three parallel Maps keyed by requestId.
+ * mutation, consolidated into a single object so the promise settlers and the
+ * chunk reassembler live together instead of in parallel Maps keyed by
+ * requestId.
  */
 interface UnaryRequestState {
   /** Promise settlers, timeout handle, and replay metadata for the request. */
@@ -395,20 +388,12 @@ interface UnaryRequestState {
    * is being reassembled. Absent for single-frame responses.
    */
   reassembler?: ChunkReassembler;
-  /**
-   * Highest contiguous chunk sequence received before a disconnect interrupted
-   * a chunked transfer; consulted by `replayPendingAfterReconnect` to decide
-   * between RESUME and re-send. Populated by `captureResumeState`; a value of
-   * -1 (the ChunkReassembler default) means no chunks were seen.
-   */
-  resumeFrom?: number;
 }
 
 /**
  * All per-request state for one active streaming request, consolidated into a
- * single object so the streaming queue, its replay metadata, idle timer, and
- * resume high-water mark live together instead of being scattered across four
- * parallel Maps keyed by requestId.
+ * single object so the streaming queue, its replay metadata and its idle
+ * timer live together instead of in parallel Maps keyed by requestId.
  */
 interface StreamingState {
   /** Queue chunks route into; removes itself via its cleanup callback. */
@@ -426,12 +411,6 @@ interface StreamingState {
    * (during a disconnect, before replay re-arms it).
    */
   timer?: ReturnType<typeof setTimeout>;
-  /**
-   * Highest contiguous chunk sequence the queue has accepted, populated only
-   * once a disconnect interrupts the transfer; consulted by
-   * `replayPendingAfterReconnect` to decide between RESUME and re-send.
-   */
-  resumeFrom?: number;
 }
 
 /**
@@ -484,14 +463,13 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private ws: IWebSocket | null = null;
   private nextRequestId = 1;
   /**
-   * Per-request unary state (promise settlers, chunk reassembler, resume
-   * high-water mark) for each in-flight non-streaming request, one object per
-   * id.
+   * Per-request unary state (promise settlers, chunk reassembler) for each
+   * in-flight non-streaming request, one object per id.
    */
   private readonly unary = new Map<number, UnaryRequestState>();
   /**
-   * Per-request streaming state (queue, replay metadata, idle timer, resume
-   * high-water mark) for each active streaming request, one object per id.
+   * Per-request streaming state (queue, replay metadata, idle timer) for each
+   * active streaming request, one object per id.
    */
   private readonly streaming = new Map<number, StreamingState>();
   private readonly wsConstructor: IWebSocketConstructor;
@@ -748,15 +726,13 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     if (shouldReconnect && this.reconnectController) {
       // The socket is gone, so streaming idle timers would fire against a dead
       // connection during the backoff window and prematurely fail iterators
-      // that are about to be resumed. Clear them here; replayPendingAfterReconnect
-      // re-arms one for every streaming request it resumes/re-sends.
+      // that are about to be re-sent. Clear them here; replayPendingAfterReconnect
+      // re-arms one for every streaming request it re-sends.
       this.clearAllStreamingTimeouts();
-      // Snapshot per-request resume offsets but KEEP the reassembler buffers
-      // across the disconnect so partial chunks already received aren't lost
-      // — the server's GetChunksAfter only retransmits chunks strictly after
-      // `lastSequence`, so we must hold the earlier ones locally to be able
-      // to assemble the full message once the tail arrives on the new socket.
-      this.captureResumeState();
+      // The server's chunk buffer dies with the connection, so a partial
+      // reassembly can never be completed on the next socket. Free it now
+      // instead of holding up to maxChunkedResponseBytes through the backoff.
+      this.dropPartialReassemblies();
       this.reconnectController.start(
         new Error(`Connection closed: ${code} ${reason}`)
       );
@@ -772,19 +748,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   }
 
   /**
-   * Snapshots the highest contiguous sequence per pending reassembler into
-   * `resumeFromByRequestId` so the next successful reconnect can send a
-   * Resume frame asking the server to retransmit from there. The reassembler
-   * buffers themselves are kept so the partial chunks already received can
-   * be merged with the retransmitted tail. Streaming requests track their
-   * own contiguous sequence in `StreamingState.resumeFrom`, populated
-   * incrementally in handleChunkedFrame.
+   * Drops every partial chunk reassembly after a disconnect. The server keeps
+   * sent chunks per connection (its `ChunkBuffer` lives and dies with the
+   * socket), so a fresh socket can never deliver the missing tail: a query is
+   * re-run from the start and a mutation is rejected.
    */
-  private captureResumeState(): void {
+  private dropPartialReassemblies(): void {
     for (const state of this.unary.values()) {
-      if (state.reassembler) {
-        state.resumeFrom = state.reassembler.lastReceivedSequence;
-      }
+      state.reassembler = undefined;
     }
   }
 
@@ -801,14 +772,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   private handleReconnectSuccess(attempt: number): void {
     this.onReconnect?.(attempt);
     this.replayPendingAfterReconnect();
-    // Requests that survived the replay persist; clear their consumed resume
-    // marks so a subsequent drop before any new chunk doesn't reuse a stale one.
-    for (const state of this.unary.values()) {
-      state.resumeFrom = undefined;
-    }
-    for (const state of this.streaming.values()) {
-      state.resumeFrom = undefined;
-    }
   }
 
   private handleReconnectGiveUp(attempts: number, lastError: Error): void {
@@ -821,91 +784,62 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   }
 
   /**
-   * Walks every pending and streaming request and either sends a Resume frame
-   * (if the request had received at least one chunk before the disconnect) or
-   * re-sends the original Query/Mutation frame. Called from the reconnect
-   * controller's success callback once a fresh socket is open.
+   * Walks every pending and streaming request after a reconnect. The server
+   * lost them all with the old socket, buffered chunks included, so nothing
+   * can be resumed:
+   * - a query is re-sent from the start (its partial reassembly was dropped
+   *   at the disconnect, and the caller has seen nothing yet);
+   * - a mutation is rejected, because it may already have committed and a
+   *   re-send risks applying it twice (at-most-once);
+   * - a stream whose consumer already received chunks is failed, because a
+   *   re-run would deliver them again.
+   * Called from the reconnect controller's success callback once a fresh
+   * socket is open.
    */
   private replayPendingAfterReconnect(): void {
     if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
       return;
     }
 
-    // Snapshot entries first: the mutation-rejection branch mutates `unary`
-    // and `streaming` while we iterate.
+    // Snapshot entries first: the rejection branches mutate `unary` and
+    // `streaming` while we iterate.
     for (const [requestId, state] of Array.from(this.unary)) {
-      const pending = state.pending;
-      this.replayOne(
-        requestId,
-        pending.meta,
-        state.resumeFrom,
-        // The request-timeout clock was set once at send-time and has been
-        // ticking against the dead socket; restart it so the replayed request
-        // gets a full window on the fresh connection.
-        () => this.rearmRequestTimeout(requestId),
-        () => {
-          // A mutation that yielded no chunks before the drop may already have
-          // committed on the server. Re-sending it risks applying it twice, so
-          // reject it (at-most-once) and let the caller decide whether to
-          // retry.
-          clearTimeout(pending.timer);
-          this.unary.delete(requestId);
-          pending.reject(
-            new Error(
-              `Mutation for request ${requestId} was interrupted by a reconnect and was not automatically retried to avoid double execution.`
-            )
-          );
-        }
-      );
+      if (state.pending.meta.type === BifrostMessageType.Mutation) {
+        this.rejectPendingRequest(
+          requestId,
+          new Error(
+            `Mutation for request ${requestId} was interrupted by a reconnect and was not automatically retried to avoid double execution.`
+          )
+        );
+        continue;
+      }
+      this.sendOriginalFrame(requestId, state.pending.meta);
+      // The request-timeout clock was set once at send-time and has been
+      // ticking against the dead socket; restart it so the replayed request
+      // gets a full window on the fresh connection.
+      this.rearmRequestTimeout(requestId);
     }
 
     for (const [requestId, state] of Array.from(this.streaming)) {
-      this.replayOne(
-        requestId,
-        state.meta,
-        state.resumeFrom,
-        () => this.armStreamingTimeout(requestId),
-        () => {
-          // Same at-most-once guard for streaming mutations.
-          const queue = state.queue;
-          this.removeStreamingQueue(requestId);
-          queue?.error(
-            new Error(
-              `Streaming mutation for request ${requestId} was interrupted by a reconnect and was not automatically retried to avoid double execution.`
-            )
-          );
-        }
-      );
-    }
-  }
-
-  /**
-   * Replays a single request onto the fresh socket after a reconnect (or a
-   * resume failure). Sends a Resume frame when chunks were already received
-   * (`resumeFrom >= 0`), rejects at-most-once via `onDoubleExecReject` when the
-   * request is a mutation that yielded nothing, and otherwise re-sends the
-   * original frame. `rearmTimeout` restarts whichever idle clock guards the
-   * request (per-request timeout for pending, idle timer for streaming); it
-   * runs on the resume and re-send paths but not the reject path, which tears
-   * the request down.
-   */
-  private replayOne(
-    requestId: number,
-    meta: RequestMetadata,
-    resumeFrom: number | undefined,
-    rearmTimeout: () => void,
-    onDoubleExecReject: () => void
-  ): void {
-    if (resumeFrom !== undefined && resumeFrom >= 0) {
-      // Chunks were already received — resuming only pulls the missing tail,
-      // so there is no re-execution to worry about.
-      this.sendResumeFrame(requestId, resumeFrom);
-      rearmTimeout();
-    } else if (meta.type === BifrostMessageType.Mutation) {
-      onDoubleExecReject();
-    } else {
-      this.sendOriginalFrame(requestId, meta);
-      rearmTimeout();
+      // queue.error runs the cleanup callback → removeStreamingQueue.
+      if (state.queue.receivedAnyChunk) {
+        state.queue.error(
+          new Error(
+            `Streaming request ${requestId} was interrupted by a reconnect after it had delivered chunks; it was not restarted because a re-run would deliver them again.`
+          )
+        );
+        continue;
+      }
+      if (state.meta.type === BifrostMessageType.Mutation) {
+        state.queue.error(
+          new Error(
+            `Streaming mutation for request ${requestId} was interrupted by a reconnect and was not automatically retried to avoid double execution.`
+          )
+        );
+        continue;
+      }
+      this.sendOriginalFrame(requestId, state.meta);
+      this.armStreamingTimeout(requestId);
     }
   }
 
@@ -942,19 +876,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return;
     }
     this.ws.send(encodeMessage(frame));
-  }
-
-  private sendResumeFrame(requestId: number, lastSequence: number): void {
-    this.trySend(
-      this.makeFrame({
-        requestId,
-        type: BifrostMessageType.Resume,
-        // Server treats uint.MaxValue as "no chunks received". For real
-        // progress we just pass the highest contiguous sequence we have.
-        lastSequence:
-          lastSequence < 0 ? RESUME_NO_CHUNKS_RECEIVED : lastSequence,
-      })
-    );
   }
 
   private sendOriginalFrame(requestId: number, meta: RequestMetadata): void {
@@ -1042,7 +963,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * @internal Registers a streaming queue so chunks for `requestId` route to
-   * it, records the request metadata for resume/replay, and arms the idle
+   * it, records the request metadata for replay, and arms the idle
    * timeout. `meta` is passed by `createChunkStream` at registration time
    * rather than stashed on the client, so a failed (not-connected) stream that
    * never registers can't leave stale metadata for the next request to claim.
@@ -1167,8 +1088,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * Builds the request-timeout timer for a pending request. On fire it mirrors
-   * the abort path: drops any in-flight reassembly buffer and resume snapshot,
-   * and tombstones the id so the server's late chunks for this now-abandoned
+   * the abort path: drops any in-flight reassembly buffer and tombstones the id so the server's late chunks for this now-abandoned
    * response are ack-and-dropped (keeping its send window moving) instead of
    * stalling the shared socket or spraying unknown-requestId errors.
    */
@@ -1177,8 +1097,8 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     reject: (error: Error) => void
   ): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
-      // Dropping the unary entry discards the reassembly buffer and resume
-      // snapshot along with the promise settlers in one step.
+      // Dropping the unary entry discards the reassembly buffer along with
+      // the promise settlers in one step.
       this.unary.delete(requestId);
       this.abortedRequests.add(requestId);
       reject(new Error(`Request ${requestId} timed out`));
@@ -1187,7 +1107,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * Restarts the request-timeout clock for a still-pending request after a
-   * reconnect re-sends or resumes it on a fresh socket. The original timer was
+   * reconnect re-sends it on a fresh socket. The original timer was
    * armed once at send-time and keeps counting through the disconnect, so
    * without re-arming a request that survived the drop would reject almost
    * immediately after being replayed.
@@ -1303,19 +1223,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return;
     }
 
-    // ResumeAck with chunk_total > 0 is informational: the server confirms the
-    // resume and then sends the remaining Chunk frames via the normal
-    // chunked-frame path. chunk_total == 0 is the server's "cannot resume"
-    // signal (transfer expired or unknown — see BifrostBinaryMiddleware): no
-    // frames will follow, so the request must be unstuck here instead of
-    // hanging until the request timeout.
-    if (response.type === BifrostMessageType.ResumeAck) {
-      if (response.chunkInfo.total === 0) {
-        this.handleResumeFailure(response.requestId);
-      }
-      return;
-    }
-
     if (isChunkedFrame(response.chunkInfo)) {
       this.handleChunkedFrame(response);
       return;
@@ -1330,54 +1237,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     }
 
     this.deliverComplete(response);
-  }
-
-  /**
-   * Handles a ResumeAck with chunk_total == 0: the server could not resume the
-   * transfer (its chunk buffer expired or never knew the request), so no
-   * frames will follow. Queries are safe to re-execute — drop the stale
-   * partial reassembly and re-send the original frame. Mutations had already
-   * produced partial results before the drop, so re-executing risks applying
-   * them twice; reject instead (at-most-once, matching the replay path).
-   * Streaming consumers have already been handed earlier chunks, so a restart
-   * would emit duplicates — fail the iterator.
-   */
-  private handleResumeFailure(requestId: number): void {
-    const state = this.unary.get(requestId);
-    if (state) {
-      // The stale partial reassembly can't be resumed; drop it (and the resume
-      // mark) before the query re-send. The mutation path's rejectPendingRequest
-      // drops the whole entry anyway.
-      state.reassembler = undefined;
-      state.resumeFrom = undefined;
-      // resumeFrom `undefined` forces the re-send / reject path — there is no
-      // tail to resume once the server has given up on the transfer.
-      this.replayOne(
-        requestId,
-        state.pending.meta,
-        undefined,
-        () => this.rearmRequestTimeout(requestId),
-        () =>
-          this.rejectPendingRequest(
-            requestId,
-            new Error(
-              `Server could not resume request ${requestId} after reconnect; the mutation was not automatically retried to avoid double execution.`
-            )
-          )
-      );
-      return;
-    }
-
-    const queue = this.streaming.get(requestId)?.queue;
-    if (queue) {
-      // queue.error runs the cleanup callback, which removes the queue and its
-      // resume bookkeeping via removeStreamingQueue.
-      queue.error(
-        new Error(
-          `Server could not resume streaming request ${requestId} after reconnect`
-        )
-      );
-    }
   }
 
   /**
@@ -1432,21 +1291,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       const accepted = ingestStreamingChunk(streamingQueue, chunk);
       if (accepted) {
         this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
-        // Only track resume state and re-arm the idle timer while the stream is
-        // still registered. If the final chunk just auto-completed the queue (or
-        // an overflow errored it), its cleanup already ran removeStreamingQueue —
-        // which dropped the streaming entry (and its resume mark / timer).
-        // Setting them again here would resurrect a leaked resume entry that,
-        // after uint32 request-id reuse, triggers a bogus Resume for an unrelated
-        // request; and arm a timer no chunk will ever clear.
-        const state = this.streaming.get(chunk.requestId);
-        if (state) {
-          // Track the highest contiguous sequence the queue has actually
-          // accepted, so a mid-stream disconnect knows what to RESUME from. The
-          // server's GetChunksAfter retransmits everything strictly after the
-          // value we send, so any gap below the contiguous high-water mark
-          // would be silently lost if we reported the absolute max instead.
-          state.resumeFrom = streamingQueue.lastContiguousSequence;
+        // Re-arm the idle timer only while the stream is still registered. If
+        // the final chunk just auto-completed the queue (or an overflow errored
+        // it), its cleanup already ran removeStreamingQueue, and a timer armed
+        // now would never be cleared.
+        if (this.streaming.has(chunk.requestId)) {
           this.armStreamingTimeout(chunk.requestId);
         }
       }

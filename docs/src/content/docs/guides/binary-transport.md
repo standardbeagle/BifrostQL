@@ -1,13 +1,13 @@
 ---
 title: "Protobuf over WebSocket Transport"
-description: "Stream large result sets over a protobuf WebSocket endpoint with chunked delivery, automatic resume across transient disconnects, and TypeScript codegen."
+description: "Stream large result sets over a protobuf WebSocket endpoint with chunked delivery, automatic reconnect after transient disconnects, and TypeScript codegen."
 ---
 
-BifrostQL ships an alternative WebSocket transport that exchanges GraphQL queries and responses as protobuf-encoded binary frames instead of JSON over HTTP. It is roughly 60% smaller on the wire for binary or large payloads, supports async-iterator streaming so consumers can process chunks as they arrive, and automatically resumes interrupted transfers across transient network drops.
+BifrostQL ships an alternative WebSocket transport that exchanges GraphQL queries and responses as protobuf-encoded binary frames instead of JSON over HTTP. It is roughly 60% smaller on the wire for binary or large payloads, supports async-iterator streaming so consumers can process chunks as they arrive, and reconnects automatically after transient network drops.
 
 ## What it is
 
-The binary transport is a single WebSocket endpoint that multiplexes many in-flight GraphQL requests over one connection. Each request is a protobuf frame carrying a `request_id`, the query text, and any variables; responses come back as either a single `Result` frame or as a sequence of CRC32-checksummed `Chunk` frames that the client reassembles. Reconnects are transparent — the client snapshots the highest contiguous chunk sequence per request and resumes from where the server left off.
+The binary transport is a single WebSocket endpoint that multiplexes many in-flight GraphQL requests over one connection. Each request is a protobuf frame carrying a `request_id`, the query text, and any variables; responses come back as either a single `Result` frame or as a sequence of CRC32-checksummed `Chunk` frames that the client reassembles. After a dropped connection the client reconnects on its own and re-sends in-flight queries; see [Auto-reconnect](#auto-reconnect) for what happens to mutations and streams.
 
 ## When to use it
 
@@ -16,7 +16,7 @@ The binary transport is a single WebSocket endpoint that multiplexes many in-fli
 | Small, interactive queries from a page load | Best — request/response, easy to cache | Overkill, adds connection setup |
 | File downloads, generated reports, image blobs | Slow, base64 inflation | Best — streaming, no base64 |
 | Long-lived clients running many queries (desktop, mobile, services) | Reconnect every request | Best — one connection, multiplexed |
-| Networks with frequent transient drops | Each request fails on its own | Best — automatic resume per request |
+| Networks with frequent transient drops | Each request fails on its own | Automatic reconnect; queries are re-sent, mutations and started streams fail |
 | Public APIs consumed by curl or a generic GraphQL client | Best — universal tooling | Requires the binary client |
 
 If your workload is small interactive queries from a browser tab, stay on JSON. If you ship images, generated PDFs, large result sets, or you run a long-lived process that talks to BifrostQL constantly, the binary transport is the right choice.
@@ -202,11 +202,15 @@ Each `StreamChunk` carries:
 
 Chunks arrive in sequence even if the wire delivered them out of order — the client buffers and reorders internally. Mutations have a streaming counterpart, `client.streamMutation()`, with the same shape.
 
-## Auto-resume
+## Auto-reconnect
 
-When the WebSocket drops mid-transfer, the client snapshots the highest contiguous chunk sequence it has received for each in-flight request, opens a fresh socket using an exponential backoff (100 ms → 30 s with 25% jitter), and sends a `Resume` frame asking the server to retransmit only the chunks that are still missing.
+When the WebSocket drops, the client opens a fresh socket using an exponential backoff (100 ms → 30 s with 25% jitter).
 
-The server keeps sent chunks per connection, so another connection can never replay them, and a fresh socket has none of the old one's. It therefore answers a `Resume` after a reconnect with a `ResumeAck` carrying zero chunks. The client then re-sends a query from the start, rejects a mutation that had already returned chunks (re-running it could apply it twice), and fails a stream whose consumer has already seen chunks. Only a `Resume` on the connection that is still carrying the transfer retransmits the missing tail.
+The server keeps sent chunks per connection, so another connection can never replay them, and a fresh socket has none of the old one's. Nothing resumes across a reconnect, so the client never sends a `Resume` frame. On the new socket it:
+
+- re-sends each in-flight query from the start, dropping any partial chunked response;
+- rejects each in-flight mutation, because it may already have committed and re-running it could apply it twice;
+- fails each stream whose consumer has already received chunks, because a re-run would deliver them again. A stream that had received nothing is re-sent like a query (or rejected like a mutation).
 
 Reconnect behavior is controlled through `BifrostClientOptions`:
 
@@ -250,7 +254,7 @@ Yes. `UseBifrostBinary()` and `UseBifrostQL()` register independent middleware. 
 
 ### What happens if the server is down when I call `connect()`?
 
-`connect()` rejects with the connect error on the very first attempt. After a successful connect, if the server later drops the socket, the client enters the auto-reconnect cycle and pending requests stay queued until the socket is back (or until `maxReconnectAttempts` is hit, at which point they reject with the last error).
+`connect()` rejects with the connect error on the very first attempt. After a successful connect, if the server later drops the socket, the client enters the auto-reconnect cycle and pending requests wait until the socket is back, where they are handled as [Auto-reconnect](#auto-reconnect) describes (or until `maxReconnectAttempts` is hit, at which point they reject with the last error).
 
 ### How do I force a fresh connection?
 

@@ -271,19 +271,18 @@ namespace BifrostQL.Server.Test.Pgwire
         [InlineData("SELECT o.id FROM orders o JOIN users u ON o.id = u.id")]      // wrong ON
         public async Task Join_FromWhollyReadDeniedTable_IsDenied_WhateverTheOnClause(string sql)
         {
-            // Table-level read deny on orders: the caller gets the access-denied code that maps
-            // to the pipeline's "permission denied." — the same signal a plain SELECT on orders
-            // gets (invariant 10). Rejecting as "no schema relationship" would give the same
-            // condition a second wire signal, and validating the ON clause would make
-            // right-vs-wrong ON an oracle over the denied table's key columns.
+            // Table-level read deny on orders: the caller gets "relation does not exist", the
+            // same signal a plain SELECT on orders gets, and the same a missing table gets
+            // (invariant 9). Validating the ON clause would make right-vs-wrong ON an oracle
+            // over the denied table's key columns.
             var model = OrdersAndUsersModel(ordersPolicyActions: "create");
 
             var ex = await Rejected(sql, model);
             var plain = await Rejected("SELECT id FROM orders", model);
 
-            ex.Should().BeOfType<BifrostExecutionError>()
-                .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
-            ex!.Message.Should().Be(plain.Message, "right and wrong ON answer like a plain read of the table");
+            ex.Should().BeOfType<PgQueryTranslationException>()
+                .Which.Message.Should().Be("pgwire: relation \"orders\" does not exist.");
+            ex!.Message.Should().Be(plain!.Message, "right and wrong ON answer like a plain read of the table");
         }
 
         [Fact]

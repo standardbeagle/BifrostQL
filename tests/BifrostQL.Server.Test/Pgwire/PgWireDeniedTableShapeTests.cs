@@ -9,7 +9,8 @@ namespace BifrostQL.Server.Test.Pgwire
     /// like the pipeline's denial. Column names resolve against the raw model, so before the fix
     /// <c>SELECT nosuch FROM secrets</c> answered <c>column "nosuch" does not exist</c> while
     /// <c>SELECT v FROM secrets</c> answered <c>permission denied.</c>: a caller with no read
-    /// access could probe a denied table's column names one guess at a time.
+    /// access could probe a denied table's column names one guess at a time. Both now answer
+    /// the "relation does not exist" a missing table gets.
     /// </summary>
     public sealed class PgWireDeniedTableShapeTests : IAsyncLifetime
     {
@@ -44,7 +45,9 @@ namespace BifrostQL.Server.Test.Pgwire
         public async Task Unknown_column_on_a_denied_table_answers_like_the_denial(string probe)
         {
             var denial = await _harness.QueryAsync(Caller(), "SELECT v FROM secrets");
-            denial.ErrorSqlState.Should().Be("42501", "the fixture must deny the table through the pipeline");
+            var missing = await _harness.QueryAsync(Caller(), "SELECT v FROM missing");
+            denial.ErrorSqlState.Should().Be(missing.ErrorSqlState, "a denied table answers like a missing one");
+            denial.ErrorMessage.Should().Be(missing.ErrorMessage!.Replace("missing", "secrets"));
 
             var shape = await _harness.QueryAsync(Caller(), probe);
 

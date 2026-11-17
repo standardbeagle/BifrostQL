@@ -195,6 +195,21 @@ namespace BifrostQL.Server.Test.Pgwire
             return PgWireLoopback.Decode(result);
         }
 
+        // ---- (c2) table existence probe -------------------------------------
+
+        protected override bool AdapterSupportsTableExistenceProbe => true;
+
+        protected override async Task<string> ProbeTableReadAsync(string table, ClaimsPrincipal principal)
+        {
+            var executor = Host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var result = await PgWireLoopback.RunAsync(executor, principal, $"SELECT id FROM {table}", EndpointPath, Timeout);
+            return string.Join("\n",
+                $"sqlstate={result.ErrorSqlState} message={result.ErrorMessage}",
+                $"tag={result.CommandTag} status={result.TransactionStatus}",
+                "fields=" + string.Join(",", result.Fields.Select(f => f.Name)),
+                "rows=" + result.Rows.Count);
+        }
+
         /// <summary>An authenticated identity with no tenant claim — the wire equivalent of the kit's null principal.</summary>
         private static ClaimsPrincipal NoTenantPrincipal() =>
             new(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "user-no-tenant") }, authenticationType: "pgwire"));

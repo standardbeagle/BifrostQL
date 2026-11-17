@@ -191,7 +191,9 @@ that is by design — check the server logs for the real cause.
 catalog is filtered by the **same** `PolicyEvaluator` read check the query path enforces,
 and **fails closed** — a table whose policy cannot be evaluated is omitted, and a
 read-denied column is absent from the emulated `pg_attribute` / `information_schema.columns`.
-The catalog can never leak the existence of a table you cannot query.
+The catalog can never leak the existence of a table you cannot query. A query
+naming such a table, in `FROM` or `JOIN`, answers
+`relation "<name>" does not exist.` exactly like a table that is not there.
 
 The server reports itself as `PostgreSQL 16.0 (BifrostQL)`.
 

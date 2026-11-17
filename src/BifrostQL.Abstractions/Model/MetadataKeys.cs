@@ -857,9 +857,8 @@ namespace BifrostQL.Core.Model
             public const string Exclude = "sp-exclude";
 
             /// <summary>
-            /// Model-level role required to execute stored procedures through the
-            /// stored-procedure resolver. Mirrors <see cref="RawSql.Role"/>: when
-            /// unset, execution is open to all callers (no gate).
+            /// Accepted for compatibility but inert: no dialect loads stored procedures
+            /// and nothing executes them, so there is no field for this role to gate.
             /// </summary>
             public const string Role = "stored-procedure-role";
         }

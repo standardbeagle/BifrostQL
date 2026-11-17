@@ -231,21 +231,6 @@ namespace BifrostQL.Core.Resolvers
                 foreach (var (typeName, fieldName) in Operations.OperationValueResolver.DeclaredObjectFields(operation.Operation))
                     builder.Types.For(typeName).FieldFor(fieldName).Resolver = Operations.OperationValueResolver.Instance;
             }
-
-            foreach (var proc in _model.StoredProcedures)
-            {
-                if (proc.IsReadOnly)
-                    query.FieldFor(proc.FullGraphQlName).Resolver = this;
-                else
-                    mut.FieldFor(proc.FullGraphQlName).Resolver = this;
-
-                var resultType = builder.Types.For(proc.ResultTypeName);
-                foreach (var fieldName in new[] { "resultSets", "affectedRows" })
-                    resultType.FieldFor(fieldName).Resolver = this;
-
-                foreach (var outputParam in proc.OutputParameters)
-                    resultType.FieldFor(outputParam.GraphQlName).Resolver = this;
-            }
         }
 
         /// <summary>
@@ -435,15 +420,6 @@ namespace BifrostQL.Core.Resolvers
                 if (!map.TryAdd((rootType, operation.Operation.Name), new Operations.OperationResolver(operation)))
                     throw new InvalidOperationException(
                         $"Server operation '{operation.Operation.Name}' has the name of a generated {rootType} field.");
-            }
-
-            foreach (var proc in model.StoredProcedures)
-            {
-                var resolver = new StoredProcedureResolver(proc);
-                if (proc.IsReadOnly)
-                    map[(queryType, proc.FullGraphQlName)] = resolver;
-                else
-                    map[(mutationType, proc.FullGraphQlName)] = resolver;
             }
 
             return map;

@@ -22,13 +22,6 @@ namespace BifrostQL.Core.Schema
             var builder = new StringBuilder();
             var typeMapper = model.TypeMapper;
             var allTableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t, typeMapper)).ToList();
-            var spGenerators = model.StoredProcedures.Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
-            var readOnlySpGenerators = model.StoredProcedures
-                .Where(p => p.IsReadOnly)
-                .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
-            var mutatingSpGenerators = model.StoredProcedures
-                .Where(p => !p.IsReadOnly)
-                .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
 
             var grouped = config.GroupTablesBySchema(model.Tables);
             var defaultTables = grouped.TryGetValue("", out var dt) ? dt : Array.Empty<IDbTable>();
@@ -52,10 +45,6 @@ namespace BifrostQL.Core.Schema
                 var schemaFieldName = kvp.Key.ToGraphQl();
                 var schemaTypeName = SchemaFieldConfig.GetSchemaQueryTypeName(kvp.Key);
                 builder.AppendLine($"{schemaFieldName}: {schemaTypeName}");
-            }
-            foreach (var generator in readOnlySpGenerators)
-            {
-                builder.AppendLine(generator.GetFieldDefinition());
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             if (SchemaGenerator.IsRawSqlEnabled(model))
@@ -85,15 +74,7 @@ namespace BifrostQL.Core.Schema
             }
 
             // Root mutation type: default-schema tables + schema mutation fields
-            builder.Append(GetFieldModeInputAndArgumentTypes(model, allTableGenerators, mutatingSpGenerators, config, grouped, nonDefaultSchemas));
-
-            foreach (var generator in spGenerators)
-            {
-                builder.AppendLine(generator.GetResultTypeDefinition());
-                var inputType = generator.GetInputTypeDefinition();
-                if (!string.IsNullOrEmpty(inputType))
-                    builder.AppendLine(inputType);
-            }
+            builder.Append(GetFieldModeInputAndArgumentTypes(model, allTableGenerators, config, grouped, nonDefaultSchemas));
 
             // Filter types for all columns in the database
             foreach (var gqlType in model.Tables.SelectMany(t => t.Columns).Select(c => typeMapper.GetGraphQlTypeName(c.EffectiveDataType).TrimEnd('!')).Distinct())
@@ -109,7 +90,6 @@ namespace BifrostQL.Core.Schema
         private static StringBuilder GetFieldModeInputAndArgumentTypes(
             IDbModel model,
             List<TableSchemaGenerator> allTableGenerators,
-            List<StoredProcedureSchemaGenerator> mutatingSpGenerators,
             SchemaFieldConfig config,
             IReadOnlyDictionary<string, IReadOnlyList<IDbTable>> grouped,
             List<KeyValuePair<string, IReadOnlyList<IDbTable>>> nonDefaultSchemas)
@@ -129,10 +109,6 @@ namespace BifrostQL.Core.Schema
                 var schemaFieldName = kvp.Key.ToGraphQl();
                 var schemaMutTypeName = SchemaFieldConfig.GetSchemaMutationTypeName(kvp.Key);
                 builder.AppendLine($"{schemaFieldName}: {schemaMutTypeName}");
-            }
-            foreach (var generator in mutatingSpGenerators)
-            {
-                builder.AppendLine(generator.GetFieldDefinition());
             }
             builder.AppendLine("}");
 

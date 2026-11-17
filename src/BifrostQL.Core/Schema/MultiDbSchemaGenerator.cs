@@ -17,9 +17,8 @@ namespace BifrostQL.Core.Schema
     /// }
     /// </code>
     ///
-    /// Cross-database joins are not supported as native SQL joins because the data
-    /// resides on separate servers. Instead, use <c>CrossDatabaseJoinResolver</c> to
-    /// perform in-memory joins after fetching results from each database independently.
+    /// Cross-database joins are not supported: the data resides on separate servers.
+    /// Query each database's field independently and join the results in the client.
     ///
     /// Transaction limitations: transactions cannot span multiple databases. Mutations
     /// targeting different databases execute in separate transactions. Applications

@@ -24,13 +24,6 @@ namespace BifrostQL.Core.Schema
             var builder = new StringBuilder();
             var typeMapper = model.TypeMapper;
             var tableGenerators = model.Tables.Select(t => new TableSchemaGenerator(t, typeMapper, model.EnumColumns)).ToList();
-            var spGenerators = model.StoredProcedures.Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
-            var readOnlySpGenerators = model.StoredProcedures
-                .Where(p => p.IsReadOnly)
-                .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
-            var mutatingSpGenerators = model.StoredProcedures
-                .Where(p => !p.IsReadOnly)
-                .Select(p => new StoredProcedureSchemaGenerator(p)).ToList();
 
             // History targets are system tables (epic decision D2): no root query
             // field, no aggregate/pivot field, no mutation field. Their TYPE
@@ -53,10 +46,6 @@ namespace BifrostQL.Core.Schema
                 var historyField = generator.GetHistoryFieldDefinition(model);
                 if (historyField.Length > 0)
                     builder.AppendLine(historyField);
-            }
-            foreach (var generator in readOnlySpGenerators)
-            {
-                builder.AppendLine(generator.GetFieldDefinition());
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("_grants: [String!]!");
@@ -117,20 +106,12 @@ namespace BifrostQL.Core.Schema
             var mutationOperations = operations
                 .Where(o => o.Operation.Kind == Operations.BifrostOperationKind.Mutation)
                 .ToList();
-            builder.Append(GetInputAndArgumentTypes(model, tableGenerators, mutatingSpGenerators, mutationOperations));
+            builder.Append(GetInputAndArgumentTypes(model, tableGenerators, mutationOperations));
             foreach (var operation in operations)
             {
                 var typeDefinitions = operation.Operation.TypeDefinitions;
                 if (!string.IsNullOrWhiteSpace(typeDefinitions))
                     builder.AppendLine(typeDefinitions);
-            }
-
-            foreach (var generator in spGenerators)
-            {
-                builder.AppendLine(generator.GetResultTypeDefinition());
-                var inputType = generator.GetInputTypeDefinition();
-                if (!string.IsNullOrEmpty(inputType))
-                    builder.AppendLine(inputType);
             }
 
             //Define the filter types of all the columns in the database, needs to be specific to the connected database, and distinct because of GraphQL.
@@ -171,13 +152,13 @@ namespace BifrostQL.Core.Schema
         }
 
         private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators,
-            List<StoredProcedureSchemaGenerator> mutatingSpGenerators, IReadOnlyList<Operations.ExposedOperation> mutationOperations)
+            IReadOnlyList<Operations.ExposedOperation> mutationOperations)
         {
             var builder = new StringBuilder();
             var historyTargets = HistorySurface.ResolveTargets(model);
 
             // Only generate databaseInput type if there are mutations
-            if (tableGenerators.Count > 0 || mutatingSpGenerators.Count > 0 || mutationOperations.Count > 0)
+            if (tableGenerators.Count > 0 || mutationOperations.Count > 0)
             {
                 // One shared enum for the explicit-ops graph save's per-node verb.
                 builder.AppendLine("enum bifrost_save_op { insert update delete }");
@@ -190,10 +171,6 @@ namespace BifrostQL.Core.Schema
                     if (historyTargets.Contains(generator.Table))
                         continue;
                     builder.AppendLine(generator.GetInputFieldDefinition());
-                }
-                foreach (var generator in mutatingSpGenerators)
-                {
-                    builder.AppendLine(generator.GetFieldDefinition());
                 }
                 foreach (var operation in mutationOperations)
                     builder.AppendLine(OperationFieldDefinition(operation));

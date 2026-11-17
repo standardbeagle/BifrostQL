@@ -335,10 +335,14 @@ namespace BifrostQL.Server.Ldap
                         matched.Add(row);
                     }
 
-                    var members = await ResolveMembersIfRequestedAsync(
-                        membership, target, matched, selection, userContext, ct);
-                    var memberOf = await ResolveMemberOfIfRequestedAsync(
-                        membership, target, matched, selection, userContext, ct);
+                    // Membership is resolved only for rows the page will emit: a 200-row batch on a
+                    // one-entry page used to fan out every matched row's member/memberOf joins.
+                    // Rows are resolved in chunks sized to the room left on the page; a later chunk
+                    // runs only when a row projected to no entry (empty naming value) left room.
+                    var members = EmptyMembership;
+                    var memberOf = EmptyMembership;
+                    var resolvedThrough = 0;
+                    var matchedSeen = 0;
 
                     // The resume offset counts SOURCE rows consumed, not entries emitted, and not
                     // the size of the batch that was fetched. Advancing by the batch size would skip
@@ -357,6 +361,17 @@ namespace BifrostQL.Server.Ldap
 
                         if (!matchedSet.Contains(row))
                             continue;
+
+                        if (matchedSeen == resolvedThrough)
+                        {
+                            var chunk = matched.Skip(resolvedThrough).Take(pageSize - entries.Count).ToList();
+                            members = await ResolveMembersIfRequestedAsync(
+                                membership, target, chunk, selection, userContext, ct);
+                            memberOf = await ResolveMemberOfIfRequestedAsync(
+                                membership, target, chunk, selection, userContext, ct);
+                            resolvedThrough += chunk.Count;
+                        }
+                        matchedSeen++;
 
                         var entry = LdapEntryProjector.Project(
                             target, row, selection, request.TypesOnly,

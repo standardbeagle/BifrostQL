@@ -205,6 +205,31 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task Member_IsResolvedOnlyForTheRowsThePageEmits()
+        {
+            // Five matching groups, a size limit of one: only the emitted group's members may be
+            // fetched. The junction leg's row ceiling is keys x MaxMembersPerEntry + 1, so it
+            // names how many source rows the membership query was built for.
+            var (executor, pipeline) = BuildDirectory(o => o.MaxMembersPerEntry = 3);
+            for (var g = 1; g <= 5; g++)
+            {
+                pipeline.WithRows("groups", Row(("id", g), ("name", $"group{g}")));
+                pipeline.WithRows("users", Row(("id", 100 + g), ("username", $"user{g}")));
+                pipeline.WithRows("user_groups", Row(("id", g), ("group_id", g), ("user_id", 100 + g)));
+            }
+            var oneEntry = Search() with { SizeLimit = 1 };
+
+            var outcome = await executor.ExecuteAsync(
+                oneEntry, Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            var entry = outcome.Entries.Should().ContainSingle().Subject;
+            MemberValues(entry).Should().ContainSingle();
+            pipeline.Intents.Where(i => i.Query.TableName == "user_groups")
+                .Should().ContainSingle().Which.Query.Limit.Should().Be(1 * 3 + 1,
+                    "membership is resolved for the one emitted row, not the five matched");
+        }
+
+        [Fact]
         public async Task Member_OverThePerEntryBound_IsRefusedRatherThanTruncated()
         {
             // A truncated member list misreports who is in the group, which is worse than an

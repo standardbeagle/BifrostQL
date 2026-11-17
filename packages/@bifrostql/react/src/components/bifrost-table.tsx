@@ -22,6 +22,7 @@ import type {
 import { rowsToCsv, triggerDownload } from '../utils/table-export';
 import { getTheme } from './table-theme';
 import type { AnyThemeName, TableTheme } from './table-theme';
+import { InlineCellEditor } from './inline-cell-editor';
 
 // ---------------------------------------------------------------------------
 // Theme context for composable sub-components
@@ -750,37 +751,18 @@ function TableRows<T>({
                   }
                 >
                   {isEditing ? (
-                    <input
-                      type="text"
-                      value={formatCellValue(
-                        editing.getCellValue(key, col.field),
-                      )}
-                      onChange={(e) =>
-                        editing.setCellValue(key, col.field, e.target.value)
+                    <InlineCellEditor
+                      column={col}
+                      value={editing.getCellValue(key, col.field)}
+                      originalValue={value}
+                      row={rowRecord}
+                      onChange={(next) =>
+                        editing.setCellValue(key, col.field, next)
                       }
-                      // Blur and Enter both commit: clicking away from a cell
-                      // the user has typed into must not discard the edit.
-                      onBlur={() => {
+                      onCommit={() => {
                         void editing.commitCell();
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          void editing.commitCell();
-                        } else if (e.key === 'Escape') {
-                          editing.discardRow(key);
-                        }
-                      }}
-                      autoFocus
-                      data-testid="edit-input"
-                      style={{
-                        width: '100%',
-                        padding: '2px 4px',
-                        border: '1px solid #3b82f6',
-                        borderRadius: '2px',
-                        outline: 'none',
-                        fontSize: 'inherit',
-                      }}
+                      onCancel={() => editing.discardRow(key)}
                     />
                   ) : isColumnMasked(col.field) ? (
                     MASKED_CELL

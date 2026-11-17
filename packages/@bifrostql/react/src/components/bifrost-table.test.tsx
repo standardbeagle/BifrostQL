@@ -645,6 +645,129 @@ describe('BifrostTable', () => {
     });
   });
 
+  describe('typed inline editors', () => {
+    const typedRows = [
+      {
+        id: 1,
+        name: 'Alice',
+        age: 30,
+        active: true,
+        joined: '2024-03-05T14:30:00Z',
+      },
+    ];
+    const typedColumns: ColumnConfig[] = [
+      { field: 'id', header: 'ID', readOnly: true },
+      { field: 'age', header: 'Age' },
+      { field: 'active', header: 'Active' },
+      { field: 'joined', header: 'Joined' },
+    ];
+    const typedAccess: DbSchemaProjection = {
+      ...FULL_ACCESS,
+      columns: ['id', 'age', 'active', 'joined'].map((graphQlName) => ({
+        graphQlName,
+        readable: true,
+        writable: true,
+      })),
+    };
+    const typedFetch = () =>
+      createFetchMock(
+        { data: { users: paged(typedRows) } },
+        true,
+        200,
+        typedAccess,
+      );
+
+    async function editCell(text: string) {
+      await waitFor(() => {
+        expect(screen.getByText(text)).toBeInTheDocument();
+      });
+      fireEvent.doubleClick(screen.getByText(text));
+      return screen.getByTestId('edit-input') as HTMLInputElement;
+    }
+
+    it('edits a number column as a number and sends a number', async () => {
+      // Arrange
+      globalThis.fetch = typedFetch();
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate, columns: typedColumns });
+
+      // Act
+      const input = await editCell('30');
+      fireEvent.change(input, { target: { value: '42' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      // Assert: a number input, and the Int variable gets 42, not "42".
+      expect(input.type).toBe('number');
+      await waitFor(() => {
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          { age: 42 },
+        );
+      });
+    });
+
+    it('retyping the same number is not a change', async () => {
+      // Arrange
+      globalThis.fetch = typedFetch();
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate, columns: typedColumns });
+
+      // Act
+      const input = await editCell('30');
+      fireEvent.change(input, { target: { value: '31' } });
+      fireEvent.change(input, { target: { value: '30' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      // Assert
+      await waitFor(() => {
+        expect(screen.queryByTestId('edit-input')).not.toBeInTheDocument();
+      });
+      expect(onRowUpdate).not.toHaveBeenCalled();
+    });
+
+    it('edits a boolean column as a checkbox and sends a boolean', async () => {
+      // Arrange
+      globalThis.fetch = typedFetch();
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate, columns: typedColumns });
+
+      // Act
+      const input = await editCell('Yes');
+      fireEvent.click(input);
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      // Assert: false, never the display string "No".
+      expect(input.type).toBe('checkbox');
+      await waitFor(() => {
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          { active: false },
+        );
+      });
+    });
+
+    it('edits a timestamp from its raw value so the time survives', async () => {
+      // Arrange
+      globalThis.fetch = typedFetch();
+      const onRowUpdate = vi.fn().mockResolvedValue(undefined);
+      renderTable({ editable: true, onRowUpdate, columns: typedColumns });
+
+      // Act
+      const input = await editCell('2024-03-05T14:30:00Z');
+
+      // Assert: the editor shows the raw value, not a locale date.
+      expect(input.value).toBe('2024-03-05T14:30:00Z');
+      fireEvent.change(input, { target: { value: '2024-03-06T14:30:00Z' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      await waitFor(() => {
+        expect(onRowUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 1 }),
+          { joined: '2024-03-06T14:30:00Z' },
+        );
+      });
+    });
+  });
+
   describe('editable', () => {
     it('shows edit input on double-click when editable', async () => {
       globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });

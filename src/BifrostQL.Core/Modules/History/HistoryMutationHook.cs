@@ -145,7 +145,7 @@ namespace BifrostQL.Core.Modules.History
             // disagrees with the actual pre-write state.
             var row = await MutationCommandExecutor.LoadRowByKey(
                 context.Connection, context.Transaction, context.Dialect, context.Table,
-                ReadColumns(context.Table, config), keyData, forUpdate: true);
+                ReadColumns(context.Table, config), keyData, forUpdate: true, cancellationToken: context.CancellationToken);
 
             context.MutationState[BeforeImageKey] = new BeforeImage(row);
             return Array.Empty<string>();
@@ -254,7 +254,7 @@ namespace BifrostQL.Core.Modules.History
                 // update-lock hint would be redundant.
                 after = await MutationCommandExecutor.LoadRowByKey(
                     context.Connection, context.Transaction, context.Dialect, context.Table,
-                    ReadColumns(context.Table, config), keyData);
+                    ReadColumns(context.Table, config), keyData, cancellationToken: context.CancellationToken);
 
                 if (after is null)
                     throw new BifrostExecutionError(

@@ -44,7 +44,7 @@ namespace BifrostQL.Core.Modules.History
                 context.Dialect, historyTable, tableRef, historyRow.Keys) + ";";
 
             await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection!, context.Transaction, sql, historyRow);
+                context.Connection!, context.Transaction, sql, historyRow, cancellationToken: context.CancellationToken);
         }
 
         /// <summary>
@@ -77,7 +77,7 @@ namespace BifrostQL.Core.Modules.History
             await MutationCommandExecutor.ExecuteNonQuery(
                 context.Connection!, context.Transaction,
                 HistoryErasure.BuildTrailPurgeSql(context.Dialect, historyTable, tableRef, record.Entity, entityId),
-                purgeScope);
+                purgeScope, cancellationToken: context.CancellationToken);
 
             // 2. Record the payload-free tombstone.
             var tombstone = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -98,7 +98,7 @@ namespace BifrostQL.Core.Modules.History
             var insertSql = MutationCommandExecutor.BuildInsertInto(
                 context.Dialect, historyTable, tableRef, tombstone.Keys) + ";";
             await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection!, context.Transaction, insertSql, tombstone);
+                context.Connection!, context.Transaction, insertSql, tombstone, cancellationToken: context.CancellationToken);
         }
 
         /// <summary>

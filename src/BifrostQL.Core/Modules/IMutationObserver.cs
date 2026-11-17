@@ -19,6 +19,13 @@ public sealed record MutationObserverContext
     public required object? Result { get; init; }
     public required IDictionary<string, object?> UserContext { get; init; }
 
+    /// <summary>
+    /// The request's abort signal. The in-transaction phases pass it to every command they run,
+    /// so a client that gives up does not leave a hook's read waiting on a row lock (and the
+    /// connection and transaction held) until the lock frees or the command times out.
+    /// </summary>
+    public CancellationToken CancellationToken { get; init; }
+
     // --- Before-commit-only ambient state ---
     // These are populated ONLY during the before-commit phase (by
     // MutationNotifier.RunBeforeCommitHooksAsync), where a hook may need to write

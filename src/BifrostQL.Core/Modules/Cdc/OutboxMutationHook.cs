@@ -110,7 +110,7 @@ namespace BifrostQL.Core.Modules.Cdc
             var sql = MutationCommandExecutor.BuildInsertInto(context.Dialect, outbox, tableRef, eventRow.Keys) + ";";
 
             await MutationCommandExecutor.ExecuteNonQuery(
-                context.Connection, context.Transaction, sql, eventRow);
+                context.Connection, context.Transaction, sql, eventRow, cancellationToken: context.CancellationToken);
         }
 
         // The write result of an UPDATE/DELETE is the affected-row count. Treat a

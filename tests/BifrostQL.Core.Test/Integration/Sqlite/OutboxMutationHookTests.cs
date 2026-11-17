@@ -185,6 +185,40 @@ public sealed class OutboxMutationHookTests : IAsyncLifetime
         (await OutboxRowsAsync()).Should().BeEmpty("gadgets does not opt into events");
     }
 
+    [Fact]
+    public async Task ClientAbort_StopsTheOutboxWrite_InsideTheTransaction()
+    {
+        // The pipeline hands the hook its request token. A client that has gone away must
+        // stop the hook's SQL, not let it run on to the commit the abort is about to undo.
+        var widgets = _model.GetTableFromDbName("main", "widgets");
+        await using var conn = new SqliteConnection(ConnString);
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+        using var aborted = new CancellationTokenSource();
+        aborted.Cancel();
+
+        var context = new MutationObserverContext
+        {
+            Table = widgets,
+            MutationType = MutationType.Update,
+            Data = new Dictionary<string, object?> { ["id"] = 1L, ["name"] = "renamed" },
+            Result = 1,
+            UserContext = new Dictionary<string, object?>(),
+            MutationState = MutationObserverContext.NewMutationState(),
+            Connection = conn,
+            Transaction = transaction,
+            Model = _model,
+            Dialect = SqliteDialect.Instance,
+            CancellationToken = aborted.Token,
+        };
+
+        var write = async () => await new OutboxMutationHook().AfterWriteInTransactionAsync(context);
+
+        await write.Should().ThrowAsync<OperationCanceledException>();
+        await transaction.CommitAsync();
+        (await OutboxRowsAsync()).Should().BeEmpty("the aborted hook wrote no event");
+    }
+
     private async Task<ExecutionResult> ExecuteMutationAsync(string mutation, IDbModel? model = null)
     {
         model ??= _model;

@@ -87,6 +87,7 @@ namespace BifrostQL.Core.Resolvers
                 Model = ctx.Model,
                 Dialect = dialect,
                 ConnFactory = ctx.ConnFactory,
+                CancellationToken = ctx.CancellationToken,
                 MutationState = MutationObserverContext.NewMutationState(),
                 TransactionState = ctx.WriteScope?.TransactionState ?? MutationObserverContext.NewMutationState(),
             };

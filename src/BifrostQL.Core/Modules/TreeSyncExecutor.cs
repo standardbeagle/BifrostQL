@@ -268,6 +268,7 @@ public sealed class TreeSyncExecutor
                     Model = model,
                     Dialect = _dialect,
                     ConnFactory = connFactory,
+                    CancellationToken = cancellationToken,
                     MutationState = MutationObserverContext.NewMutationState(),
                     TransactionState = treeTransactionState,
                 };

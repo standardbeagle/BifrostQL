@@ -93,7 +93,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         {
             storedAfter = await MutationCommandExecutor.LoadRowByKey(
                 context.Connection, context.Transaction, context.Dialect, context.Table,
-                context.Table.Columns.Select(column => column.ColumnName).ToList(), key);
+                context.Table.Columns.Select(column => column.ColumnName).ToList(), key, cancellationToken: context.CancellationToken);
             if (storedAfter is null)
                 throw new BifrostExecutionError(
                     $"Deferred delta could not read back the row it just wrote in " +
@@ -118,7 +118,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
 
         var tableRef = context.Dialect.TableReference(deltaTable.TableSchema, deltaTable.DbName);
         var sql = MutationCommandExecutor.BuildInsertInto(context.Dialect, deltaTable, tableRef, delta.Keys) + ";";
-        await MutationCommandExecutor.ExecuteNonQuery(context.Connection, context.Transaction, sql, delta);
+        await MutationCommandExecutor.ExecuteNonQuery(context.Connection, context.Transaction, sql, delta, cancellationToken: context.CancellationToken);
     }
 
     private static async ValueTask<ActiveChangeSet> GetOrCreateChangeSetAsync(MutationObserverContext context, DeferredConfig config)
@@ -142,7 +142,7 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
                 };
                 var sql = $"UPDATE {changeSetTableRef} SET {context.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tables)}=" +
                           $"@{MetadataKeys.Deferred.ChangeSet.Column.Tables} WHERE {context.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@{MetadataKeys.Deferred.ChangeSet.Column.Id};";
-                await MutationCommandExecutor.ExecuteNonQuery(context.Connection!, context.Transaction, sql, update);
+                await MutationCommandExecutor.ExecuteNonQuery(context.Connection!, context.Transaction, sql, update, cancellationToken: context.CancellationToken);
             }
             return active;
         }
@@ -166,8 +166,8 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         var insert = MutationCommandExecutor.BuildInsertInto(context.Dialect, changeSetTable, tableRef, changeSet.Keys);
         var returning = context.Dialect.ReturningIdentityClauseFor(changeSetTable.KeyColumns.Select(c => c.ColumnName).ToList());
         var id = returning is null
-            ? await InsertAndReadIdentityAsync(context.Connection!, context.Transaction, insert + ";", context.Dialect.LastInsertedIdentity, changeSet)
-            : await ExecuteScalarAsync(context.Connection!, context.Transaction, insert + returning + ";", changeSet);
+            ? await InsertAndReadIdentityAsync(context.Connection!, context.Transaction, insert + ";", context.Dialect.LastInsertedIdentity, changeSet, context.CancellationToken)
+            : await ExecuteScalarAsync(context.Connection!, context.Transaction, insert + returning + ";", changeSet, context.CancellationToken);
         if (id is null || id is DBNull)
             throw new BifrostExecutionError("Deferred change-set store did not return its generated identity.");
 
@@ -200,20 +200,22 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
            && string.Equals(left.DbName, right.DbName, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<object?> InsertAndReadIdentityAsync(
-        DbConnection connection, DbTransaction? transaction, string insert, string identity, Dictionary<string, object?> data)
+        DbConnection connection, DbTransaction? transaction, string insert, string identity, Dictionary<string, object?> data,
+        CancellationToken cancellationToken)
     {
-        await MutationCommandExecutor.ExecuteNonQuery(connection, transaction, insert, data);
-        return await ExecuteScalarAsync(connection, transaction, $"SELECT {identity};", new Dictionary<string, object?>());
+        await MutationCommandExecutor.ExecuteNonQuery(connection, transaction, insert, data, cancellationToken: cancellationToken);
+        return await ExecuteScalarAsync(connection, transaction, $"SELECT {identity};", new Dictionary<string, object?>(), cancellationToken);
     }
 
     private static async ValueTask<object?> ExecuteScalarAsync(
-        DbConnection connection, DbTransaction? transaction, string sql, Dictionary<string, object?> data)
+        DbConnection connection, DbTransaction? transaction, string sql, Dictionary<string, object?> data,
+        CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         command.Transaction = transaction;
         AddParameters(command, data);
-        return await command.ExecuteScalarAsync();
+        return await command.ExecuteScalarAsync(cancellationToken);
     }
 
     private static IDbTable RequireTable(IDbModel model, string name)

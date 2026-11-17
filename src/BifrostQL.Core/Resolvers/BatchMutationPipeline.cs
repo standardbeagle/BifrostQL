@@ -339,6 +339,7 @@ namespace BifrostQL.Core.Resolvers
                 Model = ctx.Model,
                 Dialect = ctx.Dialect,
                 ConnFactory = ctx.ConnFactory,
+                CancellationToken = ctx.Ct,
                 // Per-ACTION scratchpad: fresh for every row, so one action's before-image,
                 // divert signal, or logical verb can never be read as the next action's.
                 MutationState = MutationObserverContext.NewMutationState(),

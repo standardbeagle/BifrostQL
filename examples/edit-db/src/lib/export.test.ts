@@ -46,6 +46,21 @@ describe('formatCsvCell', () => {
         expect(formatCsvCell(-5)).toBe('-5');
     });
 
+    it('leaves a numeric literal sent as text alone', () => {
+        // The server writes BigInt as a decimal string (a JSON number rounds past
+        // 2^53) and exact decimals may arrive the same way, so a negative value
+        // reaches the export as '-5', not -5. A bare numeric literal opens as that
+        // number in Excel and runs nothing, so it must not be prefixed.
+        expect(formatCsvCell('-5')).toBe('-5');
+        expect(formatCsvCell('-9007199254740993')).toBe('-9007199254740993');
+        expect(formatCsvCell('+12.50')).toBe('+12.50');
+        expect(formatCsvCell('-1.5e3')).toBe('-1.5e3');
+        // Anything past the literal is still a formula.
+        for (const hostile of ['-5+cmd|\' /C calc\'!A0', '-1-1', '+1)', '-5 ']) {
+            expect(formatCsvCell(hostile).replace(/^"/, '')).toMatch(/^'/);
+        }
+    });
+
     it('renders a bigint as its exact decimal string', () => {
         expect(formatCsvCell(9007199254740993n)).toBe('9007199254740993');
     });

@@ -34,19 +34,27 @@ const NEEDS_QUOTING = /["\n\r,]/;
 const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
 
 /**
+ * A complete decimal numeric literal. Excel opens it as that number and runs
+ * nothing, so a signed one is exempt from the formula guard. This is what keeps
+ * negative BigInt values (which the server writes as decimal strings, since a
+ * JSON number rounds past 2^53) and exact decimals sent as text unprefixed.
+ */
+const NUMERIC_LITERAL = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+/**
  * Render one cell value as an RFC4180 CSV field.
  *
  * `null`/`undefined` become a bare empty field; an empty string becomes a
  * quoted empty pair (`""`) so the two stay distinguishable in the output bytes.
  * bigint and Date get exact/stable string forms; objects are JSON-encoded.
  * String values that would execute as a spreadsheet formula are prefixed with
- * an apostrophe.
+ * an apostrophe; a string holding only a numeric literal is not.
  */
 export function formatCsvCell(value: unknown): string {
     if (value === null || value === undefined) return '';
     let text = stringifyCell(value);
     if (text === '') return '""';
-    if (typeof value === 'string' && FORMULA_TRIGGER.test(text)) {
+    if (typeof value === 'string' && FORMULA_TRIGGER.test(text) && !NUMERIC_LITERAL.test(text)) {
         text = `'${text}`;
     }
     if (NEEDS_QUOTING.test(text)) {

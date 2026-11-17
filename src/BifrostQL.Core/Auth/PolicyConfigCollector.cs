@@ -10,12 +10,11 @@ namespace BifrostQL.Core.Auth;
 /// </summary>
 public static class PolicyConfigCollector
 {
-    // NOTE: do NOT memoize the parsed TablePolicy per table instance. Although the
-    // table metadata is immutable, the returned TablePolicy (and its row-scope
-    // filter) is consumed mutably downstream by the policy evaluator per caller, so
-    // sharing one cached instance across requests leaks row-scope state between
-    // callers — a security regression (out-of-scope rows become visible). Parse
-    // fresh on every call.
+    // NOTE: parsed fresh on every call. TablePolicy is an immutable record, so sharing
+    // one instance is safe; what blocks a per-table memo is that IDbTable.Metadata is a
+    // mutable dictionary with no change signal (hosts and tests set policy keys after
+    // the model loads). A memo would serve the policy from before such a write, which
+    // for row-scope or deny keys widens access. Memoize only once metadata is frozen.
 
     /// <summary>
     /// Builds the policy for a single table. Returns <see cref="TablePolicy.None"/>

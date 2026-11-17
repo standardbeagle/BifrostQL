@@ -50,18 +50,20 @@ namespace BifrostQL.Core.Model
         public void ApplyTableMetadata(IDbTable table, IDictionary<string, object?> metadata)
         {
             ArgumentNullException.ThrowIfNull(table, nameof(table));
+            var columnNames = table.Columns.Select(c => c.DbName).ToArray();
             foreach (var rule in _metaRules)
             {
-                rule.ApplyToTable(table.TableSchema, table.DbName, table.Columns.Select(c => c.DbName).ToArray(), metadata);
+                rule.ApplyToTable(table.TableSchema, table.DbName, columnNames, metadata);
             }
         }
 
         public void ApplyColumnMetadata(IDbTable table, ColumnDto column, IDictionary<string, object?> metadata)
         {
             ArgumentNullException.ThrowIfNull(table, nameof(table));
+            var columnNames = table.Columns.Select(c => c.DbName).ToArray();
             foreach (var rule in _metaRules)
             {
-                rule.ApplyToColumn(table.TableSchema, table.DbName, table.Columns.Select(c => c.DbName).ToArray(), column.DbName, metadata);
+                rule.ApplyToColumn(table.TableSchema, table.DbName, columnNames, column.DbName, metadata);
             }
         }
     }

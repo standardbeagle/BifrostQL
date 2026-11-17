@@ -113,9 +113,7 @@ namespace BifrostQL.Core.Modules.Cdc
                         }
 
                         var outcome = await DrainOnceAsync(model, connFactory, _sink, _logger, BatchSize, _maxAttempts, cancellationToken);
-                        delay = outcome.FailedAttempts is int attempts
-                            ? ComputeBackoff(attempts, _jitter(), BaseBackoff, MaxBackoff)
-                            : PollInterval;
+                        delay = NextDelay(outcome, BatchSize, _jitter);
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -137,6 +135,20 @@ namespace BifrostQL.Core.Modules.Cdc
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// The wait before the next drain pass. A failed delivery backs off; a pass that
+        /// delivered a full batch with no failure runs again at once, because more rows are
+        /// almost certainly queued (sleeping the poll interval there caps drain at
+        /// <c>batchSize</c> per interval while the backlog grows); anything else means the
+        /// queue is drained, so the loop polls.
+        /// </summary>
+        internal static TimeSpan NextDelay(DrainOutcome outcome, int batchSize, Func<double> jitter)
+        {
+            if (outcome.FailedAttempts is int attempts)
+                return ComputeBackoff(attempts, jitter(), BaseBackoff, MaxBackoff);
+            return outcome.Delivered >= batchSize ? TimeSpan.Zero : PollInterval;
         }
 
         private bool _warnedMultiEndpoint;

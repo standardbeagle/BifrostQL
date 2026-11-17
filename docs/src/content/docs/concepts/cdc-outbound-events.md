@@ -195,6 +195,9 @@ The dispatcher drains undelivered, non-dead outbox rows in `id` order and stamps
   payload and secrets never are.
 - **Backoff.** Between retry passes the dispatcher waits a bounded exponential
   backoff with equal jitter (floor 1s, ceiling 5m).
+- **Cadence.** A pass reads up to 100 rows. When it delivers a full batch with no
+  failure, the next pass starts at once, so a backlog drains as fast as the sink
+  accepts events. Once a pass comes back short, the dispatcher polls every 5 seconds.
 
 ## Subscription routing
 

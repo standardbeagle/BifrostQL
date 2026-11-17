@@ -49,4 +49,21 @@ public sealed class OutboxBackoffTests
 
         delay.Should().BeGreaterThan(TimeSpan.Zero);
     }
+
+    // A pass that delivered a full batch leaves more rows queued: sleeping the poll interval
+    // there capped drain at one batch per interval while the backlog grew.
+    [Fact]
+    public void FullBatchDelivered_RunsTheNextPassAtOnce()
+        => OutboxDispatcher.NextDelay(new DrainOutcome(Delivered: 100, FailedAttempts: null), batchSize: 100, () => 0.5)
+            .Should().Be(TimeSpan.Zero);
+
+    [Fact]
+    public void ShortBatchDelivered_WaitsThePollInterval()
+        => OutboxDispatcher.NextDelay(new DrainOutcome(Delivered: 99, FailedAttempts: null), batchSize: 100, () => 0.5)
+            .Should().Be(TimeSpan.FromSeconds(5));
+
+    [Fact]
+    public void FailedDelivery_BacksOff_EvenAfterAFullBatch()
+        => OutboxDispatcher.NextDelay(new DrainOutcome(Delivered: 100, FailedAttempts: 2), batchSize: 100, () => 1.0)
+            .Should().Be(TimeSpan.FromSeconds(2));
 }

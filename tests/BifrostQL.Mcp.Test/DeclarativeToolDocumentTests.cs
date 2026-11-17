@@ -36,9 +36,9 @@ namespace BifrostQL.Mcp.Test
             """;
 
         [Fact]
-        public void Loader_DeserializesVersionedTypedShape()
+        public async Task Loader_DeserializesVersionedTypedShape()
         {
-            var document = Load(ValidDocument);
+            var document = await LoadAsync(ValidDocument);
 
             document.Version.Should().Be(1);
             var tool = document.Tools.Should().ContainSingle().Subject;
@@ -56,122 +56,135 @@ namespace BifrostQL.Mcp.Test
         /// behaviour — never be accepted and silently ignored.
         /// </summary>
         [Fact]
-        public void Loader_RejectsHiddenFieldBehavior_BecauseNothingEnforcesIt()
+        public async Task Loader_RejectsHiddenFieldBehavior_BecauseNothingEnforcesIt()
         {
             var json = ValidDocument.Replace(
                 "\"policy\": { \"allowedRoles\"",
                 "\"policy\": { \"hiddenFieldBehavior\": \"omit\", \"allowedRoles\"");
 
-            var act = () => Load(json);
+            var act = () => LoadAsync(json);
 
-            act.Should().Throw<InvalidOperationException>()
+            await act.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("*hiddenFieldBehavior*reserved and NOT enforced*");
         }
 
         [Theory]
         [InlineData("\"support\"", "*must be an array*")]
         [InlineData("[\"\"]", "*non-empty role names*")]
-        public void Loader_RejectsMalformedAllowedRoles(string value, string expected)
+        public async Task Loader_RejectsMalformedAllowedRoles(string value, string expected)
         {
             var json = ValidDocument.Replace("[\"support\"]", value);
 
-            var act = () => Load(json);
+            var act = () => LoadAsync(json);
 
-            act.Should().Throw<InvalidOperationException>().WithMessage(expected);
+            await act.Should().ThrowAsync<InvalidOperationException>().WithMessage(expected);
         }
 
         [Theory]
         [InlineData("{ \"tools\": [] }", "missing required property 'version'")]
         [InlineData("{ \"version\": 2, \"tools\": [] }", "Unsupported declarative MCP tool document version '2'")]
-        public void Loader_RejectsMissingOrUnknownVersion(string json, string expected)
+        public async Task Loader_RejectsMissingOrUnknownVersion(string json, string expected)
         {
-            var act = () => Load(json);
+            var act = () => LoadAsync(json);
 
-            act.Should().Throw<InvalidOperationException>().WithMessage($"*{expected}*");
+            await act.Should().ThrowAsync<InvalidOperationException>().WithMessage($"*{expected}*");
         }
 
         [Fact]
-        public void Loader_RejectsUnknownPropertyWithToolNameAndKey()
+        public async Task Loader_RejectsUnknownPropertyWithToolNameAndKey()
         {
             var json = ValidDocument.Replace("\"description\": \"Return", "\"descriptoin\": \"typo\", \"description\": \"Return");
 
-            var act = () => Load(json);
+            var act = () => LoadAsync(json);
 
-            act.Should().Throw<InvalidOperationException>()
+            await act.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("*Unknown property 'descriptoin' in tool 'get_customer_context'*");
         }
 
         [Theory]
         [InlineData("")]
         [InlineData("short")]
-        public void Loader_RejectsMissingOrTooShortDescription(string description)
+        public async Task Loader_RejectsMissingOrTooShortDescription(string description)
         {
             var json = ValidDocument.Replace("Return a customer and related order summary.", description);
 
-            var act = () => Load(json);
+            var act = () => LoadAsync(json);
 
-            act.Should().Throw<InvalidOperationException>()
+            await act.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("*get_customer_context*description*");
         }
 
         [Fact]
-        public void Loader_WarnsWithToolAndParameterWhenParameterDescriptionIsMissing()
+        public async Task Loader_WarnsWithToolAndParameterWhenParameterDescriptionIsMissing()
         {
             var warnings = new List<string>();
 
-            _ = new DeclarativeToolDocumentLoader(
+            _ = await new DeclarativeToolDocumentLoader(
                 new StreamDeclarativeToolDocumentSource(Stream(ValidDocument), "test document"),
-                warnings.Add).Load();
+                warnings.Add).LoadAsync(CancellationToken.None);
 
             warnings.Should().Contain(message => message.Contains("get_customer_context") && message.Contains("customerId"));
         }
 
         [Fact]
-        public void Loader_RejectsIncompatibleDetailParameterWithDetailGating()
+        public async Task Loader_RejectsIncompatibleDetailParameterWithDetailGating()
         {
             var invalid = ValidDocument.Replace("[\"summary\", \"full\"]", "[\"brief\", \"verbose\"]");
-            var act = () => Load(invalid);
+            var act = () => LoadAsync(invalid);
 
-            act.Should().Throw<InvalidOperationException>()
+            await act.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("*get_customer_context*detail*reserved*");
         }
 
         [Fact]
-        public void Registration_LoadsImmediatelyAndExposesIndependentService()
+        public async Task Registration_ExposesTheDocumentThroughTheProvider_AsAnIndependentService()
         {
             var services = new ServiceCollection();
             services.AddBifrostMcpTools(Stream(ValidDocument), "test document");
 
-            using var provider = services.BuildServiceProvider();
-            provider.GetRequiredService<DeclarativeToolDocument>().Tools.Should().ContainSingle();
+            await using var provider = services.BuildServiceProvider();
+            (await provider.GetRequiredService<DeclarativeToolDocumentProvider>().GetAsync(CancellationToken.None))
+                .Tools.Should().ContainSingle();
             provider.GetService<AppMetadataModel>().Should().BeNull();
             provider.GetService<IDbModel>().Should().BeNull();
         }
 
         [Fact]
-        public void Registration_FailsFastInsteadOfRegisteringEmptyDocument()
+        public async Task BrokenDocument_FailsTheHostStart_BeforeAnyToolIsServed()
         {
             var services = new ServiceCollection();
-            var act = () => services.AddBifrostMcpTools(Stream("{ bad json"), "broken document");
+            services.AddSingleton<BifrostQL.Core.Resolvers.IQueryIntentExecutor>(new ThrowingExecutor());
+            services.AddBifrostMcpTools(Stream("{ bad json"), "broken document");
+            await using var provider = services.BuildServiceProvider();
 
-            act.Should().Throw<InvalidOperationException>().WithMessage("*broken document*");
-            services.Should().BeEmpty();
+            var start = async () =>
+            {
+                foreach (var hosted in provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>())
+                    await hosted.StartAsync(CancellationToken.None);
+            };
+
+            await start.Should().ThrowAsync<InvalidOperationException>().WithMessage("*broken document*");
         }
 
         [Fact]
-        public void FileRegistration_LoadsDocumentAtRegistrationTime()
+        public async Task FileRegistration_ReadsNothingAtRegistration_AndReadsTheFileAsynchronouslyOnFirstUse()
         {
-            var path = Path.GetTempFileName();
+            var path = Path.Combine(Path.GetTempPath(), $"bifrost-mcp-tools-{Guid.NewGuid():N}.json");
             try
             {
-                File.WriteAllText(path, ValidDocument);
                 var services = new ServiceCollection();
 
+                // Registration runs before the file exists: it must not touch the file system.
                 services.AddBifrostMcpTools(path);
-                File.Delete(path);
+                await File.WriteAllTextAsync(path, ValidDocument);
 
-                using var provider = services.BuildServiceProvider();
-                provider.GetRequiredService<DeclarativeToolDocument>().Version.Should().Be(1);
+                await using var provider = services.BuildServiceProvider();
+                (await provider.GetRequiredService<DeclarativeToolDocumentProvider>().GetAsync(CancellationToken.None))
+                    .Version.Should().Be(1);
+
+                await using var stream = await new FileDeclarativeToolDocumentSource(path).OpenReadAsync(CancellationToken.None);
+                stream.Should().BeOfType<FileStream>().Which.IsAsync.Should().BeTrue(
+                    "the document is read with async I/O, never a synchronous read on a pool thread");
             }
             finally
             {
@@ -179,9 +192,45 @@ namespace BifrostQL.Mcp.Test
             }
         }
 
-        private static DeclarativeToolDocument Load(string json) =>
+        [Fact]
+        public async Task Provider_ReadsTheDocumentOnce_AcrossConcurrentCallers()
+        {
+            var source = new CountingSource(ValidDocument);
+            var documents = new DeclarativeToolDocumentProvider(new DeclarativeToolDocumentLoader(source));
+
+            var loaded = await Task.WhenAll(Enumerable.Range(0, 8)
+                .Select(_ => Task.Run(() => documents.GetAsync(CancellationToken.None))));
+
+            source.Opens.Should().Be(1);
+            loaded.Distinct().Should().ContainSingle("every caller shares the one loaded document");
+        }
+
+        private sealed class CountingSource(string json) : IDeclarativeToolDocumentSource
+        {
+            private int _opens;
+            public int Opens => Volatile.Read(ref _opens);
+            public string Description => "counting source";
+
+            public ValueTask<Stream> OpenReadAsync(CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref _opens);
+                return ValueTask.FromResult<Stream>(Stream(json));
+            }
+        }
+
+        private sealed class ThrowingExecutor : BifrostQL.Core.Resolvers.IQueryIntentExecutor
+        {
+            public Task<IDbModel> GetModelAsync(string? endpoint = null) =>
+                throw new InvalidOperationException("control: the document load must fail before the model is read");
+
+            public Task<BifrostQL.Core.Resolvers.QueryIntentResult> ExecuteAsync(
+                BifrostQL.Core.Resolvers.QueryIntent intent, CancellationToken cancellationToken = default) =>
+                throw new NotSupportedException();
+        }
+
+        private static Task<DeclarativeToolDocument> LoadAsync(string json) =>
             new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(Stream(json), "test document")).Load();
+                new StreamDeclarativeToolDocumentSource(Stream(json), "test document")).LoadAsync(CancellationToken.None);
 
         private static MemoryStream Stream(string value) => new(Encoding.UTF8.GetBytes(value));
     }

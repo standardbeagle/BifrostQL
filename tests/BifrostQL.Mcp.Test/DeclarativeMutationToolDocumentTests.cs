@@ -14,14 +14,14 @@ namespace BifrostQL.Mcp.Test
     /// </summary>
     public sealed class DeclarativeMutationToolDocumentTests
     {
-        private static DeclarativeToolDocument Load(string json) =>
+        private static Task<DeclarativeToolDocument> LoadAsync(string json) =>
             new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(new MemoryStream(Encoding.UTF8.GetBytes(json)), "test")).Load();
+                new StreamDeclarativeToolDocumentSource(new MemoryStream(Encoding.UTF8.GetBytes(json)), "test")).LoadAsync(CancellationToken.None);
 
         [Fact]
-        public void Loader_AcceptsValidInsertMutation()
+        public async Task Loader_AcceptsValidInsertMutation()
         {
-            var document = Load("""
+            var document = await LoadAsync("""
                 {
                   "version": 1,
                   "tools": [{
@@ -39,9 +39,9 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void Loader_RejectsToolDeclaringBothRootAndMutation()
+        public async Task Loader_RejectsToolDeclaringBothRootAndMutation()
         {
-            var act = () => Load("""
+            var act = () => LoadAsync("""
                 {
                   "version": 1,
                   "tools": [{
@@ -52,13 +52,13 @@ namespace BifrostQL.Mcp.Test
                 }
                 """);
 
-            act.Should().Throw<InvalidOperationException>().WithMessage("*must not also declare 'root'*");
+            await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*must not also declare 'root'*");
         }
 
         [Fact]
-        public void Loader_RejectsInsertWithById()
+        public async Task Loader_RejectsInsertWithById()
         {
-            var act = () => Load("""
+            var act = () => LoadAsync("""
                 {
                   "version": 1,
                   "tools": [{
@@ -69,13 +69,13 @@ namespace BifrostQL.Mcp.Test
                 }
                 """);
 
-            act.Should().Throw<InvalidOperationException>().WithMessage("*insert mutation must not declare 'byId'*");
+            await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*insert mutation must not declare 'byId'*");
         }
 
         [Fact]
-        public void Loader_RejectsDeleteWithValues()
+        public async Task Loader_RejectsDeleteWithValues()
         {
-            var act = () => Load("""
+            var act = () => LoadAsync("""
                 {
                   "version": 1,
                   "tools": [{
@@ -86,13 +86,13 @@ namespace BifrostQL.Mcp.Test
                 }
                 """);
 
-            act.Should().Throw<InvalidOperationException>().WithMessage("*delete mutation must not declare 'values'*");
+            await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*delete mutation must not declare 'values'*");
         }
 
         [Fact]
-        public void Validator_FlagsUnknownColumnAndUndeclaredParameterAndBadByIdType()
+        public async Task Validator_FlagsUnknownColumnAndUndeclaredParameterAndBadByIdType()
         {
-            var document = Load("""
+            var document = await LoadAsync("""
                 {
                   "version": 1,
                   "tools": [{
@@ -111,9 +111,9 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void Validator_FlagsUnknownMutationTable()
+        public async Task Validator_FlagsUnknownMutationTable()
         {
-            var document = Load("""
+            var document = await LoadAsync("""
                 {
                   "version": 1,
                   "tools": [{

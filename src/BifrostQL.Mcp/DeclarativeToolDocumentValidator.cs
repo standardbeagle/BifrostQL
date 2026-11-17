@@ -6,11 +6,12 @@ using Microsoft.Extensions.Hosting;
 namespace BifrostQL.Mcp
 {
     public sealed class DeclarativeToolDocumentValidator(
-        DeclarativeToolDocument document,
+        DeclarativeToolDocumentProvider documents,
         IQueryIntentExecutor executor) : IHostedService
     {
         public async Task StartAsync(CancellationToken cancellationToken)
         {
+            var document = await documents.GetAsync(cancellationToken);
             var model = await executor.GetModelAsync();
             var errors = Validate(document, model);
             if (errors.Count != 0)

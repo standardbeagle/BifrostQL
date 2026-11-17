@@ -258,8 +258,11 @@ builder.Services.AddBifrostMcpTools("mcp-tools.json");        // from a file pat
 // or from a stream / custom IDeclarativeToolDocumentSource
 ```
 
-`AddBifrostMcpTools` loads and shape-checks the document immediately, then
-registers a hosted service that validates every tool against the live model at
-startup. A bad reference (unknown table, column, relation, or parameter) fails
-the host start with a precise message — it never ships a tool that would only
-fault on first use.
+`AddBifrostMcpTools` reads nothing itself. It registers a hosted service that,
+at host start, reads the document with async I/O, shape-checks it, and validates
+every tool against the live model. A malformed document or a bad reference
+(unknown table, column, relation, or parameter) fails the host start with a
+precise message — it never ships a tool that would only fault on first use.
+`DeclarativeToolDocumentProvider.GetAsync` returns the loaded document. A custom
+`IDeclarativeToolDocumentSource` implements `OpenReadAsync` and must not block
+on I/O.

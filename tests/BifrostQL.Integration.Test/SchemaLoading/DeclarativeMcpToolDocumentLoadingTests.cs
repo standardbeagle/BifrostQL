@@ -60,7 +60,7 @@ public sealed class DeclarativeMcpToolDocumentLoadingTests
         await start.Should().NotThrowAsync();
 
         // The loaded document is the shipped 4-tool consolidation sample.
-        var document = host.Services.GetRequiredService<DeclarativeToolDocument>();
+        var document = await host.Services.GetRequiredService<DeclarativeToolDocumentProvider>().GetAsync(CancellationToken.None);
         document.Version.Should().Be(1);
         document.Tools.Select(tool => tool.Name).Should().BeEquivalentTo(new[]
         {

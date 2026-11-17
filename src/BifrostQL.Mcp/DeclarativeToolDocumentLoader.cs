@@ -17,12 +17,12 @@ namespace BifrostQL.Mcp
         private static readonly HashSet<string> MutationKeys = ["table", "action", "values", "byId"];
         private static readonly HashSet<string> MutationActions = ["insert", "update", "delete"];
 
-        public DeclarativeToolDocument Load()
+        public async Task<DeclarativeToolDocument> LoadAsync(CancellationToken cancellationToken)
         {
             try
             {
-                using var stream = source.OpenRead();
-                using var json = JsonDocument.Parse(stream);
+                await using var stream = await source.OpenReadAsync(cancellationToken);
+                using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
                 ValidateShape(json.RootElement);
                 return json.RootElement.Deserialize<DeclarativeToolDocument>(DeclarativeToolJson.Options)
                     ?? throw new InvalidOperationException("Tool document is empty.");

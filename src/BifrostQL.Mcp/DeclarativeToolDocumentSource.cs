@@ -1,9 +1,14 @@
 namespace BifrostQL.Mcp
 {
+    /// <summary>
+    /// Where a declarative MCP tool document comes from. <see cref="OpenReadAsync"/> runs once, from
+    /// <see cref="DeclarativeToolDocumentProvider"/> at host start, so an implementation reads its
+    /// backing store asynchronously and never blocks a thread on I/O.
+    /// </summary>
     public interface IDeclarativeToolDocumentSource
     {
         string Description { get; }
-        Stream OpenRead();
+        ValueTask<Stream> OpenReadAsync(CancellationToken cancellationToken);
     }
 
     public sealed class FileDeclarativeToolDocumentSource(string path) : IDeclarativeToolDocumentSource
@@ -14,7 +19,11 @@ namespace BifrostQL.Mcp
 
         public string Description => _path;
 
-        public Stream OpenRead() => File.OpenRead(_path);
+        // FileOptions.Asynchronous makes the reads the loader awaits true async I/O instead of
+        // synchronous reads on a thread-pool thread.
+        public ValueTask<Stream> OpenReadAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<Stream>(new FileStream(
+                _path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, FileOptions.Asynchronous));
     }
 
     public sealed class StreamDeclarativeToolDocumentSource : IDeclarativeToolDocumentSource
@@ -32,6 +41,7 @@ namespace BifrostQL.Mcp
 
         public string Description { get; }
 
-        public Stream OpenRead() => new MemoryStream(_content, writable: false);
+        public ValueTask<Stream> OpenReadAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<Stream>(new MemoryStream(_content, writable: false));
     }
 }

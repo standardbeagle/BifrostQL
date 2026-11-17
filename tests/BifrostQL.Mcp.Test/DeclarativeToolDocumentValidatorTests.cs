@@ -11,9 +11,9 @@ namespace BifrostQL.Mcp.Test
     public sealed class DeclarativeToolDocumentValidatorTests
     {
         [Fact]
-        public void Validate_AggregatesEveryReferenceError()
+        public async Task Validate_AggregatesEveryReferenceError()
         {
-            var document = ToolDocument(
+            var document = await ToolDocumentAsync(
                 rootTable: "dbo.missing",
                 rootFields: ["missing_root"],
                 byId: "missingParam",
@@ -28,9 +28,9 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void Validate_RejectsUnknownIdParameterTableWithPrecisePath()
+        public async Task Validate_RejectsUnknownIdParameterTableWithPrecisePath()
         {
-            var document = ToolDocument(idTable: "dbo.missing");
+            var document = await ToolDocumentAsync(idTable: "dbo.missing");
 
             var errors = DeclarativeToolDocumentValidator.Validate(document, Model());
 
@@ -40,11 +40,11 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void Validate_ReportsRootRelationFilterAndAggregatePaths()
+        public async Task Validate_ReportsRootRelationFilterAndAggregatePaths()
         {
             var model = Model();
-            var badRelation = ToolDocument(relation: "missing_relation");
-            var badColumns = ToolDocument(rootFields: ["missing_root"], filterColumn: "missing_filter", aggregateColumn: "missing_total");
+            var badRelation = await ToolDocumentAsync(relation: "missing_relation");
+            var badColumns = await ToolDocumentAsync(rootFields: ["missing_root"], filterColumn: "missing_filter", aggregateColumn: "missing_total");
 
             var errors = DeclarativeToolDocumentValidator.Validate(badRelation, model)
                 .Concat(DeclarativeToolDocumentValidator.Validate(badColumns, model)).ToList();
@@ -60,7 +60,8 @@ namespace BifrostQL.Mcp.Test
         {
             var model = Model();
             var executor = new RecordingExecutor(model);
-            var validator = new DeclarativeToolDocumentValidator(ToolDocument(), executor);
+            var validator = new DeclarativeToolDocumentValidator(
+                new DeclarativeToolDocumentProvider(ToolDocumentLoader()), executor);
 
             await validator.StartAsync(CancellationToken.None);
 
@@ -69,27 +70,27 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void Validate_AcceptsCompositePkRootAndCompositeFkInclude()
+        public async Task Validate_AcceptsCompositePkRootAndCompositeFkInclude()
         {
             // A composite-PK root table with a composite-FK include is now a valid
             // v2 document — startup must not fail it (criterion 3).
             var errors = DeclarativeToolDocumentValidator.Validate(
-                CompositeDocument(relation: "inventory"), CompositeModel());
+                await CompositeDocumentAsync(relation: "inventory"), CompositeModel());
 
             errors.Should().BeEmpty();
         }
 
         [Fact]
-        public void Validate_CompositeDocumentStillFailsOnUnknownRelation()
+        public async Task Validate_CompositeDocumentStillFailsOnUnknownRelation()
         {
             var errors = DeclarativeToolDocumentValidator.Validate(
-                CompositeDocument(relation: "missing_relation"), CompositeModel());
+                await CompositeDocumentAsync(relation: "missing_relation"), CompositeModel());
 
             errors.Should().ContainSingle()
                 .Which.Should().Contain("include[0].relation").And.Contain("missing_relation");
         }
 
-        private static DeclarativeToolDocument CompositeDocument(string relation)
+        private static async Task<DeclarativeToolDocument> CompositeDocumentAsync(string relation)
         {
             var json = $$"""
                 {
@@ -104,8 +105,8 @@ namespace BifrostQL.Mcp.Test
                 }
                 """;
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            return new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "composite validator test")).Load();
+            return await new DeclarativeToolDocumentLoader(
+                new StreamDeclarativeToolDocumentSource(stream, "composite validator test")).LoadAsync(CancellationToken.None);
         }
 
         private static IDbModel CompositeModel()
@@ -128,7 +129,19 @@ namespace BifrostQL.Mcp.Test
             };
         }
 
-        private static DeclarativeToolDocument ToolDocument(
+        private static Task<DeclarativeToolDocument> ToolDocumentAsync(
+            string rootTable = "dbo.customers",
+            string idTable = "dbo.customers",
+            string[]? rootFields = null,
+            string byId = "customerId",
+            string enumDefault = "summary",
+            string relation = "orders",
+            string filterColumn = "status",
+            string aggregateColumn = "total") =>
+            ToolDocumentLoader(rootTable, idTable, rootFields, byId, enumDefault, relation, filterColumn, aggregateColumn)
+                .LoadAsync(CancellationToken.None);
+
+        private static DeclarativeToolDocumentLoader ToolDocumentLoader(
             string rootTable = "dbo.customers",
             string idTable = "dbo.customers",
             string[]? rootFields = null,
@@ -158,8 +171,7 @@ namespace BifrostQL.Mcp.Test
                 }
                 """;
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            return new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "validator test")).Load();
+            return new DeclarativeToolDocumentLoader(new StreamDeclarativeToolDocumentSource(stream, "validator test"));
         }
 
         private static IDbModel Model()

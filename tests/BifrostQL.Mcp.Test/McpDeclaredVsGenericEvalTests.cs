@@ -99,7 +99,7 @@ namespace BifrostQL.Mcp.Test
             var harness = new McpEvalHarness();
 
             var generic = await harness.RunAsync(GenericInvoker(), new[] { GenericScenario() });
-            var declared = await harness.RunAsync(DeclaredInvoker(), new[] { DeclaredScenario() });
+            var declared = await harness.RunAsync(await DeclaredInvokerAsync(), new[] { DeclaredScenario() });
 
             generic.AllPassed.Should().BeTrue(generic.Scenarios.FirstOrDefault(s => !s.Passed)?.FailureReason);
             declared.AllPassed.Should().BeTrue(declared.Scenarios.FirstOrDefault(s => !s.Passed)?.FailureReason);
@@ -223,11 +223,11 @@ namespace BifrostQL.Mcp.Test
 
         private McpToolInvoker GenericInvoker() => BuildInvoker(declarativeTools: null);
 
-        private McpToolInvoker DeclaredInvoker()
+        private async Task<McpToolInvoker> DeclaredInvokerAsync()
         {
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(DeclaredDocument));
-            var document = new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "declared-eval")).Load();
+            var document = await new DeclarativeToolDocumentLoader(
+                new StreamDeclarativeToolDocumentSource(stream, "declared-eval")).LoadAsync(CancellationToken.None);
             return BuildInvoker(document);
         }
 

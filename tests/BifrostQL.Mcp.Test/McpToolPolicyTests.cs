@@ -357,8 +357,8 @@ namespace BifrostQL.Mcp.Test
                 }
                 """;
             using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-            return new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "widget-lookup test")).Load();
+            return await new DeclarativeToolDocumentLoader(
+                new StreamDeclarativeToolDocumentSource(stream, "widget-lookup test")).LoadAsync(CancellationToken.None);
         }
 
         private static McpToolPolicyOptions GateAggregateToAnalyst() => new()

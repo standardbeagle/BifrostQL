@@ -121,8 +121,8 @@ namespace BifrostQL.Mcp.Test
             }
 
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(Document));
-            _document = new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "declared-mutation")).Load();
+            _document = await new DeclarativeToolDocumentLoader(
+                new StreamDeclarativeToolDocumentSource(stream, "declared-mutation")).LoadAsync(CancellationToken.None);
 
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>

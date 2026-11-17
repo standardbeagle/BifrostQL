@@ -55,6 +55,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - **SQL Server `timestamp` / `rowversion` columns are row versions, not date-times.** They are exposed as base64 binary, left out of insert input, and usable as a `concurrency-token`. Postgres, MySQL and SQLite `timestamp` keep their date-time meaning.
 - **Field-encryption key APIs are async.** `IDataEncryptionKeyStore` has only `LoadAsync`/`StoreAsync`, so custom key stores must implement them. `EnvelopeKeyManager` key methods are `*Async` (`GetDataKeyAsync`, `RotateAsync`, …), `CryptoReadProjector` is built with `CreateAsync`, and `TableReadChain.For` is `ForAsync`. A key version minted by another process is picked up within about a second.
 - **`RowScopeCompiler.Compile` takes an `ITypeMapper`**, so row-scope comparisons convert context values by the column's dialect type.
+- **Declarative MCP tool documents load at host start, with async I/O.** `AddBifrostMcpTools` no longer reads the document; a missing or malformed one fails `StartAsync` instead of the registration call. `IDeclarativeToolDocumentSource.OpenRead()` is now `OpenReadAsync(CancellationToken)`, `DeclarativeToolDocumentLoader.Load()` is `LoadAsync(CancellationToken)`, and `DeclarativeToolDocument` is no longer a DI service: resolve `DeclarativeToolDocumentProvider` and await `GetAsync`.
 - **A `DbSavedObjectStore` table name must start with `_bifrost_saved_objects`.** Any other configured name throws `ArgumentException` at construction. Rename a custom table, for example `_bifrost_saved_objects_tenant_a`.
 
 ### Security — third review pass

@@ -94,7 +94,6 @@ namespace BifrostQL.Mcp
             return endpoints.MapMcp(pattern);
         }
 
-#pragma warning disable CS1998 // async signature is fixed by ConfigureSessionOptions
         private static async Task ConfigureSessionAsync(
             HttpContext httpContext,
             ModelContextProtocol.Server.McpServerOptions sessionOptions,
@@ -126,7 +125,9 @@ namespace BifrostQL.Mcp
             var logger = requestServices.GetRequiredService<ILoggerFactory>().CreateLogger<BifrostMcpAdapter>();
             // Opt-in declarative tools, resolved from the configured document (null when
             // AddBifrostMcpTools was never called — the built-in surface only).
-            var declarativeTools = requestServices.GetService<DeclarativeToolDocument>();
+            var declarativeTools = requestServices.GetService<DeclarativeToolDocumentProvider>() is { } documents
+                ? await documents.GetAsync(cancellationToken)
+                : null;
             var sessionScoped = BifrostMcpServerFactory.CreateServerOptions(
                 executor,
                 endpoint,
@@ -143,7 +144,6 @@ namespace BifrostQL.Mcp
             sessionOptions.Capabilities = sessionScoped.Capabilities;
             sessionOptions.Handlers = sessionScoped.Handlers;
         }
-#pragma warning restore CS1998
 
         /// <summary>
         /// Per-request identity for one HTTP MCP session.

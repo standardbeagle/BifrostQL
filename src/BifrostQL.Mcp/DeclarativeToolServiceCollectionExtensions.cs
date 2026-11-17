@@ -23,11 +23,12 @@ namespace BifrostQL.Mcp
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(source);
 
-            var loader = new DeclarativeToolDocumentLoader(source);
-            var document = loader.Load();
+            // Nothing is read here: registration is synchronous, and the document is read with
+            // async I/O by the provider. The validator's StartAsync forces that read, so a missing
+            // or malformed document still fails the host start, before any tool is served.
             services.AddSingleton(source);
-            services.AddSingleton(loader);
-            services.AddSingleton(document);
+            services.AddSingleton(new DeclarativeToolDocumentLoader(source));
+            services.AddSingleton<DeclarativeToolDocumentProvider>();
             services.AddSingleton<DeclarativeToolDocumentValidator>();
             services.AddSingleton<IHostedService>(provider =>
                 provider.GetRequiredService<DeclarativeToolDocumentValidator>());

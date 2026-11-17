@@ -395,7 +395,7 @@ namespace BifrostQL.Mcp
                 authOptions.Mode, authOptions.EnableWrites ? "enabled" : "disabled");
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
             if (_server is not null)
                 throw new InvalidOperationException("BifrostMcpAdapter is already started.");
@@ -406,7 +406,9 @@ namespace BifrostQL.Mcp
 
             // Declarative tools are opt-in: present only when AddBifrostMcpTools registered a
             // document. Absent, the factory publishes only the built-in surface (inert).
-            var declarativeTools = _services.GetService(typeof(DeclarativeToolDocument)) as DeclarativeToolDocument;
+            var declarativeTools = _services.GetService(typeof(DeclarativeToolDocumentProvider)) is DeclarativeToolDocumentProvider documents
+                ? await documents.GetAsync(cancellationToken)
+                : null;
             var options = BifrostMcpServerFactory.CreateServerOptions(
                 _executor,
                 userContextProviderAsync: ConfigureAuth(),
@@ -422,7 +424,6 @@ namespace BifrostQL.Mcp
             // stdin or the host stops. Faults surface on StopAsync (graceful
             // shutdown always awaits the session) rather than being swallowed.
             _runTask = _server.RunAsync(_stopping.Token);
-            return Task.CompletedTask;
         }
 
         public async Task StopAsync(CancellationToken cancellationToken)

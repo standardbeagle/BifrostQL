@@ -112,6 +112,14 @@ public sealed class SqlServerDialect : SqlDialectBase
         if (pivotValues.Count == 0)
             return PivotSqlGenerator.GenerateEmptyPivot(this, config, tableRef, filter);
 
+        // PIVOT matches CAST(col AS NVARCHAR(MAX)) against labels built in .NET, which
+        // agree only for text: a bit casts to "1" (.NET "True"), a datetime to style 0,
+        // and a uniqueidentifier to upper case (hidden only by a case-insensitive
+        // collation). Any other type takes the portable CASE WHEN pivot, which binds
+        // each value as a parameter.
+        if (pivotValues.Any(v => v is not null and not string))
+            return null;
+
         var aggFunc = config.AggregateFunction.ToString().ToUpperInvariant();
         var groupByCols = string.Join(", ", config.GroupByColumns.Select(EscapeIdentifier));
         var pivotCol = EscapeIdentifier(config.PivotColumn);

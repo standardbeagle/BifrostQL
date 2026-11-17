@@ -11,6 +11,12 @@ namespace BifrostQL.Server.Pgwire
     /// adapter is the only Kestrel-specific glue between the two. Reads pull from the
     /// pipe reader; writes buffer in the pipe writer until the codec's explicit flush at a
     /// message boundary, or until <see cref="MaxUnflushedBytes"/> accumulate.
+    ///
+    /// <para>The adapter is async only. The synchronous <see cref="Read(byte[], int, int)"/>,
+    /// <see cref="Write(byte[], int, int)"/> and <see cref="Flush"/> throw rather than block a
+    /// thread-pool thread on the pipe, and the array overloads of <c>ReadAsync</c> /
+    /// <c>WriteAsync</c> forward to the memory ones instead of the base class's fallback to the
+    /// synchronous members.</para>
     /// </summary>
     internal sealed class DuplexPipeStream : Stream
     {
@@ -53,8 +59,10 @@ namespace BifrostQL.Server.Pgwire
             return toCopy;
         }
 
-        public override int Read(byte[] buffer, int offset, int count)
-            => ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw SyncIoNotSupported();
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -68,8 +76,10 @@ namespace BifrostQL.Server.Pgwire
                 await FlushAsync(cancellationToken);
         }
 
-        public override void Write(byte[] buffer, int offset, int count)
-            => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw SyncIoNotSupported();
 
         public override async Task FlushAsync(CancellationToken cancellationToken)
         {
@@ -77,7 +87,10 @@ namespace BifrostQL.Server.Pgwire
             await _writer.FlushAsync(cancellationToken);
         }
 
-        public override void Flush() => FlushAsync(CancellationToken.None).GetAwaiter().GetResult();
+        public override void Flush() => throw SyncIoNotSupported();
+
+        private static NotSupportedException SyncIoNotSupported()
+            => new("DuplexPipeStream is async only; use ReadAsync, WriteAsync and FlushAsync.");
 
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();

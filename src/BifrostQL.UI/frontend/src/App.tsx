@@ -180,9 +180,9 @@ export default function App() {
         id: 'edit-as-query',
         label: 'Edit as query',
         onSelect: (table: EditDbTable) => {
-          // The builder's name space is the qualified db name; edit-db's dbName
-          // is bare, so qualify it with the table's schema.
-          setBuilderSeedTable(qualifiedDbName(table));
+          // edit-db's dbName is the BARE name and repeats across schemas; the
+          // GraphQL name is unique, and the builder schema carries it.
+          setBuilderSeedTable(table.graphQlName);
           setEditorPane('builder');
         },
       });

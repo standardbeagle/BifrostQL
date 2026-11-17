@@ -22,15 +22,15 @@ import {
 function schema(): BuilderSchema {
   return {
     tables: [
-      { schema: "dbo", name: "customers", qualified: "dbo.customers" },
-      { schema: "dbo", name: "orders", qualified: "dbo.orders" },
+      { schema: "dbo", name: "customers", qualified: "dbo.customers", graphQlName: "customers" },
+      { schema: "dbo", name: "orders", qualified: "dbo.orders", graphQlName: "orders" },
     ],
     columns: [
-      { table: "dbo.customers", name: "id", type: "int", nullable: false, isPrimaryKey: true },
-      { table: "dbo.customers", name: "name", type: "varchar", nullable: true, isPrimaryKey: false },
-      { table: "dbo.orders", name: "id", type: "int", nullable: false, isPrimaryKey: true },
-      { table: "dbo.orders", name: "customer_id", type: "int", nullable: true, isPrimaryKey: false },
-      { table: "dbo.orders", name: "total", type: "decimal", nullable: true, isPrimaryKey: false },
+      { table: "dbo.customers", name: "id", graphQlName: "id", type: "int", nullable: false, isPrimaryKey: true },
+      { table: "dbo.customers", name: "name", graphQlName: "name", type: "varchar", nullable: true, isPrimaryKey: false },
+      { table: "dbo.orders", name: "id", graphQlName: "id", type: "int", nullable: false, isPrimaryKey: true },
+      { table: "dbo.orders", name: "customer_id", graphQlName: "customer_id", type: "int", nullable: true, isPrimaryKey: false },
+      { table: "dbo.orders", name: "total", graphQlName: "total", type: "decimal", nullable: true, isPrimaryKey: false },
     ],
     relationships: [],
   };

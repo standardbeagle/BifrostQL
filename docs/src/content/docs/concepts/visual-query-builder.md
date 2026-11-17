@@ -14,7 +14,7 @@ The builder is split across three layers, each independently tested:
 2. **Server-side SQL generation** — `VisualQueryBuilder.Build(spec, model, dialect)` resolves every table and column against the loaded `IDbModel` (an allow-list — anything not in the model is rejected, an injection guard), escapes identifiers and paginates through the active `ISqlDialect`, emits `INNER`/`LEFT` joins with multi-column `ON` for composite foreign keys, builds a parameterized `WHERE` from the filter tree, and adds `ORDER BY` + a clamped row limit. **No identifier or value is ever string-concatenated** — values flow through named parameters (`@p0`, `@p1`, …).
 
 3. **The Photino bridge + React designer** — the designer never calls HTTP. Three in-process bridge handlers serve it:
-   - `get-builder-schema` — tables, columns, and FK relationships from the cached `DbModel` (composite FKs included).
+   - `get-builder-schema` — tables, columns, and FK relationships from the cached `DbModel` (composite FKs included). Tables and columns carry their database names (what the designer builds SQL from) and their `graphQlName`. Visualize, pivot and dashboard tiles map a saved design onto GraphQL through the GraphQL names, so a sanitized name (`unit-price` → `unit_price`) or a table name repeated across schemas (`dbo.orders` / `sales.orders`) resolves to the right field.
    - `build-sql` — spec → `{ sql, parameters }` for the read-only SQL-preview tab.
    - `build-and-exec` — spec → build → execute → the same columnar result shape (`columns`, `rows`, `rowsAffected`, `truncated`) the raw SQL console renders.
 

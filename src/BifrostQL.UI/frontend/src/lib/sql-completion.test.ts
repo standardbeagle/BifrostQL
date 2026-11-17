@@ -9,14 +9,14 @@ import type { BuilderSchema } from './builder-bridge';
 // A two-table mock schema standing in for the live DbModel the bridge would return.
 const mockSchema: BuilderSchema = {
   tables: [
-    { schema: 'main', name: 'users', qualified: 'main.users' },
-    { schema: 'main', name: 'orders', qualified: 'main.orders' },
+    { schema: 'main', name: 'users', qualified: 'main.users', graphQlName: 'users' },
+    { schema: 'main', name: 'orders', qualified: 'main.orders', graphQlName: 'orders' },
   ],
   columns: [
-    { table: 'main.users', name: 'id', type: 'integer', nullable: false, isPrimaryKey: true },
-    { table: 'main.users', name: 'email', type: 'text', nullable: false, isPrimaryKey: false },
-    { table: 'main.orders', name: 'id', type: 'integer', nullable: false, isPrimaryKey: true },
-    { table: 'main.orders', name: 'user_id', type: 'integer', nullable: false, isPrimaryKey: false },
+    { table: 'main.users', name: 'id', graphQlName: 'id', type: 'integer', nullable: false, isPrimaryKey: true },
+    { table: 'main.users', name: 'email', graphQlName: 'email', type: 'text', nullable: false, isPrimaryKey: false },
+    { table: 'main.orders', name: 'id', graphQlName: 'id', type: 'integer', nullable: false, isPrimaryKey: true },
+    { table: 'main.orders', name: 'user_id', graphQlName: 'user_id', type: 'integer', nullable: false, isPrimaryKey: false },
   ],
   relationships: [],
 };
@@ -45,12 +45,12 @@ describe('buildSchemaCompletionMap', () => {
     // Arrange — same "users" name under two different schemas.
     const collided: BuilderSchema = {
       tables: [
-        { schema: 'main', name: 'users', qualified: 'main.users' },
-        { schema: 'audit', name: 'users', qualified: 'audit.users' },
+        { schema: 'main', name: 'users', qualified: 'main.users', graphQlName: 'users' },
+        { schema: 'audit', name: 'users', qualified: 'audit.users', graphQlName: 'users' },
       ],
       columns: [
-        { table: 'main.users', name: 'id', type: 'integer', nullable: false, isPrimaryKey: true },
-        { table: 'audit.users', name: 'changed_at', type: 'text', nullable: false, isPrimaryKey: false },
+        { table: 'main.users', name: 'id', graphQlName: 'id', type: 'integer', nullable: false, isPrimaryKey: true },
+        { table: 'audit.users', name: 'changed_at', graphQlName: 'changed_at', type: 'text', nullable: false, isPrimaryKey: false },
       ],
       relationships: [],
     };

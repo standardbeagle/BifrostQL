@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { downloadTextFile, exportAllRows, filenameFor, mimeFor, type GraphQLFetcher, type SavedObject, type SavedObjectsClient } from "@standardbeagle/edit-db";
 import { parseQueryDefinition, type SavedQueryDefinition } from "../designer/saved-query";
 import { toFilter } from "../designer/designer-state";
-import { resolveVisualFilter, tableFilterTypeName, tablePart } from "../lib/visual-filter";
+import { resolveDesignerSource, type NamedTable } from "../lib/visual-filter";
 import { buildPivotQuery, displayPivotColumn, parsePivotPayload, type PivotAggregate, type PivotDefinition, type PivotPayload, type ResolvedSavedQueryPivotSource } from "./pivot-model";
 import { openPivot, PIVOT_SAVED_OBJECT_TYPE, pivotStore, savePivot } from "./pivot-store";
 
-type Table = { graphQlName: string; columns: Array<{ graphQlName: string }> };
+type Table = NamedTable;
 const empty = (table = ""): PivotDefinition => ({ kind: "bifrost.pivot", version: 1, source: { kind: "table", table }, rowKeys: [], pivotColumn: "", valueColumn: "", aggregate: "count" });
 
 /** Resolve a saved visual query into the exact table/filter context accepted by
@@ -14,11 +14,8 @@ const empty = (table = ""): PivotDefinition => ({ kind: "bifrost.pivot", version
  * of producing a deceptively different pivot. */
 export function resolveSavedQueryPivotSource(saved: SavedQueryDefinition, tables: readonly Table[]): ResolvedSavedQueryPivotSource {
   if (saved.state.tables.length !== 1 || saved.state.joins.length !== 0) throw new Error("Pivoting a saved query requires one backing table and no joins.");
-  const tableRef = saved.state.tables[0].alias ?? saved.state.tables[0].table;
-  const table = tables.find((candidate) => candidate.graphQlName === tablePart(saved.state.tables[0].table));
-  if (!table) throw new Error("The saved query backing table is not present in this schema.");
-  const filter = resolveVisualFilter(saved.state.filter ?? toFilter(saved.state), tableRef);
-  return { table: table.graphQlName, filter, filterType: filter ? tableFilterTypeName(table.graphQlName) : undefined };
+  const { table, filter, filterType } = resolveDesignerSource(saved.state.tables[0], saved.state.filter ?? toFilter(saved.state), tables);
+  return { table, filter, filterType };
 }
 
 /** Export the displayed server matrix through edit-db's shared 3.3 serializer. */
@@ -60,7 +57,7 @@ export function PivotPane({ fetcher, initialDefinition, store = pivotStore }: { 
   const fields = selected?.columns ?? [];
   const ready = !!active && active.rowKeys.length > 0 && !!active.pivotColumn && !!active.valueColumn;
 
-  useEffect(() => { void fetcher.query<{ _dbSchema: Table[] }>("query PivotSchema { _dbSchema { graphQlName columns { graphQlName } } }").then((data) => setTables(data._dbSchema ?? [])).catch((reason) => setError(String(reason))); }, [fetcher]);
+  useEffect(() => { void fetcher.query<{ _dbSchema: Table[] }>("query PivotSchema { _dbSchema { schema dbName graphQlName columns { dbName graphQlName } } }").then((data) => setTables(data._dbSchema ?? [])).catch((reason) => setError(String(reason))); }, [fetcher]);
   useEffect(() => { void store.list(PIVOT_SAVED_OBJECT_TYPE).then(setSaved).catch((reason) => setError(String(reason))); }, [store]);
   useEffect(() => { if (initialDefinition) { setDefinition(initialDefinition); setActivePivot(null); } }, [initialDefinition]);
   useEffect(() => {

@@ -76,6 +76,30 @@ public sealed class BuilderSchemaProjectionTests : IDisposable
         dto.Columns.Should().ContainSingle(c => c.Table == childQ && c.Name == "id" && c.IsPrimaryKey);
     }
 
+    [Fact]
+    public async Task Project_CarriesGraphQlNamesBesideTheDbNames()
+    {
+        // A column whose GraphQL name is sanitized away from the DB name (SQLite
+        // has one schema, so the table half is a pass-through check): the
+        // GraphQL-facing bridges need the GraphQL spelling, the SQL the DB one.
+        await using (var conn = _factory.GetConnection())
+        {
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "CREATE TABLE line_items (id INTEGER PRIMARY KEY, \"unit-price\" REAL)";
+            await cmd.ExecuteNonQueryAsync();
+        }
+        var model = await new DbModelLoader(_factory, new MetadataLoader(Array.Empty<string>())).LoadAsync();
+        var table = model.GetTableFromDbName("line_items");
+
+        var dto = BuilderSchemaProjection.Project(model);
+
+        var projected = dto.Tables.Single(t => t.Name == "line_items");
+        projected.GraphQlName.Should().Be(table.GraphQlName);
+        var column = dto.Columns.Single(c => c.Table == projected.Qualified && c.Name == "unit-price");
+        column.GraphQlName.Should().Be(table.ColumnLookup["unit-price"].GraphQlName).And.NotBe("unit-price");
+    }
+
     private async Task<IDbModel> SeedJunctionAsync()
     {
         var ddl = new[]

@@ -16,18 +16,23 @@ import {
   type BridgeRequestOptions,
 } from "./native-bridge";
 import type { VisualQuerySpec } from "./visual-query";
+import type { NamedTable } from "./visual-filter";
 
 export interface BuilderTable {
   schema: string;
   name: string;
   /** "schema.name" — the value VisualQuerySpec.tables[].table expects. */
   qualified: string;
+  /** The table's GraphQL name — what GraphQL-facing bridges address it by. */
+  graphQlName: string;
 }
 
 export interface BuilderColumn {
   /** Qualified owning table ("schema.name"). */
   table: string;
   name: string;
+  /** The column's GraphQL field name. */
+  graphQlName: string;
   type: string;
   nullable: boolean;
   isPrimaryKey: boolean;
@@ -126,4 +131,16 @@ export function buildAndExec(
   return sendBridgeRequest<BuildAndExecResult>("build-and-exec", spec, {
     timeoutMs: options?.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS,
   });
+}
+
+/** The builder schema as {@link NamedTable}s, for the shared designer → GraphQL resolver. */
+export function namedTablesFromBuilder(schema: BuilderSchema): NamedTable[] {
+  return schema.tables.map((table) => ({
+    schema: table.schema,
+    dbName: table.name,
+    graphQlName: table.graphQlName,
+    columns: schema.columns
+      .filter((column) => column.table === table.qualified)
+      .map((column) => ({ dbName: column.name, graphQlName: column.graphQlName })),
+  }));
 }

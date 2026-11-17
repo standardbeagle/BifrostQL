@@ -47,15 +47,15 @@ const { QueryBuilderPane } = await import("./QueryBuilderPane");
 function schema(): BuilderSchema {
   return {
     tables: [
-      { schema: "dbo", name: "customers", qualified: "dbo.customers" },
-      { schema: "dbo", name: "orders", qualified: "dbo.orders" },
+      { schema: "dbo", name: "customers", qualified: "dbo.customers", graphQlName: "customers" },
+      { schema: "dbo", name: "orders", qualified: "dbo.orders", graphQlName: "orders" },
     ],
     columns: [
-      { table: "dbo.customers", name: "id", type: "int", nullable: false, isPrimaryKey: true },
-      { table: "dbo.customers", name: "name", type: "varchar", nullable: true, isPrimaryKey: false },
-      { table: "dbo.orders", name: "id", type: "int", nullable: false, isPrimaryKey: true },
-      { table: "dbo.orders", name: "customer_id", type: "int", nullable: true, isPrimaryKey: false },
-      { table: "dbo.orders", name: "total", type: "decimal", nullable: true, isPrimaryKey: false },
+      { table: "dbo.customers", name: "id", graphQlName: "id", type: "int", nullable: false, isPrimaryKey: true },
+      { table: "dbo.customers", name: "name", graphQlName: "name", type: "varchar", nullable: true, isPrimaryKey: false },
+      { table: "dbo.orders", name: "id", graphQlName: "id", type: "int", nullable: false, isPrimaryKey: true },
+      { table: "dbo.orders", name: "customer_id", graphQlName: "customer_id", type: "int", nullable: true, isPrimaryKey: false },
+      { table: "dbo.orders", name: "total", graphQlName: "total", type: "decimal", nullable: true, isPrimaryKey: false },
     ],
     relationships: [],
   };
@@ -255,12 +255,34 @@ describe("edit-as-query seed", () => {
     await waitFor(() => expect(onSeedHandled).toHaveBeenCalledTimes(1));
   });
 
-  it("matches a bare table name case-insensitively against the builder schema", async () => {
-    bridge.getBuilderSchema.mockResolvedValue(schema());
+  /** dbo.orders (GraphQL dbo_orders) plus sales.orders (sales_orders): one bare name, neither GraphQL name equal to it. */
+  function twoSchemas(): BuilderSchema {
+    const base = schema();
+    return {
+      ...base,
+      tables: [...base.tables.map((t) => (t.qualified === "dbo.orders" ? { ...t, graphQlName: "dbo_orders" } : t)), { schema: "sales", name: "orders", qualified: "sales.orders", graphQlName: "sales_orders" }],
+      columns: [...base.columns, { table: "sales.orders", name: "id", graphQlName: "id", type: "int", nullable: false, isPrimaryKey: true }],
+    };
+  }
+
+  it("seeds by GraphQL name, landing on the second schema's same-named table", async () => {
+    // The grid knows a table by its GraphQL name; the bare DB name "orders"
+    // would seed dbo.orders for a click on sales.orders.
+    bridge.getBuilderSchema.mockResolvedValue(twoSchemas());
     const onSeedHandled = vi.fn();
-    render(<QueryBuilderPane seedTable="Orders" onSeedHandled={onSeedHandled} />);
+    render(<QueryBuilderPane seedTable="sales_orders" onSeedHandled={onSeedHandled} />);
     await waitFor(() => expect(onSeedHandled).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText(/was not found in the query builder schema/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove sales.orders" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove dbo.orders" })).toBeNull();
+  });
+
+  it("refuses a bare DB name that exists in two schemas", async () => {
+    bridge.getBuilderSchema.mockResolvedValue(twoSchemas());
+    const onSeedHandled = vi.fn();
+    render(<QueryBuilderPane seedTable="orders" onSeedHandled={onSeedHandled} />);
+    await waitFor(() => expect(onSeedHandled).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/'orders' was not found in the query builder schema/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Remove dbo.orders" })).toBeNull();
   });
 
   it("refuses a bare name two schemas share, like an unknown table, and seeds the qualified one", async () => {

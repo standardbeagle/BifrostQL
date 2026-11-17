@@ -2,12 +2,15 @@ using BifrostQL.Core.Model;
 
 namespace BifrostQL.UI.NativeBridge
 {
-    /// <summary>A table available to the visual query builder.</summary>
-    public sealed record BuilderTableInfo(string Schema, string Name, string Qualified);
+    /// <summary>A table available to the visual query builder. <c>Name</c>/<c>Qualified</c>
+    /// are the database names the designer builds SQL from; <c>GraphQlName</c> is the
+    /// name the GraphQL surface (Visualize, pivot, dashboards) addresses it by.</summary>
+    public sealed record BuilderTableInfo(string Schema, string Name, string Qualified, string GraphQlName);
 
-    /// <summary>A column available to the visual query builder.</summary>
+    /// <summary>A column available to the visual query builder; <c>GraphQlName</c> is its
+    /// GraphQL field name.</summary>
     public sealed record BuilderColumnInfo(
-        string Table, string Name, string Type, bool Nullable, bool IsPrimaryKey);
+        string Table, string Name, string GraphQlName, string Type, bool Nullable, bool IsPrimaryKey);
 
     /// <summary>An FK relationship between two tables. Column lists are parallel
     /// (left[i] references right[i]) so composite foreign keys carry every pair.</summary>
@@ -45,12 +48,12 @@ namespace BifrostQL.UI.NativeBridge
             ArgumentNullException.ThrowIfNull(model);
 
             var tables = model.Tables
-                .Select(t => new BuilderTableInfo(t.TableSchema, t.DbName, Qualified(t)))
+                .Select(t => new BuilderTableInfo(t.TableSchema, t.DbName, Qualified(t), t.GraphQlName))
                 .ToList();
 
             var columns = model.Tables
                 .SelectMany(t => t.Columns.Select(c => new BuilderColumnInfo(
-                    Qualified(t), c.DbName, c.DataType, c.IsNullable, c.IsPrimaryKey)))
+                    Qualified(t), c.DbName, c.GraphQlName, c.DataType, c.IsNullable, c.IsPrimaryKey)))
                 .ToList();
 
             // SingleLinks are the child->parent FK edges and are composite-safe via

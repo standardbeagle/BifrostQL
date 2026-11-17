@@ -6,7 +6,7 @@ import type { PivotDefinition } from "./pivot-model";
 
 afterEach(cleanup);
 const definition: PivotDefinition = { kind: "bifrost.pivot", version: 1, source: { kind: "table", table: "sales" }, rowKeys: ["region"], pivotColumn: "quarter", valueColumn: "amount", aggregate: "sum" };
-const schema = { _dbSchema: [{ graphQlName: "sales", columns: [{ graphQlName: "region" }, { graphQlName: "quarter" }, { graphQlName: "amount" }] }] };
+const schema = { _dbSchema: [{ schema: "dbo", dbName: "sales", graphQlName: "sales", columns: [{ dbName: "region", graphQlName: "region" }, { dbName: "quarter", graphQlName: "quarter" }, { dbName: "amount", graphQlName: "amount" }] }] };
 const payload = { salesPivot: { pivotColumn: "quarter", rowKeys: ["region"], columns: ["Q1", "Q2", "(null)", ""], rows: [{ region: "north", cells: { Q1: 12, Q2: 7, "(null)": 1, "": 2 } }, { region: "south", cells: { Q1: 3, Q2: 9, "(null)": 0, "": 0 } }] } };
 function fetcher(response = payload) { return { query: vi.fn((query: string) => Promise.resolve(query.includes("PivotSchema") ? schema : response)) }; }
 const savedVisualQuery = { id: "north-sales", type: "query", name: "North sales", version: 1, definition: { kind: "bifrost.visual-query", version: 1, state: { tables: [{ table: "dbo.sales", alias: null }], columns: [], joins: [], filter: { op: "leaf", children: null, criterion: { table: "dbo.sales", column: "region", operator: "_eq", value: "north" } }, rowLimit: null } } };

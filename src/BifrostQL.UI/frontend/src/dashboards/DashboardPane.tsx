@@ -4,29 +4,30 @@ import { ChartPreview } from "../charts/ChartPane";
 import { buildChartAggregateQuery, mapChartData, parseChartDefinition, type ChartData, type ChartDefinition } from "../charts/chart-model";
 import { toFilter } from "../designer/designer-state";
 import { parseQueryDefinition } from "../designer/saved-query";
-import { resolveVisualFilter, tableFilterTypeName, tablePart } from "../lib/visual-filter";
+import { resolveDesignerSource, type NamedTable } from "../lib/visual-filter";
 import { assertDashboardName, blankDashboard, type CountTileConfig, type DashboardDefinition, type DashboardLayout, type DashboardTile, type TableTileConfig } from "./dashboard-model";
 import { openChart } from "../charts/chart-store";
 import { dashboardStore, DASHBOARD_SAVED_OBJECT_TYPE, openDashboard, saveDashboard } from "./dashboard-store";
 import "./dashboard.css";
 
-type ResolvedTile = { kind: "chart"; config: ChartDefinition } | { kind: "count"; config: CountTileConfig } | { kind: "table"; config: TableTileConfig } | { error: string };
-type SchemaTable = { graphQlName: string; columns: Array<{ graphQlName: string }> };
+type ResolvedTile = { kind: "chart"; config: ChartDefinition } | { kind: "count"; config: CountTileConfig } | { kind: "table"; config: TableTileConfig } | { error: string } | { pending: string };
+type SchemaTable = NamedTable;
 
-function configFromSaved(tile: DashboardTile, object: SavedObject): ResolvedTile {
+function configFromSaved(tile: DashboardTile, object: SavedObject, schema: readonly SchemaTable[] | null): ResolvedTile {
   if (tile.kind === "chart") {
     const chart = parseChartDefinition(object.definition);
     return chart ? { kind: "chart", config: chart } : { error: `Saved object ${object.id} is not a chart.` };
   }
   const query = parseQueryDefinition(object.definition);
   if (query?.state.tables.length === 1 && query.state.joins.length === 0) {
-    const tableRef = query.state.tables[0].alias ?? query.state.tables[0].table;
-    const table = tablePart(query.state.tables[0].table);
+    // A saved query holds DB names; the tile queries GraphQL, so it waits for
+    // _dbSchema to map them (see resolveDesignerSource).
+    if (!schema) return { pending: "Loading schema…" };
     try {
-      const filter = resolveVisualFilter(query.state.filter ?? toFilter(query.state), tableRef);
-      const source = filter ? { filter, filterType: tableFilterTypeName(table) } : {};
+      const { table, filter, filterType, names } = resolveDesignerSource(query.state.tables[0], query.state.filter ?? toFilter(query.state), schema);
+      const source = filter ? { filter, filterType } : {};
       if (tile.kind === "count") return { kind: "count", config: { table, label: object.name, ...source } };
-      return { kind: "table", config: { table, columns: query.state.columns.filter((column) => column.show).map((column) => column.column), limit: query.state.rowLimit ?? 10, ...source } };
+      return { kind: "table", config: { table, columns: query.state.columns.filter((column) => column.show).map((column) => names.column(column.column)), limit: query.state.rowLimit ?? 10, ...source } };
     } catch (reason) { return { error: reason instanceof Error ? reason.message : String(reason) }; }
   }
   const config = object.definition;
@@ -38,11 +39,11 @@ function configFromSaved(tile: DashboardTile, object: SavedObject): ResolvedTile
   return { error: `Saved object ${object.id} cannot be rendered as a ${tile.kind} tile.` };
 }
 
-function resolveTile(tile: DashboardTile, saved: Map<string, SavedObject>): ResolvedTile {
+function resolveTile(tile: DashboardTile, saved: Map<string, SavedObject>, schema: readonly SchemaTable[] | null): ResolvedTile {
   if (tile.ref) {
     const object = saved.get(tile.ref);
     if (!object) return { error: `Missing saved object: ${tile.ref}` };
-    return configFromSaved(tile, object);
+    return configFromSaved(tile, object, schema);
   }
   if (!tile.config) return { error: "Tile has no configuration." };
   if (tile.kind === "chart") {
@@ -77,7 +78,7 @@ export function DashboardPane({ fetcher, store = dashboardStore, onOpenTable }: 
   useEffect(() => {
     let live = true;
     setSchema(null); setSchemaError(null);
-    fetcher.query<{ _dbSchema: SchemaTable[] }>("query DashboardSchema { _dbSchema { graphQlName columns { graphQlName } } }")
+    fetcher.query<{ _dbSchema: SchemaTable[] }>("query DashboardSchema { _dbSchema { schema dbName graphQlName columns { dbName graphQlName } } }")
       .then((result) => { if (live) setSchema(result._dbSchema ?? []); })
       .catch((reason) => { if (live) setSchemaError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { live = false; };
@@ -133,22 +134,22 @@ export function DashboardPane({ fetcher, store = dashboardStore, onOpenTable }: 
       {error && <p role="alert">{error}</p>}
       {editMode && schemaError && <p role="alert">Schema failed to load, so new tiles cannot be added: {schemaError}</p>}
       <div className="bifrost-dashboard-grid" style={{ "--dashboard-columns": definition.grid.cols } as CSSProperties} aria-label="Dashboard tile grid">
-        {definition.tiles.map((tile) => <DashboardTileView key={tile.id} tile={tile} savedById={savedById} fetcher={fetcher} editMode={editMode} savedCharts={savedCharts} onBindChart={bindChart} onMove={move} onResize={resize} onRemove={removeTile} onOpenTable={onOpenTable} />)}
+        {definition.tiles.map((tile) => <DashboardTileView key={tile.id} tile={tile} savedById={savedById} schema={schema} fetcher={fetcher} editMode={editMode} savedCharts={savedCharts} onBindChart={bindChart} onMove={move} onResize={resize} onRemove={removeTile} onOpenTable={onOpenTable} />)}
       </div>
     </main>
   </section>;
 }
 
-function DashboardTileView({ tile, savedById, fetcher, editMode, savedCharts, onBindChart, onMove, onResize, onRemove, onOpenTable }: { tile: DashboardTile; savedById: Map<string, SavedObject>; fetcher: GraphQLFetcher; editMode: boolean; savedCharts: SavedObject[]; onBindChart: (id: string, ref: string) => void; onMove: (id: string, target: DashboardLayout) => void; onResize: (id: string) => void; onRemove: (id: string) => void; onOpenTable?: (table: string) => void }) {
+function DashboardTileView({ tile, savedById, schema, fetcher, editMode, savedCharts, onBindChart, onMove, onResize, onRemove, onOpenTable }: { tile: DashboardTile; savedById: Map<string, SavedObject>; schema: readonly SchemaTable[] | null; fetcher: GraphQLFetcher; editMode: boolean; savedCharts: SavedObject[]; onBindChart: (id: string, ref: string) => void; onMove: (id: string, target: DashboardLayout) => void; onResize: (id: string) => void; onRemove: (id: string) => void; onOpenTable?: (table: string) => void }) {
   const [dragged, setDragged] = useState<string | null>(null);
   // Memoised on the tile and the saved-object map: resolveTile builds a fresh
   // config object, and a fresh config re-runs the tile's request effect. During
   // render it refetched every saved-query tile on each dashboard-name keystroke.
-  const resolved = useMemo(() => resolveTile(tile, savedById), [tile, savedById]);
+  const resolved = useMemo(() => resolveTile(tile, savedById, schema), [tile, savedById, schema]);
   const style = { gridColumn: `${tile.layout.x + 1} / span ${tile.layout.w}`, gridRow: `${tile.layout.y + 1} / span ${tile.layout.h}` };
   return <article className="bifrost-dashboard-tile" style={style} draggable={editMode} onDragStart={(event) => { event.dataTransfer.setData("text/plain", tile.id); setDragged(tile.id); }} onDragEnd={() => setDragged(null)} onDragOver={(event) => { if (editMode) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain") || dragged; if (editMode && id && id !== tile.id) onMove(id, tile.layout); }} aria-label={`${tile.title} tile`}>
     <h3>{tile.title}</h3>{editMode && <div className="bifrost-dashboard-tile__controls">{tile.kind === "chart" && <select aria-label={`Saved chart for ${tile.title}`} value={tile.ref ?? ""} onChange={(event) => onBindChart(tile.id, event.target.value)}><option value="">Built-in config</option>{savedCharts.map((chart) => <option key={chart.id} value={chart.id}>{chart.name}</option>)}</select>}<span className="bifrost-dashboard-drag" aria-label={`Drag ${tile.title}`} title="Drag tile">⠿</span><button type="button" aria-label={`Remove ${tile.title}`} onClick={() => onRemove(tile.id)}>Remove</button><button type="button" className="bifrost-dashboard-resize" aria-label={`Resize ${tile.title}`} onClick={() => onResize(tile.id)}>↘</button></div>}
-    {"error" in resolved ? <p className="bifrost-dashboard-error" role="alert">{resolved.error}</p> : resolved.kind === "chart" ? <ChartTile fetcher={fetcher} definition={resolved.config} refreshSeconds={tile.refreshSeconds} /> : resolved.kind === "count" ? <CountTile fetcher={fetcher} config={resolved.config} refreshSeconds={tile.refreshSeconds} /> : <TableTile fetcher={fetcher} config={resolved.config} refreshSeconds={tile.refreshSeconds} onOpenTable={onOpenTable} />}
+    {"error" in resolved ? <p className="bifrost-dashboard-error" role="alert">{resolved.error}</p> : "pending" in resolved ? <p>{resolved.pending}</p> : resolved.kind === "chart" ? <ChartTile fetcher={fetcher} definition={resolved.config} refreshSeconds={tile.refreshSeconds} /> : resolved.kind === "count" ? <CountTile fetcher={fetcher} config={resolved.config} refreshSeconds={tile.refreshSeconds} /> : <TableTile fetcher={fetcher} config={resolved.config} refreshSeconds={tile.refreshSeconds} onOpenTable={onOpenTable} />}
   </article>;
 }
 

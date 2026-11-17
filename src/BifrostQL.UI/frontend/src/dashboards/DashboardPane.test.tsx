@@ -35,8 +35,15 @@ function memoryStore(initial = [dashboard()]) {
     remove: vi.fn(async (_type, id) => { const index = objects.findIndex((item) => item.id === id); if (index >= 0) objects.splice(index, 1); }),
   };
 }
+/** _dbSchema as the server reports it: DB identity beside the GraphQL names. */
+const dbSchema = [
+  { schema: "dbo", dbName: "orders", graphQlName: "orders", columns: [{ dbName: "id", graphQlName: "id" }, { dbName: "region", graphQlName: "region" }] },
+  { schema: "sales", dbName: "orders", graphQlName: "sales_orders", columns: [{ dbName: "id", graphQlName: "id" }, { dbName: "region", graphQlName: "region" }] },
+  { schema: "dbo", dbName: "order items", graphQlName: "order_items", columns: [{ dbName: "id", graphQlName: "id" }, { dbName: "unit-price", graphQlName: "unit_price" }] },
+];
 function fetcher({ failOrders = false } = {}) {
   return { query: vi.fn((query: string) => {
+    if (query.includes("DashboardSchema")) return Promise.resolve({ _dbSchema: dbSchema });
     if (query.includes("ordersAggregate")) return failOrders ? Promise.reject(new Error("orders unavailable")) : Promise.resolve({ ordersAggregate: query.includes("groupBy") ? [{ region: "north", _count: 7 }] : { _count: 7 } });
     if (query.includes("customersAggregate")) return Promise.resolve({ customersAggregate: { _count: 3 } });
     if (query.includes("DashboardTable")) return Promise.resolve({ orders: [{ id: 101, region: "north" }, { id: 102, region: "south" }] });
@@ -266,6 +273,34 @@ describe("DashboardPane", () => {
     const call = (live.query.mock.calls as Array<[string, Record<string, unknown>?]>).find(([query]) => String(query).includes("DashboardCount"));
     expect(call?.[0]).toContain("TableFilterordersInput");
     expect(call?.[1]).toEqual({ filter: { region: { _eq: "north" } } });
+  });
+
+  it("queries a saved query's second-schema table by its own GraphQL name", async () => {
+    // sales.orders shares the bare name "orders" with dbo.orders; its GraphQL
+    // name is sales_orders. The bare name would count dbo.orders instead.
+    const visualQuery = { id: "sales-north", type: "query", name: "Sales north", version: 1, definition: { kind: "bifrost.visual-query", version: 1, state: { tables: [{ table: "sales.orders", alias: null }], columns: [], joins: [], filter: { op: "leaf", children: null, criterion: { table: "sales.orders", column: "region", operator: "_eq", value: "north" } }, rowLimit: null } } };
+    const bound: DashboardDefinition = { ...definition, tiles: [{ id: "sales", kind: "count", title: "Sales", ref: "sales-north", layout: { x: 0, y: 0, w: 3, h: 3 } }] };
+    const live = fetcher();
+    live.query.mockImplementation((query: string) => Promise.resolve(query.includes("DashboardSchema") ? { _dbSchema: dbSchema } : query.includes("sales_ordersAggregate") ? { sales_ordersAggregate: { _count: 4 } } : {}));
+    await openDashboardPane(memoryStore([dashboard(bound), visualQuery] as any[]), live);
+    await waitFor(() => expect(screen.getByLabelText("Sales north").textContent).toContain("4"));
+    const call = (live.query.mock.calls as Array<[string, Record<string, unknown>?]>).find(([query]) => String(query).includes("DashboardCount"));
+    expect(call?.[0]).toContain("sales_ordersAggregate(filter: $filter)");
+    expect(call?.[0]).toContain("TableFiltersales_ordersInput");
+    expect(call?.[0]).not.toMatch(/[{\s]ordersAggregate/);
+  });
+
+  it("maps a saved query's sanitized table and column names onto GraphQL names", async () => {
+    const visualQuery = { id: "items", type: "query", name: "Items", version: 1, definition: { kind: "bifrost.visual-query", version: 1, state: { tables: [{ table: "dbo.order items", alias: null }], columns: [{ tableRef: "dbo.order items", column: "unit-price", show: true, sort: "none", sortOrder: null, alias: null, criteria: [] }], joins: [], filter: { op: "leaf", children: null, criterion: { table: "dbo.order items", column: "unit-price", operator: "_gt", value: 5 } }, rowLimit: 5 } } };
+    const bound: DashboardDefinition = { ...definition, tiles: [{ id: "items", kind: "table", title: "Items", ref: "items", layout: { x: 0, y: 0, w: 6, h: 4 } }] };
+    const live = fetcher();
+    live.query.mockImplementation((query: string) => Promise.resolve(query.includes("DashboardSchema") ? { _dbSchema: dbSchema } : query.includes("DashboardTable") ? { order_items: [{ unit_price: 9.5 }] } : {}));
+    await openDashboardPane(memoryStore([dashboard(bound), visualQuery] as any[]), live);
+    expect(await screen.findByText("9.5")).toBeTruthy();
+    const call = (live.query.mock.calls as Array<[string, Record<string, unknown>?]>).find(([query]) => String(query).includes("DashboardTable"));
+    expect(call?.[0]).toContain("order_items(limit: $limit, offset: $offset, filter: $filter) { unit_price }");
+    expect(call?.[0]).toContain("$filter: TableFilterorder_itemsInput");
+    expect(call?.[1]).toMatchObject({ filter: { unit_price: { _gt: 5 } } });
   });
 
   it("persists dashboards under the dashboard saved-object type", async () => {

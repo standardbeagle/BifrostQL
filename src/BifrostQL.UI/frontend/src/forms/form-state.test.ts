@@ -15,11 +15,11 @@ import {
 import type { BuilderColumn, BuilderSchema } from "../lib/builder-bridge";
 
 function col(name: string, type: string, extra: Partial<BuilderColumn> = {}): BuilderColumn {
-  return { table: "dbo.users", name, type, nullable: true, isPrimaryKey: false, ...extra };
+  return { table: "dbo.users", name, graphQlName: name, type, nullable: true, isPrimaryKey: false, ...extra };
 }
 
 const schema: BuilderSchema = {
-  tables: [{ schema: "dbo", name: "users", qualified: "dbo.users" }],
+  tables: [{ schema: "dbo", name: "users", qualified: "dbo.users", graphQlName: "users" }],
   columns: [
     col("id", "int", { isPrimaryKey: true, nullable: false }),
     col("full_name", "varchar(100)", { nullable: false }),
@@ -69,7 +69,7 @@ describe("buildFormFromTable", () => {
   });
 
   it("derives child subforms from incoming relationships without dropping composite FK columns", () => {
-    const ordersSchema: BuilderSchema = { ...schema, tables: [...schema.tables, { schema: 'sales', name: 'orders', qualified: 'sales.orders' }, { schema: 'sales', name: 'order_lines', qualified: 'sales.order_lines' }], relationships: [{ leftTable: 'sales.order_lines', leftColumns: ['tenant_id', 'order_id'], rightTable: 'sales.orders', rightColumns: ['tenant_id', 'order_id'] }] };
+    const ordersSchema: BuilderSchema = { ...schema, tables: [...schema.tables, { schema: 'sales', name: 'orders', qualified: 'sales.orders', graphQlName: 'orders' }, { schema: 'sales', name: 'order_lines', qualified: 'sales.order_lines', graphQlName: 'order_lines' }], relationships: [{ leftTable: 'sales.order_lines', leftColumns: ['tenant_id', 'order_id'], rightTable: 'sales.orders', rightColumns: ['tenant_id', 'order_id'] }] };
     const def = buildFormFromTable(ordersSchema, 'sales.orders');
     expect(def.subforms).toEqual([expect.objectContaining({ childTable: 'sales.order_lines', parentColumns: ['tenant_id', 'order_id'], childColumns: ['tenant_id', 'order_id'], mode: 'grid' })]);
   });

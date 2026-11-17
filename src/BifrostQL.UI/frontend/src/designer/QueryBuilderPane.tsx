@@ -7,6 +7,7 @@ import {
   buildSql,
   buildAndExec,
   isBuilderBridgeAvailable,
+  namedTablesFromBuilder,
   type BuilderSchema,
   type BuildAndExecResult,
 } from "../lib/builder-bridge";
@@ -37,7 +38,7 @@ import {
   type DesignerState,
   type M2mJoinPlan,
 } from "./designer-state";
-import { resolveVisualFilter, tableFilterTypeName, tablePart } from "../lib/visual-filter";
+import { resolveDesignerSource } from "../lib/visual-filter";
 import {
   serializeQuery,
   parseQueryDefinition,
@@ -72,8 +73,8 @@ interface QueryBuilderPaneProps {
   onStoreChanged?: () => void;
   /**
    * "Edit as query": a table the shell asked us to seed a FRESH design from.
-   * Either the qualified "schema.name" or a bare table name (matched against
-   * the builder schema case-insensitively). One-shot like `openRequest`.
+   * The table's GraphQL name (what the grid knows) or its qualified
+   * "schema.name". One-shot like `openRequest`.
    */
   seedTable?: string | null;
   /** Fired once the seed has been consumed or declined, so a pane remount cannot replay it. */
@@ -191,7 +192,11 @@ export function QueryBuilderPane({
   // two schemas share is a miss too, never the first listed table.
   useEffect(() => {
     if (!seedTable || !schema) return;
-    const match = findBuilderTable(schema.tables, seedTable);
+    // The grid seeds by GraphQL name (unique per table). A qualified
+    // "schema.name", or a bare DB name only one schema defines, is accepted too.
+    const match =
+      schema.tables.find((t) => t.graphQlName === seedTable) ??
+      findBuilderTable(schema.tables, seedTable);
     if (!match) {
       setError(`Table '${seedTable}' was not found in the query builder schema.`);
       onSeedHandled?.();
@@ -474,18 +479,16 @@ export function QueryBuilderPane({
         <button
           type="button"
           onClick={() => {
-            // The chart source must be the BARE table name (parseChartDefinition
-            // rejects a schema-qualified one — the old dispatch made the chart
-            // silently never render) and must CARRY the designer's filter: a
-            // chart that quietly drops the filter the builder shows is a chart
-            // that lies. Resolution failures surface as the pane's own error.
+            // The chart source is the table's GRAPHQL name (the designer holds
+            // DB names, which differ once sanitized, prefixed or deduped across
+            // schemas) and must CARRY the designer's filter, keyed by GraphQL
+            // field names: a chart that quietly drops the filter the builder
+            // shows is a chart that lies. Failures surface as the pane's error.
             if (state.tables.length !== 1 || state.joins.length !== 0) return;
-            const placed = state.tables[0];
-            const bare = tablePart(placed.table);
             try {
-              const filter = resolveVisualFilter(state.filter ?? toFilter(state), tableRef(placed));
+              const source = resolveDesignerSource(state.tables[0], state.filter ?? toFilter(state), namedTablesFromBuilder(schema));
               window.dispatchEvent(new CustomEvent("bifrostql:visualize", {
-                detail: { table: bare, filter, filterType: filter ? tableFilterTypeName(bare) : undefined },
+                detail: { table: source.table, filter: source.filter, filterType: source.filterType },
               }));
             } catch (reason) {
               setError(reason instanceof Error ? reason.message : String(reason));

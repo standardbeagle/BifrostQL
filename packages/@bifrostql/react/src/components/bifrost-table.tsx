@@ -1,4 +1,10 @@
-import { useState, useCallback, createContext, useContext } from 'react';
+import {
+  useState,
+  useCallback,
+  useMemo,
+  createContext,
+  useContext,
+} from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useBifrostTable } from '../hooks/use-bifrost-table';
 import type {
@@ -616,13 +622,54 @@ interface TableRowsProps<T> {
   renderCell:
     ((value: unknown, row: T, column: ColumnConfig) => ReactNode) | undefined;
   renderExpandedRow: ((row: T) => ReactNode) | undefined;
-  hoveredRowIndex: number | null;
-  setHoveredRowIndex: (index: number | null) => void;
   /**
    * The table hook's editing surface. Inline edits are committed through it,
    * so a keystroke actually reaches `onRowUpdate`.
    */
   editing: EditingState;
+}
+
+interface HoverableRowProps {
+  style: CSSProperties;
+  /** Merged over `style` while the pointer is over the row; none = no hover. */
+  hoverStyle: CSSProperties | undefined;
+  tabIndex: number | undefined;
+  onClick: (() => void) | undefined;
+  onKeyDown: ((e: React.KeyboardEvent) => void) | undefined;
+  testId: string;
+  children: ReactNode;
+}
+
+/**
+ * A body row that owns its own hover state. Hover used to live in
+ * BifrostTable, so every mouse move between rows re-rendered the whole
+ * table; now only the row entered and the row left re-render, and their
+ * cells (already-built `children`) are reused as is.
+ */
+function HoverableRow({
+  style,
+  hoverStyle,
+  tabIndex,
+  onClick,
+  onKeyDown,
+  testId,
+  children,
+}: HoverableRowProps) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <tr
+      style={hovered && hoverStyle ? { ...style, ...hoverStyle } : style}
+      role="row"
+      tabIndex={tabIndex}
+      onClick={onClick}
+      onKeyDown={onKeyDown}
+      onMouseEnter={hoverStyle ? () => setHovered(true) : undefined}
+      onMouseLeave={hoverStyle ? () => setHovered(false) : undefined}
+      data-testid={testId}
+    >
+      {children}
+    </tr>
+  );
 }
 
 /**
@@ -646,8 +693,6 @@ function TableRows<T>({
   renderRow,
   renderCell,
   renderExpandedRow,
-  hoveredRowIndex,
-  setHoveredRowIndex,
   editing,
 }: TableRowsProps<T>) {
   const theme = useTableTheme();
@@ -660,14 +705,12 @@ function TableRows<T>({
           typeof rowKey === 'string'
             ? String(rowRecord[rowKey] ?? rowIndex)
             : rowIdentity(rowRecord, rowKey);
-        const isHovered = hoverable && hoveredRowIndex === rowIndex;
         const isStriped = striped && rowIndex % 2 === 1;
         const isExpanded = expandable && expansion.expandedRows.has(key);
 
         const rowStyle: CSSProperties = {
           ...theme.bodyRow,
           ...(isStriped ? theme.bodyRowStriped : {}),
-          ...(isHovered ? theme.bodyRowHover : {}),
           ...(onRowClick ? { cursor: 'pointer' } : {}),
         };
 
@@ -697,20 +740,14 @@ function TableRows<T>({
           (action) => !action.permission || rowCan(row, action.permission),
         );
         const defaultRowElement = (
-          <tr
+          <HoverableRow
             key={key}
             style={rowStyle}
-            role="row"
+            hoverStyle={hoverable ? theme.bodyRowHover : undefined}
             tabIndex={expandable ? 0 : undefined}
             onClick={onRowClick ? () => onRowClick(row) : undefined}
             onKeyDown={handleRowKeyDown}
-            onMouseEnter={
-              hoverable ? () => setHoveredRowIndex(rowIndex) : undefined
-            }
-            onMouseLeave={
-              hoverable ? () => setHoveredRowIndex(null) : undefined
-            }
-            data-testid={`table-row-${key}`}
+            testId={`table-row-${key}`}
           >
             {visibleColumns.map((col) => {
               if (col.field === '__expand') {
@@ -803,7 +840,7 @@ function TableRows<T>({
                 </td>
               );
             })}
-          </tr>
+          </HoverableRow>
         );
 
         rows.push(
@@ -975,8 +1012,15 @@ export function BifrostTable<T = Record<string, unknown>>(
     );
   }
 
+  // Memoised so the context value below keeps its identity across renders;
+  // a fresh theme object re-rendered every useTableTheme() consumer. An
+  // inline `themeOverrides={{…}}` still defeats this: hoist it.
   const resolvedTheme = customTheme ?? getTheme(themeName);
-  const theme = mergeThemeOverrides(resolvedTheme, themeOverrides);
+  const theme = useMemo(
+    () => mergeThemeOverrides(resolvedTheme, themeOverrides),
+    [resolvedTheme, themeOverrides],
+  );
+  const themeContextValue = useMemo(() => ({ theme }), [theme]);
 
   const table = useBifrostTable<T>({
     table: tableName,
@@ -997,8 +1041,6 @@ export function BifrostTable<T = Record<string, unknown>>(
     onSaveError,
     ...bifrostOptions,
   });
-
-  const [hoveredRowIndex, setHoveredRowIndex] = useState<number | null>(null);
 
   const baseColumns = expandable
     ? [{ field: '__expand', header: '', width: 40 } as ColumnConfig, ...columns]
@@ -1049,7 +1091,7 @@ export function BifrostTable<T = Record<string, unknown>>(
     (expandable && table.data.length > 0);
 
   return (
-    <TableThemeContext.Provider value={{ theme }}>
+    <TableThemeContext.Provider value={themeContextValue}>
       <div style={theme.container} data-testid="bifrost-table">
         {table.policy.error && (
           // The data arrived but the policy document did not: the table is
@@ -1152,8 +1194,6 @@ export function BifrostTable<T = Record<string, unknown>>(
                 renderRow={renderRow}
                 renderCell={renderCell}
                 renderExpandedRow={renderExpandedRow}
-                hoveredRowIndex={hoveredRowIndex}
-                setHoveredRowIndex={setHoveredRowIndex}
                 editing={table.editing}
               />
             )}

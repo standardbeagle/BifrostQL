@@ -52,6 +52,10 @@ the call-site update it requires.
   `aria-sort`) instead of a click handler on the `<th>`, so sorting is in the
   tab order and fires on Enter/Space. Tests or styles that targeted the
   `<th>` click should target the button.
+- **Hovering a row no longer re-renders the whole table.** Each
+  `BifrostTable` row owns its hover state, and the merged theme and its
+  context value are memoised. Pass `themeOverrides` as a stable object
+  (not an inline literal) to keep the memo effective.
 
 ### Deprecated
 

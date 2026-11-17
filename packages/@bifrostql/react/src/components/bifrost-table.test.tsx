@@ -643,6 +643,33 @@ describe('BifrostTable', () => {
       expect(secondBg).not.toBe('');
       expect(firstBg).not.toBe(secondBg);
     });
+
+    it('hovers one row without re-rendering the table', async () => {
+      // Arrange: count cell renders; hover state in the root component made
+      // every pointer move between rows re-render every cell.
+      globalThis.fetch = createFetchMock({ data: { users: paged(mockUsers) } });
+      const renderCell = vi.fn((value: unknown) => String(value));
+      renderTable({ renderCell });
+      await waitFor(() => {
+        expect(screen.getByText('Alice')).toBeInTheDocument();
+      });
+      const firstRow = screen.getByTestId('table-row-1');
+      const secondRow = screen.getByTestId('table-row-2');
+      const restingBg = firstRow.style.backgroundColor;
+      const cellRendersBefore = renderCell.mock.calls.length;
+
+      // Act
+      fireEvent.mouseEnter(firstRow);
+
+      // Assert: the hovered row takes the hover style, its neighbour does
+      // not, and no cell was rendered again.
+      expect(firstRow.style.backgroundColor).not.toBe(restingBg);
+      expect(secondRow.style.backgroundColor).toBe(restingBg);
+      expect(renderCell.mock.calls.length).toBe(cellRendersBefore);
+
+      fireEvent.mouseLeave(firstRow);
+      expect(firstRow.style.backgroundColor).toBe(restingBg);
+    });
   });
 
   describe('typed inline editors', () => {

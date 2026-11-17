@@ -232,19 +232,20 @@ namespace BifrostQL.Server.Resp
             // Charge the WHOLE declared length to the frame budget before allocating: a hostile
             // length prefix must be refused having materialized nothing, not after a proportional
             // allocation the cap then complains about.
+            // The payload then grows as its bytes arrive, so a stalled peer pins only what it sent.
             Consume(count);
-            var result = new byte[count];
-            var got = 0;
-            while (got < count)
+            var result = new ReceivedByteBuffer(count);
+            while (result.Remaining > 0)
             {
                 if (_start >= _end && !await FillAsync(ct))
                     throw new RespProtocolException("unexpected end of stream while reading a bulk payload.");
-                var take = Math.Min(count - got, _end - _start);
-                Array.Copy(_buffer, _start, result, got, take);
+                var free = result.FreeSpace();
+                var take = Math.Min(free.Length, _end - _start);
+                _buffer.AsMemory(_start, take).CopyTo(free);
                 _start += take;
-                got += take;
+                result.Advance(take);
             }
-            return result;
+            return result.ToArray();
         }
 
         private async Task ExpectCrlfAsync(CancellationToken ct)

@@ -35,8 +35,7 @@ namespace BifrostQL.Server.Pgwire
             if (length < 8 || length > MaxMessageLength)
                 throw new PgProtocolException($"Invalid startup packet length {length}.");
 
-            var body = new byte[length - 4];
-            await stream.ReadExactlyAsync(body, ct);
+            var body = await ReadBodyAsync(stream, length - 4, ct);
             var code = BinaryPrimitives.ReadInt32BigEndian(body);
             return (code, body[4..]);
         }
@@ -52,11 +51,15 @@ namespace BifrostQL.Server.Pgwire
             if (length < 4 || length > MaxMessageLength)
                 throw new PgProtocolException($"Invalid message length {length} for type '{(char)typeByte[0]}'.");
 
-            var body = new byte[length - 4];
-            if (body.Length > 0)
-                await stream.ReadExactlyAsync(body, ct);
+            var body = await ReadBodyAsync(stream, length - 4, ct);
             return new PgFrontendMessage(typeByte[0], body);
         }
+
+        // The body grows as its bytes arrive: the length was checked against the cap, but a
+        // declared length is a claim, and allocating it up front lets a stalled peer pin the cap.
+        private static async Task<byte[]> ReadBodyAsync(Stream stream, int length, CancellationToken ct)
+            => await ReceivedByteBuffer.ReadAsync(stream, length, ct)
+                ?? throw new EndOfStreamException("pgwire frame ended before its declared length.");
 
         /// <summary>Writes a typed backend message (<c>[type][Int32 len][body]</c>) and flushes.</summary>
         public static async Task WriteMessageAsync(Stream stream, byte type, ReadOnlyMemory<byte> body, CancellationToken ct)

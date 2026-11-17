@@ -343,18 +343,9 @@ namespace BifrostQL.Server.Ldap
             return read == 0 ? -1 : one[0];
         }
 
+        // The body grows as its bytes arrive (size caps count received bytes, never declared ones).
         private static async Task<byte[]> ReadExactAsync(Stream stream, int count, CancellationToken ct)
-        {
-            var buffer = new byte[count];
-            var offset = 0;
-            while (offset < count)
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(offset, count - offset), ct);
-                if (read == 0)
-                    throw new LdapProtocolException("unexpected end of stream inside an LDAPMessage body.");
-                offset += read;
-            }
-            return buffer;
-        }
+            => await ReceivedByteBuffer.ReadAsync(stream, count, ct)
+                ?? throw new LdapProtocolException("unexpected end of stream inside an LDAPMessage body.");
     }
 }

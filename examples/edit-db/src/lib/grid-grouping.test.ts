@@ -324,13 +324,14 @@ describe('grouping keys sent as BigInt strings', () => {
         const prices = { name: 'prices', graphQlName: 'prices', columns: [
             { name: 'price', graphQlName: 'price', label: 'Price', paramType: 'Decimal' },
         ] } as unknown as Table;
-        const data = { pricesAggregate: [
+        const buckets = [
             { price: '10.5', _count: 1 },
             { price: '9.25', _count: 1 },
             { price: '-3.75', _count: 1 },
             { price: '123456789012345678.0123456789', _count: 1 },
             { price: '123456789012345678.0123456788', _count: 1 },
-        ] };
+        ];
+        const data = { pricesAggregate: buckets, [GROUPING_PROBE_FIELD]: buckets.slice(1) };
         expect(readGroupingResult(data, prices, prices.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
             .toEqual(['-3.75', '9.25', '10.5', '123456789012345678.0123456788', '123456789012345678.0123456789']);
     });

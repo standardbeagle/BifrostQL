@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using System;
 using System.Collections.Generic;
 using System.Data.Common;
@@ -154,7 +155,9 @@ public sealed class DeferredDeltaMutationHook : IInTransactionMutationHook
         {
             [MetadataKeys.Deferred.ChangeSet.Column.State] = HeldLifecycle,
             [MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt] = DateTime.UtcNow.Add(config.UndoWindow!.Value),
-            [MetadataKeys.Deferred.ChangeSet.Column.Requester] = AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
+            // The policy subject, the same projection DeferredReviewQueue reads the reviewer
+            // through, so the self-approve check compares one identity source.
+            [MetadataKeys.Deferred.ChangeSet.Column.Requester] = PolicyIdentity.FromUserContext(context.UserContext).Id,
             [MetadataKeys.Deferred.ChangeSet.Column.Tenant] = tenant?.ToString(),
             [MetadataKeys.Deferred.ChangeSet.Column.Tables] = JsonSerializer.Serialize(new[] { tableName }),
             [MetadataKeys.Deferred.ChangeSet.Column.CreatedAt] = DateTime.UtcNow,

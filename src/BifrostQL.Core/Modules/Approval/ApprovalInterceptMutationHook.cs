@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -230,9 +231,12 @@ namespace BifrostQL.Core.Modules.Approval
                 // The POST-transformer, scoped physical intent — see the ordering note on the class.
                 [PendingChangeStore.ColPayload] = JsonSerializer.Serialize(context.Data),
                 // Requester + tenant come from the caller's context so replay (slice 3) runs
-                // under the REQUESTER's scope, not the approver's.
-                [PendingChangeStore.ColRequester] =
-                    AuditMutationTransformer.ResolveActor(context.Model!, context.UserContext)?.ToString(),
+                // under the REQUESTER's scope, not the approver's. The requester is the POLICY
+                // subject, the same projection ApprovalDecisionService reads the decider through:
+                // the four-eyes check compares these two, so they must come from one source. The
+                // audit actor (user-audit-key) can name a different claim and is replayed from
+                // requester_context instead.
+                [PendingChangeStore.ColRequester] = PolicyIdentity.FromUserContext(context.UserContext).Id,
                 [PendingChangeStore.ColTenant] = ResolveTenant(context)?.ToString(),
                 // A PROJECTION of the caller's context, never the context itself: a live context
                 // carries the raw ClaimsPrincipal (an object cycle) and other opaque entries.

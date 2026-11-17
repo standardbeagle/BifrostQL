@@ -177,14 +177,15 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     /// transformer chain (so tenant isolation applies) AND the approval intercept hook,
     /// exactly as the hosted registration composes them.
     /// </summary>
-    private static MutationIntentExecutor BuildExecutor(bool secondEndpoint = false)
+    private static MutationIntentExecutor BuildExecutor(bool secondEndpoint = false, string[]? rules = null)
     {
+        rules ??= Rules;
         var pathCache = new PathCache<Inputs>();
         foreach (var path in secondEndpoint ? new[] { EndpointPath, "/other" } : new[] { EndpointPath })
             pathCache.AddLoader(path, async () =>
             {
                 var factory = new SqliteDbConnFactory(ConnString);
-                var model = await new DbModelLoader(factory, new MetadataLoader(Rules)).LoadAsync();
+                var model = await new DbModelLoader(factory, new MetadataLoader(rules)).LoadAsync();
                 return new Inputs(new Dictionary<string, object?>
                 {
                     ["model"] = model,
@@ -608,6 +609,45 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         result.Errors.Should().NotBeNullOrEmpty();
         result.Errors!.Single().Message.Should().Contain("cannot approve their own");
         (await CountAsync("orders", "name = 'self-denied'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_SelfApprover_IsDenied_WhenUserAuditKeyNamesAnotherClaim()
+    {
+        // The audit actor claim (email) differs from the policy subject (user_id). The four-eyes
+        // check must compare one identity source, so the requester still cannot approve.
+        var rules = Rules.Select(rule => rule == ":root { user-audit-key: user_id }"
+            ? ":root { user-audit-key: email }" : rule).ToArray();
+        rules.Should().Contain(":root { user-audit-key: email }");
+        var model = await new DbModelLoader(new SqliteDbConnFactory(ConnString), new MetadataLoader(rules)).LoadAsync();
+        var executor = BuildExecutor(rules: rules);
+        var alice = ApproverContext("a-123", "manager");
+        alice["email"] = "alice@example.com";
+        await EnqueueAsync(executor, "self-denied-email", alice);
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }", alice,
+            mutations: executor, model: model);
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("cannot approve their own");
+        (await CountAsync("orders", "name = 'self-denied-email'")).Should().Be(0);
+        (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GraphQlApprove_RowWithoutRequester_IsRefused_AndLeavesChangePending()
+    {
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "no-requester", RequesterContext());
+        await Exec("UPDATE pending_changes SET requester = NULL WHERE id = 1");
+
+        var result = await ExecuteGraphQlAsync("mutation { approve(pendingChangeId: \"1\") }",
+            ApproverContext("bob", "manager"));
+
+        result.Errors.Should().NotBeNullOrEmpty();
+        result.Errors!.Single().Message.Should().Contain("missing its requester identity");
+        (await CountAsync("orders", "name = 'no-requester'")).Should().Be(0);
         (await CountAsync("pending_changes", "id = 1 AND \"state\" = 'pending'")).Should().Be(1);
     }
 
@@ -1055,9 +1095,10 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
     // nested sync runs the before-commit phase.
     private async Task<ExecutionResult> ExecuteGraphQlAsync(
         string mutation, IDictionary<string, object?>? userContext = null, bool readFilters = false,
-        IMutationIntentExecutor? mutations = null)
+        IMutationIntentExecutor? mutations = null, IDbModel? model = null)
     {
-        var schema = DbSchema.FromModel(_model);
+        model ??= _model;
+        var schema = DbSchema.FromModel(model);
         var factory = new SqliteDbConnFactory(ConnString);
 
         var services = new ServiceCollection();
@@ -1082,11 +1123,11 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
             options.Extensions = new Inputs(new Dictionary<string, object?>
             {
                 ["connFactory"] = factory,
-                ["model"] = _model,
+                ["model"] = model,
                 ["endpoint"] = EndpointPath,
                 // readFilters: the production read funnel with no host transformers registered,
                 // so only what the funnel itself enforces applies.
-                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, readFilters
+                ["tableReaderFactory"] = new SqlExecutionManager(model, schema, readFilters
                     ? new QueryTransformerService(new FilterTransformersWrap())
                     : BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
             });

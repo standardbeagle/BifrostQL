@@ -118,6 +118,8 @@ public sealed class ApprovalDecisionService
         var table = FindTable(row.Table);
         var config = ApprovalConfig.FromTable(table);
         var identity = PolicyIdentity.FromUserContext(context);
+        // row.Requester is the requester's PolicyIdentity.Id (ApprovalInterceptMutationHook), so
+        // both sides of the four-eyes compare come from the same projection.
         var selfApproval = string.Equals(row.Requester, identity.Id, StringComparison.Ordinal);
         // Keep this comparison unconditional: it is the four-eyes decision, not an optional
         // branch hidden behind requester existence or another authorization result.
@@ -164,6 +166,9 @@ public sealed class ApprovalDecisionService
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw PendingChangeNotFound();
+        // The four-eyes check needs the requester: a row without one cannot be decided.
+        if (reader.IsDBNull(3))
+            throw new BifrostExecutionError("The pending change is missing its requester identity.");
         var row = new PendingRow(
             reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetValue(4)?.ToString(),

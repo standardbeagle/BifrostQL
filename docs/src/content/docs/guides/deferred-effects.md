@@ -93,7 +93,8 @@ Model loading rejects a missing store table or a missing column.
 The `change_sets` store uses the constants in `MetadataKeys.Deferred.ChangeSet.Column`:
 `id`, `state`, `undo_window_expires_at`, `requester`, `tenant`, `tables`, `created_at`,
 `applied_at`, and `reversed_at`. The `tables` column holds a JSON array of the
-`schema.name` values the change set touched.
+`schema.name` values the change set touched. `requester` is the writer's policy subject
+(`user_id`), the identity `self-approve: false` compares the reviewer against.
 
 The `change_set_deltas` reverse store uses
 `MetadataKeys.Deferred.ChangeSetDelta.Column`: `id`, `change_set_id`, `table`, `pk`,

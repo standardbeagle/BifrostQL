@@ -67,7 +67,12 @@ Every decision runs the same authorization, in this order:
    A row whose `tenant` disagrees with the tenant of its stored requester identity was not
    written by the gate and is refused the same way.
 2. The change must still be `pending`. A decided change is refused.
-3. When `self-approve: false`, the requester may not decide their own change.
+3. When `self-approve: false`, the requester may not decide their own change. Both sides
+   of this check are the policy subject (`user_id` in the user context): the queue's
+   `requester` column stores the requester's, and the decider's is read the same way.
+   `user-audit-key` names only the audit actor, so pointing it at another claim (such as
+   `email`) does not let a requester approve their own change. A row with no `requester`
+   cannot be decided.
 4. The caller must hold the table's `approver-role`.
 5. The caller must pass the table's policy for the action being approved.
 

@@ -62,7 +62,7 @@ Undeclared means `loopback`. Widening (loopback → lan → public) is the opera
 
 | Listener | Port | Posture | Max connections | Pre-auth deadline | Idle | Max message |
 |---|---|---|---|---|---|---|
-| pgwire | 5432 | loopback (`PgWireOptions.BindAddress`) | `MaxConnections` 100 | `HandshakeTimeout` 30 s; SCRAM `MaxAuthAttemptsPerSource` 100 / 1 min | none | 1 MiB |
+| pgwire | 5432 | loopback (`PgWireOptions.BindAddress`) | `MaxConnections` 100 | `HandshakeTimeout` 30 s; auth `MaxAuthAttemptsPerSource` / `MaxAuthAttemptsPerAccount` 100 each / 1 min | none | 1 MiB |
 | RESP | 6379 | loopback (`RespWireOptions.BindAddress`) | 100, taken before TLS | `AuthenticationTimeout` 30 s | `IdleTimeout` 10 min | `MaxBulkLength` / `MaxFrameLength` 1 MiB |
 | LDAP / LDAPS | 389 / `LdapsPort` (null = off) | loopback (`LdapWireOptions.BindAddress`) | 100 shared across both | `AuthenticationTimeout` 30 s, `TlsHandshakeTimeout` 30 s | `IdleTimeout` 5 min (credentialed only) | 1 MiB |
 | gRPC | 5090 | loopback (`GrpcWireOptions.BindAddress`) | `MaxConcurrentConnections` 100 | Kestrel HTTP/2 | Kestrel | Kestrel |

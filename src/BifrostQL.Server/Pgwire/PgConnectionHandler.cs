@@ -72,7 +72,8 @@ namespace BifrostQL.Server.Pgwire
             // Admission + pre-auth deadline, shared with every other raw-wire front door.
             _sessions = sessionHost ?? new PgwireSessionHost(options, connectionLimiter, _timeProvider);
             _authRateLimiter = authRateLimiter
-                ?? new PgAuthRateLimiter(options.MaxAuthAttemptsPerSource, options.AuthRateLimitWindow);
+                ?? new PgAuthRateLimiter(
+                    options.MaxAuthAttemptsPerSource, options.MaxAuthAttemptsPerAccount, options.AuthRateLimitWindow);
         }
 
         public override async Task OnConnectedAsync(ConnectionContext connection)
@@ -137,18 +138,6 @@ namespace BifrostQL.Server.Pgwire
                     return;
                 }
 
-                // Per-source SCRAM throttle, checked BEFORE any credential lookup or hash work:
-                // one SCRAM verification costs PBKDF2(4096), so an unbounded attempt rate is an
-                // unauthenticated CPU-exhaustion vector. The refusal answers with the SAME
-                // invalid_password wire shape as a wrong password (no throttle-state oracle).
-                if (_options.AuthMethod == PgAuthMethod.ScramSha256
-                    && !_authRateLimiter.TryAcquire(string.IsNullOrEmpty(source) ? "unknown" : source))
-                {
-                    await RejectAsync(stream, PgWireProtocol.SqlStateInvalidPassword,
-                        "password authentication failed.", ct);
-                    return;
-                }
-
                 // Cleartext auth must never invite a password onto a non-confidential
                 // stream. TLS is client-initiated, so a client that skips SSLRequest is
                 // still on the raw socket here; refuse BEFORE looking up the login or
@@ -164,6 +153,20 @@ namespace BifrostQL.Server.Pgwire
                 {
                     await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
                         "cleartext password authentication requires a TLS connection; send SSLRequest first.", ct);
+                    return;
+                }
+
+                // Per-source and per-account throttle, checked BEFORE any credential lookup or
+                // hash work. SCRAM and cleartext both verify through PBKDF2(4096), so an
+                // unbounded attempt rate is an unauthenticated CPU-exhaustion vector, and a free
+                // reconnect per guess makes the account axis necessary too. It runs after the
+                // cleartext-needs-TLS refusal, which reads no credential and costs nothing. The
+                // refusal answers with the SAME invalid_password wire shape as a wrong password
+                // (no throttle-state oracle).
+                if (!_authRateLimiter.TryAcquire(string.IsNullOrEmpty(source) ? "unknown" : source, username))
+                {
+                    await RejectAsync(stream, PgWireProtocol.SqlStateInvalidPassword,
+                        "password authentication failed.", ct);
                     return;
                 }
 

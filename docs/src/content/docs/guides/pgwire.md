@@ -51,8 +51,9 @@ builder.Services.AddSingleton<IPgCredentialStore, MyCredentialStore>();
 | `MaxConnections` | `100` | Concurrent admitted connections; the next is refused cleanly with `53300 too_many_connections`. |
 | `ServerCertificate` | *(none — required)* | Cert presented on `SSLRequest`. The port refuses to start without it. |
 | `HandshakeTimeout` | `30s` | Pre-auth deadline from accept to `ReadyForQuery`; a silent or slow peer is cut off. |
-| `MaxAuthAttemptsPerSource` | `100` | SCRAM attempts admitted from one client IP per `AuthRateLimitWindow`. Over the cap, the refusal is issued before any credential lookup or PBKDF2 work, with the same `28P01 invalid_password` shape as a wrong password. |
-| `AuthRateLimitWindow` | `1m` | Fixed window for the per-source SCRAM cap. |
+| `MaxAuthAttemptsPerSource` | `100` | Authentication attempts (SCRAM or cleartext) admitted from one client IP per `AuthRateLimitWindow`. Over the cap, the refusal is issued before any credential lookup or PBKDF2 work, with the same `28P01 invalid_password` shape as a wrong password. |
+| `MaxAuthAttemptsPerAccount` | `100` | Authentication attempts admitted against one login name per `AuthRateLimitWindow`, whatever their source. Same refusal as the per-source cap. Every connection counts, so set it above the rate a connection pool for one login reconnects. |
+| `AuthRateLimitWindow` | `1m` | Fixed window for both authentication caps. |
 | `Endpoint` | `null` | Registered BifrostQL endpoint path to read against; `null` selects the single endpoint. |
 
 ## Authentication and identity mapping

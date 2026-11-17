@@ -98,17 +98,26 @@ namespace BifrostQL.Server.Pgwire
         public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
         /// <summary>
-        /// Maximum SCRAM authentication attempts admitted per connection source (client IP)
-        /// within <see cref="AuthRateLimitWindow"/> before further attempts from that source
-        /// are refused. One SCRAM verification costs PBKDF2(4096), so an unbounded attempt
-        /// rate is a CPU-exhaustion vector; the refusal happens BEFORE any credential lookup
-        /// or hash work and answers with the SAME invalid_password wire shape as a wrong
-        /// password (no throttle-state oracle). Enforced by <see cref="PgAuthRateLimiter"/>.
+        /// Maximum authentication attempts (SCRAM or cleartext) admitted per connection source
+        /// (client IP) within <see cref="AuthRateLimitWindow"/> before further attempts from
+        /// that source are refused. Both methods verify through PBKDF2(4096), so an unbounded
+        /// attempt rate is a CPU-exhaustion vector; the refusal happens BEFORE any credential
+        /// lookup or hash work and answers with the SAME invalid_password wire shape as a
+        /// wrong password (no throttle-state oracle). Enforced by <see cref="PgAuthRateLimiter"/>.
         /// Default 100.
         /// </summary>
         public int MaxAuthAttemptsPerSource { get; set; } = 100;
 
-        /// <summary>The fixed window over which the per-source auth cap is counted. Default 1 minute.</summary>
+        /// <summary>
+        /// Maximum authentication attempts admitted against one login name within
+        /// <see cref="AuthRateLimitWindow"/>, whatever their source. Each connection carries one
+        /// attempt, but reconnecting is free, so without this axis many source addresses could
+        /// guess one account without bound. Every connection counts, successful or not, so size
+        /// it above the rate at which a connection pool for one login reconnects. Default 100.
+        /// </summary>
+        public int MaxAuthAttemptsPerAccount { get; set; } = 100;
+
+        /// <summary>The fixed window over which both auth caps are counted. Default 1 minute.</summary>
         public TimeSpan AuthRateLimitWindow { get; set; } = TimeSpan.FromMinutes(1);
 
         /// <summary>

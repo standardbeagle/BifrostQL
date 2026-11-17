@@ -422,6 +422,84 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Cleartext_PerSourceThrottle_RefusesBeforePasswordRequest()
+        {
+            // Cleartext verification runs the same PBKDF2(4096) as SCRAM, so it needs the same
+            // throttle. The third connection from one source must be refused BEFORE the server
+            // asks for the password, with the wrong-password wire shape.
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            var options = new PgWireOptions
+            {
+                AuthMethod = PgAuthMethod.Cleartext,
+                AllowCleartextPasswordWithoutTls = true, // the loopback test transport is not TLS
+                MaxAuthAttemptsPerSource = 2,
+            };
+            var handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, EmptyServices(), options);
+            const string source = "203.0.113.8";
+
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var (client, cleanup) = await StartConnectionAsync(handler, source);
+                await client.SendStartupAsync("alice");
+                await client.DoCleartextAsync("wrong");
+                var rejected = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+                rejected.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidPassword);
+                await cleanup();
+            }
+
+            var (throttled, throttledCleanup) = await StartConnectionAsync(handler, source);
+            await throttled.SendStartupAsync("alice");
+            var first = await throttled.ReadNextMessageAsync().WaitAsync(Timeout);
+            first.Type.Should().Be(PgWireProtocol.ErrorResponse,
+                "a throttled cleartext attempt is refused before AuthenticationCleartextPassword is sent");
+            PgHandshakeClient.ErrorSqlStateOf(first.Type, first.Body).Should().Be(PgWireProtocol.SqlStateInvalidPassword);
+            await throttledCleanup();
+        }
+
+        [Fact]
+        public async Task PerAccountThrottle_RefusesOneLoginGuessedFromManySources()
+        {
+            // Each connection carries one attempt, but reconnecting is free: many source
+            // addresses could guess one login without bound. The per-account cap trips while no
+            // single source is near its own cap, and a different login is still admitted.
+            var store = new FakePgCredentialStore()
+                .Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"))
+                .Add("bob", "s3cret", TenantPrincipal("user-bob", "tenant-a"));
+            var options = new PgWireOptions
+            {
+                AuthMethod = PgAuthMethod.ScramSha256,
+                MaxAuthAttemptsPerSource = 100,
+                MaxAuthAttemptsPerAccount = 2,
+            };
+            var handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, EmptyServices(), options);
+
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var (client, cleanup) = await StartConnectionAsync(handler, $"198.51.100.{attempt + 1}");
+                await client.SendStartupAsync("alice");
+                await client.DoScramExpectingFailureAsync("wrong");
+                var rejected = await client.WaitForReadyOrErrorAsync().WaitAsync(Timeout);
+                rejected.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidPassword);
+                await cleanup();
+            }
+
+            var (throttled, throttledCleanup) = await StartConnectionAsync(handler, "198.51.100.3");
+            await throttled.SendStartupAsync("alice");
+            var first = await throttled.ReadNextMessageAsync().WaitAsync(Timeout);
+            first.Type.Should().Be(PgWireProtocol.ErrorResponse,
+                "the third guess at one login is refused before the SASL challenge, from a fresh source");
+            PgHandshakeClient.ErrorSqlStateOf(first.Type, first.Body).Should().Be(PgWireProtocol.SqlStateInvalidPassword);
+            await throttledCleanup();
+
+            var (other, otherCleanup) = await StartConnectionAsync(handler, "198.51.100.3");
+            await other.SendStartupAsync("bob");
+            var challenge = await other.ReadNextMessageAsync().WaitAsync(Timeout);
+            challenge.Type.Should().Be(PgWireProtocol.AuthenticationRequest,
+                "the account cap is per login: another login from the same source still gets its challenge");
+            await otherCleanup();
+        }
+
+        [Fact]
         public async Task Scram_PerSourceThrottle_KeysOnClientIp_NotTheEphemeralPort()
         {
             // The production entry point (OnConnectedAsync) derives the throttle key from the

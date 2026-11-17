@@ -245,6 +245,53 @@ query {
         ((Dictionary<string, object?>)group["_max"]!)["wide_numeric"].Should().Be("123456789012345678.0123456789");
     }
 
+    /// <summary>
+    /// Numbers inside a native JSON column keep their exact text on the wire. jsonb
+    /// stores them as numeric; parsing them to long/double on the way out rounded
+    /// 12345678901234567890123 to 1.2345678901234568E+22 before any client saw it.
+    /// Asserted on the serializer's output: the bytes a client actually receives.
+    /// </summary>
+    [SkippableFact]
+    public async Task Read_JsonColumnNumbers_KeepExactTextOnTheWire()
+    {
+        var result = await ExecuteQueryAsync("query { type_roundtrip { data { wide_jsonb } } }");
+        result.Errors.Should().BeNullOrEmpty();
+
+        var json = WireRowField(result, "wide_jsonb");
+        json.GetProperty("id").GetRawText().Should().Be("12345678901234567890123");
+        json.GetProperty("rate").GetRawText().Should().Be("0.12345678901234567890123");
+        json.GetProperty("small").GetRawText().Should().Be("7");
+    }
+
+    /// <summary>
+    /// The JSON write path: an object sent as a variable (deserialized by the same
+    /// serializer the HTTP front door uses) is stored with its numbers' exact text.
+    /// </summary>
+    [SkippableFact]
+    public async Task Write_JsonColumnNumbers_StoreExactText()
+    {
+        var variables = new GraphQL.SystemTextJson.GraphQLSerializer().Deserialize<Inputs>(
+            """{"id": 1, "v": {"id": 98765432109876543210987, "rate": 0.98765432109876543210987, "small": 7}}""")!;
+        var write = await ExecuteQueryAsync(
+            "mutation SetJson($id: Int!, $v: JSON!) { type_roundtrip(update: {id: $id, wide_jsonb: $v}) }",
+            new Dictionary<string, object?>(variables));
+        write.Errors.Should().BeNullOrEmpty();
+
+        var json = WireRowField(await ExecuteQueryAsync("query { type_roundtrip { data { wide_jsonb } } }"), "wide_jsonb");
+        json.GetProperty("id").GetRawText().Should().Be("98765432109876543210987");
+        json.GetProperty("rate").GetRawText().Should().Be("0.98765432109876543210987");
+        json.GetProperty("small").GetRawText().Should().Be("7");
+    }
+
+    private static JsonElement WireRowField(ExecutionResult result, string field)
+    {
+        result.Errors.Should().BeNullOrEmpty();
+        var wire = new GraphQL.SystemTextJson.GraphQLSerializer().Serialize(result);
+        using var doc = JsonDocument.Parse(wire);
+        return doc.RootElement.GetProperty("data").GetProperty("type_roundtrip")
+            .GetProperty("data")[0].GetProperty(field).Clone();
+    }
+
     private static Dictionary<string, JsonElement> ExtractSingleRow(ExecutionResult result, string tableName)
     {
         result.Errors.Should().BeNullOrEmpty();

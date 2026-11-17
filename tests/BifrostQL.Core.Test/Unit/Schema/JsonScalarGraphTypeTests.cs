@@ -98,12 +98,45 @@ public class JsonScalarGraphTypeTests
     }
 
     [Fact]
-    public void Serialize_JsonWithFloats_ReturnsDoubles()
+    public void Serialize_JsonWithFractions_KeepsExactNumberText()
     {
-        var result = _scalar.Serialize("{\"price\":19.99}");
+        var result = _scalar.Serialize("{\"price\":19.99,\"rate\":0.12345678901234567890123}");
 
         var dict = Assert.IsType<Dictionary<string, object?>>(result);
-        Assert.Equal(19.99, dict["price"]);
+        Assert.Equal("19.99", Assert.IsType<JsonElement>(dict["price"]).GetRawText());
+        Assert.Equal("0.12345678901234567890123", Assert.IsType<JsonElement>(dict["rate"]).GetRawText());
+    }
+
+    [Fact]
+    public void Serialize_IntegerWiderThanLong_KeepsExactNumberText()
+    {
+        var result = _scalar.Serialize("[12345678901234567890123, 7]");
+
+        var list = Assert.IsType<List<object?>>(result);
+        Assert.Equal("12345678901234567890123", Assert.IsType<JsonElement>(list[0]).GetRawText());
+        Assert.Equal(7L, list[1]);
+    }
+
+    [Fact]
+    public void Serialize_ResponseSerializer_WritesNumbersVerbatim()
+    {
+        var result = _scalar.Serialize("{\"id\":12345678901234567890123,\"rate\":1.10}");
+
+        Assert.Equal("{\"id\":12345678901234567890123,\"rate\":1.10}", JsonSerializer.Serialize(result));
+    }
+
+    [Fact]
+    public void ParseValue_BigIntegerFromVariables_WritesAJsonNumber()
+    {
+        var input = new Dictionary<string, object?>
+        {
+            ["id"] = System.Numerics.BigInteger.Parse("98765432109876543210987"),
+            ["rate"] = 0.98765432109876543210987m,
+        };
+
+        var result = _scalar.ParseValue(input);
+
+        Assert.Equal("{\"id\":98765432109876543210987,\"rate\":0.98765432109876543210987}", result);
     }
 
     [Fact]

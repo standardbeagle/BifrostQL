@@ -206,6 +206,13 @@ Each `StreamChunk` carries:
 
 Chunks arrive in sequence even if the wire delivered them out of order — the client buffers and reorders internally. Concatenating `bytes` across all chunks gives the same payload whether or not the server chunked the response: a chunk frame carries a slice of the whole serialized protobuf message, and the client strips that message's envelope, so the first chunk is a few bytes shorter than the rest. If the envelope carries errors, the iterator throws with their text before yielding any payload, as it does for an unchunked `Result` with errors. Mutations have a streaming counterpart, `client.streamMutation()`, with the same shape.
 
+The client acks a chunk only when your loop takes it, so the server's ack window paces the transfer to your consumer and the client buffers about one window (8 chunks, 512 KB by default). Two rules follow from the server's 30 s ack timeout, which closes the whole connection when it expires:
+
+- Don't hold one chunk longer than 30 s before asking for the next.
+- End an iterator you stop reading with `break` (or `iterator.return()`), never by leaving it suspended. Ending it acks every chunk it still holds, and the client ack-drops the rest of the response.
+
+The client's own idle timeout (`requestTimeoutMs`) restarts on every chunk received or acked.
+
 ## Auto-reconnect
 
 When the WebSocket drops, the client opens a fresh socket using an exponential backoff (100 ms → 30 s with 25% jitter).
@@ -266,4 +273,4 @@ Call `client.close()` to drop the current socket, error any active streams with 
 
 ### How big are chunks?
 
-The server defaults to a 64 KB chunk threshold and an 8-chunk ack window — payloads above 64 KB are chunked, and the server holds back at 8 unacked chunks to apply backpressure. Both values are tunable through the parameters of `UseBifrostBinary()`.
+The server defaults to a 64 KB chunk threshold and an 8-chunk ack window — payloads above 64 KB are chunked, and the server holds back at 8 unacked chunks to apply backpressure. Both values are tunable through the parameters of `UseBifrostBinary()`. `query()` acks each chunk as it arrives and reassembles the response in memory; `stream()` acks each chunk when your loop takes it (see [Streaming](#streaming)).

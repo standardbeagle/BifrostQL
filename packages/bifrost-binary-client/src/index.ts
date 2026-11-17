@@ -839,11 +839,16 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * Drops every partial chunk reassembly after a disconnect. The server keeps
    * sent chunks per connection (its `ChunkBuffer` lives and dies with the
    * socket), so a fresh socket can never deliver the missing tail: a query is
-   * re-run from the start and a mutation is rejected.
+   * re-run from the start and a mutation is rejected. Streams forget the acks
+   * they still owe: those chunks belong to the dead connection, and an ack on
+   * the next socket would name a transfer that socket never started.
    */
   private dropPartialReassemblies(): void {
     for (const state of this.unary.values()) {
       state.reassembler = undefined;
+    }
+    for (const state of this.streaming.values()) {
+      state.queue.forgetOwedAcks();
     }
   }
 
@@ -1172,6 +1177,17 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * only when the server goes silent for a full `requestTimeoutMs` window with
    * the stream unfinished.
    */
+  /**
+   * @internal Acks a streamed chunk once its consumer has taken it (or the
+   * stream was torn down holding it). The server stops sending after
+   * `ackWindow` unacked chunks, so this is what paces the transfer to the
+   * consumer. The ack is progress, so it also restarts the idle timer.
+   */
+  ackStreamChunk(requestId: number, sequence: number): void {
+    this.sendChunkAck(requestId, sequence);
+    this.armStreamingTimeout(requestId);
+  }
+
   private armStreamingTimeout(requestId: number): void {
     const state = this.streaming.get(requestId);
     if (!state) {
@@ -1502,9 +1518,11 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     // via its cleanup callback when it completes or errors.
     const streamingQueue = this.streaming.get(chunk.requestId)?.queue;
     if (streamingQueue) {
+      // No ack here: the queue acks a chunk when it hands it to the consumer
+      // (ackStreamChunk), so the server's ack window is the stream's
+      // backpressure.
       const accepted = ingestStreamingChunk(streamingQueue, chunk);
       if (accepted) {
-        this.sendChunkAck(chunk.requestId, chunk.chunkInfo.sequence);
         // Re-arm the idle timer only while the stream is still registered. If
         // the final chunk just auto-completed the queue (or an overflow errored
         // it), its cleanup already ran removeStreamingQueue, and a timer armed

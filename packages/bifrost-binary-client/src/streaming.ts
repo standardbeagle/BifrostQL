@@ -23,18 +23,23 @@
  *
  * ## Backpressure
  *
- * The queue holds up to `MAX_QUEUE_SIZE` (256) buffered chunks. If the
- * producer outruns the consumer beyond that limit, the queue errors with a
- * "stream backpressure exceeded" message and the iterator throws on the next
- * `next()` call. 256 chunks at the server's default 64 KB chunk size is 16 MB
- * of in-memory buffering, which is enough headroom for any realistic consumer
- * loop while still bounding memory in pathological cases.
+ * The server stops sending after `ackWindow` (default 8) unacked chunks. The
+ * queue acks a chunk only when it hands it to the consumer (`next()`), so a
+ * slow consumer slows the server down and the queue holds at most about
+ * `ackWindow` chunks (512 KB at the default 64 KB chunk size). The message
+ * handler never awaits: it buffers the chunk, and the consumer's pull sends
+ * the ack.
  *
- * The simpler alternative — applying real backpressure via a producer-side
- * Promise that the consumer must drain — would require the WebSocket message
- * handler to await the queue, which is incompatible with the synchronous
- * `onmessage` callback shape. Erroring on overflow is the only correct option
- * given the underlying transport.
+ * When the stream stops early (consumer `break`, error, timeout) every held
+ * chunk is acked at once and the client ack-drops the rest, so the server can
+ * finish. Two limits follow from the server's 30 s ack timeout, which closes
+ * the whole connection: a consumer must not hold one chunk (stop calling
+ * `next()`) longer than that, and an iterator it abandons must be ended with
+ * `break` / `return()` rather than left suspended. The client's own idle
+ * timeout (`requestTimeoutMs`) restarts on every chunk received or acked.
+ *
+ * `MAX_QUEUE_SIZE` (256) stays as a guard against a server that ignores its
+ * window: past it the queue errors and the iterator throws.
  */
 import { emptyChunkInfo, verifyChecksum } from "./chunking.js";
 import { StreamPayloadExtractor } from "./stream-payload.js";
@@ -116,12 +121,25 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
    * serialized message, so the envelope is stripped as chunks drain in order.
    */
   private extractor: StreamPayloadExtractor | null = null;
+  /**
+   * Sequences of chunked fragments received but not yet acked. A fragment is
+   * acked when the consumer takes it, or when the stream ends holding it.
+   */
+  private readonly owedAcks = new Set<number>();
+  private readonly ackChunk: ((sequence: number) => void) | null;
 
+  /**
+   * @param ackChunk sends the ChunkAck for a fragment. Omitted for queues that
+   *   only ever see unchunked frames, which the server does not expect acks
+   *   for.
+   */
   constructor(
     public readonly requestId: number,
-    cleanup: () => void
+    cleanup: () => void,
+    ackChunk?: (sequence: number) => void
   ) {
     this.cleanup = cleanup;
+    this.ackChunk = ackChunk ?? null;
   }
 
   /** Total buffered + ready chunks; used by overflow detection and tests. */
@@ -203,10 +221,59 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
    * Accepts a verified fragment of a chunked response. Its bytes are a slice
    * of the serialized BifrostMessage; the consumer receives only the payload
    * part (see StreamPayloadExtractor).
+   *
+   * The fragment's ack is owed until the consumer takes it, so the server's
+   * ack window (8 chunks by default) bounds what this queue buffers. A
+   * duplicate of a fragment still held is dropped (its ack is already owed);
+   * a duplicate of one already taken is acked at once, as the server expects
+   * an ack per frame it sent.
    */
   pushFragment(chunk: StreamChunk): void {
     this.extractor ??= new StreamPayloadExtractor();
+    if (this.owedAcks.has(chunk.sequence)) {
+      return;
+    }
+    if (
+      this.closed ||
+      this.errorValue !== null ||
+      chunk.sequence < this.nextSequence
+    ) {
+      this.ackChunk?.(chunk.sequence);
+      return;
+    }
+    this.owedAcks.add(chunk.sequence);
     this.push(chunk);
+  }
+
+  /**
+   * Drops the acks still owed without sending them. Called when the
+   * connection that carried the fragments is gone: an ack on the next socket
+   * would name a transfer that socket never started.
+   */
+  forgetOwedAcks(): void {
+    this.owedAcks.clear();
+  }
+
+  /** Acks a fragment as it is handed to the consumer. */
+  private handOut(chunk: StreamChunk): StreamChunk {
+    if (this.owedAcks.delete(chunk.sequence)) {
+      this.ackChunk?.(chunk.sequence);
+    }
+    return chunk;
+  }
+
+  /**
+   * Acks every fragment still held. Called when the stream stops early
+   * (error, consumer break): backpressure no longer matters, and an unacked
+   * fragment would stall the server's transfer until its ack timeout closes
+   * the whole connection.
+   */
+  private releaseOwedAcks(): void {
+    const owed = Array.from(this.owedAcks);
+    this.owedAcks.clear();
+    for (const sequence of owed) {
+      this.ackChunk?.(sequence);
+    }
   }
 
   /**
@@ -228,6 +295,7 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
    * Aborts the stream with an error. The next `next()` call (or in-progress
    * await) rejects with this error after any already-ready chunks have been
    * drained. Out-of-order pending chunks (not yet contiguous) are dropped.
+   * Every held fragment is acked now, so the server can finish the transfer.
    * Runs the cleanup hook so the client drops its registration.
    */
   error(err: Error): void {
@@ -236,6 +304,7 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
     }
     this.errorValue = err;
     this.pendingChunks.clear();
+    this.releaseOwedAcks();
     this.runCleanup();
     this.wakeConsumer();
   }
@@ -275,7 +344,7 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
     // consumer sees every chunk that arrived before the failure.
     const next = this.ready.shift();
     if (next !== undefined) {
-      waiter.resolve({ value: next, done: false });
+      waiter.resolve({ value: this.handOut(next), done: false });
       return;
     }
     if (this.errorValue !== null) {
@@ -292,7 +361,7 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
     // state, so consumers see every chunk that arrived before the failure.
     const next = this.ready.shift();
     if (next !== undefined) {
-      return Promise.resolve({ value: next, done: false });
+      return Promise.resolve({ value: this.handOut(next), done: false });
     }
     if (this.errorValue !== null) {
       return Promise.reject(this.errorValue);
@@ -307,12 +376,14 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
 
   /**
    * Called when the consumer breaks out of the `for await` loop. Cleans up
-   * the client-side registration so the stream is cancelled.
+   * the client-side registration so the stream is cancelled, and acks every
+   * fragment still held so the server's transfer is not left waiting.
    */
   return(): Promise<IteratorResult<StreamChunk>> {
     this.closed = true;
     this.ready.length = 0;
     this.pendingChunks.clear();
+    this.releaseOwedAcks();
     this.runCleanup();
     if (this.waiter) {
       const waiter = this.waiter;
@@ -410,6 +481,8 @@ export interface StreamingClientInternals extends StreamingClientHooks {
     meta: RequestMetadata
   ): void;
   allocateRequestId(): number;
+  /** Sends the ChunkAck for a fragment the consumer has taken. */
+  ackStreamChunk(requestId: number, sequence: number): void;
 }
 
 /**
@@ -447,11 +520,15 @@ export function createChunkStream(
     return failed;
   }
 
-  const queue = new StreamingQueue(requestId, () => {
-    // Pass whether the stream reached its final chunk so the client only
-    // tombstones the id on an early teardown (break / overflow / error).
-    client.removeStreamingQueue(requestId, queue.streamCompleted);
-  });
+  const queue = new StreamingQueue(
+    requestId,
+    () => {
+      // Pass whether the stream reached its final chunk so the client only
+      // tombstones the id on an early teardown (break / overflow / error).
+      client.removeStreamingQueue(requestId, queue.streamCompleted);
+    },
+    (sequence) => client.ackStreamChunk(requestId, sequence)
+  );
   client.startStreamingRequest(requestId, queue, { type, frame: bytes });
   return queue;
 }

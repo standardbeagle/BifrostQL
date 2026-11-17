@@ -729,6 +729,70 @@ describe("BifrostBinaryClient.stream()", () => {
     );
   });
 
+  function ackedSequences(ws: FakeWebSocketTracker["last"]): number[] {
+    return ws.sentFrames
+      .map((f) => decodeMessage(f))
+      .filter((m) => m.type === BifrostMessageType.ChunkAck)
+      .map((m) => m.chunkInfo.sequence);
+  }
+
+  it("acks a streamed chunk only when the consumer takes it, so the server's window paces the transfer", async () => {
+    const ws = tracker.last;
+    const iterator = client.stream("{ big }");
+    const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+    const inner = emptyMessage({
+      requestId: sentId,
+      type: BifrostMessageType.Result,
+      payload: new TextEncoder().encode(JSON.stringify({ data: "z".repeat(60) })),
+    });
+    const frames = buildChunkFrames(sentId, inner, 8);
+    expect(frames.length).toBeGreaterThan(8);
+
+    // The server's window: it sends 8 and waits for an ack.
+    for (const frame of frames.slice(0, 8)) ws.receive(frame);
+    expect(ackedSequences(ws)).toEqual([]);
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(ackedSequences(ws)).toEqual([0]);
+
+    await iterator.next();
+    expect(ackedSequences(ws)).toEqual([0, 1]);
+
+    for (const frame of frames.slice(8)) ws.receive(frame);
+    for await (const _ of iterator) {
+      // drain
+    }
+    expect(ackedSequences(ws)).toEqual(frames.map((_, i) => i));
+  });
+
+  it("acks every held chunk when the consumer breaks, then ack-drops the rest", async () => {
+    const ws = tracker.last;
+    const iterator = client.stream("{ big }");
+    const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+    const inner = emptyMessage({
+      requestId: sentId,
+      type: BifrostMessageType.Result,
+      payload: new TextEncoder().encode(JSON.stringify({ data: "w".repeat(60) })),
+    });
+    const frames = buildChunkFrames(sentId, inner, 8);
+
+    // Chunk 4 arrives ahead of 3: one held out of order, the rest in order.
+    for (const i of [0, 1, 2, 4]) ws.receive(frames[i]!);
+    await iterator.next();
+    expect(ackedSequences(ws)).toEqual([0]);
+
+    await iterator.return!();
+    expect(ackedSequences(ws).sort((a, b) => a - b)).toEqual([0, 1, 2, 4]);
+
+    for (const frame of frames.slice(3)) {
+      if (frame !== frames[4]) ws.receive(frame);
+    }
+    const acked = ackedSequences(ws);
+    expect(acked).toHaveLength(frames.length);
+    expect(new Set(acked).size).toBe(frames.length);
+  });
+
   it("streamMutation() sends a Mutation-typed frame", async () => {
     const ws = tracker.last;
     const iterator = client.streamMutation(

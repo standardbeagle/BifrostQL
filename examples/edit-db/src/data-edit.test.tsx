@@ -647,6 +647,31 @@ describe('DataEditDialog unresolvable-record guards', () => {
     );
     expect(screen.queryByText('Cannot edit record')).not.toBeInTheDocument();
   });
+
+  it('shows a failed load inside the dialog', async () => {
+    fetcherQuery.mockRejectedValue(new Error('permission denied for order_lines'));
+    renderDialog('7::3');
+    const title = await screen.findByText('Cannot load record');
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toContainElement(title);
+    expect(dialog).toHaveTextContent('permission denied for order_lines');
+  });
+
+  it('keys the cached record by the columns the form projects', async () => {
+    fetcherQuery.mockResolvedValue({ value: { data: [{ order_id: '7', line_id: '3', note: 'hello' }] } });
+    const table = compositeTable();
+    schemaMock.schema.data = [table];
+    schemaMock.schema.findTable.mockReturnValue(table);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <DataEditDialog table="order_lines" editId="7::3" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.queryAllByTestId('mock-input').length).toBeGreaterThan(0));
+    const keys = client.getQueryCache().getAll().map((q) => q.queryKey).filter((k) => k[0] === 'editRecord');
+    expect(keys).toEqual([['editRecord', 'order_lines', '7::3', ['order_id', 'line_id', 'note']]]);
+  });
 });
 
 describe('DataEditDialog FK select shows the stored value', () => {

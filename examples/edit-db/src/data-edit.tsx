@@ -19,6 +19,7 @@ import {
     Dialog,
     DialogContent,
     DialogDescription,
+    DialogFooter,
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -201,7 +202,9 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: stri
     }, [dataTable, editColumns, pkEq]);
 
     const { isLoading, error, data } = useQuery({
-        queryKey: ['editRecord', dataTable.name, editId],
+        // The projected columns are part of the key: a cached row read with a
+        // different projection would seed the form without these fields.
+        queryKey: ['editRecord', dataTable.name, editId, editColumns.map(({ column: c }) => c.name)],
         queryFn: () => fetcher.query<{ value: { data: Record<string, unknown>[] } }>(queryStr, pkEq.variables),
         enabled: !!dataTable && !isInsert && pkEq.filterText !== "",
     });
@@ -303,7 +306,21 @@ function DataEditDetail({ table, schema, editId, onClose }: { table: string, sch
             </Dialog>
         );
     }
-    if (error) return <div>Error: {(error as Error).message}</div>;
+    // Inside the dialog, so a failed load reads as this dialog's error rather
+    // than an empty modal over a stray line of page text.
+    if (error) {
+        return (
+            <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+                <DialogContent showCloseButton={false} className="sm:max-w-md">
+                    <DialogTitle className="text-sm font-semibold">Cannot load record</DialogTitle>
+                    <DialogDescription role="alert" className="text-sm text-destructive">{(error as Error).message}</DialogDescription>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={onClose}>Close</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        );
+    }
 
     // Refuse to render an editable form when there is no row behind it — either the
     // key doesn't resolve (an UPDATE with no WHERE columns is a full-table write) or

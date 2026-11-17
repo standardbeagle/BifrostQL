@@ -233,6 +233,52 @@ namespace BifrostQL.Server.Test
                 "the client should receive an error frame before the close");
         }
 
+        [Fact]
+        public async Task ClientChunkWithABadChecksum_IsRefusedWithoutAnAck()
+        {
+            // The server used to ack a client chunk before validating it, so the client saw
+            // ChunkAck(0) and then "Invalid chunk" for the same chunk. A client driving its send
+            // window off acks would advance past a chunk the server rejected.
+            var payload = new byte[] { 1, 2, 3, 4 };
+            var corrupt = new BifrostMessage
+            {
+                RequestId = 4,
+                Type = BifrostMessageType.Chunk,
+                Payload = payload,
+                ChunkSequence = 0,
+                ChunkTotal = 2,
+                ChunkOffset = 0,
+                TotalBytes = 8,
+                ChunkChecksum = ChunkSender.ComputeCrc32(payload) ^ 1,
+            };
+            var valid = new BifrostMessage
+            {
+                RequestId = 5,
+                Type = BifrostMessageType.Chunk,
+                Payload = payload,
+                ChunkSequence = 0,
+                ChunkTotal = 2,
+                ChunkOffset = 0,
+                TotalBytes = 8,
+                ChunkChecksum = ChunkSender.ComputeCrc32(payload),
+            };
+
+            var socket = new FakeWebSocket();
+            socket.EnqueueMessage(corrupt);
+            socket.EnqueueMessage(valid);
+            var context = new DefaultHttpContext();
+            context.Features.Set<IHttpWebSocketFeature>(new PassthroughFeature(socket));
+
+            await Middleware(new DictEngine(null)).InvokeAsync(context);
+
+            var sent = socket.SentMessages();
+            sent.Should().Contain(m => m.RequestId == 4 && m.Type == BifrostMessageType.Error);
+            sent.Should().NotContain(m => m.RequestId == 4 && m.Type == BifrostMessageType.ChunkAck,
+                "a rejected chunk is never acknowledged");
+            sent.Should().Contain(m => m.RequestId == 5 && m.Type == BifrostMessageType.ChunkAck && m.ChunkSequence == 0,
+                "control: an accepted chunk is acknowledged");
+        }
+
         // ---- H8: admission cap, pre-auth deadline, and the mount's identity gate ----
 
         [Fact]

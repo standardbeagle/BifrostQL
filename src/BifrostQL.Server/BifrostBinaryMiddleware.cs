@@ -768,15 +768,14 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Acknowledges an incoming client chunk and adds it to the reassembly buffer. Returns
-        /// the reconstructed original request once the final chunk arrives, or null when more
-        /// chunks are still expected or reassembly failed (an Error frame is sent in that case).
+        /// Adds an incoming client chunk to the reassembly buffer and acknowledges it once it is
+        /// accepted. Returns the reconstructed original request once the final chunk arrives, or
+        /// null when more chunks are still expected or reassembly failed (an Error frame and no
+        /// ack are sent in that case, so a client driving its send window off acks never
+        /// advances past a chunk the server rejected).
         /// </summary>
         private async Task<BifrostMessage?> HandleChunkAsync(BifrostMessage request, BinaryConnection connection)
         {
-            var ack = ChunkReceiver.CreateAck(request.RequestId, request.ChunkSequence);
-            await connection.SendAsync(ack, connection.Token);
-
             byte[]? assembledBytes;
             try
             {
@@ -788,6 +787,8 @@ namespace BifrostQL.Server
                 await SendErrorResponseAsync(connection, request.RequestId, "Invalid chunk");
                 return null;
             }
+
+            await connection.SendAsync(ChunkReceiver.CreateAck(request.RequestId, request.ChunkSequence), connection.Token);
 
             if (assembledBytes == null)
                 return null; // More chunks expected

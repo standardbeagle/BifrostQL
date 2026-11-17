@@ -133,6 +133,33 @@ namespace BifrostQL.Server.Test.OData
             return DecodeRows(body, graphToDb);
         }
 
+        // ---- (c2) table existence probe -------------------------------------
+        //
+        // Entity sets are addressed by their GraphQL name; for the fixture tables it equals the DB
+        // name, and the missing name addresses nothing, so the raw table name is the wire path.
+
+        protected override bool AdapterSupportsTableExistenceProbe => true;
+
+        protected override async Task<string> ProbeTableReadAsync(string table, ClaimsPrincipal principal)
+        {
+            var reads = Host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var authFactory = Host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var middleware = new ODataMiddleware(
+                _ => throw new InvalidOperationException("the OData endpoint terminates the request"),
+                new ODataOptions { Endpoint = EndpointPath },
+                new ODataAuthenticator(authFactory, basicStore: null),
+                reads, NullLogger<ODataMiddleware>.Instance);
+
+            var ctx = new DefaultHttpContext { User = principal };
+            ctx.Request.Method = "GET";
+            ctx.Request.Path = "/" + table;
+            ctx.Response.Body = new MemoryStream();
+            await middleware.InvokeAsync(ctx);
+            ctx.Response.Body.Seek(0, SeekOrigin.Begin);
+            var body = await new StreamReader(ctx.Response.Body).ReadToEndAsync();
+            return $"{ctx.Response.StatusCode} {ctx.Response.ContentType}\n{body}";
+        }
+
         private static string BuildQueryString(ConformanceReadRequest request, Func<string, string> toProperty)
         {
             var parts = new List<string>();

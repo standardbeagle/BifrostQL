@@ -4,6 +4,7 @@ using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -115,6 +116,54 @@ namespace BifrostQL.Mcp.Test
             return DecodeJson(payload.GetProperty("result"));
         }
 
+        // ---- (c2) table existence probe -------------------------------------
+        //
+        // Every read tool that takes a table name, plus the per-table schema resource. Each answer is
+        // the tool result's raw JSON (isError, content text, structured payload) or the JSON-RPC error.
+
+        protected override bool AdapterSupportsTableExistenceProbe => true;
+
+        protected override async Task<string> ProbeTableReadAsync(string table, System.Security.Claims.ClaimsPrincipal principal)
+        {
+            var calls = new (string Tool, Dictionary<string, object?> Args)[]
+            {
+                ("bifrost_describe_table", new() { ["table"] = table }),
+                ("bifrost_query", new() { ["table"] = table, ["fields"] = new[] { "id" } }),
+                ("bifrost_query", new() { ["table"] = table }),
+                ("bifrost_aggregate", new() { ["table"] = table, ["measures"] = new[] { new Dictionary<string, object?> { ["fn"] = "count" } } }),
+                ("bifrost_row_context", new() { ["table"] = table, ["id"] = 1 }),
+            };
+            var transcript = new System.Text.StringBuilder();
+            await WithClientAsync(principal, enableWrites: false, async client =>
+            {
+                foreach (var (tool, args) in calls)
+                {
+                    transcript.Append(tool).Append(" => ");
+                    try
+                    {
+                        var result = await client.CallToolAsync(tool, args);
+                        transcript.Append(JsonSerializer.Serialize(result));
+                    }
+                    catch (McpException ex)
+                    {
+                        transcript.Append("rpc-error ").Append(ex.Message);
+                    }
+                    transcript.Append('\n');
+                }
+                transcript.Append("resource => ");
+                try
+                {
+                    transcript.Append(JsonSerializer.Serialize(await client.ReadResourceAsync("bifrost://schema/" + table)));
+                }
+                catch (McpException ex)
+                {
+                    transcript.Append("rpc-error ").Append(ex.Message);
+                }
+                transcript.Append('\n');
+            });
+            return transcript.ToString();
+        }
+
         /// <summary>
         /// Spins up a fresh in-memory MCP server bound to the base fixture's real executors with the
         /// caller's identity, issues one tools/call over the wire, and returns the structured payload.
@@ -123,6 +172,20 @@ namespace BifrostQL.Mcp.Test
         /// </summary>
         private async Task<JsonElement> CallToolAsync(
             System.Security.Claims.ClaimsPrincipal? principal, bool enableWrites, string tool, Dictionary<string, object?> args)
+        {
+            JsonElement payload = default;
+            await WithClientAsync(principal, enableWrites, async client =>
+            {
+                var result = await client.CallToolAsync(tool, args);
+                if (result.IsError == true)
+                    throw new InvalidOperationException(result.Content.OfType<TextContentBlock>().Single().Text);
+                payload = result.StructuredContent!.Value;
+            });
+            return payload;
+        }
+
+        private async Task WithClientAsync(
+            System.Security.Claims.ClaimsPrincipal? principal, bool enableWrites, Func<McpClient, Task> body)
         {
             var executor = Host.Services.GetRequiredService<IQueryIntentExecutor>();
             var mutation = Host.Services.GetRequiredService<IMutationIntentExecutor>();
@@ -147,10 +210,7 @@ namespace BifrostQL.Mcp.Test
                 serverInput: clientToServer.Writer.AsStream(), serverOutput: serverToClient.Reader.AsStream()));
             try
             {
-                var result = await client.CallToolAsync(tool, args);
-                if (result.IsError == true)
-                    throw new InvalidOperationException(result.Content.OfType<TextContentBlock>().Single().Text);
-                return result.StructuredContent!.Value;
+                await body(client);
             }
             finally
             {

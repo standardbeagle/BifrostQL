@@ -43,6 +43,10 @@ namespace BifrostQL.Server.Test.S3
             // listing explicitly selects file columns, so it hits the column read guard.
             "main.vaults { policy-actions: read; policy-read-deny: blob }",
             "main.vaults.blob { file: json }",
+            // The whole table is read-denied: a policy with no policy-actions allows nothing.
+            "main.sealed { policy-read-deny: blob }",
+            "main.sealed.blob { file: json }",
+            "main.opened.blob { file: json }",
         };
 
         private static string[] SeedSql() => new[]
@@ -53,6 +57,12 @@ namespace BifrostQL.Server.Test.S3
             $"INSERT INTO assets(id, tenant_id, data) VALUES (1, 'tenant-a', '{Pointer()}')",
             "CREATE TABLE vaults (id INTEGER PRIMARY KEY, blob TEXT)",
             $"INSERT INTO vaults(id, blob) VALUES (1, '{Pointer()}')",
+            "DROP TABLE IF EXISTS sealed",
+            "CREATE TABLE sealed (id INTEGER PRIMARY KEY, blob TEXT)",
+            $"INSERT INTO sealed(id, blob) VALUES (1, '{Pointer()}')",
+            "DROP TABLE IF EXISTS opened",
+            "CREATE TABLE opened (id INTEGER PRIMARY KEY, blob TEXT)",
+            $"INSERT INTO opened(id, blob) VALUES (1, '{Pointer()}')",
         };
 
         private static string Pointer() =>
@@ -126,7 +136,66 @@ namespace BifrostQL.Server.Test.S3
             list.Code.Should().Be("NoSuchBucket");
         }
 
+        // ---- table existence is not an oracle ----------------------------------------------
+
+        /// <summary>
+        /// A bucket whose table exists but is read-denied answers every op class byte for byte like
+        /// a bucket that does not exist (invariant 9: body equality). Both names are six characters
+        /// and the request id (fresh per request by design) is masked.
+        ///
+        /// <para>The control (a readable bucket answers differently) runs where the op can tell a
+        /// readable object apart: list and HEAD. GET streams from storage the fixture does not
+        /// populate, and DELETE is idempotent by contract, so both answer an absent object the same
+        /// way whatever the bucket.</para>
+        /// </summary>
+        [Theory]
+        [InlineData("GET", "", "?list-type=2", true)]
+        [InlineData("HEAD", "/blob/1", null, true)]
+        [InlineData("GET", "/blob/1", null, false)]
+        [InlineData("DELETE", "/blob/1", null, false)]
+        public async Task A_read_denied_table_answers_exactly_like_a_missing_bucket(
+            string method, string suffix, string? query, bool readableAnswersDifferently)
+        {
+            var denied = await RunRaw(Signed(method, "/sealed" + suffix, query), enableWrites: true);
+            var missing = await RunRaw(Signed(method, "/nobody" + suffix, query), enableWrites: true);
+
+            if (readableAnswersDifferently)
+            {
+                var readable = await RunRaw(Signed(method, "/opened" + suffix, query), enableWrites: true);
+                readable.Replace("opened", "<b>").Should().NotBe(missing.Replace("nobody", "<b>"),
+                    "control: the probe reaches a bucket that exists for this caller");
+            }
+            denied.Replace("sealed", "<b>").Should().Be(missing.Replace("nobody", "<b>"));
+        }
+
+        [Fact]
+        public async Task A_read_denied_table_answers_a_put_exactly_like_a_missing_bucket()
+        {
+            var denied = await RunRaw(SignedPut("/sealed/blob/1", "payload"u8.ToArray()), enableWrites: true);
+            var missing = await RunRaw(SignedPut("/nobody/blob/1", "payload"u8.ToArray()), enableWrites: true);
+
+            denied.Replace("sealed", "<b>").Should().Be(missing.Replace("nobody", "<b>"));
+        }
+
         // ---- helpers -----------------------------------------------------------------------
+
+        /// <summary>Status, content type and body, with the per-request id masked in body and header.</summary>
+        private async Task<string> RunRaw(DefaultHttpContext ctx, bool enableWrites)
+        {
+            var middleware = Build(enableWrites);
+            ctx.Response.Body = new MemoryStream();
+            await middleware.InvokeAsync(ctx);
+            ctx.Response.Body.Seek(0, SeekOrigin.Begin);
+            var body = await new StreamReader(ctx.Response.Body).ReadToEndAsync();
+            var requestId = ctx.Response.Headers["x-amz-request-id"].ToString();
+            if (requestId.Length > 0)
+                body = body.Replace(requestId, "<request-id>");
+            var headers = string.Join(";", ctx.Response.Headers
+                .Where(h => h.Key != "x-amz-request-id")
+                .OrderBy(h => h.Key, StringComparer.Ordinal)
+                .Select(h => $"{h.Key}={h.Value}"));
+            return $"{ctx.Response.StatusCode} {ctx.Response.ContentType}\n{headers}\n{body}";
+        }
 
         private async Task<(int Status, string? Code)> Run(DefaultHttpContext ctx, bool enableWrites = false)
         {

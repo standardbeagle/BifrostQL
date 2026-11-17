@@ -234,6 +234,20 @@ namespace BifrostQL.Server.Test
         }
 
         [Theory, MemberData(nameof(Backends))]
+        public async Task PasswordHistory_OrdersByInsertion_WhenChangesShareATimestamp(string backend)
+        {
+            // Two changes in one clock tick (or under a fixed clock) tie on changed_at. The history
+            // must still be the newest `keep` by insertion, or the reuse check compares against an
+            // arbitrary subset and trimming keeps the wrong rows.
+            var store = Make(backend);
+            for (var i = 1; i <= 6; i++)
+                await store.AppendPasswordHistoryAsync("alice", $"hash-{i}", T0, keep: 4, None);
+
+            (await store.GetPasswordHistoryAsync("alice", 10, None)).Select(e => e.PasswordHash)
+                .Should().Equal("hash-6", "hash-5", "hash-4", "hash-3");
+        }
+
+        [Theory, MemberData(nameof(Backends))]
         public async Task Audit_RoundTripsInTimeOrder_FromTheGivenInstant(string backend)
         {
             var store = Make(backend);

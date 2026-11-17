@@ -67,6 +67,9 @@ namespace BifrostQL.Server.Auth
             new SqlColumnDefinition("entry_id", SqlColumnKind.KeyText, Nullable: false, PrimaryKey: true),
             new SqlColumnDefinition("user_id", SqlColumnKind.KeyText, Nullable: false),
             new SqlColumnDefinition("changed_at", SqlColumnKind.KeyText, Nullable: false),
+            // Per-user insertion order. changed_at is a clock reading, so two changes in one tick
+            // (or under a fixed test clock) tie on it; history order and trimming use seq instead.
+            new SqlColumnDefinition("seq", SqlColumnKind.Int, Nullable: false),
             new SqlColumnDefinition("password_hash", SqlColumnKind.Text, Nullable: false),
         };
 
@@ -311,38 +314,52 @@ namespace BifrostQL.Server.Auth
         public async Task<IReadOnlyList<LocalPasswordHistoryEntry>> GetPasswordHistoryAsync(
             string userId, int maxEntries, CancellationToken cancellationToken)
         {
+            var rows = await ReadPasswordHistoryAsync(userId, maxEntries, cancellationToken).ConfigureAwait(false);
+            return rows.Select(r => r.Entry).ToList();
+        }
+
+        /// <summary>The newest <paramref name="maxEntries"/> history rows, newest first by insertion order.</summary>
+        private async Task<IReadOnlyList<(LocalPasswordHistoryEntry Entry, long Seq)>> ReadPasswordHistoryAsync(
+            string userId, int maxEntries, CancellationToken cancellationToken)
+        {
             if (maxEntries < 1)
-                return Array.Empty<LocalPasswordHistoryEntry>();
+                return Array.Empty<(LocalPasswordHistoryEntry, long)>();
             var sql =
-                $"SELECT {Col("password_hash")}, {Col("changed_at")} FROM {Table(PasswordHistoryTable)} " +
+                $"SELECT {Col("password_hash")}, {Col("changed_at")}, {Col("seq")} FROM {Table(PasswordHistoryTable)} " +
                 $"WHERE {Col("user_id")} = @user" +
-                _dialect.Pagination(new[] { $"{Col("changed_at")} DESC", $"{Col("entry_id")} DESC" }, offset: null, limit: maxEntries);
+                _dialect.Pagination(new[] { $"{Col("seq")} DESC", $"{Col("entry_id")} DESC" }, offset: null, limit: maxEntries);
             var result = await RunAsync(sql, new Dictionary<string, object?> { ["user"] = userId }, maxEntries, cancellationToken)
                 .ConfigureAwait(false);
             return result.Rows
-                .Select(r => new LocalPasswordHistoryEntry(Convert.ToString(r[0], CultureInfo.InvariantCulture)!, Parse(r[1])))
+                .Select(r => (new LocalPasswordHistoryEntry(Convert.ToString(r[0], CultureInfo.InvariantCulture)!, Parse(r[1])),
+                    Convert.ToInt64(r[2], CultureInfo.InvariantCulture)))
                 .ToList();
         }
 
         public async Task AppendPasswordHistoryAsync(
             string userId, string passwordHash, DateTimeOffset changedAt, int keep, CancellationToken cancellationToken)
         {
+            // Next seq for this user. Two concurrent changes of one user's password can read the same
+            // MAX and tie; the entry_id tie-break keeps the order deterministic, and both stay history.
+            var newest = await ReadPasswordHistoryAsync(userId, 1, cancellationToken).ConfigureAwait(false);
+            var seq = newest.Count == 0 ? 1 : newest[0].Seq + 1;
             await RunAsync(
                 $"INSERT INTO {Table(PasswordHistoryTable)} ({Col("entry_id")}, {Col("user_id")}, {Col("changed_at")}, " +
-                $"{Col("password_hash")}) VALUES (@id, @user, @at, @hash)",
+                $"{Col("seq")}, {Col("password_hash")}) VALUES (@id, @user, @at, @seq, @hash)",
                 new Dictionary<string, object?>
                 {
-                    ["id"] = Guid.NewGuid().ToString("N"), ["user"] = userId, ["at"] = Stamp(changedAt), ["hash"] = passwordHash,
+                    ["id"] = Guid.NewGuid().ToString("N"), ["user"] = userId, ["at"] = Stamp(changedAt), ["seq"] = seq,
+                    ["hash"] = passwordHash,
                 }, 0, cancellationToken).ConfigureAwait(false);
 
             // Drop everything older than the newest `keep` entries. Read the cut point first so the
             // DELETE is one portable statement (MySQL refuses a subquery on the table it deletes from).
-            var kept = await GetPasswordHistoryAsync(userId, Math.Max(keep, 1), cancellationToken).ConfigureAwait(false);
+            var kept = await ReadPasswordHistoryAsync(userId, Math.Max(keep, 1), cancellationToken).ConfigureAwait(false);
             if (kept.Count < Math.Max(keep, 1))
                 return;
             await RunAsync(
-                $"DELETE FROM {Table(PasswordHistoryTable)} WHERE {Col("user_id")} = @user AND {Col("changed_at")} < @cut",
-                new Dictionary<string, object?> { ["user"] = userId, ["cut"] = Stamp(kept[^1].ChangedAt) },
+                $"DELETE FROM {Table(PasswordHistoryTable)} WHERE {Col("user_id")} = @user AND {Col("seq")} < @cut",
+                new Dictionary<string, object?> { ["user"] = userId, ["cut"] = kept[^1].Seq },
                 0, cancellationToken).ConfigureAwait(false);
         }
 

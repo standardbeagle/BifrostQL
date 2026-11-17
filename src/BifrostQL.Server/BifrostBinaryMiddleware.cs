@@ -363,27 +363,38 @@ namespace BifrostQL.Server
             /// <summary>
             /// Claims <paramref name="requestId"/> and starts <paramref name="work"/> for it on the
             /// thread pool. False when the id is already in flight. An id whose transfer the client
-            /// has fully acked counts as finished: its task only has queued acks left, so it is
-            /// awaited and the id reused, which a client may do as soon as it has every chunk.
+            /// has fully acked counts as finished, which a client may assume as soon as it has every
+            /// chunk: the new request takes the id over and its task waits for the old one (only
+            /// queued acks left) before it runs. The wait happens on the new request's task, never
+            /// on the caller: the caller is the connection's single reader, and blocking it would
+            /// stop ack routing for every other transfer on the socket.
             /// </summary>
-            public async Task<bool> TryStartAsync(uint requestId, Func<Task> work)
+            public bool TryStart(uint requestId, Func<Task> work)
             {
                 var entry = new InFlightRequest();
-                if (!_inFlight.TryAdd(requestId, entry))
+                Task? priorWork = null;
+                // The prior request's task removes its own entry when it ends, which can happen
+                // between any two of these steps; an entry that vanished is retried, not refused.
+                while (!_inFlight.TryAdd(requestId, entry))
                 {
-                    if (!_inFlight.TryGetValue(requestId, out var prior)
-                        || prior.Transfer is not { AckedByClient: true }
-                        || prior.Work is not { } priorWork)
+                    if (!_inFlight.TryGetValue(requestId, out var prior))
+                        continue;
+                    if (prior.Transfer is not { AckedByClient: true } || prior.Work is not { } work0)
                         return false;
-                    await priorWork;
-                    if (!_inFlight.TryAdd(requestId, entry))
-                        return false;
+                    if (_inFlight.TryUpdate(requestId, entry, prior))
+                    {
+                        // The prior task's own removal is keyed on its entry, so it leaves ours alone.
+                        priorWork = work0;
+                        break;
+                    }
                 }
 
                 var task = Task.Run(async () =>
                 {
                     try
                     {
+                        if (priorWork != null)
+                            await priorWork;
                         await work();
                     }
                     finally
@@ -723,7 +734,7 @@ namespace BifrostQL.Server
                 return;
             }
 
-            var started = await connection.TryStartAsync(request.RequestId, async () =>
+            var started = connection.TryStart(request.RequestId, async () =>
             {
                 try
                 {

@@ -93,6 +93,7 @@ namespace BifrostQL.Server
             {
                 var unacked = 0;
                 var retransmitCounts = new Dictionary<uint, int>();
+                var acked = new HashSet<uint>();
 
                 foreach (var chunk in _chunks)
                 {
@@ -101,11 +102,11 @@ namespace BifrostQL.Server
                     unacked++;
 
                     while (unacked >= _ackWindow)
-                        unacked += await NextSignalAsync(retransmitCounts, cancellationToken);
+                        unacked += await NextSignalAsync(retransmitCounts, acked, cancellationToken);
                 }
 
                 while (unacked > 0)
-                    unacked += await NextSignalAsync(retransmitCounts, cancellationToken);
+                    unacked += await NextSignalAsync(retransmitCounts, acked, cancellationToken);
             }
             finally
             {
@@ -116,11 +117,13 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// Waits for one ack or NACK and returns the change to the unacknowledged count: -1 for
-        /// an ack, +1 for a NACK whose retransmit is now in flight (its ack is owed too, which
-        /// keeps the window bounded even when a client acks both copies), 0 for a NACK of a
-        /// sequence this transfer does not have.
+        /// the first ack of a sequence this transfer sent, 0 otherwise. A NACK answers the
+        /// original chunk (a client that NACKs a corrupt chunk never acks it), so the retransmit
+        /// takes over its slot rather than adding one; a client that acks both copies hits the
+        /// duplicate rule and the count stays exact either way.
         /// </summary>
-        private async Task<int> NextSignalAsync(Dictionary<uint, int> retransmitCounts, CancellationToken cancellationToken)
+        private async Task<int> NextSignalAsync(
+            Dictionary<uint, int> retransmitCounts, HashSet<uint> acked, CancellationToken cancellationToken)
         {
             AckSignal signal;
             using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
@@ -138,17 +141,16 @@ namespace BifrostQL.Server
             }
 
             if (!signal.IsNack)
-                return -1;
+                return signal.Sequence < _chunks.Count && acked.Add(signal.Sequence) ? -1 : 0;
 
             var count = retransmitCounts.TryGetValue(signal.Sequence, out var prior) ? prior + 1 : 1;
             retransmitCounts[signal.Sequence] = count;
             if (count > _maxRetransmitsPerSequence)
                 throw new ChunkRetransmitLimitExceededException(RequestId, signal.Sequence, _maxRetransmitsPerSequence);
 
-            if (signal.Sequence >= _chunks.Count)
-                return 0;
-            await _send(_chunks[(int)signal.Sequence], cancellationToken);
-            return +1;
+            if (signal.Sequence < _chunks.Count)
+                await _send(_chunks[(int)signal.Sequence], cancellationToken);
+            return 0;
         }
 
         private readonly record struct AckSignal(bool IsNack, uint Sequence);

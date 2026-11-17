@@ -142,6 +142,8 @@ namespace BifrostQL.Server.Test
 
             var sent = socket.SentMessages();
             sent.Should().Contain(m => m.Type == BifrostMessageType.Chunk, "the response was chunked");
+            sent.Should().ContainSingle(m => m.Type == BifrostMessageType.ResumeAck,
+                "the Resume is answered; sent: " + string.Join(", ", sent.Select(m => $"{m.Type}#{m.RequestId}/{m.ChunkSequence} {string.Join('|', m.Errors)}")));
             var resumeAck = sent.Single(m => m.Type == BifrostMessageType.ResumeAck);
             resumeAck.ChunkTotal.Should().Be(0u, "a completed transfer must not remain buffered");
         }

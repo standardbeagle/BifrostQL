@@ -38,6 +38,8 @@ namespace BifrostQL.Server.Test
             public Dictionary<int, List<BifrostMessage>> ExtraBefore { get; } = new();
             public bool Silent { get; init; }
             public bool NackOnly { get; init; }
+            /// <summary>Received-chunk indices answered with a NACK of that chunk instead of an ack.</summary>
+            public HashSet<int> NackInsteadOfAck { get; } = new();
             public int MaxInFlightSeen { get; private set; }
             private int _acked;
 
@@ -59,13 +61,16 @@ namespace BifrostQL.Server.Test
                 var index = 0;
                 await foreach (var chunk in _received.Reader.ReadAllAsync(cancellationToken))
                 {
-                    if (ExtraBefore.TryGetValue(index++, out var extras))
+                    var received = index++;
+                    if (ExtraBefore.TryGetValue(received, out var extras))
                         foreach (var extra in extras)
                             await transfer.AcknowledgeAsync(extra, cancellationToken);
 
                     var reply = NackOnly
                         ? new BifrostMessage { RequestId = chunk.RequestId, Type = BifrostMessageType.ChunkNack, ChunkSequence = 0 }
-                        : ChunkReceiver.CreateAck(chunk.RequestId, chunk.ChunkSequence);
+                        : NackInsteadOfAck.Contains(received)
+                            ? new BifrostMessage { RequestId = chunk.RequestId, Type = BifrostMessageType.ChunkNack, ChunkSequence = chunk.ChunkSequence }
+                            : ChunkReceiver.CreateAck(chunk.RequestId, chunk.ChunkSequence);
                     lock (Sent) _acked++;
                     await transfer.AcknowledgeAsync(reply, cancellationToken);
                 }
@@ -185,6 +190,43 @@ namespace BifrostQL.Server.Test
 
             client.Sent.Count(m => m.ChunkSequence == finalSeq).Should().Be(2,
                 "the final chunk is sent once and retransmitted on the tail NACK");
+        }
+
+        [Theory]
+        [InlineData(64)] // every chunk out at once; the NACK lands in the tail drain
+        [InlineData(2)]  // the NACK lands while the window is full
+        public async Task NackInsteadOfAck_TheAckedRetransmitCompletesTheTransfer(int ackWindow)
+        {
+            // A client that finds chunk 1 corrupt NACKs it and never acks the original; it acks
+            // the retransmit. The NACK used to count as one more owed ack, so the transfer waited
+            // for an ack that never came and failed on the ack timeout.
+            var sender = new ChunkSender(chunkThreshold: 100, ackWindow, chunkBuffer: new ChunkBuffer(),
+                ackTimeout: TimeSpan.FromSeconds(30));
+            var client = new ScriptedClient();
+            client.NackInsteadOfAck.Add(1);
+
+            var run = RunAsync(sender, Result(31, 600), client);
+
+            (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(run,
+                "the acked retransmit answers chunk 1, so the transfer finishes without waiting out the ack timeout");
+            await run;
+            client.Sent.Count(m => m.ChunkSequence == 1).Should().Be(2, "chunk 1 is sent once and retransmitted once");
+        }
+
+        [Fact]
+        public async Task AckOfBothCopies_DoesNotEndTheTransferEarly()
+        {
+            // The NACK of chunk 0 comes with an ack of the original too, and the retransmit is
+            // acked again. Only distinct sequences count, so the transfer still waits for every
+            // other chunk's ack and sends all of them.
+            var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 2, chunkBuffer: new ChunkBuffer());
+            var client = new ScriptedClient();
+            client.ExtraBefore[1] = new() { Nack(32, 0), ChunkReceiver.CreateAck(32, 0) };
+            var chunkCount = sender.SplitIntoChunks(Result(32, 600)).Count;
+
+            await RunAsync(sender, Result(32, 600), client);
+
+            client.Sent.Select(m => m.ChunkSequence).Distinct().Should().HaveCount(chunkCount);
         }
 
         [Fact]

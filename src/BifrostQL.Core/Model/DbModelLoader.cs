@@ -144,7 +144,7 @@ namespace BifrostQL.Model
                 NormalizedName = source.NormalizedName,
                 TableSchema = source.TableSchema,
                 TableType = source.TableType,
-                Metadata = new Dictionary<string, object?>(source.Metadata),
+                Metadata = MetadataDictionary.CopyOf(source.Metadata),
                 ColumnLookup = columns,
                 GraphQlLookup = columns.Values.ToDictionary(c => c.GraphQlName, c => c),
                 ColumnPrefixGroups = source.ColumnPrefixGroups,

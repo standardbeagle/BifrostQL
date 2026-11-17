@@ -20,16 +20,32 @@ public sealed class MetadataDictionary : IDictionary<string, object?>
 
     public MetadataDictionary() : this(new Dictionary<string, object?>()) { }
 
-    private MetadataDictionary(IDictionary<string, object?> inner) => _inner = inner;
+    private MetadataDictionary(Dictionary<string, object?> inner) => _inner = inner;
 
     /// <summary>The number of metadata writes so far, process-wide.</summary>
     public static long Version => Interlocked.Read(ref _version);
 
-    /// <summary><paramref name="metadata"/> itself when it already counts writes, else a wrapper over it.</summary>
-    public static MetadataDictionary Wrap(IDictionary<string, object?> metadata)
+    /// <summary>
+    /// <paramref name="metadata"/> itself when it already counts writes (copies that share one
+    /// store, such as <see cref="DbTable.WithGraphQlName"/>, stay shared), else
+    /// <see cref="CopyOf"/> it. A plain dictionary is never wrapped by reference: a later write
+    /// through the caller's reference would change the store without bumping the version and
+    /// a memo would keep serving the config parsed before it.
+    /// </summary>
+    public static MetadataDictionary ShareOrCopy(IDictionary<string, object?> metadata)
     {
         if (metadata is null) throw new ArgumentNullException(nameof(metadata));
-        return metadata as MetadataDictionary ?? new MetadataDictionary(metadata);
+        return metadata as MetadataDictionary ?? CopyOf(metadata);
+    }
+
+    /// <summary>A new store holding <paramref name="metadata"/>'s entries, with its key comparer when it has one.</summary>
+    public static MetadataDictionary CopyOf(IDictionary<string, object?> metadata)
+    {
+        if (metadata is null) throw new ArgumentNullException(nameof(metadata));
+        var source = metadata is MetadataDictionary owned ? owned._inner : metadata;
+        return new MetadataDictionary(source is Dictionary<string, object?> plain
+            ? new Dictionary<string, object?>(plain, plain.Comparer)
+            : new Dictionary<string, object?>(source));
     }
 
     private static void Changed() => Interlocked.Increment(ref _version);

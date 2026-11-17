@@ -103,7 +103,7 @@ namespace BifrostQL.Core.Model
         public bool RequiresInsertValue => !IsNullable && !HasDefault && !IsIdentity && !IsComputed;
         public bool IsPrimaryKey { get; init; } = false;
         public bool IsUnique { get; init; } = false;
-        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.Wrap(value); }
+        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.ShareOrCopy(value); }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
         public bool GetMetadataBool(string property, bool defaultValue) => Utils.MetadataSwitch.Parse(GetMetadataValue(property), defaultValue);
         public bool CompareMetadata(string property, string value)
@@ -225,24 +225,24 @@ namespace BifrostQL.Core.Model
         /// Used for deduplicating GraphQL names within a table; the copy shares
         /// this column's metadata dictionary.
         /// </summary>
-        public ColumnDto WithGraphQlName(string newGraphQlName) => CopyWith(newGraphQlName, Metadata);
+        public ColumnDto WithGraphQlName(string newGraphQlName) => CopyWith(newGraphQlName, _metadata);
 
         /// <summary>
         /// Copy for one model build: every member is preserved and the metadata
         /// dictionary is a fresh copy, because <c>DbModel.FromTables</c> applies
         /// metadata to its input in place and each build must own its state.
         /// </summary>
-        internal ColumnDto CloneForBuild() => CopyWith(GraphQlName, new Dictionary<string, object?>(Metadata));
+        internal ColumnDto CloneForBuild() => CopyWith(GraphQlName, MetadataDictionary.CopyOf(_metadata));
 
         /// <summary>
         /// The one column copy routine. Structural, so a member added to this
         /// type is carried by every copy without a second property list to update.
         /// </summary>
-        private ColumnDto CopyWith(string graphQlName, IDictionary<string, object?> metadata)
+        private ColumnDto CopyWith(string graphQlName, MetadataDictionary metadata)
         {
             var copy = (ColumnDto)MemberwiseClone();
             copy._graphQlName = graphQlName;
-            copy._metadata = MetadataDictionary.Wrap(metadata);
+            copy._metadata = metadata;
             return copy;
         }
 

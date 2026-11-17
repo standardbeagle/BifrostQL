@@ -250,7 +250,7 @@ namespace BifrostQL.Core.Model
         // no metadata behaves as a no-metadata model — GetMetadataValue/CompareMetadata must
         // answer "absent", not NullReferenceException.
         private MetadataDictionary _metadata = new();
-        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.Wrap(value); }
+        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.ShareOrCopy(value); }
         public ITypeMapper TypeMapper { get; set; } = AnsiSqlTypeMapper.Instance;
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public BifrostQL.Core.Schema.EnumColumnMap? EnumColumns { get; set; }
@@ -483,7 +483,7 @@ namespace BifrostQL.Core.Model
             // unified dictionary FIRST, then stamp from it — stamping from
             // additionalMetadata alone left every rule-string-configured model
             // fail-open, because its consumers read the table, not the model.
-            var dbMetadata = new Dictionary<string, object?>();
+            var dbMetadata = new MetadataDictionary();
             metadataLoader.ApplyDatabaseMetadata(dbMetadata);
 
             if (additionalMetadata != null &&

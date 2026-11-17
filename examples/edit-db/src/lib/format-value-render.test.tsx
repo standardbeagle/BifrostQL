@@ -76,6 +76,14 @@ describe('formatColumnValue (render)', () => {
         expect(container.textContent?.replace(/\D/g, '')).toBe('1234567');
     });
 
+    it('groups a BigInt sent as a decimal string without rounding it', () => {
+        const { container } = render(
+            <>{formatColumnValue('9007199254740993', col({ paramType: 'BigInt', metadata: { 'display-format': 'number' } }))}</>
+        );
+        expect(container.textContent).not.toBe('9007199254740993');
+        expect(container.textContent?.replace(/\D/g, '')).toBe('9007199254740993');
+    });
+
     it('falls back to raw text for an unparseable date', () => {
         const { container } = render(<>{formatColumnValue('not-a-date', col({ dbType: 'datetime2' }))}</>);
         expect(container.textContent).toBe('not-a-date');

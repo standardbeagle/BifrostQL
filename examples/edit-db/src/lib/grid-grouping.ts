@@ -2,7 +2,7 @@ import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Column, Table } from '../types/schema';
 import { buildColumnFilters, getGraphQlType, parseTableFilterString } from './query-builder';
 import { coerceForGql } from './fk';
-import { isNumericScalar } from './scalar-types';
+import { isIntegerScalar, isNumericScalar } from './scalar-types';
 
 /** URL parameter that owns the selected grouping field. */
 export const GRID_GROUP_BY_PARAM = 'gb';
@@ -163,23 +163,36 @@ export function buildGridGroupingRequest(
     };
 }
 
-/** Defined aggregate ordering for the server-grouped replacement surface. */
-export function compareGroupingRowsByKey(left: GroupingRow, right: GroupingRow): number {
+const INTEGER_TEXT = /^-?\d+$/;
+
+/**
+ * Defined aggregate ordering for the server-grouped replacement surface.
+ * `integerKeys` is set for an integer key column: BigInt keys arrive as
+ * decimal strings and must compare as integers, or "10" sorts before "9"
+ * (Number() would merge distinct keys past 2^53). A text column of digit
+ * strings keeps text order.
+ */
+export function compareGroupingRowsByKey(left: GroupingRow, right: GroupingRow, integerKeys = false): number {
     if (left.value === right.value) return 0;
     if (left.value === null || left.value === undefined) return -1;
     if (right.value === null || right.value === undefined) return 1;
     if (typeof left.value === 'number' && typeof right.value === 'number') return left.value - right.value;
+    if (integerKeys && typeof left.value === 'string' && typeof right.value === 'string' && INTEGER_TEXT.test(left.value) && INTEGER_TEXT.test(right.value)) {
+        const l = BigInt(left.value);
+        const r = BigInt(right.value);
+        return l < r ? -1 : l > r ? 1 : 0;
+    }
     return String(left.value).localeCompare(String(right.value));
 }
 
 /** Sort aggregate buckets by the selected key/count direction with a stable key tie-breaker. */
-export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort: GroupingSort = DEFAULT_GROUPING_SORT): number {
+export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort: GroupingSort = DEFAULT_GROUPING_SORT, integerKeys = false): number {
     if (sort.field === 'count') {
         const byCount = left.count - right.count;
         if (byCount !== 0) return sort.desc ? -byCount : byCount;
-        return compareGroupingRowsByKey(left, right);
+        return compareGroupingRowsByKey(left, right, integerKeys);
     }
-    const byKey = compareGroupingRowsByKey(left, right);
+    const byKey = compareGroupingRowsByKey(left, right, integerKeys);
     return sort.desc ? -byKey : byKey;
 }
 
@@ -193,6 +206,7 @@ export function readGroupingResult(data: Record<string, unknown> | undefined, ta
     const raw = data?.[`${table.name}Aggregate`];
     if (!Array.isArray(raw)) return { rows: [], truncated: false };
     const truncated = raw.length > GROUPING_BUCKET_CAP;
+    const integerKeys = isIntegerScalar(groupBy.paramType);
     // Couple each server row to its configured sum before ordering; never
     // calculate a measure from the current flat page.
     const rows = raw.slice(0, GROUPING_BUCKET_CAP).map((source) => {
@@ -202,7 +216,7 @@ export function readGroupingResult(data: Record<string, unknown> | undefined, ta
             count: Number(record._count ?? 0),
             sum: sumBy ? (record._sum as Record<string, unknown> | undefined)?.[sumBy.graphQlName] : undefined,
         };
-    }).sort((left, right) => compareGroupingRows(left, right, sort));
+    }).sort((left, right) => compareGroupingRows(left, right, sort, integerKeys));
     return { rows, truncated };
 }
 

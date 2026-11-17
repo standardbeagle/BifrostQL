@@ -257,3 +257,26 @@ describe('grouping sum columns', () => {
         expect(groupingSumColumnFromUrl('memo', ledger)).toBeNull();
     });
 });
+
+describe('grouping keys sent as BigInt strings', () => {
+    it('orders BigInt keys numerically, not as text', () => {
+        const ledger = { name: 'ledger', graphQlName: 'ledger', columns: [
+            { name: 'account', graphQlName: 'account', label: 'Account', paramType: 'BigInt' },
+        ] } as unknown as Table;
+        const data = { ledgerAggregate: [
+            { account: '10', _count: 1 },
+            { account: '9', _count: 1 },
+            { account: '-3', _count: 1 },
+            { account: '9007199254740993', _count: 1 },
+            { account: '9007199254740992', _count: 1 },
+        ] };
+        expect(readGroupingResult(data, ledger, ledger.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
+            .toEqual(['-3', '9', '10', '9007199254740992', '9007199254740993']);
+    });
+
+    it('keeps text order for a text column of digit strings', () => {
+        const data = { ordersAggregate: [{ status: '10', _count: 1 }, { status: '9', _count: 1 }] };
+        expect(readGroupingResult(data, orders, orders.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
+            .toEqual(['10', '9']);
+    });
+});

@@ -171,6 +171,22 @@ namespace BifrostQL.Server.Test.Resp
             executor.Intents.Should().BeEmpty();
         }
 
+        [Fact]
+        public async Task Scan_UnderARowCeilingOfOne_IsRefusedAndExecutesNothing()
+        {
+            // A ceiling of 1 leaves no room for the probe row, so SCAN cannot tell a last page.
+            // A loaded model never reaches this (ModelConfigValidator rejects max-query-rows < 2);
+            // the guard covers a DbModel built directly.
+            var model = BuildModel();
+            model.GetMetadataValue(MetadataKeys.Model.MaxQueryRows).Returns("1");
+            var (executor, services) = Arrange(Tenant1, model);
+
+            var reply = await Handle(services, "SCAN", "0", "MATCH", "widgets:*");
+
+            reply.Should().Be(new RespError("ERR SCAN needs a row ceiling of at least 2 to page"));
+            executor.Intents.Should().BeEmpty();
+        }
+
         // ---- MATCH / table validation --------------------------------------
 
         [Fact]

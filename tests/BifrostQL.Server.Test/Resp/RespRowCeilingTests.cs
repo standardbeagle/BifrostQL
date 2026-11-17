@@ -161,17 +161,5 @@ namespace BifrostQL.Server.Test.Resp
                 .Should().NotBe(RespProtocol.ScanStartCursor, "145 keys remain after this page");
             BulkTexts(page.Items[1]).Should().Equal("items:1", "items:2", "items:3", "items:4");
         }
-
-        [Fact]
-        public async Task Scan_UnderACeilingOfOne_IsRefused()
-        {
-            await using var harness = await StartAsync(nameof(Scan_UnderACeilingOfOne_IsRefused), 1);
-
-            var reply = await SendAsync(harness,
-                RespProtocol.Scan, RespProtocol.ScanStartCursor,
-                RespProtocol.ScanMatchOption, "items" + RespProtocol.ScanWildcardSuffix);
-
-            reply.Should().Be(new RespError("ERR SCAN needs a row ceiling of at least 2 to page"));
-        }
     }
 }

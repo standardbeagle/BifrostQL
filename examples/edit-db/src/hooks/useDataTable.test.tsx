@@ -292,3 +292,41 @@ describe('getTableColumns: type-based cell rendering', () => {
         expect(container.querySelector('.sr-only')!.textContent).toBe('false');
     });
 });
+
+describe('getTableColumns: FK filter column', () => {
+    const col = (name: string, paramType = 'Int'): Column => ({
+        dbName: name, graphQlName: name, name, label: name, paramType, dbType: 'int',
+        isPrimaryKey: false, isIdentity: false, isNullable: true, isReadOnly: false, metadata: {},
+    });
+    const tenants: Table = {
+        dbName: 'tenant_codes', graphQlName: 'tenant_codes', name: 'tenant_codes', label: 'Codes', labelColumn: 'title',
+        primaryKeys: ['tenant_id', 'code'], isEditable: true, metadata: {},
+        columns: [col('tenant_id'), col('code', 'String'), col('title', 'String')], multiJoins: [], singleJoins: [],
+    };
+    const owners: Table = {
+        dbName: 'owners', graphQlName: 'owners', name: 'owners', label: 'Owners', labelColumn: 'name',
+        primaryKeys: ['uid'], isEditable: true, metadata: {},
+        columns: [col('uid'), col('name', 'String')], multiJoins: [], singleJoins: [],
+    };
+    const byCode: Join = { name: 'tenant_codes', sourceColumnNames: ['tenant_id', 'code'], destinationTable: 'tenant_codes', destinationColumnNames: ['tenant_id', 'code'] } as Join;
+    const byOwner: Join = { name: 'owners', sourceColumnNames: ['owner_id'], destinationTable: 'owners', destinationColumnNames: ['uid'] } as Join;
+    const items: Table = {
+        dbName: 'items', graphQlName: 'items', name: 'items', label: 'Items', labelColumn: 'id',
+        primaryKeys: ['id'], isEditable: true, metadata: {},
+        columns: [col('id'), col('tenant_id'), col('code', 'String'), col('owner_id')],
+        multiJoins: [], singleJoins: [byCode, byOwner],
+    };
+    const schema = { findTable: (name: string) => (name === 'tenant_codes' ? tenants : name === 'owners' ? owners : undefined) } as unknown as SchemaContextValue;
+    const meta = (id: string) => (getTableColumns(items, schema).find((c) => c.id === id)!.meta as Record<string, unknown>);
+
+    it('offers no FK dropdown on a composite FK, whose options would list one column of the tuple', () => {
+        // The dropdown projected `id: tenant_id` and filtered on tenant_id alone.
+        expect(meta('tenant_id').joinFkColumn).toBeUndefined();
+        expect(meta('code').joinFkColumn).toBeUndefined();
+        expect(meta('tenant_id').isCompositeFk).toBe(true);
+    });
+
+    it('points a single-column FK dropdown at the destination column it references', () => {
+        expect(meta('owner_id').joinFkColumn).toBe('uid');
+    });
+});

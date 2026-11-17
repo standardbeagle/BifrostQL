@@ -155,6 +155,11 @@ function buildJoinColumn(
     const joinSchema = schema.findTable(anchorJoin.destinationTable);
     const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
     const composite = isComposite(anchorJoin);
+    // The destination column this FK column points at. A composite FK has no
+    // single one: its FK dropdown would list one column's values (repeated,
+    // one per tuple) and filter on that column alone, matching rows of other
+    // tuples. It falls back to the column's ordinary type-based filter.
+    const fkColumn = composite ? null : fkDestinationColumnFor(anchorJoin, c.name);
     // Self-referential FK: column points back at the same table
     // (e.g. categories.parent_id -> categories.id). Label it clearly
     // so users know the FK means "parent" rather than an unrelated
@@ -169,7 +174,7 @@ function buildJoinColumn(
         meta: columnMeta(c, operators, {
             joinTable: anchorJoin.destinationTable,
             joinLabelColumn,
-            joinFkColumn: anchorJoin.destinationColumnNames[0],
+            joinFkColumn: fkColumn ?? undefined,
             isSelfReference,
             isCompositeFk: composite,
         }),
@@ -194,7 +199,8 @@ function buildJoinColumn(
                     <FkCellPopover
                         tableName={anchorJoin.destinationTable}
                         fkValue={joinedPk}
-                        filterColumn={anchorJoin.destinationColumnNames[0]}
+                        // A composite FK previews through join + sourceRow instead.
+                        filterColumn={fkColumn ?? ''}
                         join={anchorJoin}
                         sourceRow={row.original as Record<string, unknown>}
                     >
@@ -258,9 +264,9 @@ function buildScalarColumn(
                 dbType: c.dbType,
                 joinTable: memberJoin.destinationTable,
                 joinLabelColumn,
-                // Null when the pairing does not resolve. Consumers must then decline
-                // the FK filter rather than aim it at the first destination column.
-                joinFkColumn: fkDestinationColumnFor(memberJoin, c.name),
+                // A member column only exists on a composite FK, which has no single
+                // destination column to list (see buildJoinColumn): no FK dropdown.
+                joinFkColumn: undefined,
                 isSelfReference,
                 isCompositeFk: true,
                 isCompositeFkMember: true,

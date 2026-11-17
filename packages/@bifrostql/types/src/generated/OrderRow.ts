@@ -4,7 +4,7 @@ import { Status } from './Status.js';
 
 export interface OrderRow {
   orderId: number;
-  total: number | null;
+  total: string | null;
   payload: Uint8Array;
   status: Status;
 }

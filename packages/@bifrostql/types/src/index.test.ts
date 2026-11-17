@@ -98,6 +98,9 @@ describe('@bifrostql/types barrel', () => {
     // sample generation.
     expectTypeOf<UserRow>().toHaveProperty('friendIds');
     expectTypeOf<OrderRow>().toHaveProperty('status');
+    // A decimal column is a proto string: the server's Decimal scalar writes
+    // exact decimal text, never a double.
+    expectTypeOf<OrderRow['total']>().toEqualTypeOf<string | null>();
 
     const order: OrderRow = {
       orderId: 1,

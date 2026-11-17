@@ -62,7 +62,10 @@ namespace BifrostQL.Core.Schema
                 "smallint" => "int32",
                 "tinyint" => "int32",
                 "bigint" => "int64",
-                "decimal" => "double",
+                // The Decimal scalar writes exact decimal text, never a double, so a
+                // decimal column is a string here too (numeric/money fall through to
+                // the same default).
+                "decimal" => "string",
                 "float" => "double",
                 "real" => "float",
                 "bit" => "bool",

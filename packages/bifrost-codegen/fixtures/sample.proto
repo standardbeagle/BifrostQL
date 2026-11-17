@@ -13,7 +13,7 @@ message UserRow {
 
 message OrderRow {
   int32 orderId = 1;
-  optional double total = 2;
+  optional string total = 2;
   bytes payload = 3;
   Status status = 4;
 }

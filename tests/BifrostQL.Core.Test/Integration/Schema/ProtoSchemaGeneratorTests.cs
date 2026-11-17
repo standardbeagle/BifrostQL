@@ -144,7 +144,9 @@ public class ProtoTypeMapTests
     [InlineData("smallint", "int32")]
     [InlineData("tinyint", "int32")]
     [InlineData("bigint", "int64")]
-    [InlineData("decimal", "double")]
+    [InlineData("decimal", "string")]
+    [InlineData("numeric", "string")]
+    [InlineData("money", "string")]
     [InlineData("float", "double")]
     [InlineData("real", "float")]
     [InlineData("bit", "bool")]
@@ -238,7 +240,7 @@ public class ProtoSchemaIntegrationTests
         proto.Should().Contain("int32 SmallIntCol = 3;");
         proto.Should().Contain("int32 TinyIntCol = 4;");
         proto.Should().Contain("int64 BigIntCol = 5;");
-        proto.Should().Contain("double DecimalCol = 6;");
+        proto.Should().Contain("string DecimalCol = 6;");
         proto.Should().Contain("double FloatCol = 7;");
         proto.Should().Contain("float RealCol = 8;");
         proto.Should().Contain("bool BitCol = 9;");

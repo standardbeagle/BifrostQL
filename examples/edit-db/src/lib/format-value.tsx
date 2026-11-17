@@ -78,19 +78,40 @@ export function resolveDisplayFormat(column: Column, formatKey?: string): Displa
     return null; // no special formatting
 }
 
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A calendar date (`2026-05-11`, what a `date` column sends) names a day, not
+ * an instant. `new Date('2026-05-11')` reads it as UTC midnight, which local
+ * formatting shows as May 10 anywhere west of UTC, so it is built as LOCAL
+ * midnight instead. setFullYear keeps years below 100 literal (the Date
+ * constructor maps 0-99 to 1900-1999).
+ */
 function toDate(value: unknown): Date | null {
     if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
     if (typeof value === 'number') { const d = new Date(value); return isNaN(d.getTime()) ? null : d; }
-    if (typeof value === 'string') { const d = new Date(value); return isNaN(d.getTime()) ? null : d; }
+    if (typeof value === 'string') {
+        const day = DATE_ONLY.exec(value);
+        if (day) {
+            const d = new Date(0);
+            d.setFullYear(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+            d.setHours(0, 0, 0, 0);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? null : d;
+    }
     return null;
 }
 
 /**
- * The two instants a date column stores to mean "not set": the Unix epoch
- * (timestamp 0) and .NET/SQL DateTime.MinValue (year 0001). Only these exact
- * markers count; real historical dates (1900, 1969) are real data.
+ * The two values a date column stores to mean "not set": the Unix epoch
+ * (timestamp 0, or the calendar date 1970-01-01) and .NET/SQL
+ * DateTime.MinValue (year 0001). Only these exact markers count; real
+ * historical dates (1900, 1969) are real data.
  */
-function isUnsetSentinel(date: Date): boolean {
+function isUnsetSentinel(date: Date, raw: unknown): boolean {
+    if (typeof raw === 'string' && DATE_ONLY.test(raw)) return raw === '1970-01-01' || date.getFullYear() <= 1;
     return date.getTime() === 0 || date.getUTCFullYear() <= 1;
 }
 
@@ -167,7 +188,7 @@ function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode 
             return (value) => {
                 const date = toDate(value);
                 if (!date) return String(value); // unparseable → show raw rather than hide it
-                if (isUnsetSentinel(date)) return <EmptyValue kind="unset" title={String(value)} />;
+                if (isUnsetSentinel(date, value)) return <EmptyValue kind="unset" title={String(value)} />;
                 return <span title={exactFmt.format(date)}>{display.format(date)}</span>;
             };
         }
@@ -175,7 +196,7 @@ function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode 
             return (value) => {
                 const date = toDate(value);
                 if (!date) return String(value);
-                if (isUnsetSentinel(date)) return <EmptyValue kind="unset" title={String(value)} />;
+                if (isUnsetSentinel(date, value)) return <EmptyValue kind="unset" title={String(value)} />;
                 return (
                     <span title={exactFmt.format(date)} className="cursor-help underline decoration-dotted decoration-muted-foreground/40 underline-offset-2">
                         {formatRelative(date)}

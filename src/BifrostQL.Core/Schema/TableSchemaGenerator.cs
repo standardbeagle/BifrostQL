@@ -476,7 +476,8 @@ namespace BifrostQL.Core.Schema
         /// <summary>
         /// The GraphQL input type name for a nested ("tree") insert rooted at this table.
         /// </summary>
-        public string NestedSyncInsertTypeName => $"{_table.GraphQlName}_sync_insert";
+        public string NestedSyncInsertTypeName => NestedSyncInsertTypeNameFor(_table);
+        internal static string NestedSyncInsertTypeNameFor(IDbTable table) => $"{table.GraphQlName}_sync_insert";
 
         /// <summary>
         /// Emits the nested-insert input type: insertable scalar columns (all
@@ -517,8 +518,10 @@ namespace BifrostQL.Core.Schema
         }
 
         /// <summary>The input type naming pair for the opt-in filtered set-update surface.</summary>
-        public string SetTypeName => $"{_table.GraphQlName}_set";
-        public string UpdateWhereTypeName => $"{_table.GraphQlName}_update_where";
+        public string SetTypeName => SetTypeNameFor(_table);
+        public string UpdateWhereTypeName => UpdateWhereTypeNameFor(_table);
+        internal static string SetTypeNameFor(IDbTable table) => $"{table.GraphQlName}_set";
+        internal static string UpdateWhereTypeNameFor(IDbTable table) => $"{table.GraphQlName}_update_where";
 
         /// <summary>
         /// Emits the <c>&lt;t&gt;_set</c> fieldset input: every visible, writable, non-key
@@ -558,7 +561,8 @@ namespace BifrostQL.Core.Schema
         }
 
         /// <summary>The explicit-ops graph save input's type name.</summary>
-        public string NestedSaveTypeName => $"{_table.GraphQlName}_save";
+        public string NestedSaveTypeName => NestedSaveTypeNameFor(_table);
+        internal static string NestedSaveTypeNameFor(IDbTable table) => $"{table.GraphQlName}_save";
 
         /// <summary>
         /// Emits the explicit-ops graph save input: the same optional column set as the
@@ -595,7 +599,14 @@ namespace BifrostQL.Core.Schema
         }
 
         /// <summary>The collection-diff save input's type name.</summary>
-        public string DeltaTypeName => $"{_table.GraphQlName}_delta";
+        public string DeltaTypeName => DeltaTypeNameFor(_table);
+        internal static string DeltaTypeNameFor(IDbTable table) => $"{table.GraphQlName}_delta";
+
+        /// <summary>The root mutation field for a table's batch write.</summary>
+        internal static string BatchFieldName(IDbTable table) => $"{table.GraphQlName}_batch";
+
+        /// <summary>The input type one batch action takes.</summary>
+        internal static string BatchInputTypeName(IDbTable table) => $"batch_{table.GraphQlName}";
 
         /// <summary>
         /// Emits <c>&lt;t&gt;_delta</c>: the collection-diff save shape — a grid or sync
@@ -617,7 +628,7 @@ namespace BifrostQL.Core.Schema
         public string GetBatchMutationParameterType()
         {
             var result = new StringBuilder();
-            var name = "batch_" + _table.GraphQlName;
+            var name = BatchInputTypeName(_table);
             result.AppendLine($"input {name} {{");
             result.AppendLine($"insert: {_table.GetActionTypeName(MutateActions.Insert)}");
             result.AppendLine($"update: {_table.GetActionTypeName(MutateActions.Update)}");
@@ -711,7 +722,7 @@ namespace BifrostQL.Core.Schema
             result.AppendLine(
                 $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, save: {NestedSaveTypeName}, delta: {DeltaTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
 
-            result.AppendLine($"{_table.GraphQlName}_batch(actions: [batch_{_table.GraphQlName}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
+            result.AppendLine($"{BatchFieldName(_table)}(actions: [{BatchInputTypeName(_table)}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
             return result.ToString();
         }
 

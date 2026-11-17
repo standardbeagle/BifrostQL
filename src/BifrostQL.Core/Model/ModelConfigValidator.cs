@@ -112,12 +112,47 @@ namespace BifrostQL.Core.Model
             ValidatePrometheusMetrics(model, errors);
             ValidateLdap(model, errors);
             ValidateOperations(model, errors);
+            ValidateGeneratedNames(model, errors);
 
             if (errors.Count > 0)
             {
                 throw new InvalidOperationException(
                     "Invalid BifrostQL metadata configuration:" + Environment.NewLine +
                     string.Join(Environment.NewLine, errors));
+            }
+        }
+
+        /// <summary>
+        /// Two tables that generate the same GraphQL type or root field name (a rollup table
+        /// <c>orders_aggregate</c> next to <c>orders</c>, whose aggregate row type has that name)
+        /// would fail the schema build with no table named, so model load refuses the pair and
+        /// names both. The names come from <see cref="Schema.GeneratedSchemaNames"/>, the same
+        /// members and conditions the schema generator uses.
+        /// </summary>
+        private static void ValidateGeneratedNames(IDbModel model, List<string> errors)
+        {
+            var historyTargets = Schema.HistorySurface.ResolveTargets(model);
+            var owners = new Dictionary<Schema.GeneratedName, IDbTable>();
+            var reported = new HashSet<Schema.GeneratedName>();
+            foreach (var table in model.Tables)
+            {
+                foreach (var name in Schema.GeneratedSchemaNames.For(model, table, historyTargets))
+                {
+                    if (owners.TryAdd(name, table) || ReferenceEquals(owners[name], table) || !reported.Add(name))
+                        continue;
+                    var first = owners[name];
+                    var space = name.Space switch
+                    {
+                        Schema.GeneratedNameSpace.Type => "type",
+                        Schema.GeneratedNameSpace.QueryField => "query field",
+                        Schema.GeneratedNameSpace.MutationField => "mutation field",
+                        _ => throw new System.Diagnostics.UnreachableException(name.Space.ToString()),
+                    };
+                    errors.Add($"  generated GraphQL {space} '{name.Name}' is produced by both " +
+                        $"{first.TableSchema}.{first.DbName} and {table.TableSchema}.{table.DbName}; the schema " +
+                        "cannot define it twice. Rename one of the tables (or disable the feature that " +
+                        "generates the name).");
+                }
             }
         }
 
@@ -1117,24 +1152,9 @@ namespace BifrostQL.Core.Model
                     continue;
                 }
 
-                // Every history-enabled table generates a `<table>History` trail read
-                // field on the root query type. A real table whose generated query
-                // field carries that exact name would produce a duplicate GraphQL
-                // field and crash (or shadow) at schema build — reject at model load,
-                // naming both tables, while the config is still being written.
+                // A trail read field that collides with another table's generated name is
+                // reported by ValidateGeneratedNames, with every other generated name.
                 var readField = Schema.HistorySurface.HistoryFieldName(table);
-                var colliding = model.Tables.FirstOrDefault(t =>
-                    !ReferenceEquals(t, table)
-                    && string.Equals(t.GraphQlName, readField, StringComparison.Ordinal));
-                if (colliding != null)
-                {
-                    errors.Add(Problem(table, MetadataKeys.History.Enabled,
-                        table.GetMetadataValue(MetadataKeys.History.Enabled),
-                        $"generates the trail read field '{readField}', which collides with the generated query " +
-                        $"field of table '{colliding.TableSchema}.{colliding.DbName}' (GraphQL name " +
-                        $"'{colliding.GraphQlName}'). Rename one of the tables, or disable history on " +
-                        $"'{table.TableSchema}.{table.DbName}'."));
-                }
 
                 // A policy row scope is an arbitrary expression evaluated against the
                 // TRACKED table's rows; the history table has no materialized column

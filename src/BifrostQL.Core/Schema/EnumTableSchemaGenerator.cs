@@ -44,10 +44,9 @@ public sealed class EnumTableSchemaGenerator
     /// Gets the GraphQL filter input type name for this enum, suitable for
     /// use in filter arguments on FK columns that reference this enum table.
     /// </summary>
-    public string GetFilterInputTypeName()
-    {
-        return $"FilterType{_config.GraphQlEnumName}Input";
-    }
+    public string GetFilterInputTypeName() => FilterTypeNameFor(_config);
+
+    internal static string FilterTypeNameFor(EnumTableConfig config) => $"FilterType{config.GraphQlEnumName}Input";
 
     /// <summary>
     /// Generates the GraphQL filter input type definition for this enum.

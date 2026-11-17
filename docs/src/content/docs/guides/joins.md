@@ -129,6 +129,10 @@ You can declare one manually when automatic detection is not enough:
 "dbo.posts { many-to-many: tags:post_tags; }"
 ```
 
+## Relationship field names
+
+Model load also refuses two tables whose generated GraphQL names collide. A rollup table named `orders_aggregate` clashes with the aggregate row type of `orders`. Other clashes are `posts_paged`, `posts_batch` and `ordersAggregate`. The error names the generated name and both tables.
+
 ## Application schema relationships
 
 Prefer real database foreign keys where possible. Known application schemas such as WordPress can also inject synthetic foreign keys during schema detection, so legacy databases without declared constraints can still expose direct relationship fields.

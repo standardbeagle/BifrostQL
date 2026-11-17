@@ -118,7 +118,8 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
 
     // The reader and writer SHARE one PathCache so both resolve the same cached model.
     private static (RetentionPurgeEngine Engine, IMutationIntentExecutor Writer, QueryIntentExecutor Reader, PathCache<Inputs> Cache) Build(
-        int batchSize = RetentionPurgeEngine.DefaultBatchSize, Func<Task>? beforeFirstDelete = null)
+        int batchSize = RetentionPurgeEngine.DefaultBatchSize, Func<Task>? beforeFirstDelete = null,
+        int maxRowsPerPass = RetentionPurgeEngine.DefaultMaxRowsPerPass)
     {
         var pathCache = new PathCache<Inputs>();
         pathCache.AddLoader(EndpointPath, async () =>
@@ -155,7 +156,7 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
         });
 
         IMutationIntentExecutor engineWriter = beforeFirstDelete is null ? writer : new RaceBeforeFirstWrite(writer, beforeFirstDelete);
-        var engine = new RetentionPurgeEngine(reader, engineWriter, pathCache, clock: () => Now, batchSize: batchSize);
+        var engine = new RetentionPurgeEngine(reader, engineWriter, pathCache, clock: () => Now, batchSize: batchSize, maxRowsPerPass: maxRowsPerPass);
         return (engine, writer, reader, pathCache);
     }
 
@@ -305,35 +306,59 @@ public sealed class RetentionPurgeEngineTests : IAsyncLifetime
     // ---- criterion 4/6: bounded batch, resumable, independent commits -------------
 
     [Fact]
-    public async Task Ttl_BoundedBatch_ResumesAcrossPasses_LosingNoProgress()
+    public async Task Ttl_OnePass_ReadsBatchAfterBatch_UntilTheBacklogIsGone()
     {
+        // One read returned at most batchSize rows and the pass stopped there, so a table that
+        // expires more than batchSize rows per poll interval never caught up.
         var (engine, _, reader, _) = Build(batchSize: 2);
+        var model = await reader.GetModelAsync(EndpointPath);
+        var metrics = model.GetTableFromDbName("metrics");
+
+        var purged = await engine.SweepTableForTenantAsync(
+            model, metrics, RetentionConfig.FromTable(metrics), null, null, EndpointPath, Now, CancellationToken.None);
+
+        purged.Should().Be(5, "the pass reads 2, 2, then a short 1");
+        (await ScalarAsync("SELECT COUNT(*) FROM metrics")).Should().Be("0");
+    }
+
+    [Fact]
+    public async Task Ttl_PassBudget_BoundsAPass_AndTheNextPassResumes()
+    {
+        var (engine, _, reader, _) = Build(batchSize: 2, maxRowsPerPass: 3);
         var model = await reader.GetModelAsync(EndpointPath);
         var metrics = model.GetTableFromDbName("metrics");
         var config = RetentionConfig.FromTable(metrics);
 
-        // Pass 1: at most batchSize (2) rows removed — the batch is bounded.
-        var first = await engine.SweepTableForTenantAsync(
-            model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None);
-        first.Should().Be(2, "the batch caps at 2 rows per pass");
-        (await ScalarAsync("SELECT COUNT(*) FROM metrics")).Should().Be("3", "each delete committed independently — the 2 removed are gone");
+        (await engine.SweepTableForTenantAsync(model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None))
+            .Should().Be(3, "the pass stops at its row budget");
+        (await ScalarAsync("SELECT group_concat(id) FROM (SELECT id FROM metrics ORDER BY id)")).Should().Be("4,5", "oldest keys first; each delete committed on its own");
+        (await engine.SweepTableForTenantAsync(model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None))
+            .Should().Be(2);
+        (await engine.SweepTableForTenantAsync(model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None))
+            .Should().Be(0, "idempotent once drained");
+    }
 
-        // Pass 2 resumes over the shrunken set (no re-scan from zero, no lost progress).
-        var second = await engine.SweepTableForTenantAsync(
-            model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None);
-        second.Should().Be(2);
-        (await ScalarAsync("SELECT COUNT(*) FROM metrics")).Should().Be("1");
+    // A row whose delete the database refuses (an FK or trigger) aborted the whole pass, and the
+    // next pass re-read it first, so nothing behind it on any table or tenant was ever purged.
+    [Fact]
+    public async Task PoisonRows_AreSkipped_AndEveryOtherRowOfThePassIsPurged()
+    {
+        // Tenant 1's expired session (the soft-delete UPDATE ttl routes) and metrics id 1 (the
+        // first key of the first read) both refuse to go.
+        await Exec("CREATE TRIGGER keep_session BEFORE UPDATE ON sessions WHEN old.id = 1 AND new.deleted_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'held by a reference'); END");
+        await Exec("CREATE TRIGGER keep_metric BEFORE DELETE ON metrics WHEN old.id = 1 BEGIN SELECT RAISE(ABORT, 'held by a reference'); END");
+        // batchSize 1: every read of metrics would return the poison row again without the key cursor.
+        var (engine, _, reader, _) = Build(batchSize: 1);
+        var model = await reader.GetModelAsync(EndpointPath);
 
-        // Pass 3 drains the remainder.
-        var third = await engine.SweepTableForTenantAsync(
-            model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None);
-        third.Should().Be(1);
-        (await ScalarAsync("SELECT COUNT(*) FROM metrics")).Should().Be("0");
+        var outcome = await engine.PurgeOnceAsync(model, new SqliteDbConnFactory(ConnString), EndpointPath, CancellationToken.None);
 
-        // Idempotent once drained.
-        var fourth = await engine.SweepTableForTenantAsync(
-            model, metrics, config, null, null, EndpointPath, Now, CancellationToken.None);
-        fourth.Should().Be(0);
+        outcome.RowsFailed.Should().Be(2, "each poison row is tried once per pass");
+        outcome.RowsPurged.Should().Be(6, "session 2, audit_log 1 and metrics 2-5 still go");
+        (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 1")).Should().BeNullOrEmpty();
+        (await ScalarAsync("SELECT deleted_at FROM sessions WHERE id = 2")).Should().NotBeNullOrEmpty("a later tenant still purges");
+        (await ScalarAsync("SELECT COUNT(*) FROM audit_log WHERE id = 1")).Should().Be("0", "a later table still purges");
+        (await ScalarAsync("SELECT group_concat(id) FROM metrics")).Should().Be("1", "the rows after the poison key still purge");
     }
 
     // ---- dry-run: same selection path, zero deletes ------------------------------

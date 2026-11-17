@@ -218,13 +218,15 @@ public sealed class RetentionErasureHistoryTests : IAsyncLifetime
         return (engine, reader);
     }
 
-    private async Task<int> SweepTenantOneAsync(RetentionPurgeEngine engine, QueryIntentExecutor reader)
+    private async Task<int> SweepTenantOneAsync(RetentionPurgeEngine engine, QueryIntentExecutor reader,
+        RetentionPurgeEngine.PurgeFailures? failures = null)
     {
         var model = await reader.GetModelAsync(EndpointPath);
         var people = model.GetTableFromDbName("people");
         var config = RetentionConfig.FromTable(people);
         return await engine.SweepTableForTenantAsync(
-            model, people, config, "tenant_id", tenantValue: 1L, EndpointPath, Now, CancellationToken.None);
+            model, people, config, "tenant_id", tenantValue: 1L, EndpointPath, Now, CancellationToken.None,
+            failures: failures);
     }
 
     [Fact]
@@ -277,9 +279,10 @@ public sealed class RetentionErasureHistoryTests : IAsyncLifetime
         var (engine, reader) = Build(poison: true);
 
         // The poison hook throws after the history + outbox hooks wrote, rolling the whole
-        // purge transaction back.
-        var act = async () => await SweepTenantOneAsync(engine, reader);
-        await act.Should().ThrowAsync<BifrostExecutionError>();
+        // purge transaction back. The pass contains the failure: it counts the row and goes on.
+        var failures = new RetentionPurgeEngine.PurgeFailures();
+        (await SweepTenantOneAsync(engine, reader, failures)).Should().Be(0);
+        failures.Rows.Should().Be(1, "the rolled-back delete is counted as a failed row");
 
         // The delete rolled back: the row survives.
         (await CountAsync("SELECT COUNT(*) FROM people WHERE id = 1")).Should().Be(1);

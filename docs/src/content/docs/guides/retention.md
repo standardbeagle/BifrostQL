@@ -118,7 +118,8 @@ No feature flag turns it on — declaring `retain` or `ttl` on a table is the sw
 | Setting | Production value |
 |---|---|
 | Poll interval | 1 hour |
-| Rows per (table, tenant, mode) per pass | 100 |
+| Rows per expired-key read | 100 |
+| Rows per (table, tenant, mode) per pass | 10,000 |
 
 The loop self-disables. On its first pass, a model where no table declares `retain` or
 `ttl` makes the engine log a debug line and return, so the loop stops rather than polling
@@ -134,11 +135,20 @@ in metadata, the next pass will act on it within the hour.
 
 ## Bounded, resumable passes
 
-Each pass reads at most a bounded batch of expired keys per (table, tenant, window), and
-**each delete commits in its own transaction**. There is no long-running transaction and no
-partial batch. A crash mid-sweep leaves every already-committed delete in place; the next
-pass re-reads the shrunken expired set and continues. Progress is monotonic and never
-re-scans from zero.
+For each (table, tenant, window) a pass reads expired keys in key order, 100 at a time, and
+**each delete commits in its own transaction**. Each read starts after the last key the
+previous read returned, and the pass keeps reading until a read comes back short or it has
+visited 10,000 rows, so a table that expires more than one batch per hour still catches up.
+There is no long-running transaction and no partial batch. A crash mid-sweep leaves every
+already-committed delete in place; the next pass re-reads the shrunken expired set and
+continues.
+
+A row the database refuses to delete (a foreign key still points at it, or a trigger blocks
+it) does not stop the pass. The failure is logged with the table and window, never the key,
+and counted in `RetentionPurgeOutcome.RowsFailed`; the key cursor moves past the row and the
+rest of the table, the other tenants and the other tables still purge. The next pass tries
+the row again. A (table, tenant) whose expired-key read fails is likewise logged, counted in
+`SweepsFailed` and skipped for that pass.
 
 Because the read and each delete are separate transactions, a row can change in between. Each
 delete therefore matches its row only while the anchor column still holds the value the read

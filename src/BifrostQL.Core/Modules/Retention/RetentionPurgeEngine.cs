@@ -80,8 +80,13 @@ namespace BifrostQL.Core.Modules.Retention
     /// </summary>
     public sealed class RetentionPurgeEngine
     {
-        /// <summary>Max expired rows read (and therefore deleted) per (table, tenant, mode) per pass.</summary>
+        /// <summary>Max expired rows one read returns. A pass reads batch after batch until a read
+        /// comes back short or <see cref="DefaultMaxRowsPerPass"/> is reached.</summary>
         public const int DefaultBatchSize = 100;
+
+        /// <summary>Max expired rows one pass visits per (table, tenant, mode), so one table's
+        /// backlog cannot hold the pass away from the others.</summary>
+        public const int DefaultMaxRowsPerPass = 10_000;
 
         // Retention runs on a slow cadence (unlike CDC drain): expired-row windows are measured
         // in hours/days, so a frequent poll would only burn cycles finding nothing.
@@ -98,6 +103,7 @@ namespace BifrostQL.Core.Modules.Retention
         private readonly ILogger? _logger;
         private readonly TimeSpan _pollInterval;
         private readonly int _batchSize;
+        private readonly int _maxRowsPerPass;
 
         /// <param name="reader">Scoped read seam; the expired-key SELECT runs through it so tenant/
         /// soft-delete/policy transformers apply.</param>
@@ -110,8 +116,9 @@ namespace BifrostQL.Core.Modules.Retention
         /// <param name="clock">Injected wall clock (UTC) for deterministic cutoffs under test;
         /// defaults to <see cref="DateTime.UtcNow"/>.</param>
         /// <param name="pollInterval">Cadence between passes; defaults to one hour.</param>
-        /// <param name="batchSize">Rows purged per (table, tenant, mode) per pass; bounds memory and
-        /// keeps each pass short.</param>
+        /// <param name="batchSize">Rows one expired-row read returns; bounds memory per read.</param>
+        /// <param name="maxRowsPerPass">Rows one pass visits per (table, tenant, mode); bounds the
+        /// pass. Defaults to <see cref="DefaultMaxRowsPerPass"/>.</param>
         public RetentionPurgeEngine(
             IQueryIntentExecutor reader,
             IMutationIntentExecutor writer,
@@ -119,7 +126,8 @@ namespace BifrostQL.Core.Modules.Retention
             Func<DateTime>? clock = null,
             ILogger? logger = null,
             TimeSpan? pollInterval = null,
-            int batchSize = DefaultBatchSize)
+            int batchSize = DefaultBatchSize,
+            int maxRowsPerPass = DefaultMaxRowsPerPass)
         {
             _reader = reader ?? throw new ArgumentNullException(nameof(reader));
             _writer = writer ?? throw new ArgumentNullException(nameof(writer));
@@ -128,6 +136,7 @@ namespace BifrostQL.Core.Modules.Retention
             _logger = logger;
             _pollInterval = pollInterval is { } p && p > TimeSpan.Zero ? p : DefaultPollInterval;
             _batchSize = batchSize < 1 ? DefaultBatchSize : batchSize;
+            _maxRowsPerPass = maxRowsPerPass < 1 ? DefaultMaxRowsPerPass : maxRowsPerPass;
         }
 
         /// <summary>
@@ -227,6 +236,7 @@ namespace BifrostQL.Core.Modules.Retention
             var now = _clock();
             int tablesSwept = 0, rowsPurged = 0, tablesSkipped = 0;
             var candidates = dryRun ? new List<RetentionCandidate>() : null;
+            var failures = new PurgeFailures();
 
             foreach (var physical in plan)
             {
@@ -242,22 +252,49 @@ namespace BifrostQL.Core.Modules.Retention
 
                 var table = target.Table;
                 var tenantColumn = NormalizeTenantColumn(table);
-                IReadOnlyList<object?> tenants = tenantColumn is null
-                    ? new object?[] { null }                                   // no tenant boundary: one global sweep
-                    : await EnumerateTenantsAsync(table, tenantColumn, target.ConnFactory, cancellationToken);
+                IReadOnlyList<object?> tenants;
+                try
+                {
+                    tenants = tenantColumn is null
+                        ? new object?[] { null }                               // no tenant boundary: one global sweep
+                        : await EnumerateTenantsAsync(table, tenantColumn, target.ConnFactory, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // One table that cannot be read must not stop the tables after it.
+                    _logger?.LogError(ex, "Retention purge could not enumerate the tenants of '{Schema}.{Table}'; skipping it this pass.",
+                        table.TableSchema, table.DbName);
+                    failures.Sweeps++;
+                    continue;
+                }
 
                 foreach (var tenant in tenants)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    rowsPurged += await SweepTableForTenantAsync(
-                        target.Model, table, target.Config, tenantColumn, tenant, target.Endpoint, now, cancellationToken,
-                        dryRun, candidates);
+                    try
+                    {
+                        rowsPurged += await SweepTableForTenantAsync(
+                            target.Model, table, target.Config, tenantColumn, tenant, target.Endpoint, now, cancellationToken,
+                            dryRun, candidates, failures);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // A failed expired-row read skips this (table, tenant) only: later tenants and
+                        // tables still purge. Row-level delete failures never reach here.
+                        _logger?.LogError(ex, "Retention purge of '{Schema}.{Table}' failed for one tenant; continuing with the rest.",
+                            table.TableSchema, table.DbName);
+                        failures.Sweeps++;
+                    }
                 }
             }
 
             return new RetentionPurgeOutcome(
                 tablesSwept, rowsPurged, tablesSkipped,
-                (IReadOnlyList<RetentionCandidate>?)candidates ?? Array.Empty<RetentionCandidate>());
+                (IReadOnlyList<RetentionCandidate>?)candidates ?? Array.Empty<RetentionCandidate>())
+            {
+                RowsFailed = failures.Rows,
+                SweepsFailed = failures.Sweeps,
+            };
         }
 
         /// <summary>
@@ -373,15 +410,16 @@ namespace BifrostQL.Core.Modules.Retention
         internal async Task<int> SweepTableForTenantAsync(
             IDbModel model, IDbTable table, RetentionConfig config, string? tenantColumn,
             object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken,
-            bool dryRun = false, List<RetentionCandidate>? candidates = null)
+            bool dryRun = false, List<RetentionCandidate>? candidates = null, PurgeFailures? failures = null)
         {
             var purged = 0;
+            failures ??= new PurgeFailures();
 
             if (config.PurgesSoftDeleted)
-                purged += await PurgeRetainAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken, dryRun, candidates);
+                purged += await PurgeRetainAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken, dryRun, candidates, failures);
 
             if (config.ExpiresLiveRows)
-                purged += await PurgeTtlAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken, dryRun, candidates);
+                purged += await PurgeTtlAsync(model, table, config, tenantColumn, tenantValue, endpoint, now, cancellationToken, dryRun, candidates, failures);
 
             return purged;
         }
@@ -392,7 +430,7 @@ namespace BifrostQL.Core.Modules.Retention
         private async Task<int> PurgeRetainAsync(
             IDbModel model, IDbTable table, RetentionConfig config, string? tenantColumn,
             object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken,
-            bool dryRun, List<RetentionCandidate>? candidates)
+            bool dryRun, List<RetentionCandidate>? candidates, PurgeFailures failures)
         {
             var cutoff = now - config.RetainWindow!.Value;
             var readContext = BuildTenantContext(model, tenantColumn, tenantValue);
@@ -400,20 +438,11 @@ namespace BifrostQL.Core.Modules.Retention
             // already-soft-deleted rows retain exists to purge.
             readContext[SoftDeleteModuleApi.OnlyDeletedKey] = true;
 
-            var rows = await ReadExpiredKeysAsync(table, config.RetainAnchorColumn!, cutoff, readContext, endpoint, cancellationToken);
-
-            // Dry-run reports the SAME candidate set the read produced and routes NO delete —
-            // see PurgeOnceAsync(dryRun).
-            if (dryRun)
-                return ReportCandidates(candidates!, table, RetentionMode.Retain, tenantValue, rows);
-
             var hardRole = table.GetMetadataValue(MetadataKeys.SoftDelete.HardDeleteRole);
 
-            var purged = 0;
-            foreach (var row in rows)
+            return await PurgeExpiredAsync(table, RetentionMode.Retain, config.RetainAnchorColumn!, cutoff, readContext,
+                tenantValue, endpoint, dryRun, candidates, failures, cancellationToken, row =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 var deleteContext = BuildTenantContext(model, tenantColumn, tenantValue);
                 // Grant EXACTLY the table's declared hard-delete role (nothing broader) so the
                 // pipeline's role gate authorizes the system purge; a table with no declared role
@@ -424,7 +453,7 @@ namespace BifrostQL.Core.Modules.Retention
                 // instead of re-persisting the before-image of the PII being purged.
                 deleteContext[HistoryErasure.ContextKey] = HistoryErasure.Marker;
 
-                var result = await _writer.ExecuteAsync(new MutationIntent
+                return new MutationIntent
                 {
                     Table = QualifiedName(table),
                     Action = MutationIntentAction.Delete,
@@ -434,12 +463,8 @@ namespace BifrostQL.Core.Modules.Retention
                     UserContext = deleteContext,
                     Endpoint = endpoint,
                     HiddenTableAccess = HiddenTableAccess.Granted,
-                }, cancellationToken);
-
-                purged += DeletedRowCount(result);
-            }
-
-            return purged;
+                };
+            });
         }
 
         // ttl: expire live rows anchored on the explicit ttl column. Route a PLAIN Delete intent and
@@ -447,24 +472,16 @@ namespace BifrostQL.Core.Modules.Retention
         private async Task<int> PurgeTtlAsync(
             IDbModel model, IDbTable table, RetentionConfig config, string? tenantColumn,
             object? tenantValue, string? endpoint, DateTime now, CancellationToken cancellationToken,
-            bool dryRun, List<RetentionCandidate>? candidates)
+            bool dryRun, List<RetentionCandidate>? candidates, PurgeFailures failures)
         {
             var cutoff = now - config.TtlWindow!.Value;
             // Default read context: the soft-delete filter (if any) hides already-deleted rows, which
             // is correct — ttl targets LIVE rows.
             var readContext = BuildTenantContext(model, tenantColumn, tenantValue);
 
-            var rows = await ReadExpiredKeysAsync(table, config.TtlAnchorColumn!, cutoff, readContext, endpoint, cancellationToken);
-
-            // Dry-run reports the SAME candidate set the read produced and routes NO delete.
-            if (dryRun)
-                return ReportCandidates(candidates!, table, RetentionMode.Ttl, tenantValue, rows);
-
-            var purged = 0;
-            foreach (var row in rows)
+            return await PurgeExpiredAsync(table, RetentionMode.Ttl, config.TtlAnchorColumn!, cutoff, readContext,
+                tenantValue, endpoint, dryRun, candidates, failures, cancellationToken, row =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 var deleteContext = BuildTenantContext(model, tenantColumn, tenantValue);
                 // Mark this delete an erasure. When the pipeline hard-deletes (a ttl table with
                 // no soft-delete), the history writer tombstones the trail; when it SOFT-deletes
@@ -472,7 +489,7 @@ namespace BifrostQL.Core.Modules.Retention
                 // is gated on a physical delete, so the marker is harmless there.
                 deleteContext[HistoryErasure.ContextKey] = HistoryErasure.Marker;
 
-                var result = await _writer.ExecuteAsync(new MutationIntent
+                return new MutationIntent
                 {
                     Table = QualifiedName(table),
                     Action = MutationIntentAction.Delete,
@@ -481,11 +498,57 @@ namespace BifrostQL.Core.Modules.Retention
                     UserContext = deleteContext,
                     Endpoint = endpoint,
                     HiddenTableAccess = HiddenTableAccess.Granted,
-                }, cancellationToken);
+                };
+            });
+        }
 
-                purged += DeletedRowCount(result);
+        // The one read-then-delete loop both modes share. Reads expired rows in key order, a batch
+        // at a time, each read starting after the last key the previous one returned, until a read
+        // comes back short or the pass has visited _maxRowsPerPass rows. Each delete commits on its
+        // own; one that throws (a row an FK or trigger refuses to let go) is logged, counted and
+        // passed over, and the key cursor moves past it, so one poison row neither stops the pass
+        // nor pins every later batch behind it. Dry-run walks the identical reads and reports them.
+        private async Task<int> PurgeExpiredAsync(
+            IDbTable table, RetentionMode mode, string anchorColumn, DateTime cutoff,
+            IDictionary<string, object?> readContext, object? tenantValue, string? endpoint,
+            bool dryRun, List<RetentionCandidate>? candidates, PurgeFailures failures,
+            CancellationToken cancellationToken, Func<ExpiredRow, MutationIntent> deleteIntent)
+        {
+            var purged = 0;
+            var visited = 0;
+            IReadOnlyList<object?>? after = null;
+            while (visited < _maxRowsPerPass)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var limit = Math.Min(_batchSize, _maxRowsPerPass - visited);
+                var rows = await ReadExpiredKeysAsync(table, anchorColumn, cutoff, readContext, endpoint, after, limit, cancellationToken);
+                visited += rows.Count;
+
+                // Dry-run reports the SAME candidate set the reads produce and routes NO delete —
+                // see PurgeOnceAsync(dryRun).
+                if (dryRun)
+                    purged += ReportCandidates(candidates!, table, mode, tenantValue, rows);
+                else
+                    foreach (var row in rows)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        try
+                        {
+                            purged += DeletedRowCount(await _writer.ExecuteAsync(deleteIntent(row), cancellationToken));
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // The key stays out of the log: it can be a personal identifier.
+                            _logger?.LogWarning(ex, "Retention {Mode} purge could not delete a row of '{Schema}.{Table}'; skipping it this pass.",
+                                mode, table.TableSchema, table.DbName);
+                            failures.Rows++;
+                        }
+                    }
+
+                if (rows.Count < limit)
+                    break;
+                after = rows[^1].PrimaryKey;
             }
-
             return purged;
         }
 
@@ -508,12 +571,23 @@ namespace BifrostQL.Core.Modules.Retention
         // transaction, and matches the row only while that anchor is unchanged (see ExpiredRow).
         private async Task<List<ExpiredRow>> ReadExpiredKeysAsync(
             IDbTable table, string anchorColumn, DateTime cutoff,
-            IDictionary<string, object?> readContext, string? endpoint, CancellationToken cancellationToken)
+            IDictionary<string, object?> readContext, string? endpoint, IReadOnlyList<object?>? afterKey, int limit,
+            CancellationToken cancellationToken)
         {
             var keyColumns = table.KeyColumns.ToList();
             if (keyColumns.Count == 0)
                 throw new BifrostExecutionError(
                     $"Table '{table.TableSchema}.{table.DbName}' has no primary key; a retention purge cannot address its rows.");
+
+            var filter = new Dictionary<string, object?>
+            {
+                [anchorColumn] = new Dictionary<string, object?> { ["_lt"] = cutoff },
+            };
+            if (afterKey is not null)
+                filter = new Dictionary<string, object?>
+                {
+                    ["and"] = new List<object?> { filter, KeysAfter(keyColumns, afterKey) },
+                };
 
             var query = new GqlObjectQuery
             {
@@ -522,16 +596,11 @@ namespace BifrostQL.Core.Modules.Retention
                 TableName = table.DbName,
                 GraphQlName = table.GraphQlName,
                 Path = table.GraphQlName,
-                Limit = _batchSize,
-                Filter = TableFilter.FromObject(
-                    new Dictionary<string, object?>
-                    {
-                        [anchorColumn] = new Dictionary<string, object?> { ["_lt"] = cutoff },
-                    },
-                    table),
+                Limit = limit,
+                Filter = TableFilter.FromObject(filter, table),
             };
             // Select and order by the key columns so the bounded batch is deterministic and the
-            // next resumable pass continues over the shrunken set.
+            // key cursor (KeysAfter) continues where the previous read stopped.
             foreach (var keyColumn in keyColumns)
             {
                 query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.ColumnName));
@@ -566,6 +635,24 @@ namespace BifrostQL.Core.Modules.Retention
                 keys.Add(new ExpiredRow(pk, new Dictionary<string, object?> { [anchorColumn] = anchor }));
             }
             return keys;
+        }
+
+        // The keyset predicate "key > afterKey" in key order: for (k1, k2) it is
+        // k1 > a1 OR (k1 = a1 AND k2 > a2), built as a filter object so values stay parameters.
+        private static Dictionary<string, object?> KeysAfter(IReadOnlyList<ColumnDto> keyColumns, IReadOnlyList<object?> afterKey)
+        {
+            var alternatives = new List<object?>(keyColumns.Count);
+            for (var i = 0; i < keyColumns.Count; i++)
+            {
+                var terms = new List<object?>(i + 1);
+                for (var j = 0; j < i; j++)
+                    terms.Add(new Dictionary<string, object?> { [keyColumns[j].GraphQlName] = new Dictionary<string, object?> { ["_eq"] = afterKey[j] } });
+                terms.Add(new Dictionary<string, object?> { [keyColumns[i].GraphQlName] = new Dictionary<string, object?> { ["_gt"] = afterKey[i] } });
+                alternatives.Add(terms.Count == 1 ? terms[0] : new Dictionary<string, object?> { ["and"] = terms });
+            }
+            return alternatives.Count == 1
+                ? (Dictionary<string, object?>)alternatives[0]!
+                : new Dictionary<string, object?> { ["or"] = alternatives };
         }
 
         /// <summary>
@@ -643,6 +730,14 @@ namespace BifrostQL.Core.Modules.Retention
 
         private sealed record EndpointModel(string? Path, IDbModel Model, IDbConnFactory ConnFactory);
 
+        // Failures one pass contained instead of aborting on: rows whose delete threw, and
+        // (table, tenant) sweeps whose read threw.
+        internal sealed class PurgeFailures
+        {
+            public int Rows;
+            public int Sweeps;
+        }
+
         // One endpoint's view of one table. Config is null when that endpoint's config is invalid.
         private sealed record EndpointTableView(EndpointModel Endpoint, IDbTable Table, RetentionConfig? Config);
 
@@ -679,7 +774,14 @@ namespace BifrostQL.Core.Modules.Retention
     /// pass deletes — and is empty for a live pass.
     /// </summary>
     public readonly record struct RetentionPurgeOutcome(
-        int TablesSwept, int RowsPurged, int TablesSkipped, IReadOnlyList<RetentionCandidate> Candidates);
+        int TablesSwept, int RowsPurged, int TablesSkipped, IReadOnlyList<RetentionCandidate> Candidates)
+    {
+        /// <summary>Rows whose delete threw; each was logged and passed over. The next pass retries them.</summary>
+        public int RowsFailed { get; init; }
+
+        /// <summary>(table, tenant) sweeps whose read threw; each was logged and the pass went on.</summary>
+        public int SweepsFailed { get; init; }
+    }
 
     /// <summary>Which retention window selected a candidate row.</summary>
     public enum RetentionMode

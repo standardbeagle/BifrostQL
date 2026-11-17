@@ -106,6 +106,46 @@ namespace BifrostQL.Server.Test.Pgwire
                 PgWireProtocol.ParameterDescription, PgWireProtocol.RowDescription, PgWireProtocol.ReadyForQuery);
         }
 
+        [Theory]
+        [InlineData(32768)]       // one past the Int16 ParameterDescription count
+        [InlineData(2147483647)]  // int.MaxValue: Describe would size an int[] from it
+        public async Task DescribeStatement_PlaceholderOrdinalPastWireMaximum_IsSyntaxError_SessionSurvives(int ordinal)
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            await client.SendParseAsync("s", $"SELECT id FROM users WHERE id = ${ordinal}");
+            await client.SendDescribeStatementAsync("s");
+            await client.SendSyncAsync();
+            var result = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeTrue();
+            result.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateSyntaxError);
+            result.ParameterTypeOids.Should().BeEmpty();
+
+            await client.SendQueryAsync("SELECT id FROM users");
+            var ok = await client.ReadQueryResultAsync().WaitAsync(Timeout);
+            ok.HasError.Should().BeFalse();
+            ok.Rows.Should().HaveCount(2);
+        }
+
+        [Fact]
+        public async Task DescribeStatement_PlaceholderOrdinalAtWireMaximum_IsDescribed()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(TwoUsers(), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            await client.SendParseAsync("s", "SELECT id FROM users WHERE id = $32767");
+            await client.SendDescribeStatementAsync("s");
+            await client.SendSyncAsync();
+            var result = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            result.HasError.Should().BeFalse();
+            result.ParameterTypeOids.Should().HaveCount(32767);
+        }
+
         [Fact]
         public async Task DescribeStatement_OnACatalogQuery_AgreesWithExecute()
         {

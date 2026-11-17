@@ -68,6 +68,13 @@ namespace BifrostQL.Server.Pgwire
         public const byte CloseMessage = (byte)'C';    // frontend: drop a statement ('S') or portal ('P')
         public const byte FlushMessage = (byte)'H';    // frontend: flush buffered output (no-op here — we flush each frame)
 
+        /// <summary>
+        /// The highest <c>$N</c> placeholder ordinal a statement may use. Bind and
+        /// ParameterDescription carry the parameter count as an Int16, so no client can bind
+        /// more than this many values; a higher ordinal is refused as a syntax error.
+        /// </summary>
+        public const int MaxParameterOrdinal = short.MaxValue;
+
         /// <summary>Describe/Close target discriminator: a prepared statement.</summary>
         public const byte DescribeStatement = (byte)'S';
 

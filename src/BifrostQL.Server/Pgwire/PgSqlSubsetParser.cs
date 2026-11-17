@@ -220,6 +220,12 @@ namespace BifrostQL.Server.Pgwire
         /// <summary>
         /// Reads a <c>$N</c> extended-protocol parameter placeholder. The ordinal is 1-based
         /// per the protocol; <c>$0</c> is invalid. The parsed value carried is the int ordinal.
+        ///
+        /// <para>The ordinal is capped at <see cref="PgWireProtocol.MaxParameterOrdinal"/>: the
+        /// highest ordinal becomes the statement's parameter count, which Describe sizes an
+        /// array from and ParameterDescription writes as an Int16. An uncapped
+        /// <c>$2147483647</c> asked for an ~8 GB array, and anything past 32767 wrapped the
+        /// Int16 count into a corrupt frame.</para>
         /// </summary>
         private static Tok ReadParameter(string sql, ref int i)
         {
@@ -228,7 +234,8 @@ namespace BifrostQL.Server.Pgwire
             var n = sql.Length;
             while (i < n && char.IsDigit(sql[i])) i++;
             var text = sql[start..i];
-            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var ordinal) || ordinal < 1)
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var ordinal)
+                || ordinal < 1 || ordinal > PgWireProtocol.MaxParameterOrdinal)
                 throw Reject($"invalid parameter placeholder '${text}'.");
             return new Tok(TokKind.Parameter, "$" + text, ordinal);
         }

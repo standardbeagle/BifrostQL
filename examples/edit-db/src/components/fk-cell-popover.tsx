@@ -107,7 +107,7 @@ export function FkCellPopover({ tableName, fkValue, filterColumn, join, sourceRo
         ? buildPreviewPlan(tableName, table, previewColumns, join, sourceRow, fkValue, filterColumn)
         : null;
 
-    const { data, isLoading } = useQuery({
+    const { data, isLoading, error } = useQuery({
         queryKey: ["fkPreview", tableName, plan?.cacheKey],
         queryFn: () => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(plan!.query, plan!.variables),
         enabled: open && !!plan,
@@ -135,7 +135,11 @@ export function FkCellPopover({ tableName, fkValue, filterColumn, join, sourceRo
                             ))}
                         </dl>
                     )}
-                    {!isLoading && !record && open && (
+                    {/* A failed lookup is not a dangling key: say it failed, never "not found". */}
+                    {error && (
+                        <p role="alert" className="text-xs text-destructive">Could not load this record: {error.message}</p>
+                    )}
+                    {!isLoading && !error && !record && open && (
                         <p className="text-xs text-muted-foreground">Record not found</p>
                     )}
                 </div>

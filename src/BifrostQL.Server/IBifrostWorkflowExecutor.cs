@@ -48,7 +48,7 @@ namespace BifrostQL.Server
         }
 
         public async Task<IDictionary<string, object?>?> QuerySingleAsync(
-            string table, object id, IDictionary<string, object?> userContext)
+            string table, object id, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(table)) throw new ArgumentException("Table name is required.", nameof(table));
             if (id is null) throw new ArgumentNullException(nameof(id));
@@ -60,44 +60,88 @@ namespace BifrostQL.Server
                 $"query {{ {dbTable.GraphQlName}(_primaryKey: [{ToGraphQlString(id.ToString())}]) " +
                 $"{{ data {{ {string.Join(' ', columns)} }} }} }}";
 
-            var result = await ExecuteAsync(query, userContext);
+            var result = await ExecuteAsync(query, userContext, cancellationToken);
             var rows = ExtractRows(result, dbTable.GraphQlName);
             return rows.Count == 0 ? null : rows[0];
         }
 
-        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext)
-            => MutateAsync(table, "insert", values, userContext);
+        public Task InsertAsync(
+            string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+            => MutateAsync(table, "insert", values, userContext, cancellationToken);
 
-        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext)
-            => MutateAsync(table, "update", values, userContext);
+        public Task UpdateAsync(
+            string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+            => MutateAsync(table, "update", values, userContext, cancellationToken);
+
+        /// <summary>
+        /// Sends only the key and the state column, with a <see cref="WorkflowTransitionGuard"/> in a
+        /// copy of the user context: the pipeline adds <c>state = from</c> to the UPDATE's WHERE and
+        /// turns zero affected rows into a CONFLICT error.
+        /// </summary>
+        public async Task TransitionAsync(
+            WorkflowTransition transition, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(transition);
+            ArgumentNullException.ThrowIfNull(userContext);
+            if (string.IsNullOrWhiteSpace(transition.Table))
+                throw new ArgumentException("Table name is required.", nameof(transition));
+
+            var dbTable = await ResolveTableAsync(transition.Table);
+            var keys = dbTable.KeyColumns.ToArray();
+            if (keys.Length != 1)
+                throw new ArgumentException(
+                    $"A workflow transition needs a single-column primary key; '{dbTable.DbName}' has {keys.Length}.",
+                    nameof(transition));
+            var stateColumn = dbTable.Columns.FirstOrDefault(c =>
+                    string.Equals(c.DbName, transition.StateColumn, StringComparison.OrdinalIgnoreCase))
+                ?? throw new ArgumentException(
+                    $"'{transition.StateColumn}' is not a column of '{dbTable.DbName}'.", nameof(transition));
+
+            var guardedContext = new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase)
+            {
+                [WorkflowTransitionGuard.ContextKey] = new WorkflowTransitionGuard(
+                    dbTable, keys[0].DbName, transition.Id, stateColumn.DbName, transition.From),
+            };
+            await MutateAsync(dbTable, "update", new Dictionary<string, object?>
+            {
+                [keys[0].DbName] = transition.Id,
+                [stateColumn.DbName] = transition.To,
+            }, guardedContext, cancellationToken);
+        }
 
         private async Task MutateAsync(
-            string table, string action, object values, IDictionary<string, object?> userContext)
+            string table, string action, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(table)) throw new ArgumentException("Table name is required.", nameof(table));
             if (values is null) throw new ArgumentNullException(nameof(values));
             if (userContext is null) throw new ArgumentNullException(nameof(userContext));
 
-            var dbTable = await ResolveTableAsync(table);
+            await MutateAsync(await ResolveTableAsync(table), action, values, userContext, cancellationToken);
+        }
+
+        private async Task MutateAsync(
+            IDbTable dbTable, string action, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        {
             var fields = ToFieldMap(values, dbTable);
             if (fields.Count == 0)
-                throw new ArgumentException($"No writable columns supplied for '{table}'.", nameof(values));
+                throw new ArgumentException($"No writable columns supplied for '{dbTable.DbName}'.", nameof(values));
 
             var literal = string.Join(", ", fields.Select(kv => $"{kv.Key}: {ToGraphQlLiteral(kv.Value)}"));
             var mutation = $"mutation {{ {dbTable.GraphQlName}({action}: {{ {literal} }}) }}";
 
-            var result = await ExecuteAsync(mutation, userContext);
+            var result = await ExecuteAsync(mutation, userContext, cancellationToken);
             ThrowOnErrors(result);
         }
 
         private async Task<ExecutionResult> ExecuteAsync(
-            string document, IDictionary<string, object?> userContext)
+            string document, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         {
             var options = new ExecutionOptions
             {
                 Query = document,
                 RequestServices = _services,
                 UserContext = userContext,
+                CancellationToken = cancellationToken,
             };
             return await _executor.ExecuteAsync(options);
         }

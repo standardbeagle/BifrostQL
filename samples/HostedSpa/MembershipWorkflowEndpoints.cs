@@ -144,7 +144,7 @@ public static class MembershipWorkflowEndpoints
             ["summary"] = summary,
             ["actorUserId"] = ActorUserId(userContext),
             ["createdAt"] = UtcTimestamp(),
-        }, userContext);
+        }, userContext, http.RequestAborted);
 
         return ToWorkflowResult(result);
     }
@@ -184,7 +184,7 @@ public static class MembershipWorkflowEndpoints
             ["summary"] = $"Membership {request.MemberMembershipId} renewed through {request.NewEndDate}",
             ["actorUserId"] = ActorUserId(userContext),
             ["createdAt"] = UtcTimestamp(),
-        }, userContext);
+        }, userContext, http.RequestAborted);
 
         return ToWorkflowResult(result);
     }
@@ -222,7 +222,7 @@ public static class MembershipWorkflowEndpoints
             ["summary"] = $"Member {request.MemberId} checked in to event {request.EventId}",
             ["actorUserId"] = ActorUserId(userContext),
             ["createdAt"] = UtcTimestamp(),
-        }, userContext);
+        }, userContext, http.RequestAborted);
 
         return ToWorkflowResult(result);
     }
@@ -258,7 +258,7 @@ public static class MembershipWorkflowEndpoints
             ["summary"] = $"App user {request.UserId} linked to member {request.MemberId}",
             ["actorUserId"] = ActorUserId(userContext),
             ["createdAt"] = UtcTimestamp(),
-        }, userContext);
+        }, userContext, http.RequestAborted);
 
         return ToWorkflowResult(result);
     }

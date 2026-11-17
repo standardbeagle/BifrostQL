@@ -80,7 +80,10 @@ public class WorkflowRunnerTests
         result.Trace.Should().Contain(t => t.StepName == "load" && t.Succeeded);
         result.Trace.Should().Contain(t => t.StepName == "audit-branch" && t.Succeeded);
         executor.Queries.Should().HaveCount(3, "load, transition pre-read, and parallel query all go through the executor");
-        executor.Updates.Should().HaveCount(2, "mutation and transition both use executor updates");
+        executor.Updates.Should().ContainSingle("only the mutation step is a plain update");
+        executor.Transitions.Should().ContainSingle().Which.Should().Be(
+            new WorkflowTransition("members", 1L, "status", "pending", "active"),
+            "the transition writes through the guarded transition seam with the state it read");
         executor.Inserts.Should().ContainSingle(i => i.Table == "audit_log");
         result.Outputs.Should().ContainKey("activated");
     }
@@ -279,16 +282,19 @@ public class WorkflowRunnerTests
     private sealed class YieldingWorkflowDataExecutor : IWorkflowDataExecutor
     {
         public async Task<IDictionary<string, object?>?> QuerySingleAsync(
-            string table, object id, IDictionary<string, object?> userContext)
+            string table, object id, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
             await Task.Delay(1).ConfigureAwait(false);
             return null;
         }
 
-        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext)
+        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
-        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext)
+        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task TransitionAsync(WorkflowTransition transition, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
     }
 
@@ -298,12 +304,14 @@ public class WorkflowRunnerTests
         public List<(string Table, object Id)> Queries { get; } = new();
         public List<(string Table, IDictionary<string, object?> Values)> Inserts { get; } = new();
         public List<(string Table, IDictionary<string, object?> Values)> Updates { get; } = new();
+        public List<WorkflowTransition> Transitions { get; } = new();
         public bool FailQueries { get; init; }
 
         public Task<IDictionary<string, object?>?> QuerySingleAsync(
             string table,
             object id,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            CancellationToken cancellationToken = default)
         {
             if (FailQueries)
                 throw new InvalidOperationException("query failed");
@@ -313,13 +321,13 @@ public class WorkflowRunnerTests
             return Task.FromResult(row);
         }
 
-        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext)
+        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
             Inserts.Add((table, ToDictionary(values)));
             return Task.CompletedTask;
         }
 
-        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext)
+        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
             var dictionary = ToDictionary(values);
             Updates.Add((table, dictionary));
@@ -327,6 +335,15 @@ public class WorkflowRunnerTests
             if (dictionary.TryGetValue("member_id", out var id))
                 Rows[(table, id?.ToString() ?? string.Empty)] = dictionary;
 
+            return Task.CompletedTask;
+        }
+
+        public Task TransitionAsync(WorkflowTransition transition, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+        {
+            Transitions.Add(transition);
+            var key = (transition.Table, transition.Id.ToString() ?? string.Empty);
+            if (Rows.TryGetValue(key, out var row))
+                row[transition.StateColumn] = transition.To;
             return Task.CompletedTask;
         }
 

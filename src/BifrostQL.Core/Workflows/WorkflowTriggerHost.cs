@@ -36,7 +36,7 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
                 ["to"] = transition.To,
                 ["actor"] = transition.Actor,
                 ["eventName"] = transition.EventName,
-            }, userContext);
+            }, userContext, CancellationToken.None);
         }
     }
 
@@ -53,7 +53,7 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
                 ["action"] = action,
                 ["result"] = context.Result,
                 ["data"] = new Dictionary<string, object?>(context.Data, StringComparer.OrdinalIgnoreCase),
-            }, context.UserContext);
+            }, context.UserContext, CancellationToken.None);
         }
     }
 
@@ -69,22 +69,26 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
                    && seconds > 0;
         });
 
-    internal Task RunScheduledAsync(WorkflowDefinition workflow, DateTimeOffset now, IDictionary<string, object?> userContext)
+    internal Task RunScheduledAsync(
+        WorkflowDefinition workflow, DateTimeOffset now, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         => RunTriggeredAsync(workflow, new Dictionary<string, object?>
         {
             ["scheduledAt"] = now.ToString("o"),
-        }, userContext);
+        }, userContext, cancellationToken);
 
+    // The transition and mutation observer hooks carry no CancellationToken, so a run they
+    // trigger passes CancellationToken.None; a scheduled run takes the scheduler's token.
     private async Task RunTriggeredAsync(
         WorkflowDefinition workflow,
         IDictionary<string, object?> inputs,
-        IDictionary<string, object?> userContext)
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken)
     {
         var scopedContext = new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase)
         {
             [SuppressTriggersKey] = WorkflowTriggerSuppression.Instance,
         };
-        await _runner.RunAsync(workflow, inputs, scopedContext);
+        await _runner.RunAsync(workflow, inputs, scopedContext, cancellationToken);
     }
 
     private IEnumerable<WorkflowDefinition> Matching(

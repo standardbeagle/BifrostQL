@@ -9,10 +9,11 @@ public sealed class WorkflowScheduler
         _triggerHost = triggerHost;
     }
 
-    public async Task TickAsync(DateTimeOffset now, IDictionary<string, object?>? userContext = null)
+    public async Task TickAsync(
+        DateTimeOffset now, IDictionary<string, object?>? userContext = null, CancellationToken cancellationToken = default)
     {
         var context = userContext ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var workflow in _triggerHost.ScheduledWorkflows(now))
-            await _triggerHost.RunScheduledAsync(workflow, now, context);
+            await _triggerHost.RunScheduledAsync(workflow, now, context, cancellationToken);
     }
 }

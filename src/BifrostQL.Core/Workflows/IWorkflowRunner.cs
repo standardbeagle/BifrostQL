@@ -1,19 +1,27 @@
 using System.Text.Json;
 using BifrostQL.Core.Resolvers;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Workflows;
 
+/// <summary>
+/// Runs a workflow's steps in order through <see cref="IWorkflowDataExecutor"/>. A step failure
+/// returns a failed <see cref="WorkflowRunResult"/>; cancelling <c>cancellationToken</c> stops the
+/// run with <see cref="OperationCanceledException"/>, never a step failure.
+/// </summary>
 public interface IWorkflowRunner
 {
     Task<WorkflowRunResult> RunAsync(
         string name,
         IDictionary<string, object?> inputs,
-        IDictionary<string, object?> userContext);
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken = default);
 
     Task<WorkflowRunResult> RunAsync(
         WorkflowDefinition workflow,
         IDictionary<string, object?> inputs,
-        IDictionary<string, object?> userContext);
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record WorkflowRunResult(
@@ -53,7 +61,8 @@ public sealed class WorkflowRunner : IWorkflowRunner
     public Task<WorkflowRunResult> RunAsync(
         string name,
         IDictionary<string, object?> inputs,
-        IDictionary<string, object?> userContext)
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Workflow name is required.", nameof(name));
@@ -66,13 +75,14 @@ public sealed class WorkflowRunner : IWorkflowRunner
                 Array.Empty<WorkflowStepTrace>()));
         }
 
-        return RunAsync(workflow, inputs, userContext);
+        return RunAsync(workflow, inputs, userContext, cancellationToken);
     }
 
     public async Task<WorkflowRunResult> RunAsync(
         WorkflowDefinition workflow,
         IDictionary<string, object?> inputs,
-        IDictionary<string, object?> userContext)
+        IDictionary<string, object?> userContext,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workflow);
         ArgumentNullException.ThrowIfNull(inputs);
@@ -83,7 +93,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
             return Failed("invalid_input", inputError, Array.Empty<WorkflowStepTrace>());
 
         var trace = new List<WorkflowStepTrace>();
-        var context = new WorkflowExecutionContext(inputs, userContext, trace);
+        var context = new WorkflowExecutionContext(inputs, userContext, trace, cancellationToken);
 
         var outcome = await ExecuteStepsAsync(workflow.Steps, context);
         if (!outcome.Succeeded)
@@ -102,7 +112,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
     /// <summary>
     /// Runs a sequence of steps in order: executes each, appends its trace, and stashes
     /// any named output. Stops at the first failed step. The two callers differ only in
-    /// how they react to a failure — <see cref="RunAsync(WorkflowDefinition, IDictionary{string, object?}, IDictionary{string, object?})"/>
+    /// how they react to a failure — <see cref="RunAsync(WorkflowDefinition, IDictionary{string, object?}, IDictionary{string, object?}, CancellationToken)"/>
     /// returns a failed <see cref="WorkflowRunResult"/>; <see cref="RunInlineStepsAsync"/>
     /// throws — so that decision stays with the caller via the returned outcome.
     /// </summary>
@@ -113,6 +123,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
         object? last = null;
         foreach (var step in steps)
         {
+            context.CancellationToken.ThrowIfCancellationRequested();
             var result = await RunStepAsync(step, context);
             context.Trace.Add(result.Trace);
             if (!result.Succeeded)
@@ -152,12 +163,16 @@ public sealed class WorkflowRunner : IWorkflowRunner
                 new WorkflowStepTrace(step.Name, step.Type, false, Error: ex.Message),
                 ex.Code);
         }
-        catch (Exception ex) when (ex is not ArgumentException)
+        catch (Exception ex) when (ex is not (ArgumentException or OperationCanceledException))
         {
             // Classify server-side against the full exception chain: the CONFLICT
             // error, or the raw driver error with its duplicate-key code, lives on
             // the InnerException because the client-facing message is sanitized.
+            // Cancellation is not a step failure: it propagates and stops the run.
             var code = IsConflict(ex) ? "conflict" : "step_failed";
+            // The trace carries only the fixed step error, so the detail goes to the log.
+            BifrostErrorSink.Logger?.LogWarning(ex,
+                "Workflow step '{StepName}' ({StepType}) failed as {Code}.", step.Name, step.Type, code);
             return StepRunResult.Failure(
                 new WorkflowStepTrace(step.Name, step.Type, false, Error: StepError),
                 code);
@@ -210,7 +225,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
         var table = RequiredString(payload, "table");
         var id = ResolveValue(RequiredProperty(payload, "id"), context)
             ?? throw new WorkflowStepException("step_failed", StepError);
-        var row = await _executor.QuerySingleAsync(table, id, context.UserContext);
+        var row = await _executor.QuerySingleAsync(table, id, context.UserContext, context.CancellationToken);
         if (row is null
             && payload.TryGetProperty("required", out var required)
             && required.ValueKind == JsonValueKind.True)
@@ -226,9 +241,9 @@ public sealed class WorkflowRunner : IWorkflowRunner
         var values = ResolveObject(RequiredProperty(payload, "values"), context);
 
         if (string.Equals(action, "insert", StringComparison.OrdinalIgnoreCase))
-            await _executor.InsertAsync(table, values, context.UserContext);
+            await _executor.InsertAsync(table, values, context.UserContext, context.CancellationToken);
         else if (string.Equals(action, "update", StringComparison.OrdinalIgnoreCase))
-            await _executor.UpdateAsync(table, values, context.UserContext);
+            await _executor.UpdateAsync(table, values, context.UserContext, context.CancellationToken);
         else
             throw new WorkflowStepException("step_failed", StepError);
 
@@ -245,7 +260,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
         var from = RequiredString(payload, "from");
         var to = RequiredString(payload, "to");
 
-        var row = await _executor.QuerySingleAsync(table, id, context.UserContext);
+        var row = await _executor.QuerySingleAsync(table, id, context.UserContext, context.CancellationToken);
         if (row is null
             || !row.TryGetValue(stateColumn, out var current)
             || !string.Equals(current?.ToString(), from, StringComparison.OrdinalIgnoreCase))
@@ -253,12 +268,17 @@ public sealed class WorkflowRunner : IWorkflowRunner
             throw new WorkflowStepException("not_found", "Workflow row was not found.");
         }
 
-        var values = new Dictionary<string, object?>(row, StringComparer.OrdinalIgnoreCase)
+        // The write carries only the key and the state, and lands only while the row still holds
+        // the state read above. Echoing the whole row back failed on any column the update input
+        // leaves out (computed, blind-index), overwrote concurrent edits to other columns, and let
+        // a concurrent transition between this read and the write go unseen.
+        await _executor.TransitionAsync(
+            new WorkflowTransition(table, id, stateColumn, Convert.ToString(current, System.Globalization.CultureInfo.InvariantCulture)!, to),
+            context.UserContext, context.CancellationToken);
+        return new Dictionary<string, object?>(row, StringComparer.OrdinalIgnoreCase)
         {
             [stateColumn] = to,
         };
-        await _executor.UpdateAsync(table, values, context.UserContext);
-        return values;
     }
 
     private static object RunPolicyCheck(WorkflowStep step)
@@ -294,7 +314,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
         if (payload.TryGetProperty("createdAt", out var createdAt))
             values["created_at"] = ResolveValue(createdAt, context);
 
-        await _executor.InsertAsync("audit_log", values, context.UserContext);
+        await _executor.InsertAsync("audit_log", values, context.UserContext, context.CancellationToken);
         return values;
     }
 
@@ -328,7 +348,7 @@ public sealed class WorkflowRunner : IWorkflowRunner
         var branches = inlineSteps.Select(s =>
         {
             var branchTrace = new List<WorkflowStepTrace>();
-            var isolated = new WorkflowExecutionContext(context.Inputs, context.UserContext, branchTrace);
+            var isolated = new WorkflowExecutionContext(context.Inputs, context.UserContext, branchTrace, context.CancellationToken);
             foreach (var (key, value) in context.NamedOutputs)
                 isolated.NamedOutputs[key] = value;
             return (task: RunStepAsync(s, isolated), trace: branchTrace);
@@ -523,12 +543,16 @@ public sealed class WorkflowRunner : IWorkflowRunner
         public WorkflowExecutionContext(
             IDictionary<string, object?> inputs,
             IDictionary<string, object?> userContext,
-            List<WorkflowStepTrace> trace)
+            List<WorkflowStepTrace> trace,
+            CancellationToken cancellationToken)
         {
             Inputs = inputs;
             UserContext = userContext;
             Trace = trace;
+            CancellationToken = cancellationToken;
         }
+
+        public CancellationToken CancellationToken { get; }
 
         public IDictionary<string, object?> Inputs { get; }
         public IDictionary<string, object?> UserContext { get; }

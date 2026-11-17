@@ -58,6 +58,7 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
         "main.Orders { policy-actions: read,update }",
         "main.audit_log { policy-actions: read }",
         "main.audit_log { tenant-filter: tenant_id }",
+        "main.tickets { policy-actions: read,update }",
     };
 
     public async Task InitializeAsync()
@@ -86,13 +87,20 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
                     tag_id INTEGER PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     weight INTEGER NOT NULL
+                );
+                CREATE TABLE tickets (
+                    ticket_id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    title_upper TEXT GENERATED ALWAYS AS (upper(title)) VIRTUAL
                 );", conn);
             await ddl.ExecuteNonQueryAsync();
 
             var seed = new SqliteCommand(
                 @"INSERT INTO Orders (tenant_id, total) VALUES (1, 10.0), (2, 20.0);
                   INSERT INTO audit_log (tenant_id, action) VALUES (1, 'seed.tenant1'), (2, 'seed.tenant2');
-                  INSERT INTO tags (tag_id, name, weight) VALUES (1, 'red', 1);", conn);
+                  INSERT INTO tags (tag_id, name, weight) VALUES (1, 'red', 1);
+                  INSERT INTO tickets (ticket_id, title, status) VALUES (1, 'one', 'open'), (2, 'two', 'open'), (3, 'three', 'closed');", conn);
             await seed.ExecuteNonQueryAsync();
         }
 
@@ -353,5 +361,121 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
         var idColumn = _model.GetTableFromDbName("Orders").Columns
             .First(c => string.Equals(c.DbName, "Id", StringComparison.OrdinalIgnoreCase));
         return Convert.ToInt64(row[idColumn.GraphQlName]);
+    }
+
+    // ---- A transition writes only the key and the state, guarded by the state it read ----
+
+    private static WorkflowDefinition TicketTransition(string from, string to) => new()
+    {
+        Name = "close-ticket",
+        Trigger = new WorkflowTrigger { Type = "manual" },
+        Steps = new[]
+        {
+            new WorkflowStep
+            {
+                Name = "close",
+                Type = "transition",
+                Payload = JsonDocument.Parse(
+                    """{ "table": "tickets", "id": "{{ inputs.id }}", "stateColumn": "status", "from": "__FROM__", "to": "__TO__" }"""
+                        .Replace("__FROM__", from).Replace("__TO__", to))
+                    .RootElement.Clone(),
+            },
+        },
+    };
+
+    private async Task<string> TicketStatusAsync(int id)
+    {
+        await using var conn = new SqliteConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new SqliteCommand($"SELECT status FROM tickets WHERE ticket_id = {id}", conn);
+        return (string)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    private async Task<WorkflowRunResult> RunTicketTransitionAsync(
+        IWorkflowDataExecutor executor, IDictionary<string, object?> userContext, int id, string from, string to)
+    {
+        var workflow = TicketTransition(from, to);
+        var runner = new WorkflowRunner(
+            new Dictionary<string, WorkflowDefinition> { [workflow.Name] = workflow }, executor);
+        return await runner.RunAsync(workflow.Name, new Dictionary<string, object?> { ["id"] = id }, userContext);
+    }
+
+    [Fact]
+    public async Task Transition_OnATableWithAComputedColumn_Succeeds()
+    {
+        // tickets.title_upper is a generated column: the update input type leaves it out, so a
+        // transition that echoed the whole row back failed GraphQL validation on every run.
+        var (executor, userContext, provider) = BuildExecutor(role: "user", tenantId: 1);
+        await using var _ = provider;
+
+        var result = await RunTicketTransitionAsync(executor, userContext, 1, "open", "closed");
+
+        result.Error.Should().BeNull();
+        result.Succeeded.Should().BeTrue();
+        (await TicketStatusAsync(1)).Should().Be("closed");
+    }
+
+    [Fact]
+    public async Task Transition_WhenTheRowMovesBetweenReadAndWrite_IsAConflict()
+    {
+        // Another writer moves ticket 2 to 'review' after the step read 'open' and before it
+        // writes. The write must not land: 'review' -> 'closed' was never validated.
+        var (executor, userContext, provider) = BuildExecutor(role: "user", tenantId: 1);
+        await using var _ = provider;
+        var racing = new RaceAfterReadExecutor(executor, _connectionString,
+            "UPDATE tickets SET status = 'review' WHERE ticket_id = 2");
+
+        var result = await RunTicketTransitionAsync(racing, userContext, 2, "open", "closed");
+
+        result.Succeeded.Should().BeFalse();
+        result.Error!.Code.Should().Be("conflict");
+        (await TicketStatusAsync(2)).Should().Be("review", "the racing write wins; the stale transition is refused");
+    }
+
+    [Fact]
+    public async Task Transition_FromAStateTheRowIsNotIn_IsNotFound()
+    {
+        // Control: the read-side check still refuses a row that is not in 'from'.
+        var (executor, userContext, provider) = BuildExecutor(role: "user", tenantId: 1);
+        await using var _ = provider;
+
+        var result = await RunTicketTransitionAsync(executor, userContext, 3, "open", "closed");
+
+        result.Error!.Code.Should().Be("not_found");
+        (await TicketStatusAsync(3)).Should().Be("closed");
+    }
+
+    /// <summary>
+    /// Delegates to the real executor and runs <c>racingSql</c> right after the first read,
+    /// standing in for a concurrent writer between a transition's read and its write.
+    /// </summary>
+    private sealed class RaceAfterReadExecutor(IWorkflowDataExecutor inner, string connectionString, string racingSql)
+        : IWorkflowDataExecutor
+    {
+        private bool _raced;
+
+        public async Task<IDictionary<string, object?>?> QuerySingleAsync(
+            string table, object id, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+        {
+            var row = await inner.QuerySingleAsync(table, id, userContext, cancellationToken);
+            if (!_raced)
+            {
+                _raced = true;
+                await using var conn = new SqliteConnection(connectionString);
+                await conn.OpenAsync(cancellationToken);
+                await using var cmd = new SqliteCommand(racingSql, conn);
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+            return row;
+        }
+
+        public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+            => inner.InsertAsync(table, values, userContext, cancellationToken);
+
+        public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+            => inner.UpdateAsync(table, values, userContext, cancellationToken);
+
+        public Task TransitionAsync(WorkflowTransition transition, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
+            => inner.TransitionAsync(transition, userContext, cancellationToken);
     }
 }

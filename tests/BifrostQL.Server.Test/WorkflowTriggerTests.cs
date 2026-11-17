@@ -111,13 +111,15 @@ public class WorkflowTriggerTests
         public Task<WorkflowRunResult> RunAsync(
             string name,
             IDictionary<string, object?> inputs,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public Task<WorkflowRunResult> RunAsync(
             WorkflowDefinition workflow,
             IDictionary<string, object?> inputs,
-            IDictionary<string, object?> userContext)
+            IDictionary<string, object?> userContext,
+            CancellationToken cancellationToken = default)
         {
             Runs.Add(new Run(
                 workflow,

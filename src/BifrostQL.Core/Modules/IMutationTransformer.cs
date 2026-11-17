@@ -347,6 +347,17 @@ public sealed class MutationTransformersWrap : IMutationTransformers
             conflictOnNoRows |= result.ConflictOnNoRows;
         }
 
+        // A workflow transition's write lands only while the row still holds the state the step
+        // read; zero rows is a conflict. Applied here, not as a registered transformer, so no host
+        // transformer list can drop it.
+        if (currentType == MutationType.Update
+            && Workflows.WorkflowTransitionGuard.For(context.UserContext, table, currentData) is { } guard)
+        {
+            var stateFilter = TableFilterFactory.Equals(table, guard.StateColumn, guard.FromState);
+            combinedFilter = combinedFilter == null ? stateFilter : CombineFilters(combinedFilter, stateFilter);
+            conflictOnNoRows = true;
+        }
+
         return new MutationTransformResult
         {
             MutationType = currentType,

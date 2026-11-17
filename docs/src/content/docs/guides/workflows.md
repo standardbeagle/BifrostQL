@@ -57,11 +57,13 @@ Templates in the form `{{ inputs.name }}` and `{{ steps.output.column }}` are re
 
 - `query`: reads one row by primary key through `IWorkflowDataExecutor.QuerySingleAsync`.
 - `mutation`: inserts or updates a row through the generated GraphQL mutation pipeline.
-- `transition`: reads the current row and updates the configured state column, letting the state-machine validator decide whether the transition is allowed.
+- `transition`: reads the current row, checks it is in `from`, then writes only the key and the state column through `IWorkflowDataExecutor.TransitionAsync`, letting the state-machine validator decide whether the transition is allowed. The table needs a single-column primary key. The UPDATE matches only while the row still holds `from`: if another write moved it between the read and the write, nothing is written and the step fails with code `conflict`. Columns the update input leaves out (computed, blind-index) are never sent back.
 - `policy-check`: validates table/action intent before later side effects.
 - `audit`: inserts an `audit_log` row.
 - `branch`: runs inline steps when a simple condition matches.
 - `parallel`: runs inline steps concurrently.
+
+A step whose executor call throws fails with `step_failed` (or `conflict` for a CONFLICT error or a duplicate key), and the exception is logged at warning level through the attached `BifrostErrorSink` logger; the run's trace carries only the fixed step error. `IWorkflowRunner.RunAsync` takes an optional `CancellationToken`: cancelling it stops the run with `OperationCanceledException` instead of a step failure. `WorkflowScheduler.TickAsync` passes its token on; runs started by the `on-mutation` and `on-state-transition` triggers are not cancellable.
 
 ## Triggers
 

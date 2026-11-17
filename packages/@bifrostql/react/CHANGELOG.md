@@ -47,6 +47,11 @@ the call-site update it requires.
   link could request a page of any size. Only `pagination.pageSizeOptions`
   (default `[10, 25, 50, 100]`) plus the table's own `pageSize` are accepted;
   anything else falls back to `pageSize`.
+- **Sortable headers are keyboard-operable.** `TableHeader`/`BifrostTable`
+  render a `<button type="button">` inside each sortable `<th>` (which keeps
+  `aria-sort`) instead of a click handler on the `<th>`, so sorting is in the
+  tab order and fires on Enter/Space. Tests or styles that targeted the
+  `<th>` click should target the button.
 
 ### Deprecated
 

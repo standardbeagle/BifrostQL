@@ -567,8 +567,7 @@ describe('BifrostTable', () => {
         expect(screen.getByText('Alice')).toBeInTheDocument();
       });
 
-      const nameHeader = screen.getByText('Name').closest('th');
-      fireEvent.click(nameHeader!);
+      fireEvent.click(screen.getByRole('button', { name: /^Name/ }));
 
       expect(screen.getByLabelText('sorted ascending')).toBeInTheDocument();
     });
@@ -583,12 +582,13 @@ describe('BifrostTable', () => {
       });
 
       const nameHeader = screen.getByText('Name').closest('th');
+      const nameButton = screen.getByRole('button', { name: /^Name/ });
       expect(nameHeader).toHaveAttribute('aria-sort', 'none');
 
-      fireEvent.click(nameHeader!);
+      fireEvent.click(nameButton);
       expect(nameHeader).toHaveAttribute('aria-sort', 'ascending');
 
-      fireEvent.click(nameHeader!);
+      fireEvent.click(nameButton);
       expect(nameHeader).toHaveAttribute('aria-sort', 'descending');
     });
   });
@@ -1636,9 +1636,34 @@ describe('composable sub-components', () => {
           <TableHeader columns={defaultColumns} onSort={onSort} />
         </table>,
       );
-      const nameHeader = screen.getByText('Name').closest('th');
-      fireEvent.click(nameHeader!);
+      fireEvent.click(screen.getByRole('button', { name: /^Name/ }));
       expect(onSort).toHaveBeenCalledWith('name');
+    });
+
+    it('puts each sortable header behind a focusable button inside the th', () => {
+      // A click handler on the <th> is mouse-only; a <button> is in the tab
+      // order and fires on Enter/Space.
+      const onSort = vi.fn();
+      render(
+        <table>
+          <TableHeader
+            columns={[
+              { field: 'name', header: 'Name', sortable: true },
+              { field: 'id', header: 'ID' },
+            ]}
+            onSort={onSort}
+          />
+        </table>,
+      );
+
+      const button = screen.getByRole('button', { name: /^Name/ });
+      expect(button.tagName).toBe('BUTTON');
+      expect(button).toHaveAttribute('type', 'button');
+      expect(button.closest('th')).toHaveAttribute('aria-sort', 'none');
+      button.focus();
+      expect(document.activeElement).toBe(button);
+      // The non-sortable column gets no button.
+      expect(screen.queryByRole('button', { name: /^ID/ })).toBeNull();
     });
 
     it('does not call onSort for non-sortable columns', () => {

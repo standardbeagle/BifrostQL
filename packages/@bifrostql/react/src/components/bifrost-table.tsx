@@ -92,6 +92,18 @@ function SortArrow({ direction }: { direction: 'asc' | 'desc' | null }) {
 // Composable sub-components
 // ---------------------------------------------------------------------------
 
+/** Strip native button chrome so the header cell's theme styling shows. */
+const SORT_BUTTON_STYLE: CSSProperties = {
+  background: 'none',
+  border: 0,
+  padding: 0,
+  margin: 0,
+  font: 'inherit',
+  color: 'inherit',
+  textAlign: 'inherit',
+  cursor: 'pointer',
+};
+
 export interface TableHeaderProps {
   columns: ColumnConfig[];
   sortState?: SortOption[];
@@ -122,13 +134,22 @@ export function TableHeader({
             col.sortable &&
             col.field !== '__actions' &&
             col.field !== '__expand';
+          const label = (
+            <>
+              {col.header}
+              {isSortable && (
+                <span style={theme.sortIndicator}>
+                  <SortArrow direction={sortDir} />
+                </span>
+              )}
+            </>
+          );
           return (
             <th
               key={col.field}
               style={{
                 ...theme.headerCell,
                 ...(col.width ? { width: col.width } : {}),
-                ...(isSortable ? { cursor: 'pointer' } : {}),
               }}
               role="columnheader"
               aria-sort={
@@ -138,15 +159,19 @@ export function TableHeader({
                     ? 'descending'
                     : 'none'
               }
-              onClick={
-                isSortable && onSort ? () => onSort(col.field) : undefined
-              }
             >
-              {col.header}
-              {isSortable && (
-                <span style={theme.sortIndicator}>
-                  <SortArrow direction={sortDir} />
-                </span>
+              {/* A real button, so the sort is reachable by Tab and fires on
+                  Enter/Space; a click handler on the <th> is mouse-only. */}
+              {isSortable && onSort ? (
+                <button
+                  type="button"
+                  style={SORT_BUTTON_STYLE}
+                  onClick={() => onSort(col.field)}
+                >
+                  {label}
+                </button>
+              ) : (
+                label
               )}
             </th>
           );

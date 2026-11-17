@@ -26,12 +26,26 @@ namespace BifrostQL.Server.Test
             new(new ClaimsIdentity(
                 new[] { new Claim(ClaimTypes.NameIdentifier, "app-user") }, authenticationType: "test"));
 
-        private static ServiceProvider BuildServices(AppMetadataModel? overlay = null)
+        private static ServiceProvider BuildServices(
+            AppMetadataModel? overlay = null, IBifrostAuthContextFactory? authFactory = null)
         {
             var services = new ServiceCollection();
             if (overlay != null)
                 services.AddSingleton(new AppMetadataCache(() => Task.FromResult(overlay)));
+            if (authFactory != null)
+                services.AddSingleton(authFactory);
             return services.BuildServiceProvider();
+        }
+
+        /// <summary>A factory whose projection is empty: the fail-closed signal for "no identity".</summary>
+        private sealed class EmptyProjectionAuthFactory : IBifrostAuthContextFactory
+        {
+            public IDictionary<string, object?> CreateUserContext(HttpContext context)
+                => new Dictionary<string, object?>();
+
+            public IDictionary<string, object?> CreateUserContext(
+                HttpContext context, IDictionary<string, object?> existing)
+                => new Dictionary<string, object?>();
         }
 
         private static AppMetadataModel SampleOverlay() => new()
@@ -231,6 +245,30 @@ namespace BifrostQL.Server.Test
             await middleware.InvokeAsync(context);
 
             context.Response.StatusCode.Should().Be(401);
+        }
+
+        [Fact]
+        public async Task Middleware_Returns401_ForAnAuthenticatedPrincipalThatProjectsToNoIdentity()
+        {
+            // IsAuthenticated is not an identity (invariant 12): a principal whose claims project
+            // to an EMPTY user context is Anonymous, and /_blob and /_saved-objects answer it 401.
+            var options = new BifrostAppMetadataOptions();
+            var middleware = new BifrostAppMetadataMiddleware(_ => Task.CompletedTask, options);
+            var context = new DefaultHttpContext
+            {
+                RequestServices = BuildServices(SampleOverlay(), new EmptyProjectionAuthFactory()),
+                User = AuthenticatedUser(),
+            };
+            context.Request.Method = HttpMethods.Get;
+            context.Request.Path = "/_app-metadata";
+            context.Response.Body = new MemoryStream();
+
+            BifrostIdentityGate.Project(context, out _).Should().Be(BifrostIdentityOutcome.Anonymous,
+                "fixture precondition: the principal is authenticated but projects to an empty context");
+            await middleware.InvokeAsync(context);
+
+            context.Response.StatusCode.Should().Be(401);
+            context.Response.Body.Length.Should().Be(0, "no overlay is written to a refused caller");
         }
 
         [Fact]

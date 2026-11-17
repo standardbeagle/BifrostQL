@@ -83,5 +83,16 @@ namespace BifrostQL.Server
             userContext = projected;
             return BifrostIdentityOutcome.Projected;
         }
+
+        /// <summary>
+        /// The one refusal rule for an HTTP surface with a <c>RequireAuth</c> switch: a projection
+        /// fault is always refused (opting out of authentication is not opting into a broken
+        /// credential), and when auth is required anything short of a real, non-empty identity is
+        /// refused too. An authenticated principal that projects to an empty context is
+        /// <see cref="BifrostIdentityOutcome.Anonymous"/>, not an identity (invariant 12).
+        /// </summary>
+        internal static bool Refuses(BifrostIdentityOutcome outcome, bool requireAuth) =>
+            outcome == BifrostIdentityOutcome.Unprojectable
+            || (requireAuth && outcome != BifrostIdentityOutcome.Projected);
     }
 }

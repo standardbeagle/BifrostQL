@@ -81,19 +81,12 @@ namespace BifrostQL.Server
                 return;
             }
 
-            if (_options.RequireAuth && !(context.User?.Identity?.IsAuthenticated ?? false))
-            {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                return;
-            }
-
             // Identity is projected ONCE, up front, through the shared gate — before any overlay is
-            // loaded — so an identity this deployment cannot project is refused with 401 rather than
-            // faulting mid-response. The sibling /_saved-objects gate has always answered 401 here;
-            // this endpoint used to let the fault escape to the host (invariant 1's shape), and the
-            // two now share one implementation so they cannot diverge again.
+            // loaded — and refused by the same rule /_saved-objects and /_blob use. IsAuthenticated
+            // alone is not an identity: an authenticated principal that projects to an EMPTY
+            // context used to be served the overlay here while both siblings answered 401.
             var outcome = BifrostIdentityGate.Project(context, out var userContext);
-            if (outcome == BifrostIdentityOutcome.Unprojectable)
+            if (BifrostIdentityGate.Refuses(outcome, _options.RequireAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;

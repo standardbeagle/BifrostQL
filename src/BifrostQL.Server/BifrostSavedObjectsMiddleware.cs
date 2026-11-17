@@ -73,8 +73,7 @@ namespace BifrostQL.Server
             // gRPC and MCP gates. A projection FAULT is refused even when RequireAuth is cleared —
             // opting out of authentication is not opting into accepting a broken credential.
             var outcome = BifrostIdentityGate.Project(context, out var userContext);
-            if (outcome == BifrostIdentityOutcome.Unprojectable
-                || (_options.RequireAuth && outcome != BifrostIdentityOutcome.Projected))
+            if (BifrostIdentityGate.Refuses(outcome, _options.RequireAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;

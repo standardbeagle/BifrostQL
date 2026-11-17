@@ -68,6 +68,7 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
         table={child}
         definition={definition}
         hiddenFields={subform.childColumns}
+        scope={plan}
         initialValues={activeForm.kind === 'create' ? prefill : undefined}
         startInNewMode={activeForm.kind === 'create'}
         initialPkRoute={activeForm.kind === 'edit' ? rowIdOf(activeForm.row!, child, activeForm.index ?? 0) : undefined}

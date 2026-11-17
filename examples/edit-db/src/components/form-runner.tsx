@@ -43,6 +43,7 @@ import {
 } from '../lib/form-widget';
 import { nextIndex, canNavigate, positionLabel, type NavDirection } from '../lib/form-runner-nav';
 import { FormSubformPanel } from './form-subform';
+import type { ChildFilterPlan } from '../lib/form-subform';
 
 const EMPTY_VALUES: Record<string, unknown> = {};
 
@@ -99,11 +100,17 @@ function selectFields(bound: BoundField[], table: Table): string[] {
   return [...names];
 }
 
-/** The paged browse query: one row at an absolute offset, plus the total count. */
-function buildBrowseQuery(table: Table, fields: readonly string[]): string {
+/**
+ * The paged browse query: one row at an absolute offset, plus the total count.
+ * A scope (a subform's parent filter) restricts both the row and the total, so
+ * browsing never leaves the parent's child rows.
+ */
+function buildBrowseQuery(table: Table, fields: readonly string[], scope: ChildFilterPlan | undefined): string {
   assertGraphQlName(table.name, 'form browse table name');
   for (const f of fields) assertGraphQlName(f, 'form browse selection field');
-  return `query FormBrowse_${table.name}($limit: Int, $offset: Int) { ${table.name}(limit: $limit offset: $offset) { total data { ${fields.join(' ')} } } }`;
+  const params = ['$limit: Int', '$offset: Int', ...(scope?.params ?? [])].join(', ');
+  const filter = scope ? ` filter: ${scope.filter}` : '';
+  return `query FormBrowse_${table.name}(${params}) { ${table.name}(limit: $limit offset: $offset${filter}) { total data { ${fields.join(' ')} } } }`;
 }
 
 /** Coerces a stored value into what the control's input element expects. */
@@ -158,13 +165,15 @@ interface FormRunnerViewProps {
   startInNewMode?: boolean;
   /** Opens the runner on this row for a related-record edit action. */
   initialPkRoute?: string;
+  /** Restricts record browsing to these rows (a subform's parent filter). */
+  scope?: ChildFilterPlan;
 }
 
 /**
  * The bound runtime for a resolved table. Split from {@link FormRunner} so it can
  * be exercised directly with a `Table` and a fetcher, without a schema fetch.
  */
-export function FormRunnerView({ table, definition, fieldMetadata, onClose, schema, initialValues = EMPTY_VALUES, hiddenFields = [], startInNewMode = false, initialPkRoute }: FormRunnerViewProps) {
+export function FormRunnerView({ table, definition, fieldMetadata, onClose, schema, initialValues = EMPTY_VALUES, hiddenFields = [], startInNewMode = false, initialPkRoute, scope }: FormRunnerViewProps) {
   const fetcher = useFetcher();
   const queryClient = useQueryClient();
 
@@ -231,16 +240,16 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   const rowQuery = useMemo(() => {
     if (isNew || bound.length === 0) return null;
     if (location.kind === 'offset') {
-      return { text: buildBrowseQuery(table, fields), variables: { limit: 1, offset: location.index }, kind: 'offset' as const };
+      return { text: buildBrowseQuery(table, fields, scope), variables: { ...scope?.variables, limit: 1, offset: location.index }, kind: 'offset' as const };
     }
     const pkFilter = parsePkRoute(location.route, table);
     const pkEq = pkFilter ? buildPkEqFilter(pkFilter, table) : null;
     if (!pkEq) return null;
     return { text: buildSingleRowQuery(table, pkEq, fields), variables: pkEq.variables, kind: 'pk' as const };
-  }, [isNew, bound.length, location, table, fields]);
+  }, [isNew, bound.length, location, table, fields, scope]);
 
   const { data: rowData, isLoading, error: rowError } = useQuery({
-    queryKey: ['formRunner', table.name, location, isNew],
+    queryKey: ['formRunner', table.name, location, isNew, scope?.variables ?? null],
     queryFn: () => fetcher.query<BrowseResponse | SingleRowResponse>(rowQuery!.text, rowQuery!.variables),
     enabled: !isNew && rowQuery !== null,
   });
@@ -304,6 +313,9 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   }
 
   const currentIndex = location.kind === 'offset' ? location.index : -1;
+  // Null while pinned to a key: the offset is unknown, so canNavigate offers
+  // only First (see form-runner-nav).
+  const navPosition = location.kind === 'offset' ? location.index : null;
 
   // editId drives the update WHERE clause (route-encoded, composite-safe).
   const editId = useMemo(() => {
@@ -318,6 +330,7 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
     (dir: NavDirection) => {
       setMode('browse');
       setLocation((loc) => {
+        if (loc.kind === 'pk' && dir !== 'first') return loc;
         const from = loc.kind === 'offset' ? loc.index : 0;
         return { kind: 'offset', index: nextIndex(from, total, dir) };
       });
@@ -420,11 +433,11 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   return (
     <div className={classes.root}>
       <div className={classes.toolbar} role="toolbar" aria-label="Record navigation">
-        <button type="button" className={classes.btn} onClick={() => navigate('first')} disabled={isNew || !canNavigate(currentIndex, total, 'first')} aria-label="First record">⏮</button>
-        <button type="button" className={classes.btn} onClick={() => navigate('prev')} disabled={isNew || !canNavigate(currentIndex, total, 'prev')} aria-label="Previous record">◀</button>
+        <button type="button" className={classes.btn} onClick={() => navigate('first')} disabled={isNew || !canNavigate(navPosition, total, 'first')} aria-label="First record">⏮</button>
+        <button type="button" className={classes.btn} onClick={() => navigate('prev')} disabled={isNew || !canNavigate(navPosition, total, 'prev')} aria-label="Previous record">◀</button>
         <span className={classes.position} aria-label="Record position">{isNew ? 'New record' : positionText}</span>
-        <button type="button" className={classes.btn} onClick={() => navigate('next')} disabled={isNew || !canNavigate(currentIndex, total, 'next')} aria-label="Next record">▶</button>
-        <button type="button" className={classes.btn} onClick={() => navigate('last')} disabled={isNew || !canNavigate(currentIndex, total, 'last')} aria-label="Last record">⏭</button>
+        <button type="button" className={classes.btn} onClick={() => navigate('next')} disabled={isNew || !canNavigate(navPosition, total, 'next')} aria-label="Next record">▶</button>
+        <button type="button" className={classes.btn} onClick={() => navigate('last')} disabled={isNew || !canNavigate(navPosition, total, 'last')} aria-label="Last record">⏭</button>
         <span className={classes.spacer} />
         <input
           className={classes.jump}

@@ -59,4 +59,27 @@ describe('FormSubformPanel', () => {
     expect(screen.queryByLabelText('tenant_id')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('order_id')).not.toBeInTheDocument();
   });
+
+  it('keeps the child form browsing inside the selected parent', async () => {
+    const browses: { text: string; variables?: Record<string, unknown> }[] = [];
+    const line = { tenant_id: 7, order_id: 42, line_no: 1, qty: 3 };
+    const query = vi.fn(async (text: string, variables?: Record<string, unknown>) => {
+      if (text.includes('FormSubform_order_lines')) return { order_lines: { data: [line] } };
+      if (text.includes('GetSingleRow_order_lines')) return { value: { data: [line] } };
+      if (text.includes('FormBrowse_order_lines')) { browses.push({ text, variables }); return { order_lines: { total: 1, data: [line] } }; }
+      throw new Error(`unexpected query: ${text}`);
+    });
+
+    render(createElement(FormSubformPanel, { parent, child, subform, row: { tenant_id: 7, order_id: 42 } }), { wrapper: wrapper({ query: query as GraphQLFetcher['query'] }) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await screen.findByLabelText('qty');
+    expect(screen.getByLabelText('Next record')).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText('First record'));
+    await waitFor(() => expect(browses.length).toBeGreaterThan(0));
+    for (const b of browses) {
+      expect(b.text).toContain('filter: {and: [{tenant_id: {_eq: $parent_tenant_id}}, {order_id: {_eq: $parent_order_id}}]}');
+      expect(b.variables).toMatchObject({ parent_tenant_id: 7, parent_order_id: 42, limit: 1, offset: 0 });
+    }
+  });
 });

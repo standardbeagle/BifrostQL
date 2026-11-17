@@ -28,8 +28,14 @@ export function nextIndex(current: number, total: number, direction: NavDirectio
   }
 }
 
-/** Whether a navigation step from `current` would actually move (false at a bound). */
-export function canNavigate(current: number, total: number, direction: NavDirection): boolean {
+/**
+ * Whether a navigation step from `current` would actually move (false at a
+ * bound). `current` is null while the runner sits on a pinned key (a Jump or a
+ * subform Edit): its offset and the total are unknown, so only First has a
+ * well-defined target — any relative step would land on an arbitrary row.
+ */
+export function canNavigate(current: number | null, total: number, direction: NavDirection): boolean {
+  if (current === null) return direction === 'first';
   return nextIndex(current, total, direction) !== current;
 }
 

@@ -30,6 +30,15 @@ describe('canNavigate', () => {
   });
 });
 
+describe('canNavigate from a pinned key', () => {
+  it('allows only First when the position is unknown', () => {
+    expect(canNavigate(null, 0, 'first')).toBe(true);
+    expect(canNavigate(null, 0, 'next')).toBe(false);
+    expect(canNavigate(null, 5, 'prev')).toBe(false);
+    expect(canNavigate(null, 5, 'last')).toBe(false);
+  });
+});
+
 describe('positionLabel', () => {
   it('renders a 1-based position and the empty case', () => {
     expect(positionLabel(0, 12)).toBe('1 of 12');

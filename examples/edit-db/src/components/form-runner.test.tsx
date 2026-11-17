@@ -350,6 +350,31 @@ describe('FormRunnerView — composite (2-column) PK', () => {
   });
 });
 
+describe('FormRunnerView — pinned key navigation', () => {
+  it('offers only First while the runner sits on a key with no known position', async () => {
+    // Opened on a key (Jump, or a subform's Edit), the runner has no offset and
+    // no total. Next used to resolve to offset 0 or 1 of the whole table: a
+    // different row than the one after the pinned key.
+    const db = makeDb(usersTable, [
+      { id: 1, name: 'Ada', active: true },
+      { id: 2, name: 'Grace', active: false },
+      { id: 3, name: 'Edsger', active: true },
+    ]);
+    const { wrapper } = harness({ query: db.query as GraphQLFetcher['query'] });
+    render(createElement(FormRunnerView, { table: usersTable, definition: usersDef, initialPkRoute: '2' }), { wrapper });
+
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Grace'));
+    expect(screen.getByLabelText('Next record')).toBeDisabled();
+    expect(screen.getByLabelText('Previous record')).toBeDisabled();
+    expect(screen.getByLabelText('Last record')).toBeDisabled();
+    expect(screen.getByLabelText('First record')).toBeEnabled();
+
+    fireEvent.click(screen.getByLabelText('First record'));
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue('Ada'));
+    expect(screen.getByLabelText('Record position')).toHaveTextContent('1 of 3');
+  });
+});
+
 describe('resolveDefinitionTable', () => {
   const schema: SchemaContextValue = {
     loading: false,

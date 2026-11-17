@@ -105,6 +105,7 @@ export default defineConfig({
 						{ label: 'Building SQL Expressions (SqlExpr)', slug: 'guides/expression-builder' },
 						{ label: 'Authentication', slug: 'guides/authentication' },
 						{ label: 'Authorization Policies', slug: 'guides/authorization' },
+						{ label: 'Compliance Controls (HIPAA, SOX, PCI)', slug: 'guides/compliance-controls' },
 						{ label: 'Multi-Tenant Org Model', slug: 'guides/org-model' },
 						{ label: 'File Storage', slug: 'guides/file-storage' },
 						{ label: 'State Machines', slug: 'guides/state-machines' },

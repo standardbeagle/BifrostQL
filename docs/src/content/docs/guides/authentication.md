@@ -56,7 +56,7 @@ builder.Services.AddBifrostQL(o => o.BindStandardConfig(builder.Configuration));
 
 var app = builder.Build();
 app.UseAuthentication();
-app.UseBifrostLocalAuth();   // maps /auth/login and /auth/logout
+app.UseBifrostLocalAuth();   // maps /auth/login, /auth/logout, /auth/session, /auth/password
 app.UseBifrostQL();
 await app.RunAsync();
 ```
@@ -67,10 +67,12 @@ await app.RunAsync();
 
 | Endpoint | Method | Behavior |
 |----------|--------|----------|
-| `/auth/login` | `POST` | Accepts `{ "login": "...", "password": "..." }`. On valid credentials, issues a session cookie and returns `204`. On a missing user or wrong password, returns `401` — the response is identical for both so account existence is never leaked. |
-| `/auth/logout` | `POST` | Clears the session cookie and returns `204`. |
+| `/auth/login` | `POST` | Accepts `{ "login": "...", "password": "..." }`. On valid credentials, opens a server-side session, issues its cookie and returns `204`. A missing user, wrong password, disabled account and locked account all return the same `401` with the same body, so the response does not say which. A correct but expired password (`MaxPasswordAge`) returns `403` `{"error":"password_expired"}` and opens no session. |
+| `/auth/logout` | `POST` | Revokes the server-side session, clears the cookie and returns `204`. A copied cookie stops working too. |
+| `/auth/password` | `POST` | Accepts `{ "login", "currentPassword", "newPassword" }`. The current password is checked like a login (rate windows, lockout, audit); an expired one is accepted. A new password that breaks the policy returns `400` `{"error":"password_policy","rule":"..."}`, where the rule is `min_length`, `max_length`, `letter_and_digit` or `reused`. On success every session of the user is revoked and `204` is returned; the user signs in again. |
+| `/auth/admin/revoke-sessions`, `/auth/admin/unlock` | `POST` | Mapped only when `AdminRole` is set. JSON body `{ "userId": "..." }`; the caller must hold `AdminRole`. Revokes every session of the user, or ends a lockout. Host code can call the same actions on `LocalAuthAdministration`. |
 
-Passwords are verified with the vetted ASP.NET Core `PasswordHasher`; no plaintext password is ever stored or compared.
+Passwords are verified with the vetted ASP.NET Core `PasswordHasher` (PBKDF2-HMAC-SHA512, `PasswordHashIterations`, default 210,000); no plaintext password is ever stored or compared.
 
 ### 3. App-user table configuration
 
@@ -104,10 +106,31 @@ Login attempts are counted per source IP and per account before the password is 
 | `MaxLoginAttemptsPerSource` | `20` | Attempts one IP may make per window, across all accounts. |
 | `MaxLoginAttemptsPerAccount` | `10` | Attempts against one login per window, from any IP. |
 | `LoginAttemptWindow` | `5 min` | The window both caps count over. |
-| `SessionLifetime` | `8 h` | Absolute cookie lifetime from sign-in. Activity does not extend it. |
-| `SessionRevalidationInterval` | `1 min` | How often a live cookie is re-checked against the user table. A deleted user is signed out, and changed roles or tenant are picked up, within one interval. |
+| `SessionLifetime` | `8 h` | Absolute session lifetime from sign-in. Activity does not extend it. |
 
 A successful login whose stored hash uses outdated parameters is rehashed in place.
+
+### Sessions, lockout and password policy
+
+Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated request checks it. The cookie carries a random session id; the table keeps only its SHA-256. The state tables are created on first use in the app-user database and are never served by a GraphQL endpoint. Register your own `ILocalAuthStateStore` before `AddBifrostLocalAuth` to keep them elsewhere.
+
+| Option | Default | Effect |
+|---|---|---|
+| `SessionIdleTimeout` | `15 min` | A session with no request for this long is revoked. |
+| `SessionRevalidationInterval` | `1 min` | How often a session re-reads its user row. A deleted or disabled user, a changed password, or changed roles, tenant or household revoke every session of that user. A display-name change only refreshes the claims. |
+| `MaxConcurrentSessions` | none | A sign-in past the cap revokes the user's oldest sessions. |
+| `DisabledColumn` | none | Column on the user table; a true or non-zero value blocks sign-in and revokes sessions. |
+| `LockoutThreshold` | `10` | Consecutive failed logins (or password-change attempts) that lock the account. |
+| `LockoutDuration` | `30 min` | How long the lock lasts; `null` locks until an administrator unlocks. |
+| `MinPasswordLength` / `MaxPasswordLength` | `12` / `256` | Length bounds for a new password, in characters. |
+| `PasswordRequiresLetterAndDigit` | `true` | A new password needs a letter and a digit. |
+| `PasswordHistoryCount` | `4` | A new password may not match the current one or the last N. |
+| `MaxPasswordAge` | none | A password older than this cannot sign in until changed. An account with no recorded change counts as expired. |
+| `AdminRole` / `AdminPath` | none / `/auth/admin` | Enables the administration endpoints. |
+
+Settings are validated at `AddBifrostLocalAuth`; an out-of-range value throws at startup.
+
+Every login, logout, lock, unlock, password change, revocation and privilege change is written to `_bifrost_auth_audit`, logged under the `BifrostQL.Audit.Authentication` category, and passed to every registered `IAuthAuditSink`. See [Compliance controls](/BifrostQL/guides/compliance-controls/) for how these map to HIPAA, SOX and PCI DSS.
 
 ## OIDC providers (Microsoft 365 and Google)
 

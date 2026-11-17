@@ -185,6 +185,8 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
 
     private static string Str(JsonElement e) => e.ValueKind == JsonValueKind.Null ? null! : e.ToString();
     private static double Dbl(JsonElement e) => e.GetDouble();
+    // The Decimal scalar writes exact decimal text, never a JSON number.
+    private static decimal Dec(JsonElement e) => decimal.Parse(e.GetString()!, System.Globalization.CultureInfo.InvariantCulture);
     private static int Int(JsonElement e) => e.GetInt32();
     private static bool Bool(JsonElement e) => e.GetBoolean();
 
@@ -303,7 +305,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         var query = "query { products(filter: { price: { _lt: 50 } }) { data { name price } } }";
         var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
         products.Should().HaveCountGreaterThan(0);
-        products.All(p => Dbl(p["price"]) < 50).Should().BeTrue();
+        products.All(p => Dec(p["price"]) < 50m).Should().BeTrue();
     }
 
     [SkippableFact]
@@ -431,7 +433,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
     {
         var query = "query { products(sort: [price_asc]) { data { name price } } }";
         var products = ExtractPagedData(await ExecuteQueryAsync(query), "products");
-        var prices = products.Select(p => Dbl(p["price"])).ToList();
+        var prices = products.Select(p => Dec(p["price"])).ToList();
         prices.Should().BeInAscendingOrder();
     }
 
@@ -533,7 +535,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         var products = ExtractPagedData(await ExecuteQueryAsync(verifyQuery), "products");
         products.Should().ContainSingle();
         Str(products[0]["name"]).Should().Be("Keyboard");
-        Dbl(products[0]["price"]).Should().BeApproximately(79.99, 0.01);
+        Dec(products[0]["price"]).Should().Be(79.99m);
     }
 
     [SkippableFact]
@@ -571,7 +573,7 @@ INSERT INTO orderitems (orderid, productid, quantity, unitprice) VALUES (3, 2, 1
         var verifyQuery = "query { products(filter: { productid: { _eq: 1 } }) { data { price stock } } }";
         var products = ExtractPagedData(await ExecuteQueryAsync(verifyQuery), "products");
 
-        Dbl(products[0]["price"]).Should().BeApproximately(899.99, 0.01);
+        Dec(products[0]["price"]).Should().Be(899.99m);
         Int(products[0]["stock"]).Should().Be(15);
     }
 

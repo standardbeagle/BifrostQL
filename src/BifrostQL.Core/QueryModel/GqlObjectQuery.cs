@@ -504,7 +504,9 @@ namespace BifrostQL.Core.QueryModel
             var srcCount = tableJoin.FromColumns.Count;
             var partitionCols = Enumerable.Range(0, srcCount)
                 .Select(i => $"{ea}.{dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, srcCount))}");
-            var windowOrder = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
+            // The primary-key tie-break makes each parent's window a total order, so
+            // offset pages neither overlap nor skip rows (RenderPagedSortColumns).
+            var windowOrder = RenderPagedSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
 
             var pagedSql = dialect.ConnectedPaging(
                 projection,
@@ -539,7 +541,9 @@ namespace BifrostQL.Core.QueryModel
         {
             var dialect = ctx.Dialect;
             var effectiveLimit = tableJoin.ConnectedTable.Limit ?? -1;
-            var sortCols = RenderSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort);
+            // Qualified with the connected table's alias: a bridge's junction table may
+            // carry a same-named key column, and the key tie-break is added unrequested.
+            var sortCols = RenderPagedSortColumns(dialect, tableJoin.ConnectedTable.DbTable, tableJoin.ConnectedTable.Sort, "b");
             var pagination = dialect.Pagination(sortCols, tableJoin.ConnectedTable.Offset, ResolveRowWindow(ctx.Model, effectiveLimit));
 
             return new ParameterizedSql(wrap, main.Parameters.Concat(relationParams).ToList())

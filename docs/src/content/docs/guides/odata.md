@@ -66,6 +66,9 @@ enabling OData touches no GraphQL or binary service.
 | `ContinuationTokenTtl` | `15 min` | How long a minted continuation token stays valid. An expired token fails closed as a clean `400`, exactly like a tampered one, so a stale `nextLink` can never silently serve a wrong page. |
 | `PublicServiceRoot` | `null` | Absolute service root used to build `@odata.context` pointers and paging `nextLink`s (e.g. `https://api.example.com/odata`). When unset they are derived from the request's own scheme/Host/PathBase — the Host header is client-supplied, so behind a reverse proxy (or any host without host filtering) set this explicitly to keep a forged `Host` out of the emitted links. |
 | `MaxExpandFanout` | `1000` | Upper bound on the number of related rows a single `$expand` navigation may return across the whole page. Exceeding it fails closed as a clean `400` rather than materializing an unbounded fan-out. |
+| `MaxBasicAuthAttemptsPerSource` | `100` | Basic credential attempts one client IP may make per `BasicAuthAttemptWindow`, across all usernames. |
+| `MaxBasicAuthAttemptsPerAccount` | `100` | Basic credential attempts one username may receive per `BasicAuthAttemptWindow`, across all clients. |
+| `BasicAuthAttemptWindow` | `1 min` | The window both Basic attempt caps count over. |
 
 ## Authentication
 
@@ -95,7 +98,12 @@ builder.Services.AddSingleton<IODataBasicCredentialStore, MyODataBasicCredential
 
 An unknown username is verified against a fixed dummy hash so it spends the
 same PBKDF2 work as a known one — an attacker cannot distinguish "no such user"
-from "wrong password" by timing or response (anti-enumeration). A subject-less
+from "wrong password" by timing or response (anti-enumeration). Basic attempts
+are capped per client IP and per username (`MaxBasicAuthAttemptsPerSource`,
+`MaxBasicAuthAttemptsPerAccount`). An attempt over either cap is refused with
+`429` before the credential store is asked or any hashing runs, with the same
+answer whether or not the account exists. Basic credentials travel in the clear
+on plain HTTP; serve the endpoint over HTTPS when you accept them. A subject-less
 principal, an unmapped OIDC issuer, or a projection that yields an empty user
 context all fail closed with `403` — never a degraded or anonymous context. No
 projection detail ever reaches the wire; it is logged server-side only.

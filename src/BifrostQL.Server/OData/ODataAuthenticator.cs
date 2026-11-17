@@ -49,19 +49,37 @@ namespace BifrostQL.Server.OData
         private readonly IBifrostAuthContextFactory _authFactory;
         private readonly IODataBasicCredentialStore? _basicStore;
         private readonly IPasswordHasher<string> _passwordHasher;
+        private readonly ODataBasicAuthRateLimiter _basicAttempts;
         private readonly ILogger? _logger;
 
+        /// <param name="options">Supplies the Basic attempt caps; null uses <see cref="ODataOptions"/> defaults.</param>
         public ODataAuthenticator(
             IBifrostAuthContextFactory authFactory,
             IODataBasicCredentialStore? basicStore = null,
             ILogger<ODataAuthenticator>? logger = null,
-            IPasswordHasher<string>? passwordHasher = null)
+            IPasswordHasher<string>? passwordHasher = null,
+            ODataOptions? options = null)
+            : this(authFactory, basicStore, logger, passwordHasher, options ?? new ODataOptions(), clock: null)
+        {
+        }
+
+        // The clock seam tests use to step the attempt window.
+        internal ODataAuthenticator(
+            IBifrostAuthContextFactory authFactory,
+            IODataBasicCredentialStore? basicStore,
+            ILogger<ODataAuthenticator>? logger,
+            IPasswordHasher<string>? passwordHasher,
+            ODataOptions options,
+            Func<DateTimeOffset>? clock)
         {
             _authFactory = authFactory ?? throw new ArgumentNullException(nameof(authFactory));
             _basicStore = basicStore;
             _logger = logger;
             _passwordHasher = passwordHasher ?? new PasswordHasher<string>();
             _dummyHash = _passwordHasher.HashPassword(DummyUsername, DummyPassword);
+            _basicAttempts = new ODataBasicAuthRateLimiter(
+                options.MaxBasicAuthAttemptsPerSource, options.MaxBasicAuthAttemptsPerAccount,
+                options.BasicAuthAttemptWindow, clock);
         }
 
         /// <summary>
@@ -92,6 +110,15 @@ namespace BifrostQL.Server.OData
             // request fails closed rather than degrading to anonymous.
             if (_basicStore is null)
                 throw ODataProtocolException.Unauthorized("Basic authentication is not configured.");
+
+            // Throttle per client IP and per username BEFORE the store lookup and the PBKDF2
+            // verification: a refused guess costs no hashing, and the refusal reads the same
+            // whether or not the account exists.
+            var source = ProtocolSourceKey.Of(context.Connection.RemoteIpAddress is { } ip
+                ? new System.Net.IPEndPoint(ip, context.Connection.RemotePort)
+                : null);
+            if (!_basicAttempts.TryAttempt(source, username))
+                throw ODataProtocolException.TooManyAuthenticationAttempts();
 
             var credential = await _basicStore.FindAsync(username, ct);
             var usable = credential is { Enabled: true };

@@ -77,5 +77,21 @@ namespace BifrostQL.Server.OData
         /// Default: 1000.
         /// </summary>
         public int MaxExpandFanout { get; set; } = 1000;
+
+        /// <summary>
+        /// Basic credential attempts one client IP may make per <see cref="BasicAuthAttemptWindow"/>,
+        /// across all usernames. An attempt over the cap is refused with 429 before the credential
+        /// store is asked or any password hashing runs. Default: 100.
+        /// </summary>
+        public int MaxBasicAuthAttemptsPerSource { get; set; } = 100;
+
+        /// <summary>
+        /// Basic credential attempts one username may receive per <see cref="BasicAuthAttemptWindow"/>,
+        /// across all clients, bounding a distributed guess at one login. Default: 100.
+        /// </summary>
+        public int MaxBasicAuthAttemptsPerAccount { get; set; } = 100;
+
+        /// <summary>The window both Basic attempt caps count over. Default: 1 minute.</summary>
+        public TimeSpan BasicAuthAttemptWindow { get; set; } = TimeSpan.FromMinutes(1);
     }
 }

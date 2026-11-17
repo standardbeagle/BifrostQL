@@ -476,7 +476,8 @@ namespace BifrostQL.Server
             services.AddSingleton(sp => new BifrostQL.Server.OData.ODataAuthenticator(
                 sp.GetRequiredService<IBifrostAuthContextFactory>(),
                 sp.GetService<BifrostQL.Server.OData.IODataBasicCredentialStore>(),
-                sp.GetService<ILogger<BifrostQL.Server.OData.ODataAuthenticator>>()));
+                sp.GetService<ILogger<BifrostQL.Server.OData.ODataAuthenticator>>(),
+                options: options));
         }
 
         /// <summary>

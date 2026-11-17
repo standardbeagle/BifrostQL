@@ -167,6 +167,83 @@ namespace BifrostQL.Server.Test.OData
                 "the existence/enabled check is ANDed after the verification, never gated before it");
         }
 
+        /// <summary>
+        /// Basic auth ran a PBKDF2 verification per attempt with no attempt cap, so one client
+        /// could guess passwords (and burn server CPU) without limit. Each axis gets its own cap
+        /// so each binds alone: per source with the account cap out of reach, per account with
+        /// the source cap out of reach. A refused attempt runs no hash and answers 429 even with
+        /// the right password, the same for an unknown username.
+        /// </summary>
+        [Theory]
+        [InlineData(ODataTestAuth.Username)]
+        [InlineData("nobody")]
+        public async Task Basic_attempts_over_the_per_source_cap_are_refused_before_hashing(string username)
+        {
+            var hasher = new CountingPasswordHasher();
+            var store = new FakeODataBasicCredentialStore().Add(
+                ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
+            var options = new ODataOptions { MaxBasicAuthAttemptsPerSource = 2, MaxBasicAuthAttemptsPerAccount = 1000 };
+            var auth = new ODataAuthenticator(BifrostAuthContextFactory.Instance, store, passwordHasher: hasher, options: options);
+
+            for (var i = 0; i < 2; i++)
+                (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", username, "wrong-password"))).HttpStatus.Should().Be(401);
+            hasher.VerifyCalls = 0;
+
+            var refused = await AuthShouldThrow(auth, BasicFrom("10.0.0.1", username, ODataTestAuth.Password));
+
+            refused.HttpStatus.Should().Be(429);
+            refused.Message.Should().Be("Too many authentication attempts; retry later.");
+            hasher.VerifyCalls.Should().Be(0, "a refused attempt must cost no PBKDF2 work");
+
+            // Another source is still admitted: the cap is per source, not global.
+            var other = BasicFrom("10.0.0.2", ODataTestAuth.Username, ODataTestAuth.Password);
+            (await auth.AuthenticateAsync(other, CancellationToken.None)).Should().NotBeEmpty();
+        }
+
+        [Fact]
+        public async Task Basic_attempts_over_the_per_account_cap_are_refused_from_every_source()
+        {
+            var store = new FakeODataBasicCredentialStore().Add(
+                ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
+            var options = new ODataOptions { MaxBasicAuthAttemptsPerSource = 1000, MaxBasicAuthAttemptsPerAccount = 2 };
+            var auth = new ODataAuthenticator(BifrostAuthContextFactory.Instance, store, options: options);
+
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", ODataTestAuth.Username, "wrong"))).HttpStatus.Should().Be(401);
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.2", ODataTestAuth.Username, "wrong"))).HttpStatus.Should().Be(401);
+
+            var refused = await AuthShouldThrow(auth, BasicFrom("10.0.0.3", ODataTestAuth.Username, ODataTestAuth.Password));
+
+            refused.HttpStatus.Should().Be(429);
+        }
+
+        [Fact]
+        public async Task Basic_attempt_window_reopens_after_it_elapses()
+        {
+            var now = DateTimeOffset.UnixEpoch;
+            var store = new FakeODataBasicCredentialStore().Add(
+                ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
+            var options = new ODataOptions { MaxBasicAuthAttemptsPerSource = 1, BasicAuthAttemptWindow = TimeSpan.FromMinutes(1) };
+            var auth = new ODataAuthenticator(
+                BifrostAuthContextFactory.Instance, store, logger: null, passwordHasher: null, options, clock: () => now);
+
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", ODataTestAuth.Username, "wrong"))).HttpStatus.Should().Be(401);
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", ODataTestAuth.Username, ODataTestAuth.Password))).HttpStatus.Should().Be(429);
+
+            now += TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1);
+
+            (await auth.AuthenticateAsync(BasicFrom("10.0.0.1", ODataTestAuth.Username, ODataTestAuth.Password), CancellationToken.None))
+                .Should().NotBeEmpty();
+        }
+
+        private static DefaultHttpContext BasicFrom(string ip, string username, string password)
+        {
+            var ctx = new DefaultHttpContext();
+            ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(ip);
+            ctx.Connection.RemotePort = 40000 + Random.Shared.Next(1000); // ports must not split a source
+            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(username, password);
+            return ctx;
+        }
+
         private sealed class CountingPasswordHasher : Microsoft.AspNetCore.Identity.IPasswordHasher<string>
         {
             private readonly Microsoft.AspNetCore.Identity.PasswordHasher<string> _inner = new();

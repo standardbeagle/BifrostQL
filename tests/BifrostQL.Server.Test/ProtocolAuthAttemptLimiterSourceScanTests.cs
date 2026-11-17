@@ -9,7 +9,8 @@ namespace BifrostQL.Server.Test;
 /// Source-scan guard for the pre-auth attempt-limiter consolidation (H11 follow-up): the
 /// fixed-window arithmetic, the bounded key map and the two-axis accounting must live in
 /// exactly ONE place — <c>ProtocolAuthAttemptLimiter</c> — with per-adapter SUBTYPES
-/// (<c>LdapBindRateLimiter</c>, <c>RespAuthRateLimiter</c>, <c>PgAuthRateLimiter</c>) so no
+/// (<c>LdapBindRateLimiter</c>, <c>RespAuthRateLimiter</c>, <c>PgAuthRateLimiter</c>,
+/// <c>ODataBasicAuthRateLimiter</c>) so no
 /// two front doors share one budget. The window arithmetic was copied three times (LDAP,
 /// then RESP as H11's deliberate near-copy, and pgwire's per-source half); three copies of
 /// one security decision drift. Anchored on the DATA the copy must carry (the Window
@@ -75,8 +76,9 @@ public class ProtocolAuthAttemptLimiterSourceScanTests
                 Path.Combine(serverRoot!, "Ldap", "LdapBindRateLimiter.cs"),
                 Path.Combine(serverRoot!, "Resp", "RespAuthRateLimiter.cs"),
                 Path.Combine(serverRoot!, "Pgwire", "PgAuthRateLimiter.cs"),
+                Path.Combine(serverRoot!, "OData", "ODataBasicAuthRateLimiter.cs"),
             },
-            "LDAP, RESP and pgwire each keep a per-adapter subtype with its own budget — " +
+            "LDAP, RESP, pgwire and OData Basic each keep a per-adapter subtype with its own budget — " +
             "registering the shared base directly would let two front doors consume one budget");
     }
 

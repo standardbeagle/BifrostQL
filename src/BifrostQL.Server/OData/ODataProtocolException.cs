@@ -27,6 +27,13 @@ namespace BifrostQL.Server.OData
             => new("Unauthorized", 401, message);
 
         /// <summary>
+        /// The caller's source or the presented username has used its credential attempts for
+        /// the current window. The text is the same whether or not the account exists.
+        /// </summary>
+        public static ODataProtocolException TooManyAuthenticationAttempts()
+            => new("TooManyRequests", 429, "Too many authentication attempts; retry later.");
+
+        /// <summary>
         /// Authenticated, but the identity is not acceptable — a subject-less principal, an
         /// unmapped OIDC issuer, or a projection that yields no usable identity.
         /// </summary>

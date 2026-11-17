@@ -127,11 +127,16 @@ namespace BifrostQL.Server.Auth
     public sealed class LocalAuthAdministration
     {
         private readonly LocalSessionManager _sessions;
+        private readonly ILocalAuthStateStore _state;
+        private readonly LocalAuthAudit _audit;
         private readonly TimeProvider _time;
 
-        internal LocalAuthAdministration(LocalSessionManager sessions, TimeProvider time)
+        internal LocalAuthAdministration(
+            LocalSessionManager sessions, ILocalAuthStateStore state, LocalAuthAudit audit, TimeProvider time)
         {
             _sessions = sessions;
+            _state = state;
+            _audit = audit;
             _time = time;
         }
 
@@ -141,6 +146,15 @@ namespace BifrostQL.Server.Auth
             ArgumentException.ThrowIfNullOrWhiteSpace(userId);
             return _sessions.RevokeAllAsync(userId, LocalSessionRevokeReasons.Administrator, actorId, sourceIp: null,
                 _time.GetUtcNow(), cancellationToken);
+        }
+
+        /// <summary>Ends a lockout and clears the failure count of <paramref name="userId"/>.</summary>
+        public async Task UnlockAccountAsync(string userId, string? actorId, CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+            await _state.ClearLockoutAsync(userId, cancellationToken).ConfigureAwait(false);
+            await _audit.RecordAsync(_time.GetUtcNow(), AuthAuditKind.AccountUnlocked, AuthAuditOutcome.Success,
+                userId, actorId, null, AuthAuditReasons.Administrator, cancellationToken).ConfigureAwait(false);
         }
     }
 }

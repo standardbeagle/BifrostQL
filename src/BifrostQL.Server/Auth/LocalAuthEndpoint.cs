@@ -34,7 +34,10 @@ namespace BifrostQL.Server.Auth
             app.Map(options.LogoutPath, branch => branch.Run(HandleLogoutAsync));
             app.Map(options.SessionPath, branch => branch.Run(HandleSessionAsync));
             if (options.AdminRole is not null)
+            {
                 app.Map(options.AdminPath + "/revoke-sessions", branch => branch.Run(HandleRevokeSessionsAsync));
+                app.Map(options.AdminPath + "/unlock", branch => branch.Run(HandleUnlockAsync));
+            }
             return app;
         }
 
@@ -134,16 +137,21 @@ namespace BifrostQL.Server.Auth
             var now = Now(context);
             var sourceIp = SourceIp(context);
             var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
+            var ct = context.RequestAborted;
+            if (await RefuseLockedAsync(context, result.Account, AuthAuditKind.LoginFailed, now, sourceIp).ConfigureAwait(false))
+                return;
+
             if (!result.Succeeded || result.Identity == null || result.Account == null)
             {
-                await audit.RecordAsync(now, AuthAuditKind.LoginFailed, AuthAuditOutcome.Failure,
-                    result.Account?.UserId, null, sourceIp, FailureReason(result.Account), context.RequestAborted)
+                await RecordFailedAttemptAsync(context, result.Account, AuthAuditKind.LoginFailed, now, sourceIp)
                     .ConfigureAwait(false);
                 // Same response for missing user, wrong password and disabled account: do not leak which.
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
             }
 
+            await context.RequestServices.GetRequiredService<ILocalAuthStateStore>()
+                .ClearLockoutAsync(result.Account.UserId, ct).ConfigureAwait(false);
             var sessionId = await context.RequestServices.GetRequiredService<LocalSessionManager>()
                 .IssueAsync(result.Account, sourceIp, now, context.RequestAborted).ConfigureAwait(false);
             var principal = BuildPrincipal(result.Identity, now, sessionId);
@@ -153,6 +161,60 @@ namespace BifrostQL.Server.Auth
                 result.Account.UserId, null, sourceIp, null, context.RequestAborted).ConfigureAwait(false);
 
             context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>
+        /// Refuses a verified attempt against a locked account with the wrong-password answer (401),
+        /// right password or not, and audits it as <paramref name="kind"/>. Lockout is checked after
+        /// verification because only a matched account has an id to look up. A lock that lapsed on its
+        /// own is cleared and its end audited. Returns true when the response is written.
+        /// </summary>
+        private static async Task<bool> RefuseLockedAsync(
+            HttpContext context, LocalAccountState? account, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
+        {
+            if (account is null)
+                return false;
+            var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
+            var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
+            var ct = context.RequestAborted;
+            var lockout = await state.GetLockoutAsync(account.UserId, ct).ConfigureAwait(false);
+            if (lockout.IsLockedAt(now))
+            {
+                await audit.RecordAsync(now, kind, AuthAuditOutcome.Failure,
+                    account.UserId, null, sourceIp, AuthAuditReasons.AccountLocked, ct).ConfigureAwait(false);
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return true;
+            }
+            if (lockout.LockedUntil is not null)
+            {
+                await state.ClearLockoutAsync(account.UserId, ct).ConfigureAwait(false);
+                await audit.RecordAsync(now, AuthAuditKind.AccountUnlocked, AuthAuditOutcome.Success,
+                    account.UserId, null, sourceIp, AuthAuditReasons.LockoutExpired, ct).ConfigureAwait(false);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Counts a failed credential check toward the lockout of the matched, enabled account, audits
+        /// the lock when this failure takes it, and audits the failure as <paramref name="kind"/>.
+        /// </summary>
+        private static async Task RecordFailedAttemptAsync(
+            HttpContext context, LocalAccountState? account, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
+        {
+            var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
+            var ct = context.RequestAborted;
+            if (account is { Disabled: false })
+            {
+                var options = context.RequestServices.GetRequiredService<LocalAuthOptions>();
+                var failed = await context.RequestServices.GetRequiredService<ILocalAuthStateStore>()
+                    .RecordFailedLoginAsync(account.UserId, now, options.LockoutThreshold, options.LockoutEndsAt(now), ct)
+                    .ConfigureAwait(false);
+                if (failed.LockedNow)
+                    await audit.RecordAsync(now, AuthAuditKind.AccountLocked, AuthAuditOutcome.Success,
+                        account.UserId, null, sourceIp, AuthAuditReasons.BadCredentials, ct).ConfigureAwait(false);
+            }
+            await audit.RecordAsync(now, kind, AuthAuditOutcome.Failure,
+                account?.UserId, null, sourceIp, FailureReason(account), ct).ConfigureAwait(false);
         }
 
         private static string FailureReason(LocalAccountState? account) => account switch
@@ -294,6 +356,20 @@ namespace BifrostQL.Server.Auth
                 return;
             await context.RequestServices.GetRequiredService<LocalAuthAdministration>()
                 .RevokeAllSessionsAsync(target.Value.UserId, target.Value.ActorId, context.RequestAborted).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>
+        /// <c>POST {AdminPath}/unlock</c> with <c>{"userId": "..."}</c>: ends a lockout and clears the
+        /// failure count. Same gate as <c>revoke-sessions</c>.
+        /// </summary>
+        private static async Task HandleUnlockAsync(HttpContext context)
+        {
+            var target = await ReadAdminTargetAsync(context).ConfigureAwait(false);
+            if (target is null)
+                return;
+            await context.RequestServices.GetRequiredService<LocalAuthAdministration>()
+                .UnlockAccountAsync(target.Value.UserId, target.Value.ActorId, context.RequestAborted).ConfigureAwait(false);
             context.Response.StatusCode = StatusCodes.Status204NoContent;
         }
 

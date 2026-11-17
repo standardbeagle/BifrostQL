@@ -60,6 +60,8 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthOptions>()));
             services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalAuthAdministration(
                 sp.GetRequiredService<BifrostQL.Server.Auth.LocalSessionManager>(),
+                sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>(),
+                sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthAudit>(),
                 sp.GetService<TimeProvider>() ?? TimeProvider.System));
 
             services

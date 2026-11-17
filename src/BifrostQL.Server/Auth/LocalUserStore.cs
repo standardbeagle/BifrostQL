@@ -140,6 +140,25 @@ namespace BifrostQL.Server.Auth
         public string AdminPath { get; set; } = "/auth/admin";
 
         /// <summary>
+        /// Consecutive failed logins against one account that lock it (PCI DSS 8.3.4 asks for at
+        /// most 10). Counted per account across every source, beside and separate from the
+        /// <see cref="MaxLoginAttemptsPerAccount"/> rate window. A success or an unlock resets it.
+        /// Defaults to 10; at least 1.
+        /// </summary>
+        public int LockoutThreshold { get; set; } = 10;
+
+        /// <summary>
+        /// How long a locked account stays locked (PCI DSS 8.3.4 asks for at least 30 minutes or
+        /// until an administrator unlocks it). Null locks until <see cref="LocalAuthAdministration.UnlockAccountAsync"/>.
+        /// Defaults to 30 minutes.
+        /// </summary>
+        public TimeSpan? LockoutDuration { get; set; } = TimeSpan.FromMinutes(30);
+
+        /// <summary>When a lock taken at <paramref name="now"/> ends; <see cref="DateTimeOffset.MaxValue"/> when only an administrator ends it.</summary>
+        internal DateTimeOffset LockoutEndsAt(DateTimeOffset now) =>
+            LockoutDuration is { } duration ? now + duration : DateTimeOffset.MaxValue;
+
+        /// <summary>
         /// PBKDF2 iteration count for password hashes this host writes (ASP.NET Core Identity V3:
         /// PBKDF2-HMAC-SHA512, 128-bit salt, 256-bit subkey). A stored hash below the count still
         /// verifies and is rehashed at the configured count on the next successful login.
@@ -181,6 +200,9 @@ namespace BifrostQL.Server.Auth
                 "must be null or at least 1");
             Require(AdminRole is null || !string.IsNullOrWhiteSpace(AdminRole), nameof(AdminRole), AdminRole,
                 "must be null or a role name");
+            Require(LockoutThreshold >= 1, nameof(LockoutThreshold), LockoutThreshold, "must be at least 1");
+            Require(LockoutDuration is null || LockoutDuration > TimeSpan.Zero, nameof(LockoutDuration), LockoutDuration,
+                "must be null or positive");
             _ = CreatePasswordHasher();
         }
 

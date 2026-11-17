@@ -388,6 +388,94 @@ namespace BifrostQL.Server.Test
                 && e.SubjectId == "user-2" && e.ActorId == "user-1" && e.Reason == LocalSessionRevokeReasons.Administrator);
         }
 
+        private Task<HttpClient> StartForLockoutAsync(Action<LocalAuthOptions>? configure = null) =>
+            StartAsync(o =>
+            {
+                // Lift the rate windows so only the lockout counter can refuse.
+                o.MaxLoginAttemptsPerSource = 1_000;
+                o.MaxLoginAttemptsPerAccount = 1_000;
+                o.AdminRole = "admin";
+                configure?.Invoke(o);
+            });
+
+        private static async Task FailLoginsAsync(HttpClient client, int count)
+        {
+            for (var i = 0; i < count; i++)
+                (await PostLoginAsync(client, "wrong", $"10.1.0.{i % 200 + 1}")).StatusCode
+                    .Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        [Fact]
+        public async Task TenConsecutiveFailures_LockTheAccount_ForThirtyMinutes_EvenAgainstTheRightPassword()
+        {
+            var defaults = new LocalAuthOptions();
+            defaults.LockoutThreshold.Should().Be(10, "PCI DSS 8.3.4");
+            defaults.LockoutDuration.Should().Be(TimeSpan.FromMinutes(30), "PCI DSS 8.3.4");
+            var client = await StartForLockoutAsync();
+
+            await FailLoginsAsync(client, 9);
+            SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            await FailLoginsAsync(client, 10);
+
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "ten consecutive failures since the last success lock the account");
+            _clock.Advance(TimeSpan.FromMinutes(29));
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            _clock.Advance(TimeSpan.FromMinutes(2));
+            SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+
+            var audit = await AuditAsync();
+            audit.Count(e => e.Kind == AuthAuditKind.AccountLocked).Should().Be(1,
+                "nine failures, a success, then ten failures: only the second run reaches the threshold");
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.LoginFailed && e.Reason == AuthAuditReasons.AccountLocked);
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.AccountUnlocked && e.Reason == AuthAuditReasons.LockoutExpired);
+        }
+
+        [Fact]
+        public async Task IndefiniteLockout_EndsOnlyWhenAnAdministratorUnlocks()
+        {
+            Execute("INSERT INTO app_users VALUES ('admin-1', 'root@club.test', " +
+                    $"'{new PasswordHasher<string>().HashPassword("root@club.test", Password)}', 'Root', 'club-7', 'admin')");
+            var client = await StartForLockoutAsync(o =>
+            {
+                o.LockoutThreshold = 3;
+                o.LockoutDuration = null;
+            });
+            await FailLoginsAsync(client, 3);
+            _clock.Advance(TimeSpan.FromDays(30));
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "no duration means the lock does not lapse");
+            using var adminLogin = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { login = "root@club.test", password = Password }),
+            };
+            var admin = SessionCookie(await client.SendAsync(adminLogin));
+
+            (await PostAsync(client, "/auth/admin/unlock", admin, new { userId = "user-1" })).StatusCode
+                .Should().Be(HttpStatusCode.NoContent);
+
+            SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            (await AuditAsync()).Should().Contain(e => e.Kind == AuthAuditKind.AccountUnlocked
+                && e.SubjectId == "user-1" && e.ActorId == "admin-1" && e.Reason == AuthAuditReasons.Administrator);
+        }
+
+        [Fact]
+        public async Task UnknownLogins_LockNothing_AndAnswerLikeALockedAccount()
+        {
+            var client = await StartForLockoutAsync(o => o.LockoutThreshold = 2);
+            await FailLoginsAsync(client, 2);
+            using var unknown = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { login = "nobody@club.test", password = "x" }),
+            };
+            using var unknownResponse = await client.SendAsync(unknown);
+            using var locked = await PostLoginAsync(client, Password, "10.0.0.1");
+
+            unknownResponse.StatusCode.Should().Be(locked.StatusCode);
+            (await unknownResponse.Content.ReadAsStringAsync()).Should().Be(await locked.Content.ReadAsStringAsync(),
+                "a locked account must not be told apart from a missing one");
+        }
+
         [Fact]
         public async Task LoginAudit_RecordsSuccessAndFailure_WithoutCredentials()
         {

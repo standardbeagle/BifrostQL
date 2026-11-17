@@ -15,7 +15,7 @@ namespace BifrostQL.UI.Web
     /// </summary>
     public static class VaultEndpoints
     {
-        public static void MapVaultEndpoints(this WebApplication app, ConnectionState state, SshTunnelManager sshTunnel)
+        public static void MapVaultEndpoints(this WebApplication app, ConnectionState state, ISshTunnel sshTunnel)
         {
             // GET /api/vault/servers — List saved servers (metadata only, no passwords)
             app.MapGet("/api/vault/servers", async () =>
@@ -55,6 +55,9 @@ namespace BifrostQL.UI.Web
                 // rejection (actionable: this entry can opt into trusting the certificate)
                 // apart from every other connect failure.
                 VaultServer? attempted = null;
+                // A tunnel this request started is stopped on every failure path: a
+                // failed connect leaves nothing bound that could use it.
+                var tunnelStarted = false;
                 try
                 {
                     var servers = await VaultServerProvider.LoadServers(state.VaultPath);
@@ -87,6 +90,7 @@ namespace BifrostQL.UI.Web
                             server.Ssh.Host, server.Ssh.Port, server.Ssh.Username,
                             server.Ssh.IdentityFile, remoteHost, remotePort);
                         var localPort = await sshTunnel.StartAsync(sshConfig, ct);
+                        tunnelStarted = true;
 
                         // WordPress credential auto-discovery runs when the vault entry is
                         // tagged "wordpress" AND has no explicit username. We `wp config get`
@@ -122,6 +126,7 @@ namespace BifrostQL.UI.Web
 
                             if (discovered is null)
                             {
+                                await sshTunnel.StopAsync();
                                 var rootList = string.Join(", ", WordPressDiscovery.DefaultRoots);
                                 // wp-cli stderr and parse errors can carry wp-config values.
                                 var detail = SecretScrubber.Scrub(lastError?.Message) ?? "no installations found";
@@ -155,6 +160,10 @@ namespace BifrostQL.UI.Web
                     // Arbitrary vault DB — no bundled profile config, so only the synthesized
                     // raw default is offered. Clear any profiles left over from a prior connect.
                     await state.ActivateAsync(app.Services, new ActiveConnection(connStr, provider), profileSchema: null, ct);
+                    // A tunnel left by an earlier SSH entry served the connection just
+                    // replaced; nothing uses it once a non-SSH entry is bound.
+                    if (server.Ssh is null)
+                        await sshTunnel.StopAsync();
 
                     return Results.Ok(new
                     {
@@ -177,6 +186,8 @@ namespace BifrostQL.UI.Web
                     // (still scrubbed, belt-and-suspenders) is logged server-side and
                     // referenced by that id.
                     var logger = app.Services.GetRequiredService<ILogger<Program>>();
+                    if (tunnelStarted)
+                        await sshTunnel.StopAsync();
 
                     var correlationId = Guid.NewGuid().ToString("N")[..8];
                     var scrubbedMessage = SecretScrubber.Scrub(ex.Message) ?? "";

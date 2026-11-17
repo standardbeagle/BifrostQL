@@ -19,10 +19,23 @@ public record WpDiscoverConfig(string? WpPath, string? WpRoot);
 public record WpCredentials(string DbName, string DbUser, string DbPassword, string DbHost);
 
 /// <summary>
+/// The one SSH tunnel vault connect drives. Its owner is the process boundary
+/// (an <c>ssh</c> child process), so vault-connect tests substitute it.
+/// </summary>
+public interface ISshTunnel
+{
+    /// <summary>Starts a tunnel (stopping any previous one) and returns its local port.</summary>
+    Task<int> StartAsync(SshTunnelConfig config, CancellationToken ct = default);
+    /// <summary>Stops the tunnel; a no-op when none is running.</summary>
+    Task StopAsync();
+    Task<WpCredentials> DiscoverWordPressAsync(SshTunnelConfig sshConfig, WpDiscoverConfig wpConfig, CancellationToken ct = default);
+}
+
+/// <summary>
 /// Manages an SSH tunnel by spawning the system <c>ssh</c> binary with <c>-L</c> local port forwarding.
 /// Uses the system SSH agent, config, and known_hosts automatically.
 /// </summary>
-public sealed class SshTunnelManager : IAsyncDisposable
+public sealed class SshTunnelManager : ISshTunnel, IAsyncDisposable
 {
     private Process? _process;
     private readonly SemaphoreSlim _lock = new(1, 1);

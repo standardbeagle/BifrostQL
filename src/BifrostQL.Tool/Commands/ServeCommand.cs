@@ -1,6 +1,8 @@
 using BifrostQL.Core.Modules;
 using BifrostQL.Server;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.HostFiltering;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Tool.Commands;
@@ -54,7 +56,36 @@ public sealed class ServeCommand : ICommand
             builder.Configuration.AddJsonFile(configSection.ConfigFilePath, optional: true);
         }
 
-        var metadata = configSection?.Metadata ?? Array.Empty<string>();
+        var app = BuildApp(builder, host, connectionString);
+        await app.RunAsync();
+        return 0;
+    }
+
+    /// <summary>
+    /// Wires the serve pipeline onto <paramref name="builder"/>. The server has no
+    /// authentication, so the browser is the attacker to keep out:
+    /// <list type="bullet">
+    /// <item>No CORS policy. The playground is served from this same origin, so a page on
+    /// any other origin gets no <c>Access-Control-Allow-Origin</c> and cannot read a
+    /// response or send a preflighted (JSON) request.</item>
+    /// <item>On a loopback bind, the Host header must name a loopback host. That stops a DNS
+    /// rebinding page (its own name resolved to 127.0.0.1) from reaching the API
+    /// as same-origin.</item>
+    /// </list>
+    /// A widened <c>--host</c> bind has already warned the operator, and its reachable
+    /// names are unknown, so host filtering is left to configuration there.
+    /// </summary>
+    internal static WebApplication BuildApp(WebApplicationBuilder builder, string host, string connectionString)
+    {
+        // serve wires no authentication scheme (no JwtSettings binding), so it states that
+        // instead of inheriting the fail-secure "auth on" default: with auth on and no scheme
+        // registered, UseAuthentication fails the pipeline build and the server never starts
+        // unless the config file happened to carry DisableAuth: true.
+        builder.Configuration.AddInMemoryCollection(
+            [new KeyValuePair<string, string?>("BifrostQL:DisableAuth", "true")]);
+
+        if (IsLoopback(host))
+            builder.Services.Configure<HostFilteringOptions>(o => o.AllowedHosts = LoopbackHostNames.ToList());
 
         builder.Services.AddBifrostQL(options =>
         {
@@ -62,18 +93,14 @@ public sealed class ServeCommand : ICommand
                 .BindConnectionString(connectionString)
                 .BindConfiguration(builder.Configuration.GetSection("BifrostQL"));
         });
-        builder.Services.AddCors();
 
         var app = builder.Build();
-        // Permissive CORS for the local development playground. Safe because the server
-        // binds loopback by default (see host above); AllowAnyOrigin cannot carry
-        // credentials, and a widened --host bind already warned the operator.
-        app.UseCors(x => x.AllowAnyMethod().AllowAnyHeader().AllowAnyOrigin());
         app.UseBifrostQL();
-
-        await app.RunAsync();
-        return 0;
+        return app;
     }
+
+    /// <summary>Host header values a loopback bind answers to (ports are ignored by host filtering).</summary>
+    internal static readonly string[] LoopbackHostNames = ["localhost", "127.0.0.1", "[::1]"];
 
     /// <summary>
     /// True when the bind host is a loopback address (localhost / 127.0.0.0-8 / ::1),

@@ -69,6 +69,7 @@ Undeclared means `loopback`. Widening (loopback → lan → public) is the opera
 | HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host Kestrel | host's | host | host | host | host |
 | Binary WS `/bifrost-ws` | host Kestrel | host's | `UseBifrostBinary(maxConnections:)` 100 per mount; 16 concurrent requests per connection (`MaxConcurrentRequestsPerConnection`) | `firstFrameTimeout` 30 s | `idleTimeout` 10 min | frame 4 MiB; reassembly 64 MiB/session, 128 MiB/connection (received bytes) |
 | LLM chat `/_chat` | host Kestrel | host's | host | identity gate before body read | one SSE stream per conversation | `MaxMessageLength` 32768 chars; body 4×that + 1 KiB (received bytes) |
+| CLI `bifrost serve` | `--port` 5000 | loopback `127.0.0.1` (Host header must be loopback, no CORS); `--host` widens with a warning | Kestrel default | none: no auth, loopback is the only gate | Kestrel | Kestrel |
 | Desktop UI `bifrostui` | `--port` | loopback `127.0.0.1`; `--expose` widens to LAN | host | none: loopback is the only gate | host | host |
 
 `bifrostui --enable-http-bridge` (`/_bridge/{kind}`) runs SQL with no auth. It refuses to start alongside `--expose` (exit 2), and every POST needs `X-Bifrost-Bridge: 1` + `Content-Type: application/json`. The header is the load-bearing half.

@@ -115,7 +115,7 @@ bifrost schema --connection-string "..."
 bifrost config-generate --connection-string "..."
 ```
 
-`bifrost serve` starts a local GraphQL server without writing any project files. Useful for exploring a database schema before committing to a project structure.
+`bifrost serve` starts a local GraphQL server without writing any project files. Useful for exploring a database schema before committing to a project structure. It has no authentication, so it binds `127.0.0.1` (widen with `--host`, which prints a warning), answers only `localhost` / `127.0.0.1` / `[::1]` Host headers on that bind, and sends no CORS headers: only the playground it serves can call it from a browser.
 
 ## Next steps
 

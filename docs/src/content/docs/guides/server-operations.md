@@ -305,8 +305,8 @@ update commits separately from the operation.
 
 - Operations are GraphQL-only. Protocol adapters and MCP do not expose them.
 - Multi-database endpoints (`AddBifrostEndpoints`) do not expose operations.
-- Stored procedures and database functions are not exposed: `sp-include` is accepted, but no
-  dialect loads procedures yet, and the operation context has no raw-SQL call. Logic that lives in
+- Stored procedures and database functions are not exposed: BifrostQL does not load them, and
+  the operation context has no raw-SQL call. Logic that lives in
   a database function stays reachable only through a table the operation reads or writes
   (a view, or a trigger on a table it writes).
 

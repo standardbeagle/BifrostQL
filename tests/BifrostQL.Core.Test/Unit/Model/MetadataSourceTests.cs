@@ -486,7 +486,7 @@ public class MetadataSourceTests
         };
 
         var metadataLoader = new TestNoOpMetadataLoader();
-        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbStoredProcedure>(), Array.Empty<DbForeignKey>(), additionalMetadata);
+        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbForeignKey>(), additionalMetadata);
 
         var orders = model.GetTableFromDbName("Orders");
         orders.GetMetadataValue("soft-delete").Should().Be("deleted_at");
@@ -509,7 +509,7 @@ public class MetadataSourceTests
         };
 
         var metadataLoader = new TestNoOpMetadataLoader();
-        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbStoredProcedure>(), Array.Empty<DbForeignKey>(), additionalMetadata);
+        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbForeignKey>(), additionalMetadata);
 
         model.GetMetadataValue("default-limit").Should().Be("50");
     }
@@ -535,7 +535,7 @@ public class MetadataSourceTests
             ["soft-delete"] = "file_value"
         });
 
-        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbStoredProcedure>(), Array.Empty<DbForeignKey>(), additionalMetadata);
+        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbForeignKey>(), additionalMetadata);
 
         var orders = model.GetTableFromDbName("Orders");
         orders.GetMetadataValue("soft-delete").Should().Be("db_override");
@@ -550,7 +550,7 @@ public class MetadataSourceTests
         };
 
         var metadataLoader = new TestNoOpMetadataLoader();
-        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbStoredProcedure>(), Array.Empty<DbForeignKey>(), null);
+        var model = DbModel.FromTables(tables, metadataLoader, Array.Empty<DbForeignKey>(), null);
 
         model.Tables.Should().HaveCount(1);
     }

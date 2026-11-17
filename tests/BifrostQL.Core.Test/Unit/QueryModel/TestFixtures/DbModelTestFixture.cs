@@ -184,7 +184,6 @@ public sealed class DbModelTestFixture
         return DbModel.FromTables(
             _tables.Values.ToList(),
             metadataLoader,
-            Array.Empty<DbStoredProcedure>(),
             _foreignKeys);
     }
 
@@ -307,7 +306,6 @@ public sealed class DbModelTestFixture
         }
 
         public IReadOnlyCollection<IDbTable> Tables { get; }
-        public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; } = Array.Empty<DbStoredProcedure>();
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public IDictionary<string, object?> Metadata { get; init; }
 

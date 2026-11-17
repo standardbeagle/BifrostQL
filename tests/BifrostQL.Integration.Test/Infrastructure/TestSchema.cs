@@ -603,7 +603,6 @@ public static class TestSchema
         }
 
         public IReadOnlyCollection<IDbTable> Tables { get; }
-        public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; } = Array.Empty<DbStoredProcedure>();
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
 
         public string? GetMetadataValue(string property) =>

@@ -36,7 +36,6 @@ public sealed class PolicyGateTests
         var model = new DbModel
         {
             Tables = Array.Empty<IDbTable>(),
-            StoredProcedures = Array.Empty<DbStoredProcedure>(),
             Metadata = new Dictionary<string, object?>()
         };
         var gate = new PolicyGate(model, new AppIdentity("user", "test"));

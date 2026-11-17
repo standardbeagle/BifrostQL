@@ -32,7 +32,6 @@ namespace BifrostQL.Core.Model
         /// </summary>
         bool TryGetTableIncludingHidden(string clientName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table)
             => TryGetTableFromClientName(clientName, out table);
-        IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; }
         IDbTable GetTableByFullGraphQlName(string fullName);
 
         /// <summary>
@@ -247,7 +246,6 @@ namespace BifrostQL.Core.Model
 
         public IReadOnlyCollection<IDbTable> Tables { get; init; } = null!;
         public IReadOnlyCollection<IDbTable> HiddenTables { get; init; } = Array.Empty<IDbTable>();
-        public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; init; } = Array.Empty<DbStoredProcedure>();
         // Defaults to EMPTY, not null: a model built by object initializer (tests, tools) with
         // no metadata behaves as a no-metadata model — GetMetadataValue/CompareMetadata must
         // answer "absent", not NullReferenceException.
@@ -453,20 +451,15 @@ namespace BifrostQL.Core.Model
 
         public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader)
         {
-            return FromTables(tables, metadataLoader, Array.Empty<DbStoredProcedure>());
+            return FromTables(tables, metadataLoader, Array.Empty<DbForeignKey>());
         }
 
-        public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader, IReadOnlyCollection<DbStoredProcedure> storedProcedures)
+        public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader, IReadOnlyCollection<DbForeignKey> foreignKeys)
         {
-            return FromTables(tables, metadataLoader, storedProcedures, Array.Empty<DbForeignKey>());
+            return FromTables(tables, metadataLoader, foreignKeys, null);
         }
 
-        public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader, IReadOnlyCollection<DbStoredProcedure> storedProcedures, IReadOnlyCollection<DbForeignKey> foreignKeys)
-        {
-            return FromTables(tables, metadataLoader, storedProcedures, foreignKeys, null);
-        }
-
-        public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader, IReadOnlyCollection<DbStoredProcedure> storedProcedures, IReadOnlyCollection<DbForeignKey> foreignKeys, IDictionary<string, IDictionary<string, object?>>? additionalMetadata)
+        public static DbModel FromTables(List<DbTable> tables, IMetadataLoader metadataLoader, IReadOnlyCollection<DbForeignKey> foreignKeys, IDictionary<string, IDictionary<string, object?>>? additionalMetadata)
         {
             foreach (var table in tables)
             {
@@ -540,19 +533,11 @@ namespace BifrostQL.Core.Model
             var prefixedTables = DeduplicateTableGraphQlNames(
                 tables.Select(t => t.WithSchemaPrefix(schemaPrefixOptions)).ToList());
 
-            var includePattern = dbMetadata.TryGetValue(MetadataKeys.StoredProcedures.Include, out var inc) ? inc?.ToString() : null;
-            var excludePattern = dbMetadata.TryGetValue(MetadataKeys.StoredProcedures.Exclude, out var exc) ? exc?.ToString() : null;
-
-            var filteredProcs = storedProcedures
-                .Where(p => DbStoredProcedure.MatchesFilter(p.DbName, includePattern, excludePattern))
-                .ToList();
-
             var model =
                 new DbModel()
                 {
                     Tables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden) == false).ToList(),
                     HiddenTables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden)).ToList(),
-                    StoredProcedures = filteredProcs,
                     Metadata = dbMetadata,
                     DefaultSchema = schemaPrefixOptions.DefaultSchema,
                 };

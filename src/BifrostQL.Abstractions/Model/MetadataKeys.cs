@@ -849,21 +849,6 @@ namespace BifrostQL.Core.Model
         }
 
         /// <summary>
-        /// Metadata keys for stored procedure discovery.
-        /// </summary>
-        public static class StoredProcedures
-        {
-            public const string Include = "sp-include";
-            public const string Exclude = "sp-exclude";
-
-            /// <summary>
-            /// Accepted for compatibility but inert: no dialect loads stored procedures
-            /// and nothing executes them, so there is no field for this role to gate.
-            /// </summary>
-            public const string Role = "stored-procedure-role";
-        }
-
-        /// <summary>
         /// Default user-context key names produced by the normalized identity
         /// contract (<c>AppIdentity</c> / <c>IdentityContextMapper</c>). These
         /// mirror the defaults read by the tenancy, auto-filter, and audit

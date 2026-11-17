@@ -18,7 +18,6 @@ BifrostQL.Core.Test/
 │   ├── Schema/            # GraphQL schema generation tests
 │   ├── Serialization/     # PHP serialization tests
 │   ├── Storage/           # File storage tests
-│   ├── StoredProcedure/   # Stored procedure tests
 │   ├── Utils/             # Utility class tests
 │   └── Views/             # View builder tests
 │

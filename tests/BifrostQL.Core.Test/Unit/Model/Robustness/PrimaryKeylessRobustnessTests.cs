@@ -148,7 +148,6 @@ public sealed class PrimaryKeylessRobustnessTests
         {
             Tables = new List<IDbTable>(),
             Metadata = new Dictionary<string, object?>(),
-            StoredProcedures = Array.Empty<DbStoredProcedure>(),
             EnumColumns = orphanedEnumMap,   // has 'statuses' key, but Tables is empty
         };
 
@@ -201,7 +200,6 @@ public sealed class PrimaryKeylessRobustnessTests
         var model = DbModel.FromTables(
             new List<DbTable> { table },
             new PrimaryKeylessTableFixtures.NoOpMetadataLoader(),
-            Array.Empty<DbStoredProcedure>(),
             Array.Empty<DbForeignKey>(),
             additionalMetadata);
 
@@ -249,7 +247,6 @@ public sealed class PrimaryKeylessRobustnessTests
         var model = DbModel.FromTables(
             new List<DbTable> { table },
             new PrimaryKeylessTableFixtures.NoOpMetadataLoader(),
-            Array.Empty<DbStoredProcedure>(),
             Array.Empty<DbForeignKey>(),
             additionalMetadata);
 

@@ -1283,7 +1283,6 @@ public class BifrostFormBuilderTests
         }
 
         public IReadOnlyCollection<IDbTable> Tables { get; }
-        public IReadOnlyCollection<DbStoredProcedure> StoredProcedures { get; } = Array.Empty<DbStoredProcedure>();
         public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
         public bool GetMetadataBool(string property, bool defaultValue) => (Metadata.TryGetValue(property, out var v) && v?.ToString() == null) ? defaultValue : v?.ToString() == "true";

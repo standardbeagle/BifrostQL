@@ -39,6 +39,10 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Breaking — third review pass
+
+- **Stored-procedure config is removed.** BifrostQL never loaded or executed stored procedures; the keys were accepted and did nothing. `sp-include`, `sp-exclude` and `stored-procedure-role` are now unknown `:root` keys, so a model that still sets one fails at load: delete them. `IDbModel.StoredProcedures`, `DbStoredProcedure` and the unused `MultiDbConfig` / `DatabaseFieldConfig` / `CrossDbJoinConfig` types are removed, and the `DbModel.FromTables` overloads lose their stored-procedure parameter. Nothing public replaces them; multi-database hosting stays on `BifrostMultiDbOptions`.
+
 ### Breaking — second review pass
 
 - **`BigInt` is sent as a decimal string.** The scalar now writes every value as a string; input still accepts a number or a string. A JSON number past 2^53 rounds in every browser's `JSON.parse`, so a bigint key shown or sent back could name a different row. Clients that read `BigInt` fields as numbers must accept strings. `Decimal` is unchanged. `@bifrostql/codegen` maps 64-bit proto integers to `string` to match.

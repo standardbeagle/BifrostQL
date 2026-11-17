@@ -605,4 +605,23 @@ public class ModelConfigValidatorTests
 
         act.Should().NotThrow();
     }
+    [Theory]
+    [InlineData("sp-include")]
+    [InlineData("sp-exclude")]
+    [InlineData("stored-procedure-role")]
+    public void Validate_RetiredStoredProcedureKey_FailsAsUnrecognized(string key)
+    {
+        // BifrostQL never loaded stored procedures; these keys were accepted and did nothing.
+        // With the inert model removed they are unknown keys, so a config still setting one
+        // fails at load instead of implying procedures are filtered or role-gated.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t.WithSchema("dbo").WithPrimaryKey("Id"))
+            .WithModelMetadata(key, ".*")
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain($":root [{key}]: unrecognized database metadata key");
+    }
 }

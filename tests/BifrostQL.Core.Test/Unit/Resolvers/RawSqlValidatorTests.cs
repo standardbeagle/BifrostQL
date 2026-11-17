@@ -31,7 +31,7 @@ public sealed class RawSqlValidatorTests
         }
     }
 
-    // Access internal SchemaGenerator via reflection, matching existing test patterns (StoredProcedureTests)
+    // Access internal SchemaGenerator via reflection, matching existing test patterns
     private static readonly MethodInfo SchemaTextFromModelMethod = typeof(DbSchema).Assembly
         .GetType("BifrostQL.Core.Schema.SchemaGenerator")!
         .GetMethod("SchemaTextFromModel", BindingFlags.Static | BindingFlags.Public)!;

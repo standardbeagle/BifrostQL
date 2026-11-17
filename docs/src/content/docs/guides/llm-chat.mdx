@@ -66,6 +66,7 @@ app.UseBifrostChat(chat =>
     chat.Path = "/_chat";            // default
     chat.HistoryLimit = 50;          // default
     chat.MaxMessageLength = 32768;   // default; chars per message, 400 when exceeded
+    chat.MaxMediaBytes = 16 * 1024 * 1024; // default; largest value the media route serves, 413 when exceeded
     chat.SystemPrompt = "You answer questions about the ACME order database.";
     // chat.GraphQlEndpoint = "/graphql"; // required only with multiple endpoints
 });

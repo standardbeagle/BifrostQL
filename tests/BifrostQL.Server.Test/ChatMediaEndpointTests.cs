@@ -100,6 +100,31 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task Get_media_over_the_size_cap_is_413()
+        {
+            // The route used to serve any stored size, decoding the whole value per fetch.
+            var capped = await _h.StartAsync(extraMetadata: MediaMetadata,
+                configureChat: o => o.MaxMediaBytes = PngBytes.Length - 1);
+            using (var over = await capped.SendAsync(BuildGet("/_chat/media/documents/1", "tenant-a")))
+            {
+                over.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+                (await over.Content.ReadAsStringAsync()).Should().Contain("media-too-large");
+            }
+        }
+
+        [Fact]
+        public async Task Get_media_exactly_at_the_size_cap_is_served()
+        {
+            var client = await _h.StartAsync(extraMetadata: MediaMetadata,
+                configureChat: o => o.MaxMediaBytes = PngBytes.Length);
+
+            using var response = await client.SendAsync(BuildGet("/_chat/media/documents/1", "tenant-a"));
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            (await response.Content.ReadAsByteArrayAsync()).Should().Equal(PngBytes);
+        }
+
+        [Fact]
         public async Task Get_media_response_carries_nosniff_and_content_disposition()
         {
             // Stored bytes are attacker-controlled content served from this origin:

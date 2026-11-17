@@ -63,6 +63,13 @@ namespace BifrostQL.Server
         /// no assistant row. Default: 8.
         /// </summary>
         public int MaxToolIterations { get; set; } = ChatCompletionToolOptions.DefaultMaxToolIterations;
+
+        /// <summary>
+        /// Largest stored media value the <c>GET {Path}/media/{table}/{id}</c> route serves, in
+        /// decoded bytes. The size is checked from the stored value's length before anything is
+        /// decoded; a larger value answers 413 <c>media-too-large</c>. Default: 16 MiB.
+        /// </summary>
+        public int MaxMediaBytes { get; set; } = 16 * 1024 * 1024;
     }
 
     /// <summary>
@@ -471,31 +478,48 @@ namespace BifrostQL.Server
                 }, context.RequestAborted);
 
                 // The read seam materializes blob columns as BASE64 (ReaderEnum.DbConvert);
-                // byte[] is accepted for providers that hand bytes through untouched.
+                // byte[] is accepted for providers that hand bytes through untouched. The cap
+                // is checked on the decoded size before decoding, and base64 decodes once into a
+                // pooled buffer rather than a fresh large-object-heap array per fetch.
                 var value = result.Rows.Count == 1 ? result.Rows[0][mediaColumn.GraphQlName] : null;
-                var bytes = value switch
+                long? size = value switch
                 {
-                    byte[] raw => raw,
-                    string base64 => TryDecodeBase64(base64),
+                    byte[] raw => raw.Length,
+                    string base64 => BifrostBlobMiddleware.Base64DecodedLength(base64),
                     _ => null,
                 };
-                if (bytes is null)
+                if (size is null)
                 {
                     await WriteMediaNotFoundAsync(context);
                     return;
                 }
+                if (size > _options.MaxMediaBytes)
+                {
+                    await WriteErrorAsync(context, StatusCodes.Status413PayloadTooLarge, "media-too-large",
+                        $"The media value exceeds the {_options.MaxMediaBytes}-byte limit.");
+                    return;
+                }
 
-                context.Response.StatusCode = StatusCodes.Status200OK;
-                var sniffed = MediaContentSniffer.SniffImageMediaType(bytes);
-                // Only magic-byte-verified image types render inline; anything else
-                // is an attachment so stored markup can never execute on this origin.
-                StoredBinaryContentHeaders.Apply(
-                    context.Response,
-                    sniffed ?? MediaContentSniffer.DefaultContentType,
-                    $"{tableName}-{rawRowId}{MediaExtension(sniffed)}",
-                    inline: sniffed is not null);
-                context.Response.ContentLength = bytes.Length;
-                await context.Response.Body.WriteAsync(bytes, context.RequestAborted);
+                if (value is byte[] bytes)
+                {
+                    await WriteMediaAsync(context, tableName, rawRowId, bytes);
+                    return;
+                }
+
+                var rented = System.Buffers.ArrayPool<byte>.Shared.Rent((int)size.Value);
+                try
+                {
+                    if (!Convert.TryFromBase64String((string)value!, rented, out var written))
+                    {
+                        await WriteMediaNotFoundAsync(context);
+                        return;
+                    }
+                    await WriteMediaAsync(context, tableName, rawRowId, rented.AsMemory(0, written));
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+                }
             }
             catch (BifrostExecutionError ex)
             {
@@ -538,10 +562,20 @@ namespace BifrostQL.Server
             _ => ".bin",
         };
 
-        private static byte[]? TryDecodeBase64(string base64)
+        private static async Task WriteMediaAsync(
+            HttpContext context, string tableName, string rawRowId, ReadOnlyMemory<byte> bytes)
         {
-            try { return Convert.FromBase64String(base64); }
-            catch (FormatException) { return null; }
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            var sniffed = MediaContentSniffer.SniffImageMediaType(bytes.Span);
+            // Only magic-byte-verified image types render inline; anything else
+            // is an attachment so stored markup can never execute on this origin.
+            StoredBinaryContentHeaders.Apply(
+                context.Response,
+                sniffed ?? MediaContentSniffer.DefaultContentType,
+                $"{tableName}-{rawRowId}{MediaExtension(sniffed)}",
+                inline: sniffed is not null);
+            context.Response.ContentLength = bytes.Length;
+            await context.Response.Body.WriteAsync(bytes, context.RequestAborted);
         }
 
         private static Task WriteMediaNotFoundAsync(HttpContext context) =>

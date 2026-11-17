@@ -41,6 +41,9 @@ namespace BifrostQL.Server
             if (options.MaxToolIterations < 1)
                 throw new InvalidOperationException(
                     "BifrostChatOptions.MaxToolIterations must be at least 1.");
+            if (options.MaxMediaBytes < 1)
+                throw new InvalidOperationException(
+                    "BifrostChatOptions.MaxMediaBytes must be at least 1.");
 
             var services = app.ApplicationServices;
             if (services.GetService<IQueryIntentExecutor>() is null

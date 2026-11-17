@@ -201,7 +201,9 @@ it, weigh:
 - **Data egress** — with vision on, image bytes leave your infrastructure
   for the model provider. With vision off, `view_image_id` does not exist in
   the tool schema and media bytes never leave the server — clients fetch
-  them through the auth-gated media route instead.
+  them through the auth-gated media route instead. That route serves values up
+  to `BifrostChatOptions.MaxMediaBytes` (default 16 MiB, checked before
+  decoding); a larger stored value answers `413 media-too-large`.
 
 ## Custom connectors
 

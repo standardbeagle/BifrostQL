@@ -36,7 +36,7 @@ namespace BifrostQL.Server.Pgwire
 
         public Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
-            string sql,
+            PgSql sql,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken)
@@ -44,13 +44,13 @@ namespace BifrostQL.Server.Pgwire
 
         public async Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
-            string sql,
+            PgSql sql,
             IReadOnlyList<object?>? parameters,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken)
         {
-            var stmt = PgSqlSubsetParser.Parse(sql);
+            var stmt = sql.Statement;
             var binding = new ParameterBinding(parameters);
             var model = await executor.GetModelAsync(endpoint);
             var fromTable = ResolveTable(model, stmt.From);

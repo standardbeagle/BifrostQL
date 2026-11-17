@@ -451,7 +451,13 @@ namespace BifrostQL.Server.Pgwire
             Stream stream, IDictionary<string, object?> userContext,
             PgCancellationRegistration cancellation, CancellationToken ct)
         {
-            var extended = CreateExtendedProcessor(stream, userContext, cancellation, ct);
+            // The query seams are resolved once per connection and shared by the simple and the
+            // extended paths, so both run one security pipeline and one set of encoders.
+            var seams = ResolveQuerySeams();
+            var extended = new PgExtendedQueryProcessor(
+                stream, userContext, seams.Executor, seams.Translator, seams.Catalog,
+                _options.Endpoint, cancellation, ct, _logger,
+                _options.MaxPreparedStatements, _options.MaxPortals);
 
             while (true)
             {
@@ -474,7 +480,7 @@ namespace BifrostQL.Server.Pgwire
                         // A simple query is an implicit sync point: it is refused while the
                         // extended protocol is skipping to a Sync, matching pg semantics.
                         if (!extended.IsSkipping)
-                            await HandleSimpleQueryAsync(stream, message.Body, userContext, cancellation, ct);
+                            await HandleSimpleQueryAsync(stream, message.Body, seams, userContext, cancellation, ct);
                         break;
 
                     case PgWireProtocol.ParseMessage:
@@ -498,24 +504,17 @@ namespace BifrostQL.Server.Pgwire
             }
         }
 
-        /// <summary>
-        /// Builds the per-connection extended query protocol driver, resolving the SAME
-        /// executor/translator/catalog seams the simple path uses so both share one security
-        /// pipeline and one set of encoders.
-        /// </summary>
-        private PgExtendedQueryProcessor CreateExtendedProcessor(
-            Stream stream, IDictionary<string, object?> userContext,
-            PgCancellationRegistration cancellation, CancellationToken ct)
+        /// <summary>The executor/translator/catalog seams one connection's queries run through.</summary>
+        private sealed record PgQuerySeams(
+            IQueryIntentExecutor Executor, IPgQueryTranslator Translator, IPgCatalogResponder? Catalog);
+
+        private PgQuerySeams ResolveQuerySeams()
         {
             var executor = _services.GetService<IQueryIntentExecutor>()
                 ?? throw new BifrostExecutionError("pgwire endpoint has no registered query executor.");
             var translator = _services.GetService<IPgQueryTranslator>()
                 ?? throw new BifrostExecutionError("pgwire endpoint has no registered query translator.");
-            var catalog = _services.GetService<IPgCatalogResponder>();
-            return new PgExtendedQueryProcessor(
-                stream, userContext, executor, translator, catalog,
-                _options.Endpoint, cancellation, ct, _logger,
-                _options.MaxPreparedStatements, _options.MaxPortals);
+            return new PgQuerySeams(executor, translator, _services.GetService<IPgCatalogResponder>());
         }
 
         /// <summary>
@@ -530,7 +529,7 @@ namespace BifrostQL.Server.Pgwire
         /// handler untouched.
         /// </summary>
         private async Task HandleSimpleQueryAsync(
-            Stream stream, byte[] body, IDictionary<string, object?> userContext,
+            Stream stream, byte[] body, PgQuerySeams seams, IDictionary<string, object?> userContext,
             PgCancellationRegistration cancellation, CancellationToken ct)
         {
             // Open a per-query cancel scope so a matching CancelRequest aborts THIS query while
@@ -538,9 +537,9 @@ namespace BifrostQL.Server.Pgwire
             var queryToken = cancellation.BeginQuery(ct);
             try
             {
-                var sql = Encoding.UTF8.GetString(TrimTrailingNul(body));
-                var executor = _services.GetService<IQueryIntentExecutor>()
-                    ?? throw new BifrostExecutionError("pgwire endpoint has no registered query executor.");
+                // One PgSql per query: the catalog responder and the translator share its parse.
+                var sql = new PgSql(Encoding.UTF8.GetString(TrimTrailingNul(body)));
+                var executor = seams.Executor;
 
                 // Catalog / introspection queries (psql \d, BI-tool schema discovery) are
                 // answered from a DbModel-derived, identity-filtered projection — NOT from a
@@ -548,7 +547,7 @@ namespace BifrostQL.Server.Pgwire
                 // normal SQL read path below is unchanged. The projection runs under the
                 // authenticated userContext and reuses the query path's authoritative table/
                 // column visibility check, so it is not a security bypass.
-                var catalog = _services.GetService<IPgCatalogResponder>();
+                var catalog = seams.Catalog;
                 if (catalog is not null)
                 {
                     var response = await catalog.TryRespondAsync(executor, sql, userContext, _options.Endpoint, queryToken);
@@ -560,10 +559,7 @@ namespace BifrostQL.Server.Pgwire
                     }
                 }
 
-                var translator = _services.GetService<IPgQueryTranslator>()
-                    ?? throw new BifrostExecutionError("pgwire endpoint has no registered query translator.");
-
-                var plan = await translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, queryToken);
+                var plan = await seams.Translator.TranslateAsync(executor, sql, userContext, _options.Endpoint, queryToken);
                 var result = await executor.ExecuteAsync(plan.Intent, queryToken);
                 var rows = plan.BoundRows(result.Rows);
 

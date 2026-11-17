@@ -59,6 +59,40 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Simple_queries_resolve_the_query_seams_once_per_connection()
+        {
+            var executor = FakeExecutor(UsersTable(), Array.Empty<IReadOnlyDictionary<string, object?>>(), out _);
+            CountingServiceProvider? services = null;
+            await using var fixture = await PgSession.StartAsync(
+                executor, wrapServices: inner => services = new CountingServiceProvider(inner));
+
+            for (var i = 0; i < 3; i++)
+            {
+                await fixture.Client.SendQueryAsync("SELECT id FROM users");
+                (await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout)).HasError.Should().BeFalse();
+            }
+
+            services!.Lookups(typeof(IQueryIntentExecutor)).Should().Be(1);
+            services.Lookups(typeof(IPgQueryTranslator)).Should().Be(1);
+        }
+
+        private sealed class CountingServiceProvider : IServiceProvider
+        {
+            private readonly IServiceProvider _inner;
+            private readonly System.Collections.Concurrent.ConcurrentDictionary<Type, int> _lookups = new();
+
+            public CountingServiceProvider(IServiceProvider inner) => _inner = inner;
+
+            public int Lookups(Type type) => _lookups.TryGetValue(type, out var n) ? n : 0;
+
+            public object? GetService(Type serviceType)
+            {
+                _lookups.AddOrUpdate(serviceType, 1, (_, n) => n + 1);
+                return _inner.GetService(serviceType);
+            }
+        }
+
+        [Fact]
         public async Task Select_MultipleRows_ReportsCommandCompleteCountAndIdleReadyForQuery()
         {
             var rows = Enumerable.Range(1, 5)
@@ -478,12 +512,17 @@ namespace BifrostQL.Server.Test.Pgwire
                 Client = client;
             }
 
-            public static async Task<PgSession> StartAsync(IQueryIntentExecutor executor)
+            public static async Task<PgSession> StartAsync(
+                IQueryIntentExecutor executor,
+                Func<Stream, Stream>? wrapServerStream = null,
+                Func<IServiceProvider, IServiceProvider>? wrapServices = null)
             {
-                var services = new ServiceCollection()
+                IServiceProvider services = new ServiceCollection()
                     .AddSingleton(executor)
                     .AddSingleton<IPgQueryTranslator, PgSubsetQueryTranslator>()
                     .BuildServiceProvider();
+                if (wrapServices is not null)
+                    services = wrapServices(services);
 
                 var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
                 var options = new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, AllowCleartextPasswordWithoutTls = true };
@@ -498,7 +537,10 @@ namespace BifrostQL.Server.Test.Pgwire
                 await connectTask;
 
                 var handler = new PgConnectionHandler(store, BifrostAuthContextFactory.Instance, services, options);
-                var serverTask = handler.HandleConnectionAsync(serverSocket.GetStream(), CancellationToken.None);
+                Stream serverStream = serverSocket.GetStream();
+                if (wrapServerStream is not null)
+                    serverStream = wrapServerStream(serverStream);
+                var serverTask = handler.HandleConnectionAsync(serverStream, CancellationToken.None);
 
                 var client = new PgHandshakeClient(clientSocket.GetStream());
                 await client.SendStartupAsync("alice");

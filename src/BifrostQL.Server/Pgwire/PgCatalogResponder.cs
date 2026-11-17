@@ -30,7 +30,7 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         Task<PgCatalogResponse?> TryRespondAsync(
             IQueryIntentExecutor executor,
-            string sql,
+            PgSql sql,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken);
@@ -90,7 +90,7 @@ namespace BifrostQL.Server.Pgwire
 
         public async Task<PgCatalogResponse?> TryRespondAsync(
             IQueryIntentExecutor executor,
-            string sql,
+            PgSql sql,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken)
@@ -99,7 +99,7 @@ namespace BifrostQL.Server.Pgwire
 
             // 1. Scalar introspection functions/keywords (version(), current_schema(), …)
             //    are not in the SELECT-FROM grammar, so match them before parsing.
-            var scalar = TryScalar(sql, userContext);
+            var scalar = TryScalar(sql.Text, userContext);
             if (scalar is not null)
                 return scalar;
 
@@ -107,7 +107,7 @@ namespace BifrostQL.Server.Pgwire
             //    the relkind / pg_table_is_visible signature. Answered by an in-memory
             //    join over the identity-visible projection — the subset parser does not
             //    accept this shape and is intentionally not loosened for it.
-            var describe = DescribeRelationsPattern.Match(sql);
+            var describe = DescribeRelationsPattern.Match(sql.Text);
             if (describe.Success)
             {
                 var describeModel = await executor.GetModelAsync(endpoint);
@@ -124,7 +124,7 @@ namespace BifrostQL.Server.Pgwire
             PgSelectStatement stmt;
             try
             {
-                stmt = PgSqlSubsetParser.Parse(sql);
+                stmt = sql.Statement;
             }
             catch (PgQueryTranslationException)
             {

@@ -91,7 +91,7 @@ namespace BifrostQL.Server.Pgwire
     {
         Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
-            string sql,
+            PgSql sql,
             IDictionary<string, object?> userContext,
             string? endpoint,
             CancellationToken cancellationToken);
@@ -107,7 +107,7 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         Task<PgQueryPlan> TranslateAsync(
             IQueryIntentExecutor executor,
-            string sql,
+            PgSql sql,
             IReadOnlyList<object?>? parameters,
             IDictionary<string, object?> userContext,
             string? endpoint,

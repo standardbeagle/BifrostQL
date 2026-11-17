@@ -640,7 +640,7 @@ namespace BifrostQL.Server.Pgwire
     /// type OIDs (may be shorter than the actual <c>$N</c> count, in which case the extra
     /// placeholders are inferred). Immutable — re-Parse replaces the map entry.
     /// </summary>
-    internal sealed record PgPreparedStatement(string Sql, int[] ParameterTypeOids);
+    internal sealed record PgPreparedStatement(PgSql Sql, int[] ParameterTypeOids);
 
     /// <summary>
     /// A bound portal: the prepared statement plus this bind's parameter values, and the

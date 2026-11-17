@@ -53,8 +53,10 @@ mutation {
 ```
 
 `rejectDeferredChangeSet(changeSetId: ID!)` returns `DeferredUndoResult`. Queue entries
-are tenant-scoped, require readable policy on every affected table, and are omitted when
-configuration or policy evaluation fails. Approval and rejection additionally require
+are tenant-scoped (a reviewer with no tenant claim sees the change sets recorded without a
+tenant, which is every change set on a host without tenants), require readable policy on
+every affected table, and are omitted when configuration or policy evaluation fails; each
+omission is logged as a warning with the change set id. Approval and rejection additionally require
 each table's approver role and honor `self-approve: false`.
 
 Bulk deferred-effects controls in the edit-db UI remain a follow-up. This guide documents

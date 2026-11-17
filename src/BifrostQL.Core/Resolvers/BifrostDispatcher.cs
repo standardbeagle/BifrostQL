@@ -11,6 +11,7 @@ using GraphQL.Resolvers;
 using GraphQL.Types;
 using GraphQL.Utilities;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Resolvers
 {
@@ -321,7 +322,8 @@ namespace BifrostQL.Core.Resolvers
                 var identity = PolicyIdentity.FromUserContext(request.UserContext,
                     request.Model.GetMetadataValue(MetadataKeys.Security.TenantContextKey));
                 var queue = new DeferredReviewQueue(request.Model, request.ConnFactory, mutations, new PolicyEvaluator(),
-                    endpoint: request.Endpoint);
+                    endpoint: request.Endpoint,
+                    logger: context.RequestServices?.GetService<ILogger<DeferredReviewQueue>>());
                 var id = context.FieldName == "deferredReviewQueue"
                     ? 0
                     : context.GetArgument<long>("changeSetId");

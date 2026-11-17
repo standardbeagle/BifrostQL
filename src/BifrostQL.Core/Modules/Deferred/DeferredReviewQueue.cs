@@ -5,6 +5,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.Cdc;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Core.Modules.Deferred;
 
@@ -17,34 +18,14 @@ public sealed class DeferredReviewQueue
     private readonly PolicyEvaluator _policies;
     private readonly Func<DateTimeOffset> _clock;
     private readonly string? _endpoint;
+    private readonly ILogger? _logger;
 
     public DeferredReviewQueue(IDbModel model, IDbConnFactory connections, IMutationIntentExecutor mutations,
-        PolicyEvaluator policies, Func<DateTimeOffset>? clock = null, string? endpoint = null)
-    { _model = model; _connections = connections; _mutations = mutations; _policies = policies; _clock = clock ?? (() => DateTimeOffset.UtcNow); _endpoint = endpoint; }
+        PolicyEvaluator policies, Func<DateTimeOffset>? clock = null, string? endpoint = null, ILogger? logger = null)
+    { _model = model; _connections = connections; _mutations = mutations; _policies = policies; _clock = clock ?? (() => DateTimeOffset.UtcNow); _endpoint = endpoint; _logger = logger; }
 
-    public async Task<IReadOnlyList<DeferredReviewItem>> ListAsync(AppIdentity identity, CancellationToken ct = default)
-    {
-        var result = new List<DeferredReviewItem>();
-        await using var connection = _connections.GetConnection(); await connection.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        var table = RequireChangeSets(); var d = _connections.Dialect;
-        command.CommandText = $"SELECT {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Requester)}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tenant)}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tables)}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.CreatedAt)} FROM {d.TableReference(table.TableSchema, table.DbName)} WHERE {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@held AND {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tenant)}=@tenant";
-        Add(command, "@held", "held"); Add(command, "@tenant", identity.TenantId);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var names = JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? Array.Empty<string>();
-            try
-            {
-                var tables = names.Select(RequireTable).ToArray();
-                if (tables.Length == 0 || tables.Any(t => DeferredConfig.FromTable(t).EventHold != DeferredEventHold.UntilApproved)) continue;
-                if (tables.Any(t => !_policies.CanAct(PolicyConfigCollector.FromTable(t), PolicyAction.Read, identity).Allowed)) continue;
-                result.Add(new(Convert.ToInt64(reader.GetValue(0)), reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), names, DateTimeOffset.Parse(reader.GetValue(4).ToString()!)));
-            }
-            catch { /* configuration/policy evaluation failures are invisible (fail closed) */ }
-        }
-        return result;
-    }
+    public Task<IReadOnlyList<DeferredReviewItem>> ListAsync(AppIdentity identity, CancellationToken ct = default)
+        => ReadVisibleAsync(identity, changeSetId: null, ct);
 
     public async Task<bool> ApproveAsync(long id, AppIdentity identity, CancellationToken ct = default)
     {
@@ -62,9 +43,48 @@ public sealed class DeferredReviewQueue
             .RejectApprovalHoldAsync(id, mapper.ToUserContext(identity), ct);
     }
 
+    // The held, until-approved change sets of the caller's tenant that the caller may read: all of
+    // them, or only the one with changeSetId. A tenant-less caller sees the tenant-less change sets
+    // (a host without tenants); `tenant = NULL` matched nothing, so such a host could never review.
+    private async Task<IReadOnlyList<DeferredReviewItem>> ReadVisibleAsync(
+        AppIdentity identity, long? changeSetId, CancellationToken ct)
+    {
+        var result = new List<DeferredReviewItem>();
+        await using var connection = _connections.GetConnection(); await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        var table = RequireChangeSets(); var d = _connections.Dialect;
+        var tenantColumn = d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tenant);
+        var tenantPredicate = identity.TenantId is null ? $"{tenantColumn} IS NULL" : $"{tenantColumn}=@tenant";
+        var idPredicate = changeSetId is null ? "" : $" AND {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id";
+        command.CommandText = $"SELECT {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Requester)}, {tenantColumn}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Tables)}, {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.CreatedAt)} FROM {d.TableReference(table.TableSchema, table.DbName)} WHERE {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@held AND {tenantPredicate}{idPredicate}";
+        Add(command, "@held", "held");
+        if (identity.TenantId is not null) Add(command, "@tenant", identity.TenantId);
+        if (changeSetId is not null) Add(command, "@id", changeSetId.Value);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var id = Convert.ToInt64(reader.GetValue(0));
+            try
+            {
+                var names = JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? Array.Empty<string>();
+                var tables = names.Select(RequireTable).ToArray();
+                if (tables.Length == 0 || tables.Any(t => DeferredConfig.FromTable(t).EventHold != DeferredEventHold.UntilApproved)) continue;
+                if (tables.Any(t => !_policies.CanAct(PolicyConfigCollector.FromTable(t), PolicyAction.Read, identity).Allowed)) continue;
+                result.Add(new(id, reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), names, DeferredTimestamp.ReadUtc(reader.GetValue(4))));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError or JsonException)
+            {
+                // A change set whose tables are no longer configured, or whose config or policy
+                // does not parse, stays hidden (fail closed) — and the operator hears about it.
+                _logger?.LogWarning(ex, "Deferred change set {ChangeSetId} is hidden from review: its configuration could not be evaluated.", id);
+            }
+        }
+        return result;
+    }
+
     private async Task<DeferredReviewItem?> LoadAuthorizedAsync(long id, AppIdentity identity, CancellationToken ct)
     {
-        var item = (await ListAsync(identity, ct)).SingleOrDefault(x => x.ChangeSetId == id);
+        var item = (await ReadVisibleAsync(identity, id, ct)).SingleOrDefault();
         if (item is null) return null;
         foreach (var name in item.Tables)
         {

@@ -406,6 +406,29 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=93")).Should().Be("held");
     }
 
+    // The hook writes the expiry as a UTC DateTime, which the provider stores with no zone
+    // marker. Read back through the host's zone, a window that closed an hour ago looked open on
+    // a host west of UTC (and an open one looked closed east of it). The bug needs a non-UTC host
+    // zone to show: run under TZ=America/Chicago (or any non-UTC zone) to replay the RED.
+    [Fact]
+    public async Task UnmarkedExpiry_IsReadAsUtc_WhateverTheHostZone()
+    {
+        var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
+        var clock = DateTimeOffset.Parse("2026-07-20T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        await SeedChangeSetAsync(101, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("UPDATE change_sets SET undo_window_expires_at='2026-07-20 09:00:00' WHERE id=101");
+        await SeedChangeSetAsync(102, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("UPDATE change_sets SET undo_window_expires_at='2026-07-20 11:00:00' WHERE id=102");
+        await Exec("UPDATE widgets SET name='edited', version=2 WHERE id=1");
+        var engine = new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model), () => clock);
+
+        Func<Task> closed = async () => await engine.UndoAsync(101, new Dictionary<string, object?>());
+        await closed.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*undo window has expired*");
+
+        (await engine.UndoAsync(102, new Dictionary<string, object?>()))
+            .Should().Be(new DeferredUndoResult(102, 1, 0, false), "an hour of window is left in UTC");
+    }
+
     [Fact]
     public async Task ReviewRejection_ClaimsAndCompensatesExpiredUntilApprovedHold()
     {
@@ -503,6 +526,37 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         result.Errors.Should().BeNullOrEmpty();
         GraphQlJson(result).Should().Contain("false");
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=97")).Should().Be("held");
+    }
+
+    // A host without tenants stores a NULL tenant and its reviewers carry none; `tenant = NULL`
+    // matched nothing, so nothing on such a host could ever be reviewed.
+    [Fact]
+    public async Task ReviewQueue_OnAHostWithoutTenants_ListsAndApprovesTheTenantlessChangeSet()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(103, "requester", "unused");
+        await Exec("UPDATE change_sets SET tenant=NULL WHERE id=103");
+        var reviewer = new AppIdentity("reviewer", "test", tenantId: null, roles: ["manager"]);
+        var queue = new DeferredReviewQueue(model, new SqliteDbConnFactory(ConnString),
+            BuildMutationExecutor(model), new PolicyEvaluator());
+
+        (await queue.ListAsync(reviewer)).Select(item => item.ChangeSetId).Should().Equal(103L);
+        (await queue.ApproveAsync(103, reviewer)).Should().BeTrue();
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=103")).Should().Be("released");
+    }
+
+    [Fact]
+    public async Task ReviewQueue_ATenantedReviewer_DoesNotSeeTenantlessChangeSets()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(104, "requester", "unused");
+        await Exec("UPDATE change_sets SET tenant=NULL WHERE id=104");
+        var queue = new DeferredReviewQueue(model, new SqliteDbConnFactory(ConnString),
+            BuildMutationExecutor(model), new PolicyEvaluator());
+
+        (await queue.ListAsync(Reviewer("reviewer", "tenant-1"))).Should().BeEmpty();
+        (await queue.ApproveAsync(104, Reviewer("reviewer", "tenant-1"))).Should().BeFalse();
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=104")).Should().Be("held");
     }
 
     [Fact]

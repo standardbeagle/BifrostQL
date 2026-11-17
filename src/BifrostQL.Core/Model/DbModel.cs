@@ -534,11 +534,15 @@ namespace BifrostQL.Core.Model
             var prefixedTables = DeduplicateTableGraphQlNames(
                 tables.Select(t => t.WithSchemaPrefix(schemaPrefixOptions)).ToList());
 
+            static bool IsHiddenTable(IDbTable t) =>
+                t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden)
+                || BifrostSystemTables.IsAlwaysHidden(t.DbName);
+
             var model =
                 new DbModel()
                 {
-                    Tables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden) == false).ToList(),
-                    HiddenTables = prefixedTables.Where(t => t.CompareMetadata(MetadataKeys.Ui.Visibility, MetadataKeys.Ui.Hidden)).ToList(),
+                    Tables = prefixedTables.Where(t => !IsHiddenTable(t)).ToList(),
+                    HiddenTables = prefixedTables.Where(IsHiddenTable).ToList(),
                     Metadata = dbMetadata,
                     DefaultSchema = schemaPrefixOptions.DefaultSchema,
                 };

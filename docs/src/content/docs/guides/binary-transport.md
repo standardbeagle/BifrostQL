@@ -270,7 +270,7 @@ CLI flags:
 | `--header <key=value>` | HTTP header to send on the WebSocket handshake (repeatable). |
 | `-h`, `--help` | Show help and exit. |
 
-The interfaces describe rows as they arrive in JSON, over GraphQL or in a binary `Result` payload. A 64-bit integer (`int64`, a `bigint` column) is a `string`, because the server's `BigInt` scalar writes every value as a decimal string, so a value past 2^53 keeps every digit. A `decimal` column is a proto `string` for the same reason: the `Decimal` scalar writes its exact decimal text, never a double. Members of a `oneof`, such as the per-table `<table>_row` fields of `BifrostMessage`, are optional properties, since at most one is set.
+The interfaces describe rows as they arrive in JSON, over GraphQL or in a binary `Result` payload. A 64-bit integer (`int64`, a `bigint` column) is a `string`, because the server's `BigInt` scalar writes every value as a decimal string, so a value past 2^53 keeps every digit. A `decimal` column is a proto `string` for the same reason: the `Decimal` scalar writes its exact decimal text, never a double. A `bytes` field (a `binary`, `varbinary` or `image` column) is a base64 `string`, because that is how the server writes blob values into JSON; decode it yourself when you need the bytes. Members of a `oneof`, such as the per-table `<table>_row` fields of `BifrostMessage`, are optional properties, since at most one is set.
 
 A `--endpoint <ws-url>` flag is pre-wired for fetching the `.proto` text directly from a running server, but the server does not yet expose its proto schema as a GraphQL field. Until that lands, prefer `--proto-file` against a checked-in copy of the schema (the .NET `ProtoSchemaGeneratorTests` test can capture one for you).
 

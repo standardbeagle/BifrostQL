@@ -105,7 +105,7 @@ describe('@bifrostql/types barrel', () => {
     const order: OrderRow = {
       orderId: 1,
       total: null,
-      payload: new Uint8Array(),
+      payload: 'AAEC',
       status: Status.PENDING,
     };
     expectTypeOf(order).toMatchTypeOf<OrderRow>();

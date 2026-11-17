@@ -182,7 +182,42 @@ describe("ts-emitter", () => {
     expect(mapProtoType("double")).toBe("number");
     expect(mapProtoType("string")).toBe("string");
     expect(mapProtoType("bool")).toBe("boolean");
-    expect(mapProtoType("bytes")).toBe("Uint8Array");
+    // Blob columns reach the client as base64 strings (ReaderEnum writes
+    // Convert.ToBase64String), never as raw bytes.
+    expect(mapProtoType("bytes")).toBe("string");
+  });
+
+  it("types every scalar field as the value JSON.parse yields for a server-shaped row", () => {
+    // A row as the server serializes it: blob columns via Convert.ToBase64String,
+    // 64-bit integers as decimal strings (BigInt scalar). The binary client and
+    // GraphQL over HTTP both hand the consumer JSON.parse of this text.
+    const schema = parseProto(`
+      syntax = "proto3";
+      message BlobRow {
+        int32 id = 1;
+        int64 big = 2;
+        double ratio = 3;
+        string name = 4;
+        bool active = 5;
+        bytes payload = 6;
+      }
+    `);
+    const serverJson = JSON.stringify({
+      id: 7,
+      big: "9007199254740993",
+      ratio: 0.5,
+      name: "row",
+      active: true,
+      payload: Buffer.from([0, 1, 2, 255]).toString("base64"),
+    });
+    const decoded = JSON.parse(serverJson) as Record<string, unknown>;
+
+    const emitted = emitMessage(schema.messages[0]!);
+    for (const field of schema.messages[0]!.fields) {
+      const declared = new RegExp(`^  ${field.name}: (\\w+);$`, "m").exec(emitted)?.[1];
+      expect(declared, field.name).toBe(mapProtoType(field.type));
+      expect(typeof decoded[field.name], `${field.name} (${field.type})`).toBe(declared);
+    }
   });
 
   it("passes message references through unchanged", () => {

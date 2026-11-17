@@ -7,7 +7,7 @@
  *   - float / double                                → number
  *   - string                                        → string
  *   - bool                                          → boolean
- *   - bytes                                         → Uint8Array
+ *   - bytes                                         → string (base64)
  *   - repeated T                                    → T[]
  *   - optional T                                    → T | null
  *   - oneof member T                                → optional property `?: T`
@@ -44,7 +44,7 @@ const SCALAR_MAP: Readonly<Record<string, string>> = {
   double: "number",
   string: "string",
   bool: "boolean",
-  bytes: "Uint8Array",
+  bytes: "string",
 };
 
 /** Returns the TypeScript type expression for a single proto type token. */

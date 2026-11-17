@@ -9,7 +9,9 @@ bifrostql-codegen --proto-file schema.proto --out packages/@bifrostql/types/src/
 
 The interfaces describe rows as they arrive in JSON. `int64` maps to `string`
 (the server's `BigInt` scalar writes every value as a decimal string, so a key
-past 2^53 is never rounded by `JSON.parse`), and `oneof` members are optional
+past 2^53 is never rounded by `JSON.parse`), `bytes` maps to `string` (blob
+columns arrive base64-encoded; decode with `Uint8Array.from(atob(v), c => c.charCodeAt(0))`
+or `Buffer.from(v, "base64")`), and `oneof` members are optional
 properties.
 
 ## Grant catalogue

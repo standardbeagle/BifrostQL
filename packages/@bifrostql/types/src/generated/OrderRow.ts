@@ -5,6 +5,6 @@ import { Status } from './Status.js';
 export interface OrderRow {
   orderId: number;
   total: string | null;
-  payload: Uint8Array;
+  payload: string;
   status: Status;
 }

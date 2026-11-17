@@ -360,6 +360,31 @@ public class ModelConfigValidatorSecurityTests
             .And.Contain(MetadataKeys.Policy.RowScope);
     }
 
+    [Theory]
+    [InlineData("tenant_id = tenant_id")]
+    [InlineData("tenant_id = {tenant_id} = x")]
+    [InlineData("tenant_id == {tenant_id}")]
+    [InlineData("tenant_id = {}")]
+    public void Validate_PolicyRowScopeMalformed_ThrowsAtLoad(string expression)
+    {
+        // RowScopeCompiler refuses each of these on every request to the table
+        // ("Row-scope authorization policy is misconfigured"), so the table would load
+        // and then be unusable. The validator must refuse them with the same grammar.
+        var model = DbModelTestFixture.Create()
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("id")
+                .WithColumn("tenant_id", "int")
+                .WithMetadata(MetadataKeys.Policy.RowScope, expression))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(MetadataKeys.Policy.RowScope)
+            .And.Contain(expression);
+    }
+
     [Fact]
     public void Validate_ValidPolicyDenyColumns_DoesNotThrow()
     {

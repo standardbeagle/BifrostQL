@@ -718,31 +718,24 @@ namespace BifrostQL.Core.Model
                 errors.Add(Problem(table, MetadataKeys.Policy.SelfColumn, policy.SelfColumn,
                     "policy-self-column names a column that does not exist on the table"));
 
-            var rowScopeColumn = TryExtractRowScopeColumn(policy.RowScopeExpression);
-            if (rowScopeColumn != null && !DbColumnExists(table, rowScopeColumn))
-                errors.Add(Problem(table, MetadataKeys.Policy.RowScope, rowScopeColumn,
-                    "policy-row-scope references a column that does not exist on the table"));
+            // Split by RowScopeCompiler.TryParse, the grammar the request-time filter compiles:
+            // a shape it refuses would load here and then refuse every read and write.
+            if (policy.RowScopeExpression is { } rowScope)
+            {
+                if (!Auth.RowScopeCompiler.TryParse(rowScope, out var term))
+                    errors.Add(Problem(table, MetadataKeys.Policy.RowScope, rowScope,
+                        "policy-row-scope must have the form 'column = {context-key}'; the row-scope filter " +
+                        "refuses any other shape on every request to the table"));
+                else if (!DbColumnExists(table, term.Column))
+                    errors.Add(Problem(table, MetadataKeys.Policy.RowScope, term.Column,
+                        "policy-row-scope references a column that does not exist on the table"));
+            }
 
             if (table.GetMetadataValue(MetadataKeys.Policy.RowScopeExempt) is { } raw &&
                 raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is var grants &&
                 grants.Length == 0)
                 errors.Add(Problem(table, MetadataKeys.Policy.RowScopeExempt, raw,
                     "policy-row-scope-exempt must contain comma-separated grant names"));
-        }
-
-        // Extracts the LHS column of a "column = {context-key}" row-scope expression
-        // (the only grammar RowScopeCompiler supports). Returns null for a malformed
-        // expression — the compiler itself fails closed on those at runtime, so the
-        // validator does not double-report the shape here, only the column existence.
-        private static string? TryExtractRowScopeColumn(string? expression)
-        {
-            if (string.IsNullOrWhiteSpace(expression))
-                return null;
-            var idx = expression.IndexOf('=');
-            if (idx <= 0)
-                return null;
-            var column = expression[..idx].Trim();
-            return column.Length == 0 ? null : column;
         }
 
         /// <summary>

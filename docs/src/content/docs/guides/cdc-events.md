@@ -156,11 +156,17 @@ the old value:
 
 ### NATS sink
 
-Set `Cdc:NatsUrl` to the NATS server URL. The sink publishes each envelope to a
-subject equal to its CloudEvents `type` **verbatim**
+Set `Cdc:NatsUrl` to the NATS server URL. The sink publishes each envelope through
+JetStream to a subject equal to its CloudEvents `type` **verbatim**
 (`bifrostql.<schema>.<table>.<op>`) and carries the CloudEvents `id` as the
-`Nats-Msg-Id` header, so at-least-once redelivery de-dupes at a JetStream
-consumer.
+JetStream message id (`Nats-Msg-Id`), so at-least-once redelivery de-dupes in the
+stream.
+
+A row is marked dispatched only after the stream acknowledges the publish. Bind a
+JetStream stream to the `bifrostql.>` subjects before enabling the sink: a publish no
+stream captures, a timeout, or an error acknowledgement counts as a failed delivery, so
+the dispatcher backs off, retries, and eventually dead-letters the row instead of losing
+the event.
 
 ## Kafka sink (follow-up, not yet implemented)
 

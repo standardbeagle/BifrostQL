@@ -19,6 +19,8 @@ namespace BifrostQL.Core.Modules.Cdc
         /// <param name="payload">The serialized envelope bytes, published verbatim.</param>
         /// <param name="msgId">The CloudEvents <c>id</c>, carried as the <c>Nats-Msg-Id</c>
         /// header so a JetStream consumer de-duplicates at-least-once redelivery.</param>
+        /// <remarks>Completes only once the broker has stored the message; anything short of
+        /// that (no stream, timeout, error ack) throws.</remarks>
         ValueTask PublishAsync(string subject, byte[] payload, string msgId, CancellationToken ct);
     }
 
@@ -34,14 +36,18 @@ namespace BifrostQL.Core.Modules.Cdc
     /// <see cref="SubjectFor"/> is a pure function of the envelope — no connection needed.</para>
     ///
     /// <para><b>Idempotency.</b> The CloudEvents <c>id</c> (<paramref name="idempotencyKey"/> on
-    /// <see cref="DeliverAsync"/>) becomes the NATS message dedupe id (<c>Nats-Msg-Id</c> header on
-    /// the real adapter), so at-least-once redelivery de-dupes at a JetStream consumer.</para>
+    /// <see cref="DeliverAsync"/>) becomes the JetStream message id (<c>Nats-Msg-Id</c>) on
+    /// the real adapter, so at-least-once redelivery de-dupes in the stream.</para>
+    ///
+    /// <para><b>Acknowledgement.</b> The real adapter publishes through JetStream and returns only
+    /// after the stream's <c>PubAck</c>, so <see cref="EventDeliveryResult.Delivered"/> means the
+    /// broker stored the event. A subject no stream captures is a transient failure.</para>
     ///
     /// <para><b>Error hygiene.</b> A publish fault is logged by exception TYPE only — never a
     /// Bifrost-internal message or the payload (protocol-adapter-security rule 3). Cancellation via
     /// the passed token rethrows so the dispatcher's loop observes cooperative shutdown.</para>
     /// </summary>
-    public sealed class NatsEventSink : IEventSink
+    public sealed class NatsEventSink : IEventSink, IAsyncDisposable
     {
         /// <summary>Configuration key naming the NATS server URL the sink connects to.</summary>
         public const string UrlConfigKey = "Cdc:NatsUrl";
@@ -85,6 +91,10 @@ namespace BifrostQL.Core.Modules.Cdc
                 return EventDeliveryResult.TransientFailure;
             }
         }
+
+        /// <summary>Disposes the publisher (and the NATS connection it owns).</summary>
+        public ValueTask DisposeAsync()
+            => _publisher is IAsyncDisposable disposable ? disposable.DisposeAsync() : ValueTask.CompletedTask;
 
         /// <summary>
         /// The NATS subject for one envelope: its CloudEvents <c>type</c> verbatim, which the

@@ -108,6 +108,57 @@ public class NatsEventSinkTests
         publisher.WasCalled.Should().BeFalse("a blank dedupe id must never reach the wire");
     }
 
+    // The real adapter publishes through JetStream; delivery means a stream stored the message.
+    [Fact]
+    public void JetStream_ack_from_a_stream_counts_as_stored()
+    {
+        var act = () => NatsConnectionPublisher.EnsureStored(new NATS.Client.JetStream.Models.PubAckResponse { Stream = "CDC", Seq = 7 });
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void JetStream_duplicate_ack_counts_as_stored()
+    {
+        var act = () => NatsConnectionPublisher.EnsureStored(
+            new NATS.Client.JetStream.Models.PubAckResponse { Stream = "CDC", Seq = 7, Duplicate = true });
+        act.Should().NotThrow("an earlier attempt with the same message id was stored");
+    }
+
+    [Fact]
+    public void JetStream_error_ack_is_not_stored()
+    {
+        var act = () => NatsConnectionPublisher.EnsureStored(new NATS.Client.JetStream.Models.PubAckResponse
+        {
+            Stream = "CDC",
+            Error = new NATS.Client.JetStream.Models.ApiError { Code = 503, Description = "unavailable" },
+        });
+        act.Should().Throw<NATS.Client.JetStream.NatsJSException>();
+    }
+
+    [Fact]
+    public async Task Publish_fault_from_the_ack_check_reports_transient_failure()
+    {
+        var sink = new NatsEventSink(new ThrowingPublisher(new NATS.Client.JetStream.NatsJSException("no stream")));
+
+        (await sink.DeliverAsync(Envelope(), "key-1", CancellationToken.None))
+            .Should().Be(EventDeliveryResult.TransientFailure);
+    }
+
+    [Fact]
+    public async Task Disposing_the_sink_disposes_its_publisher()
+    {
+        var publisher = new DisposablePublisher();
+        await new NatsEventSink(publisher).DisposeAsync();
+        publisher.Disposed.Should().BeTrue("the sink owns the publisher and the connection behind it");
+    }
+
+    private sealed class DisposablePublisher : INatsPublisher, IAsyncDisposable
+    {
+        public bool Disposed { get; private set; }
+        public ValueTask PublishAsync(string subject, byte[] payload, string msgId, CancellationToken ct) => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
+    }
+
     private sealed class RecordingPublisher : INatsPublisher
     {
         public bool WasCalled { get; private set; }

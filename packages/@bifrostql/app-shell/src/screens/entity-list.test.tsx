@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '@bifrostql/react';
 import { EntityList, buildColumns, entityKeyToQueryName } from './entity-list';
+import { resolveEntityQueryName } from './entity-query-name';
+import type { SchemaTableIdentity } from './entity-query-name';
 import type {
   AppMetadata,
   EntityMetadata,
@@ -26,26 +28,43 @@ const sampleMetadata: AppMetadata = {
   },
 };
 
-/** A `fetch` mock returning the overlay and an empty GraphQL data page. */
-function createFetchMock(metadata: AppMetadata = sampleMetadata) {
-  return vi.fn((input: RequestInfo | URL) => {
+const DBO_USERS: SchemaTableIdentity = {
+  schema: 'dbo',
+  dbName: 'users',
+  graphQlName: 'users',
+};
+
+function jsonResponse(body: unknown): Promise<Response> {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: () => Promise.resolve(body),
+  } as Response);
+}
+
+/**
+ * A `fetch` mock returning the overlay, the server's `_dbSchema` table list,
+ * and an empty GraphQL data page. Every GraphQL query text is recorded.
+ */
+function createFetchMock(
+  metadata: AppMetadata = sampleMetadata,
+  tables: SchemaTableIdentity[] = [DBO_USERS],
+  queries: string[] = [],
+) {
+  return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.includes('/_app-metadata')) {
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        json: () => Promise.resolve(metadata),
-      } as Response);
+      return jsonResponse(metadata);
     }
-    // GraphQL data request from BifrostTable; the query field is the bare
-    // table name (`dbo` schema is unprefixed).
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      json: () => Promise.resolve({ data: { users: { data: [], total: 0 } } }),
-    } as Response);
+    const query = String(JSON.parse(String(init?.body)).query);
+    queries.push(query);
+    if (query.includes('EntityTables')) {
+      return jsonResponse({ data: { _dbSchema: tables } });
+    }
+    return jsonResponse({
+      data: { [tables[0].graphQlName]: { data: [], total: 0 } },
+    });
   });
 }
 
@@ -107,6 +126,33 @@ describe('entityKeyToQueryName', () => {
   });
 });
 
+describe('resolveEntityQueryName', () => {
+  const tables: SchemaTableIdentity[] = [
+    { schema: 'sales', dbName: 'orders', graphQlName: 'orders' },
+    { schema: 'dbo', dbName: 'users', graphQlName: 'users' },
+    { schema: 'audit', dbName: 'users', graphQlName: 'audit_users' },
+    { schema: 'dbo', dbName: 'order items', graphQlName: 'order_items' },
+  ];
+
+  it('returns the server name for a qualified key', () => {
+    expect(resolveEntityQueryName('sales.orders', tables)).toBe('orders');
+    expect(resolveEntityQueryName('audit.users', tables)).toBe('audit_users');
+    expect(resolveEntityQueryName('dbo.order items', tables)).toBe(
+      'order_items',
+    );
+  });
+
+  it('resolves a bare key only when one schema has the table', () => {
+    expect(resolveEntityQueryName('orders', tables)).toBe('orders');
+    // Two schemas have `users`: ambiguous, never the first match.
+    expect(resolveEntityQueryName('users', tables)).toBeNull();
+  });
+
+  it('returns null for a table the server does not serve', () => {
+    expect(resolveEntityQueryName('sales.missing', tables)).toBeNull();
+  });
+});
+
 describe('EntityList', () => {
   let originalFetch: typeof globalThis.fetch;
 
@@ -137,6 +183,35 @@ describe('EntityList', () => {
     );
     expect(screen.getByText('Users')).toBeInTheDocument();
     expect(screen.getByTestId('bifrost-table')).toBeInTheDocument();
+  });
+
+  it('queries the GraphQL name the server serves, not a client-built one', async () => {
+    // Arrange: `sales.orders` has no collision, so the server serves it as
+    // bare `orders`; a client guess would send `sales_orders`.
+    const queries: string[] = [];
+    globalThis.fetch = createFetchMock(
+      {
+        entities: {
+          'sales.orders': { label: 'Orders', fields: { id: {}, total: {} } },
+        },
+      },
+      [{ schema: 'sales', dbName: 'orders', graphQlName: 'orders' }],
+      queries,
+    );
+    const Wrapper = createWrapper();
+
+    // Act
+    render(
+      <Wrapper>
+        <EntityList entityKey="sales.orders" />
+      </Wrapper>,
+    );
+
+    // Assert: the table query names `orders`, never the guessed name.
+    await waitFor(() =>
+      expect(queries.some((q) => /\borders\s*[({]/.test(q))).toBe(true),
+    );
+    expect(queries.some((q) => q.includes('sales_orders'))).toBe(false);
   });
 
   it('renders the not-found fallback for an unknown entity', async () => {

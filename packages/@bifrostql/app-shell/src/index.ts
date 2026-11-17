@@ -54,6 +54,14 @@ export {
   entityKeyToQueryName,
 } from './screens/entity-list';
 export type { EntityListProps } from './screens/entity-list';
+export {
+  useEntityQueryName,
+  resolveEntityQueryName,
+} from './screens/entity-query-name';
+export type {
+  SchemaTableIdentity,
+  UseEntityQueryNameResult,
+} from './screens/entity-query-name';
 export { EntityForm, buildFormFields } from './screens/entity-form';
 export type {
   EntityFormProps,

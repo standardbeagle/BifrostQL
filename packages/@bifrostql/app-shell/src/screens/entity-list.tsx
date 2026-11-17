@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { BifrostTable } from '@bifrostql/react';
 import type { ColumnConfig, RowAction } from '@bifrostql/react';
 import { useAppMetadata } from '../metadata/use-app-metadata';
+import { useEntityQueryName } from './entity-query-name';
 import type {
   EntityMetadata,
   FieldMetadata,
@@ -23,14 +24,13 @@ export interface EntityListProps {
 }
 
 /**
- * Convert a qualified app-metadata entity key to its BifrostQL GraphQL query
- * field name.
+ * Guess a qualified app-metadata entity key's GraphQL query field name.
  *
- * App-metadata entity keys are schema-qualified (`dbo.users`, `sales.orders`),
- * but GraphQL field names cannot contain `.`. BifrostQL names tables in the
- * `dbo` schema by the bare table name and prefixes other schemas with
- * `<schema>_` (mirrors C# `DbTable.FullName`). Keys without a `.` are returned
- * unchanged.
+ * @deprecated This rebuilds a server-chosen name on the client and is wrong
+ * whenever the server differs: it keeps a non-`dbo` table's bare name unless
+ * two schemas collide, and applies `ToGraphQl` cleanup to names with spaces
+ * or hyphens. Use {@link useEntityQueryName}, which reads the name from
+ * `_dbSchema`. Kept only until the HostedSpa sample moves off it.
  *
  * @example
  * entityKeyToQueryName('dbo.users') // 'users'
@@ -97,13 +97,24 @@ export function EntityList({
 
   const columns = useMemo(() => (entity ? buildColumns(entity) : []), [entity]);
 
-  const queryName = useMemo(() => entityKeyToQueryName(entityKey), [entityKey]);
+  const tableName = useEntityQueryName(entityKey);
 
-  if (isLoading) {
+  if (isLoading || tableName.isLoading) {
     return <>{loadingFallback}</>;
   }
 
-  if (!entity) {
+  if (tableName.error) {
+    return (
+      <p role="alert" className="bifrost-entity-list__error">
+        Could not load the table list: {tableName.error.message}
+      </p>
+    );
+  }
+
+  // An entity the overlay declares but the server does not serve (or serves
+  // under an ambiguous bare name) is not found, never a guessed query.
+  const queryName = tableName.queryName;
+  if (!entity || !queryName) {
     return <>{notFoundFallback}</>;
   }
 

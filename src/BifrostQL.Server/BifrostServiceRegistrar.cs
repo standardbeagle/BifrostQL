@@ -573,7 +573,9 @@ namespace BifrostQL.Server
                 sp.GetService<ILogger<BifrostQL.Server.Feeds.FeedAuthenticator>>()));
 
             services.AddGraphQL(b => b
-                    .AddSystemTextJson()
+                    // Variables keep a number no decimal or double holds exactly as its own
+                    // token, so a JSON column stores it verbatim (ExactNumberInputsJsonConverter).
+                    .AddSystemTextJson(o => o.Converters.Add(new BifrostQL.Core.Schema.ExactNumberInputsJsonConverter()))
                     .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))
                     .AddBifrostErrorLogging(options =>
                     {

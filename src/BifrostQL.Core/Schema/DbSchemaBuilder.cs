@@ -20,6 +20,9 @@ namespace BifrostQL.Core.Schema
             // string — the only form in which a browser can send a value a JSON
             // number would round. See ExactNumericScalars.
             ExactNumericScalars.Register(schema);
+            // Float that also parses a number token ExactNumberInputsJsonConverter kept
+            // as text (more digits than a decimal or double holds).
+            schema.RegisterType(new JsonNumberFloatGraphType());
             // `_agg(...) : AggregateNumber` on every table type (see AggregateNumberGraphType).
             schema.RegisterType(new AggregateNumberGraphType());
             base.PreConfigure(schema);

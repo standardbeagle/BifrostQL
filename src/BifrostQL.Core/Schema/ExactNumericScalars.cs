@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Text.Json;
 using GraphQL.Types;
 using GraphQLParser.AST;
 
@@ -164,6 +165,9 @@ public sealed class ExactDecimalGraphType : ScalarGraphType
         sbyte or byte or short or ushort or int or uint or long or ulong or float or double
             => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
         BigInteger big => (decimal)big,
+        // A number token ExactNumberInputsJsonConverter kept as text because no decimal
+        // or double holds it exactly: parsed to the nearest decimal, as before.
+        JsonElement { ValueKind: JsonValueKind.Number } element => ParseText(element.GetRawText()),
         _ => ThrowValueConversionError(value),
     };
 
@@ -193,6 +197,7 @@ public sealed class ExactDecimalGraphType : ScalarGraphType
         null => true,
         string text => CanParseText(text),
         decimal or BigInteger or sbyte or byte or short or ushort or int or uint or long or ulong or float or double => true,
+        JsonElement { ValueKind: JsonValueKind.Number } element => CanParseText(element.GetRawText()),
         _ => false,
     };
 

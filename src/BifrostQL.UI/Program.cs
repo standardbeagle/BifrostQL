@@ -102,9 +102,8 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         return 2;
     }
 
-    state.ConnectionString = connectionString;
     if (connectionString != null)
-        state.Provider = DbConnFactoryResolver.DetectProvider(connectionString);
+        state.SetInitial(connectionString, DbConnFactoryResolver.DetectProvider(connectionString));
 
     // An operator-pinned --port is a contract and fails fast when taken; the
     // implicit default falls back to an OS-assigned free port instead — a desktop

@@ -66,26 +66,34 @@ namespace BifrostQL.UI.Web
             });
 
             // Health check endpoint
-            app.MapGet("/api/health", () => Results.Ok(new
+            app.MapGet("/api/health", () =>
             {
-                status = "ok",
-                connected = !string.IsNullOrEmpty(state.ConnectionString),
-                provider = state.Provider?.ToString().ToLowerInvariant(),
-                version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
-            }));
+                var active = state.Active;
+                return Results.Ok(new
+                {
+                    status = "ok",
+                    connected = active is not null,
+                    provider = active?.Provider.ToString().ToLowerInvariant(),
+                    version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)
+                });
+            });
 
             // GET /api/diagnostics — versions + runtime info for the About page. The
             // host (this desktop shell) and server (BifrostQL GraphQL engine) are
             // versioned independently, so reporting both makes a drift obvious.
-            app.MapGet("/api/diagnostics", () => Results.Ok(new
+            app.MapGet("/api/diagnostics", () =>
             {
-                hostVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
-                serverVersion = typeof(BifrostSetupOptions).Assembly.GetName().Version?.ToString(3),
-                runtime = RuntimeInformation.FrameworkDescription,
-                os = RuntimeInformation.OSDescription,
-                connected = !string.IsNullOrEmpty(state.ConnectionString),
-                provider = state.Provider?.ToString().ToLowerInvariant()
-            }));
+                var active = state.Active;
+                return Results.Ok(new
+                {
+                    hostVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
+                    serverVersion = typeof(BifrostSetupOptions).Assembly.GetName().Version?.ToString(3),
+                    runtime = RuntimeInformation.FrameworkDescription,
+                    os = RuntimeInformation.OSDescription,
+                    connected = active is not null,
+                    provider = active?.Provider.ToString().ToLowerInvariant()
+                });
+            });
         }
     }
 }

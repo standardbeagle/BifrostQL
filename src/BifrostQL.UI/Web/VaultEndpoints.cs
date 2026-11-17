@@ -151,15 +151,9 @@ namespace BifrostQL.UI.Web
                     }
 
                     var provider = DbConnFactoryResolver.ParseProviderName(server.Provider);
-                    state.ConnectionString = connStr;
-                    state.Provider = provider;
-
-                    state.Options?.BindConnectionString(connStr);
-                    state.Options?.BindProvider(provider.ToString().ToLowerInvariant());
                     // Arbitrary vault DB — no bundled profile config, so only the synthesized
                     // raw default is offered. Clear any profiles left over from a prior connect.
-                    await ProfileActivation.RebindProfilesAsync(app.Services, null);
-                    state.Options?.ResetSchema(app.Services);
+                    await state.ActivateAsync(app.Services, new ActiveConnection(connStr, provider), profileSchema: null, ct);
 
                     return Results.Ok(new
                     {

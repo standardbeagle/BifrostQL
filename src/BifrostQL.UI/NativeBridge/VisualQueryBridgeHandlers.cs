@@ -47,13 +47,14 @@ namespace BifrostQL.UI.NativeBridge
 
         private async Task<object?> GetBuilderSchemaAsync(JsonElement _, CancellationToken __)
         {
-            var model = await ResolveModelAsync();
+            _state.RequireActive();
+            var model = await BridgeModel.ResolveAsync(_services);
             return BuilderSchemaProjection.Project(model);
         }
 
         private async Task<object?> BuildSqlAsync(JsonElement payload, CancellationToken _)
         {
-            var (model, dialect) = await ResolveModelAndDialectAsync();
+            var (model, dialect, _) = await ResolveModelAndDialectAsync();
             var spec = VisualQueryBridge.Parse(payload);
             var built = VisualQueryBuilder.Build(spec, model, dialect);
             return new { sql = built.Sql, parameters = built.Parameters };
@@ -61,11 +62,11 @@ namespace BifrostQL.UI.NativeBridge
 
         private async Task<object?> BuildAndExecAsync(JsonElement payload, CancellationToken ct)
         {
-            var (model, dialect) = await ResolveModelAndDialectAsync();
+            var (model, dialect, active) = await ResolveModelAndDialectAsync();
             var spec = VisualQueryBridge.Parse(payload);
             var built = VisualQueryBuilder.Build(spec, model, dialect);
 
-            var factory = DbConnFactoryResolver.Create(_state.ConnectionString!, _state.Provider!.Value);
+            var factory = DbConnFactoryResolver.Create(active.ConnectionString, active.Provider);
             var result = await RawSqlExecutor.ExecuteAsync(
                 factory, built.Sql, built.Parameters,
                 RawSqlQueryResolver.DefaultTimeoutSeconds, RawSqlQueryResolver.DefaultMaxRows, ct);
@@ -80,14 +81,14 @@ namespace BifrostQL.UI.NativeBridge
             };
         }
 
-        private Task<IDbModel> ResolveModelAsync() => LoadedBridgeModel.ResolveAsync(_state, _services);
-
-        // Resolves the cached model + active dialect for the build handlers.
-        private async Task<(IDbModel Model, ISqlDialect Dialect)> ResolveModelAndDialectAsync()
+        // Resolves the cached model + the dialect of ONE connection snapshot, so the
+        // factory that later executes is built from the same snapshot as the dialect.
+        private async Task<(IDbModel Model, ISqlDialect Dialect, ActiveConnection Active)> ResolveModelAndDialectAsync()
         {
-            var model = await ResolveModelAsync();
-            var dialect = DbConnFactoryResolver.Create(_state.ConnectionString!, _state.Provider!.Value).Dialect;
-            return (model, dialect);
+            var active = _state.RequireActive();
+            var model = await BridgeModel.ResolveAsync(_services);
+            var dialect = DbConnFactoryResolver.Create(active.ConnectionString, active.Provider).Dialect;
+            return (model, dialect, active);
         }
     }
 }

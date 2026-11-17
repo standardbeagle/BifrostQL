@@ -32,18 +32,17 @@ namespace BifrostQL.UI.NativeBridge
 
         private async Task<object?> GetTableDdlAsync(JsonElement payload, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrEmpty(_state.ConnectionString) || _state.Provider is null)
-                throw new InvalidOperationException("No active database connection. Connect to a database first.");
+            var active = _state.RequireActive();
             if (payload.ValueKind != JsonValueKind.Object
                 || !payload.TryGetProperty("table", out var tableProp)
                 || tableProp.ValueKind != JsonValueKind.String
                 || string.IsNullOrWhiteSpace(tableProp.GetString()))
                 throw new ArgumentException("get-table-ddl requires a 'table' string payload.");
 
-            var model = await LoadedBridgeModel.ResolveAsync(_state, _services);
+            var model = await BridgeModel.ResolveAsync(_services);
             var table = ResolveTable(model, tableProp.GetString()!);
 
-            var dialect = DbConnFactoryResolver.Create(_state.ConnectionString!, _state.Provider!.Value).Dialect;
+            var dialect = DbConnFactoryResolver.Create(active.ConnectionString, active.Provider).Dialect;
             return new
             {
                 table = string.IsNullOrEmpty(table.TableSchema) ? table.DbName : $"{table.TableSchema}.{table.DbName}",

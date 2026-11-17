@@ -202,14 +202,9 @@ namespace BifrostQL.UI.Web
                     // itself here before announcing completion. The client now
                     // treats the Complete! event as "ready to switch views" and
                     // doesn't need a follow-up bind request.
-                    state.ConnectionString = sqliteConnectionString;
-                    state.Provider = BifrostDbProvider.Sqlite;
-                    state.Options?.BindConnectionString(sqliteConnectionString);
-                    state.Options?.BindProvider("sqlite");
-                    // Rebind profiles from this schema's bundled <schema>.bifrost.json BEFORE
-                    // ResetSchema, so the next schema rebuild picks up the new profile set.
-                    await ProfileActivation.RebindProfilesAsync(app.Services, request.Schema);
-                    state.Options?.ResetSchema(app.Services);
+                    // Profiles come from this schema's bundled <schema>.bifrost.json.
+                    await state.ActivateAsync(app.Services,
+                        new ActiveConnection(sqliteConnectionString, BifrostDbProvider.Sqlite), request.Schema, ct);
 
                     yield return SseWriter.Event("Complete!", 100, "Quickstart database created successfully",
                         connectionString: sqliteConnectionString, provider: "sqlite");

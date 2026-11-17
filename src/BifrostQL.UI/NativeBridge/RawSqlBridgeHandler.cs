@@ -29,8 +29,7 @@ namespace BifrostQL.UI.NativeBridge
 
         private async Task<object?> ExecSqlAsync(JsonElement payload, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(_state.ConnectionString) || _state.Provider is null)
-                throw new InvalidOperationException("No active database connection. Connect to a database first.");
+            var active = _state.RequireActive();
 
             if (payload.ValueKind != JsonValueKind.Object)
                 throw new ArgumentException("exec-sql payload must be an object");
@@ -59,7 +58,7 @@ namespace BifrostQL.UI.NativeBridge
                     sqlParams[prop.Name] = VisualQueryBridge.JsonValueToClr(prop.Value);
             }
 
-            var factory = DbConnFactoryResolver.Create(_state.ConnectionString, _state.Provider.Value);
+            var factory = DbConnFactoryResolver.Create(active.ConnectionString, active.Provider);
             var result = await RawSqlExecutor.ExecuteAsync(factory, sql!, sqlParams, timeout, maxRows, ct);
 
             return new

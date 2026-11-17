@@ -3,7 +3,7 @@ import { pkFilterFor, type PkFilter } from "./row-id";
 import { validateRowValues } from "./field-validation";
 import { isJsonColumn } from "./content-detect";
 import { isDateColumn } from "./date-input";
-import { baseParamType, isExactScalar, isIntegerScalar, isNumericScalar } from "./scalar-types";
+import { baseParamType, isBooleanScalar, isExactScalar, isIntegerScalar, isNumericScalar } from "./scalar-types";
 
 // BigInt/Decimal exceed what a JS number holds exactly: coercing through +val /
 // Number() silently rounds a large key and drops decimal precision. The read path
@@ -13,7 +13,6 @@ import { baseParamType, isExactScalar, isIntegerScalar, isNumericScalar } from "
 // and Byte (smallint/tinyint) used to miss this list entirely and were written as
 // strings their `Short!`/`Byte!` input rejects.
 const isPlainNumeric = (paramType: string) => isNumericScalar(paramType) && !isExactScalar(paramType);
-const booleanTypes = ["Boolean", "Boolean!"];
 
 export function coerceNumericValue(value: unknown, paramType: string, columnName: string): number {
     const baseType = baseParamType(paramType);
@@ -80,7 +79,7 @@ export function coerceDetail(
                 : val === "" ? (isInsert ? undefined : null)
                 : String(val);
         }
-        if (booleanTypes.some(t => t === col.paramType)) {
+        if (isBooleanScalar(col.paramType)) {
             const v = coerced[col.name];
             // Nullable booleans keep NULL rather than coercing an unset value to
             // false. On insert an unset value is omitted so the DB default applies.

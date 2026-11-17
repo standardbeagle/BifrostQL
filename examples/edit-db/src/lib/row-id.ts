@@ -1,7 +1,17 @@
-import type { Table } from '../types/schema';
+import type { Column, Table } from '../types/schema';
 import { coerceForGql, gqlTypeOf } from './fk';
 
 export type PkFilter = Record<string, unknown>;
+
+/**
+ * Every primary-key column of `table`, in key declaration order. Composite keys
+ * need all of them for a by-id filter and an update's WHERE clause; a key name
+ * with no matching column is dropped (the caller's key-count checks catch it).
+ */
+export function pkColumnsOf(table: Pick<Table, 'primaryKeys' | 'columns'>): Column[] {
+    const byName = new Map(table.columns.map((c) => [c.name, c] as const));
+    return (table.primaryKeys ?? []).map((pk) => byName.get(pk)).filter((c): c is Column => !!c);
+}
 
 export interface PkEqFilterResult {
     filterText: string;
@@ -84,6 +94,24 @@ export function pkFilterFor(
     return filter;
 }
 
+/**
+ * The key-equality predicate and its variable declarations, without values:
+ * `{col: {_eq: $pk_col}}` per key column, `and`-wrapped when composite. The one
+ * producer of the `pk_<col>` variable names, for query text built before the
+ * key values are known; {@link buildPkEqFilter} binds them.
+ */
+export function pkEqDeclaration(table: TableLike): Pick<PkEqFilterResult, 'filterText' | 'params'> {
+    const columnByName = new Map((table.columns ?? []).map((c) => [c.name, c] as const));
+    const clauses: string[] = [];
+    const params: string[] = [];
+    for (const pk of table.primaryKeys ?? []) {
+        params.push(`$pk_${pk}: ${gqlTypeOf(columnByName.get(pk))}`);
+        clauses.push(`{${pk}: {_eq: $pk_${pk}}}`);
+    }
+    const filterText = clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(', ')}]}`;
+    return { filterText, params };
+}
+
 export function buildPkEqFilter(
     row: Record<string, unknown> | null | undefined,
     table: Pick<Table, 'primaryKeys' | 'columns'>,
@@ -92,20 +120,11 @@ export function buildPkEqFilter(
     if (!filter) return null;
 
     const columnByName = new Map((table.columns ?? []).map((c) => [c.name, c] as const));
-    const clauses: string[] = [];
     const variables: Record<string, unknown> = {};
-    const params: string[] = [];
-
     for (const pk of table.primaryKeys ?? []) {
-        const gqlType = gqlTypeOf(columnByName.get(pk));
-        const varName = `pk_${pk}`;
-        variables[varName] = coerceForGql(filter[pk], gqlType);
-        params.push(`$${varName}: ${gqlType}`);
-        clauses.push(`{${pk}: {_eq: $${varName}}}`);
+        variables[`pk_${pk}`] = coerceForGql(filter[pk], gqlTypeOf(columnByName.get(pk)));
     }
-
-    const filterText = clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(', ')}]}`;
-    return { filterText, variables, params };
+    return { ...pkEqDeclaration(table), variables };
 }
 
 export function encodePkRoute(filter: PkFilter, table: TableLike): string {

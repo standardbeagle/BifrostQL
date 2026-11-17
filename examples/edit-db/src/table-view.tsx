@@ -16,7 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { isBinaryDbType, isJsonColumn, isLargeValueColumn } from './lib/content-detect';
 import { Table, Column } from './types/schema';
 import type { DrillFrame } from './lib/drill-stack';
-import { encodePkRoute, parsePkRoute, pkFilterFor, rowIdOf, buildPkEqFilter, type PkFilter } from './lib/row-id';
+import { encodePkRoute, parsePkRoute, pkColumnsOf, pkFilterFor, rowIdOf, buildPkEqFilter, type PkFilter } from './lib/row-id';
 import { buildSingleRowQuery, buildRowsByPkQuery } from './lib/query-builder';
 import { describeDeleteRows } from './lib/delete-summary';
 import { buildColumnFilters, getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './lib/query-builder';
@@ -334,10 +334,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         [editableColumns, panel?.columnName],
     );
     const contentEditColumns = useMemo(() => panelWriteColumns.map((column: Column) => ({ column })), [panelWriteColumns]);
-    const contentIdColumns = useMemo(() => {
-        const byName = new Map(table.columns.map((c: Column) => [c.name, c] as const));
-        return (table.primaryKeys ?? []).map((pk) => byName.get(pk)).filter((c): c is Column => !!c);
-    }, [table]);
+    const contentIdColumns = useMemo(() => pkColumnsOf(table), [table]);
     const contentMutation = useTableMutation(table, contentEditColumns, contentIdColumns, panelPkRoute ?? '');
 
     // Save is only possible when the table is editable and the row has a real PK
@@ -428,9 +425,7 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
         setSavingEdits(true);
         try {
             const editableColumns = table.columns.filter((c: Column) => inlineEditableColumns.has(c.name));
-            const idColumns = (table.primaryKeys ?? [])
-                .map((pk) => table.columns.find((c: Column) => c.name === pk))
-                .filter((c): c is Column => !!c);
+            const idColumns = pkColumnsOf(table);
             const changedColumnNames = new Set(entries.flatMap(([, e]) => Object.keys(e.changes)));
             const writeCandidates = editableColumns.filter((c: Column) => !c.isNullable || changedColumnNames.has(c.name));
             const fetchFields = [...new Set([...(table.primaryKeys ?? []), ...writeCandidates.map((c: Column) => c.name)])];

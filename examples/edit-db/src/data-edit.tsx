@@ -8,7 +8,7 @@ import { TableRefValue, useTableRef, useTableRefValue } from "./hooks/useTableRe
 import { useCompositeTableRef } from "./hooks/useCompositeTableRef";
 import { useFetcher } from "./common/fetcher";
 import { useTableMutation } from "./hooks/useTableMutation";
-import { parsePkRoute, buildPkEqFilter, encodeRouteParts } from "./lib/row-id";
+import { parsePkRoute, buildPkEqFilter, encodeRouteParts, pkColumnsOf } from "./lib/row-id";
 import { validateFieldValue } from "./lib/field-validation";
 import { isComposite } from "./lib/fk";
 import { isDateColumn, isDateTimeColumn, toDateInputValue, preserveUntouchedDateValues } from "./lib/date-input";
@@ -37,9 +37,8 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LoaderCircle, Save, X, AlertCircle } from "lucide-react";
 import { ContentEditor } from "@/components/content-editor";
 import { isBinaryDbType, isLongTextDbType, isJsonColumn } from "@/lib/content-detect";
-import { isExactScalar, isIntegerScalar, isNumericScalar } from "@/lib/scalar-types";
+import { isBooleanScalar, isExactScalar, isIntegerScalar, isNumericScalar } from "@/lib/scalar-types";
 
-const booleanTypes = ["Boolean", "Boolean!"];
 
 // Sentinel for the "(none)" option in FK/enum selects. Radix's Select rejects an
 // empty-string item value, so we round-trip this and map it back to null on change.
@@ -150,14 +149,7 @@ function useTable(schema: SchemaContextValue, tableName: string) {
             }
             return { column: c, fkRole: 'none' as const };
         });
-        // idColumns is every primary-key column in declaration order. Composite PKs need them
-        // all for the by-id filter and for the update mutation's WHERE clause. Previously this
-        // was `c.isIdentity` which only captured auto-increment columns and silently dropped
-        // the second half of a composite key.
-        const byName = new Map(table.columns.map((c: Column) => [c.name, c] as const));
-        const idColumns: Column[] = (table.primaryKeys ?? [])
-            .map((pk) => byName.get(pk))
-            .filter((c): c is Column => !!c);
+        const idColumns = pkColumnsOf(table);
         return [
             table,
             editColumnsJoin,
@@ -224,7 +216,7 @@ function useEditRecord(dataTable: Table, editColumns: ColumnJoin[], editId: stri
             const isFkOrEnum = isFkOrEnumColumn(c, fkRole);
             if (isDateColumn(c)) {
                 values[c.name] = toDateInputValue(value[c.name] as string | undefined, isDateTimeColumn(c));
-            } else if (booleanTypes.some(t => t === c.paramType)) {
+            } else if (isBooleanScalar(c.paramType)) {
                 // Preserve NULL for nullable booleans so re-saving an unrelated
                 // field doesn't silently coerce an unset boolean to false.
                 const raw = value[c.name];
@@ -348,10 +340,10 @@ function DataEditDetail({ table, schema, editId, onClose }: { table: string, sch
     const labelIdValue = (value?.[labelColumn] as string | number | undefined) ?? editId;
 
     // Separate fields into types for layout grouping
-    const booleanFields = editColumns.filter(({ column: c }) => booleanTypes.some(t => t === c.paramType));
+    const booleanFields = editColumns.filter(({ column: c }) => isBooleanScalar(c.paramType));
     const contentFields = editColumns.filter(({ column: c }) => isContentColumn(c));
     const standardFields = editColumns.filter(({ column: c }) =>
-        !booleanTypes.some(t => t === c.paramType) &&
+        !isBooleanScalar(c.paramType) &&
         !isContentColumn(c)
     );
 

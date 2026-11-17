@@ -26,6 +26,7 @@ import {
   parsePkRoute,
   buildPkEqFilter,
   encodePkRoute,
+  pkColumnsOf,
   type PkFilter,
 } from '../lib/row-id';
 import { assertGraphQlName, buildSingleRowQuery } from '../lib/query-builder';
@@ -224,10 +225,7 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
     () => bound.filter(isEditable).map((b) => ({ column: b.column })),
     [bound, isEditable],
   );
-  const idColumns = useMemo(
-    () => (table.primaryKeys ?? []).map((pk) => columnByName.get(pk)).filter((c): c is Column => !!c),
-    [table, columnByName],
-  );
+  const idColumns = useMemo(() => pkColumnsOf(table), [table]);
   const editColumnNames = useMemo(
     () => new Set(editColumns.map((e) => e.column.name)),
     [editColumns],

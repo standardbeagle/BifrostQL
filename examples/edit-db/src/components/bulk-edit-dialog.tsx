@@ -12,7 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { Column, Table } from '../types/schema';
-import type { PkFilter } from '../lib/row-id';
+import { pkColumnsOf, type PkFilter } from '../lib/row-id';
 import { buildRowsByPkQuery } from '../lib/query-builder';
 import { buildBulkUpdatePayloads } from '../lib/mutation-payload';
 import { isBinaryDbType } from '../lib/content-detect';
@@ -61,10 +61,7 @@ export function BulkEditDialog({ table, pks, onClose }: BulkEditDialogProps) {
             !c.isReadOnly && !c.isIdentity && !c.isPrimaryKey && !c.isNullable && isBinaryDbType(c.dbType)),
         [table],
     );
-    const idColumns = useMemo(() => {
-        const byName = new Map(table.columns.map((c: Column) => [c.name, c] as const));
-        return (table.primaryKeys ?? []).map((pk) => byName.get(pk)).filter((c): c is Column => !!c);
-    }, [table]);
+    const idColumns = useMemo(() => pkColumnsOf(table), [table]);
 
     const enabledColumns = editableColumns.filter((c) => fields[c.name]?.enabled);
     const isPending = isFetching || deltaMutation.isPending;

@@ -6,7 +6,7 @@ import type { PkFilter } from "../lib/row-id";
 import { invalidateAfterTableWrite } from "../lib/invalidate";
 import { useToast } from "./useToast";
 import { assertGraphQlName } from "../lib/query-builder";
-import { baseParamType, isExactScalar, isIntegerScalar } from "../lib/scalar-types";
+import { coerceForGql } from "../lib/fk";
 
 export type DeleteInput = PkFilter | string | number;
 
@@ -21,27 +21,9 @@ function isPkFilter(value: DeleteInput): value is PkFilter {
     return typeof value === 'object' && value !== null;
 }
 
-function coerceValue(value: unknown, paramType: string | undefined): unknown {
-    if (value === null || value === undefined) return null;
-    if (!paramType) return value;
-    const base = baseParamType(paramType);
-    // BigInt/Decimal keys stay text (a JS number would round them into a DIFFERENT
-    // row — and this deletes rows). Short/Byte are whole numbers like Int; they used
-    // to fall through to String, which their own scalar rejects.
-    if (isExactScalar(paramType)) return String(value);
-    if (isIntegerScalar(paramType)) {
-        const n = typeof value === 'number' ? value : Number(value);
-        return Number.isFinite(n) ? Math.trunc(n) : value;
-    }
-    if (base === 'Float') {
-        const n = typeof value === 'number' ? value : Number(value);
-        return Number.isFinite(n) ? n : value;
-    }
-    if (base === 'Boolean') {
-        if (typeof value === 'boolean') return value;
-        return value === 'true' || value === 1;
-    }
-    return String(value);
+/** A key value as its column's GraphQL scalar wants it; a column of unknown type passes through. */
+function coerceKeyValue(value: unknown, paramType: string | undefined): unknown {
+    return paramType ? coerceForGql(value, paramType) : value ?? null;
 }
 
 export function useDeleteMutation(table: Table): UseDeleteMutationResult {
@@ -76,7 +58,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
                 if (raw === undefined || raw === null) {
                     throw new Error(`Cannot delete row: missing value for primary-key column '${col}'.`);
                 }
-                payload[col] = coerceValue(raw, columnParamType.get(col));
+                payload[col] = coerceKeyValue(raw, columnParamType.get(col));
             }
             return payload;
         }
@@ -90,7 +72,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
             throw new Error(`Cannot delete row: missing value for primary-key column '${pkColumns[0]}'.`);
         }
         const firstPk = pkColumns[0];
-        payload[firstPk] = coerceValue(input, columnParamType.get(firstPk));
+        payload[firstPk] = coerceKeyValue(input, columnParamType.get(firstPk));
         return payload;
     };
 

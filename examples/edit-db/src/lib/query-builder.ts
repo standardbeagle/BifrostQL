@@ -5,7 +5,7 @@
 
 import type { Table, Column, Join, SchemaContextValue, TableIndex } from '../types/schema';
 import type { ColumnFiltersState } from '@tanstack/react-table';
-import { rowIdOf, buildPkEqFilter, parsePkRoute, decodePkPart, type PkEqFilterResult, type PkFilter } from './row-id';
+import { rowIdOf, buildPkEqFilter, pkEqDeclaration, parsePkRoute, decodePkPart, type PkEqFilterResult, type PkFilter } from './row-id';
 import { coerceForGql, gqlTypeOf } from './fk';
 import { resolveChildJoin, childFieldName } from './polymorphic';
 import { isComposite } from './fk';
@@ -709,11 +709,11 @@ function buildDrillQuery(
             param = `, $id: ${parentPkType}`;
             parentFilter = `{ ${parentPk}: { _eq: $id}}`;
         } else {
-            // Composite parent PK — one $pk_${name} variable per parent PK column.
-            const pkParamDecls = parentPkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ');
-            param = `, ${pkParamDecls}`;
-            const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
-            parentFilter = `{and: [${clauses.join(', ')}]}`;
+            // Composite parent PK — one $pk_${name} variable per parent PK column,
+            // bound by buildPkEqVariables through buildPkEqFilter.
+            const declaration = pkEqDeclaration(drill.parentTable);
+            param = `, ${declaration.params.join(', ')}`;
+            parentFilter = declaration.filterText;
         }
         param += ownParams;
         return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
@@ -751,10 +751,10 @@ function buildByIdQuery(table: Table, tableSchema: Table, allFields: string, col
         param = `, $id: ${pkType}`;
         filterText = `{ ${primaryKey}: { _eq: $id}}`;
     } else {
-        // Composite PK — one $pk_${name} variable per column, wrapped in and
-        param = `, ${pkTypes.map((t) => `$pk_${t.name}: ${t.gqlType}`).join(', ')}`;
-        const clauses = pkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
-        filterText = `{and: [${clauses.join(', ')}]}`;
+        // Composite PK — one $pk_${name} variable per column, wrapped in and.
+        const declaration = pkEqDeclaration(tableSchema);
+        param = `, ${declaration.params.join(', ')}`;
+        filterText = declaration.filterText;
     }
     // The grid's own column filters still apply on top of the key.
     const own = buildColumnFilters(columnFilters, table);

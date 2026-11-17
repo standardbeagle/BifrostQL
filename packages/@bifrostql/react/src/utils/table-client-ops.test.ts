@@ -41,6 +41,18 @@ describe('defaultCompare', () => {
     expect(defaultCompare(9, '10')).toBeLessThan(0);
   });
 
+  // Decimal cells are decimal strings too; text order put "10.5" before "9.25"
+  // and Number() could not tell two 28-digit values apart.
+  it('orders Decimal strings by value', () => {
+    expect(defaultCompare('9.25', '10.5')).toBeLessThan(0);
+    expect(defaultCompare('-10.5', '-9.25')).toBeLessThan(0);
+    expect(defaultCompare('19.99', '19.990')).toBe(0);
+    expect(
+      defaultCompare('123456789012345678.0123456789', '123456789012345678.0123456788'),
+    ).toBeGreaterThan(0);
+    expect(defaultCompare(9, '10.5')).toBeLessThan(0);
+  });
+
   it('keeps non-canonical digit text in text order', () => {
     expect(defaultCompare('007', '10')).toBeLessThan(0);
     expect(defaultCompare('10', '007')).toBeGreaterThan(0);
@@ -154,6 +166,25 @@ describe('aggregates', () => {
     expect(computeAggregateForRows(rows, { field: 'n', fn: 'min' })).toBe(2);
     expect(computeAggregateForRows([{ n: '10' }, { n: '20' }], { field: 'n', fn: 'sum' })).toBe(30);
     expect(computeAggregateForRows([{ n: '10' }, { n: '20' }], { field: 'n', fn: 'avg' })).toBe(15);
+  });
+
+  // Decimal cells are decimal strings; the reducer read only integers, so a
+  // Decimal column summed to 0, and through Number() 28 digits would round.
+  it('reduces Decimal strings exactly', () => {
+    const rows = [{ n: '123456789012345678.0123456789' }, { n: '0.50' }, { n: null }];
+    expect(computeAggregateForRows(rows, { field: 'n', fn: 'sum' })).toBe('123456789012345678.5123456789');
+    expect(computeAggregateForRows(rows, { field: 'n', fn: 'max' })).toBe('123456789012345678.0123456789');
+    expect(computeAggregateForRows(rows, { field: 'n', fn: 'min' })).toBe('0.50');
+    expect(computeAggregateForRows([{ n: '-0.25' }, { n: '0.05' }], { field: 'n', fn: 'sum' })).toBe('-0.20');
+    expect(computeAggregateForRows([{ n: '1.5' }, { n: '2.5' }], { field: 'n', fn: 'avg' })).toBe(2);
+  });
+
+  // An exact aggregate is a decimal string; it used to bypass the format and
+  // print raw. Intl formats the string itself, so no digit is rounded.
+  it('formats a Decimal string aggregate without rounding its digits', () => {
+    const text = formatAggregateValue('123456789012345678.25', 'number')!;
+    expect(text).toBe(new Intl.NumberFormat(undefined).format('123456789012345678.25' as Intl.StringNumericLiteral));
+    expect(text.replace(/\D/g, '')).toBe('12345678901234567825');
   });
 
   it('formatAggregateValue handles formats and custom functions', () => {

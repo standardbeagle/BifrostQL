@@ -45,25 +45,58 @@ export function countActiveFilters(
   return count;
 }
 
-// The server writes the BigInt scalar as a canonical decimal string ("-12",
-// "9007199254740993"): no sign on zero, no leading zeros. Only that exact shape
-// is read as an integer, so text such as "007" or "1e3" stays text.
-const CANONICAL_INTEGER = /^(?:0|-?[1-9]\d*)$/;
+// The server writes the BigInt and Decimal scalars as canonical decimal
+// strings ("-12", "9007199254740993", "19.990"): no leading zeros, a fraction
+// only when the value has a scale. Only that exact shape is read as a number,
+// so text such as "007" or "1e3" stays text.
+const CANONICAL_DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.(\d+))?$/;
 
-/**
- * The exact integer a cell holds, or null: a safe-integer number, or a
- * canonical decimal string (a BigInt column).
- */
-function exactInteger(value: unknown): bigint | null {
-  if (typeof value === 'number') return Number.isSafeInteger(value) ? BigInt(value) : null;
-  if (typeof value === 'string' && CANONICAL_INTEGER.test(value)) return BigInt(value);
-  return null;
+/** A decimal held exactly: `coefficient / 10^scale`. */
+interface ExactDecimal {
+  coefficient: bigint;
+  scale: number;
 }
 
-/** Numeric value for client aggregation: numbers, and BigInt columns' strings. */
-function numericValue(value: unknown): number | bigint | null {
+/**
+ * The exact decimal a cell holds, or null: a safe-integer number, or a
+ * canonical decimal string (a BigInt or Decimal column).
+ */
+function exactDecimal(value: unknown): ExactDecimal | null {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) ? { coefficient: BigInt(value), scale: 0 } : null;
+  }
+  if (typeof value !== 'string') return null;
+  const match = CANONICAL_DECIMAL.exec(value);
+  if (!match) return null;
+  return { coefficient: BigInt(value.replace('.', '')), scale: match[1]?.length ?? 0 };
+}
+
+function rescale(value: ExactDecimal, scale: number): bigint {
+  return value.coefficient * 10n ** BigInt(scale - value.scale);
+}
+
+function compareExact(a: ExactDecimal, b: ExactDecimal): number {
+  const scale = Math.max(a.scale, b.scale);
+  const left = rescale(a, scale);
+  const right = rescale(b, scale);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Canonical decimal text for an exact value, the shape the server writes. */
+function exactDecimalText(value: ExactDecimal): string {
+  if (value.scale === 0) return value.coefficient.toString();
+  const negative = value.coefficient < 0n;
+  const digits = (negative ? -value.coefficient : value.coefficient)
+    .toString()
+    .padStart(value.scale + 1, '0');
+  const point = digits.length - value.scale;
+  return `${negative ? '-' : ''}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
+/** Numeric value for client aggregation: numbers, and BigInt/Decimal columns' strings. */
+function numericValue(value: unknown): number | ExactDecimal | null {
   if (typeof value === 'number') return value;
-  return typeof value === 'string' ? exactInteger(value) : null;
+  return typeof value === 'string' ? exactDecimal(value) : null;
 }
 
 export function defaultCompare(a: unknown, b: unknown): number {
@@ -71,10 +104,11 @@ export function defaultCompare(a: unknown, b: unknown): number {
   if (a === null || a === undefined) return 1;
   if (b === null || b === undefined) return -1;
   if (typeof a === 'number' && typeof b === 'number') return a - b;
-  // BigInt columns arrive as decimal strings; text order would put "10" before "9".
-  const ai = exactInteger(a);
-  const bi = exactInteger(b);
-  if (ai !== null && bi !== null) return ai < bi ? -1 : ai > bi ? 1 : 0;
+  // BigInt and Decimal columns arrive as decimal strings; text order would put
+  // "10" before "9", and Number() rounds past 15-17 significant digits.
+  const ad = exactDecimal(a);
+  const bd = exactDecimal(b);
+  if (ad !== null && bd !== null) return compareExact(ad, bd);
   return String(a).localeCompare(String(b));
 }
 
@@ -258,22 +292,25 @@ export function clientFilterRows<T>(
 }
 
 /**
- * Reduces numeric cells. Numbers reduce as numbers. When any cell is a BigInt
- * column's integer, sum/min/max are computed exactly and returned as a number
- * while that is exact, else as the decimal string the server would send; avg is
- * a number either way.
+ * Reduces numeric cells. Numbers reduce as numbers. When any cell is a BigInt or
+ * Decimal column's string, sum/min/max are computed exactly: an integer result
+ * is returned as a number while that is exact, anything else as the decimal
+ * string the server would send. avg is a number either way.
  */
 export function computeBuiltinAggregate(
   fn: AggregateFn,
-  values: Array<number | bigint>,
+  values: Array<number | ExactDecimal>,
 ): number | string {
   if (values.length === 0) return 0;
   if (fn === 'count') return values.length;
-  if (values.some((v) => typeof v === 'bigint')) {
-    const exact = values.map((v) => (typeof v === 'bigint' ? v : exactInteger(v)));
-    if (exact.every((v): v is bigint => v !== null)) return bigintAggregate(fn, exact);
-    // A fractional number among the integers: no exact result exists.
-    return computeBuiltinAggregate(fn, values.map(Number));
+  if (values.some((v) => typeof v !== 'number')) {
+    const exact = values.map((v) => (typeof v === 'number' ? exactDecimal(v) : v));
+    if (exact.every((v): v is ExactDecimal => v !== null)) return exactAggregate(fn, exact);
+    // A fractional number among the exact values: no exact result exists.
+    return computeBuiltinAggregate(
+      fn,
+      values.map((v) => (typeof v === 'number' ? v : Number(exactDecimalText(v)))),
+    );
   }
   const nums = values as number[];
   switch (fn) {
@@ -288,24 +325,30 @@ export function computeBuiltinAggregate(
   }
 }
 
-function bigintAggregate(fn: Exclude<AggregateFn, 'count'>, values: bigint[]): number | string {
-  const sum = () => values.reduce((a, b) => a + b, 0n);
-  let result: bigint;
+function exactAggregate(fn: Exclude<AggregateFn, 'count'>, values: ExactDecimal[]): number | string {
+  const sum = (): ExactDecimal => {
+    const scale = Math.max(...values.map((v) => v.scale));
+    return { coefficient: values.reduce((a, v) => a + rescale(v, scale), 0n), scale };
+  };
+  let result: ExactDecimal;
   switch (fn) {
     case 'avg':
-      return Number(sum()) / values.length;
+      return Number(exactDecimalText(sum())) / values.length;
     case 'sum':
       result = sum();
       break;
     case 'min':
-      result = values.reduce((a, b) => (b < a ? b : a));
+      result = values.reduce((a, b) => (compareExact(b, a) < 0 ? b : a));
       break;
     case 'max':
-      result = values.reduce((a, b) => (b > a ? b : a));
+      result = values.reduce((a, b) => (compareExact(b, a) > 0 ? b : a));
       break;
   }
-  const asNumber = Number(result);
-  return Number.isSafeInteger(asNumber) ? asNumber : result.toString();
+  if (result.scale === 0) {
+    const asNumber = Number(result.coefficient);
+    if (Number.isSafeInteger(asNumber)) return asNumber;
+  }
+  return exactDecimalText(result);
 }
 
 export function formatAggregateValue(
@@ -314,21 +357,26 @@ export function formatAggregateValue(
 ): string | null {
   if (!format) return null;
   if (typeof format === 'function') return format(value);
-  if (typeof value !== 'number') return String(value ?? '');
+  // An exact aggregate (or cell) is canonical decimal text. Intl formats that
+  // string itself, so no digit is rounded through a double.
+  const formattable: number | Intl.StringNumericLiteral | null =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && CANONICAL_DECIMAL.test(value)
+        ? (value as Intl.StringNumericLiteral)
+        : null;
+  if (formattable === null) return String(value ?? '');
   switch (format) {
     case 'currency':
-      return value.toLocaleString(undefined, {
-        style: 'currency',
-        currency: 'USD',
-      });
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(formattable);
     case 'percentage':
-      return value.toLocaleString(undefined, {
+      return new Intl.NumberFormat(undefined, {
         style: 'percent',
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
-      });
+      }).format(formattable);
     case 'number':
-      return value.toLocaleString();
+      return new Intl.NumberFormat(undefined).format(formattable);
   }
 }
 
@@ -341,7 +389,7 @@ export function computeAggregateForRows(
     return config.fn(values);
   }
   if (config.fn === 'count') return rows.length;
-  const values: Array<number | bigint> = [];
+  const values: Array<number | ExactDecimal> = [];
   if (config.field) {
     for (const row of rows) {
       const val = numericValue(row[config.field]);

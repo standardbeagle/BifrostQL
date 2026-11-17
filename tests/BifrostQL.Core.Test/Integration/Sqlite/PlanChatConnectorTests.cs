@@ -234,6 +234,36 @@ public sealed class PlanChatConnectorTests : IAsyncLifetime
 
     // ---- tool definitions -----------------------------------------------------------
 
+    [Theory]
+    [InlineData("decimal(18,2)")]
+    [InlineData("numeric")]
+    [InlineData("money")]
+    public void RowValue_ExactNumericColumn_KeepsEveryDigit(string dataType)
+    {
+        var column = new ColumnDto
+        {
+            TableSchema = "main", TableName = "t", ColumnName = "amount", GraphQlName = "amount",
+            NormalizedName = "amount", DataType = dataType,
+        };
+        using var doc = JsonDocument.Parse("12345678901234.57");
+
+        PlanChatConnector.RowValue(column, doc.RootElement).Should().Be(12345678901234.57m,
+            "the committed value must equal the one in the approved confirmation");
+    }
+
+    [Fact]
+    public void RowValue_ApproximateColumn_StaysDouble()
+    {
+        var column = new ColumnDto
+        {
+            TableSchema = "main", TableName = "t", ColumnName = "ratio", GraphQlName = "ratio",
+            NormalizedName = "ratio", DataType = "real",
+        };
+        using var doc = JsonDocument.Parse("0.25");
+
+        PlanChatConnector.RowValue(column, doc.RootElement).Should().BeOfType<double>();
+    }
+
     [Fact]
     public async Task ToolDefinitions_OneToolPerAllowedOperation_AllRequireConfirmation()
     {

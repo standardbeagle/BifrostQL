@@ -468,16 +468,33 @@ namespace BifrostQL.Core.Modules.Chat
         private static string KeyColumnNames(IDbTable table) =>
             string.Join(", ", table.KeyColumns.Select(c => c.GraphQlName));
 
-        private static object? RowValue(ColumnDto column, JsonElement value) => value.ValueKind switch
+        internal static object? RowValue(ColumnDto column, JsonElement value) => value.ValueKind switch
         {
             JsonValueKind.String => value.GetString(),
-            JsonValueKind.Number => value.TryGetInt64(out var integer) ? integer : value.GetDouble(),
+            JsonValueKind.Number => NumberValue(column, value),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Null => null,
             _ => throw new ChatToolInputException(
                 $"The value for column '{column.GraphQlName}' must be a JSON scalar (string, number, boolean, or null)."),
         };
+
+        /// <summary>
+        /// An exact-numeric column decodes through decimal: a double round-trip changed
+        /// 12345678901234.57 between the confirmation the user approved and the committed row.
+        /// Other columns keep the int64-then-double decode.
+        /// </summary>
+        private static object NumberValue(ColumnDto column, JsonElement value)
+        {
+            if (value.TryGetInt64(out var integer))
+                return integer;
+            if (ColumnDto.IsExactNumeric(column.DataType))
+                return value.TryGetDecimal(out var exact)
+                    ? exact
+                    : throw new ChatToolInputException(
+                        $"The value for column '{column.GraphQlName}' is outside the column's decimal range.");
+            return value.GetDouble();
+        }
 
         private static string BuildSummary(IDbTable table, MutationType operation, int rowCount)
         {

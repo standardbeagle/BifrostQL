@@ -108,7 +108,9 @@ CREATE TABLE type_roundtrip (
     uuid_value UUID NOT NULL,
     jsonb_value JSONB NOT NULL,
     numeric_value NUMERIC(10,2) NOT NULL,
-    enum_value mood NOT NULL
+    enum_value mood NOT NULL,
+    wide_numeric NUMERIC(38,10) NOT NULL,
+    wide_jsonb JSONB NOT NULL
 );
 """;
         await using var cmd = conn.CreateCommand();
@@ -130,7 +132,9 @@ INSERT INTO type_roundtrip (
     uuid_value,
     jsonb_value,
     numeric_value,
-    enum_value
+    enum_value,
+    wide_numeric,
+    wide_jsonb
 ) VALUES (
     DATE '2026-06-07',
     TIME '14:15:16',
@@ -142,7 +146,9 @@ INSERT INTO type_roundtrip (
     UUID '11111111-2222-3333-4444-555555555555',
     '{"ok": true, "count": 2}'::jsonb,
     123.45,
-    'focused'
+    'focused',
+    123456789012345678.0123456789,
+    '{"id": 12345678901234567890123, "rate": 0.12345678901234567890123, "small": 7}'::jsonb
 );
 """;
         await using var cmd = conn.CreateCommand();
@@ -184,8 +190,59 @@ query {
         row["uuid_value"].GetString().Should().Be("11111111-2222-3333-4444-555555555555");
         row["jsonb_value"].ValueKind.Should().Be(JsonValueKind.Object);
         row["jsonb_value"].GetProperty("ok").GetBoolean().Should().BeTrue();
-        row["numeric_value"].GetDecimal().Should().Be(123.45m);
+        row["numeric_value"].GetString().Should().Be("123.45");
         row["enum_value"].GetString().Should().Be("focused");
+    }
+
+    /// <summary>
+    /// A NUMERIC(38,10) value with 28 significant digits — far past the 15–17 a
+    /// double keeps. Written as a JSON number it reaches every browser client
+    /// through JSON.parse already rounded, so the Decimal scalar writes it as a
+    /// decimal string, digits and scale intact.
+    /// </summary>
+    [SkippableFact]
+    public async Task Read_WideDecimal_SerializesAsExactDecimalString()
+    {
+        var result = await ExecuteQueryAsync("query { type_roundtrip { data { wide_numeric } } }");
+
+        var row = ExtractSingleRow(result, "type_roundtrip");
+        row["wide_numeric"].ValueKind.Should().Be(JsonValueKind.String);
+        row["wide_numeric"].GetString().Should().Be("123456789012345678.0123456789");
+    }
+
+    /// <summary>
+    /// The write half: a decimal sent as text is stored exactly and read back as
+    /// the same text. Through a double it would round on the way in.
+    /// </summary>
+    [SkippableFact]
+    public async Task Write_WideDecimalAsText_RoundTripsExactly()
+    {
+        var write = await ExecuteQueryAsync(
+            "mutation SetWide($id: Int!, $v: Decimal!) { type_roundtrip(update: {id: $id, wide_numeric: $v}) }",
+            new Dictionary<string, object?> { ["id"] = 1, ["v"] = "-987654321098765432.9876543210" });
+        write.Errors.Should().BeNullOrEmpty();
+
+        var read = await ExecuteQueryAsync("query { type_roundtrip { data { wide_numeric } } }");
+        ExtractSingleRow(read, "type_roundtrip")["wide_numeric"].GetString()
+            .Should().Be("-987654321098765432.9876543210");
+    }
+
+    /// <summary>
+    /// SUM/MAX over a decimal column are exact in SQL. The aggregate surface types
+    /// a Decimal column's values as Decimal, so they stay exact on the wire instead
+    /// of being squeezed through Float.
+    /// </summary>
+    [SkippableFact]
+    public async Task Aggregate_WideDecimal_SerializesAsExactDecimalString()
+    {
+        var result = await ExecuteQueryAsync(
+            "query { type_roundtripAggregate { _sum { wide_numeric } _max { wide_numeric } } }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        var root = (Dictionary<string, object?>)((RootExecutionNode)result.Data!).ToValue()!;
+        var group = (Dictionary<string, object?>)((System.Collections.IList)root["type_roundtripAggregate"]!)[0]!;
+        ((Dictionary<string, object?>)group["_sum"]!)["wide_numeric"].Should().Be("123456789012345678.0123456789");
+        ((Dictionary<string, object?>)group["_max"]!)["wide_numeric"].Should().Be("123456789012345678.0123456789");
     }
 
     private static Dictionary<string, JsonElement> ExtractSingleRow(ExecutionResult result, string tableName)

@@ -918,8 +918,9 @@ namespace BifrostQL.Core.Resolvers
         /// Shapes the flat grouped result set into <see cref="AggregateResultRow"/>s.
         /// Group-key values are read by column GraphQL name; <c>_count</c> by its
         /// alias; each op group's values by their per-column aliases. Aggregate values
-        /// are coerced to double so the <c>Float</c>-typed value fields serialize
-        /// regardless of the provider's numeric CLR type (decimal/long/…).
+        /// keep the provider's CLR type: the field's own scalar coerces it
+        /// (<see cref="Schema.AggregateSurface.ValueScalar"/>), so a Decimal column's
+        /// SUM reaches the Decimal scalar exact instead of rounded through a double.
         /// </summary>
         private static IReadOnlyList<AggregateResultRow> BuildAggregateRows(
             GroupedAggregate grouped,
@@ -955,7 +956,7 @@ namespace BifrostQL.Core.Resolvers
                 {
                     var opValues = new Dictionary<string, object?>(StringComparer.Ordinal);
                     foreach (var value in opGroup)
-                        opValues[value.Column.GraphQlName] = ToDouble(ReadCell(index, row, value.SqlAlias));
+                        opValues[value.Column.GraphQlName] = ReadCell(index, row, value.SqlAlias);
                     ops[opGroup.Key] = new AggregateFields { Values = opValues };
                 }
 
@@ -968,9 +969,6 @@ namespace BifrostQL.Core.Resolvers
             => index.TryGetValue(alias, out var ordinal) && ordinal < row.Length
                 ? ReaderEnum.DbConvert(row[ordinal])
                 : null;
-
-        private static object? ToDouble(object? value)
-            => value == null ? null : Convert.ToDouble(value);
 
         /// <summary>
         /// Fires one query-observer phase notification. Centralizes the

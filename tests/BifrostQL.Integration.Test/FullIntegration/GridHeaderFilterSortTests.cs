@@ -308,6 +308,42 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
     }
 
     /// <summary>
+    /// Decimal follows BigInt: a JSON number is a double to every browser client, so
+    /// an exact value past 15–17 significant digits would arrive rounded. Every value
+    /// is written as a decimal string, so the column's client type stays fixed.
+    /// </summary>
+    [Fact]
+    public async Task Read_DecimalValues_SerializeAsDecimalStrings()
+    {
+        var result = await ExecuteQueryAsync(
+            "query { widgets(sort: [id_asc]) { data { price } } }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
+        var rows = (System.Collections.IList)((Dictionary<string, object?>)data!["widgets"]!)["data"]!;
+        ((Dictionary<string, object?>)rows[0]!)["price"].Should().Be("19.99");
+    }
+
+    /// <summary>
+    /// The grouped aggregate types a Decimal column's _sum/_avg/_min/_max as Decimal,
+    /// not Float, so the grid's group totals carry the same exact text as its cells.
+    /// A Float column's aggregates stay Float (the control).
+    /// </summary>
+    [Fact]
+    public async Task Aggregate_DecimalColumn_SerializesAsDecimalString()
+    {
+        var result = await ExecuteQueryAsync(
+            "query { widgetsAggregate { _sum { price ratio } } }");
+
+        result.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
+        var group = (Dictionary<string, object?>)((System.Collections.IList)data!["widgetsAggregate"]!)[0]!;
+        var sum = (Dictionary<string, object?>)group["_sum"]!;
+        sum["price"].Should().Be("89.97");
+        sum["ratio"].Should().Be(7.5d);
+    }
+
+    /// <summary>
     /// A bigint-keyed table's mutation field returns the key through the BigInt
     /// scalar too, so it must come back as text — and a delete's affected-row count,
     /// carried by the same field, along with it.

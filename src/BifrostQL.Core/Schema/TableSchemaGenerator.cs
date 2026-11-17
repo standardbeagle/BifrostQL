@@ -283,7 +283,7 @@ namespace BifrostQL.Core.Schema
             {
                 builder.AppendLine($"type {AggregateSurface.AggregateFieldsTypeName(_table)} {{");
                 foreach (var column in numericColumns)
-                    builder.AppendLine($"\t{column.GraphQlName} : Float");
+                    builder.AppendLine($"\t{column.GraphQlName} : {AggregateSurface.ValueScalar(_typeMapper.GetGraphQlType(column.EffectiveDataType))}");
                 builder.AppendLine("}");
             }
 

@@ -60,13 +60,25 @@ namespace BifrostQL.Core.Schema
 
         /// <summary>
         /// True for the GraphQL scalar types that back SUM/AVG/MIN/MAX. MIN/MAX are
-        /// restricted to numeric here to keep the aggregate-values object a single
-        /// <c>Float</c>-typed shape; date/string extrema are a deferred extension.
+        /// restricted to numeric here to keep the aggregate-values object a numeric
+        /// shape (see <see cref="ValueScalar"/>); date/string extrema are a deferred
+        /// extension.
         /// </summary>
         public static bool IsNumeric(string graphQlType) => graphQlType switch
         {
             "Int" or "Short" or "Byte" or "BigInt" or "Decimal" or "Float" => true,
             _ => false,
         };
+
+        /// <summary>
+        /// The GraphQL scalar of one column's field on the aggregate-values object,
+        /// shared by every op group. A <c>Decimal</c> column keeps <c>Decimal</c>:
+        /// SUM/AVG/MIN/MAX of an exact column are exact in every supported dialect,
+        /// and a <c>Float</c> field would round them to a double before the client
+        /// saw them. Every other numeric column reads as <c>Float</c> (AVG of an
+        /// integer column is fractional).
+        /// </summary>
+        public static string ValueScalar(string columnGraphQlType) =>
+            columnGraphQlType == "Decimal" ? "Decimal" : "Float";
     }
 }

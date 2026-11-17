@@ -27,7 +27,7 @@ Each SQL dialect defines its own type mapper. The general mapping follows this p
 | `int` | `Int` |
 | `smallint` | `Short` |
 | `bigint` | `BigInt` (returned as a decimal string; accepts a number or a string) |
-| `decimal`, `numeric`, `money` | `Decimal` |
+| `decimal`, `numeric`, `money` | `Decimal` (returned as a decimal string with the value's scale; accepts a number or a string) |
 | `float`, `real`, `double` | `Float` |
 | `varchar`, `nvarchar`, `text` | `String` |
 | `bit`, `boolean`, `tinyint(1)` | `Boolean` |

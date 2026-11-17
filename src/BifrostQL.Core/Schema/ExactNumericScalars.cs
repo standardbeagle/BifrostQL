@@ -129,16 +129,31 @@ public sealed class ExactBigIntGraphType : ScalarGraphType
 
 /// <summary>
 /// <c>Decimal</c>, accepting a JSON number or a decimal string — the string form
-/// being the only way a browser can express an exact value a double rounds.
+/// being the only way a browser can express an exact value a double rounds — and
+/// always written to the response as a decimal string.
 /// </summary>
 public sealed class ExactDecimalGraphType : ScalarGraphType
 {
     public ExactDecimalGraphType()
     {
         Name = "Decimal";
-        Description = "An exact fixed-point number. Send it as a JSON number, or as a decimal " +
-                      "string to preserve precision a double would round away.";
+        Description = "An exact fixed-point number, returned as a decimal string. Send it as a JSON number, or as a " +
+                      "decimal string to preserve precision a double would round away.";
     }
+
+    /// <summary>
+    /// Output is ALWAYS a decimal string, with the value's own scale (<c>12.50</c>
+    /// stays <c>12.50</c>). A JSON number is a double to every browser client, so a
+    /// decimal past 15–17 significant digits reaches JSON.parse rounded. As with
+    /// BigInt, one representation for every value keeps the column's client type
+    /// independent of its data.
+    /// </summary>
+    public override object? Serialize(object? value) => ParseValue(value) switch
+    {
+        null => null,
+        decimal d => d.ToString(CultureInfo.InvariantCulture),
+        var other => ThrowSerializationError(other),
+    };
 
     /// <inheritdoc />
     public override object? ParseValue(object? value) => value switch

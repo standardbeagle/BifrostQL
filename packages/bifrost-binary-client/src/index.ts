@@ -57,6 +57,27 @@ export {
 export const DEFAULT_MAX_CHUNKED_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 /**
+ * Largest request frame the server accepts (4 MiB, `MaxFrameSize` in
+ * BifrostBinaryMiddleware). The server answers a bigger message by closing the
+ * whole connection with a protocol error, so the client refuses such a
+ * request before it reaches the wire.
+ */
+export const MAX_REQUEST_FRAME_BYTES = 4 * 1024 * 1024;
+
+/** WebSocket close code 1002, which the server sends after a frame it could not process. */
+const PROTOCOL_ERROR_CLOSE_CODE = 1002;
+
+/**
+ * Builds the rejection for a request frame over `MAX_REQUEST_FRAME_BYTES`.
+ * Shared by the unary and streaming send paths.
+ */
+export function oversizedRequestError(frameBytes: number): Error {
+  return new Error(
+    `Request frame is ${frameBytes} bytes, over the server's ${MAX_REQUEST_FRAME_BYTES}-byte limit; it was not sent.`
+  );
+}
+
+/**
  * Minimal WebSocket interface consumed by BifrostBinaryClient.
  * Compatible with the browser WebSocket API and Node.js ws/undici WebSocket.
  */
@@ -724,6 +745,18 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       code !== 1000;
 
     if (shouldReconnect && this.reconnectController) {
+      if (code === PROTOCOL_ERROR_CLOSE_CODE) {
+        // The server closes with 1002 after a frame it could not process (an
+        // oversized or malformed message, or a request that faulted). It does
+        // not say which request caused it, and replaying them all would send
+        // the offending one again, close again, and loop. Fail every in-flight
+        // request instead; the socket itself still reconnects.
+        this.rejectAllPending(
+          new Error(
+            `Connection closed by the server for a protocol error (${code} ${reason}); in-flight requests were not replayed.`
+          )
+        );
+      }
       // The socket is gone, so streaming idle timers would fire against a dead
       // connection during the backoff window and prematurely fail iterators
       // that are about to be re-sent. Clear them here; replayPendingAfterReconnect
@@ -1139,6 +1172,18 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       }
 
       const requestId = this.allocateRequestId();
+      const bytes = encodeMessage(
+        this.makeFrame({
+          requestId,
+          type,
+          query: queryText,
+          variablesJson: variables ? JSON.stringify(variables) : "",
+        })
+      );
+      if (bytes.length > MAX_REQUEST_FRAME_BYTES) {
+        reject(oversizedRequestError(bytes.length));
+        return;
+      }
 
       // Wrap the settlers so every settle path — server response, timeout,
       // disconnect, abort — detaches the abort listener exactly once, so a
@@ -1187,18 +1232,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         signal.addEventListener("abort", onAbort, { once: true });
       }
 
-      const msg = this.makeFrame({
-        requestId,
-        type,
-        query: queryText,
-        variablesJson: variables ? JSON.stringify(variables) : "",
-      });
-
       try {
-        const bytes = encodeMessage(msg);
         this.ws.send(bytes);
       } catch (err) {
-        // A synchronous throw from encode/send (e.g. the socket dropped between
+        // A synchronous throw from send (e.g. the socket dropped between
         // the readyState check and send()) must fully unwind this request:
         // clear the timeout, drop the pending entry, detach the abort listener
         // (via wrappedReject), and reject. Leaving them installed would leak the

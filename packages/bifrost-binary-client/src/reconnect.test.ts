@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
   BifrostMessageType,
+  MAX_REQUEST_FRAME_BYTES,
   decodeMessage,
   emptyChunkInfo,
   encodeMessage,
@@ -750,6 +751,58 @@ describe("BifrostBinaryClient auto-reconnect", () => {
       if (chunk.isLast) break;
     }
     expect(collected).toEqual([0]);
+
+    client.close();
+  });
+
+  it("refuses a request frame over the server's 4 MiB limit without sending it", async () => {
+    const client = await makeConnectedClient();
+    const ws = tracker.last;
+
+    // Control: a frame just under the limit goes out.
+    const nearLimit = "x".repeat(MAX_REQUEST_FRAME_BYTES - 1024);
+    void client.query("{ a }", { blob: nearLimit }).catch(() => {});
+    expect(ws.sentFrames).toHaveLength(1);
+
+    const overLimit = "x".repeat(MAX_REQUEST_FRAME_BYTES);
+    await expect(
+      client.query("{ a }", { blob: overLimit })
+    ).rejects.toThrowError(/over the server's 4194304-byte limit; it was not sent/);
+    await expect(
+      client.stream("{ a }", { blob: overLimit }).next()
+    ).rejects.toThrowError(/over the server's 4194304-byte limit/);
+    expect(ws.sentFrames).toHaveLength(1);
+    expect(client.pendingCount).toBe(1);
+
+    client.close();
+  });
+
+  it("fails in-flight requests instead of replaying them after a protocol-error close", async () => {
+    const client = await makeConnectedClient();
+    const firstWs = tracker.last;
+
+    const query = client.query("{ a }");
+    const assertion = expect(query).rejects.toThrowError(
+      /protocol error \(1002 Malformed frame\); in-flight requests were not replayed/
+    );
+    const stream = client.stream("{ b }");
+
+    // The server's answer to a frame it cannot process: an Error frame with
+    // no request id, then a 1002 close.
+    firstWs.simulateClose(1002, "Malformed frame");
+    await assertion;
+    await expect(stream.next()).rejects.toThrowError(/protocol error/);
+
+    // The socket still reconnects, but sends nothing: replaying would resend
+    // the offending frame and loop.
+    await vi.advanceTimersByTimeAsync(100);
+    const secondWs = tracker.last;
+    expect(secondWs).not.toBe(firstWs);
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.connected).toBe(true);
+    expect(secondWs.sentFrames).toHaveLength(0);
+    expect(client.pendingCount).toBe(0);
 
     client.close();
   });

@@ -40,6 +40,8 @@ import { emptyChunkInfo, verifyChecksum } from "./chunking.js";
 import {
   BifrostMessageType,
   encodeMessage,
+  MAX_REQUEST_FRAME_BYTES,
+  oversizedRequestError,
   type BifrostMessage,
   type RequestMetadata,
 } from "./index.js";
@@ -389,17 +391,6 @@ export function createChunkStream(
   }
 
   const requestId = client.allocateRequestId();
-  const queue = new StreamingQueue(requestId, () => {
-    // Pass whether the stream reached its final chunk so the client only
-    // tombstones the id on an early teardown (break / overflow / error).
-    client.removeStreamingQueue(requestId, queue.streamCompleted);
-  });
-  client.registerStreamingQueue(requestId, queue, {
-    type,
-    query: queryText,
-    variables,
-  });
-
   const frame: BifrostMessage = {
     requestId,
     type,
@@ -410,6 +401,23 @@ export function createChunkStream(
     chunkInfo: emptyChunkInfo(),
     lastSequence: 0,
   };
-  client.sendRawFrame(encodeMessage(frame));
+  const bytes = encodeMessage(frame);
+  if (bytes.length > MAX_REQUEST_FRAME_BYTES) {
+    const failed = new StreamingQueue(requestId, () => {});
+    failed.error(oversizedRequestError(bytes.length));
+    return failed;
+  }
+
+  const queue = new StreamingQueue(requestId, () => {
+    // Pass whether the stream reached its final chunk so the client only
+    // tombstones the id on an early teardown (break / overflow / error).
+    client.removeStreamingQueue(requestId, queue.streamCompleted);
+  });
+  client.registerStreamingQueue(requestId, queue, {
+    type,
+    query: queryText,
+    variables,
+  });
+  client.sendRawFrame(bytes);
   return queue;
 }

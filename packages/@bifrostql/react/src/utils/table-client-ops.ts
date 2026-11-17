@@ -45,11 +45,36 @@ export function countActiveFilters(
   return count;
 }
 
+// The server writes the BigInt scalar as a canonical decimal string ("-12",
+// "9007199254740993"): no sign on zero, no leading zeros. Only that exact shape
+// is read as an integer, so text such as "007" or "1e3" stays text.
+const CANONICAL_INTEGER = /^(?:0|-?[1-9]\d*)$/;
+
+/**
+ * The exact integer a cell holds, or null: a safe-integer number, or a
+ * canonical decimal string (a BigInt column).
+ */
+function exactInteger(value: unknown): bigint | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? BigInt(value) : null;
+  if (typeof value === 'string' && CANONICAL_INTEGER.test(value)) return BigInt(value);
+  return null;
+}
+
+/** Numeric value for client aggregation: numbers, and BigInt columns' strings. */
+function numericValue(value: unknown): number | bigint | null {
+  if (typeof value === 'number') return value;
+  return typeof value === 'string' ? exactInteger(value) : null;
+}
+
 export function defaultCompare(a: unknown, b: unknown): number {
   if (a === b) return 0;
   if (a === null || a === undefined) return 1;
   if (b === null || b === undefined) return -1;
   if (typeof a === 'number' && typeof b === 'number') return a - b;
+  // BigInt columns arrive as decimal strings; text order would put "10" before "9".
+  const ai = exactInteger(a);
+  const bi = exactInteger(b);
+  if (ai !== null && bi !== null) return ai < bi ? -1 : ai > bi ? 1 : 0;
   return String(a).localeCompare(String(b));
 }
 
@@ -232,23 +257,55 @@ export function clientFilterRows<T>(
   return result;
 }
 
+/**
+ * Reduces numeric cells. Numbers reduce as numbers. When any cell is a BigInt
+ * column's integer, sum/min/max are computed exactly and returned as a number
+ * while that is exact, else as the decimal string the server would send; avg is
+ * a number either way.
+ */
 export function computeBuiltinAggregate(
   fn: AggregateFn,
-  values: number[],
-): number {
+  values: Array<number | bigint>,
+): number | string {
   if (values.length === 0) return 0;
-  switch (fn) {
-    case 'count':
-      return values.length;
-    case 'sum':
-      return values.reduce((a, b) => a + b, 0);
-    case 'avg':
-      return values.reduce((a, b) => a + b, 0) / values.length;
-    case 'min':
-      return Math.min(...values);
-    case 'max':
-      return Math.max(...values);
+  if (fn === 'count') return values.length;
+  if (values.some((v) => typeof v === 'bigint')) {
+    const exact = values.map((v) => (typeof v === 'bigint' ? v : exactInteger(v)));
+    if (exact.every((v): v is bigint => v !== null)) return bigintAggregate(fn, exact);
+    // A fractional number among the integers: no exact result exists.
+    return computeBuiltinAggregate(fn, values.map(Number));
   }
+  const nums = values as number[];
+  switch (fn) {
+    case 'sum':
+      return nums.reduce((a, b) => a + b, 0);
+    case 'avg':
+      return nums.reduce((a, b) => a + b, 0) / nums.length;
+    case 'min':
+      return Math.min(...nums);
+    case 'max':
+      return Math.max(...nums);
+  }
+}
+
+function bigintAggregate(fn: Exclude<AggregateFn, 'count'>, values: bigint[]): number | string {
+  const sum = () => values.reduce((a, b) => a + b, 0n);
+  let result: bigint;
+  switch (fn) {
+    case 'avg':
+      return Number(sum()) / values.length;
+    case 'sum':
+      result = sum();
+      break;
+    case 'min':
+      result = values.reduce((a, b) => (b < a ? b : a));
+      break;
+    case 'max':
+      result = values.reduce((a, b) => (b > a ? b : a));
+      break;
+  }
+  const asNumber = Number(result);
+  return Number.isSafeInteger(asNumber) ? asNumber : result.toString();
 }
 
 export function formatAggregateValue(
@@ -284,11 +341,11 @@ export function computeAggregateForRows(
     return config.fn(values);
   }
   if (config.fn === 'count') return rows.length;
-  const values: number[] = [];
+  const values: Array<number | bigint> = [];
   if (config.field) {
     for (const row of rows) {
-      const val = row[config.field];
-      if (typeof val === 'number') values.push(val);
+      const val = numericValue(row[config.field]);
+      if (val !== null) values.push(val);
     }
   }
   return computeBuiltinAggregate(config.fn, values);

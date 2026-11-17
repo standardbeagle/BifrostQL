@@ -31,6 +31,20 @@ describe('defaultCompare', () => {
     expect(defaultCompare(2, 10)).toBeLessThan(0);
     expect(defaultCompare('b', 'a')).toBeGreaterThan(0);
   });
+
+  // The server writes BigInt cells as decimal strings; text order sorted "10"
+  // before "9" and could not tell 2^53+1 from 2^53.
+  it('orders BigInt decimal strings by value', () => {
+    expect(defaultCompare('9', '10')).toBeLessThan(0);
+    expect(defaultCompare('-10', '-9')).toBeLessThan(0);
+    expect(defaultCompare('9007199254740993', '9007199254740992')).toBeGreaterThan(0);
+    expect(defaultCompare(9, '10')).toBeLessThan(0);
+  });
+
+  it('keeps non-canonical digit text in text order', () => {
+    expect(defaultCompare('007', '10')).toBeLessThan(0);
+    expect(defaultCompare('10', '007')).toBeGreaterThan(0);
+  });
 });
 
 describe('clientSortRows', () => {
@@ -129,6 +143,17 @@ describe('aggregates', () => {
         fn: (vals) => (vals as unknown[]).length,
       }),
     ).toBe(3);
+  });
+
+  // BigInt cells are decimal strings; the reducer used to drop every non-number,
+  // so a BigInt column summed to 0.
+  it('reduces BigInt decimal strings exactly', () => {
+    const rows = [{ n: '9007199254740993' }, { n: '2' }, { n: null }];
+    expect(computeAggregateForRows(rows, { field: 'n', fn: 'sum' })).toBe('9007199254740995');
+    expect(computeAggregateForRows(rows, { field: 'n', fn: 'max' })).toBe('9007199254740993');
+    expect(computeAggregateForRows(rows, { field: 'n', fn: 'min' })).toBe(2);
+    expect(computeAggregateForRows([{ n: '10' }, { n: '20' }], { field: 'n', fn: 'sum' })).toBe(30);
+    expect(computeAggregateForRows([{ n: '10' }, { n: '20' }], { field: 'n', fn: 'avg' })).toBe(15);
   });
 
   it('formatAggregateValue handles formats and custom functions', () => {

@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -205,7 +204,7 @@ namespace BifrostQL.Server.Resp
 
             var payload = issuedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture)
                           + "|" + JsonSerializer.Serialize(segments, JsonOptions);
-            return Base64Url(Encoding.UTF8.GetBytes(payload)) + "." + Base64Url(ComputeMac(payload, binding, secret));
+            return ProtocolBase64Url.Encode(Encoding.UTF8.GetBytes(payload)) + "." + ProtocolBase64Url.Encode(ComputeMac(payload, binding, secret));
         }
 
         /// <summary>Mints a cursor from raw key-column values, rendered invariantly.</summary>
@@ -244,8 +243,8 @@ namespace BifrostQL.Server.Resp
                 var dot = cursor.IndexOf('.');
                 if (dot <= 0 || dot == cursor.Length - 1)
                     return false;
-                payloadBytes = FromBase64Url(cursor[..dot]);
-                presentedMac = FromBase64Url(cursor[(dot + 1)..]);
+                payloadBytes = ProtocolBase64Url.Decode(cursor[..dot]);
+                presentedMac = ProtocolBase64Url.Decode(cursor[(dot + 1)..]);
             }
             // Decoding untrusted wire text catches the full parse family, not just FormatException:
             // a truncated or over-length segment must become a clean refusal, never an unhandled
@@ -295,18 +294,7 @@ namespace BifrostQL.Server.Resp
         /// </summary>
         public static string FingerprintIdentity(IDictionary<string, object?>? userContext)
         {
-            if (userContext is null)
-                return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(" anonymous")));
-
-            var parts = new List<string>();
-            foreach (var entry in userContext)
-            {
-                var rendered = RenderClaim(entry.Value);
-                if (rendered is not null)
-                    parts.Add(entry.Key + "=" + rendered);
-            }
-            parts.Sort(StringComparer.Ordinal);
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", parts))));
+            return ProtocolIdentityFingerprint.Of(userContext);
         }
 
         private static bool TryParsePayload(string payload, out IReadOnlyList<string>? segments, out long issuedAtUnix)
@@ -353,32 +341,5 @@ namespace BifrostQL.Server.Resp
 
         private static string Prefixed(string value) =>
             value.Length.ToString(CultureInfo.InvariantCulture) + ":" + value;
-
-        private static string? RenderClaim(object? value) => value switch
-        {
-            null => null,
-            string s => s,
-            bool or byte or short or int or long or Guid => Convert.ToString(value, CultureInfo.InvariantCulture),
-            IEnumerable<string> sequence => "[" + string.Join(",", sequence) + "]",
-            IEnumerable enumerable => "[" + string.Join(",",
-                enumerable.Cast<object?>().Select(x => x?.ToString() ?? string.Empty)) + "]",
-            _ => null,
-        };
-
-        private static string Base64Url(byte[] bytes) =>
-            Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-        private static byte[] FromBase64Url(string value)
-        {
-            var padded = value.Replace('-', '+').Replace('_', '/');
-            padded = (padded.Length % 4) switch
-            {
-                2 => padded + "==",
-                3 => padded + "=",
-                0 => padded,
-                _ => throw new FormatException("invalid base64url length."),
-            };
-            return Convert.FromBase64String(padded);
-        }
     }
 }

@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -101,18 +100,7 @@ namespace BifrostQL.Server.Feeds
         public static string IdentityPartition(IDictionary<string, object?> userContext)
         {
             ArgumentNullException.ThrowIfNull(userContext);
-
-            var parts = new List<string>(userContext.Count);
-            foreach (var kv in userContext)
-            {
-                var rendered = RenderValue(kv.Value);
-                if (rendered is not null)
-                    parts.Add(kv.Key + "=" + rendered);
-            }
-            parts.Sort(StringComparer.Ordinal);
-
-            var canonical = string.Join("\n", parts);
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+            return ProtocolIdentityFingerprint.Of(userContext);
         }
 
         private static string ComputeETag(FeedDocument document, FeedFormat format, string identityPartition)
@@ -172,15 +160,5 @@ namespace BifrostQL.Server.Feeds
 
         private static DateTime TruncateToSeconds(DateTime value)
             => new(value.Ticks - (value.Ticks % TimeSpan.TicksPerSecond), DateTimeKind.Utc);
-
-        private static string? RenderValue(object? value) => value switch
-        {
-            null => null,
-            string s => s,
-            bool or byte or short or int or long or Guid => Convert.ToString(value, CultureInfo.InvariantCulture),
-            IEnumerable<string> seq => "[" + string.Join(",", seq) + "]",
-            IEnumerable e => "[" + string.Join(",", e.Cast<object?>().Select(x => x?.ToString() ?? string.Empty)) + "]",
-            _ => null, // opaque/complex entries (e.g. the ClaimsPrincipal) are never part of the stable partition
-        };
     }
 }

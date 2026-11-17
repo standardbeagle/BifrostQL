@@ -119,6 +119,27 @@ namespace BifrostQL.Server.Test.Prometheus
             keyEmpty.Should().NotBe(keyA); // an empty/non-tenant partition is its own slot
         }
 
+        /// <summary>
+        /// The partition rendered each value with Convert.ToString, so any collection claim became
+        /// its type name ("System.String[]"): two service identities differing only in roles shared
+        /// one cache slot, and the second scraped the first's cached series.
+        /// </summary>
+        [Fact]
+        public async Task Cache_key_partitions_identities_that_differ_only_in_a_collection_claim()
+        {
+            await using var harness = await ODataRealDbHarness.StartAsync("svc-key-roles", new[] { SalesMetric }, Seed);
+            var service = Service(harness.Reads, Opts());
+            var table = (await harness.ModelAsync()).GetTableFromDbName("Sales");
+            var config = PrometheusMetricConfig.FromTable(table);
+
+            var admin = service.CacheKey("model", config, new Dictionary<string, object?> { ["sub"] = "svc", ["roles"] = new[] { "admin" } });
+            var viewer = service.CacheKey("model", config, new Dictionary<string, object?> { ["sub"] = "svc", ["roles"] = new[] { "viewer" } });
+            var adminAgain = service.CacheKey("model", config, new Dictionary<string, object?> { ["sub"] = "svc", ["roles"] = new[] { "admin" } });
+
+            admin.Should().NotBe(viewer);
+            admin.Should().Be(adminAgain);
+        }
+
         // ---- criterion 3: a failure never caches partial-as-fresh + a health metric surfaces it
 
         [Fact]

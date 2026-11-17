@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -59,7 +58,7 @@ namespace BifrostQL.Server.OData
 
             var payload = Payload(offset, issuedAt.ToUnixTimeSeconds());
             var mac = ComputeMac(payload, binding, secret);
-            return Base64Url(Encoding.UTF8.GetBytes(payload)) + "." + Base64Url(mac);
+            return ProtocolBase64Url.Encode(Encoding.UTF8.GetBytes(payload)) + "." + ProtocolBase64Url.Encode(mac);
         }
 
         /// <summary>
@@ -84,8 +83,8 @@ namespace BifrostQL.Server.OData
             byte[] payloadBytes, presentedMac;
             try
             {
-                payloadBytes = FromBase64Url(token[..dot]);
-                presentedMac = FromBase64Url(token[(dot + 1)..]);
+                payloadBytes = ProtocolBase64Url.Decode(token[..dot]);
+                presentedMac = ProtocolBase64Url.Decode(token[(dot + 1)..]);
             }
             // Decoding untrusted wire text catches the full parse-exception family, not just
             // FormatException — a truncated/over-length base64url segment must become a clean
@@ -141,18 +140,7 @@ namespace BifrostQL.Server.OData
         public static string FingerprintIdentity(IDictionary<string, object?> userContext)
         {
             ArgumentNullException.ThrowIfNull(userContext);
-
-            var parts = new List<string>();
-            foreach (var kv in userContext)
-            {
-                var rendered = RenderClaim(kv.Value);
-                if (rendered is not null)
-                    parts.Add(kv.Key + "=" + rendered);
-            }
-            parts.Sort(StringComparer.Ordinal);
-
-            var canonical = string.Join("\n", parts);
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+            return ProtocolIdentityFingerprint.Of(userContext);
         }
 
         /// <summary>
@@ -214,31 +202,5 @@ namespace BifrostQL.Server.OData
         private static ODataProtocolException InvalidToken()
             => ODataProtocolException.BadRequest("The continuation token ($skiptoken) provided is not valid.");
 
-        private static string? RenderClaim(object? value) => value switch
-        {
-            null => null,
-            string s => s,
-            bool or byte or short or int or long or Guid =>
-                Convert.ToString(value, CultureInfo.InvariantCulture),
-            IEnumerable<string> seq => "[" + string.Join(",", seq) + "]",
-            IEnumerable e => "[" + string.Join(",", e.Cast<object?>().Select(x => x?.ToString() ?? "")) + "]",
-            _ => null, // opaque/complex entries are not part of the stable identity shape
-        };
-
-        private static string Base64Url(byte[] bytes)
-            => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-        private static byte[] FromBase64Url(string value)
-        {
-            var padded = value.Replace('-', '+').Replace('_', '/');
-            padded = (padded.Length % 4) switch
-            {
-                2 => padded + "==",
-                3 => padded + "=",
-                0 => padded,
-                _ => throw new FormatException("Invalid base64url length."),
-            };
-            return Convert.FromBase64String(padded);
-        }
     }
 }

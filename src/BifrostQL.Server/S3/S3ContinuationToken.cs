@@ -53,7 +53,7 @@ namespace BifrostQL.Server.S3
             ArgumentNullException.ThrowIfNull(secret);
 
             var mac = ComputeMac(position, binding, secret);
-            return Base64Url(Encoding.UTF8.GetBytes(position)) + "." + Base64Url(mac);
+            return ProtocolBase64Url.Encode(Encoding.UTF8.GetBytes(position)) + "." + ProtocolBase64Url.Encode(mac);
         }
 
         /// <summary>
@@ -77,8 +77,8 @@ namespace BifrostQL.Server.S3
             byte[] positionBytes, presentedMac;
             try
             {
-                positionBytes = FromBase64Url(token[..dot]);
-                presentedMac = FromBase64Url(token[(dot + 1)..]);
+                positionBytes = ProtocolBase64Url.Decode(token[..dot]);
+                presentedMac = ProtocolBase64Url.Decode(token[(dot + 1)..]);
             }
             catch (FormatException)
             {
@@ -119,21 +119,5 @@ namespace BifrostQL.Server.S3
         // into a prefix to forge a matching MAC.
         private static S3ProtocolException InvalidToken()
             => S3ProtocolException.InvalidArgument("The continuation token provided is not valid.");
-
-        private static string Base64Url(byte[] bytes)
-            => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-        private static byte[] FromBase64Url(string value)
-        {
-            var padded = value.Replace('-', '+').Replace('_', '/');
-            padded = (padded.Length % 4) switch
-            {
-                2 => padded + "==",
-                3 => padded + "=",
-                0 => padded,
-                _ => throw new FormatException("Invalid base64url length."),
-            };
-            return Convert.FromBase64String(padded);
-        }
     }
 }

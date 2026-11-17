@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
@@ -257,22 +255,12 @@ namespace BifrostQL.Server.Prometheus
                 IdentityPartition(userContext));
 
         // A deterministic, plaintext-free fingerprint of the scope's user context. An empty context
-        // (non-tenant / aggregate-with-no-claims) is its own partition; two different service
-        // identities never collide.
+        // (non-tenant / aggregate-with-no-claims) is its own partition; otherwise the shared
+        // injective fingerprint, so two service identities whose role sets differ never share an
+        // entry (Convert.ToString rendered every collection as its type name).
         private static string IdentityPartition(IDictionary<string, object?>? userContext)
-        {
-            if (userContext is null || userContext.Count == 0)
-                return "none";
-
-            var parts = new List<string>();
-            foreach (var kv in userContext)
-            {
-                if (kv.Value is null)
-                    continue;
-                parts.Add(kv.Key + "=" + Convert.ToString(kv.Value, CultureInfo.InvariantCulture));
-            }
-            parts.Sort(StringComparer.Ordinal);
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", parts))));
-        }
+            => userContext is null || userContext.Count == 0
+                ? "none"
+                : ProtocolIdentityFingerprint.Of(userContext);
     }
 }

@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -430,28 +429,7 @@ namespace BifrostQL.Server.S3
         /// </summary>
         private static string IdentityFingerprint(IDictionary<string, object?> userContext)
         {
-            var parts = new List<string>();
-            foreach (var kv in userContext)
-            {
-                var rendered = RenderClaim(kv.Value);
-                if (rendered is not null)
-                    parts.Add(kv.Key + "=" + rendered);
-            }
-            parts.Sort(StringComparer.Ordinal);
-
-            var canonical = string.Join("\n", parts);
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+            return ProtocolIdentityFingerprint.Of(userContext);
         }
-
-        private static string? RenderClaim(object? value) => value switch
-        {
-            null => null,
-            string s => s,
-            bool or byte or short or int or long or Guid =>
-                Convert.ToString(value, CultureInfo.InvariantCulture),
-            IEnumerable<string> seq => "[" + string.Join(",", seq) + "]",
-            IEnumerable e => "[" + string.Join(",", e.Cast<object?>().Select(x => x?.ToString() ?? "")) + "]",
-            _ => null, // opaque/complex entries are not part of the stable identity shape
-        };
     }
 }

@@ -183,137 +183,22 @@ namespace BifrostQL.Server
 
         public async Task<ExecutionResult> ExecuteAsync(ExecutionOptions options)
         {
-            var contextAccessor = options.RequestServices!.GetRequiredService<IHttpContextAccessor>();
-            var context = contextAccessor.HttpContext;
-            var extensionsLoader = options.RequestServices!.GetRequiredService<PathCache<Inputs>>();
-            var transformerService = options.RequestServices!.GetRequiredService<IQueryTransformerService>();
-            var observers = options.RequestServices!.GetService<IQueryObservers>();
+            var services = options.RequestServices!;
+            var context = services.GetRequiredService<IHttpContextAccessor>().HttpContext;
+            var extensionsLoader = services.GetRequiredService<PathCache<Inputs>>();
+            // app.Map() strips the matched prefix from Path and moves it to PathBase, so the
+            // endpoint is looked up by PathBase before Path (ResolveExtensionsAsync).
+            var userContext = options.UserContext as IDictionary<string, object?> ?? new Dictionary<string, object?>();
+            var (setup, error) = await BifrostExecutionPipeline.PrepareAsync(
+                services, context,
+                () => ResolveExtensionsAsync(extensionsLoader, context),
+                userContext,
+                context?.TraceIdentifier ?? Guid.NewGuid().ToString("N"));
+            if (setup is null)
+                return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError(error!) } };
 
-            // Check if a connection string is configured before trying to load the schema
-            var setupOptions = options.RequestServices!.GetService<BifrostSetupOptions>();
-            if (setupOptions != null && !setupOptions.HasConnectionString)
-                return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError("No database connection configured. Set a connection string first.") } };
-
-            // Resolve the active profile. An unspecified profile resolves to the system
-            // default profile (raw base schema, no opt-in modules). Every named profile —
-            // including a registered "default" — resolves through the registry; a named
-            // profile absent from the registry is an error. Auth/role requirements on a named
-            // profile are enforced here.
-            var profileRegistry = options.RequestServices!.GetService<BifrostProfileRegistry>();
-            var profileResult = BifrostProfileResolver.Resolve(
-                profileRegistry, context, options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>());
-            if (profileResult.HasError)
-                return new ExecutionResult { Errors = new ExecutionErrors { new ExecutionError(profileResult.ErrorMessage!) } };
-            var profileName = profileResult.ProfileName;
-            var activeProfile = profileResult.ActiveProfile;
-
-            // app.Map() strips the matched prefix from Path and moves it to PathBase,
-            // so we need to check PathBase (where the endpoint path lives after routing)
-            // before falling back to Path or the first registered value.
-            Inputs sharedExtensions;
-            try
-            {
-                sharedExtensions = await ResolveExtensionsAsync(extensionsLoader, context);
-            }
-            catch (UnknownBifrostEndpointException ex)
-            {
-                // Unmatched request path in a multi-endpoint deployment. Do NOT fall back to
-                // another database's schema — report the endpoint as not found.
-                var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
-                logger?.LogWarning("No BifrostQL endpoint configured for request path: {Message}", ex.Message);
-                return new ExecutionResult
-                {
-                    Errors = new ExecutionErrors
-                    {
-                        new ExecutionError("No BifrostQL endpoint is configured for this path.")
-                    }
-                };
-            }
-            catch (Exception ex)
-            {
-                // Surface connection/schema errors as GraphQL errors instead of 500
-                var innerMessage = ex.InnerException?.Message ?? ex.Message;
-
-                // Log full exception with stack trace for debugging
-                var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
-                logger?.LogError(ex, "Schema resolution failed: {Message}", innerMessage);
-
-                // The raw connection/driver message can expose host names, credentials
-                // hints, and infrastructure detail; keep it server-side only. Opt into
-                // the raw text for local debugging via BIFROST_EXPOSE_DB_ERRORS.
-                var expose = Environment.GetEnvironmentVariable(BifrostExecutionError.ExposeDbErrorsEnvVar);
-                var reveal = string.Equals(expose, "1", StringComparison.Ordinal)
-                    || string.Equals(expose, "true", StringComparison.OrdinalIgnoreCase);
-                var clientMessage = reveal
-                    ? $"Database connection failed: {innerMessage}"
-                    : "Database connection failed.";
-
-                return new ExecutionResult
-                {
-                    Errors = new ExecutionErrors
-                    {
-                        new ExecutionError(clientMessage)
-                    }
-                };
-            }
-            // Build (or fetch cached) the model+schema for the active profile. The empty
-            // default profile yields the raw base schema; named profiles fold their own
-            // metadata into the model and schema.
-            var profileCache = (ProfileModelCache)(sharedExtensions["profileModelCache"]
-                ?? throw new InvalidDataException("profileModelCache not configured"));
-            IDbModel model;
-            ISchema schema;
-            try
-            {
-                (model, schema) = profileCache.GetFor(profileName);
-            }
-            catch (Exception ex)
-            {
-                // A named profile is validated lazily on its first request, not at
-                // bootstrap: an invalid one throws ModelConfigValidator's aggregate
-                // here, which names tables/columns/metadata values. The middleware's
-                // outer catch already keeps that text off the wire, but it collapses
-                // the condition into "unexpected server error" — a misconfigured
-                // profile is a distinct, diagnosable condition and deserves its own
-                // constant (map by condition, invariant 10). Full detail server-side.
-                var logger = options.RequestServices!.GetService<ILogger<BifrostDocumentExecutor>>();
-                logger?.LogError(ex, "Profile model load failed for profile '{Profile}'", profileName);
-                return new ExecutionResult
-                {
-                    Errors = new ExecutionErrors
-                    {
-                        new ExecutionError("The requested profile failed to load."),
-                    },
-                };
-            }
-            options.Schema = schema;
-
-            // Inject correlation ID from ASP.NET Core's TraceIdentifier
-            if (options.UserContext is IDictionary<string, object?> userContext && !userContext.ContainsKey("_correlationId"))
-                userContext["_correlationId"] = context?.TraceIdentifier ?? Guid.NewGuid().ToString("N");
-
-            // Always filter transformers/observers by the active profile. The empty default
-            // profile filters out all opt-in transformers (soft-delete, tenant, etc.).
-            var filterTransformers = options.RequestServices!.GetRequiredService<IFilterTransformers>();
-            var filteredTransformers = BifrostProfileRegistry.FilterBy(filterTransformers, activeProfile);
-            transformerService = new QueryTransformerService(filteredTransformers);
-            observers = observers != null ? BifrostProfileRegistry.FilterBy(observers, activeProfile) : null;
-
-            // Store profile in UserContext so downstream resolvers see the active profile.
-            if (options.UserContext is IDictionary<string, object?> uc)
-                uc[BifrostProfile.UserContextKey] = activeProfile;
-
-            // Override "model" with the per-profile model so request-time readers
-            // (IBifrostContext, resolvers) see the same model the schema was built from.
-            options.Extensions = Combine(
-                sharedExtensions,
-                new Dictionary<string, object?>
-                {
-                    { "model", model },
-                    { "tableReaderFactory", new SqlExecutionManager(model, options.Schema, transformerService, observers,
-                        options.RequestServices!.GetService<BifrostQL.Core.Observers.EngineMetrics>()) },
-                }
-            );
+            options.Schema = setup.Schema;
+            options.Extensions = setup.Extensions;
             return await _documentExecutor.ExecuteAsync(options);
         }
 

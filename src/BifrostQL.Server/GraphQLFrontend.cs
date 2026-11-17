@@ -91,19 +91,15 @@ namespace BifrostQL.Server
     {
         private readonly IDocumentExecuter _documentExecuter;
         private readonly PathCache<Inputs> _pathCache;
-        private readonly IQueryTransformerService _transformerService;
-        private readonly IQueryObservers? _observers;
 
-        public BifrostEngine(
-            IDocumentExecuter documentExecuter,
-            PathCache<Inputs> pathCache,
-            IQueryTransformerService transformerService,
-            IQueryObservers? observers = null)
+        /// <summary>
+        /// Transformers and observers come from the request's services, filtered by the active
+        /// profile (<see cref="BifrostExecutionPipeline"/>), so the engine holds neither.
+        /// </summary>
+        public BifrostEngine(IDocumentExecuter documentExecuter, PathCache<Inputs> pathCache)
         {
             _documentExecuter = documentExecuter ?? throw new ArgumentNullException(nameof(documentExecuter));
             _pathCache = pathCache ?? throw new ArgumentNullException(nameof(pathCache));
-            _transformerService = transformerService ?? throw new ArgumentNullException(nameof(transformerService));
-            _observers = observers;
         }
 
         public async Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
@@ -117,10 +113,10 @@ namespace BifrostQL.Server
             // Loaders are registered under a lowercase key (app.Map is case-insensitive but
             // PathCache is ordinal), so normalize before lookup.
             var schemaKey = endpointPath?.ToLowerInvariant() ?? string.Empty;
-            Inputs sharedExtensions;
+            Func<Task<Inputs>> loadEndpoint;
             if (_pathCache.HasPath(schemaKey))
             {
-                sharedExtensions = await _pathCache.GetValueAsync(schemaKey);
+                loadEndpoint = () => _pathCache.GetValueAsync(schemaKey);
             }
             else
             {
@@ -144,92 +140,44 @@ namespace BifrostQL.Server
                         }},
                     };
 
-                sharedExtensions = await _pathCache.GetFirstValueAsync()
+                loadEndpoint = async () => await _pathCache.GetFirstValueAsync()
                     ?? throw new InvalidOperationException(
                         "No BifrostQL GraphQL endpoint is registered to resolve the schema for the binary transport.");
             }
 
-            var services = request.RequestServices;
-            // The binary WebSocket transport reaches execution through this engine. It must
-            // enforce the same profile role gating and per-profile module filtering as the
-            // HTTP middleware, otherwise a client could use the binary path to bypass
-            // profile authorization and — via the fail-closed transformer filter below —
-            // tenant isolation and soft-delete. HttpContext is available here through the
-            // same IHttpContextAccessor the HTTP path uses (the WebSocket handler runs
-            // inside the request's async flow).
-            var httpContext = services?.GetService<IHttpContextAccessor>()?.HttpContext;
-            var profileRegistry = services?.GetService<BifrostProfileRegistry>();
-
-            var profileResolution = BifrostProfileResolver.Resolve(
-                profileRegistry, httpContext, services?.GetService<ILogger<GraphQLFrontend>>());
-            if (profileResolution.HasError)
-            {
+            var services = request.RequestServices
+                ?? throw new InvalidOperationException("BifrostRequest.RequestServices is required.");
+            // The binary WebSocket and frontend transports reach execution through this engine.
+            // They run the SAME pipeline glue as the HTTP middleware (BifrostExecutionPipeline):
+            // profile role gating, per-profile module filtering, and the constant-text error
+            // mapping for connection and profile-build faults. HttpContext comes from the same
+            // IHttpContextAccessor the HTTP path uses.
+            var httpContext = services.GetService<IHttpContextAccessor>()?.HttpContext;
+            var userContext = request.UserContext;
+            // A binary socket shares one HttpContext across its messages, so each execution gets
+            // its own correlation id rather than the socket's TraceIdentifier.
+            var (setup, error) = await BifrostExecutionPipeline.PrepareAsync(
+                services, httpContext, loadEndpoint, userContext, Guid.NewGuid().ToString("N"),
+                // Wire entries merge with the model in hand: the identity-owned key set (which
+                // wire entries may never supply) includes the model's tenant-context-key.
+                model => BifrostQL.Core.Auth.WireContextMerger.Merge(userContext, request.WireContext, model));
+            if (setup is null)
                 return new BifrostResult
                 {
                     Data = null,
-                    Errors = new[] { new BifrostResultError { Message = profileResolution.ErrorMessage! } },
+                    Errors = new[] { new BifrostResultError { Message = error! } },
                 };
-            }
-
-            var profileName = profileResolution.ProfileName;
-            var activeProfile = profileResolution.ActiveProfile;
-
-            // Resolve the model+schema for the active profile so the binary path serves the
-            // same per-profile shape as HTTP. Fall back to the base model/schema only when
-            // no profile cache is configured (older bootstrap or a direct engine test).
-            IDbModel model;
-            ISchema schema;
-            if (sharedExtensions.TryGetValue("profileModelCache", out var cacheObj) && cacheObj is ProfileModelCache profileCache)
-            {
-                (model, schema) = profileCache.GetFor(profileName);
-            }
-            else
-            {
-                model = (IDbModel)(sharedExtensions["model"]
-                    ?? throw new InvalidDataException("model not configured for endpoint: " + endpointPath));
-                schema = (ISchema)(sharedExtensions["dbSchema"]
-                    ?? throw new InvalidDataException("dbSchema not configured for endpoint: " + endpointPath));
-            }
-
-            // Filter transformers/observers by the active profile (fail-closed: security and
-            // data-integrity modules always remain). Mirrors BifrostDocumentExecutor so the
-            // two transports cannot drift apart.
-            var transformerService = _transformerService;
-            var filterTransformers = services?.GetService<IFilterTransformers>();
-            if (filterTransformers != null)
-                transformerService = new QueryTransformerService(BifrostProfileRegistry.FilterBy(filterTransformers, activeProfile));
-
-            var observers = services?.GetService<IQueryObservers>() ?? _observers;
-            if (observers != null)
-                observers = BifrostProfileRegistry.FilterBy(observers, activeProfile);
-
-            var userContext = request.UserContext;
-            // Merge frontend-parsed wire entries only NOW, with the model in hand: the
-            // identity-owned key set (which wire entries may never supply) includes the
-            // model-configured tenant-context-key, not just the defaults.
-            BifrostQL.Core.Auth.WireContextMerger.Merge(userContext, request.WireContext, model);
-            if (!userContext.ContainsKey("_correlationId"))
-                userContext["_correlationId"] = Guid.NewGuid().ToString("N");
-            // Surface the active profile to downstream resolvers, matching the HTTP path.
-            userContext[BifrostProfile.UserContextKey] = activeProfile;
 
             var options = new ExecutionOptions
             {
                 Query = request.Query,
                 OperationName = request.OperationName,
                 Variables = request.Variables != null ? new Inputs(new Dictionary<string, object?>(request.Variables)) : null,
-                Schema = schema,
-                RequestServices = request.RequestServices,
+                Schema = setup.Schema,
+                RequestServices = services,
                 CancellationToken = request.CancellationToken,
                 UserContext = userContext,
-                Extensions = Combine(
-                    sharedExtensions,
-                    new Dictionary<string, object?>
-                    {
-                        { "model", model },
-                        { "tableReaderFactory", new SqlExecutionManager(model, schema, transformerService, observers,
-                            services?.GetService<BifrostQL.Core.Observers.EngineMetrics>()) }
-                    }),
+                Extensions = setup.Extensions,
             };
 
             var gqlResult = await _documentExecuter.ExecuteAsync(options);
@@ -277,15 +225,5 @@ namespace BifrostQL.Server
 
         /// <summary>The <see cref="BifrostResultError.Extensions"/> key holding the error code.</summary>
         internal const string CodeExtension = "code";
-
-        private static Inputs Combine(IReadOnlyDictionary<string, object?> input1, IReadOnlyDictionary<string, object?> input2)
-        {
-            var dict = new Dictionary<string, object?>();
-            foreach (var kv in input1)
-                dict[kv.Key] = kv.Value;
-            foreach (var kv in input2)
-                dict[kv.Key] = kv.Value;
-            return new Inputs(dict);
-        }
     }
 }

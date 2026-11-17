@@ -217,9 +217,7 @@ namespace BifrostQL.Server
             {
                 var documentExecuter = sp.GetRequiredService<GraphQL.IDocumentExecuter>();
                 var pathCache = sp.GetRequiredService<PathCache<Inputs>>();
-                var transformerService = sp.GetRequiredService<IQueryTransformerService>();
-                var observers = sp.GetService<IQueryObservers>();
-                return new BifrostEngine(documentExecuter, pathCache, transformerService, observers);
+                return new BifrostEngine(documentExecuter, pathCache);
             });
             return services;
         }

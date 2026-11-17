@@ -24,7 +24,9 @@ Each SQL dialect defines its own type mapper. The general mapping follows this p
 
 | SQL Type | GraphQL Type |
 |----------|-------------|
-| `int`, `bigint`, `smallint` | `Int` |
+| `int` | `Int` |
+| `smallint` | `Short` |
+| `bigint` | `BigInt` (returned as a decimal string; accepts a number or a string) |
 | `decimal`, `numeric`, `money` | `Decimal` |
 | `float`, `real`, `double` | `Float` |
 | `varchar`, `nvarchar`, `text` | `String` |

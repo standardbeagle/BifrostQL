@@ -288,6 +288,43 @@ public class GridHeaderFilterSortTests : FullIntegrationTestBase, IAsyncLifetime
     }
 
     /// <summary>
+    /// The OUTPUT half of the same rule. A BigInt written to the response as a JSON
+    /// number reaches a browser through JSON.parse as a double: 9007199254740993
+    /// arrives as ...992, so the key the grid shows and sends back names a different
+    /// row. The scalar serializes as a decimal string, every value alike, so a
+    /// client's type for the column does not depend on the value's magnitude.
+    /// </summary>
+    [Fact]
+    public async Task Read_BigIntValues_SerializeAsDecimalStrings()
+    {
+        const string query = "query GetSingleRow_ledger($pk_entry_id: BigInt) " +
+                             "{ value: ledger(filter: {entry_id: {_eq: $pk_entry_id}}) { data { entry_id } } }";
+        var result = await ExecuteQueryAsync(query, new Dictionary<string, object?> { ["pk_entry_id"] = "9007199254740993" });
+
+        result.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
+        var rows = (System.Collections.IList)((Dictionary<string, object?>)data!["value"]!)["data"]!;
+        ((Dictionary<string, object?>)rows[0]!)["entry_id"].Should().Be("9007199254740993");
+    }
+
+    /// <summary>
+    /// A bigint-keyed table's mutation field returns the key through the BigInt
+    /// scalar too, so it must come back as text — and a delete's affected-row count,
+    /// carried by the same field, along with it.
+    /// </summary>
+    [Fact]
+    public async Task Write_BigIntKeyedMutationResult_SerializesAsDecimalString()
+    {
+        var result = await ExecuteQueryAsync(
+            "mutation UpdateLedger($id: BigInt!, $note: String!) { ledger(update: {entry_id: $id, note: $note}) }",
+            new Dictionary<string, object?> { ["id"] = "9007199254740993", ["note"] = "edited" });
+
+        result.Errors.Should().BeNullOrEmpty();
+        var data = ((RootExecutionNode)result.Data!).ToValue() as Dictionary<string, object?>;
+        data!["ledger"].Should().Be("9007199254740993");
+    }
+
+    /// <summary>
     /// The WRITE path, not a read: the edit form and the delete action bind values
     /// through the same scalars. A smallint/tinyint value used to be sent as text
     /// (its `Short!`/`Byte!` input rejects that), and a bigint key had to be text to

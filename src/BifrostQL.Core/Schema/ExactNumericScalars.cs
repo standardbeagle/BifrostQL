@@ -41,7 +41,8 @@ public static class ExactNumericScalars
 }
 
 /// <summary>
-/// <c>BigInt</c>, accepting a JSON number or a decimal string.
+/// <c>BigInt</c>, accepting a JSON number or a decimal string, and always written to
+/// the response as a decimal string.
 ///
 /// Values inside <see cref="long"/> range are returned as <see cref="long"/>, never
 /// <see cref="BigInteger"/>: ADO.NET providers have no mapping for BigInteger and
@@ -54,7 +55,7 @@ public sealed class ExactBigIntGraphType : ScalarGraphType
     public ExactBigIntGraphType()
     {
         Name = "BigInt";
-        Description = "A signed integer of arbitrary width. Send it as a JSON number, or as a " +
+        Description = "A signed integer of arbitrary width, returned as a decimal string. Send it as a JSON number, or as a " +
                       "decimal string to carry a value a double cannot hold exactly.";
     }
 
@@ -67,6 +68,21 @@ public sealed class ExactBigIntGraphType : ScalarGraphType
         sbyte or byte or short or ushort or int or uint or long => Convert.ToInt64(value, CultureInfo.InvariantCulture),
         ulong u => u <= long.MaxValue ? Convert.ToInt64(u) : (object)new BigInteger(u),
         _ => ThrowValueConversionError(value),
+    };
+
+    /// <summary>
+    /// Output is ALWAYS a decimal string, whatever the magnitude. A JSON number is a
+    /// double to every browser client, so 9007199254740993 written as a number reaches
+    /// JSON.parse as ...992 and a key shown or sent back names a different row. Writing
+    /// small values as numbers and large ones as strings would make the column's client
+    /// type depend on its data; one representation keeps it fixed.
+    /// </summary>
+    public override object? Serialize(object? value) => ParseValue(value) switch
+    {
+        null => null,
+        long l => l.ToString(CultureInfo.InvariantCulture),
+        BigInteger big => big.ToString(CultureInfo.InvariantCulture),
+        var other => ThrowSerializationError(other),
     };
 
     /// <inheritdoc />

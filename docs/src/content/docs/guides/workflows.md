@@ -74,6 +74,10 @@ Workflows support four trigger types:
 - `on-state-transition`: runs after a matching state-machine transition succeeds.
 - `scheduled`: runs from the in-process scheduler tick.
 
+`IWorkflowRunner.RunAsync` and every `IWorkflowDataExecutor` method take an optional `CancellationToken`. Pass the request's `HttpContext.RequestAborted` from a manual HTTP shim so a client disconnect stops the run and cancels its queries and mutations; a canceled run throws `OperationCanceledException` rather than reporting a failed step. Custom `IWorkflowDataExecutor` implementations must accept the new parameter.
+
+The executor resolves tables against the same endpoint the GraphQL pipeline picks for the current request. On a host with more than one endpoint, a request whose path matches none of them is refused instead of falling back to the first endpoint.
+
 Non-manual triggers set an internal suppression flag while running so workflow-generated mutations do not recursively trigger more workflows.
 
 The built-in scheduler is in-process and single-instance. It is suitable for local automation and sample applications; durable distributed scheduling is intentionally left to an external job runner or a follow-up integration.

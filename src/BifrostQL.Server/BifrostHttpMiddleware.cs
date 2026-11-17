@@ -317,7 +317,7 @@ namespace BifrostQL.Server
             return await _documentExecutor.ExecuteAsync(options);
         }
 
-        private static async Task<Inputs> ResolveExtensionsAsync(PathCache<Inputs> cache, HttpContext? context)
+        internal static async Task<Inputs> ResolveExtensionsAsync(PathCache<Inputs> cache, HttpContext? context)
         {
             if (context?.Request == null)
                 throw new ArgumentNullException("context", "HttpContext.Request is null");

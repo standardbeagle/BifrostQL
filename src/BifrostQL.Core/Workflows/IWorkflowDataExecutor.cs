@@ -2,7 +2,8 @@ namespace BifrostQL.Core.Workflows;
 
 /// <summary>
 /// Data operations available to workflow steps. Server implementations must
-/// route these calls through the normal BifrostQL GraphQL pipeline.
+/// route these calls through the normal BifrostQL GraphQL pipeline, and pass
+/// <c>cancellationToken</c> to it so a caller that goes away stops the work.
 /// </summary>
 public interface IWorkflowDataExecutor
 {

@@ -210,6 +210,48 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
     // ---- The executor runs through the policy pipeline ----
 
     [Fact]
+    public async Task MultiEndpointHost_UnmatchedPath_RefusesWithoutLoadingAnyEndpoint()
+    {
+        // The executor used to resolve tables through PathCache.GetFirstValueAsync while the
+        // document executor resolved the request's own endpoint: two answers to one question.
+        // On a two-endpoint host with no matching path it now refuses the way the document
+        // executor does, and loads no endpoint's model to guess with.
+        var loads = 0;
+        var provider = BuildRequestServices();
+        await using var _ = provider;
+        var cache = provider.GetRequiredService<PathCache<Inputs>>();
+        cache.AddLoader("/graphql/other", () =>
+        {
+            Interlocked.Increment(ref loads);
+            return Task.FromResult(new Inputs(new Dictionary<string, object?> { { "model", _model } }));
+        });
+        var httpContext = new DefaultHttpContext { RequestServices = provider };
+        httpContext.Request.Path = "/workflows/renew";
+        provider.GetRequiredService<IHttpContextAccessor>().HttpContext = httpContext;
+        var executor = new BifrostWorkflowExecutor(new DocumentExecuter(), cache, provider);
+
+        var act = () => executor.QuerySingleAsync("Orders", 1, BuildUserContext("admin", 1));
+
+        await act.Should().ThrowAsync<UnknownBifrostEndpointException>();
+        loads.Should().Be(0, "no endpoint is guessed at");
+    }
+
+    [Theory]
+    [InlineData("a\u0001b", "\"a\\u0001b\"")]
+    [InlineData("\u001f", "\"\\u001F\"")]
+    [InlineData("tab\tnl\n", "\"tab\\tnl\\n\"")]
+    public void ToGraphQlString_EscapesEveryControlCharacter(string value, string expected)
+    {
+        var literal = BifrostWorkflowExecutor.ToGraphQlString(value);
+
+        literal.Should().Be(expected);
+        // The literal must parse back to the original value.
+        var document = GraphQLParser.Parser.Parse($"{{ f(a: {literal}) }}");
+        var field = (GraphQLParser.AST.GraphQLField)((GraphQLParser.AST.GraphQLOperationDefinition)document.Definitions[0]).SelectionSet.Selections[0];
+        ((GraphQLParser.AST.GraphQLStringValue)field.Arguments![0].Value).Value.ToString().Should().Be(value);
+    }
+
+    [Fact]
     public async Task InsertAsync_OnPolicyReadOnlyTable_RejectedByPolicyPipeline()
     {
         // audit_log carries policy-actions: read — a client insert must be

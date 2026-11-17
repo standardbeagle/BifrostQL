@@ -7,6 +7,48 @@ namespace BifrostQL.Core.Test;
 
 public class WorkflowRunnerTests
 {
+    private static WorkflowDefinition QueryThenAudit() => new()
+    {
+        Name = "cancel-me",
+        Trigger = new WorkflowTrigger { Type = "manual" },
+        Inputs = Json("""{ "type": "object" }"""),
+        Steps = new[]
+        {
+            new WorkflowStep { Name = "load", Type = "query", Payload = Json("""{ "table": "members", "id": "1" }""") },
+            new WorkflowStep { Name = "audit", Type = "audit", Payload = Json("""{ "action": "x", "entityType": "members", "entityId": "1" }""") },
+        },
+    };
+
+    [Fact]
+    public async Task RunAsync_PassesTheCallersTokenToEveryExecutorCall()
+    {
+        var executor = new CapturingWorkflowDataExecutor();
+        var runner = new WorkflowRunner(new Dictionary<string, WorkflowDefinition>(), executor);
+        using var cts = new CancellationTokenSource();
+
+        var result = await runner.RunAsync(QueryThenAudit(), new Dictionary<string, object?>(),
+            new Dictionary<string, object?>(), cts.Token);
+
+        result.Succeeded.Should().BeTrue();
+        executor.Tokens.Should().HaveCount(2).And.OnlyContain(t => t == cts.Token,
+            "a client disconnect must reach the pipeline's queries and mutations");
+    }
+
+    [Fact]
+    public async Task RunAsync_ACanceledCaller_StopsTheRun_InsteadOfRunningTheNextStep()
+    {
+        var executor = new CapturingWorkflowDataExecutor();
+        var runner = new WorkflowRunner(new Dictionary<string, WorkflowDefinition>(), executor);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var run = () => runner.RunAsync(QueryThenAudit(), new Dictionary<string, object?>(),
+            new Dictionary<string, object?>(), cts.Token);
+
+        await run.Should().ThrowAsync<OperationCanceledException>();
+        executor.Inserts.Should().BeEmpty("the audit step after the canceled query never runs");
+    }
+
     [Fact]
     public async Task RunAsync_ExecutesQueryMutationTransitionPolicyAuditBranchAndParallelStepsThroughExecutor()
     {
@@ -306,6 +348,7 @@ public class WorkflowRunnerTests
         public List<(string Table, IDictionary<string, object?> Values)> Updates { get; } = new();
         public List<WorkflowTransition> Transitions { get; } = new();
         public bool FailQueries { get; init; }
+        public List<CancellationToken> Tokens { get; } = new();
 
         public Task<IDictionary<string, object?>?> QuerySingleAsync(
             string table,
@@ -313,6 +356,8 @@ public class WorkflowRunnerTests
             IDictionary<string, object?> userContext,
             CancellationToken cancellationToken = default)
         {
+            Tokens.Add(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (FailQueries)
                 throw new InvalidOperationException("query failed");
 
@@ -323,12 +368,14 @@ public class WorkflowRunnerTests
 
         public Task InsertAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
+            Tokens.Add(cancellationToken);
             Inserts.Add((table, ToDictionary(values)));
             return Task.CompletedTask;
         }
 
         public Task UpdateAsync(string table, object values, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
+            Tokens.Add(cancellationToken);
             var dictionary = ToDictionary(values);
             Updates.Add((table, dictionary));
 
@@ -340,6 +387,7 @@ public class WorkflowRunnerTests
 
         public Task TransitionAsync(WorkflowTransition transition, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
         {
+            Tokens.Add(cancellationToken);
             Transitions.Add(transition);
             var key = (transition.Table, transition.Id.ToString() ?? string.Empty);
             if (Rows.TryGetValue(key, out var row))

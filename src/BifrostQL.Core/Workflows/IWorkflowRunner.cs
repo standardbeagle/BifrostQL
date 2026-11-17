@@ -157,6 +157,12 @@ public sealed class WorkflowRunner : IWorkflowRunner
 
             return StepRunResult.Success(new WorkflowStepTrace(step.Name, step.Type, true, output), output);
         }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            // The caller went away: stop the run rather than record a failed step and
+            // carry on to the next one.
+            throw;
+        }
         catch (WorkflowStepException ex)
         {
             return StepRunResult.Failure(

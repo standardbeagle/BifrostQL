@@ -8,6 +8,7 @@ using GraphQL.Execution;
 using GraphQL.Types;
 using System.Globalization;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Server
 {
@@ -147,16 +148,16 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Resolves a database table name to its model definition. The model is
-        /// read from the same <see cref="PathCache{T}"/> the document executor
-        /// uses, so the workflow executor and the GraphQL endpoint always agree
-        /// on the schema.
+        /// Resolves a database table name to its model definition through the SAME endpoint
+        /// resolution the document executor runs for this request. A first-endpoint pick here
+        /// resolved tables against endpoint one while the document ran against the request's
+        /// endpoint; on a multi-endpoint host with no matching path both now refuse
+        /// (<see cref="UnknownBifrostEndpointException"/>) instead of guessing.
         /// </summary>
         private async Task<IDbTable> ResolveTableAsync(string table)
         {
-            var extensions = await _extensionsLoader.GetFirstValueAsync()
-                ?? throw new InvalidOperationException(
-                    "No BifrostQL schemas are configured. Set a connection string first.");
+            var httpContext = _services.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>().HttpContext;
+            var extensions = await BifrostDocumentExecutor.ResolveExtensionsAsync(_extensionsLoader, httpContext);
             var model = (IDbModel)(extensions["model"]
                 ?? throw new InvalidDataException("model not configured"));
             return model.GetTableFromDbName(table);
@@ -249,7 +250,7 @@ namespace BifrostQL.Server
             };
         }
 
-        private static string ToGraphQlString(string? value)
+        internal static string ToGraphQlString(string? value)
         {
             var builder = new StringBuilder(value?.Length + 2 ?? 2);
             builder.Append('"');
@@ -262,6 +263,8 @@ namespace BifrostQL.Server
                     case '\n': builder.Append("\\n"); break;
                     case '\r': builder.Append("\\r"); break;
                     case '\t': builder.Append("\\t"); break;
+                    // Any other control character is illegal raw inside a GraphQL string.
+                    case < ' ': builder.Append("\\u").Append(((int)ch).ToString("X4", CultureInfo.InvariantCulture)); break;
                     default: builder.Append(ch); break;
                 }
             }

@@ -90,18 +90,23 @@ namespace BifrostQL.Server
             var now = _clock();
             var sourceWindow = Track(sourceKey, "s:", now);
             var accountWindow = accountKey is null ? default : Track(accountKey, "a:", now);
-            // Check both axes first without mutating, so a trip on one axis does not consume the other.
-            if (Peek(sourceWindow, now) >= _maxPerSource) return false;
-            if (accountKey is not null && Peek(accountWindow, now) >= _maxPerAccount) return false;
-            Bump(sourceWindow, now);
-            if (accountKey is not null) Bump(accountWindow, now);
+            // Each axis is reserved atomically: check-and-increment in one compare-and-swap, so N
+            // concurrent attempts against a window at cap-1 admit exactly one, not N. A separate
+            // read then increment let every in-flight attempt pass the read before any counted.
+            if (!TryReserve(sourceWindow, _maxPerSource, now, out var sourceStart)) return false;
+            if (accountKey is not null && !TryReserve(accountWindow, _maxPerAccount, now, out _))
+            {
+                // A refusal on the account axis must not consume the source axis.
+                Release(sourceWindow, sourceStart);
+                return false;
+            }
             return true;
         }
 
         /// <summary>
         /// Picks the window an attempt is counted in: the key's own when it is tracked or the map
-        /// has room (rolled-over counters are reclaimed first — <see cref="Peek"/> already reads
-        /// them as 0, so dropping them changes no decision), else its axis's shared overflow
+        /// has room (rolled-over counters are reclaimed first — <see cref="TryReserve"/> already treats
+        /// them as empty, so dropping them changes no decision), else its axis's shared overflow
         /// window. Existing counters are never evicted, so a live decision is never dropped.
         /// </summary>
         private (ConcurrentDictionary<string, Window> Map, string Key) Track(string key, string axis, DateTimeOffset now)
@@ -128,16 +133,48 @@ namespace BifrostQL.Server
         private static string HashAccountKey(string canonical) =>
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
 
-        private int Peek((ConcurrentDictionary<string, Window> Map, string Key) window, DateTimeOffset now) =>
-            window.Map.TryGetValue(window.Key, out var w) && now - w.Start < _window ? w.Count : 0;
+        /// <summary>
+        /// Takes one slot in the window when it is under <paramref name="cap"/>, atomically. A
+        /// rolled-over window restarts at this attempt. <paramref name="start"/> names the window the
+        /// slot was taken in, so <see cref="Release"/> never gives a slot back to a later window.
+        /// </summary>
+        private bool TryReserve(
+            (ConcurrentDictionary<string, Window> Map, string Key) window, int cap, DateTimeOffset now, out DateTimeOffset start)
+        {
+            start = default;
+            if (cap < 1)
+                return false;
+            while (true)
+            {
+                if (!window.Map.TryGetValue(window.Key, out var seen))
+                {
+                    if (window.Map.TryAdd(window.Key, new Window(now, 1)))
+                    {
+                        start = now;
+                        return true;
+                    }
+                    continue;
+                }
+                var live = now - seen.Start < _window ? seen : new Window(now, 0);
+                if (live.Count >= cap)
+                    return false;
+                if (window.Map.TryUpdate(window.Key, live with { Count = live.Count + 1 }, seen))
+                {
+                    start = live.Start;
+                    return true;
+                }
+            }
+        }
 
-        // Concurrent inserts between Track and Bump can overshoot the cap by at most the number of
-        // in-flight attempts; the next attempt sees the full map and counts in the overflow window.
-        private void Bump((ConcurrentDictionary<string, Window> Map, string Key) window, DateTimeOffset now) =>
-            window.Map.AddOrUpdate(
-                window.Key,
-                _ => new Window(now, 1),
-                (_, w) => now - w.Start < _window ? w with { Count = w.Count + 1 } : new Window(now, 1));
+        /// <summary>Gives back a slot taken by <see cref="TryReserve"/>, if its window is still current.</summary>
+        private static void Release((ConcurrentDictionary<string, Window> Map, string Key) window, DateTimeOffset start)
+        {
+            while (window.Map.TryGetValue(window.Key, out var seen) && seen.Start == start && seen.Count > 0)
+            {
+                if (window.Map.TryUpdate(window.Key, seen with { Count = seen.Count - 1 }, seen))
+                    return;
+            }
+        }
 
         private void TrySweepExpired(DateTimeOffset now)
         {

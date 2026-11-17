@@ -96,6 +96,13 @@ namespace BifrostQL.Server
         /// deadline that stops a silent peer from holding an admission slot for free.
         /// </param>
         /// <param name="idleTimeout">Deadline between frames of an established connection (default 10 min).</param>
+        /// <param name="ackTimeout">
+        /// How long a chunked response waits for the next ack once its window is full. Null (the
+        /// default) waits as long as the client's consumer takes; a silent peer still meets
+        /// <paramref name="idleTimeout"/>. When set and it expires, only that response is
+        /// abandoned, with an Error frame coded <see cref="BinaryErrorCode.ChunkAckTimeout"/>.
+        /// Runs on the registered <see cref="TimeProvider"/>.
+        /// </param>
         /// <returns>The application builder for chaining.</returns>
         public static IApplicationBuilder UseBifrostBinary(
             this IApplicationBuilder app,
@@ -107,7 +114,8 @@ namespace BifrostQL.Server
             bool? requireAuthentication = null,
             int maxConnections = BifrostBinaryMiddleware.DefaultMaxConnections,
             TimeSpan? firstFrameTimeout = null,
-            TimeSpan? idleTimeout = null)
+            TimeSpan? idleTimeout = null,
+            TimeSpan? ackTimeout = null)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
             // The schema-resolution key is the GraphQL endpoint path, not the WebSocket mount
@@ -126,7 +134,9 @@ namespace BifrostQL.Server
                     schemaPath,
                     chunkThreshold,
                     ackWindow,
-                    ChunkSender.DefaultAckTimeout,
+                    // No stated ack timeout: a full ack window pauses the transfer for as long as
+                    // the client's consumer takes (see ChunkSender.NoAckTimeout).
+                    ackTimeout ?? ChunkSender.NoAckTimeout,
                     requiresAuth,
                     origins,
                     maxConnections,
@@ -134,7 +144,8 @@ namespace BifrostQL.Server
                     // null Nullable<TimeSpan> would match nothing: unwrap to the middleware's
                     // "unset" sentinel here.
                     firstFrameTimeout ?? default,
-                    idleTimeout ?? default));
+                    idleTimeout ?? default,
+                    app.ApplicationServices.GetService<TimeProvider>() ?? TimeProvider.System));
             return app;
         }
 

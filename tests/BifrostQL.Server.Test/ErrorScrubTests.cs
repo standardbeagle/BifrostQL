@@ -146,7 +146,7 @@ public sealed class BinaryMiddlewareErrorScrubTests
             logger: NullLogger<BifrostBinaryMiddleware>.Instance,
             chunkThreshold: ChunkSender.DefaultChunkThreshold,
             ackWindow: ChunkSender.DefaultAckWindow,
-            ackTimeout: ChunkSender.DefaultAckTimeout,
+            ackTimeout: ChunkSender.NoAckTimeout,
             requireAuthenticatedIdentity: false);
 
         var context = new DefaultHttpContext { RequestServices = new ServiceCollection().BuildServiceProvider() };

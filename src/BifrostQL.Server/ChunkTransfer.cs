@@ -14,7 +14,9 @@ namespace BifrostQL.Server
     {
         private readonly IReadOnlyList<BifrostMessage> _chunks;
         private readonly int _ackWindow;
+        // ChunkSender.NoAckTimeout means a full window waits as long as the client takes.
         private readonly TimeSpan _ackTimeout;
+        private readonly TimeProvider _timeProvider;
         private readonly int _maxRetransmitsPerSequence;
         private readonly ChunkBuffer? _chunkBuffer;
         private readonly Func<BifrostMessage, CancellationToken, Task> _send;
@@ -28,6 +30,7 @@ namespace BifrostQL.Server
             IReadOnlyList<BifrostMessage> chunks,
             int ackWindow,
             TimeSpan ackTimeout,
+            TimeProvider timeProvider,
             int maxRetransmitsPerSequence,
             ChunkBuffer? chunkBuffer,
             Func<BifrostMessage, CancellationToken, Task> send)
@@ -36,6 +39,7 @@ namespace BifrostQL.Server
             _chunks = chunks;
             _ackWindow = ackWindow;
             _ackTimeout = ackTimeout;
+            _timeProvider = timeProvider;
             _maxRetransmitsPerSequence = maxRetransmitsPerSequence;
             _chunkBuffer = chunkBuffer;
             _send = send;
@@ -85,7 +89,10 @@ namespace BifrostQL.Server
         /// Sends every chunk, then waits until all are acknowledged so a late NACK on the tail
         /// is still served. Each chunk is stored in the connection's buffer as it goes.
         /// </summary>
-        /// <exception cref="TimeoutException">The client stopped acknowledging for the ack timeout.</exception>
+        /// <exception cref="TimeoutException">
+        /// An ack timeout is set and the client did not ack within it. Never thrown under
+        /// <see cref="ChunkSender.NoAckTimeout"/>: a full window then simply pauses the transfer.
+        /// </exception>
         /// <exception cref="ChunkRetransmitLimitExceededException">One chunk was NACKed past the cap.</exception>
         public async Task RunAsync(CancellationToken cancellationToken)
         {
@@ -125,20 +132,7 @@ namespace BifrostQL.Server
         private async Task<int> NextSignalAsync(
             Dictionary<uint, int> retransmitCounts, HashSet<uint> acked, CancellationToken cancellationToken)
         {
-            AckSignal signal;
-            using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-            {
-                timeout.CancelAfter(_ackTimeout);
-                try
-                {
-                    signal = await _signals.Reader.ReadAsync(timeout.Token);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    throw new TimeoutException(
-                        $"Client did not acknowledge chunked transfer within {_ackTimeout.TotalSeconds:0.###} seconds");
-                }
-            }
+            var signal = await ReadSignalAsync(cancellationToken);
 
             if (!signal.IsNack)
                 return signal.Sequence < _chunks.Count && acked.Add(signal.Sequence) ? -1 : 0;
@@ -151,6 +145,28 @@ namespace BifrostQL.Server
             if (signal.Sequence < _chunks.Count)
                 await _send(_chunks[(int)signal.Sequence], cancellationToken);
             return 0;
+        }
+
+        /// <summary>
+        /// The next ack or NACK. Without an ack timeout this waits as long as the client takes;
+        /// with one, the wait runs on the injected clock.
+        /// </summary>
+        private async ValueTask<AckSignal> ReadSignalAsync(CancellationToken cancellationToken)
+        {
+            if (_ackTimeout == ChunkSender.NoAckTimeout)
+                return await _signals.Reader.ReadAsync(cancellationToken);
+
+            using var timeout = new CancellationTokenSource(_ackTimeout, _timeProvider);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            try
+            {
+                return await _signals.Reader.ReadAsync(linked.Token);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Client did not acknowledge chunked transfer within {_ackTimeout.TotalSeconds:0.###} seconds");
+            }
         }
 
         private readonly record struct AckSignal(bool IsNack, uint Sequence);

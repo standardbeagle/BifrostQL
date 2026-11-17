@@ -87,6 +87,12 @@ export const BinaryErrorCode = {
   TooManyConcurrentRequests: "TOO_MANY_CONCURRENT_REQUESTS",
   /** The request_id names a request still in flight on the connection. */
   RequestIdInFlight: "REQUEST_ID_IN_FLIGHT",
+  /**
+   * The mount states an ack timeout and this client did not ack the next
+   * chunk of the response within it. Only that response was abandoned; the
+   * request ran, so resending re-runs it.
+   */
+  ChunkAckTimeout: "CHUNK_ACK_TIMEOUT",
 } as const;
 
 /** Protobuf field number of `error_code` on BifrostMessage. */
@@ -1227,6 +1233,13 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       if (current) {
         current.timer = undefined;
       }
+      // The consumer still holds chunks it has not taken, so the server is
+      // waiting on this client's acks: backpressure, not a dead server.
+      // Re-arm instead of failing.
+      if (current?.queue.awaitingConsumer) {
+        this.armStreamingTimeout(requestId);
+        return;
+      }
       // queue.error runs the cleanup callback → removeStreamingQueue, which
       // tombstones the id so the server's later chunks are ack-and-dropped.
       current?.queue.error(
@@ -1511,10 +1524,9 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * Acknowledges receipt of a chunk. The server's ChunkTransfer pauses after
-   * `ackWindow` (default 8) unacknowledged chunks until an ack arrives, and
-   * closes the connection when none comes within its ack timeout, so a client
-   * that never acks fails every response larger than ackWindow × chunkThreshold
-   * (~512 KB with defaults). One ChunkAck per received chunk keeps the
+   * `ackWindow` (default 8) unacknowledged chunks until an ack arrives, so a
+   * client that never acks never receives a response larger than
+   * ackWindow × chunkThreshold (~512 KB with defaults). One ChunkAck per received chunk keeps the
    * sender's window moving; the frame shape mirrors ChunkReceiver.CreateAck
    * (request_id + type + chunk_sequence).
    */

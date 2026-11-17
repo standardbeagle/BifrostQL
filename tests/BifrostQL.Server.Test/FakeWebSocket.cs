@@ -95,6 +95,19 @@ namespace BifrostQL.Server.Test
             _incoming.Enqueue((WebSocketMessageType.Binary, message.ToBytes()));
         }
 
+        /// <summary>
+        /// Delivers a Close frame while the connection runs (safe against the server's reader),
+        /// even to a <see cref="HangWhenDrained"/> fake.
+        /// </summary>
+        public void DeliverClose()
+        {
+            lock (_gate)
+            {
+                _incoming.Enqueue((WebSocketMessageType.Close, Array.Empty<byte>()));
+                _changed.Release();
+            }
+        }
+
         public void ForceState(WebSocketState state) => _state = state;
 
         /// <summary>Re-deserializes the recorded frames into messages for assertions.</summary>

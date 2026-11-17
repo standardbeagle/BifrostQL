@@ -20,5 +20,12 @@ namespace BifrostQL.Server
         /// ran: resend it under a fresh id.
         /// </summary>
         public const string RequestIdInFlight = "REQUEST_ID_IN_FLIGHT";
+
+        /// <summary>
+        /// The mount sets an ack timeout and the client did not ack the next chunk of this
+        /// response within it. Only this response is abandoned; the connection stays open. The
+        /// request ran, so resending re-runs it.
+        /// </summary>
+        public const string ChunkAckTimeout = "CHUNK_ACK_TIMEOUT";
     }
 }

@@ -66,7 +66,7 @@ namespace BifrostQL.Server.Test
                 NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: 100,
                 ackWindow: ackWindow,
-                ackTimeout: ChunkSender.DefaultAckTimeout,
+                ackTimeout: ChunkSender.NoAckTimeout,
                 requireAuthenticatedIdentity: false);
             var context = new DefaultHttpContext { RequestServices = new ServiceCollection().BuildServiceProvider() };
             context.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));

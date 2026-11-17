@@ -41,6 +41,8 @@ namespace BifrostQL.Server.Test
             /// <summary>Received-chunk indices answered with a NACK of that chunk instead of an ack.</summary>
             public HashSet<int> NackInsteadOfAck { get; } = new();
             public int MaxInFlightSeen { get; private set; }
+            /// <summary>Runs before each reply: a consumer that takes its time over every chunk.</summary>
+            public Func<Task>? BeforeEachReply { get; init; }
             private int _acked;
 
             public Task SendAsync(BifrostMessage frame, CancellationToken cancellationToken)
@@ -62,6 +64,8 @@ namespace BifrostQL.Server.Test
                 await foreach (var chunk in _received.Reader.ReadAllAsync(cancellationToken))
                 {
                     var received = index++;
+                    if (BeforeEachReply != null)
+                        await BeforeEachReply();
                     if (ExtraBefore.TryGetValue(received, out var extras))
                         foreach (var extra in extras)
                             await transfer.AcknowledgeAsync(extra, cancellationToken);
@@ -326,6 +330,65 @@ namespace BifrostQL.Server.Test
             var act = () => new ChunkSender(
                 chunkThreshold: 100, ackWindow: 2, chunkBuffer: null, ackTimeout: TimeSpan.Zero);
             act.Should().Throw<ArgumentOutOfRangeException>();
+        }
+
+        [Fact]
+        public void Constructor_AcceptsNoAckTimeout()
+        {
+            var act = () => new ChunkSender(
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: null, ackTimeout: ChunkSender.NoAckTimeout);
+            act.Should().NotThrow();
+        }
+
+        /// <summary>
+        /// Moves the injected clock forward one second at a time, yielding to the transfer between
+        /// steps so its wait (and any timer it arms) is in place before the clock passes it.
+        /// </summary>
+        private static async Task AdvanceAsync(Microsoft.Extensions.Time.Testing.FakeTimeProvider clock, TimeSpan total)
+        {
+            for (var elapsed = TimeSpan.Zero; elapsed < total; elapsed += TimeSpan.FromSeconds(1))
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(1);
+            }
+        }
+
+        [Fact]
+        public async Task SlowConsumer_TakingMinutesPerChunk_ReceivesTheWholeTransfer()
+        {
+            // The client's consumer holds every chunk for 61 s of injected time before acking,
+            // twice the 30 s ack timeout that used to close the connection. With no stated ack
+            // timeout a full window is backpressure: the transfer waits and then completes.
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+            var sender = new ChunkSender(
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: new ChunkBuffer(), timeProvider: clock);
+            var client = new ScriptedClient { BeforeEachReply = () => AdvanceAsync(clock, TimeSpan.FromSeconds(61)) };
+            var response = Result(40, 600);
+            var chunkCount = sender.SplitIntoChunks(response).Count;
+
+            var run = RunAsync(sender, response, client);
+
+            (await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30)))).Should().BeSameAs(run);
+            await run;
+            client.Sent.Select(m => m.ChunkSequence).Should().Equal(Enumerable.Range(0, chunkCount).Select(i => (uint)i),
+                "every chunk goes out once, in order, paced by the slow consumer's acks");
+        }
+
+        [Fact]
+        public async Task StatedAckTimeout_RunsOnTheInjectedClock()
+        {
+            // A mount that states an ack timeout still gets one, on the injected clock: the real
+            // clock never gets near 30 s here.
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+            var sender = new ChunkSender(
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: null,
+                ackTimeout: TimeSpan.FromSeconds(30), timeProvider: clock);
+            var client = new ScriptedClient { BeforeEachReply = () => AdvanceAsync(clock, TimeSpan.FromSeconds(35)) };
+
+            var act = () => RunAsync(sender, Result(41, 600), client);
+
+            (await act.Should().ThrowAsync<TimeoutException>().WaitAsync(TimeSpan.FromSeconds(30)))
+                .Which.Message.Should().Contain("30 seconds");
         }
 
         [Fact]

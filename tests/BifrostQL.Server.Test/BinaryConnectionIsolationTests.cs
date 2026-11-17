@@ -14,7 +14,7 @@ namespace BifrostQL.Server.Test
     /// End-to-end middleware tests for the binary WebSocket transport's chunk-buffer
     /// lifecycle: connection-scoped isolation (no cross-connection Resume/ChunkNack
     /// replay of another principal's buffered results), buffer release on transfer
-    /// completion, and connection abort when a client stops acknowledging chunks.
+    /// completion, and what a client that stops acknowledging chunks gets.
     /// </summary>
     public class BinaryConnectionIsolationTests
     {
@@ -37,7 +37,7 @@ namespace BifrostQL.Server.Test
         }
 
         private static BifrostBinaryMiddleware CreateMiddleware(
-            int ackWindow = 64, TimeSpan? ackTimeout = null)
+            int ackWindow = 64, TimeSpan? ackTimeout = null, TimeProvider? timeProvider = null)
         {
             return new BifrostBinaryMiddleware(
                 _ => Task.CompletedTask,
@@ -46,10 +46,11 @@ namespace BifrostQL.Server.Test
                 NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: 100,
                 ackWindow: ackWindow,
-                ackTimeout: ackTimeout ?? ChunkSender.DefaultAckTimeout,
+                ackTimeout: ackTimeout ?? ChunkSender.NoAckTimeout,
                 // Transport mechanics under an anonymous caller: this mount states the open
                 // posture explicitly, the way a DisableAuth endpoint's mount does.
-                requireAuthenticatedIdentity: false);
+                requireAuthenticatedIdentity: false,
+                timeProvider: timeProvider);
         }
 
         private static Task RunConnectionAsync(BifrostBinaryMiddleware middleware, FakeWebSocket socket)
@@ -149,19 +150,75 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task ClientThatNeverAcks_GetsConnectionClosed_InsteadOfWedgingServer()
+        public async Task StatedAckTimeout_AbandonsOnlyTheStalledResponse_WithACodedError()
         {
-            // Small ack window forces the sender to wait for acks; the client never
-            // sends any (queue drained + HangWhenDrained), so the ack timeout must
-            // abort the transfer and close the connection.
-            var middleware = CreateMiddleware(ackWindow: 2, ackTimeout: TimeSpan.FromMilliseconds(100));
-
+            // A mount that states a 30 s ack timeout, a client that never acks: the response is
+            // abandoned with a CHUNK_ACK_TIMEOUT Error frame for its request, and the connection
+            // stays open (it used to be closed with PolicyViolation and no frame saying why).
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+            var middleware = CreateMiddleware(ackWindow: 2, ackTimeout: TimeSpan.FromSeconds(30), timeProvider: clock);
+            var windowFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var abandoned = new TaskCompletionSource<BifrostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             var socket = new FakeWebSocket { HangWhenDrained = true };
+            var chunksSent = 0;
+            socket.Sent += m =>
+            {
+                if (m.Type == BifrostMessageType.Chunk && Interlocked.Increment(ref chunksSent) == 2)
+                    windowFull.TrySetResult();
+                if (m.Type == BifrostMessageType.Error)
+                    abandoned.TrySetResult(m);
+            };
             socket.EnqueueMessage(Query(5));
 
-            await RunConnectionAsync(middleware, socket).WaitAsync(TimeSpan.FromSeconds(5));
+            var run = RunConnectionAsync(middleware, socket);
+            await windowFull.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 35 && !abandoned.Task.IsCompleted; i++)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(1);
+            }
 
-            socket.State.Should().Be(WebSocketState.Closed, "the server must close the wedged connection");
+            var error = await abandoned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            error.RequestId.Should().Be(5u);
+            error.ErrorCode.Should().Be(BinaryErrorCode.ChunkAckTimeout);
+            socket.State.Should().Be(WebSocketState.Open, "only the stalled response is abandoned");
+            socket.ClosedWith.Should().BeNull();
+
+            socket.DeliverClose();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+            socket.ClosedWith.Should().Be(WebSocketCloseStatus.NormalClosure);
+        }
+
+        [Fact]
+        public async Task NoStatedAckTimeout_AClientThatStopsAcking_IsNotDisconnected()
+        {
+            // The default mount has no ack timer: a full window pauses the transfer for as long as
+            // the consumer takes, however far the clock moves.
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+            var middleware = CreateMiddleware(ackWindow: 2, timeProvider: clock);
+            var windowFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var socket = new FakeWebSocket { HangWhenDrained = true };
+            var chunksSent = 0;
+            socket.Sent += m =>
+            {
+                if (m.Type == BifrostMessageType.Chunk && Interlocked.Increment(ref chunksSent) == 2)
+                    windowFull.TrySetResult();
+            };
+            socket.EnqueueMessage(Query(6));
+
+            var run = RunConnectionAsync(middleware, socket);
+            await windowFull.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for (var i = 0; i < 120; i++)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(1);
+            }
+
+            socket.SentMessages().Should().NotContain(m => m.Type == BifrostMessageType.Error);
+            socket.State.Should().Be(WebSocketState.Open);
+
+            socket.DeliverClose();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
         }
     }
 }

@@ -42,7 +42,17 @@ namespace BifrostQL.Server
         private readonly ILogger<BifrostBinaryMiddleware> _logger;
         private readonly int _chunkThreshold;
         private readonly int _ackWindow;
+
+        /// <summary>
+        /// How long a chunked response waits for the next ack once its window is full.
+        /// <see cref="ChunkSender.NoAckTimeout"/> (the mount default) waits as long as the client's
+        /// consumer takes: the window is backpressure, and a silent peer is cut off by
+        /// <see cref="_idleTimeout"/>. A stated timeout abandons only the stalled response.
+        /// </summary>
         private readonly TimeSpan _ackTimeout;
+
+        /// <summary>The clock the ack timeout runs on.</summary>
+        private readonly TimeProvider _timeProvider;
 
         /// <summary>
         /// Origins permitted to open a cross-origin WebSocket handshake. Empty (or null)
@@ -124,7 +134,7 @@ namespace BifrostQL.Server
             ILogger<BifrostBinaryMiddleware> logger,
             int chunkThreshold,
             int ackWindow)
-            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.DefaultAckTimeout,
+            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.NoAckTimeout,
                    // Fail closed: a host constructing the middleware without stating a posture
                    // gets the safe one, never anonymous access.
                    requireAuthenticatedIdentity: true)
@@ -143,7 +153,8 @@ namespace BifrostQL.Server
             IReadOnlyList<string>? allowedOrigins = null,
             int maxConnections = DefaultMaxConnections,
             TimeSpan firstFrameTimeout = default,
-            TimeSpan idleTimeout = default)
+            TimeSpan idleTimeout = default,
+            TimeProvider? timeProvider = null)
         {
             _next = next;
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -151,7 +162,10 @@ namespace BifrostQL.Server
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
+            if (ackTimeout <= TimeSpan.Zero && ackTimeout != ChunkSender.NoAckTimeout)
+                throw new ArgumentOutOfRangeException(nameof(ackTimeout));
             _ackTimeout = ackTimeout;
+            _timeProvider = timeProvider ?? TimeProvider.System;
             _requireAuthenticatedIdentity = requireAuthenticatedIdentity;
             _allowedOrigins = allowedOrigins ?? Array.Empty<string>();
             _limiter = new BinaryTransportConnectionLimiter(maxConnections);
@@ -465,7 +479,7 @@ namespace BifrostQL.Server
             }
 
             /// <summary>
-            /// A fault a request task found (ack timeout, retransmit cap, a failed send): sends
+            /// A fault a request task found (retransmit cap, a failed send): sends
             /// the close frame after any frame being written, and stops every request. The
             /// reader keeps its receive, sees the peer echo the close and ends; a peer that
             /// never echoes is cut off after <see cref="CloseHandshakeTimeout"/>.
@@ -527,7 +541,8 @@ namespace BifrostQL.Server
             // connection's buffered results via Resume/ChunkNack (cross-principal leak)
             // or corrupt an entry by reusing the same request_id concurrently.
             var chunkBuffer = new ChunkBuffer();
-            var chunkSender = new ChunkSender(_chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout);
+            var chunkSender = new ChunkSender(
+                _chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout, timeProvider: _timeProvider);
             using var connection = new BinaryConnection(webSocket, httpContext, chunkSender, chunkBuffer);
 
             try
@@ -910,8 +925,8 @@ namespace BifrostQL.Server
         /// <summary>
         /// Runs a chunked send registered under its request id, so the reader routes its acks.
         /// Releases the buffered chunks on full delivery instead of letting the payload linger
-        /// until TTL expiry, and ends the connection on an ack timeout or a per-sequence
-        /// retransmit-limit breach.
+        /// until TTL expiry. A stated ack timeout that expires abandons only this response, with
+        /// a coded Error frame; a per-sequence retransmit-limit breach ends the connection.
         /// </summary>
         private async Task RunTransferAsync(BinaryConnection connection, uint requestId, IReadOnlyList<BifrostMessage> chunks)
         {
@@ -924,11 +939,16 @@ namespace BifrostQL.Server
             }
             catch (TimeoutException ex)
             {
-                // The client stopped acking mid-transfer: end the connection rather than let
-                // the transfer pin its buffered chunks indefinitely.
+                // Only reachable when the mount states an ack timeout. The client is still
+                // connected (a silent one meets the idle deadline instead), and its other requests
+                // are healthy, so abandon this response alone and say why with a code it can act on.
+                // Late acks for it find no transfer and are dropped.
                 _logger.LogWarning(
-                    ex, "Chunk acknowledgement timeout for request {RequestId}; closing connection", requestId);
-                await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Chunk acknowledgement timeout");
+                    ex, "Chunk acknowledgement timeout for request {RequestId}; abandoning the response", requestId);
+                connection.ChunkBuffer.Complete(requestId);
+                await SendErrorResponseAsync(connection, requestId,
+                    $"No chunk acknowledgement within {_ackTimeout.TotalSeconds:0.###} seconds; the response was abandoned.",
+                    BinaryErrorCode.ChunkAckTimeout);
             }
             catch (ChunkRetransmitLimitExceededException ex)
             {

@@ -10,7 +10,8 @@ namespace BifrostQL.Server
     /// fragments and deserializes to recover the original message.
     ///
     /// A transfer pauses when unacknowledged chunks reach the configured window and resumes
-    /// as ChunkAck messages arrive (see <see cref="ChunkTransfer"/>).
+    /// as ChunkAck messages arrive (see <see cref="ChunkTransfer"/>). By default the pause has
+    /// no time limit (<see cref="NoAckTimeout"/>).
     /// </summary>
     public sealed class ChunkSender
     {
@@ -25,11 +26,14 @@ namespace BifrostQL.Server
         public const int DefaultAckWindow = 8;
 
         /// <summary>
-        /// Default maximum time to wait for a ChunkAck/ChunkNack once the ack window is
-        /// full. A client that stops acknowledging (or never acknowledges) would otherwise
-        /// wedge the connection forever inside the send loop.
+        /// The ack timeout that means "no stall cap" (<see cref="Timeout.InfiniteTimeSpan"/>), and
+        /// the default. A full ack window is backpressure: the transfer pauses until the client
+        /// acks, however long its consumer takes. A slow consumer is not a dead peer, and a
+        /// per-ack timer never bounded how long a client holds a transfer anyway (one ack just
+        /// under the timer keeps it alive). A peer that goes silent is cut off by the
+        /// connection's idle deadline, which ends every transfer on it.
         /// </summary>
-        public static readonly TimeSpan DefaultAckTimeout = TimeSpan.FromSeconds(30);
+        public static readonly TimeSpan NoAckTimeout = Timeout.InfiniteTimeSpan;
 
         /// <summary>
         /// Default cap on how many times a single chunk sequence may be retransmitted in
@@ -46,31 +50,40 @@ namespace BifrostQL.Server
         private readonly TimeSpan _ackTimeout;
         private readonly int _maxRetransmitsPerSequence;
         private readonly ILogger? _logger;
+        private readonly TimeProvider _timeProvider;
 
         public ChunkSender(int chunkThreshold = DefaultChunkThreshold, int ackWindow = DefaultAckWindow)
             : this(chunkThreshold, ackWindow, null)
         {
         }
 
+        /// <param name="ackTimeout">
+        /// How long a transfer waits for the next ack once its window is full before it gives up
+        /// with a <see cref="TimeoutException"/>. Null or <see cref="NoAckTimeout"/> (the default)
+        /// waits as long as the client takes.
+        /// </param>
+        /// <param name="timeProvider">The clock the ack timeout runs on; the system clock when null.</param>
         public ChunkSender(
             int chunkThreshold,
             int ackWindow,
             ChunkBuffer? chunkBuffer,
             TimeSpan? ackTimeout = null,
             ILogger? logger = null,
-            int maxRetransmitsPerSequence = DefaultMaxRetransmitsPerSequence)
+            int maxRetransmitsPerSequence = DefaultMaxRetransmitsPerSequence,
+            TimeProvider? timeProvider = null)
         {
             if (chunkThreshold <= 0) throw new ArgumentOutOfRangeException(nameof(chunkThreshold));
             if (ackWindow <= 0) throw new ArgumentOutOfRangeException(nameof(ackWindow));
-            if (ackTimeout.HasValue && ackTimeout.Value <= TimeSpan.Zero)
+            if (ackTimeout is { } stated && stated <= TimeSpan.Zero && stated != NoAckTimeout)
                 throw new ArgumentOutOfRangeException(nameof(ackTimeout));
             if (maxRetransmitsPerSequence <= 0) throw new ArgumentOutOfRangeException(nameof(maxRetransmitsPerSequence));
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
             _chunkBuffer = chunkBuffer;
-            _ackTimeout = ackTimeout ?? DefaultAckTimeout;
+            _ackTimeout = ackTimeout ?? NoAckTimeout;
             _maxRetransmitsPerSequence = maxRetransmitsPerSequence;
             _logger = logger;
+            _timeProvider = timeProvider ?? TimeProvider.System;
         }
 
         /// <summary>
@@ -151,7 +164,7 @@ namespace BifrostQL.Server
         public ChunkTransfer StartTransfer(
             IReadOnlyList<BifrostMessage> chunks,
             Func<BifrostMessage, CancellationToken, Task> send)
-            => new(chunks, _ackWindow, _ackTimeout, _maxRetransmitsPerSequence, _chunkBuffer, send);
+            => new(chunks, _ackWindow, _ackTimeout, _timeProvider, _maxRetransmitsPerSequence, _chunkBuffer, send);
 
         /// <summary>
         /// Computes a CRC32 checksum for the given data using System.IO.Hashing.

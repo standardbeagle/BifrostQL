@@ -954,6 +954,94 @@ describe("BifrostBinaryClient.stream()", () => {
     }
   });
 
+  it("never times out a stream while its consumer holds chunks, however slow it is", async () => {
+    // The server's window is full and it waits for acks the client sends only
+    // when the consumer takes a chunk. The silence is the consumer's, not the
+    // server's, so the idle timer must not fail the stream.
+    vi.useFakeTimers();
+    try {
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        requestTimeoutMs: 1_000,
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+      const ws = tracker.last;
+
+      const iterator = c.stream("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(JSON.stringify({ data: "s".repeat(60) })),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      expect(frames.length).toBeGreaterThan(4);
+
+      // The server's window of 2, then nothing until an ack arrives.
+      let delivered = 0;
+      const deliverWindow = () => {
+        const acked = ackedSequences(ws).length;
+        while (delivered < frames.length && delivered < acked + 2) {
+          ws.receive(frames[delivered++]!);
+        }
+      };
+      deliverWindow();
+
+      const collected: StreamChunk[] = [];
+      for (;;) {
+        // The consumer spends 60x requestTimeoutMs on every chunk.
+        await vi.advanceTimersByTimeAsync(60_000);
+        const next = await iterator.next();
+        if (next.done) break;
+        collected.push(next.value);
+        deliverWindow();
+      }
+      expect(collected).toHaveLength(frames.length);
+      c.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still times out a stream whose server goes silent while the consumer waits", async () => {
+    // Control for the test above: with nothing held for the consumer, silence
+    // is the server's and the idle timer fires.
+    vi.useFakeTimers();
+    try {
+      const c = new BifrostBinaryClient({
+        url: TEST_URL,
+        WebSocket: tracker.ctor,
+        requestTimeoutMs: 1_000,
+      });
+      const cp = c.connect();
+      tracker.last.simulateOpen();
+      await cp;
+      const ws = tracker.last;
+
+      const iterator = c.stream("{ big }");
+      const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+      const inner = emptyMessage({
+        requestId: sentId,
+        type: BifrostMessageType.Result,
+        payload: new TextEncoder().encode(JSON.stringify({ data: "t".repeat(60) })),
+      });
+      const frames = buildChunkFrames(sentId, inner, 8);
+      ws.receive(frames[0]!);
+      expect((await iterator.next()).done).toBe(false);
+
+      const waiting = iterator.next();
+      const assertion = expect(waiting).rejects.toThrowError(/timed out/);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await assertion;
+      c.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("resets the streaming idle timeout on each chunk so a steady stream never trips it", async () => {
     vi.useFakeTimers();
     try {

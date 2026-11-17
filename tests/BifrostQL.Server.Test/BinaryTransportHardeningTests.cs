@@ -52,7 +52,7 @@ namespace BifrostQL.Server.Test
                 logger: NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: ChunkSender.DefaultChunkThreshold,
                 ackWindow: ChunkSender.DefaultAckWindow,
-                ackTimeout: ChunkSender.DefaultAckTimeout,
+                ackTimeout: ChunkSender.NoAckTimeout,
                 requireAuthenticatedIdentity: false,
                 allowedOrigins: allowedOrigins,
                 maxConnections: maxConnections);
@@ -329,7 +329,7 @@ namespace BifrostQL.Server.Test
                 logger: NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: ChunkSender.DefaultChunkThreshold,
                 ackWindow: ChunkSender.DefaultAckWindow,
-                ackTimeout: ChunkSender.DefaultAckTimeout,
+                ackTimeout: ChunkSender.NoAckTimeout,
                 requireAuthenticatedIdentity: false,
                 firstFrameTimeout: TimeSpan.FromMilliseconds(100));
 
@@ -363,7 +363,7 @@ namespace BifrostQL.Server.Test
                 logger: NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: ChunkSender.DefaultChunkThreshold,
                 ackWindow: ChunkSender.DefaultAckWindow,
-                ackTimeout: ChunkSender.DefaultAckTimeout,
+                ackTimeout: ChunkSender.NoAckTimeout,
                 requireAuthenticatedIdentity: true);
 
             var context = new DefaultHttpContext();

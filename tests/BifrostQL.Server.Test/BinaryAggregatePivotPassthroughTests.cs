@@ -152,7 +152,7 @@ namespace BifrostQL.Server.Test
                 logger: NullLogger<BifrostBinaryMiddleware>.Instance,
                 chunkThreshold: ChunkSender.DefaultChunkThreshold,
                 ackWindow: ChunkSender.DefaultAckWindow,
-                ackTimeout: ChunkSender.DefaultAckTimeout,
+                ackTimeout: ChunkSender.NoAckTimeout,
                 requireAuthenticatedIdentity: false);
 
             await middleware.InvokeAsync(context);

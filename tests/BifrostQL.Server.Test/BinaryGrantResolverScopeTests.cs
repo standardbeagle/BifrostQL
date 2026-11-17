@@ -64,7 +64,7 @@ public sealed class BinaryGrantResolverScopeTests
             NullLogger<BifrostBinaryMiddleware>.Instance,
             chunkThreshold: 1 << 20,
             ackWindow: 64,
-            ackTimeout: ChunkSender.DefaultAckTimeout,
+            ackTimeout: ChunkSender.NoAckTimeout,
             requireAuthenticatedIdentity: true);
         var context = new DefaultHttpContext { RequestServices = upgradeScope.ServiceProvider };
         context.User = new ClaimsPrincipal(new ClaimsIdentity(new[]

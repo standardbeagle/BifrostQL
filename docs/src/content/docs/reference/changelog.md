@@ -36,9 +36,12 @@ On `main` after v0.4.28; not yet on NuGet.
 - **Local auth keeps server-side sessions.** Cookies issued before the upgrade carry no session id, so every user signs in again once. Sessions end after 15 idle minutes by default (8 h absolute is unchanged). A role, tenant or household change ends the user's sessions instead of updating them.
 - **`AddBifrostLocalAuth` needs DDL and write rights** for its `_bifrost_auth_*` tables, created at host start. Missing rights fail the start, not the first login. Register your own `ILocalAuthStateStore` to keep them elsewhere.
 - **Local password hashes use PBKDF2-HMAC-SHA512 at 210,000 iterations** (2.1× the work per login). Existing hashes upgrade at the next sign-in.
+- **OData refuses Basic credentials on plain HTTP** with 403 ("Basic credentials are accepted only over HTTPS.") before reading them. Set `ODataOptions.AllowCleartextBasicAuth` to opt out (off by default; a startup warning when on). `X-Forwarded-Proto` counts only when the host configures ForwardedHeaders.
+- **A read-denied table answers like a missing one** on RESP (`-ERR unknown table`, was `-NOPERM`), pgwire (42601 `relation "<name>" does not exist.`, was 42501), LDAP (`noSuchObject`, and subtree searches skip denied families; was `insufficientAccessRights`) and gRPC (UNIMPLEMENTED "Method is unimplemented.", was INVALID_ARGUMENT / PERMISSION_DENIED). OData, MCP, S3 and feeds already matched and are now pinned. GraphQL and the binary transport still differ: the schema is not filtered per identity.
 
 ### Security — third review pass
 
+- LDAP: new `MaxMembershipValuesPerSearch` (default 10,000) caps member/memberOf values across one search; over it the search ends with `adminLimitExceeded` instead of cutting values.
 - Local auth: logout, password change, disable, delete and admin action (`POST /auth/admin/revoke-sessions`) revoke sessions server-side; `MaxConcurrentSessions` caps them.
 - Local auth: an account locks after 10 consecutive failed logins for 30 minutes (`LockoutThreshold`, `LockoutDuration`; null waits for `/auth/admin/unlock`). This is separate from the rate limiter.
 - Local auth: `/auth/password` enforces at least 12 characters with a letter and a digit, refuses the last 4 passwords, and supports opt-in `MaxPasswordAge`.
@@ -48,6 +51,7 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Fixed — third review pass
 
+- gRPC insert reports the real `AffectedRows` (0 when a trigger drops the row), and write events fire only when rows land.
 - Numbers inside native JSON columns (Postgres json/jsonb, MySQL json) keep their exact text on read and write.
 - Tree-sync reads the existing rows under an update lock inside its write transaction, so a concurrent writer can no longer change the diff between load and write.
 - Binary transport: Error frames carry a machine-readable `error_code` (protobuf field 13); the client requeues concurrency refusals by code. A stream no longer times out while its consumer still holds received chunks. Requests over 4 MiB are sent as chunks the server reassembles (up to 64 MiB); larger ones are refused before sending.

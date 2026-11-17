@@ -55,8 +55,24 @@ function paged(rows: unknown[], total = rows.length) {
   return { total, data: rows };
 }
 
-function createFetchMock(identity: TestIdentity) {
+/** The row window the server applies to a query that names no `limit`. */
+const SERVER_DEFAULT_ROW_WINDOW = 100;
+
+/**
+ * Builds `count` invoice rows. Row 1 is the `2,open,5000` the single-row
+ * facts assert on; the rest are distinguishable by `member_id`.
+ */
+function invoiceRows(count: number): Array<Record<string, unknown>> {
+  return Array.from({ length: count }, (_, i) => ({
+    member_id: i + 2,
+    status: 'open',
+    amount_cents: 5000,
+  }));
+}
+
+function createFetchMock(identity: TestIdentity, rowCount = 1) {
   graphqlRequests = [];
+  const rows = invoiceRows(rowCount);
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
 
@@ -78,11 +94,16 @@ function createFetchMock(identity: TestIdentity) {
       } as Response);
     }
 
+    const body = init?.body
+      ? (JSON.parse(init.body as string) as { query: string })
+      : { query: '' };
     if (init?.body) {
-      graphqlRequests.push(
-        JSON.parse(init.body as string) as { query: string },
-      );
+      graphqlRequests.push(body);
     }
+    // Like the server: at most `limit` rows (default 100) come back, while
+    // `total` carries the unpaged match count.
+    const limitMatch = /\blimit:\s*(\d+)/.exec(body.query);
+    const limit = limitMatch ? Number(limitMatch[1]) : SERVER_DEFAULT_ROW_WINDOW;
     return Promise.resolve({
       ok: true,
       status: 200,
@@ -90,9 +111,8 @@ function createFetchMock(identity: TestIdentity) {
       json: () =>
         Promise.resolve({
           data: {
-            main_dues_invoices: paged([
-              { member_id: 2, status: 'open', amount_cents: 5000 },
-            ])},
+            main_dues_invoices: paged(rows.slice(0, limit), rows.length),
+          },
         }),
     } as Response);
   });
@@ -187,5 +207,53 @@ describe('ExportButton', () => {
     const [csv] = downloadSpy.mock.calls[0] as [string, string];
     expect(csv).not.toContain('Amount');
     expect(csv).toContain('Member,Status');
+  });
+
+  it('exports every matching row, not the server default 100-row window', async () => {
+    // Arrange: 250 matching rows — more than a limit-less query returns.
+    globalThis.fetch = createFetchMock(identityWith(['main.members.read']), 250);
+    const user = userEvent.setup();
+    renderButton(nonFinanceColumns);
+    await waitFor(() =>
+      expect(screen.getByTestId('export-button')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByTestId('export-button'));
+
+    // Assert: header + 250 data rows, the last row present, no truncation
+    // notice.
+    await waitFor(() => expect(downloadSpy).toHaveBeenCalledOnce());
+    const [csv] = downloadSpy.mock.calls[0] as [string, string];
+    const lines = csv.split('\r\n');
+    expect(lines).toHaveLength(251);
+    expect(lines[250]).toBe('251,open');
+    expect(
+      screen.queryByTestId('export-button-truncated'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says so when the matching rows exceed the export cap', async () => {
+    // Arrange: 10050 matching rows — past the 10000-row export cap.
+    globalThis.fetch = createFetchMock(
+      identityWith(['main.members.read']),
+      10_050,
+    );
+    const user = userEvent.setup();
+    renderButton(nonFinanceColumns);
+    await waitFor(() =>
+      expect(screen.getByTestId('export-button')).toBeInTheDocument(),
+    );
+
+    // Act
+    await user.click(screen.getByTestId('export-button'));
+
+    // Assert: the capped file is written and the screen names both counts.
+    await waitFor(() => expect(downloadSpy).toHaveBeenCalledOnce());
+    const [csv] = downloadSpy.mock.calls[0] as [string, string];
+    expect(csv.split('\r\n')).toHaveLength(10_001);
+    expect(screen.getByTestId('export-button-truncated')).toHaveTextContent(
+      'Exported 10000 of 10050 rows',
+    );
   });
 });

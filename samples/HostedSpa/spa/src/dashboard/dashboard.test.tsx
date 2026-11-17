@@ -47,6 +47,16 @@ function paged(rows: unknown[], total = rows.length) {
   return { total, data: rows };
 }
 
+/** The row window the server applies to a query that names no `limit`. */
+const SERVER_DEFAULT_ROW_WINDOW = 100;
+const ACTIVE_MEMBER_COUNT = 250;
+const OPEN_INVOICE_COUNT = 150;
+const INVOICE_CENTS = 5000;
+
+function rowsOf(count: number): Array<{ id: number }> {
+  return Array.from({ length: count }, (_, i) => ({ id: i + 1 }));
+}
+
 function createFetchMock(
   identity: TestIdentity | null,
   options: { failingTable?: string } = {},
@@ -100,31 +110,40 @@ function createFetchMock(
       } as Response);
     }
 
-    // Two active members, three open invoices totalling 15000 cents, one
-    // upcoming renewal, four attendance rows — one canned answer per table.
+    // More rows than the server's default 100-row window: 250 active members
+    // and 150 open invoices of 5000 cents each, one upcoming renewal, four
+    // attendance rows. The mock behaves like the server: a row query returns
+    // at most its `limit` (default 100) rows while `total` carries the unpaged
+    // count, and `<t>Aggregate` sums every matching row.
+    const limitMatch = /\blimit:\s*(\d+)/.exec(body.query);
+    const limit = limitMatch ? Number(limitMatch[1]) : SERVER_DEFAULT_ROW_WINDOW;
+    const window = (rows: unknown[]) => paged(rows.slice(0, limit), rows.length);
     let data: Record<string, unknown> = {};
-    if (body.query.includes('main_members')) {
-      data = { main_members: paged([{ id: 1 }, { id: 2 }]) };
+    if (body.query.includes('main_dues_invoicesAggregate')) {
+      data = {
+        main_dues_invoicesAggregate: [
+          {
+            _count: OPEN_INVOICE_COUNT,
+            _sum: { amount_cents: OPEN_INVOICE_COUNT * INVOICE_CENTS },
+          },
+        ],
+      };
+    } else if (body.query.includes('main_members')) {
+      data = { main_members: window(rowsOf(ACTIVE_MEMBER_COUNT)) };
     } else if (body.query.includes('main_dues_invoices')) {
       const includesAmount = body.query.includes('amount_cents');
       data = {
-        main_dues_invoices: paged([
-          { id: 1, ...(includesAmount ? { amount_cents: 5000 } : {}) },
-          { id: 2, ...(includesAmount ? { amount_cents: 5000 } : {}) },
-          { id: 3, ...(includesAmount ? { amount_cents: 5000 } : {}) },
-        ]),
+        main_dues_invoices: window(
+          rowsOf(OPEN_INVOICE_COUNT).map((row) => ({
+            ...row,
+            ...(includesAmount ? { amount_cents: INVOICE_CENTS } : {}),
+          })),
+        ),
       };
     } else if (body.query.includes('main_member_memberships')) {
-      data = { main_member_memberships: paged([{ id: 9 }]) };
+      data = { main_member_memberships: window(rowsOf(1)) };
     } else if (body.query.includes('main_event_attendance')) {
-      data = {
-        main_event_attendance: paged([
-          { id: 1 },
-          { id: 2 },
-          { id: 3 },
-          { id: 4 },
-        ]),
-      };
+      data = { main_event_attendance: window(rowsOf(4)) };
     }
 
     return Promise.resolve({
@@ -170,7 +189,7 @@ describe('Dashboard', () => {
     // Assert
     await waitFor(() =>
       expect(screen.getByTestId('dashboard-members-card')).toHaveTextContent(
-        '2',
+        '250',
       ),
     );
   });
@@ -184,7 +203,7 @@ describe('Dashboard', () => {
 
     // Assert
     await waitFor(() =>
-      expect(screen.getByTestId('dashboard-dues-card')).toHaveTextContent('3'),
+      expect(screen.getByTestId('dashboard-dues-card')).toHaveTextContent('150'),
     );
   });
 
@@ -227,10 +246,10 @@ describe('Dashboard', () => {
     // Act
     renderDashboard();
 
-    // Assert: the dues card shows the summed amount (15000 cents = $150.00).
+    // Assert: every open invoice summed server-side (150 x 5000 cents), not one page.
     await waitFor(() =>
       expect(screen.getByTestId('dashboard-dues-card')).toHaveTextContent(
-        '$150.00',
+        '150 ($7500.00)',
       ),
     );
   });
@@ -242,7 +261,7 @@ describe('Dashboard', () => {
     // Act
     renderDashboard();
     await waitFor(() =>
-      expect(screen.getByTestId('dashboard-dues-card')).toHaveTextContent('3'),
+      expect(screen.getByTestId('dashboard-dues-card')).toHaveTextContent('150'),
     );
 
     // Assert: no dollar amount rendered, and no GraphQL query named the
@@ -278,7 +297,7 @@ describe('Dashboard', () => {
       expect(card).not.toHaveTextContent(/\b0\b/);
       // One failed metric does not blank the others.
       expect(screen.getByTestId('dashboard-members-card')).toHaveTextContent(
-        '2',
+        '250',
       );
   });
 

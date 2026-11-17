@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2, Plus, Unlink, Search, Loader2 } from 'lucide-react';
 import type { ManyToManyJoin, Table } from '../types/schema';
@@ -321,8 +321,10 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
 
     const { data, isLoading } = useQuery({
         // Only vary the query by term when the server actually filters; otherwise
-        // one fetch is reused and filtering happens client-side.
-        queryKey: ['m2mTargets', target.name, serverSearch ? term : ''],
+        // one fetch is reused and filtering happens client-side. The query text
+        // is in the key: two relationships to one target can select different
+        // link columns, and must not share rows that lack theirs.
+        queryKey: ['m2mTargets', target.name, query, serverSearch ? term : ''],
         queryFn: ({ signal }) => fetcher.query<Record<string, { data: Record<string, unknown>[] }>>(
             query,
             serverSearch && term ? { limit: pickerLimit, search: term } : { limit: pickerLimit },
@@ -346,9 +348,13 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
     // keep its error in its own state, mirroring the picker's planError handling.
     const [attachPlanError, setAttachPlanError] = useState<Error | null>(null);
 
+    // Synchronous in-flight guard: attach.isPending disables the rows only
+    // after a re-render, so two clicks in one frame both reached insert.
+    const pickInFlight = useRef(false);
+
     const handlePick = useCallback(async (rowKey: string, linkValue: string) => {
         // Belt-and-braces with the disabled button: never insert a duplicate link.
-        if (linkedIds.has(rowKey)) return;
+        if (linkedIds.has(rowKey) || pickInFlight.current) return;
         let detail: Record<string, unknown>;
         try {
             detail = attachJunctionDetail(m2m, parentRowId, linkValue);
@@ -357,6 +363,7 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
             return;
         }
         setAttachPlanError(null);
+        pickInFlight.current = true;
         try {
             await attach.insert(detail);
         } catch {
@@ -365,6 +372,8 @@ function TargetPicker({ target, junction, m2m, parentRowId, linkedIds, onClose, 
             // promise) and keep the picker open so the user can retry — do NOT
             // invalidate or close as if it succeeded.
             return;
+        } finally {
+            pickInFlight.current = false;
         }
         await onLinked();
         onClose();

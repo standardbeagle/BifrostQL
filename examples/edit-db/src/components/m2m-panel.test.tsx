@@ -213,5 +213,45 @@ describe('M2mPanel', () => {
             // Dialog title is still present — the picker did not close.
             expect(screen.getByText('Add Courses link')).toBeInTheDocument();
         });
+
+        it('sends one insert for a double click while the first is still in flight', async () => {
+            // isPending only disables the row after a re-render; two clicks in
+            // the same frame both reached attach.insert.
+            insert.mockImplementationOnce(() => new Promise(() => { /* never settles */ }));
+            await openPicker();
+            const chemistry = screen.getByRole('button', { name: /Chemistry/ });
+            fireEvent.click(chemistry);
+            fireEvent.click(chemistry);
+            await waitFor(() => expect(insert).toHaveBeenCalledTimes(1));
+            await Promise.resolve();
+            expect(insert).toHaveBeenCalledTimes(1);
+        });
+
+        it('does not reuse another relationship\'s picker rows that lack its link column', async () => {
+            // Two m2m joins to one target that link on different columns select
+            // different fields; sharing one cache entry handed the second picker
+            // rows without its link column, so a pick wrote an empty FK.
+            const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+            const targetWithCode = table('courses', {
+                label: 'Courses', labelColumn: 'title',
+                columns: [col('id', { isPrimaryKey: true, paramType: 'Int' }), col('code'), col('title')],
+            });
+            findTable.mockImplementation((n: string) =>
+                n === 'enrollments' ? junction : n === 'courses' ? targetWithCode : undefined);
+            const byId = render(<QueryClientProvider client={client}><M2mPanel m2m={m2m} parentRowId="42" onOpenColumn={vi.fn()} /></QueryClientProvider>);
+            await screen.findByText('Algebra');
+            fireEvent.click(screen.getByRole('button', { name: /Add link/ }));
+            await screen.findByRole('button', { name: /Chemistry/ });
+            byId.unmount();
+
+            fetcherQuery.mockImplementation(async (q: string) =>
+                q.includes('PickTarget') ? new Promise(() => { /* still loading */ }) : { enrollments: { data: junctionRows } });
+            const byCode: ManyToManyJoin = { ...m2m, name: 'enrollments_by_code', targetColumnNames: ['code'] };
+            render(<QueryClientProvider client={client}><M2mPanel m2m={byCode} parentRowId="42" onOpenColumn={vi.fn()} /></QueryClientProvider>);
+            await screen.findByText('Algebra');
+            fireEvent.click(screen.getByRole('button', { name: /Add link/ }));
+            await screen.findByText('Loading…');
+            expect(screen.queryByRole('button', { name: /Chemistry/ })).not.toBeInTheDocument();
+        });
     });
 });

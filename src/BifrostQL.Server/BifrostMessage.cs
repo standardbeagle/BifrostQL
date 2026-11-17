@@ -37,6 +37,8 @@ namespace BifrostQL.Server
     ///   field 10: total_bytes (uint64, varint) - total payload size before chunking
     ///   field 11: chunk_checksum (uint32, varint) - CRC32 of this chunk's payload
     ///   field 12: last_sequence (uint32, varint) - last received chunk sequence (Resume messages)
+    ///   field 13: error_code (string, length-delimited) - machine-readable code of an Error frame
+    ///             (<see cref="BinaryErrorCode"/>); absent on frames that carry none
     ///
     /// This uses Google.Protobuf's CodedOutputStream/CodedInputStream directly
     /// for maximum compatibility with any protobuf client library.
@@ -109,6 +111,13 @@ namespace BifrostQL.Server
         /// </summary>
         public uint LastSequence { get; set; }
 
+        /// <summary>
+        /// Machine-readable code of a transport-level Error frame (<see cref="BinaryErrorCode"/>),
+        /// so a client acts on the condition without parsing <see cref="Errors"/> text. Empty when
+        /// the frame carries no code. Field 13 is new: an older peer skips it as an unknown field.
+        /// </summary>
+        public string ErrorCode { get; set; } = "";
+
         // Protobuf field tags (field number << 3 | wire type)
         private const int RequestIdTag = (1 << 3) | 0;        // varint
         private const int TypeTag = (2 << 3) | 0;              // varint
@@ -122,6 +131,7 @@ namespace BifrostQL.Server
         private const int TotalBytesTag = (10 << 3) | 0;       // varint
         private const int ChunkChecksumTag = (11 << 3) | 0;    // varint
         private const int LastSequenceTag = (12 << 3) | 0;     // varint
+        private const int ErrorCodeTag = (13 << 3) | 2;        // length-delimited
 
         /// <summary>
         /// Serializes this message to protobuf wire format: one array of exactly the frame's size.
@@ -226,6 +236,12 @@ namespace BifrostQL.Server
                 output.WriteUInt32(LastSequence);
             }
 
+            if (ErrorCode.Length > 0)
+            {
+                output.WriteTag(ErrorCodeTag);
+                output.WriteString(ErrorCode);
+            }
+
             if (Payload.Length > 0)
             {
                 output.WriteTag(PayloadTag);
@@ -265,6 +281,8 @@ namespace BifrostQL.Server
                 size += CodedOutputStream.ComputeTagSize(ChunkChecksumTag >> 3) + CodedOutputStream.ComputeUInt32Size(ChunkChecksum);
             if (LastSequence != 0)
                 size += CodedOutputStream.ComputeTagSize(LastSequenceTag >> 3) + CodedOutputStream.ComputeUInt32Size(LastSequence);
+            if (ErrorCode.Length > 0)
+                size += CodedOutputStream.ComputeTagSize(ErrorCodeTag >> 3) + CodedOutputStream.ComputeStringSize(ErrorCode);
             if (Payload.Length > 0)
                 size += CodedOutputStream.ComputeTagSize(PayloadTag >> 3) + CodedOutputStream.ComputeLengthSize(Payload.Length);
             return size;
@@ -339,6 +357,9 @@ namespace BifrostQL.Server
                         break;
                     case LastSequenceTag:
                         msg.LastSequence = input.ReadUInt32();
+                        break;
+                    case ErrorCodeTag:
+                        msg.ErrorCode = input.ReadString();
                         break;
                     default:
                         input.SkipLastField();

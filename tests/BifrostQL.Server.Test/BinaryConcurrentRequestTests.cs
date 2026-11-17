@@ -137,8 +137,10 @@ namespace BifrostQL.Server.Test
             await RunAsync(engine, socket);
 
             var sent = socket.SentMessages().Where(m => m.RequestId == 5).ToList();
-            sent.Should().ContainSingle(m => m.Type == BifrostMessageType.Error)
-                .Which.Errors.Should().ContainSingle().Which.Should().Contain("already in flight");
+            var refusal = sent.Should().ContainSingle(m => m.Type == BifrostMessageType.Error).Which;
+            refusal.ErrorCode.Should().Be(BinaryErrorCode.RequestIdInFlight,
+                "a client tells this refusal from a failure by its code, never by its text");
+            refusal.Errors.Should().ContainSingle().Which.Should().Contain("already in flight");
             sent.Should().ContainSingle(m => m.Type == BifrostMessageType.Result,
                 "the request that holds the id still answers");
         }
@@ -163,7 +165,10 @@ namespace BifrostQL.Server.Test
             var sent = socket.SentMessages();
             sent.Should().ContainSingle(m => m.Type == BifrostMessageType.Error)
                 .Which.RequestId.Should().Be((uint)cap + 1);
-            sent.Single(m => m.Type == BifrostMessageType.Error).Errors.Single().Should().Contain("Too many concurrent requests");
+            var refusal = sent.Single(m => m.Type == BifrostMessageType.Error);
+            refusal.ErrorCode.Should().Be(BinaryErrorCode.TooManyConcurrentRequests,
+                "a client requeues this refusal by its code, never by its text");
+            refusal.Errors.Single().Should().Contain("Too many concurrent requests");
             sent.Count(m => m.Type == BifrostMessageType.Result).Should().Be(cap);
             engine.SlowEntered.Should().Be(cap);
         }

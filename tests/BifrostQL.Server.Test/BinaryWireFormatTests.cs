@@ -32,9 +32,11 @@ namespace BifrostQL.Server.Test
                 TotalBytes = 9_000_000_000UL,
                 ChunkChecksum = 0xCAFEBABE,
                 LastSequence = 42,
+                ErrorCode = BinaryErrorCode.TooManyConcurrentRequests,
             };
 
             var restored = BifrostMessage.FromBytes(msg.ToBytes());
+            restored.ErrorCode.Should().Be(BinaryErrorCode.TooManyConcurrentRequests);
 
             restored.RequestId.Should().Be(123456);
             restored.Type.Should().Be(BifrostMessageType.Chunk);
@@ -124,6 +126,7 @@ namespace BifrostQL.Server.Test
                     TotalBytes = ulong.MaxValue,
                     ChunkChecksum = uint.MaxValue,
                     LastSequence = uint.MaxValue,
+                    ErrorCode = "CODE",
                 },
                 "unicode" => new BifrostMessage
                 {
@@ -159,6 +162,7 @@ namespace BifrostQL.Server.Test
             if (m.TotalBytes != 0) { o.WriteTag(10, WireType.Varint); o.WriteUInt64(m.TotalBytes); }
             if (m.ChunkChecksum != 0) { o.WriteTag(11, WireType.Varint); o.WriteUInt32(m.ChunkChecksum); }
             if (m.LastSequence != 0) { o.WriteTag(12, WireType.Varint); o.WriteUInt32(m.LastSequence); }
+            if (m.ErrorCode.Length > 0) { o.WriteTag(13, WireType.LengthDelimited); o.WriteString(m.ErrorCode); }
             // The payload goes last, so a frame is its envelope followed by the payload bytes.
             if (m.Payload.Length > 0) { o.WriteTag(5, WireType.LengthDelimited); o.WriteBytes(ByteString.CopyFrom(m.Payload)); }
             o.Flush();
@@ -311,6 +315,7 @@ namespace BifrostQL.Server.Test
                 TotalBytes = 1,
                 ChunkChecksum = 1,
                 LastSequence = 1,
+                ErrorCode = "X",
             };
 
             var seen = new HashSet<(int field, WireType wt)>();
@@ -336,6 +341,7 @@ namespace BifrostQL.Server.Test
                 (10, WireType.Varint),          // total_bytes
                 (11, WireType.Varint),          // chunk_checksum
                 (12, WireType.Varint),          // last_sequence
+                (13, WireType.LengthDelimited), // error_code
             });
         }
 

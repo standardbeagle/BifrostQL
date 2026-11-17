@@ -21,7 +21,7 @@ namespace BifrostQL.Server
     /// send goes through one serialized writer, so the frames of different requests interleave
     /// and the client matches them by request_id. A slow or large response no longer blocks the
     /// requests behind it. A request_id must be unique among the requests in flight; a reused
-    /// one is refused with an Error frame.
+    /// one is refused with an Error frame coded <see cref="BinaryErrorCode.RequestIdInFlight"/>.
     ///
     /// Large responses exceeding the chunk threshold are automatically split into
     /// Chunk messages with CRC32 integrity checksums and backpressure via ChunkAck.
@@ -282,7 +282,7 @@ namespace BifrostQL.Server
         /// </summary>
         /// <summary>
         /// Most requests one connection executes at once. A request past the cap is refused
-        /// with an Error frame naming it, never queued: the reader must stay free to route the
+        /// with an Error frame coded <see cref="BinaryErrorCode.TooManyConcurrentRequests"/>, never queued: the reader must stay free to route the
         /// acks that let running transfers finish. The HTTP endpoint's counterpart is Kestrel's
         /// per-connection HTTP/2 stream limit.
         /// </summary>
@@ -755,7 +755,8 @@ namespace BifrostQL.Server
             {
                 await SendErrorResponseAsync(connection, request.RequestId,
                     $"Too many concurrent requests: a connection runs at most {MaxConcurrentRequestsPerConnection} at once. " +
-                    "Resend this request when one completes.");
+                    "Resend this request when one completes.",
+                    BinaryErrorCode.TooManyConcurrentRequests);
                 return;
             }
 
@@ -788,7 +789,8 @@ namespace BifrostQL.Server
             if (!started)
             {
                 await SendErrorResponseAsync(connection, request.RequestId,
-                    $"Request id {request.RequestId} is already in flight on this connection.");
+                    $"Request id {request.RequestId} is already in flight on this connection.",
+                    BinaryErrorCode.RequestIdInFlight);
             }
         }
 
@@ -939,12 +941,14 @@ namespace BifrostQL.Server
             }
         }
 
-        private static Task SendErrorResponseAsync(BinaryConnection connection, uint requestId, string message)
+        private static Task SendErrorResponseAsync(
+            BinaryConnection connection, uint requestId, string message, string errorCode = "")
         {
             var errorResponse = new BifrostMessage
             {
                 RequestId = requestId,
                 Type = BifrostMessageType.Error,
+                ErrorCode = errorCode,
             };
             errorResponse.Errors.Add(message);
             return connection.SendAsync(errorResponse, connection.Token);

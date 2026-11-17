@@ -496,4 +496,34 @@ public class HistoryMetadataValidationTests
 
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void Validate_HistoryTableWithBadPolicyAction_ReportsTheCombinedList()
+    {
+        // The history pass re-reads the table's policy. A bad policy-actions token is already
+        // in the error list (ValidatePolicy); the re-read must not throw the collector's raw
+        // exception over the combined report, which would drop the second problem below.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.History.Table, "dbo.__history")
+            .WithTable("orders", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Status", "nvarchar")
+                .WithMetadata(MetadataKeys.History.Enabled, MetadataKeys.History.AllOperations)
+                .WithMetadata(MetadataKeys.Policy.Actions, "reed"))
+            .WithTable("__history", WithHistoryColumns)
+            .WithTable("invoices", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithMetadata(MetadataKeys.Policy.SelfColumn, "no_such_column")
+                .WithMetadata(MetadataKeys.Policy.SelfDeny, "Id"))
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().StartWith("Invalid BifrostQL metadata configuration:")
+            .And.Contain("reed")
+            .And.Contain("no_such_column");
+    }
 }

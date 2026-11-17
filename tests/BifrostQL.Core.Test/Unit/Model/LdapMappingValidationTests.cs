@@ -480,4 +480,46 @@ public class LdapMappingValidationTests
         act.Should().Throw<InvalidOperationException>()
             .Which.Message.Should().Contain("ldap-attribtes").And.Contain("unrecognized");
     }
+
+    [Fact]
+    public void Validate_MembershipTargetWithMalformedMapping_ReportsTheCombinedList()
+    {
+        // users opts in (ldap-object-class) but has no DN template, so its own parse fails and
+        // is reported. The groups membership check re-reads users' mapping; that re-read must
+        // not throw the raw parse exception over the combined report.
+        var model = DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Ldap.BaseDn, "dc=example,dc=com")
+            .WithTable("users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("username", "nvarchar")
+                .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
+                .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username"))
+            .WithTable("groups", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("name", "nvarchar")
+                .WithMetadata(MetadataKeys.Ldap.ObjectClass, "groupOfNames")
+                .WithMetadata(MetadataKeys.Ldap.DnTemplate, "cn={name},ou=groups")
+                .WithMetadata(MetadataKeys.Ldap.Attributes, "cn=name")
+                .WithMetadata(MetadataKeys.Ldap.Member, "members"))
+            .WithTable("user_groups", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("GroupId", "int")
+                .WithColumn("UserId", "int"))
+            .WithManyToManyLink(
+                "groups", "Id",
+                "user_groups", "GroupId", "UserId",
+                "users", "Id",
+                "members")
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().StartWith("Invalid BifrostQL metadata configuration:")
+            .And.Contain(MetadataKeys.Ldap.DnTemplate);
+    }
+
 }

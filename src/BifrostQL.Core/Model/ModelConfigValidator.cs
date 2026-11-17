@@ -1143,7 +1143,7 @@ namespace BifrostQL.Core.Model
                 // readable. There is no per-table grant to opt the trail out of the
                 // row scope, so the combination is rejected outright rather than
                 // silently exposing scoped-out history.
-                if (PolicyConfigCollector.FromTable(table).RowScopeExpression is not null)
+                if (TryReadPolicy(table) is { RowScopeExpression: not null })
                 {
                     errors.Add(Problem(table, MetadataKeys.Policy.RowScope,
                         table.GetMetadataValue(MetadataKeys.Policy.RowScope),
@@ -2144,7 +2144,9 @@ namespace BifrostQL.Core.Model
         private static void RequireMappedMemberTarget(
             IDbTable table, string relationship, IDbTable target, List<string> errors)
         {
-            if (!LdapMappingConfig.FromTable(target).IsMapped)
+            // A target whose own mapping does not parse is reported by the per-table LDAP pass;
+            // throwing here would replace the combined list with that one message.
+            if (TryReadLdapMapping(target) is { IsMapped: false })
                 errors.Add(Problem(table, MetadataKeys.Ldap.Member, relationship,
                     $"the membership target table '{target.TableSchema}.{target.DbName}' is not LDAP-mapped " +
                     $"(no '{MetadataKeys.Ldap.ObjectClass}'); a member DN cannot be constructed for an unmapped table."));
@@ -2260,6 +2262,21 @@ namespace BifrostQL.Core.Model
             {
                 return true;
             }
+        }
+
+        // The runtime parses throw InvalidOperationException on bad metadata. ValidatePolicy and
+        // ValidateLdap already report that table's problem; a later pass that needs the parsed
+        // config skips the table instead of throwing past the combined error list.
+        private static Auth.TablePolicy? TryReadPolicy(IDbTable table)
+        {
+            try { return PolicyConfigCollector.FromTable(table); }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        private static LdapMappingConfig? TryReadLdapMapping(IDbTable table)
+        {
+            try { return LdapMappingConfig.FromTable(table); }
+            catch (InvalidOperationException) { return null; }
         }
 
         private static string Problem(IDbTable table, string metadataKey, string? value, string reason)

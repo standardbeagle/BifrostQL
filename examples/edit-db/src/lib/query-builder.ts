@@ -671,7 +671,7 @@ function buildDrillQuery(
     // URL filters) narrow the child rows inside the parent scope.
     const own = buildColumnFilters(columnFilters, table);
     const ownParams = own.params.map((p) => `, ${p}`).join("");
-    if (drill && canFlatFilterDrill(drill.childJoin)) {
+    if (drill && canFlatFilterDrill(drill)) {
         // Simple single-column FK: query the child table directly with a flat
         // FK filter — a "parent grid with a filter applied" rather than MODEL
         // B's nested parent traversal. The grid's own table is the query root,
@@ -873,10 +873,18 @@ export interface DrillDownTarget {
  * filter column and polymorphic links need the server-injected discriminator;
  * both must keep MODEL B's parent traversal.
  */
-export function canFlatFilterDrill(childJoin: Join): boolean {
+export function canFlatFilterDrill({ parentTable, childJoin }: Pick<DrillDownTarget, 'parentTable' | 'childJoin'>): boolean {
+    const source = childJoin.sourceColumnNames ?? [];
     return !isComposite(childJoin)
         && childJoin.isPolymorphic !== true
-        && (childJoin.destinationColumnNames?.length ?? 0) === 1;
+        && (childJoin.destinationColumnNames?.length ?? 0) === 1
+        // The flat filter binds `$id` from the PARENT's key (buildPkEqVariables),
+        // so the join must reference exactly that key: a composite parent key
+        // yields pk_* variables and no `$id`, and a join to a non-key unique
+        // column would compare the FK against the wrong value.
+        && parentTable.primaryKeys.length === 1
+        && source.length === 1
+        && parentTable.primaryKeys.includes(source.at(0) ?? '');
 }
 
 function sameJoin(left: Join, right: Join): boolean {

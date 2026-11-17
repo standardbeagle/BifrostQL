@@ -794,7 +794,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // Flat-filter drills (simple FK) query the child table at the root, so their
     // response uses the standard `{ <table>: { data } }` shape — only MODEL B's
     // nested parent traversal needs unwrapping.
-    if (drill && !canFlatFilterDrill(drill.childJoin)) {
+    if (drill && !canFlatFilterDrill(drill)) {
         const page = unwrapDrillDownPage(data, drill.parentTable.name, drill.childField);
         rows = page.data as RowData[];
         totalRows = page.total;
@@ -895,7 +895,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
                 const pageData = await fetcher.query<QueryData>(exportQuery, vars, { signal });
                 let pageRecords: RowData[];
                 let total: number;
-                if (drill && !canFlatFilterDrill(drill.childJoin)) {
+                if (drill && !canFlatFilterDrill(drill)) {
                     const page = unwrapDrillDownPage(pageData, drill.parentTable.name, drill.childField);
                     pageRecords = page.data as RowData[];
                     total = page.total;

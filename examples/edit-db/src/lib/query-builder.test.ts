@@ -653,29 +653,39 @@ describe('getPkType', () => {
 describe('canFlatFilterDrill', () => {
     const join = (overrides: Partial<Join> = {}): Join => ({
         name: 'j',
-        sourceColumnNames: ['parent_id'],
+        sourceColumnNames: ['id'],
         destinationTable: 'child',
         destinationColumnNames: ['parent_id'],
         ...overrides,
     });
+    const parent = (primaryKeys: string[] = ['id']) => makeTable({ name: 'parent', primaryKeys });
+    const drill = (childJoin: Join = join(), parentTable = parent()) => ({ parentTable, childJoin });
 
-    it('allows a simple single-column FK', () => {
-        expect(canFlatFilterDrill(join())).toBe(true);
+    it('allows a simple single-column FK to the parent key', () => {
+        expect(canFlatFilterDrill(drill())).toBe(true);
     });
 
     it('rejects a polymorphic link', () => {
-        expect(canFlatFilterDrill(join({ isPolymorphic: true }))).toBe(false);
+        expect(canFlatFilterDrill(drill(join({ isPolymorphic: true })))).toBe(false);
     });
 
     it('rejects a composite FK', () => {
-        expect(canFlatFilterDrill(join({
+        expect(canFlatFilterDrill(drill(join({
             sourceColumnNames: ['tenant_id', 'order_id'],
             destinationColumnNames: ['tenant_id', 'order_id'],
-        }))).toBe(false);
+        })))).toBe(false);
     });
 
     it('rejects when the destination has no single filter column', () => {
-        expect(canFlatFilterDrill(join({ destinationColumnNames: [] }))).toBe(false);
+        expect(canFlatFilterDrill(drill(join({ destinationColumnNames: [] })))).toBe(false);
+    });
+
+    it('rejects a single-column join from a composite-key parent, which binds no $id', () => {
+        expect(canFlatFilterDrill(drill(join({ sourceColumnNames: ['code'] }), parent(['tenant_id', 'code'])))).toBe(false);
+    });
+
+    it('rejects a join that references a non-key unique column of the parent', () => {
+        expect(canFlatFilterDrill(drill(join({ sourceColumnNames: ['email'] })))).toBe(false);
     });
 });
 

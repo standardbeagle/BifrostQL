@@ -174,6 +174,8 @@ invisible to subscribers until the change set settles.
 - **Timed release.** A detached-loop hosted service polls every five seconds, flips
   each `held` change set whose undo window has passed to `released`, and moves its outbox
   rows from `pending_hold` to `pending`. Change sets held `until-approved` are excluded.
+  One pass claims at most 100 change sets, oldest id first, with set-based updates, so a
+  backlog after downtime is released in short transactions over the following passes.
 - **Approved release.** `approveDeferredChangeSet` releases one change set through the same
   path.
 - **Suppression on undo.** Undoing a change set moves its undispatched rows to

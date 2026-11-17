@@ -391,6 +391,29 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
                 "the conditional state transition lets undo win exactly once");
     }
 
+    // One release pass claims a bounded batch, oldest first, and pages past change sets held
+    // until approved so a run of them at the front cannot starve the expired ones behind.
+    [Fact]
+    public async Task ReleasePass_IsBounded_OldestFirst_AndSkipsUntilApprovedHolds()
+    {
+        var model = await ReviewModelAsync();
+        foreach (var (id, table) in new[] { (120L, "main.widgets"), (121L, "main.widgets"), (122L, "main.soft_widgets"), (123L, "main.soft_widgets"), (124L, "main.soft_widgets") })
+        {
+            await SeedChangeSetAsync(id, table, 1, "update", "restore", "{\"id\":1}", "{\"id\":1}");
+            await Exec($"UPDATE change_sets SET tables='[\"{table}\"]' WHERE id={id}");
+            await Exec($"INSERT INTO __outbox(id,aggregate,op,payload,created_at,attempts,dead,change_set_id,state) VALUES({id},'{table}','update','{{\"id\":1}}','2026-07-20',0,0,{id},'pending_hold')");
+        }
+        var release = new DeferredOutboxReleaseEngine(model, new SqliteDbConnFactory(ConnString), batchSize: 2);
+        var afterExpiry = DateTimeOffset.Parse("2100-01-01T00:00:00Z");
+
+        (await release.ReleaseOnceAsync(afterExpiry)).Should().Be(2, "one pass claims at most the batch size");
+        (await ScalarAsync("SELECT group_concat(id) FROM (SELECT id FROM change_sets WHERE state='released' ORDER BY id)")).Should().Be("122,123");
+        (await release.ReleaseOnceAsync(afterExpiry)).Should().Be(1);
+        (await release.ReleaseOnceAsync(afterExpiry)).Should().Be(0);
+        (await ScalarAsync("SELECT group_concat(id) FROM (SELECT id FROM __outbox WHERE state='pending' ORDER BY id)")).Should().Be("122,123,124");
+        (await CountAsync("change_sets", "id IN (120,121) AND state='held'")).Should().Be(2, "until-approved holds never expire into release");
+    }
+
     [Fact]
     public async Task OrdinaryExpiredHeldState_RemainsClosed()
     {

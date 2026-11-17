@@ -198,3 +198,144 @@ describe('useTableEditing save-failure reporting', () => {
     expect(result.current.editing.isRowDirty('1')).toBe(false);
   });
 });
+
+/** A write the test resolves by hand, so edits can land while it is in flight. */
+function deferredWrite() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe('useTableEditing edits made while a save is in flight', () => {
+  it('saveRow keeps a field edited during the save', async () => {
+    // Arrange: the write hangs until we release it.
+    const write = deferredWrite();
+    const onRowUpdate = vi.fn().mockReturnValue(write.promise);
+    const { result } = renderEditing({ onRowUpdate });
+    act(() => {
+      result.current.editing.setCellValue('1', 'name', 'Alice Sent');
+    });
+
+    // Act: start the save, edit another field and re-edit the sent field
+    // while it is in flight, then let the write succeed.
+    let saving!: Promise<boolean>;
+    act(() => {
+      saving = result.current.editing.saveRow('1');
+    });
+    act(() => {
+      result.current.editing.setCellValue('1', 'email', 'new@example.com');
+    });
+    await act(async () => {
+      write.resolve();
+      await saving;
+    });
+
+    // Assert: only the value that was sent is settled; the newer edit stays.
+    expect(onRowUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1 }),
+      { name: 'Alice Sent' },
+    );
+    expect(result.current.editing.getRowChanges('1')).toEqual({
+      email: 'new@example.com',
+    });
+    expect(result.current.editing.dirtyRows.get('1')?.saving).toBe(false);
+  });
+
+  it('saveRow keeps a newer value typed into the field that was being saved', async () => {
+    // Arrange
+    const write = deferredWrite();
+    const { result } = renderEditing({
+      onRowUpdate: vi.fn().mockReturnValue(write.promise),
+    });
+    act(() => {
+      result.current.editing.setCellValue('1', 'name', 'Alice Sent');
+    });
+
+    // Act
+    let saving!: Promise<boolean>;
+    act(() => {
+      saving = result.current.editing.saveRow('1');
+    });
+    act(() => {
+      result.current.editing.setCellValue('1', 'name', 'Alice Newer');
+    });
+    await act(async () => {
+      write.resolve();
+      await saving;
+    });
+
+    // Assert
+    expect(result.current.editing.getRowChanges('1')).toEqual({
+      name: 'Alice Newer',
+    });
+  });
+
+  it('auto-save keeps a newer value typed into the field that was being saved', async () => {
+    // Arrange
+    const write = deferredWrite();
+    const { result } = renderEditing({
+      autoSave: true,
+      onRowUpdate: vi.fn().mockReturnValue(write.promise),
+    });
+    act(() => {
+      result.current.editing.startEditing('1', 'name');
+      result.current.editing.setCellValue('1', 'name', 'Alice Sent');
+    });
+
+    // Act
+    let committing!: Promise<void>;
+    act(() => {
+      committing = result.current.editing.commitCell();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      result.current.editing.setCellValue('1', 'name', 'Alice Newer');
+    });
+    await act(async () => {
+      write.resolve();
+      await committing;
+    });
+
+    // Assert
+    expect(result.current.editing.getRowChanges('1')).toEqual({
+      name: 'Alice Newer',
+    });
+  });
+
+  it('batch save keeps edits made while the batch was in flight', async () => {
+    // Arrange
+    const write = deferredWrite();
+    const { result } = renderEditing({
+      onBatchSave: vi.fn().mockReturnValue(write.promise),
+    });
+    act(() => {
+      result.current.editing.setCellValue('1', 'name', 'Alice Sent');
+    });
+
+    // Act
+    let saving!: Promise<{ saved: number; failed: number }>;
+    act(() => {
+      saving = result.current.editing.saveAllDirty();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      result.current.editing.setCellValue('2', 'name', 'Bob Newer');
+    });
+    await act(async () => {
+      write.resolve();
+      await saving;
+    });
+
+    // Assert: row 1 settled, row 2's in-flight edit survives.
+    expect(result.current.editing.isRowDirty('1')).toBe(false);
+    expect(result.current.editing.getRowChanges('2')).toEqual({
+      name: 'Bob Newer',
+    });
+  });
+});

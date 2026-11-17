@@ -26,6 +26,43 @@ function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
+/**
+ * Settle a successful write of `sent` against the row's CURRENT edit state.
+ * The user can keep editing while a write is in flight, so only the fields
+ * whose current value is still the one sent are cleared; a field edited since
+ * (or a newer value in a sent field) stays dirty. The sent values become the
+ * row's new baseline, since the server now holds them.
+ */
+function settleSavedChanges(
+  prev: Map<string, RowEditState>,
+  rk: string,
+  sent: Record<string, unknown>,
+): Map<string, RowEditState> {
+  const state = prev.get(rk);
+  if (!state) return prev;
+  const original = { ...state.original };
+  const remaining = { ...state.changes };
+  for (const [field, value] of Object.entries(sent)) {
+    original[field] = value;
+    if (field in remaining && Object.is(remaining[field], value)) {
+      delete remaining[field];
+    }
+  }
+  const next = new Map(prev);
+  if (Object.keys(remaining).length === 0) {
+    next.delete(rk);
+  } else {
+    next.set(rk, {
+      ...state,
+      original,
+      changes: remaining,
+      saving: false,
+      saveError: null,
+    });
+  }
+  return next;
+}
+
 export interface UseTableEditingResult {
   editing: EditingState;
   editableColumnSet: Set<string>;
@@ -252,19 +289,7 @@ export function useTableEditing<T = Record<string, unknown>>({
       const changes = { [field]: editState.changes[field] };
       try {
         await onRowUpdate(editState.original, changes);
-        setDirtyRows((prev) => {
-          const state = prev.get(rk);
-          if (!state) return prev;
-          const next = new Map(prev);
-          const remaining = { ...state.changes };
-          delete remaining[field];
-          if (Object.keys(remaining).length === 0) {
-            next.delete(rk);
-          } else {
-            next.set(rk, { ...state, changes: remaining, saveError: null });
-          }
-          return next;
-        });
+        setDirtyRows((prev) => settleSavedChanges(prev, rk, changes));
         refetch();
       } catch (err) {
         reportSaveFailure(rk, toError(err), editState.original, changes);
@@ -370,12 +395,9 @@ export function useTableEditing<T = Record<string, unknown>>({
       });
 
       try {
-        await onRowUpdate(editState.original, editState.changes);
-        setDirtyRows((prev) => {
-          const next = new Map(prev);
-          next.delete(rk);
-          return next;
-        });
+        const sent = editState.changes;
+        await onRowUpdate(editState.original, sent);
+        setDirtyRows((prev) => settleSavedChanges(prev, rk, sent));
         refetch();
         return true;
       } catch (err) {
@@ -431,7 +453,13 @@ export function useTableEditing<T = Record<string, unknown>>({
 
       try {
         await onBatchSave(batch);
-        setDirtyRows(new Map());
+        setDirtyRows((prev) => {
+          let next = prev;
+          for (const [rk, state] of dirtyEntries) {
+            next = settleSavedChanges(next, rk, state.changes);
+          }
+          return next;
+        });
         refetch();
         return { saved: dirtyEntries.length, failed: 0 };
       } catch (err) {

@@ -391,6 +391,82 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
                 "the conditional state transition lets undo win exactly once");
     }
 
+    // Two requests resume the same interrupted undo at once. Before the resume claim, both ran
+    // every inverse and both tried to finalize; now the second one meets the first's live claim
+    // and gets an explicit CONFLICT while the first finishes alone.
+    [Fact]
+    public async Task ConcurrentResume_OnlyOneProceeds_TheOtherGetsConflict()
+    {
+        var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
+        await SeedChangeSetAsync(93, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("UPDATE widgets SET name='edited', version=2 WHERE id=1");
+        // A crashed earlier claim: still undoing, its claim stamp long stale.
+        await Exec("UPDATE change_sets SET state='undoing', reversed_at='2089-01-01 00:00:00+00:00' WHERE id=93");
+        var clock = DateTimeOffset.Parse("2100-01-01T00:00:00Z");
+        var gated = new GatedMutationExecutor(BuildMutationExecutor(model));
+
+        var first = new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), gated, () => clock)
+            .UndoAsync(93, new Dictionary<string, object?>());
+        await gated.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Func<Task> second = async () => await new DeferredUndoEngine(
+                model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model), () => clock)
+            .UndoAsync(93, new Dictionary<string, object?>());
+        (await second.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.ConflictCode);
+        (await ScalarAsync("SELECT name FROM widgets WHERE id=1")).Should().Be("edited",
+            "the refused resume wrote no inverse");
+
+        gated.Release.SetResult();
+        (await first).Should().Be(new DeferredUndoResult(93, 1, 0, false));
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=93")).Should().Be("undone");
+    }
+
+    // A runner whose claim was taken over (its lease went stale and another resume claimed it)
+    // stops at its next step instead of finalizing a set someone else now owns.
+    [Fact]
+    public async Task UndoRunner_ThatLostItsClaim_StopsWithConflict_AndDoesNotFinalize()
+    {
+        var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
+        await SeedChangeSetAsync(94, "main.widgets", 1, "update", "restore", "{\"id\":1,\"name\":\"original\",\"version\":1}", "{\"id\":1,\"name\":\"edited\",\"version\":2}");
+        await SeedChangeSetAsync(95, "main.widgets", 2, "insert", "delete", null, "{\"id\":2,\"name\":\"added\",\"version\":1}");
+        await Exec("UPDATE change_set_deltas SET change_set_id=94 WHERE id=95");
+        await Exec("DELETE FROM change_sets WHERE id=95");
+        await Exec("UPDATE widgets SET name='edited', version=2 WHERE id=1");
+        await Exec("INSERT INTO widgets (id, name, version) VALUES (2, 'added', 1)");
+        var gated = new GatedMutationExecutor(BuildMutationExecutor(model));
+
+        var run = new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), gated,
+                () => DateTimeOffset.Parse("2098-01-01T00:00:00Z"))
+            .UndoAsync(94, new Dictionary<string, object?>());
+        await gated.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        // Another resume claimed the set after this runner's lease went stale.
+        await Exec("UPDATE change_sets SET reversed_at='2099-06-01 00:00:00+00:00' WHERE id=94");
+        gated.Release.SetResult();
+
+        (await run.Invoking(async r => await r).Should().ThrowAsync<BifrostExecutionError>())
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.ConflictCode);
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=94")).Should().Be("undoing",
+            "the new owner finalizes, not the runner that lost the claim");
+        (await CountAsync("widgets", "id=2")).Should().Be(1, "the runner stopped before the next inverse");
+    }
+
+    private sealed class GatedMutationExecutor(IMutationIntentExecutor inner) : IMutationIntentExecutor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
+        {
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            return await inner.ExecuteAsync(intent, cancellationToken);
+        }
+
+        public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
+            => inner.ExecuteBatchAsync(intent, cancellationToken);
+    }
+
     // One release pass claims a bounded batch, oldest first, and pages past change sets held
     // until approved so a run of them at the front cannot starve the expired ones behind.
     [Fact]

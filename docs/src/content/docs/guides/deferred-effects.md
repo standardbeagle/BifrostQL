@@ -165,6 +165,14 @@ retried client request is safe. An interrupted undo resumes: the engine probes e
 and skips inverses already applied. A change set whose window expired can no longer be
 undone, while a resumed `undoing` set and a rejected approval hold both proceed.
 
+Only one request runs an undo at a time. While a set is `undoing`, its `reversed_at` column
+holds the running undo's claim stamp, renewed before each delta and before the final state
+write. A resume takes the set over only when that stamp is older than five minutes, the
+lease an interrupted undo leaves behind. A second request that arrives while an undo is
+live fails with `CONFLICT` ("The deferred change set undo is already in progress."), and
+a runner whose claim was taken over stops with the same error instead of writing the final
+state. After the undo settles, `reversed_at` is the time it finished.
+
 ## Held CDC events and their release
 
 A table that declares `hold-events` writes its outbox rows with `state: pending_hold`.

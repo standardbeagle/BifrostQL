@@ -15,6 +15,13 @@ public sealed class DeferredUndoEngine
     private const string Partial = "partial";
     private const string Undoing = "undoing";
     private const string Released = "released";
+    /// <summary>
+    /// How long an undo claim stays live without renewal. While a set is <c>undoing</c>,
+    /// <c>reversed_at</c> holds the running claim's stamp; a resume may take the set over only
+    /// once that stamp is older than this (the runner died). A live runner re-stamps before
+    /// every inverse, so only a single inverse write longer than the lease can be overtaken.
+    /// </summary>
+    internal static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(5);
     private readonly IDbModel _model;
     private readonly IDbConnFactory _connections;
     private readonly IMutationIntentExecutor _mutations;
@@ -61,13 +68,25 @@ public sealed class DeferredUndoEngine
         // an authorized approval rejection remains compensatable while held.
         if (!allowExpiredHeld && !resuming && !released && changeSet.ExpiresAt <= _clock())
             throw new BifrostExecutionError("The deferred change set undo window has expired.");
-        if (!resuming && !await TryClaimUndoAsync(changeSetId, tenant, changeSet.State, allowExpiredHeld, cancellationToken))
+        // Every runner holds a claim. A fresh one moves held/released to undoing; a resume
+        // takes over an undoing set only when the previous claim's stamp went stale, so two
+        // concurrent resumes cannot both replay the inverses: the loser gets CONFLICT.
+        var claim = ClaimStamp();
+        if (resuming)
+        {
+            if (!await TryTakeOverUndoAsync(changeSetId, tenant, claim, cancellationToken))
+                throw UndoInProgress();
+        }
+        else if (!await TryClaimUndoAsync(changeSetId, tenant, changeSet.State, allowExpiredHeld, claim, cancellationToken))
             throw new BifrostExecutionError("The deferred change set is not available for undo.");
 
         var undone = 0;
         var conflicts = 0;
         foreach (var delta in await LoadDeltasAsync(changeSetId, cancellationToken))
         {
+            // Renew the claim before each inverse; a runner that lost it stops here rather
+            // than racing the new owner.
+            claim = await RenewClaimAsync(changeSetId, claim, cancellationToken);
             try
             {
                 if (resuming && await InverseAlreadyAppliedAsync(delta, cancellationToken))
@@ -90,8 +109,9 @@ public sealed class DeferredUndoEngine
             }
         }
 
+        claim = await RenewClaimAsync(changeSetId, claim, cancellationToken);
         await SettleHeldEventsAsync(changeSetId, cancellationToken);
-        await SetStateAsync(changeSetId, conflicts == 0 ? Undone : Partial, cancellationToken);
+        await SetStateAsync(changeSetId, conflicts == 0 ? Undone : Partial, claim, cancellationToken);
         return new DeferredUndoResult(changeSetId, undone, conflicts, false);
     }
 
@@ -213,19 +233,20 @@ public sealed class DeferredUndoEngine
         return rows;
     }
 
-    private async Task SetStateAsync(long id, string state, CancellationToken cancellationToken)
+    private async Task SetStateAsync(long id, string state, DateTimeOffset claim, CancellationToken cancellationToken)
     {
         var table = FindTable(MetadataKeys.Deferred.ChangeSet.Table);
         await using var connection = _connections.GetConnection();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)} = @state, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt)} = @at WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)} = @id AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@undoing";
-        Add(command, "@state", state); Add(command, "@at", _clock()); Add(command, "@id", id); Add(command, "@undoing", Undoing);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new BifrostExecutionError("The deferred change set state could not be recorded.");
+        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)} = @state, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt)} = @at WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)} = @id AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@undoing AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt)}=@claim";
+        Add(command, "@state", state); Add(command, "@at", _clock()); Add(command, "@id", id); Add(command, "@undoing", Undoing); Add(command, "@claim", claim);
+        // Zero rows: another resume took the claim over and owns finalization.
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw UndoInProgress();
     }
 
     private async Task<bool> TryClaimUndoAsync(long id, string? tenant, string expectedState, bool allowExpiredHeld,
-        CancellationToken cancellationToken)
+        DateTimeOffset claim, CancellationToken cancellationToken)
     {
         var table = FindTable(MetadataKeys.Deferred.ChangeSet.Table);
         await using var connection = _connections.GetConnection();
@@ -234,11 +255,66 @@ public sealed class DeferredUndoEngine
         var expiryGuard = !allowExpiredHeld && string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)
             ? $" AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.UndoWindowExpiresAt)}>@now"
             : string.Empty;
-        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@claim WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {TenantPredicate(command, tenant)} AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@expected{expiryGuard}";
-        Add(command, "@claim", Undoing); Add(command, "@id", id); Add(command, "@expected", expectedState);
+        command.CommandText = $"UPDATE {_connections.Dialect.TableReference(table.TableSchema, table.DbName)} SET {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@undoing, {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt)}=@claim WHERE {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {TenantPredicate(command, tenant)} AND {_connections.Dialect.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@expected{expiryGuard}";
+        Add(command, "@undoing", Undoing); Add(command, "@claim", claim); Add(command, "@id", id); Add(command, "@expected", expectedState);
         if (!allowExpiredHeld && string.Equals(expectedState, Held, StringComparison.OrdinalIgnoreCase)) Add(command, "@now", _clock());
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
+
+    /// <summary>
+    /// Takes over an <c>undoing</c> set whose claim is stale (or predates claim stamps). One
+    /// conditional UPDATE: of two concurrent resumes the database lets exactly one match, since
+    /// the winner's fresh stamp no longer satisfies the staleness predicate.
+    /// </summary>
+    private async Task<bool> TryTakeOverUndoAsync(long id, string? tenant, DateTimeOffset claim,
+        CancellationToken cancellationToken)
+    {
+        var table = FindTable(MetadataKeys.Deferred.ChangeSet.Table);
+        var d = _connections.Dialect;
+        var reversedAt = d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt);
+        await using var connection = _connections.GetConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"UPDATE {d.TableReference(table.TableSchema, table.DbName)} SET {reversedAt}=@claim WHERE {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {TenantPredicate(command, tenant)} AND {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@undoing AND ({reversedAt} IS NULL OR {reversedAt}<@staleBefore)";
+        Add(command, "@claim", claim); Add(command, "@id", id); Add(command, "@undoing", Undoing); Add(command, "@staleBefore", claim - ClaimLease);
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    /// <summary>
+    /// Re-stamps this runner's claim, conditional on still holding it, and returns the stamp it
+    /// now holds. Throws CONFLICT when another resume took the set over.
+    /// </summary>
+    private async Task<DateTimeOffset> RenewClaimAsync(long id, DateTimeOffset claim, CancellationToken cancellationToken)
+    {
+        var renewed = ClaimStamp();
+        if (renewed < claim)
+            renewed = claim;
+        var table = FindTable(MetadataKeys.Deferred.ChangeSet.Table);
+        var d = _connections.Dialect;
+        var reversedAt = d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.ReversedAt);
+        await using var connection = _connections.GetConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"UPDATE {d.TableReference(table.TableSchema, table.DbName)} SET {reversedAt}=@renewed WHERE {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.Id)}=@id AND {d.EscapeIdentifier(MetadataKeys.Deferred.ChangeSet.Column.State)}=@undoing AND {reversedAt}=@claim";
+        Add(command, "@renewed", renewed); Add(command, "@id", id); Add(command, "@undoing", Undoing); Add(command, "@claim", claim);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            throw UndoInProgress();
+        return renewed;
+    }
+
+    /// <summary>
+    /// A claim stamp: the clock in UTC, truncated to whole seconds so it is exactly
+    /// representable in every store column type and the equality checks guarding renewal and
+    /// finalization compare the value as written.
+    /// </summary>
+    private DateTimeOffset ClaimStamp()
+    {
+        var now = _clock().ToUniversalTime();
+        return new DateTimeOffset(now.Ticks - now.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+    }
+
+    private static BifrostExecutionError UndoInProgress() =>
+        new("The deferred change set undo is already in progress.") { ErrorCode = BifrostExecutionError.ConflictCode };
 
     private async Task<bool> InverseAlreadyAppliedAsync(Delta delta, CancellationToken cancellationToken)
     {

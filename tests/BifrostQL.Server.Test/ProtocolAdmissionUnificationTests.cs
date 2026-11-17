@@ -109,6 +109,7 @@ public class ProtocolAdmissionUnificationTests
         var nonAdmissionCas = new HashSet<string>(StringComparer.Ordinal)
         {
             "ChunkBuffer.cs", // eviction-timestamp claim (one sweep per second), not a slot cap
+            "LocalSessionManager.cs", // purge-timestamp claim (one expired-session purge per hour), not a slot cap
         };
 
         var offenders = files

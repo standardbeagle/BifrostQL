@@ -852,7 +852,9 @@ namespace BifrostQL.Core.Resolvers
         /// well-defined per-row flatten (no cardinality fan-out). Joined columns land
         /// under a table-qualified key (<c>&lt;parentTable&gt;.&lt;col&gt;</c>) so they
         /// never overwrite a same-named root column, and go through the same crypto
-        /// read projector as the root scalars.
+        /// read projector as the root scalars. The key names the table, not the link,
+        /// so two links to one table (billing and shipping address) would write the
+        /// same keys and the second would overwrite the first: that intent is refused.
         /// </summary>
         private static void FlattenSingleLinkJoins(
             GqlObjectQuery query,
@@ -860,10 +862,17 @@ namespace BifrostQL.Core.Resolvers
             List<IReadOnlyDictionary<string, object?>> rows,
             Modules.Crypto.CryptoReadProjector cryptoRead)
         {
-            foreach (var join in query.Joins)
+            var flattened = query.Joins.Where(j => j.QueryType == QueryType.Single && !j.IsComposite).ToList();
+            var sharedTable = flattened
+                .GroupBy(j => j.ConnectedTable.DbTable.DbName, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(g => g.Count() > 1);
+            if (sharedTable != null)
+                throw new BifrostExecutionError(
+                    $"A query intent cannot flatten more than one link to '{sharedTable.Key}': " +
+                    "their columns would share the same row keys.");
+
+            foreach (var join in flattened)
             {
-                if (join.QueryType != QueryType.Single || join.IsComposite)
-                    continue;
                 if (!data.TryGetValue(join.JoinName, out var joinData))
                     continue;
                 if (!joinData.index.TryGetValue(JoinKeyNames.SrcIdSingle, out var srcIdx))

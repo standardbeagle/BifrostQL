@@ -323,6 +323,6 @@ describe('useBifrostQuery SSR hydration', () => {
     await waitFor(() => expect(result.current.isFetching).toBe(false));
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryCache().getAll()).toHaveLength(1);
-    expect(queryClient.getQueryCache().getAll()[0].queryKey).toHaveLength(3);
+    expect(queryClient.getQueryCache().getAll()[0].queryKey).toHaveLength(4);
   });
 });

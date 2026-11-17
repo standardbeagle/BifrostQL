@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { executeGraphQL } from '../utils/graphql-client';
+import { bifrostQueryKey } from '../utils/invalidation';
 import { buildGraphqlQuery } from '../utils/query-builder';
 import type { PagedResult, QueryOptions } from '../types';
 
@@ -25,7 +26,7 @@ export async function fetchBifrostQuery<T = unknown>(
 ): Promise<T> {
   const { endpoint, headers = {}, table, staleTime, ...queryOptions } = options;
   const query = buildGraphqlQuery(table, queryOptions);
-  const queryKey = ['bifrost', query, {}];
+  const queryKey = bifrostQueryKey(endpoint, query);
 
   // The cache stores the raw enveloped response — the same shape useBifrost
   // hydrates from — while the convenience return value is the unwrapped rows.

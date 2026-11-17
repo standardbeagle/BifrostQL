@@ -381,7 +381,11 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
         result !== undefined ||
         (error instanceof BatchError && error.results.length > 0);
       if (!committed) return;
-      invalidateBifrostQueries(queryClient, options.invalidateQueries);
+      invalidateBifrostQueries(
+          queryClient,
+          config.endpoint,
+          options.invalidateQueries,
+        );
     },
   });
 

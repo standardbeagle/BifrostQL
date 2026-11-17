@@ -511,4 +511,44 @@ describe('useBifrost retry configuration', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('keys the cache by endpoint so two providers under one QueryClient never share rows', async () => {
+    // Arrange — one app QueryClient, two providers on different endpoints,
+    // the same query text. Each endpoint answers with its own rows.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: () =>
+          Promise.resolve({
+            data: { users: [{ id: url.includes('tenant-b') ? 'b' : 'a' }] },
+          }),
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    const wrapperFor =
+      (endpoint: string) =>
+      ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>
+          <BifrostProvider config={{ endpoint }}>{children}</BifrostProvider>
+        </QueryClientProvider>
+      );
+
+    // Act
+    const a = renderHook(() => useBifrost('{ users { id } }'), {
+      wrapper: wrapperFor('http://tenant-a/graphql'),
+    });
+    await waitFor(() => expect(a.result.current.isSuccess).toBe(true));
+    const b = renderHook(() => useBifrost('{ users { id } }'), {
+      wrapper: wrapperFor('http://tenant-b/graphql'),
+    });
+    await waitFor(() => expect(b.result.current.isSuccess).toBe(true));
+
+    // Assert — tenant B got its own rows, not tenant A's cached ones.
+    expect(b.result.current.data).toEqual({ users: [{ id: 'b' }] });
+    expect(a.result.current.data).toEqual({ users: [{ id: 'a' }] });
+  });
 });

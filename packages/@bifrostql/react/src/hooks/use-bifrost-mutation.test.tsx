@@ -318,10 +318,10 @@ describe('useBifrostMutation', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['bifrost', '{ users { id } }'],
+      queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id } }'],
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['bifrost', '{ users { id name } }'],
+      queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id name } }'],
     });
   });
 
@@ -335,21 +335,31 @@ describe('useBifrostMutation', () => {
       },
     });
 
-    // Bifrost queries are keyed ['bifrost', <full query string>, vars] — a
-    // bare table name used as a key prefix matches nothing, so the table-name
-    // form must find this entry through the query text.
-    const usersKey = [
-      'bifrost',
-      '{\n  users {\n    total\n    data {\n      id\n    }\n  }\n}',
-      {},
-    ];
+    // Bifrost queries are keyed ['bifrost', endpoint, <full query string>,
+    // vars] — a bare table name used as a key prefix matches nothing, so the
+    // table-name form must find this entry through the query text.
+    const usersText =
+      '{\n  users {\n    total\n    data {\n      id\n    }\n  }\n}';
+    const usersKey = ['bifrost', 'http://localhost:5000/graphql', usersText, {}];
     const ordersKey = [
       'bifrost',
+      'http://localhost:5000/graphql',
       '{\n  orders {\n    total\n    data {\n      id\n    }\n  }\n}',
+      {},
+    ];
+    // Same query text on another provider's endpoint: a write here must not
+    // invalidate that tenant's cache.
+    const otherEndpointUsersKey = [
+      'bifrost',
+      'http://other-tenant/graphql',
+      usersText,
       {},
     ];
     queryClient.setQueryData(usersKey, { users: { total: 0, data: [] } });
     queryClient.setQueryData(ordersKey, { orders: { total: 0, data: [] } });
+    queryClient.setQueryData(otherEndpointUsersKey, {
+      users: { total: 0, data: [] },
+    });
 
     function Wrapper({ children }: { children: ReactNode }) {
       return (
@@ -377,6 +387,9 @@ describe('useBifrostMutation', () => {
 
     expect(queryClient.getQueryState(usersKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(ordersKey)?.isInvalidated).toBe(false);
+    expect(
+      queryClient.getQueryState(otherEndpointUsersKey)?.isInvalidated,
+    ).toBe(false);
   });
 
   it('provides standard mutation state properties', async () => {

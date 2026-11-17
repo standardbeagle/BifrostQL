@@ -6,6 +6,19 @@ While the major version is 0, breaking changes may land in any release, but
 never silently: each one is listed under a `### Breaking changes` heading with
 the call-site update it requires.
 
+## Unreleased
+
+### Breaking changes
+
+- **Query-cache keys include the endpoint.** `useBifrost` and
+  `fetchBifrostQuery` now key on `['bifrost', endpoint, query, vars]`, and
+  `useBifrostInfinite` on `['bifrost', endpoint, query, 'infinite', initialPageParam]`.
+  Two `BifrostProvider`s with different endpoints under one app `QueryClient`
+  used to serve each other's rows for the same query text. Code that reads or
+  invalidates the cache by hand must add the endpoint after `'bifrost'`;
+  `invalidateQueries` entries on the write hooks now reach only the provider's
+  own endpoint, and now also reach infinite queries.
+
 ## 0.4.0 — 2026-11-09
 
 ### Breaking changes

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useContext, useCallback } from 'react';
 import { BifrostContext } from '../components/bifrost-provider';
 import { executeGraphQL, defaultRetryDelay } from '../utils/graphql-client';
+import { bifrostQueryKey } from '../utils/invalidation';
 
 /** Options for the {@link useBifrost} hook, forwarded to TanStack Query. */
 export interface UseBifrostOptions {
@@ -28,7 +29,7 @@ export interface UseBifrostOptions {
   /**
    * Extra query-key element for session-sensitive caches (e.g. the caller's
    * identity). Appended only when supplied, so an unsuffixed key stays the
-   * three-element key `fetchBifrostQuery` prefetches under for SSR hydration.
+   * key `fetchBifrostQuery` prefetches under for SSR hydration.
    */
   queryKeySuffix?: string;
 }
@@ -79,14 +80,19 @@ export function useBifrost<T = unknown>(
   } = options;
 
   const queryClient = useQueryClient();
-  const queryKey =
-    queryKeySuffix === undefined
-      ? ['bifrost', query, variables ?? {}]
-      : ['bifrost', query, variables ?? {}, queryKeySuffix];
+  const queryKey = bifrostQueryKey(
+    config.endpoint,
+    query,
+    variables,
+    queryKeySuffix,
+  );
 
   const invalidate = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: ['bifrost', query] }),
-    [queryClient, query],
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: ['bifrost', config.endpoint, query],
+      }),
+    [queryClient, config.endpoint, query],
   );
 
   const result = useQuery<T>({

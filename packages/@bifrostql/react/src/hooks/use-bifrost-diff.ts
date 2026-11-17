@@ -145,7 +145,11 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
     },
     onSuccess: (data) => {
       if (options.invalidateQueries) {
-        invalidateBifrostQueries(queryClient, options.invalidateQueries);
+        invalidateBifrostQueries(
+          queryClient,
+          config.endpoint,
+          options.invalidateQueries,
+        );
       }
       options.onSuccess?.(data);
     },

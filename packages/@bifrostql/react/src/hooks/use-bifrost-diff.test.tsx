@@ -404,7 +404,7 @@ describe('useBifrostDiff', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['bifrost', '{ users { id name } }'],
+      queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id name } }'],
     });
   });
 });

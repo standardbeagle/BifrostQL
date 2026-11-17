@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Server.Auth
@@ -32,9 +30,9 @@ namespace BifrostQL.Server.Auth
         /// <summary>Counts one login attempt; false when the source or the account is at its cap.</summary>
         public bool TryLogin(string source, string login) => TryAdmit(source, login);
 
-        // One window per login however it is spelled (case, surrounding whitespace), hashed so
-        // an attacker-supplied login of any length costs a fixed-size key.
-        protected override string NormalizeAccountKey(string account) =>
-            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(StringNormalizer.Normalize(account))));
+        // One window per login however it is spelled (case, surrounding whitespace). The base
+        // hashes the canonical name, so a login of any length still costs a fixed-size key.
+        protected override string CanonicalAccountName(string account) =>
+            StringNormalizer.Normalize(account);
     }
 }

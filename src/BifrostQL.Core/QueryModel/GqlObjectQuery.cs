@@ -418,6 +418,22 @@ namespace BifrostQL.Core.QueryModel
             var projection = string.IsNullOrEmpty(joinColumnSql)
                 ? srcProjection
                 : $"{srcProjection}, {joinColumnSql}";
+            return ConnectedRowsSql(ctx, main, tableJoin, projection);
+        }
+
+        /// <summary>
+        /// The rows <paramref name="tableJoin"/> returns for the parent set
+        /// <paramref name="main"/>, projected as <paramref name="projection"/> over the
+        /// connected table's alias <c>b</c>: the join's own filter and its window (single
+        /// link, per-parent paged collection, or flat collection) applied exactly as the
+        /// field's statement applies them.
+        /// </summary>
+        private static ParameterizedSql ConnectedRowsSql(SqlBuildContext ctx, ParameterizedSql main, TableJoin tableJoin, string projection)
+        {
+            var dbModel = ctx.Model;
+            var dialect = ctx.Dialect;
+            var parameters = ctx.Parameters;
+            var connectedDbTable = tableJoin.ConnectedTable.DbTable;
 
             // Schema-qualify the joined tables. The root FROM already qualifies via
             // TableReference; an unqualified join target resolves against the
@@ -588,36 +604,31 @@ namespace BifrostQL.Core.QueryModel
                     inner.Parameters);
             }
 
-            // A join nested beneath a many-to-many collection is not correctly
-            // supported: the parent m2m restricted sub-query exposes SOURCE-key values
-            // as its JoinIds, but the stitch below matches them against this layer
-            // using the parent's ConnectedColumns, which name TARGET columns — and the
-            // junction Bridge is never consulted. That silently produced wrong/empty
-            // rows. Fail loudly instead of returning incorrect data; correlating the
-            // child through the junction is a deferred feature.
+            // A join nested beneath a many-to-many collection stays refused. The old
+            // stitch matched the parent m2m set's SOURCE-key JoinIds against TARGET
+            // columns and silently produced wrong/empty rows. The windowed parent set
+            // below goes through the junction, but nesting under m2m is a feature no test
+            // covers end to end yet, so it fails loudly rather than ship unverified.
             if (query.Parent.Join.Bridge is not null)
                 throw new BifrostExecutionError(
                     $"Nesting a join ('{query.Join.Name}') beneath a many-to-many collection " +
                     $"('{query.Parent.Join.Name}') is not supported: the child cannot be correlated " +
                     "through the junction table. Query the many-to-many collection without a further nested join.");
 
-            var ea = dialect.EscapeIdentifier("a");
-            var eb = dialect.EscapeIdentifier("b");
+            // The parent level's restricted set is exactly the parent rows its own statement
+            // returns: the parent join's filter AND its window (per-parent limit/offset for a
+            // paged collection), not every child of the ancestor rows. Joining the bare
+            // relationship here spanned every child of the paged roots (10k orders per
+            // customer under an `orders(limit: 5)` page) and grew with each level.
             var baseSql = GetRestrictedSqlParameterized(dbModel, dialect, parameters, query.Parent);
-            var filterSql = query.FromTable.GetFilterSqlParameterized(dbModel, dialect, parameters, "a");
-
-            // The recursive `b` sub-query exposes the parent's join-key
-            // columns as JoinKeyNames.JoinIdAt — match them against this
-            // layer's `a` row using the parent's ConnectedColumns.
-            var (relationSql, relationParams) = query.Join.EmitOnClause(
-                dialect, parameters,
-                leftAlias: "b",
-                rightAlias: "a",
-                rightColumns: query.Parent.Join.ConnectedColumns);
-
-            var nestedProjection = query.Join.EmitJoinIdProjection(dialect, "a");
-            var querySql = $"SELECT DISTINCT {nestedProjection} FROM {dialect.TableReference(query.FromTable.SchemaName, query.FromTable.TableName)} {ea} INNER JOIN ({baseSql.Sql}) {eb} ON {relationSql}";
-            return new ParameterizedSql(querySql, baseSql.Parameters.Concat(relationParams).ToList()).Append(filterSql);
+            var parentRows = ConnectedRowsSql(
+                new SqlBuildContext(dbModel, dialect, parameters), baseSql, query.Parent.Join,
+                query.Join.EmitJoinIdProjection(dialect, "b"));
+            var nestedJoinIdNames = string.Join(", ", Enumerable.Range(0, query.Join.FromColumns.Count)
+                .Select(i => dialect.EscapeIdentifier(JoinKeyNames.JoinIdAt(i, query.Join.FromColumns.Count))));
+            return new ParameterizedSql(
+                $"SELECT DISTINCT {nestedJoinIdNames} FROM ({parentRows.Sql}) {dialect.EscapeIdentifier("r")}",
+                parentRows.Parameters);
         }
 
         /// <summary>

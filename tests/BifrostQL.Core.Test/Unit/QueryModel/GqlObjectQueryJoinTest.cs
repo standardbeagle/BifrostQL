@@ -490,7 +490,8 @@ public sealed class GqlObjectQueryJoinTest
             Name = "departments",
             FromColumn = "Id",
             ConnectedColumn = "CompanyId",
-            FromTable = companyQuery
+            FromTable = companyQuery,
+            ConnectedTable = departmentQuery
         };
 
         var innerJoin = new TableJoin
@@ -512,6 +513,40 @@ public sealed class GqlObjectQueryJoinTest
         // Assert
         result.Sql.Should().Contain("INNER JOIN");
         result.Sql.Should().Contain("[Departments]");
+    }
+
+    [Fact]
+    public void GetRestrictedSqlParameterized_BeneathAPagedCollection_KeepsOnlyTheParentsWindow()
+    {
+        var dbModel = StandardTestFixtures.CompanyHierarchy();
+        var companyQuery = new GqlObjectQuery
+        {
+            DbTable = dbModel.GetTableFromDbName("Companies"), TableName = "Companies", GraphQlName = "Companies",
+        };
+        // departments(limit: 5, offset: 2) is a per-parent paged collection.
+        var departmentQuery = new GqlObjectQuery
+        {
+            DbTable = dbModel.GetTableFromDbName("Departments"), TableName = "Departments", GraphQlName = "Departments",
+            IncludeResult = true, Limit = 5, Offset = 2,
+        };
+        var outerJoin = new TableJoin
+        {
+            Name = "departments", FromColumn = "Id", ConnectedColumn = "CompanyId",
+            FromTable = companyQuery, ConnectedTable = departmentQuery, QueryType = QueryType.Join,
+        };
+        var innerJoin = new TableJoin
+        {
+            Name = "employees", FromColumn = "Id", ConnectedColumn = "DepartmentId", Operator = "_eq",
+            FromTable = departmentQuery,
+        };
+        var queryLink = new QueryLink(innerJoin, departmentQuery, new QueryLink(outerJoin, companyQuery, null));
+
+        var result = GqlObjectQuery.GetRestrictedSqlParameterized(dbModel, Dialect, new SqlParameterCollection(), queryLink);
+
+        // The employees' parent set is the departments each company's page returns (rows 3..7 of
+        // each company's window), not every department of the paged companies.
+        result.Sql.Should().StartWith("SELECT DISTINCT [JoinId] FROM (SELECT * FROM (SELECT [b].[Id] AS [JoinId], ROW_NUMBER() OVER (PARTITION BY [a].[JoinId] ");
+        result.Sql.Should().EndWith("[p] WHERE [__rn] BETWEEN 3 AND 7) [r]");
     }
 
     #endregion

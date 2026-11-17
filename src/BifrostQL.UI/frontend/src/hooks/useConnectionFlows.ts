@@ -52,6 +52,11 @@ export interface UseConnectionFlowsParams {
   restored: ConnectionInfo | null;
   /** Transition into the editor view (bumps the editor key + sets the view). */
   enterEditor: () => void;
+  /**
+   * The restored vault session could not be re-activated on the server. The hook
+   * has already cleared the session and set the error; the shell leaves the editor.
+   */
+  onRestoreFailed: () => void;
 }
 
 export interface UseConnectionFlowsResult {
@@ -82,8 +87,13 @@ export interface UseConnectionFlowsResult {
  * connections, and vault-server discovery. On success each flow publishes a
  * ConnectionInfo and transitions to the editor via `enterEditor`.
  */
-export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlowsParams): UseConnectionFlowsResult {
-  const [connectionState, setConnectionState] = useState<ConnectionState>(restored ? 'connected' : 'idle');
+export function useConnectionFlows({ restored, enterEditor, onRestoreFailed }: UseConnectionFlowsParams): UseConnectionFlowsResult {
+  // A restored vault session is 'connecting' until the server has re-activated
+  // it: the shell holds the editor until then, so nothing introspects or queries
+  // whatever the server happens to be bound to (or nothing at all).
+  const [connectionState, setConnectionState] = useState<ConnectionState>(
+    restored?.vaultServerName ? 'connecting' : restored ? 'connected' : 'idle',
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(restored);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(restored?.provider ?? null);
@@ -112,15 +122,23 @@ export function useConnectionFlows({ restored, enterEditor }: UseConnectionFlows
   // (bifrostui "<connection>") is bound at startup by Program.cs, so the
   // common dev-launch case still works without this effect.
   useEffect(() => {
-    if (!restored) return;
-    if (!restored.vaultServerName) return;
-    fetch('/api/vault/connect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: restored.vaultServerName }),
-    }).catch(() => {
-      // Backend may not be ready yet — health check will handle recovery
-    });
+    const vaultName = restored?.vaultServerName;
+    if (!vaultName) return;
+    let live = true;
+    connectVaultServer(vaultName)
+      .then((result) => {
+        if (!result.success) throw new Error(result.error || 'the server refused the saved connection');
+        if (live) setConnectionState('connected');
+      })
+      .catch((cause: unknown) => {
+        if (!live) return;
+        setConnectionInfo(null);
+        saveSession(null);
+        setConnectionState('error');
+        setErrorMessage(`Could not reconnect to "${vaultName}": ${cause instanceof Error ? cause.message : String(cause)}`);
+        onRestoreFailed();
+      });
+    return () => { live = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activateSavedVaultEntry = useCallback(async (

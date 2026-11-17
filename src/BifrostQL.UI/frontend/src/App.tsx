@@ -241,7 +241,8 @@ export default function App() {
     }
   }, [currentView]);
 
-  const flows = useConnectionFlows({ restored, enterEditor });
+  const leaveEditorAfterFailedRestore = useCallback(() => setCurrentView('welcome'), []);
+  const flows = useConnectionFlows({ restored, enterEditor, onRestoreFailed: leaveEditorAfterFailedRestore });
   const {
     setConnectionState,
     errorMessage,
@@ -460,7 +461,12 @@ export default function App() {
           transport and remounts the editor (via the transportMode key) so new
           queries flow over the newly selected mode.
         */}
-        {editorPane === 'sql' ? (
+        {flows.connectionState === 'connecting' ? (
+          // A restored vault session is still being re-activated on the server.
+          <div className="bifrost-editor-loading" role="status" style={{ padding: 24, opacity: 0.7 }}>
+            Reconnecting to {connectionInfo?.name ?? 'the saved connection'}…
+          </div>
+        ) : editorPane === 'sql' ? (
           <SqlConsole provider={connectionInfo?.provider} />
         ) : editorPane === 'builder' ? (
           <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>

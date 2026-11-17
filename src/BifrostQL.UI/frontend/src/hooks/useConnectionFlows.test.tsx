@@ -15,6 +15,7 @@ import {
   MAX_RECENT_CONNECTIONS,
 } from '../connection/recent-connections';
 import type { ConnectionInfo } from '../connection/types';
+import { loadSession, saveSession } from '../connection/session';
 
 const conn = (id: string, name: string): ConnectionInfo => ({
   id,
@@ -42,7 +43,7 @@ describe('useConnectionFlows recent connections', () => {
   });
 
   const mount = () =>
-    renderHook(() => useConnectionFlows({ restored: null, enterEditor: () => {} }));
+    renderHook(() => useConnectionFlows({ restored: null, enterEditor: () => {}, onRestoreFailed: () => {} }));
 
   it('removes one recent connection and keeps the others', async () => {
     saveRecentConnections([conn('1', 'alpha'), conn('2', 'beta'), conn('3', 'gamma')]);
@@ -105,5 +106,56 @@ describe('useConnectionFlows recent connections', () => {
     expect(result.current.recentConnections).toHaveLength(MAX_RECENT_CONNECTIONS);
     expect(result.current.recentConnections[0].connectionString).toBe('Data Source=/tmp/new.db');
     expect(loadRecentConnections()[0].connectionString).toBe('Data Source=/tmp/new.db');
+  });
+});
+
+describe('useConnectionFlows vault session restore', () => {
+  const restoredVault: ConnectionInfo = { ...conn('v', 'prod'), provider: 'postgres', vaultServerName: 'prod-pg' };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  function stubVaultConnect(reply: () => Promise<Response>) {
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      String(input).includes('/api/vault/connect')
+        ? reply()
+        : Promise.resolve({ ok: true, json: () => Promise.resolve({ servers: [] }) } as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('holds the session in connecting until the server re-activates the vault entry', async () => {
+    let resolveConnect!: (r: Response) => void;
+    stubVaultConnect(() => new Promise<Response>((resolve) => { resolveConnect = resolve; }));
+
+    const { result } = renderHook(() =>
+      useConnectionFlows({ restored: restoredVault, enterEditor: () => {}, onRestoreFailed: () => {} }));
+
+    expect(result.current.connectionState).toBe('connecting');
+    await waitFor(() => expect(resolveConnect).toBeTypeOf('function'));
+    await act(async () => {
+      resolveConnect({ ok: true, json: () => Promise.resolve({ success: true }) } as Response);
+    });
+    await waitFor(() => expect(result.current.connectionState).toBe('connected'));
+  });
+
+  it('surfaces a failed restore, clears the session and leaves the editor', async () => {
+    stubVaultConnect(() => Promise.resolve({ ok: false, json: () => Promise.resolve({ success: false, error: 'password expired' }) } as Response));
+    saveSession(restoredVault);
+    expect(loadSession()).not.toBeNull();
+    const onRestoreFailed = vi.fn();
+
+    const { result } = renderHook(() =>
+      useConnectionFlows({ restored: restoredVault, enterEditor: () => {}, onRestoreFailed }));
+
+    await waitFor(() => expect(onRestoreFailed).toHaveBeenCalledTimes(1));
+    expect(result.current.connectionState).toBe('error');
+    expect(result.current.errorMessage).toContain('prod-pg');
+    expect(result.current.errorMessage).toContain('password expired');
+    expect(result.current.connectionInfo).toBeNull();
+    expect(loadSession()).toBeNull();
   });
 });

@@ -256,6 +256,19 @@ describe('dayBoundary', () => {
         expect(dayBoundary('2024-02-01', 'end', 'DateTimeOffset', 330)).toBe('2024-02-01T23:59:59.999-05:30');
         expect(dayBoundary('2024-02-01', 'start', 'DateTimeOffset', 0)).toBe('2024-02-01T00:00:00.000+00:00');
     });
+
+    it('stamps each edge with the offset in force at that edge on a DST-change day', () => {
+        const savedTz = process.env.TZ;
+        process.env.TZ = 'America/New_York';
+        try {
+            // Clocks spring forward at 02:00 on 2024-03-10: midnight is EST
+            // (-05:00), the end of the day is EDT (-04:00).
+            expect(dayBoundary('2024-03-10', 'start', 'DateTimeOffset')).toBe('2024-03-10T00:00:00.000-05:00');
+            expect(dayBoundary('2024-03-10', 'end', 'DateTimeOffset')).toBe('2024-03-10T23:59:59.999-04:00');
+        } finally {
+            if (savedTz === undefined) delete process.env.TZ; else process.env.TZ = savedTz;
+        }
+    });
 });
 
 // ── buildColumnFilters ─────────────────────────────────────────

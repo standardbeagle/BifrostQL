@@ -245,7 +245,9 @@ export function dayBoundary(
     const time = edge === "start" ? "00:00:00.000" : "23:59:59.999";
     const stamp = `${date}T${time}`;
     if (gqlType !== "DateTimeOffset") return stamp;
-    const offset = offsetMinutes ?? new Date(`${date}T00:00:00`).getTimezoneOffset();
+    // The offset in force at THIS edge: on a DST-change day the end of the day
+    // has a different offset than midnight.
+    const offset = offsetMinutes ?? new Date(stamp).getTimezoneOffset();
     return `${stamp}${formatUtcOffset(offset)}`;
 }
 

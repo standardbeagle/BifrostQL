@@ -44,6 +44,8 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Security — third review pass
 
+- Credential rate limits are reserved atomically. The shared per-source and per-account limiter (pgwire, RESP, LDAP, OData Basic, local login) read and incremented each window as two steps, so concurrent attempts overshot the cap; 32 simultaneous guesses against an account cap of 2 were all admitted.
+- Local auth: password history orders by insertion, not by timestamp, so the last-four reuse check holds when changes share a clock tick.
 - LDAP: new `MaxMembershipValuesPerSearch` (default 10,000) caps member/memberOf values across one search; over it the search ends with `adminLimitExceeded` instead of cutting values.
 - Local auth: logout, password change, disable, delete and admin action (`POST /auth/admin/revoke-sessions`) revoke sessions server-side; `MaxConcurrentSessions` caps them.
 - Local auth: an account locks after 10 consecutive failed logins for 30 minutes (`LockoutThreshold`, `LockoutDuration`; null waits for `/auth/admin/unlock`). This is separate from the rate limiter.

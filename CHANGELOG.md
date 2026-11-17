@@ -87,12 +87,14 @@ On `main` after v0.4.28; not yet on NuGet.
 - edit-db: a Boolean key, filter or field value other than true/false/0/1 is refused with a clear error instead of being read by truthiness.
 - edit-db: a composite foreign key's header filter selects one parent row and filters on every FK column; the `cf` URL parameter adds a `_fk_tuple` form and still reads old links.
 - edit-db and `@bifrostql/react`: grouping, sort, aggregates and number/percent formats read `Decimal` strings exactly.
+- EAV `_meta` is capped per parent at `max-query-rows - 1` attributes, windowed in SQL. A parent with more returns the first ones in key order plus `"__truncated": true`; before, it returned every attribute row however many there were. An attribute keyed `__truncated` is now refused.
 
 ### Changed — third review pass
 
 - EAV `_meta` reads a whole page's attributes in one query per 500 parents instead of one per row (1000 rows: 752 → 172 ms on SQL Server, 1099 → 132 ms on Postgres). New public seam `IBatchComputedColumnProvider`.
 - Nested collections two or more levels deep restrict to the parent page's rows instead of every child of the root page (about 8–13× faster on a 3-level fixture).
 - Parsed table policy and computed-column config are memoized per table and invalidated on any metadata write (about 48 µs → 0.5 µs per lookup).
+- `DbTable`, `ColumnDto` and `DbModel` copy a plain dictionary handed to `Metadata` in an initializer instead of wrapping it, so a later write through the caller's reference no longer reaches the object (it used to, without invalidating the memo above). Write through `.Metadata` instead.
 - edit-db: nullable text fields have an explicit "Set NULL" control in the form and grid cell, so clearing a field saves `''`.
 
 ### Breaking — second review pass

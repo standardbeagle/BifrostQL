@@ -1,6 +1,6 @@
 ---
 title: "Grouping Rows in the Data Grid"
-description: "Grouping rows in the data grid by one or more columns, with server-computed group counts and totals, URL-persisted state, and per-group member expansion."
+description: "Grouping rows in the data grid by a column, with server-computed group counts and totals, URL-persisted state, and per-group member expansion."
 ---
 
 import DemoVideo from '../../../../components/DemoVideo.astro';
@@ -11,7 +11,7 @@ import DemoVideo from '../../../../components/DemoVideo.astro';
   description="Server-computed group counts: 399 published, 65 draft, 36 archived, with inline editing switched off while grouping is active."
 />
 
-Grouping rows in the data grid works by one or more columns, with group header
+Grouping rows in the data grid works by one column, with group header
 rows whose counts and totals are computed **on the server**, not by summing the
 rows currently on the page. This keeps totals correct on large tables.
 
@@ -19,7 +19,10 @@ rows currently on the page. This keeps totals correct on large tables.
 
 - **Collapsed view** issues one grouped
   [aggregate](/BifrostQL/guides/aggregate-queries/) query returning group keys, a
-  count, and configured sums — paginated over **groups**, not member rows.
+  count, and an optional sum over one numeric column (any numeric scalar,
+  `BigInt` and `Decimal` included). It reads at most 1,000 groups, taken in key
+  order; when more match, the summary says "First 1000 groups" and notes that a
+  count sort ranks only those.
 - **Expanding a group** fetches only that group's member rows, with the group
   key merged into the active filter through the query-builder helpers. A `NULL`
   group key is its own labeled group, fetched with a `_null` filter (not
@@ -36,8 +39,11 @@ restores the same grouping. There is no parallel component state driving the
 query, so **switching tables clears grouping** — no `gb` value from the previous
 table leaks into the new table's query.
 
-With an active column filter and grouping, the filter composes first and then
-the grouping, so totals match the filtered SQL.
+With an active column filter or header filter and grouping, the filters
+compose first and then the grouping, so totals match the filtered SQL. The
+group query uses the same filter builder as the grid; a filter the grid can't
+apply shows its error and no grouping request is sent. A relationship drill
+grid ignores the main grid's filters and grouping.
 
 ## Related
 

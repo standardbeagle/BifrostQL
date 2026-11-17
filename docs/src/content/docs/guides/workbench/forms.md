@@ -15,7 +15,7 @@ the grid uses. Forms persist as [saved objects](/BifrostQL/concepts/saved-object
   Paged fetches go through the query-builder helpers and are **composite-PK
   safe** (`row-id.ts`), so multi-column and BigInt keys work end to end.
 - **CRUD** — create, update, and delete through the existing edit-db mutation
-  hooks; field validation runs before submit, and server errors surface
+  hooks (delete asks for confirmation in a dialog first); field validation runs before submit, and server errors surface
   per-field where possible. A new-record insert lands on the created row using
   the primary key returned by the mutation.
 - **Widgets** — each field's input is chosen from its type plus the
@@ -34,8 +34,9 @@ record through a schema-known relationship.
   query-builder helpers.
 - **Add-child** prefills the foreign-key columns from the parent and hides them
   from input; delete or detach follows the relationship kind — a foreign-key
-  child is deleted, a many-to-many link is detached through the existing M2M
-  panel.
+  child is deleted after a confirmation dialog (a failed delete shows its
+  error in the subform), a many-to-many link is detached through the existing
+  M2M panel.
 - Navigating the parent refreshes its children; an unsaved-child guard fires
   before you navigate away.
 

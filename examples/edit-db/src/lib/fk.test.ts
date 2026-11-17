@@ -54,6 +54,18 @@ describe('coerceForGql', () => {
         expect(coerceForGql(true, 'Boolean')).toBe(true);
         expect(coerceForGql(1, 'Boolean')).toBe(true);
         expect(coerceForGql(0, 'Boolean')).toBe(false);
+        // Route segments and URL filter values are strings, so the string forms
+        // of 0/1 must read as the same booleans ("0" is not truthy-true).
+        expect(coerceForGql('1', 'Boolean')).toBe(true);
+        expect(coerceForGql('0', 'Boolean')).toBe(false);
+    });
+
+    it('refuses a Boolean value outside true/false/0/1 instead of reading its truthiness', () => {
+        // Boolean('no') is true and Boolean('') is false: a truthiness cast
+        // turned an unreadable key into a confident, wrong delete/filter target.
+        for (const bad of ['no', 'yes', 'TRUE', '', ' ', 2, -1, 'null', {}, []]) {
+            expect(() => coerceForGql(bad, 'Boolean')).toThrow(/not a Boolean/);
+        }
     });
 
     it('coerces and truncates numeric strings for Int columns', () => {

@@ -21,9 +21,18 @@ function isPkFilter(value: DeleteInput): value is PkFilter {
     return typeof value === 'object' && value !== null;
 }
 
-/** A key value as its column's GraphQL scalar wants it; a column of unknown type passes through. */
-function coerceKeyValue(value: unknown, paramType: string | undefined): unknown {
-    return paramType ? coerceForGql(value, paramType) : value ?? null;
+/**
+ * A key value as its column's GraphQL scalar wants it; a column of unknown type
+ * passes through. A value the scalar cannot hold (a Boolean key of 'no') refuses
+ * the delete, naming the column, rather than targeting whatever row it coerces to.
+ */
+function coerceKeyValue(value: unknown, paramType: string | undefined, column: string): unknown {
+    if (!paramType) return value ?? null;
+    try {
+        return coerceForGql(value, paramType);
+    } catch (e) {
+        throw new Error(`Cannot delete row: primary-key column '${column}': ${(e as Error).message}`);
+    }
 }
 
 export function useDeleteMutation(table: Table): UseDeleteMutationResult {
@@ -58,7 +67,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
                 if (raw === undefined || raw === null) {
                     throw new Error(`Cannot delete row: missing value for primary-key column '${col}'.`);
                 }
-                payload[col] = coerceKeyValue(raw, columnParamType.get(col));
+                payload[col] = coerceKeyValue(raw, columnParamType.get(col), col);
             }
             return payload;
         }
@@ -72,7 +81,7 @@ export function useDeleteMutation(table: Table): UseDeleteMutationResult {
             throw new Error(`Cannot delete row: missing value for primary-key column '${pkColumns[0]}'.`);
         }
         const firstPk = pkColumns[0];
-        payload[firstPk] = coerceKeyValue(input, columnParamType.get(firstPk));
+        payload[firstPk] = coerceKeyValue(input, columnParamType.get(firstPk), firstPk);
         return payload;
     };
 

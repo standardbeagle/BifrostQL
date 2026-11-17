@@ -1,5 +1,6 @@
 import { Column, Table } from "../types/schema";
 import { pkFilterFor, type PkFilter } from "./row-id";
+import { coerceForGql } from "./fk";
 import { validateRowValues } from "./field-validation";
 import { isJsonColumn } from "./content-detect";
 import { isDateColumn } from "./date-input";
@@ -83,10 +84,13 @@ export function coerceDetail(
             const v = coerced[col.name];
             // Nullable booleans keep NULL rather than coercing an unset value to
             // false. On insert an unset value is omitted so the DB default applies.
+            // An untouched non-nullable checkbox is false. Any other value takes
+            // the shared Boolean reading, which refuses 'no' rather than writing
+            // its truthiness (`!!'false'` is true).
             if (col.isNullable && (v === null || v === undefined)) {
                 coerced[col.name] = isInsert ? undefined : null;
             } else {
-                coerced[col.name] = !!v;
+                coerced[col.name] = v === null || v === undefined ? false : coerceForGql(v, col.paramType);
             }
         }
         if (isJsonColumn(col)) {

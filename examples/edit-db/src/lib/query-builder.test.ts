@@ -324,6 +324,20 @@ describe('buildColumnFilters', () => {
         expect(result.params).toEqual(['$cf_age_0: Int', '$cf_active_1: Boolean']);
     });
 
+    it('refuses a Boolean filter value outside true/false/0/1 instead of widening it', () => {
+        // A hand-edited cf param can carry any JSON. Boolean('no') is true, so
+        // the truthiness cast filtered on active = true behind a 'no' the user typed.
+        const filters = [
+            { id: 'active', value: { operator: '_eq', value: 'no' } as ColumnFilterValue },
+            { id: 'age', value: { operator: '_eq', value: 5 } as ColumnFilterValue },
+        ];
+        const result = buildColumnFilters(filters, table);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toMatch(/column 'active'.*not a Boolean/);
+        expect(result.variables).toEqual({ cf_age_1: 5 });
+        expect(result.filterTexts).toEqual(['{age: {_eq: $cf_age_1}}']);
+    });
+
     it('builds _null filter without variable', () => {
         const filters = [{ id: 'name', value: { operator: '_null', value: true } as ColumnFilterValue }];
         const result = buildColumnFilters(filters, table);

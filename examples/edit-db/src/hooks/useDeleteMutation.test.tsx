@@ -215,6 +215,26 @@ describe('useDeleteMutation', () => {
 
             expect(query.mock.calls[0][1]).toEqual({ detail: { price: 3.14 } });
         });
+
+        it('reads a composite Boolean key part "0" as false, not truthy-true', async () => {
+            const { query, wrapper } = createHarness();
+            const flags = tbl('flags', ['tenant_id', 'enabled'], [col('tenant_id', 'Int!', true), col('enabled', 'Boolean!', true)]);
+            const { result } = renderHook(() => useDeleteMutation(flags), { wrapper });
+
+            await result.current.deleteRow({ tenant_id: '7', enabled: '0' });
+
+            expect(query.mock.calls[0][1]).toEqual({ detail: { tenant_id: 7, enabled: false } });
+        });
+
+        it('refuses a Boolean key value that is not true/false/0/1 and sends nothing', async () => {
+            const { query, wrapper } = createHarness();
+            const flags = tbl('flags', ['tenant_id', 'enabled'], [col('tenant_id', 'Int!', true), col('enabled', 'Boolean!', true)]);
+            const { result } = renderHook(() => useDeleteMutation(flags), { wrapper });
+
+            await expect(result.current.deleteRow({ tenant_id: '7', enabled: 'no' })).rejects.toThrow(/'enabled'.*not a Boolean/);
+            await expect(result.current.deleteRows([{ tenant_id: '7', enabled: 'false' }, { tenant_id: '8', enabled: 'yes' }])).rejects.toThrow(/not a Boolean/);
+            expect(query).not.toHaveBeenCalled();
+        });
     });
 
     describe('cache invalidation after a delete', () => {

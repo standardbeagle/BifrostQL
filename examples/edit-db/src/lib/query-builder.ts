@@ -295,6 +295,22 @@ export function toWireFilter(
     }
 }
 
+const INVALID_FILTER_VALUE = Symbol('invalid filter value');
+
+/**
+ * A filter value as its column's scalar, or INVALID_FILTER_VALUE with the reason
+ * pushed onto `errors` when the scalar cannot hold it (a Boolean filter of 'no'
+ * from a hand-edited cf param). The filter is then refused, never widened.
+ */
+function coerceFilterValue(value: unknown, gqlType: string, column: string, errors: string[]): unknown {
+    try {
+        return coerceForGql(value, gqlType);
+    } catch (e) {
+        errors.push(`The filter on column '${column}' can't be applied: ${(e as Error).message}`);
+        return INVALID_FILTER_VALUE;
+    }
+}
+
 export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Table): ColumnFilterResult {
     const variables: Record<string, unknown> = {};
     const params: string[] = [];
@@ -345,8 +361,11 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
             }
             const loVar = `${varName}_lo`;
             const hiVar = `${varName}_hi`;
-            variables[loVar] = coerceForGql(range[0], gqlType);
-            variables[hiVar] = coerceForGql(range[1], gqlType);
+            const lo = coerceFilterValue(range[0], gqlType, cf.id, errors);
+            const hi = coerceFilterValue(range[1], gqlType, cf.id, errors);
+            if (lo === INVALID_FILTER_VALUE || hi === INVALID_FILTER_VALUE) continue;
+            variables[loVar] = lo;
+            variables[hiVar] = hi;
             params.push(`$${loVar}: ${gqlType}`, `$${hiVar}: ${gqlType}`);
             filterTexts.push(`{${cf.id}: {${wire.operator}: [$${loVar}, $${hiVar}]}}`);
             continue;
@@ -355,7 +374,9 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
         // The value may arrive as a wire string (drill-down emits
         // String(row[dimension])); the variable is declared as the column's
         // scalar, so coerce it or an Int/Boolean filter ships "5" as $cf_x: Int.
-        variables[varName] = coerceForGql(wire.value, gqlType);
+        const coerced = coerceFilterValue(wire.value, gqlType, cf.id, errors);
+        if (coerced === INVALID_FILTER_VALUE) continue;
+        variables[varName] = coerced;
         params.push(`$${varName}: ${gqlType}`);
         filterTexts.push(`{${cf.id}: {${wire.operator}: $${varName}}}`);
     }

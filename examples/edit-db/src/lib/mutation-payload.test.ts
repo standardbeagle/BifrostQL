@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBulkUpdatePayloads, buildStagedUpdatePayloads, restoreBlankNulls } from './mutation-payload';
+import { buildBulkUpdatePayloads, buildStagedUpdatePayloads, coerceDetail, restoreBlankNulls } from './mutation-payload';
 import type { Column } from '../types/schema';
 
 function col(name: string, paramType: string, opts: Partial<Column> = {}): Column {
@@ -126,5 +126,25 @@ describe('restoreBlankNulls', () => {
 
     it('sends NULL for blank nullable fields on an insert', () => {
         expect(restoreBlankNulls({ notes: '', title: 'x' }, {}, columns)).toEqual({ notes: null, title: 'x' });
+    });
+});
+
+describe('coerceDetail Boolean columns', () => {
+    const active = col('active', 'Boolean!');
+    const id = col('id', 'Int!', { isPrimaryKey: true });
+
+    it('reads the string forms of a Boolean by value, not truthiness', () => {
+        // `!!'false'` is true: a staged string 'false' used to write true.
+        const out = coerceDetail({ active: 'false' }, [{ column: active }], [id], { id: 1 }, false);
+        expect(out.active).toBe(false);
+        expect(coerceDetail({ active: '1' }, [{ column: active }], [id], { id: 1 }, false).active).toBe(true);
+    });
+
+    it('keeps an untouched non-nullable Boolean as false', () => {
+        expect(coerceDetail({}, [{ column: active }], [id], null, true).active).toBe(false);
+    });
+
+    it('refuses a Boolean value outside true/false/0/1', () => {
+        expect(() => coerceDetail({ active: 'no' }, [{ column: active }], [id], { id: 1 }, false)).toThrow(/not a Boolean/);
     });
 });

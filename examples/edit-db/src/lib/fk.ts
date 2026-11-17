@@ -11,7 +11,8 @@ export interface FkEqFilterResult {
  * Coerce a raw cell/route value to the JS type matching a GraphQL scalar so the
  * variable payload agrees with its declared type (e.g. a Boolean FK is sent as
  * `true`, not `"true"`). Unparseable numerics are passed through untouched so
- * the server reports the real error instead of receiving `NaN`.
+ * the server reports the real error instead of receiving `NaN`. A Boolean value
+ * outside true/false/0/1 throws (see coerceBooleanForGql).
  */
 export function coerceForGql(value: unknown, gqlType: string): unknown {
     if (value === null || value === undefined) return null;
@@ -29,13 +30,28 @@ export function coerceForGql(value: unknown, gqlType: string): unknown {
             return Number.isFinite(n) ? n : value;
         }
         case 'Boolean':
-            if (typeof value === 'boolean') return value;
-            if (value === 'true' || value === 1) return true;
-            if (value === 'false' || value === 0) return false;
-            return Boolean(value);
+            return coerceBooleanForGql(value);
         default:
             return String(value);
     }
+}
+
+/**
+ * The one reading of a Boolean key/filter/write value: a boolean, 0/1, or their
+ * string forms (route segments and URL filter values are strings, so "0" must be
+ * false). Anything else is refused. A truthiness cast read 'no' as true and ''
+ * as false, which turned an unreadable value into a confident, wrong target.
+ */
+function coerceBooleanForGql(value: unknown): boolean {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === 1 || value === '1') return true;
+    if (value === 'false' || value === 0 || value === '0') return false;
+    throw new Error(`${describeValue(value)} is not a Boolean (expected true, false, 0 or 1).`);
+}
+
+function describeValue(value: unknown): string {
+    if (typeof value === 'string') return `'${value}'`;
+    try { return JSON.stringify(value) ?? String(value); } catch { return String(value); }
 }
 
 /** The base GraphQL scalar of a column (`paramType` minus non-null marker), defaulting to String. */

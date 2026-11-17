@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
   BifrostMessageType,
+  MAX_CONCURRENT_REQUESTS_PER_CONNECTION,
   decodeMessage,
   emptyChunkInfo,
   encodeMessage,
@@ -544,6 +545,184 @@ describe("BifrostBinaryClient", () => {
       expect(r1.data).toEqual({ tag: "first" });
       expect(r2.data).toEqual({ tag: "second" });
       expect(client.pendingCount).toBe(0);
+    });
+
+    describe("concurrency cap", () => {
+      function sentIds(ws: FakeWebSocket): number[] {
+        return ws.sentFrames
+          .map((f) => decodeMessage(f))
+          .filter(
+            (m) =>
+              m.type === BifrostMessageType.Query ||
+              m.type === BifrostMessageType.Mutation
+          )
+          .map((m) => m.requestId);
+      }
+
+      function answer(ws: FakeWebSocket, requestId: number, data: unknown): void {
+        ws.receive(
+          encodeMessage(
+            emptyMessage({
+              requestId,
+              type: BifrostMessageType.Result,
+              payload: jsonPayload(data),
+            })
+          )
+        );
+      }
+
+      function refuse(ws: FakeWebSocket, requestId: number): void {
+        // Text copied from BifrostBinaryMiddleware.StartRequestAsync.
+        ws.receive(
+          encodeMessage(
+            emptyMessage({
+              requestId,
+              type: BifrostMessageType.Error,
+              errors: [
+                `Too many concurrent requests: a connection runs at most ${MAX_CONCURRENT_REQUESTS_PER_CONNECTION} at once. Resend this request when one completes.`,
+              ],
+            })
+          )
+        );
+      }
+
+      it("sends at most 16 requests at once and the 17th when one completes", async () => {
+        const ws = tracker.last;
+        const promises = Array.from(
+          { length: MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1 },
+          (_, i) => client.query(`{ q${i} }`)
+        );
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION);
+        expect(client.queuedCount).toBe(1);
+
+        answer(ws, 1, { n: 1 });
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1);
+        expect(sentIds(ws).at(-1)).toBe(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1);
+        expect(client.queuedCount).toBe(0);
+
+        for (let id = 2; id <= MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1; id++) {
+          answer(ws, id, { n: id });
+        }
+        const results = await Promise.all(promises);
+        expect(results.every((r) => r.errors.length === 0)).toBe(true);
+        expect(results.at(-1)!.data).toEqual({
+          n: MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1,
+        });
+      });
+
+      it("counts streams against the cap and frees their slot on the final frame", async () => {
+        const ws = tracker.last;
+        const stream = client.stream("{ s }");
+        for (let i = 1; i < MAX_CONCURRENT_REQUESTS_PER_CONNECTION; i++) {
+          void client.query(`{ q${i} }`).catch(() => {});
+        }
+        const queued = client.query("{ last }");
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION);
+
+        answer(ws, 1, { s: true }); // the stream's single-frame response
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1);
+        expect((await stream.next()).done).toBe(false);
+
+        const lastId = MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1;
+        answer(ws, lastId, { ok: true });
+        await expect(queued).resolves.toMatchObject({ data: { ok: true } });
+        client.close();
+      });
+
+      it("keeps an aborted request's slot until the server's response ends", async () => {
+        const ws = tracker.last;
+        const controller = new AbortController();
+        const aborted = client.query("{ slow }", undefined, controller.signal);
+        for (let i = 1; i < MAX_CONCURRENT_REQUESTS_PER_CONNECTION; i++) {
+          void client.query(`{ q${i} }`).catch(() => {});
+        }
+        void client.query("{ waiting }").catch(() => {});
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION);
+
+        // The server has no cancel frame and keeps running request 1.
+        controller.abort();
+        await expect(aborted).rejects.toThrowError(/aborted/);
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION);
+
+        answer(ws, 1, { late: true });
+        expect(sentIds(ws)).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1);
+        client.close();
+      });
+
+      it("never sends a request aborted while it waited in the queue", async () => {
+        const ws = tracker.last;
+        for (let i = 0; i < MAX_CONCURRENT_REQUESTS_PER_CONNECTION; i++) {
+          void client.query(`{ q${i} }`).catch(() => {});
+        }
+        const controller = new AbortController();
+        const queued = client.query("{ queued }", undefined, controller.signal);
+        const after = client.query("{ after }");
+        controller.abort();
+        await expect(queued).rejects.toThrowError(/aborted/);
+
+        answer(ws, 1, {});
+        const ids = sentIds(ws);
+        expect(ids).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1);
+        expect(ids).not.toContain(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1);
+        expect(ids.at(-1)).toBe(MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 2);
+
+        answer(ws, MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 2, { ok: 1 });
+        await expect(after).resolves.toMatchObject({ data: { ok: 1 } });
+        client.close();
+      });
+
+      it("resends a request the server refused for concurrency when another one ends", async () => {
+        const ws = tracker.last;
+        const first = client.query("{ first }");
+        const refused = client.query("{ refused }");
+
+        refuse(ws, 2);
+        expect(client.queuedCount).toBe(1);
+        expect(sentIds(ws)).toEqual([1, 2]);
+
+        answer(ws, 1, { first: true });
+        await first;
+        expect(sentIds(ws)).toEqual([1, 2, 2]);
+
+        answer(ws, 2, { refused: false });
+        await expect(refused).resolves.toEqual({
+          data: { refused: false },
+          errors: [],
+        });
+      });
+
+      it("resends a refused request after a short pause when nothing else is on the wire", async () => {
+        vi.useFakeTimers();
+        const ws = tracker.last;
+        const refused = client.query("{ refused }");
+
+        refuse(ws, 1);
+        expect(sentIds(ws)).toEqual([1]);
+        await vi.advanceTimersByTimeAsync(10);
+        expect(sentIds(ws)).toEqual([1, 1]);
+
+        answer(ws, 1, { ok: true });
+        await expect(refused).resolves.toMatchObject({ data: { ok: true } });
+      });
+
+      it("reports an Error frame that is not a concurrency refusal", async () => {
+        const ws = tracker.last;
+        const p = client.query("{ a }");
+        ws.receive(
+          encodeMessage(
+            emptyMessage({
+              requestId: 1,
+              type: BifrostMessageType.Error,
+              errors: ["Request id 1 is already in flight on this connection."],
+            })
+          )
+        );
+        await expect(p).resolves.toEqual({
+          data: null,
+          errors: ["Request id 1 is already in flight on this connection."],
+        });
+        expect(sentIds(ws)).toEqual([1]);
+      });
     });
 
     it("ignores response frames with unknown requestId", async () => {

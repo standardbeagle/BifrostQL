@@ -364,17 +364,20 @@ export function ingestStreamingChunk(
  * BifrostBinaryClient exposes all of these via the methods listed below.
  */
 export interface StreamingClientInternals extends StreamingClientHooks {
-  registerStreamingQueue(
+  /**
+   * Registers the queue and sends the request frame, or queues it until the
+   * server has a free concurrency slot.
+   */
+  startStreamingRequest(
     requestId: number,
     queue: StreamingQueue,
     meta: RequestMetadata
   ): void;
   allocateRequestId(): number;
-  sendRawFrame(bytes: Uint8Array): void;
 }
 
 /**
- * Allocates a new request, registers a StreamingQueue with the client, sends
+ * Allocates a new request, registers a StreamingQueue with the client, starts
  * the initial Query/Mutation frame, and returns the iterator. Used by
  * `BifrostBinaryClient.stream()` and `streamMutation()`.
  */
@@ -413,11 +416,6 @@ export function createChunkStream(
     // tombstones the id on an early teardown (break / overflow / error).
     client.removeStreamingQueue(requestId, queue.streamCompleted);
   });
-  client.registerStreamingQueue(requestId, queue, {
-    type,
-    query: queryText,
-    variables,
-  });
-  client.sendRawFrame(bytes);
+  client.startStreamingRequest(requestId, queue, { type, frame: bytes });
   return queue;
 }

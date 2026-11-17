@@ -25,7 +25,9 @@ console.log(result.data);
 client.close();
 ```
 
-Run multiple queries concurrently over the same socket with `Promise.all`. Use `client.mutate(text, variables)` for mutations.
+Run multiple queries concurrently over the same socket with `Promise.all`. The server runs at most 16 requests per connection, so the client sends 16 at a time and queues the rest (`client.queuedCount`). Use `client.mutate(text, variables)` for mutations.
+
+A request frame larger than the server's 4 MiB limit (`MAX_REQUEST_FRAME_BYTES`) is rejected before it is sent.
 
 ## Stream
 

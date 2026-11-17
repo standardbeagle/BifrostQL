@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
   BifrostMessageType,
+  MAX_CONCURRENT_REQUESTS_PER_CONNECTION,
   MAX_REQUEST_FRAME_BYTES,
   decodeMessage,
   emptyChunkInfo,
@@ -804,6 +805,61 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     expect(secondWs.sentFrames).toHaveLength(0);
     expect(client.pendingCount).toBe(0);
 
+    client.close();
+  });
+
+  it("sends a queued mutation that never reached the server after a reconnect, and re-sends interrupted queries first", async () => {
+    const client = await makeConnectedClient();
+    const firstWs = tracker.last;
+
+    // Fill every slot with queries, then queue one mutation behind them.
+    const queries = Array.from(
+      { length: MAX_CONCURRENT_REQUESTS_PER_CONNECTION },
+      (_, i) => client.query(`{ q${i} }`)
+    );
+    const mutation = client.mutate("mutation { m }");
+    expect(firstWs.sentFrames).toHaveLength(MAX_CONCURRENT_REQUESTS_PER_CONNECTION);
+    const mutationId = MAX_CONCURRENT_REQUESTS_PER_CONNECTION + 1;
+
+    firstWs.simulateClose(1006, "drop");
+    await vi.advanceTimersByTimeAsync(100);
+    const secondWs = tracker.last;
+    secondWs.simulateOpen();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The 16 interrupted queries fill the slots again; the mutation, which
+    // the server never saw, waits its turn instead of being rejected.
+    const resent = secondWs.sentFrames.map((f) => decodeMessage(f));
+    expect(resent.map((m) => m.requestId)).toEqual(
+      Array.from({ length: MAX_CONCURRENT_REQUESTS_PER_CONNECTION }, (_, i) => i + 1)
+    );
+
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId: 1,
+          type: BifrostMessageType.Result,
+          payload: jsonPayload({ q: 0 }),
+        })
+      )
+    );
+    await expect(queries[0]).resolves.toMatchObject({ data: { q: 0 } });
+    const last = decodeMessage(secondWs.sentFrames.at(-1)!);
+    expect(last.type).toBe(BifrostMessageType.Mutation);
+    expect(last.requestId).toBe(mutationId);
+
+    secondWs.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId: mutationId,
+          type: BifrostMessageType.Result,
+          payload: jsonPayload({ m: true }),
+        })
+      )
+    );
+    await expect(mutation).resolves.toMatchObject({ data: { m: true } });
+
+    for (const q of queries.slice(1)) void q.catch(() => {});
     client.close();
   });
 

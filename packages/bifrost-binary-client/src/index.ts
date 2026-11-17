@@ -64,6 +64,32 @@ export const DEFAULT_MAX_CHUNKED_RESPONSE_BYTES = 64 * 1024 * 1024;
  */
 export const MAX_REQUEST_FRAME_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Most requests the server runs at once on one connection
+ * (`BifrostBinaryMiddleware.MaxConcurrentRequestsPerConnection`). It refuses,
+ * rather than queues, a request past the cap, so the client holds the rest
+ * back in a FIFO queue and sends one each time a slot frees.
+ */
+export const MAX_CONCURRENT_REQUESTS_PER_CONNECTION = 16;
+
+/**
+ * Leading text of the server's refusal of a request past the concurrency cap
+ * (`BifrostBinaryMiddleware.StartRequestAsync`). The refusal carries no code,
+ * so the client recognizes it by this prefix. A refused request never ran, so
+ * it is put back at the head of the queue instead of being reported.
+ */
+const CONCURRENCY_REFUSAL_PREFIX = "Too many concurrent requests";
+
+/**
+ * Delay before resending a refused request when the client has no request of
+ * its own on the wire. The server releases a slot only after the response's
+ * last frame (and, for a chunked one, the last ack) has been handled, so the
+ * client can see a response end slightly before the server frees its slot.
+ * Not measured: a short pause that keeps a lone refused request from
+ * resending in a tight loop.
+ */
+const CONCURRENCY_REFUSAL_RETRY_MS = 10;
+
 /** WebSocket close code 1002, which the server sends after a frame it could not process. */
 const PROTOCOL_ERROR_CLOSE_CODE = 1002;
 
@@ -377,15 +403,16 @@ export interface BifrostClientOptions {
 }
 
 /**
- * Metadata captured at send-time so a query can be re-sent after a reconnect.
- * We need the original type/query/variables because the server loses every
- * request (and every buffered chunk) with the connection. Stored on both
- * `pending` and `streaming` entries.
+ * The request as it goes on the wire, captured once at call time. A request
+ * waiting for a concurrency slot is sent from it, and a query is re-sent from
+ * it after a reconnect (the server loses every request, and every buffered
+ * chunk, with the connection). Stored on both `pending` and `streaming`
+ * entries.
  */
 export interface RequestMetadata {
   type: BifrostMessageType;
-  query: string;
-  variables?: Record<string, unknown>;
+  /** The encoded Query/Mutation frame. */
+  frame: Uint8Array;
 }
 
 interface PendingRequest {
@@ -493,6 +520,26 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * active streaming request, one object per id.
    */
   private readonly streaming = new Map<number, StreamingState>();
+  /**
+   * Ids whose request the server is running on this socket: sent, and the
+   * response's last frame not yet seen. An aborted or timed-out request keeps
+   * its slot until then, because the server keeps running it. Never larger
+   * than MAX_CONCURRENT_REQUESTS_PER_CONNECTION.
+   */
+  private readonly wireSlots = new Set<number>();
+  /**
+   * Ids waiting for a wire slot, oldest first. An entry whose request has
+   * since settled (abort, timeout) is skipped when it reaches the head.
+   */
+  private readonly sendQueue: number[] = [];
+  /** Pending retry of a refused request; see CONCURRENCY_REFUSAL_RETRY_MS. */
+  private refusalRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Ids that were on the wire when the socket dropped. The reconnect replay
+   * treats them as possibly executed (mutations rejected, started streams
+   * failed); requests still waiting in `sendQueue` never reached the server.
+   */
+  private interruptedOnWire = new Set<number>();
   private readonly wsConstructor: IWebSocketConstructor;
   private readonly url: string;
   private readonly headers?: Record<string, string>;
@@ -757,10 +804,18 @@ export class BifrostBinaryClient implements StreamingClientInternals {
           )
         );
       }
+      // The server dropped every request it was running. Remember which ones
+      // reached it (the replay must treat those as possibly executed), and
+      // put them back at the head of the queue, ahead of requests that never
+      // left the client, so they go out first on the new socket.
+      this.interruptedOnWire = new Set(this.wireSlots);
+      this.sendQueue.unshift(...this.wireSlots);
+      this.wireSlots.clear();
+      this.cancelRefusalRetry();
       // The socket is gone, so streaming idle timers would fire against a dead
       // connection during the backoff window and prematurely fail iterators
       // that are about to be re-sent. Clear them here; replayPendingAfterReconnect
-      // re-arms one for every streaming request it re-sends.
+      // re-arms one for every streaming request that survives it.
       this.clearAllStreamingTimeouts();
       // The server's chunk buffer dies with the connection, so a partial
       // reassembly can never be completed on the next socket. Free it now
@@ -817,26 +872,32 @@ export class BifrostBinaryClient implements StreamingClientInternals {
   }
 
   /**
-   * Walks every pending and streaming request after a reconnect. The server
-   * lost them all with the old socket, buffered chunks included, so nothing
-   * can be resumed:
+   * Walks every request that was on the wire when the socket dropped. The
+   * server lost them all with the old socket, buffered chunks included, so
+   * nothing can be resumed:
    * - a query is re-sent from the start (its partial reassembly was dropped
    *   at the disconnect, and the caller has seen nothing yet);
    * - a mutation is rejected, because it may already have committed and a
    *   re-send risks applying it twice (at-most-once);
    * - a stream whose consumer already received chunks is failed, because a
    *   re-run would deliver them again.
-   * Called from the reconnect controller's success callback once a fresh
-   * socket is open.
+   * Requests still waiting for a slot never reached the server and are sent
+   * normally. Called from the reconnect controller's success callback once a
+   * fresh socket is open.
    */
   private replayPendingAfterReconnect(): void {
     if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
       return;
     }
+    const interrupted = this.interruptedOnWire;
+    this.interruptedOnWire = new Set();
 
     // Snapshot entries first: the rejection branches mutate `unary` and
     // `streaming` while we iterate.
     for (const [requestId, state] of Array.from(this.unary)) {
+      if (!interrupted.has(requestId)) {
+        continue;
+      }
       if (state.pending.meta.type === BifrostMessageType.Mutation) {
         this.rejectPendingRequest(
           requestId,
@@ -846,7 +907,6 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         );
         continue;
       }
-      this.sendOriginalFrame(requestId, state.pending.meta);
       // The request-timeout clock was set once at send-time and has been
       // ticking against the dead socket; restart it so the replayed request
       // gets a full window on the fresh connection.
@@ -854,6 +914,10 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     }
 
     for (const [requestId, state] of Array.from(this.streaming)) {
+      if (!interrupted.has(requestId)) {
+        this.armStreamingTimeout(requestId);
+        continue;
+      }
       // queue.error runs the cleanup callback → removeStreamingQueue.
       if (state.queue.receivedAnyChunk) {
         state.queue.error(
@@ -871,8 +935,90 @@ export class BifrostBinaryClient implements StreamingClientInternals {
         );
         continue;
       }
-      this.sendOriginalFrame(requestId, state.meta);
       this.armStreamingTimeout(requestId);
+    }
+
+    // Survivors sit at the head of the queue (moved there at the disconnect);
+    // the requests just failed are skipped when they reach it.
+    this.pumpSendQueue();
+  }
+
+  /**
+   * Sends queued requests while the server has free slots. Called whenever a
+   * request is queued, a slot frees, or a fresh socket opens.
+   */
+  private pumpSendQueue(): void {
+    while (
+      this.wireSlots.size < MAX_CONCURRENT_REQUESTS_PER_CONNECTION &&
+      this.sendQueue.length > 0
+    ) {
+      if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
+        return;
+      }
+      const requestId = this.sendQueue.shift()!;
+      const meta =
+        this.unary.get(requestId)?.pending.meta ??
+        this.streaming.get(requestId)?.meta;
+      if (!meta) {
+        // Settled while it waited (abort, timeout, consumer break).
+        continue;
+      }
+      this.wireSlots.add(requestId);
+      try {
+        this.ws.send(meta.frame);
+      } catch (err) {
+        // A synchronous throw (e.g. the socket dropped between the readyState
+        // check and send()) means the request never reached the wire.
+        this.wireSlots.delete(requestId);
+        this.failUnsentRequest(
+          requestId,
+          err instanceof Error ? err : new Error(String(err))
+        );
+      }
+    }
+  }
+
+  /** Fails a request that never reached the server, unary or streaming. */
+  private failUnsentRequest(requestId: number, error: Error): void {
+    if (this.unary.has(requestId)) {
+      this.rejectPendingRequest(requestId, error);
+      return;
+    }
+    this.streaming.get(requestId)?.queue.error(error);
+  }
+
+  /**
+   * Frees the wire slot of a request whose response has ended (its last frame
+   * arrived), and sends the next queued request.
+   */
+  private releaseWireSlot(requestId: number): void {
+    if (this.wireSlots.delete(requestId)) {
+      this.pumpSendQueue();
+    }
+  }
+
+  /**
+   * The server refused a request because its own count of running requests
+   * had not yet dropped below the cap. The request never ran, so it goes back
+   * to the head of the queue. It is resent when another of this client's
+   * requests ends, or after CONCURRENCY_REFUSAL_RETRY_MS when none is on the
+   * wire.
+   */
+  private requeueRefusedRequest(requestId: number): void {
+    this.wireSlots.delete(requestId);
+    this.sendQueue.unshift(requestId);
+    if (this.wireSlots.size === 0 && this.refusalRetryTimer === null) {
+      this.refusalRetryTimer = setTimeout(() => {
+        this.refusalRetryTimer = null;
+        this.pumpSendQueue();
+      }, CONCURRENCY_REFUSAL_RETRY_MS);
+    }
+  }
+
+  private cancelRefusalRetry(): void {
+    if (this.refusalRetryTimer !== null) {
+      clearTimeout(this.refusalRetryTimer);
+      this.refusalRetryTimer = null;
     }
   }
 
@@ -900,26 +1046,14 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * Encodes and sends a frame only if the socket is open, silently dropping it
-   * otherwise. The frame-sending paths that must throw on a closed socket
-   * (`sendRawFrame`) or unwind a pending request (`send`) do their own guard
-   * instead of routing through here.
+   * otherwise. Request frames go through `pumpSendQueue`, which must unwind a
+   * request whose send fails, so they do their own guard instead.
    */
   private trySend(frame: BifrostMessage): void {
     if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
       return;
     }
     this.ws.send(encodeMessage(frame));
-  }
-
-  private sendOriginalFrame(requestId: number, meta: RequestMetadata): void {
-    this.trySend(
-      this.makeFrame({
-        requestId,
-        type: meta.type,
-        query: meta.query,
-        variablesJson: meta.variables ? JSON.stringify(meta.variables) : "",
-      })
-    );
   }
 
   /**
@@ -996,18 +1130,20 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * @internal Registers a streaming queue so chunks for `requestId` route to
-   * it, records the request metadata for replay, and arms the idle
-   * timeout. `meta` is passed by `createChunkStream` at registration time
-   * rather than stashed on the client, so a failed (not-connected) stream that
-   * never registers can't leave stale metadata for the next request to claim.
+   * it, arms the idle timeout, and queues the request frame for a wire slot.
+   * `meta` is passed by `createChunkStream` at registration time rather than
+   * stashed on the client, so a failed (not-connected) stream that never
+   * registers can't leave stale metadata for the next request to claim.
    */
-  registerStreamingQueue(
+  startStreamingRequest(
     requestId: number,
     queue: StreamingQueue,
     meta: RequestMetadata
   ): void {
     this.streaming.set(requestId, { queue, meta });
     this.armStreamingTimeout(requestId);
+    this.sendQueue.push(requestId);
+    this.pumpSendQueue();
   }
 
   /**
@@ -1017,14 +1153,15 @@ export class BifrostBinaryClient implements StreamingClientInternals {
    * frame, so the server may keep streaming on the shared socket, and without
    * a tombstone every late chunk would surface as an unknown-requestId error
    * and go un-acked — stalling the server's ack window and, with it, the whole
-   * shared connection.
+   * shared connection. A stream that never left the send queue needs no
+   * tombstone: the server never heard of it.
    */
   removeStreamingQueue(requestId: number, completed = false): void {
     // Clear the idle timer before dropping the entry — clearStreamingTimeout
     // reads the timer off the entry, so deleting first would leak it.
     this.clearStreamingTimeout(requestId);
     this.streaming.delete(requestId);
-    if (!completed) {
+    if (!completed && this.wireSlots.has(requestId)) {
       this.abortedRequests.add(requestId);
     }
   }
@@ -1073,22 +1210,26 @@ export class BifrostBinaryClient implements StreamingClientInternals {
     }
   }
 
-  /** @internal Sends a pre-encoded frame on the underlying socket. */
-  sendRawFrame(bytes: Uint8Array): void {
-    if (!this.ws || this.ws.readyState !== this.wsConstructor.OPEN) {
-      throw new Error("Not connected");
-    }
-    this.ws.send(bytes);
-  }
-
   /** Whether the WebSocket connection is currently open. */
   get connected(): boolean {
     return this.ws?.readyState === this.wsConstructor.OPEN;
   }
 
-  /** Number of requests currently awaiting responses. */
+  /**
+   * Number of unary requests currently awaiting responses, including those
+   * still waiting in the send queue for a concurrency slot.
+   */
   get pendingCount(): number {
     return this.unary.size;
+  }
+
+  /** Number of requests (unary and streaming) waiting for a concurrency slot. */
+  get queuedCount(): number {
+    let count = 0;
+    for (const id of this.sendQueue) {
+      if (this.unary.has(id) || this.streaming.has(id)) count++;
+    }
+    return count;
   }
 
   /**
@@ -1121,9 +1262,9 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
   /**
    * Builds the request-timeout timer for a pending request. On fire it mirrors
-   * the abort path: drops any in-flight reassembly buffer and tombstones the id so the server's late chunks for this now-abandoned
-   * response are ack-and-dropped (keeping its send window moving) instead of
-   * stalling the shared socket or spraying unknown-requestId errors.
+   * the abort path: drops any in-flight reassembly buffer and abandons the
+   * request (see `abandonRequest`). The clock starts at call time, so time
+   * spent waiting for a concurrency slot counts against it.
    */
   private scheduleRequestTimeout(
     requestId: number,
@@ -1133,9 +1274,24 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       // Dropping the unary entry discards the reassembly buffer along with
       // the promise settlers in one step.
       this.unary.delete(requestId);
-      this.abortedRequests.add(requestId);
+      this.abandonRequest(requestId);
       reject(new Error(`Request ${requestId} timed out`));
     }, this.requestTimeoutMs);
+  }
+
+  /**
+   * Marks a unary request the caller gave up on (abort, timeout). If it is on
+   * the wire, the server keeps running it (the protocol has no cancel frame),
+   * so its id is tombstoned: the late chunks are ack-and-dropped, keeping the
+   * server's send window moving instead of stalling the shared socket or
+   * spraying unknown-requestId errors. It keeps its wire slot until the
+   * response's last frame arrives. A request still in the send queue never
+   * reached the server; it is skipped when it reaches the head.
+   */
+  private abandonRequest(requestId: number): void {
+    if (this.wireSlots.has(requestId)) {
+      this.abortedRequests.add(requestId);
+    }
   }
 
   /**
@@ -1204,7 +1360,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
 
       const timer = this.scheduleRequestTimeout(requestId, wrappedReject);
 
-      const meta: RequestMetadata = { type, query: queryText, variables };
+      const meta: RequestMetadata = { type, frame: bytes };
       this.unary.set(requestId, {
         pending: {
           resolve: wrappedResolve,
@@ -1223,31 +1379,17 @@ export class BifrostBinaryClient implements StreamingClientInternals {
             // buffer, so an aborted request leaves no partial state behind.
             this.unary.delete(requestId);
           }
-          // The server has no cancel frame and may keep streaming chunks for
-          // this request; tombstone the id so those late frames are dropped
-          // silently instead of surfacing as unknown-requestId errors.
-          this.abortedRequests.add(requestId);
+          this.abandonRequest(requestId);
           wrappedReject(abortError());
         };
         signal.addEventListener("abort", onAbort, { once: true });
       }
 
-      try {
-        this.ws.send(bytes);
-      } catch (err) {
-        // A synchronous throw from send (e.g. the socket dropped between
-        // the readyState check and send()) must fully unwind this request:
-        // clear the timeout, drop the pending entry, detach the abort listener
-        // (via wrappedReject), and reject. Leaving them installed would leak the
-        // timer + listener and hang the unary map on a request that never
-        // reached the wire.
-        const entry = this.unary.get(requestId)?.pending;
-        if (entry) {
-          clearTimeout(entry.timer);
-          this.unary.delete(requestId);
-        }
-        wrappedReject(err instanceof Error ? err : new Error(String(err)));
-      }
+      // Goes out now when the server has a free slot, otherwise when one
+      // frees. A synchronous send failure rejects through failUnsentRequest,
+      // which clears the timer and entry and detaches the abort listener.
+      this.sendQueue.push(requestId);
+      this.pumpSendQueue();
     });
   }
 
@@ -1260,7 +1402,42 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       return;
     }
 
-    if (isChunkedFrame(response.chunkInfo)) {
+    const chunked = isChunkedFrame(response.chunkInfo);
+    if (!chunked && this.isConcurrencyRefusal(response)) {
+      this.requeueRefusedRequest(response.requestId);
+      return;
+    }
+
+    this.routeResponseFrame(response, chunked);
+
+    // A single frame, or the last chunk of a chunked response, ends the
+    // server's work for this id: its slot frees for the next queued request.
+    // Released after routing, so the next request goes out only once this
+    // response has been delivered.
+    if (
+      !chunked ||
+      response.chunkInfo.sequence + 1 === response.chunkInfo.total
+    ) {
+      this.releaseWireSlot(response.requestId);
+    }
+  }
+
+  /**
+   * True for the server's refusal of a request past its concurrency cap: a
+   * single Error frame for a request this client has on the wire, whose text
+   * starts with CONCURRENCY_REFUSAL_PREFIX.
+   */
+  private isConcurrencyRefusal(response: BifrostMessage): boolean {
+    return (
+      response.type === BifrostMessageType.Error &&
+      this.wireSlots.has(response.requestId) &&
+      response.errors.length > 0 &&
+      response.errors[0]!.startsWith(CONCURRENCY_REFUSAL_PREFIX)
+    );
+  }
+
+  private routeResponseFrame(response: BifrostMessage, chunked: boolean): void {
+    if (chunked) {
       this.handleChunkedFrame(response);
       return;
     }
@@ -1567,6 +1744,12 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       state.pending.reject(error);
     }
     this.unary.clear();
+    // Every request is gone, on the wire or queued. Cleared before the
+    // streams are errored so their teardown leaves no tombstones behind.
+    this.wireSlots.clear();
+    this.sendQueue.length = 0;
+    this.interruptedOnWire.clear();
+    this.cancelRefusalRetry();
     this.abortedRequests.clear();
     this.errorAllStreamingQueues(error);
   }

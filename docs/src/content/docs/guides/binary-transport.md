@@ -92,7 +92,11 @@ by `request_id`.
 
 A connection runs at most 16 requests at once
 (`BifrostBinaryMiddleware.MaxConcurrentRequestsPerConnection`). A request past that is refused
-with an `Error` frame rather than queued, so resend it when one completes. A `request_id` must
+with an `Error` frame rather than queued, so resend it when one completes. `@bifrostql/binary-client`
+does this for you: it sends at most 16 requests at once (`MAX_CONCURRENT_REQUESTS_PER_CONNECTION`),
+holds the rest in a first-in, first-out queue, and resends a request the server refused this way.
+A request the caller aborts keeps its slot until the server's response ends, because the server
+keeps running it. A `request_id` must
 be unique among the requests in flight; a request reusing one is refused the same way. Once the
 client has acked every chunk of a response, that id is free again.
 

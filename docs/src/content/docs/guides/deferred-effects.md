@@ -144,7 +144,12 @@ mutation {
 Undo reverses a whole change set. Each delta routes its inverse through
 `IMutationIntentExecutor`, so tenant scoping, policy, soft delete, audit columns, and
 field encryption apply to the reversal exactly as they applied to the original write.
-The engine builds no predicate of its own.
+
+The change set itself is tenant-scoped too. The engine loads and claims it only when its
+`tenant` equals the caller's tenant claim (under the model's `tenant-context-key`), and a
+caller with no tenant claim reaches only change sets recorded without one. A change set of
+another tenant answers "The deferred change set was not found.", the same as an id that does
+not exist, and its state never moves, so ids cannot be used to probe or disturb other tenants.
 
 The captured concurrency token travels with each inverse. A row that changed since capture
 fails its optimistic-concurrency check and counts in `conflictRows` instead of being

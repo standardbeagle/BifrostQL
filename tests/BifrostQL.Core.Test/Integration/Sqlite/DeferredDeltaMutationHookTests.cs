@@ -146,15 +146,30 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Undo_CrossTenant_IsDeniedThroughPipelineScoping()
+    public async Task Undo_CrossTenant_AnswersNotFound_AndLeavesTheOwnersChangeSetAndEventsAlone()
     {
+        var model = await LoadModelAsync(":root { outbox-table: main.__outbox }");
         await Exec("UPDATE tenant_widgets SET name = 'edited', version = 2 WHERE id = 1");
         await SeedChangeSetAsync(47, "main.tenant_widgets", 1, "update", "restore",
             "{\"id\":1,\"tenant_id\":1,\"name\":\"tenant-original\",\"version\":1}",
             "{\"id\":1,\"tenant_id\":1,\"name\":\"edited\",\"version\":2}");
+        await Exec("UPDATE change_sets SET tenant = '1' WHERE id = 47");
+        await Exec("INSERT INTO __outbox(id,aggregate,op,payload,tenant,created_at,attempts,dead,change_set_id,state) VALUES(47,'main.tenant_widgets','update','{\"id\":1}','1','2026-07-20',0,0,47,'pending_hold')");
+        var engine = new DeferredUndoEngine(model, new SqliteDbConnFactory(ConnString), BuildMutationExecutor(model));
 
-        (await UndoAsync(47, new Dictionary<string, object?> { ["tenant_id"] = 2 })).ConflictRows.Should().Be(1);
+        Func<Task> outsider = async () => await engine.UndoAsync(47, new Dictionary<string, object?> { ["tenant_id"] = 2 });
+        Func<Task> noTenant = async () => await engine.UndoAsync(47, new Dictionary<string, object?>());
+
+        await outsider.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*not found*");
+        await noTenant.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*not found*");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id = 47")).Should().Be("held");
+        (await ScalarAsync("SELECT state FROM __outbox WHERE id = 47")).Should().Be("pending_hold");
         (await ScalarAsync("SELECT name FROM tenant_widgets WHERE id = 1")).Should().Be("edited");
+
+        // Control: the owning tenant can still undo the same change set.
+        (await engine.UndoAsync(47, new Dictionary<string, object?> { ["tenant_id"] = 1 }))
+            .Should().Be(new DeferredUndoResult(47, 1, 0, false));
+        (await ScalarAsync("SELECT state FROM __outbox WHERE id = 47")).Should().Be("suppressed");
     }
 
     [Fact]

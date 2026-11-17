@@ -144,6 +144,42 @@ public sealed class RoleNamedLinkChainTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ThreeRoleNamedHops_ResolveEachFromItsParentTable()
+    {
+        using var doc = await Run(
+            """
+            {
+              addresses(sort: [id_asc]) {
+                data {
+                  street
+                  orders_by_billing_address(sort: [id_asc]) {
+                    data {
+                      number
+                      shipping_address { street countries { name } }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+
+        var rows = Data(doc, "addresses");
+        rows.Should().HaveCount(2);
+
+        var billedToMain = rows[0].GetProperty("orders_by_billing_address").GetProperty("data").EnumerateArray().ToList();
+        billedToMain.Should().ContainSingle();
+        billedToMain[0].GetProperty("number").GetString().Should().Be("A-1");
+        billedToMain[0].GetProperty("shipping_address").GetProperty("street").GetString().Should().Be("Rue Cler");
+        billedToMain[0].GetProperty("shipping_address").GetProperty("countries").GetProperty("name").GetString().Should().Be("FR");
+
+        var billedToRue = rows[1].GetProperty("orders_by_billing_address").GetProperty("data").EnumerateArray().ToList();
+        billedToRue.Should().ContainSingle();
+        billedToRue[0].GetProperty("number").GetString().Should().Be("A-2");
+        billedToRue[0].GetProperty("shipping_address").GetProperty("street").GetString().Should().Be("Main St");
+        billedToRue[0].GetProperty("shipping_address").GetProperty("countries").GetProperty("name").GetString().Should().Be("US");
+    }
+
+    [Fact]
     public async Task SelfReferentialChildrenBeneathChildren_ResolvesGrandchildren()
     {
         using var doc = await Run(

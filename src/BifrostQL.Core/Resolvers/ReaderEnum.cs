@@ -427,7 +427,10 @@ namespace BifrostQL.Core.Resolvers
             var found = _table.index.TryGetValue(lookup, out int index);
             if (!found)
             {
-                return _root.GetDataForMissingColumn(context, _level, _table, row);
+                // `row` indexes this parent's matched rows (_data), not the whole
+                // join result set, so the nested join/aggregate key must be read
+                // from _data. Passing _table.data read another parent's row.
+                return _root.GetDataForMissingColumn(context, _level, (_table.index, _data), row);
             }
 
             var raw = ReaderEnum.DbConvert(_data[row][index]);

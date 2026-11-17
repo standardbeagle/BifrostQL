@@ -225,16 +225,7 @@ namespace BifrostQL.Core.Resolvers
 
             if (table.IncludeResult)
             {
-                // The "=>count" result set exists only when IncludeResult is set.
-                // Look it up defensively — an unconditional .First()/[0][0] threw
-                // when the count row was absent or empty.
-                var total = 0;
-                if (data.TryGetValue(table.KeyName + "=>count", out var countEntry)
-                    && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
-                    && countEntry.data[0][0] is { } countObj)
-                {
-                    total = Convert.ToInt32(countObj);
-                }
+                var total = ReadTotalCount(data, table.KeyName) ?? 0;
 
                 return new TableResult
                 {
@@ -329,10 +320,10 @@ namespace BifrostQL.Core.Resolvers
                     };
                 }
 
-                forced = AndFilters(forced, TableFilterFactory.Equals(target, scopeColumn, tenant));
+                forced = TableFilter.CombineAnd(forced, TableFilterFactory.Equals(target, scopeColumn, tenant));
             }
 
-            query.Filter = query.Filter is null ? forced : AndFilters(query.Filter, forced);
+            query.Filter = query.Filter is null ? forced : TableFilter.CombineAnd(query.Filter, forced);
 
             // Same fail-closed transformer pass as row queries over the TARGET table
             // (its own tenant/soft-delete/policy metadata still applies), into a
@@ -361,13 +352,7 @@ namespace BifrostQL.Core.Resolvers
             // the raw ciphertext as a decryption oracle.
             ProjectTrailImages(query, trackedTable, data, cryptoRead, context.UserContext);
 
-            var total = 0;
-            if (data.TryGetValue(query.KeyName + "=>count", out var countEntry)
-                && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
-                && countEntry.data[0][0] is { } countObj)
-            {
-                total = Convert.ToInt32(countObj);
-            }
+            var total = ReadTotalCount(data, query.KeyName) ?? 0;
 
             var logger = context.RequestServices?.GetService<ILogger<SqlExecutionManager>>();
             return new TableResult
@@ -379,11 +364,17 @@ namespace BifrostQL.Core.Resolvers
             };
         }
 
-        private static TableFilter AndFilters(TableFilter left, TableFilter right) => new()
-        {
-            And = new List<TableFilter> { left, right },
-            FilterType = FilterType.And,
-        };
+        /// <summary>
+        /// The <c>COUNT(*)</c> a node's <c>=&gt;count</c> result set carries, or null when
+        /// the set is absent or empty: it exists only for an <c>IncludeResult</c> node.
+        /// </summary>
+        private static int? ReadTotalCount(
+            IDictionary<string, (IDictionary<string, int> index, IList<object?[]> data)> data, string keyName)
+            => data.TryGetValue(keyName + "=>count", out var countEntry)
+               && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
+               && countEntry.data[0][0] is { } countObj
+                ? Convert.ToInt32(countObj)
+                : null;
 
         /// <summary>
         /// Rewrites the selected <c>before</c>/<c>after</c> image cells in place so a
@@ -831,14 +822,7 @@ namespace BifrostQL.Core.Resolvers
             // are not row-flat and are rejected upstream.
             FlattenSingleLinkJoins(query, data, rows, cryptoRead);
 
-            int? total = null;
-            if (query.IncludeResult
-                && data.TryGetValue(query.KeyName + "=>count", out var countEntry)
-                && countEntry.data.Count > 0 && countEntry.data[0].Length > 0
-                && countEntry.data[0][0] is { } countObj)
-            {
-                total = Convert.ToInt32(countObj);
-            }
+            var total = query.IncludeResult ? ReadTotalCount(data, query.KeyName) : null;
 
             return new QueryIntentResult { Rows = rows, TotalCount = total, Sql = sql };
         }

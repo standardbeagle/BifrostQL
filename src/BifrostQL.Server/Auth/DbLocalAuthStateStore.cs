@@ -96,6 +96,8 @@ namespace BifrostQL.Server.Auth
         private string Table(string name) => _dialect.TableReference(null, name);
         private string Col(string name) => _dialect.EscapeIdentifier(name);
 
+        public Task EnsureProvisionedAsync(CancellationToken cancellationToken) => EnsureTablesAsync(cancellationToken);
+
         private async Task EnsureTablesAsync(CancellationToken cancellationToken)
         {
             if (_initialized)

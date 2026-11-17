@@ -131,6 +131,27 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task StateTables_AreProvisionedAtStartup_BeforeAnyRequest()
+        {
+            await StartAsync(_ => { });
+
+            await using var conn = new SqliteConnection(ConnectionString);
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '\\_bifrost\\_auth\\_%' ESCAPE '\\' ORDER BY name";
+            var names = new List<string>();
+            await using (var reader = await cmd.ExecuteReaderAsync())
+                while (await reader.ReadAsync())
+                    names.Add(reader.GetString(0));
+
+            names.Should().Equal(new[]
+            {
+                DbLocalAuthStateStore.AuditTable, DbLocalAuthStateStore.LockoutsTable,
+                DbLocalAuthStateStore.PasswordHistoryTable, DbLocalAuthStateStore.SessionsTable,
+            }, "the host creates the tables on start, so no request races their creation and missing DDL rights fail the start");
+        }
+
+        [Fact]
         public async Task ParallelGuesses_FromOneSource_AreAdmittedOnlyUpToTheCap()
         {
             const int cap = 4;
@@ -205,19 +226,183 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task RoleChange_ReachesAnIssuedSession()
+        public async Task RoleChange_RevokesEveryIssuedSession()
+        {
+            // A role or tenant change used to rewrite the live cookie's claims in place. It now
+            // ends every session of that user, so no session ever carries privileges it was not
+            // signed in with.
+            var client = await StartAsync(o => o.SessionRevalidationInterval = TimeSpan.Zero);
+            var first = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            var second = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.2"));
+            (await GetSessionAsync(client, second)).StatusCode.Should().Be(HttpStatusCode.OK, "control");
+
+            Execute("UPDATE app_users SET roles = 'member', tenant_id = 'club-9' WHERE id = 'user-1'");
+
+            (await GetSessionAsync(client, first)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await GetSessionAsync(client, second)).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "the change revokes every session of the user, not only the one that noticed it");
+            var audit = await AuditAsync();
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.PrivilegeChanged && e.SubjectId == "user-1");
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.SessionRevoked
+                && e.Reason == LocalSessionRevokeReasons.PrivilegeChanged);
+        }
+
+        [Fact]
+        public async Task DisplayNameChange_RefreshesTheSession_WithoutRevokingIt()
         {
             var client = await StartAsync(o => o.SessionRevalidationInterval = TimeSpan.Zero);
             var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
 
-            Execute("UPDATE app_users SET roles = 'member', tenant_id = 'club-9' WHERE id = 'user-1'");
+            Execute("UPDATE app_users SET display_name = 'Alice B' WHERE id = 'user-1'");
 
             using var session = await GetSessionAsync(client, cookie);
-            session.StatusCode.Should().Be(HttpStatusCode.OK);
+            session.StatusCode.Should().Be(HttpStatusCode.OK, "a display name does not scope what the session may do");
             using var doc = JsonDocument.Parse(await session.Content.ReadAsStringAsync());
-            doc.RootElement.GetProperty("roles").EnumerateArray().Select(e => e.GetString())
-                .Should().BeEquivalentTo(new[] { "member" }, "the admin role was removed from the row");
-            doc.RootElement.GetProperty("tenantId").GetString().Should().Be("club-9");
+            doc.RootElement.GetProperty("displayName").GetString().Should().Be("Alice B");
+        }
+
+        private async Task<IReadOnlyList<AuthAuditEvent>> AuditAsync() =>
+            await _app!.Services.GetRequiredService<ILocalAuthStateStore>()
+                .ReadAuditAsync(DateTimeOffset.MinValue, 1_000, CancellationToken.None);
+
+        private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string path, string cookie, object? body = null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, path);
+            request.Headers.Add("Cookie", cookie);
+            if (body is not null)
+                request.Content = JsonContent.Create(body);
+            return await client.SendAsync(request);
+        }
+
+        [Fact]
+        public async Task Logout_RevokesTheServerSession_SoACopiedCookieStopsWorking()
+        {
+            var client = await StartAsync(_ => { });
+            var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.OK, "control");
+
+            (await PostAsync(client, "/auth/logout", cookie)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "logout used to delete only the browser's cookie; a copy of it stayed valid for its whole lifetime");
+            (await AuditAsync()).Should().Contain(e => e.Kind == AuthAuditKind.Logout && e.SubjectId == "user-1");
+        }
+
+        [Fact]
+        public async Task IdleSession_IsRevokedAfterFifteenMinutesByDefault_ActivityKeepsItAlive()
+        {
+            new LocalAuthOptions().SessionIdleTimeout.Should().Be(TimeSpan.FromMinutes(15), "PCI DSS 8.2.8");
+            var client = await StartAsync(_ => { });
+            var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+
+            _clock.Advance(TimeSpan.FromMinutes(14));
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.OK, "14 idle minutes");
+            _clock.Advance(TimeSpan.FromMinutes(14));
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.OK,
+                "control: activity at minute 14 restarted the idle clock");
+            _clock.Advance(TimeSpan.FromMinutes(16));
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.Unauthorized, "16 idle minutes");
+            (await AuditAsync()).Should().Contain(e => e.Kind == AuthAuditKind.SessionRevoked
+                && e.Reason == LocalSessionRevokeReasons.IdleTimeout);
+        }
+
+        [Fact]
+        public async Task PasswordChangedInTheRow_RevokesIssuedSessions()
+        {
+            var client = await StartAsync(o => o.SessionRevalidationInterval = TimeSpan.Zero);
+            var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+
+            var newHash = new PasswordHasher<string>().HashPassword(Login, "a different passphrase");
+            Execute($"UPDATE app_users SET password_hash = '{newHash}' WHERE id = 'user-1'");
+
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await AuditAsync()).Should().Contain(e => e.Reason == LocalSessionRevokeReasons.PasswordChanged);
+        }
+
+        [Fact]
+        public async Task DisabledAccount_CannotSignIn_AndLosesItsSessions()
+        {
+            Execute("ALTER TABLE app_users ADD COLUMN disabled INTEGER");
+            var client = await StartAsync(o =>
+            {
+                o.DisabledColumn = "disabled";
+                o.SessionRevalidationInterval = TimeSpan.Zero;
+            });
+            var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+
+            Execute("UPDATE app_users SET disabled = 1 WHERE id = 'user-1'");
+
+            (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            var audit = await AuditAsync();
+            audit.Should().Contain(e => e.Reason == LocalSessionRevokeReasons.AccountDisabled);
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.LoginFailed && e.Reason == AuthAuditReasons.AccountDisabled);
+        }
+
+        [Fact]
+        public async Task ConcurrentSessionCap_RevokesTheOldestSession()
+        {
+            var client = await StartAsync(o => o.MaxConcurrentSessions = 2);
+            var first = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            _clock.Advance(TimeSpan.FromSeconds(1));
+            var second = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            _clock.Advance(TimeSpan.FromSeconds(1));
+            var third = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+
+            (await GetSessionAsync(client, first)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await GetSessionAsync(client, second)).StatusCode.Should().Be(HttpStatusCode.OK);
+            (await GetSessionAsync(client, third)).StatusCode.Should().Be(HttpStatusCode.OK);
+            new LocalAuthOptions().MaxConcurrentSessions.Should().BeNull("no cap unless the deployment sets one");
+        }
+
+        [Fact]
+        public async Task AdminEndpoint_RevokesAnotherUsersSessions_OnlyForTheAdminRole()
+        {
+            Execute("INSERT INTO app_users VALUES ('user-2', 'bob@club.test', " +
+                    $"'{new PasswordHasher<string>().HashPassword("bob@club.test", Password)}', 'Bob', 'club-7', 'member')");
+            var client = await StartAsync(o => o.AdminRole = "admin");
+            var admin = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            using var bobLogin = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { login = "bob@club.test", password = Password }),
+            };
+            var bob = SessionCookie(await client.SendAsync(bobLogin));
+
+            (await PostAsync(client, "/auth/admin/revoke-sessions", bob, new { userId = "user-1" })).StatusCode
+                .Should().Be(HttpStatusCode.Forbidden, "bob does not hold the admin role");
+            using (var form = new HttpRequestMessage(HttpMethod.Post, "/auth/admin/revoke-sessions"))
+            {
+                form.Headers.Add("Cookie", admin);
+                form.Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["userId"] = "user-2" });
+                (await client.SendAsync(form)).StatusCode.Should().Be(HttpStatusCode.UnsupportedMediaType,
+                    "a cross-site form post cannot reach the endpoint");
+            }
+            (await GetSessionAsync(client, bob)).StatusCode.Should().Be(HttpStatusCode.OK, "control");
+
+            (await PostAsync(client, "/auth/admin/revoke-sessions", admin, new { userId = "user-2" })).StatusCode
+                .Should().Be(HttpStatusCode.NoContent);
+
+            (await GetSessionAsync(client, bob)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await GetSessionAsync(client, admin)).StatusCode.Should().Be(HttpStatusCode.OK);
+            (await AuditAsync()).Should().Contain(e => e.Kind == AuthAuditKind.SessionRevoked
+                && e.SubjectId == "user-2" && e.ActorId == "user-1" && e.Reason == LocalSessionRevokeReasons.Administrator);
+        }
+
+        [Fact]
+        public async Task LoginAudit_RecordsSuccessAndFailure_WithoutCredentials()
+        {
+            var client = await StartAsync(_ => { });
+            (await PostLoginAsync(client, "wrong password", "10.0.0.5")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            SessionCookie(await PostLoginAsync(client, Password, "10.0.0.6"));
+
+            var audit = await AuditAsync();
+
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.LoginFailed && e.SubjectId == "user-1"
+                && e.SourceIp == "10.0.0.5" && e.Reason == AuthAuditReasons.BadCredentials && e.Outcome == AuthAuditOutcome.Failure);
+            audit.Should().Contain(e => e.Kind == AuthAuditKind.LoginSucceeded && e.SubjectId == "user-1"
+                && e.SourceIp == "10.0.0.6" && e.Outcome == AuthAuditOutcome.Success);
+            var text = string.Join("|", audit.Select(e => e.ToString()));
+            text.Should().NotContain(Password).And.NotContain("wrong password").And.NotContain(Login);
         }
 
         [Fact]
@@ -239,6 +424,7 @@ namespace BifrostQL.Server.Test
             var client = await StartAsync(o =>
             {
                 o.SessionLifetime = TimeSpan.FromMinutes(30);
+                o.SessionIdleTimeout = TimeSpan.FromMinutes(30);
                 o.SessionRevalidationInterval = TimeSpan.Zero;
             });
             var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));

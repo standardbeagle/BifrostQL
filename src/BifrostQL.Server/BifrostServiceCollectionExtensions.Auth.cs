@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Server
@@ -33,7 +34,7 @@ namespace BifrostQL.Server
 
             // Constructed now so an invalid attempt budget fails at startup, not on first login.
             var loginLimiter = BifrostQL.Server.Auth.LocalLoginRateLimiter.From(options);
-            _ = options.CreatePasswordHasher();
+            options.Validate();
             var connFactory = DbConnFactoryResolver.Create(connectionString);
 
             services.AddSingleton(options);
@@ -42,6 +43,24 @@ namespace BifrostQL.Server
             services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalUserStore(
                 sp.GetRequiredService<IDbConnFactory>(),
                 sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthOptions>()));
+            // Sessions, lockouts, password history and the audit trail live in Bifrost-owned tables
+            // beside the app-user rows. A host may register its own ILocalAuthStateStore first.
+            services.TryAddSingleton<BifrostQL.Server.Auth.ILocalAuthStateStore>(sp =>
+                new BifrostQL.Server.Auth.DbLocalAuthStateStore(sp.GetRequiredService<IDbConnFactory>()));
+            services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
+                new BifrostQL.Server.Auth.LocalAuthStateProvisioner(
+                    sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>()));
+            services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalAuthAudit(
+                sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>(),
+                sp.GetServices<BifrostQL.Server.Auth.IAuthAuditSink>(),
+                sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
+            services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalSessionManager(
+                sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>(),
+                sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthAudit>(),
+                sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthOptions>()));
+            services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalAuthAdministration(
+                sp.GetRequiredService<BifrostQL.Server.Auth.LocalSessionManager>(),
+                sp.GetService<TimeProvider>() ?? TimeProvider.System));
 
             services
                 .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

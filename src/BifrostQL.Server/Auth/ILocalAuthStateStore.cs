@@ -17,6 +17,15 @@ namespace BifrostQL.Server.Auth
     /// </summary>
     public interface ILocalAuthStateStore
     {
+        /// <summary>
+        /// Creates whatever storage the store needs. <c>AddBifrostLocalAuth</c> calls it once at host
+        /// start, before any request: missing DDL rights fail the start instead of the first login,
+        /// and on SQLite no pooled connection can cache a schema that predates the tables (a stale
+        /// cache meeting a concurrent writer reports "no such table" instead of waiting).
+        /// Idempotent.
+        /// </summary>
+        Task EnsureProvisionedAsync(CancellationToken cancellationToken);
+
         /// <summary>Records a newly issued session.</summary>
         Task CreateSessionAsync(LocalSession session, CancellationToken cancellationToken);
 

@@ -95,18 +95,49 @@ namespace BifrostQL.Server.Auth
         public TimeSpan LoginAttemptWindow { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
-        /// Absolute lifetime of a login session cookie, counted from sign-in. Activity does not
-        /// extend it. Defaults to 8 hours.
+        /// Absolute lifetime of a login session, counted from sign-in. Activity does not extend
+        /// it. Defaults to 8 hours.
         /// </summary>
         public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
 
         /// <summary>
-        /// How often an issued session re-reads its user row. A deleted user is signed out and a
-        /// changed tenant, role list or household replaces the cookie's claims, at the first
-        /// request after this interval. <see cref="TimeSpan.Zero"/> re-reads on every request.
-        /// Defaults to 1 minute.
+        /// A session with no request for this long is revoked (PCI DSS 8.2.8 asks for 15 minutes
+        /// or less). Activity is recorded at most once per <c>min(1 minute, SessionIdleTimeout / 15)</c>,
+        /// so a session can outlive the timeout by that much. Must be positive and no longer than
+        /// <see cref="SessionLifetime"/>. Defaults to 15 minutes.
+        /// </summary>
+        public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromMinutes(15);
+
+        /// <summary>
+        /// How often an issued session re-reads its user row. A deleted or disabled user, a
+        /// changed password, or a changed tenant, role list or household revokes every session
+        /// of that user at the first request after this interval. <see cref="TimeSpan.Zero"/>
+        /// re-reads on every request. Defaults to 1 minute.
         /// </summary>
         public TimeSpan SessionRevalidationInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
+        /// Most live sessions one user may hold. A sign-in past the cap revokes that user's oldest
+        /// sessions. Null (the default) is no cap; otherwise at least 1.
+        /// </summary>
+        public int? MaxConcurrentSessions { get; set; }
+
+        /// <summary>
+        /// Optional column on <see cref="UserTable"/> marking an account disabled (NULL, false or 0
+        /// is enabled). A disabled account cannot sign in, and its live sessions are revoked at the
+        /// next revalidation. Null (the default) reads no such column.
+        /// </summary>
+        public string? DisabledColumn { get; set; }
+
+        /// <summary>
+        /// Role that may call the session and lockout administration endpoints under
+        /// <see cref="AdminPath"/>. Null (the default) maps no administration endpoint;
+        /// <see cref="LocalAuthAdministration"/> stays available to host code either way.
+        /// </summary>
+        public string? AdminRole { get; set; }
+
+        /// <summary>Base path of the administration endpoints. Defaults to <c>/auth/admin</c>.</summary>
+        public string AdminPath { get; set; } = "/auth/admin";
 
         /// <summary>
         /// PBKDF2 iteration count for password hashes this host writes (ASP.NET Core Identity V3:
@@ -129,6 +160,34 @@ namespace BifrostQL.Server.Auth
         /// <see cref="PasswordHashIterations"/> is below <see cref="MinPasswordHashIterations"/>;
         /// <c>AddBifrostLocalAuth</c> calls it at startup so a weak setting never reaches a login.
         /// </summary>
+        /// <summary>
+        /// Throws on a setting no login could honour. <c>AddBifrostLocalAuth</c> calls it at startup;
+        /// the runtime reads the same properties, so there is no second parser to drift.
+        /// </summary>
+        public void Validate()
+        {
+            static void Require(bool ok, string name, object? value, string rule)
+            {
+                if (!ok)
+                    throw new ArgumentOutOfRangeException(name, value, $"LocalAuthOptions.{name} {rule}.");
+            }
+
+            Require(SessionLifetime > TimeSpan.Zero, nameof(SessionLifetime), SessionLifetime, "must be positive");
+            Require(SessionIdleTimeout > TimeSpan.Zero && SessionIdleTimeout <= SessionLifetime,
+                nameof(SessionIdleTimeout), SessionIdleTimeout, "must be positive and no longer than SessionLifetime");
+            Require(SessionRevalidationInterval >= TimeSpan.Zero, nameof(SessionRevalidationInterval),
+                SessionRevalidationInterval, "must not be negative");
+            Require(MaxConcurrentSessions is null or >= 1, nameof(MaxConcurrentSessions), MaxConcurrentSessions,
+                "must be null or at least 1");
+            Require(AdminRole is null || !string.IsNullOrWhiteSpace(AdminRole), nameof(AdminRole), AdminRole,
+                "must be null or a role name");
+            _ = CreatePasswordHasher();
+        }
+
+        /// <summary>How often a live session's activity stamp is written: min(1 minute, idle timeout / 15).</summary>
+        internal TimeSpan SessionTouchInterval =>
+            TimeSpan.FromTicks(Math.Min(TimeSpan.FromMinutes(1).Ticks, SessionIdleTimeout.Ticks / 15));
+
         public IPasswordHasher<string> CreatePasswordHasher()
         {
             if (PasswordHashIterations < MinPasswordHashIterations)
@@ -149,27 +208,50 @@ namespace BifrostQL.Server.Auth
     /// </summary>
     public sealed record LocalLoginResult
     {
-        private LocalLoginResult(bool succeeded, AppIdentity? identity)
+        private LocalLoginResult(bool succeeded, AppIdentity? identity, LocalAccountState? account)
         {
             Succeeded = succeeded;
             Identity = identity;
+            Account = account;
         }
 
-        /// <summary>Whether the credentials were valid.</summary>
+        /// <summary>Whether the credentials were valid and the account may sign in.</summary>
         public bool Succeeded { get; }
 
         /// <summary>The authenticated identity, or <c>null</c> when verification failed.</summary>
         public AppIdentity? Identity { get; }
 
+        /// <summary>
+        /// The account the login named, when one matched, whether or not the password did. Server-side
+        /// only: lockout counts failures against <see cref="LocalAccountState.UserId"/>. Never put it on
+        /// the wire, where it would reveal that the account exists.
+        /// </summary>
+        public LocalAccountState? Account { get; }
+
         /// <summary>A successful result carrying the resolved identity.</summary>
-        public static LocalLoginResult Success(AppIdentity identity) => new(true, identity);
+        public static LocalLoginResult Success(AppIdentity identity) => new(true, identity, null);
+
+        internal static LocalLoginResult Success(AppIdentity identity, LocalAccountState account) => new(true, identity, account);
 
         /// <summary>
         /// A failed result. Used for both "no such user" and "wrong password" so the
         /// caller cannot distinguish the two and leak account existence.
         /// </summary>
-        public static LocalLoginResult Failure() => new(false, null);
+        public static LocalLoginResult Failure() => new(false, null, null);
+
+        internal static LocalLoginResult Failure(LocalAccountState? account) => new(false, null, account);
     }
+
+    /// <summary>
+    /// Server-side facts about one app-user row that session and lockout decisions need.
+    /// </summary>
+    /// <param name="UserId">The stable user id.</param>
+    /// <param name="CredentialStamp">Fingerprint of the stored password hash (never the hash itself).</param>
+    /// <param name="Disabled">True when <see cref="LocalAuthOptions.DisabledColumn"/> marks the account disabled.</param>
+    public sealed record LocalAccountState(string UserId, string CredentialStamp, bool Disabled);
+
+    /// <summary>An app-user's identity plus the account facts a session revalidates against.</summary>
+    public sealed record LocalAccount(AppIdentity Identity, LocalAccountState State);
 
     /// <summary>
     /// Reads app-user rows from the BifrostQL database and verifies submitted passwords
@@ -261,28 +343,30 @@ namespace BifrostQL.Server.Auth
                 return LocalLoginResult.Failure();
             }
 
+            var account = StateOf(row);
             var verification = _passwordHasher.VerifyHashedPassword(login, row.PasswordHash, password);
-            if (verification == PasswordVerificationResult.Failed)
-                return LocalLoginResult.Failure();
+            if (verification == PasswordVerificationResult.Failed || account.Disabled)
+                return LocalLoginResult.Failure(account);
 
             // A hash in an older format or below the current work factor verified, so the
             // plaintext is in hand: upgrade the stored hash now, or it stays weak forever.
             if (verification == PasswordVerificationResult.SuccessRehashNeeded)
-                await StorePasswordHashAsync(conn, dialect, row.Id, _passwordHasher.HashPassword(login, password), cancellationToken)
-                    .ConfigureAwait(false);
+            {
+                var upgraded = _passwordHasher.HashPassword(login, password);
+                await StorePasswordHashAsync(conn, dialect, row.Id, upgraded, cancellationToken).ConfigureAwait(false);
+                account = account with { CredentialStamp = LocalSessionId.CredentialStamp(upgraded) };
+            }
 
             return LocalLoginResult.Success(
-                await BuildIdentityAsync(conn, dialect, row, login, cancellationToken).ConfigureAwait(false));
+                await BuildIdentityAsync(conn, dialect, row, login, cancellationToken).ConfigureAwait(false), account);
         }
 
         /// <summary>
-        /// Re-reads the user by its stable id and rebuilds the identity a fresh login would
-        /// produce (tenant, roles, household), without a password. Null when the row is gone.
-        /// The cookie session revalidates against this, so a role change, tenant move or
-        /// deleted row reaches an already-issued session within
-        /// <see cref="LocalAuthOptions.SessionRevalidationInterval"/>.
+        /// Re-reads the user by its stable id: the identity a fresh login would produce plus the
+        /// account facts (credential stamp, disabled flag) a live session is checked against.
+        /// Null when the row is gone.
         /// </summary>
-        public async Task<AppIdentity?> FindIdentityByIdAsync(string id, CancellationToken cancellationToken = default)
+        public async Task<LocalAccount?> FindAccountByIdAsync(string id, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(id))
                 return null;
@@ -293,14 +377,30 @@ namespace BifrostQL.Server.Auth
 
             var row = await ReadUserRowAsync(conn, dialect, _options.IdColumn, id, cancellationToken)
                 .ConfigureAwait(false);
-            if (row is null || string.IsNullOrEmpty(row.Id) || string.IsNullOrEmpty(row.Login))
+            if (row is null || string.IsNullOrEmpty(row.Id) || string.IsNullOrEmpty(row.Login)
+                || string.IsNullOrEmpty(row.PasswordHash))
                 return null;
 
-            return await BuildIdentityAsync(conn, dialect, row, row.Login, cancellationToken).ConfigureAwait(false);
+            var identity = await BuildIdentityAsync(conn, dialect, row, row.Login, cancellationToken).ConfigureAwait(false);
+            return new LocalAccount(identity, StateOf(row));
         }
 
+        private static LocalAccountState StateOf(UserRow row) =>
+            new(row.Id!, LocalSessionId.CredentialStamp(row.PasswordHash!), row.Disabled);
+
+        /// <summary>
+        /// Re-reads the user by its stable id and rebuilds the identity a fresh login would
+        /// produce (tenant, roles, household), without a password. Null when the row is gone.
+        /// The cookie session revalidates against this, so a role change, tenant move or
+        /// deleted row reaches an already-issued session within
+        /// <see cref="LocalAuthOptions.SessionRevalidationInterval"/>.
+        /// </summary>
+        public async Task<AppIdentity?> FindIdentityByIdAsync(string id, CancellationToken cancellationToken = default)
+            => (await FindAccountByIdAsync(id, cancellationToken).ConfigureAwait(false))?.Identity;
+
         private sealed record UserRow(
-            string? Id, string? PasswordHash, string? DisplayName, string? TenantId, string? Roles, string? Login);
+            string? Id, string? PasswordHash, string? DisplayName, string? TenantId, string? Roles, string? Login,
+            bool Disabled);
 
         private async Task<UserRow?> ReadUserRowAsync(
             DbConnection conn, ISqlDialect dialect, string keyColumn, string keyValue, CancellationToken cancellationToken)
@@ -312,7 +412,8 @@ namespace BifrostQL.Server.Auth
                 $"{dialect.EscapeIdentifier(_options.DisplayNameColumn)}, " +
                 $"{dialect.EscapeIdentifier(_options.TenantColumn)}, " +
                 $"{dialect.EscapeIdentifier(_options.RolesColumn)}, " +
-                $"{dialect.EscapeIdentifier(_options.LoginColumn)} " +
+                $"{dialect.EscapeIdentifier(_options.LoginColumn)}" +
+                (_options.DisabledColumn is { } disabled ? $", {dialect.EscapeIdentifier(disabled)} " : " ") +
                 $"FROM {dialect.EscapeIdentifier(_options.UserTable)} " +
                 $"WHERE {dialect.EscapeIdentifier(keyColumn)} = @key";
 
@@ -327,7 +428,29 @@ namespace BifrostQL.Server.Auth
                 return null;
             return new UserRow(
                 GetString(reader, 0), GetString(reader, 1), GetString(reader, 2),
-                GetString(reader, 3), GetString(reader, 4), GetString(reader, 5));
+                GetString(reader, 3), GetString(reader, 4), GetString(reader, 5),
+                _options.DisabledColumn is not null && ReadDisabled(reader, 6));
+        }
+
+        /// <summary>
+        /// Reads the disabled flag. NULL is enabled; a boolean, an integer (non-zero = disabled) or the
+        /// text <c>true</c>/<c>false</c>/<c>1</c>/<c>0</c> is accepted. Anything else is a schema fault
+        /// and throws rather than guessing which way an ambiguous value should fail.
+        /// </summary>
+        private static bool ReadDisabled(DbDataReader reader, int ordinal)
+        {
+            if (reader.IsDBNull(ordinal))
+                return false;
+            return reader.GetValue(ordinal) switch
+            {
+                bool flag => flag,
+                byte or short or int or long or sbyte or ushort or uint or ulong or decimal =>
+                    Convert.ToDecimal(reader.GetValue(ordinal), System.Globalization.CultureInfo.InvariantCulture) != 0,
+                string text when text.Trim() is "1" || text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) => true,
+                string text when text.Trim() is "0" || text.Trim().Equals("false", StringComparison.OrdinalIgnoreCase) => false,
+                var other => throw new InvalidOperationException(
+                    $"The disabled column holds a {other.GetType().Name} value that is not a recognised flag."),
+            };
         }
 
         private async Task StorePasswordHashAsync(

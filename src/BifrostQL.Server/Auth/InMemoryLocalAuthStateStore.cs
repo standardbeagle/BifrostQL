@@ -25,6 +25,8 @@ namespace BifrostQL.Server.Auth
 
         private sealed record LockoutRow(LocalLockoutState State, int Version);
 
+        public Task EnsureProvisionedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task CreateSessionAsync(LocalSession session, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(session);

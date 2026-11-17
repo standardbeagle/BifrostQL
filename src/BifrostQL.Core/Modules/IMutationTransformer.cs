@@ -278,7 +278,14 @@ public interface IMutationTransformers : IReadOnlyCollection<IMutationTransforme
 
 public sealed class MutationTransformersWrap : IMutationTransformers
 {
-    public IReadOnlyCollection<IMutationTransformer> Transformers { get; init; } = Array.Empty<IMutationTransformer>();
+    private readonly IReadOnlyCollection<IMutationTransformer> _transformers = Array.Empty<IMutationTransformer>();
+
+    /// <summary>The transformers in the priority order they run, sorted once when set.</summary>
+    public IReadOnlyCollection<IMutationTransformer> Transformers
+    {
+        get => _transformers;
+        init => _transformers = value.OrderBy(t => t.Priority).ToArray();
+    }
 
     public int Count => Transformers.Count;
 
@@ -303,20 +310,18 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         // built from its output, shares one name space; keys that are already column
         // names (tenant, soft-delete, audit) pass through untouched.
         var currentData = Resolvers.DbParameterBinder.ToDbColumnKeys(table, data);
-        var allErrors = new List<string>();
-        // The classification of the FIRST transformer to abort (transformers run in
-        // priority order, so the security band — policy/tenant — is seen first).
-        // Captured once and never overwritten so a later codeless validation error
-        // cannot recolor an earlier denial, and a codeless first-abort is never
-        // upgraded to a denial. Only an access-denial condition carries a code; a
-        // validation/enum/concurrency error leaves it null → generic fault.
+        var errors = Array.Empty<string>();
+        // The classification of the transformer that refused the write: the chain stops at
+        // the first one (priority order, so the security band — policy/tenant — is seen
+        // first), so a later codeless validation error can never recolor a denial. Only an
+        // access-denial condition carries a code; a validation/enum/concurrency error leaves
+        // it null → generic fault.
         string? errorCode = null;
-        var errorCodeCaptured = false;
         TableFilter? combinedFilter = null;
         StateTransitionInfo? stateTransition = null;
         var conflictOnNoRows = false;
 
-        foreach (var transformer in Transformers.OrderBy(t => t.Priority))
+        foreach (var transformer in _transformers)
         {
             if (!transformer.AppliesTo(table, currentType, context))
                 continue;
@@ -325,12 +330,12 @@ public sealed class MutationTransformersWrap : IMutationTransformers
 
             if (result.Errors.Length > 0)
             {
-                allErrors.AddRange(result.Errors);
-                if (!errorCodeCaptured)
-                {
-                    errorCode = result.ErrorCode;
-                    errorCodeCaptured = true;
-                }
+                // The write is refused: stop here. The transformers after this one would only
+                // add round trips and row locks (the state-machine and tenant-FK checks read the
+                // row FOR UPDATE) to a request that is already failing.
+                errors = result.Errors;
+                errorCode = result.ErrorCode;
+                break;
             }
 
             currentType = result.MutationType;
@@ -362,7 +367,7 @@ public sealed class MutationTransformersWrap : IMutationTransformers
         {
             MutationType = currentType,
             Data = currentData,
-            Errors = allErrors.ToArray(),
+            Errors = errors,
             ErrorCode = errorCode,
             AdditionalFilter = combinedFilter,
             StateTransition = stateTransition,

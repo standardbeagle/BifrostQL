@@ -122,6 +122,68 @@ public sealed class MutationTransformerCompositionTests
         log.Should().Equal("low", "mid", "high");
     }
 
+    // A refused write stops the chain: the transformers after the refusal (the state-machine and
+    // tenant-FK checks among them) read the row FOR UPDATE, which a failing request must not pay.
+    [Fact]
+    public async Task Pipeline_StopsAtTheFirstRefusal_AndKeepsItsErrorsAndCode()
+    {
+        var model = TenantSoftDeleteModel();
+        var table = model.GetTableFromDbName("Orders");
+        var log = new List<string>();
+        var later = new RecordingTransformer("later", 150, MutationType.Insert, log);
+        var wrap = new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[]
+            {
+                later,
+                new RefusingTransformer(priority: 5, "denied", "ACCESS_DENIED"),
+                new RecordingTransformer("earlier", 1, MutationType.Insert, log),
+            },
+        };
+
+        var result = await wrap.TransformAsync(table, MutationType.Insert,
+            new Dictionary<string, object?>(), Context(model));
+
+        result.Errors.Should().Equal("denied");
+        result.ErrorCode.Should().Be("ACCESS_DENIED");
+        log.Should().Equal("earlier");
+        later.Ran.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Transformers_AreExposedInRunOrder()
+    {
+        var log = new List<string>();
+        var wrap = new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[]
+            {
+                new RecordingTransformer("high", 200, MutationType.Insert, log),
+                new RecordingTransformer("low", 1, MutationType.Insert, log),
+            },
+        };
+
+        wrap.Transformers.Select(t => t.Priority).Should().Equal(1, 200);
+    }
+
+    private sealed class RefusingTransformer : IMutationTransformer
+    {
+        private readonly string _error;
+        private readonly string _code;
+        public RefusingTransformer(int priority, string error, string code) { Priority = priority; _error = error; _code = code; }
+        public int Priority { get; }
+        public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) => true;
+        public ValueTask<MutationTransformResult> TransformAsync(
+            IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationTransformContext context)
+            => ValueTask.FromResult(new MutationTransformResult
+            {
+                MutationType = mutationType,
+                Data = data,
+                Errors = new[] { _error },
+                ErrorCode = _code,
+            });
+    }
+
     // --- the DELETE→UPDATE gating hazard ------------------------------------
 
     [Fact]

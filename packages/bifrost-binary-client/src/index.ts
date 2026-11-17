@@ -2,6 +2,7 @@ import { BinaryReader, BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import {
   CHUNK_FIELD,
   ChunkReassembler,
+  crc32,
   emptyChunkInfo,
   isChunkedFrame,
   type ChunkInfo,
@@ -57,12 +58,26 @@ export {
 export const DEFAULT_MAX_CHUNKED_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 /**
- * Largest request frame the server accepts (4 MiB, `MaxFrameSize` in
- * BifrostBinaryMiddleware). The server answers a bigger message by closing the
- * whole connection with a protocol error, so the client refuses such a
- * request before it reaches the wire.
+ * Largest single WebSocket message the server accepts (4 MiB, `MaxFrameSize`
+ * in BifrostBinaryMiddleware). The server answers a bigger message by closing
+ * the whole connection with a protocol error, so a request frame over this
+ * goes out as `REQUEST_CHUNK_BYTES` Chunk frames instead.
  */
 export const MAX_REQUEST_FRAME_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Largest request the server reassembles from Chunk frames (64 MiB,
+ * `ChunkReceiver.DefaultMaxReassemblyBytes`). The client refuses a bigger
+ * request before sending any of it.
+ */
+export const MAX_REQUEST_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Payload size of each Chunk frame of a request over `MAX_REQUEST_FRAME_BYTES`.
+ * Well under the frame limit once the envelope is added; a 64 MiB request is
+ * 64 frames, far inside the server's 65536-chunk cap.
+ */
+const REQUEST_CHUNK_BYTES = 1024 * 1024;
 
 /**
  * Most requests the server runs at once on one connection
@@ -112,12 +127,12 @@ const CONCURRENCY_REFUSAL_RETRY_MS = 10;
 const PROTOCOL_ERROR_CLOSE_CODE = 1002;
 
 /**
- * Builds the rejection for a request frame over `MAX_REQUEST_FRAME_BYTES`.
- * Shared by the unary and streaming send paths.
+ * Builds the rejection for a request over `MAX_REQUEST_BYTES`. Shared by the
+ * unary and streaming send paths.
  */
 export function oversizedRequestError(frameBytes: number): Error {
   return new Error(
-    `Request frame is ${frameBytes} bytes, over the server's ${MAX_REQUEST_FRAME_BYTES}-byte limit; it was not sent.`
+    `Request is ${frameBytes} bytes, over the server's ${MAX_REQUEST_BYTES}-byte reassembly limit; it was not sent.`
   );
 }
 
@@ -1001,7 +1016,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       }
       this.wireSlots.add(requestId);
       try {
-        this.ws.send(meta.frame);
+        this.sendRequestFrame(requestId, meta.frame);
       } catch (err) {
         // A synchronous throw (e.g. the socket dropped between the readyState
         // check and send()) means the request never reached the wire.
@@ -1011,6 +1026,45 @@ export class BifrostBinaryClient implements StreamingClientInternals {
           err instanceof Error ? err : new Error(String(err))
         );
       }
+    }
+  }
+
+  /**
+   * Puts an encoded request on the wire: whole when it fits one server frame,
+   * otherwise as Chunk frames carrying slices of it, which the server
+   * reassembles (ChunkReceiver) and runs as if it had arrived whole. The
+   * slices go out back to back in one synchronous loop, so no other frame of
+   * this client lands between them and the server holds at most one partial
+   * request per connection, inside its per-connection reassembly cap. The
+   * server acks each slice; nothing waits for those acks (handleMessage drops
+   * them). Callers have already refused a request over MAX_REQUEST_BYTES.
+   */
+  private sendRequestFrame(requestId: number, frame: Uint8Array): void {
+    const ws = this.ws!;
+    if (frame.length <= MAX_REQUEST_FRAME_BYTES) {
+      ws.send(frame);
+      return;
+    }
+    const total = Math.ceil(frame.length / REQUEST_CHUNK_BYTES);
+    for (let sequence = 0; sequence < total; sequence++) {
+      const offset = sequence * REQUEST_CHUNK_BYTES;
+      const slice = frame.subarray(offset, offset + REQUEST_CHUNK_BYTES);
+      ws.send(
+        encodeMessage(
+          this.makeFrame({
+            requestId,
+            type: BifrostMessageType.Chunk,
+            payload: slice,
+            chunkInfo: {
+              sequence,
+              total,
+              offset,
+              totalBytes: frame.length,
+              checksum: crc32(slice),
+            },
+          })
+        )
+      );
     }
   }
 
@@ -1391,7 +1445,7 @@ export class BifrostBinaryClient implements StreamingClientInternals {
           variablesJson: variables ? JSON.stringify(variables) : "",
         })
       );
-      if (bytes.length > MAX_REQUEST_FRAME_BYTES) {
+      if (bytes.length > MAX_REQUEST_BYTES) {
         reject(oversizedRequestError(bytes.length));
         return;
       }
@@ -1454,6 +1508,13 @@ export class BifrostBinaryClient implements StreamingClientInternals {
       response = decodeMessage(new Uint8Array(buffer));
     } catch (err) {
       this.onError?.(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+
+    // The server acks each Chunk frame of a request this client sent in
+    // slices (sendRequestFrame). Nothing waits on those acks, and routing one
+    // as a response would settle the request early and free its slot.
+    if (response.type === BifrostMessageType.ChunkAck) {
       return;
     }
 

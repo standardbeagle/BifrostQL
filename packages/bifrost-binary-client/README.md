@@ -27,7 +27,7 @@ client.close();
 
 Run multiple queries concurrently over the same socket with `Promise.all`. The server runs at most 16 requests per connection, so the client sends 16 at a time and queues the rest (`client.queuedCount`). Use `client.mutate(text, variables)` for mutations.
 
-A request frame larger than the server's 4 MiB limit (`MAX_REQUEST_FRAME_BYTES`) is rejected before it is sent.
+A request whose frame is larger than the server's 4 MiB frame limit (`MAX_REQUEST_FRAME_BYTES`) goes out as 1 MiB chunks, which the server reassembles. A request over the server's 64 MiB reassembly limit (`MAX_REQUEST_BYTES`) is rejected before anything is sent.
 
 ## Stream
 

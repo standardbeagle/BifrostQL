@@ -49,7 +49,7 @@ import { StreamPayloadExtractor } from "./stream-payload.js";
 import {
   BifrostMessageType,
   encodeMessage,
-  MAX_REQUEST_FRAME_BYTES,
+  MAX_REQUEST_BYTES,
   oversizedRequestError,
   type BifrostMessage,
   type RequestMetadata,
@@ -527,7 +527,7 @@ export function createChunkStream(
     errorCode: "",
   };
   const bytes = encodeMessage(frame);
-  if (bytes.length > MAX_REQUEST_FRAME_BYTES) {
+  if (bytes.length > MAX_REQUEST_BYTES) {
     const failed = new StreamingQueue(requestId, () => {});
     failed.error(oversizedRequestError(bytes.length));
     return failed;

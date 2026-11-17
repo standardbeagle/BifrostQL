@@ -122,6 +122,13 @@ across one connection), but the server never allocates from it: a transfer that 
 64 MB and delivers 40 bytes holds 40 bytes and is rejected when its last chunk arrives
 short.
 
+`@bifrostql/binary-client` uses this for large requests. A request frame over the
+server's 4 MiB frame limit is split into 1 MiB `Chunk` frames, sent back to back, and
+the server runs the reassembled request as if it had arrived whole (it takes a
+concurrency slot only once the last chunk is in). The server acks each upload chunk; the
+client needs no ack to proceed and ignores them. A request over 64 MiB, the reassembly
+limit, is rejected by the client before anything is sent.
+
 The JSON `/graphql` endpoint and the binary `/bifrost-ws` endpoint can run side-by-side on the same server. Clients pick whichever transport fits the request.
 
 :::note

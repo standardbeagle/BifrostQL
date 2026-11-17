@@ -3,6 +3,7 @@ import {
   BifrostBinaryClient,
   BifrostMessageType,
   MAX_CONCURRENT_REQUESTS_PER_CONNECTION,
+  MAX_REQUEST_BYTES,
   MAX_REQUEST_FRAME_BYTES,
   decodeMessage,
   emptyChunkInfo,
@@ -757,24 +758,96 @@ describe("BifrostBinaryClient auto-reconnect", () => {
     client.close();
   });
 
-  it("refuses a request frame over the server's 4 MiB limit without sending it", async () => {
+  /**
+   * Reassembles a request the client sent as Chunk frames, the way the
+   * server's ChunkReceiver does: every slice's checksum, offset and declared
+   * total must agree, and the slices must cover the frame exactly.
+   */
+  function reassembleUpload(frames: Uint8Array[]): BifrostMessage {
+    const chunks = frames.map((f) => decodeMessage(f));
+    expect(chunks.every((c) => c.type === BifrostMessageType.Chunk)).toBe(true);
+    const totalBytes = chunks[0]!.chunkInfo.totalBytes;
+    const out = new Uint8Array(totalBytes);
+    let covered = 0;
+    chunks.forEach((c, i) => {
+      expect(c.chunkInfo.sequence).toBe(i);
+      expect(c.chunkInfo.total).toBe(chunks.length);
+      expect(c.chunkInfo.totalBytes).toBe(totalBytes);
+      expect(c.chunkInfo.checksum).toBe(crc32(c.payload));
+      out.set(c.payload, c.chunkInfo.offset);
+      covered += c.payload.length;
+    });
+    expect(covered).toBe(totalBytes);
+    return decodeMessage(out);
+  }
+
+  it("sends a 5 MiB request as chunks the server can reassemble, and resolves on its answer", async () => {
     const client = await makeConnectedClient();
     const ws = tracker.last;
 
-    // Control: a frame just under the limit goes out.
+    const blob = "x".repeat(5 * 1024 * 1024);
+    const result = client.query("{ a }", { blob });
+
+    expect(ws.sentFrames.length).toBeGreaterThan(1);
+    expect(ws.sentFrames.every((f) => f.length <= MAX_REQUEST_FRAME_BYTES)).toBe(true);
+    const request = reassembleUpload(ws.sentFrames);
+    expect(request.type).toBe(BifrostMessageType.Query);
+    expect(request.query).toBe("{ a }");
+    expect(JSON.parse(request.variablesJson)).toEqual({ blob });
+
+    // The server acks every upload chunk; the acks are not the answer.
+    ws.sentFrames.forEach((_, sequence) =>
+      ws.receive(
+        encodeMessage(
+          emptyMessage({
+            requestId: request.requestId,
+            type: BifrostMessageType.ChunkAck,
+            chunkInfo: { ...emptyChunkInfo(), sequence },
+          })
+        )
+      )
+    );
+    expect(client.pendingCount).toBe(1);
+
+    ws.receive(
+      encodeMessage(
+        emptyMessage({
+          requestId: request.requestId,
+          type: BifrostMessageType.Result,
+          payload: jsonPayload({ length: blob.length }),
+        })
+      )
+    );
+    await expect(result).resolves.toMatchObject({ data: { length: blob.length } });
+
+    client.close();
+  });
+
+  it("sends a request that fits one frame whole", async () => {
+    const client = await makeConnectedClient();
+    const ws = tracker.last;
+
     const nearLimit = "x".repeat(MAX_REQUEST_FRAME_BYTES - 1024);
     void client.query("{ a }", { blob: nearLimit }).catch(() => {});
     expect(ws.sentFrames).toHaveLength(1);
+    expect(decodeMessage(ws.sentFrames[0]!).type).toBe(BifrostMessageType.Query);
 
-    const overLimit = "x".repeat(MAX_REQUEST_FRAME_BYTES);
+    client.close();
+  });
+
+  it("refuses a request over the server's 64 MiB reassembly limit without sending any of it", async () => {
+    const client = await makeConnectedClient();
+    const ws = tracker.last;
+
+    const overLimit = "x".repeat(MAX_REQUEST_BYTES);
     await expect(
       client.query("{ a }", { blob: overLimit })
-    ).rejects.toThrowError(/over the server's 4194304-byte limit; it was not sent/);
+    ).rejects.toThrowError(/over the server's 67108864-byte reassembly limit; it was not sent/);
     await expect(
       client.stream("{ a }", { blob: overLimit }).next()
-    ).rejects.toThrowError(/over the server's 4194304-byte limit/);
-    expect(ws.sentFrames).toHaveLength(1);
-    expect(client.pendingCount).toBe(1);
+    ).rejects.toThrowError(/over the server's 67108864-byte reassembly limit/);
+    expect(ws.sentFrames).toHaveLength(0);
+    expect(client.pendingCount).toBe(0);
 
     client.close();
   });

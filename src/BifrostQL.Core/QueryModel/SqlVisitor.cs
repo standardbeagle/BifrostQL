@@ -10,9 +10,11 @@ namespace BifrostQL.Core.QueryModel
 {
     public class SqlVisitor : ASTVisitor<ISqlContext>
     {
+        // A selection the client excluded with @skip/@include is not part of the request:
+        // it adds no SQL column and the column read guards never see it.
         protected override async ValueTask VisitFieldAsync(GraphQLField field, ISqlContext context)
         {
-            if (field == null)
+            if (field == null || !SelectionDirectives.IsIncluded(field, context.Variables))
                 return;
             context.PushField(field.Name.StringValue, field.Alias?.Name?.StringValue);
             await base.VisitFieldAsync(field, context);
@@ -52,8 +54,22 @@ namespace BifrostQL.Core.QueryModel
             await base.VisitVariableAsync(variable, context);
         }
 
+        protected override async ValueTask VisitInlineFragmentAsync(GraphQLInlineFragment inlineFragment, ISqlContext context)
+        {
+            if (!SelectionDirectives.IsIncluded(inlineFragment, context.Variables))
+                return;
+            await base.VisitInlineFragmentAsync(inlineFragment, context);
+        }
+
+        // Directive arguments (`@include(if: $x)`) are not field arguments: visiting them
+        // would push `if` onto the enclosing field as if the client had passed it there.
+        protected override ValueTask VisitDirectiveAsync(GraphQLDirective directive, ISqlContext context)
+            => ValueTask.CompletedTask;
+
         protected override async ValueTask VisitFragmentSpreadAsync(GraphQLFragmentSpread spread, ISqlContext context)
         {
+            if (!SelectionDirectives.IsIncluded(spread, context.Variables))
+                return;
             context.AddFragmentSpread(spread.FragmentName.Name.StringValue);
             await base.VisitFragmentSpreadAsync(spread, context);
         }

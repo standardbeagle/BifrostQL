@@ -1,3 +1,4 @@
+using BifrostQL.Core.QueryModel;
 using GraphQL;
 using GraphQLParser.AST;
 
@@ -62,7 +63,9 @@ namespace BifrostQL.Core.Resolvers
         /// Visits every field node directly under a selection set, descending into
         /// inline fragments and named fragment spreads so fragment-wrapped selections
         /// are seen exactly as flat ones. Unknown fragment names are a validation
-        /// error before execution, so an unresolved spread never reaches here.
+        /// error before execution, so an unresolved spread never reaches here. A
+        /// selection the client excluded with <c>@skip</c>/<c>@include</c> is not
+        /// visited: it is not part of the request.
         /// </summary>
         public static void Walk(IResolveFieldContext context, GraphQLSelectionSet? selectionSet, Action<GraphQLField> visit)
         {
@@ -70,6 +73,8 @@ namespace BifrostQL.Core.Resolvers
                 return;
             foreach (var selection in selectionSet.Selections)
             {
+                if (selection is IHasDirectivesNode directed && !SelectionDirectives.IsIncluded(directed, context.Variables))
+                    continue;
                 switch (selection)
                 {
                     case GraphQLField f:

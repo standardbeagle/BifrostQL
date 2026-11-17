@@ -14,14 +14,16 @@ namespace BifrostQL.Core.Observers
     /// executing aggregate intents through the same query path this observer watches. If those
     /// scrape-internal queries were recorded, each scrape would generate engine metrics that the
     /// next scrape collects — an unbounded feedback loop. The scrape marks its intents' user context
-    /// with <see cref="ScrapeInternalContextKey"/>; this observer skips any query carrying that
-    /// marker, so serving a scrape never measures itself.</para>
+    /// with <see cref="ScrapeInternalContextKey"/>; this observer skips any query whose value under
+    /// that key is the engine's own <see cref="EngineMetricsScrapeMarker"/>, so serving a scrape never
+    /// measures itself and a caller-supplied value never hides a query.</para>
     /// </summary>
     public sealed class EngineMetricsQueryObserver : IQueryObserver
     {
         /// <summary>
-        /// User-context marker key set by the Prometheus scrape on its internal aggregate intents so
-        /// this observer excludes them from self-instrumentation (no recursive measurement).
+        /// User-context key the Prometheus scrape sets to <see cref="EngineMetricsScrapeMarker"/> on its
+        /// internal aggregate intents so this observer excludes them from self-instrumentation (no
+        /// recursive measurement). Identity mapping and the wire merge strip the key.
         /// </summary>
         public const string ScrapeInternalContextKey = "_bifrost_engine_metrics_scrape_internal";
 
@@ -42,7 +44,7 @@ namespace BifrostQL.Core.Observers
             // is the scrape observing its own collection query.
             if (!_metrics.Enabled || phase != QueryPhase.AfterExecute)
                 return ValueTask.CompletedTask;
-            if (context.UserContext.ContainsKey(ScrapeInternalContextKey))
+            if (EngineMetricsScrapeMarker.IsPresent(context.UserContext))
                 return ValueTask.CompletedTask;
 
             // The query-observer seam is the READ path (QueryType is a query shape, never a mutation);

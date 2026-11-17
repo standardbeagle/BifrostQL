@@ -200,7 +200,7 @@ namespace BifrostQL.Server.Prometheus
         {
             var copy = new Dictionary<string, object?>(userContext)
             {
-                [EngineMetricsQueryObserver.ScrapeInternalContextKey] = true,
+                [EngineMetricsQueryObserver.ScrapeInternalContextKey] = EngineMetricsScrapeMarker.Instance,
             };
             return copy;
         }

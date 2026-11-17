@@ -4,7 +4,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.Modules;
 using BifrostQL.Core.Observers;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Prometheus;
 using BifrostQL.Server.Test.OData;
@@ -333,7 +335,22 @@ namespace BifrostQL.Server.Test.Prometheus
             // observer excludes it — a scrape can never measure its own collection queries.
             spy.CapturedContexts.Should().NotBeEmpty();
             spy.CapturedContexts.Should().OnlyContain(
-                ctx => ctx.ContainsKey(EngineMetricsQueryObserver.ScrapeInternalContextKey));
+                ctx => ctx[EngineMetricsQueryObserver.ScrapeInternalContextKey] is EngineMetricsScrapeMarker);
+
+            // And the observer, fed the scrape's own context, records nothing.
+            var observed = new EngineMetrics(enabled: true);
+            var observer = new EngineMetricsQueryObserver(observed);
+            foreach (var ctx in spy.CapturedContexts)
+                await observer.OnQueryPhaseAsync(QueryPhase.AfterExecute, new QueryObserverContext
+                {
+                    Table = NSubstitute.Substitute.For<IDbTable>(),
+                    Model = NSubstitute.Substitute.For<IDbModel>(),
+                    UserContext = ctx,
+                    QueryType = QueryType.Standard,
+                    Path = "scrape",
+                    Duration = TimeSpan.FromMilliseconds(1),
+                });
+            observed.Snapshot().Requests.Should().OnlyContain(r => r.Count == 0);
         }
 
         /// <summary>Captures the user context of every executed intent, to assert the scrape marks its

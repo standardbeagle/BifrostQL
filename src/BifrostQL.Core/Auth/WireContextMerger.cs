@@ -48,10 +48,11 @@ public static class WireContextMerger
         {
             if (userContext.ContainsKey(key))
                 continue;
-            // Engine-internal keys never merge: the workflow-trigger suppression flag
-            // is privileged by the engine's unforgeable marker, and a wire entry under
+            // Engine-internal keys never merge: the workflow-trigger suppression flag and the
+            // engine-metrics scrape flag are privileged by the engine's unforgeable markers, and a wire entry under
             // its key is caller-controlled data under an engine-only name.
-            if (string.Equals(key, Workflows.WorkflowTriggerHost.SuppressTriggersKey, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(key, Workflows.WorkflowTriggerHost.SuppressTriggersKey, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, Observers.EngineMetricsQueryObserver.ScrapeInternalContextKey, StringComparison.OrdinalIgnoreCase))
                 continue;
             // The operation-id slot is set only from the Idempotency-Key header by the HTTP
             // middleware; a wire entry would record a write under an id the request never carried.

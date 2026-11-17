@@ -52,24 +52,10 @@ namespace BifrostQL.Server.Test.Prometheus
             snap.SqlDurations.Single(h => h.Operation == EngineOperation.Read).Count.Should().Be(1);
         }
 
-        [Fact]
-        public async Task Scrape_internal_query_is_excluded_no_recursive_measurement()
-        {
-            var metrics = new EngineMetrics(enabled: true);
-            var observer = new EngineMetricsQueryObserver(metrics);
-
-            var scrapeCtx = new Dictionary<string, object?>
-            {
-                [EngineMetricsQueryObserver.ScrapeInternalContextKey] = true,
-            };
-
-            await observer.OnQueryPhaseAsync(
-                QueryPhase.AfterExecute, Context(scrapeCtx, TimeSpan.FromMilliseconds(5)));
-
-            var snap = metrics.Snapshot();
-            snap.Requests.Should().OnlyContain(r => r.Count == 0);
-            snap.SqlDurations.Should().OnlyContain(h => h.Count == 0);
-        }
+        // The scrape-internal exclusion needs the engine's own marker, which only Core's
+        // InternalsVisibleTo list can mint: it is pinned in Core.Test
+        // (EngineMetricsScrapeMarkerTests) and end-to-end through the real scrape in
+        // PrometheusScrapeServiceTests.Scrape_marks_collector_context_internal_so_no_recursive_measurement.
 
         [Fact]
         public async Task Disabled_observer_is_a_noop()

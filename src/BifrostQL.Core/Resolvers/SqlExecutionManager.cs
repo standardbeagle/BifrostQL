@@ -95,12 +95,12 @@ namespace BifrostQL.Core.Resolvers
         // instruments are fed by EngineMetricsQueryObserver on the AfterExecute phase; what the
         // observer seam cannot express — a request's error/denied OUTCOME (no error phase) and the
         // transformer-pipeline DURATION — is recorded directly here on the read execution path.
-        // The scrape marks its own collection queries with ScrapeInternalContextKey; skipping them
+        // The scrape marks its own collection queries with EngineMetricsScrapeMarker; skipping them
         // keeps a scrape from measuring itself (criterion 3, no recursive measurement). Every record
         // method also gates on EngineMetrics.Enabled, so a host with no scrape surface pays nothing.
         private bool ShouldRecordEngineMetric(IDictionary<string, object?> userContext)
             => _engineMetrics is { Enabled: true }
-               && !userContext.ContainsKey(EngineMetricsQueryObserver.ScrapeInternalContextKey);
+               && !EngineMetricsScrapeMarker.IsPresent(userContext);
 
         private void RecordReadOutcome(IDictionary<string, object?> userContext, EngineRequestOutcome outcome)
         {

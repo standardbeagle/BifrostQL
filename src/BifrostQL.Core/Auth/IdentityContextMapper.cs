@@ -103,13 +103,14 @@ public sealed class IdentityContextMapper
         var context = new Dictionary<string, object?>();
 
         // Provider claims first so mapped identity keys below always win. Engine-internal
-        // keys are stripped: the workflow-trigger suppression flag's privilege is gated on
-        // the engine's unforgeable marker, and the operation-id slot is filled only from the
+        // keys are stripped: the workflow-trigger suppression and engine-metrics scrape flags'
+        // privileges are gated on the engine's unforgeable markers, and the operation-id slot is filled only from the
         // Idempotency-Key header. A provider claim under either name would put
         // caller-controlled data under an engine-only name.
         foreach (var claim in identity.Claims)
         {
             if (string.Equals(claim.Key, Workflows.WorkflowTriggerHost.SuppressTriggersKey, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(claim.Key, Observers.EngineMetricsQueryObserver.ScrapeInternalContextKey, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(claim.Key, Modules.OperationId.OperationIdConfig.UserContextKey, StringComparison.OrdinalIgnoreCase))
                 continue;
             context[claim.Key] = claim.Value;

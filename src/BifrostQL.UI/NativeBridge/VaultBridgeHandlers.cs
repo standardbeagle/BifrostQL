@@ -88,15 +88,28 @@ namespace BifrostQL.UI.NativeBridge
             return new { saved = true, name = savedName };
         }
 
+        // Bridge requests run concurrently, and an upsert is load-modify-save of one
+        // file: two overlapping saves would each write a vault missing the other's
+        // entry. One writer at a time per handler set (there is one per window).
+        private readonly SemaphoreSlim _vaultWrite = new(1, 1);
+
         private async Task UpsertVaultServer(VaultServer server)
         {
-            var vault = await VaultStore.Load(_vaultPath);
-            var servers = vault.Servers
-                .Where(s => !s.Name.Equals(server.Name, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            servers.Add(server);
-            vault = vault with { Servers = servers };
-            await VaultStore.Save(vault, _vaultPath);
+            await _vaultWrite.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var vault = await VaultStore.Load(_vaultPath);
+                var servers = vault.Servers
+                    .Where(s => !s.Name.Equals(server.Name, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                servers.Add(server);
+                vault = vault with { Servers = servers };
+                await VaultStore.Save(vault, _vaultPath);
+            }
+            finally
+            {
+                _vaultWrite.Release();
+            }
         }
 
         private static VaultServer BuildVaultServerFromPayload(

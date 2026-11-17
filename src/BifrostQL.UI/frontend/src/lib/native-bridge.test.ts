@@ -145,6 +145,38 @@ describe("native-bridge", () => {
     expect((err as InstanceType<typeof BridgeError>).kind).toBe("timeout");
   });
 
+  // A timeout used to only drop the local promise; the host kept running the
+  // handler (a SQL console query kept running on the database).
+  it("asks the host to cancel a request that timed out", async () => {
+    vi.useFakeTimers();
+    const fake = installFakeExternal();
+    const { sendBridgeRequest } = await loadBridge();
+
+    const settled = sendBridgeRequest("exec-sql", { sql: "select 1" }, { timeoutMs: 50 }).catch((e) => e);
+    const request = lastSentEnvelope(fake);
+    vi.advanceTimersByTime(100);
+    await settled;
+
+    const cancel = lastSentEnvelope(fake);
+    expect(cancel.kind).toBe("cancel");
+    expect(cancel.payload).toEqual({ id: request.id });
+    expect(cancel.id).not.toBe(request.id);
+  });
+
+  it("sends no cancel for a request that was answered", async () => {
+    vi.useFakeTimers();
+    const fake = installFakeExternal();
+    const { sendBridgeRequest } = await loadBridge();
+
+    const pending = sendBridgeRequest("ping", undefined, { timeoutMs: 50 });
+    const request = lastSentEnvelope(fake);
+    fake.dispatch!(JSON.stringify({ id: request.id, kind: "result", payload: "pong" }));
+    await pending;
+    vi.advanceTimersByTime(100);
+
+    expect(fake.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("delivers unsolicited host events to onBridgeEvent subscribers", async () => {
     const fake = installFakeExternal();
     const { onBridgeEvent } = await loadBridge();

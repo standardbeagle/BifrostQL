@@ -19,6 +19,16 @@ namespace BifrostQL.UI.NativeBridge
     /// </summary>
     public sealed class BridgeDispatcher
     {
+        /// <summary>
+        /// Reserved request kind: <c>{ kind: "cancel", payload: { id } }</c> cancels the
+        /// in-flight request <c>id</c>'s token. It gets no reply, and it is handled before
+        /// the concurrency cap so it can reach a request that is holding a slot.
+        /// </summary>
+        public const string CancelKind = "cancel";
+
+        /// <summary>Handlers that may run at once; later requests wait for a slot.</summary>
+        public const int DefaultMaxConcurrentRequests = 16;
+
         private static readonly JsonSerializerOptions DefaultJsonOptions = new()
         {
             PropertyNameCaseInsensitive = true,
@@ -34,11 +44,22 @@ namespace BifrostQL.UI.NativeBridge
             Func<JsonElement, CancellationToken, Task<object?>>
         > _handlers = new(StringComparer.Ordinal);
 
-        public BridgeDispatcher(Action<string> send, JsonSerializerOptions? jsonOptions = null, ILogger? logger = null)
+        // Requests whose handler has not finished, by request id, so a cancel envelope
+        // (or Clear) can reach their token.
+        private readonly ConcurrentDictionary<string, CancellationTokenSource> _inflight = new(StringComparer.Ordinal);
+        private readonly SemaphoreSlim _slots;
+
+        public BridgeDispatcher(
+            Action<string> send,
+            JsonSerializerOptions? jsonOptions = null,
+            ILogger? logger = null,
+            int maxConcurrentRequests = DefaultMaxConcurrentRequests)
         {
             _send = send ?? throw new ArgumentNullException(nameof(send));
             _json = jsonOptions ?? DefaultJsonOptions;
             _logger = logger;
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxConcurrentRequests, 1);
+            _slots = new SemaphoreSlim(maxConcurrentRequests, maxConcurrentRequests);
         }
 
         /// <summary>
@@ -53,8 +74,13 @@ namespace BifrostQL.UI.NativeBridge
             _handlers[kind] = handler;
         }
 
-        /// <summary>Removes all registered handlers.</summary>
-        public void Clear() => _handlers.Clear();
+        /// <summary>Removes all registered handlers and cancels every in-flight request.</summary>
+        public void Clear()
+        {
+            _handlers.Clear();
+            foreach (var cts in _inflight.Values)
+                TryCancel(cts);
+        }
 
         /// <summary>
         /// Pushes an unsolicited event envelope to the peer. No response is expected.
@@ -72,7 +98,17 @@ namespace BifrostQL.UI.NativeBridge
         /// Parses an inbound envelope, routes it to the matching handler, and writes
         /// the result (or scrubbed error) back through the send delegate. Never throws:
         /// all failures are funnelled to an error envelope or dropped with a log line.
+        /// Safe to call concurrently: at most the configured number of handlers run at
+        /// once, each with its own token that a <see cref="CancelKind"/> envelope cancels.
         /// </summary>
+        /// <summary>
+        /// Dispatches <paramref name="message"/> on the thread pool and returns at once:
+        /// the entry point for a caller that must not block (Photino's message pump).
+        /// Messages are not ordered against each other; a slow handler holds only its
+        /// own slot.
+        /// </summary>
+        public void Post(string message) => _ = Task.Run(() => DispatchAsync(message));
+
         public async Task DispatchAsync(string message)
         {
             string? requestId = null;
@@ -96,6 +132,12 @@ namespace BifrostQL.UI.NativeBridge
                 }
                 var kind = kindElement.GetString()!;
 
+                if (kind == CancelKind)
+                {
+                    CancelRequest(root);
+                    return;
+                }
+
                 if (!_handlers.TryGetValue(kind, out var handler))
                 {
                     SendError(requestId!, $"No handler registered for kind '{kind}'");
@@ -105,7 +147,29 @@ namespace BifrostQL.UI.NativeBridge
                 // Clone so the handler can outlive the JsonDocument.
                 JsonElement payload = root.TryGetProperty("payload", out var p) ? p.Clone() : default;
 
-                var result = await handler(payload, CancellationToken.None).ConfigureAwait(false);
+                using var cts = new CancellationTokenSource();
+                if (!_inflight.TryAdd(requestId!, cts))
+                {
+                    SendError(requestId!, "Duplicate request id");
+                    return;
+                }
+                object? result;
+                try
+                {
+                    await _slots.WaitAsync(cts.Token).ConfigureAwait(false);
+                    try
+                    {
+                        result = await handler(payload, cts.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _slots.Release();
+                    }
+                }
+                finally
+                {
+                    _inflight.TryRemove(requestId!, out _);
+                }
 
                 SendResult(requestId!, result);
             }
@@ -154,6 +218,27 @@ namespace BifrostQL.UI.NativeBridge
                 _logger?.LogError("NativeBridge: handler for kind {Kind} threw {Type}: {Message}", kind, ex.GetType().Name, scrubbed);
                 return (true, null, scrubbed);
             }
+        }
+
+        private void CancelRequest(JsonElement root)
+        {
+            if (root.TryGetProperty("payload", out var payload)
+                && payload.ValueKind == JsonValueKind.Object
+                && payload.TryGetProperty("id", out var target)
+                && target.ValueKind == JsonValueKind.String
+                && _inflight.TryGetValue(target.GetString()!, out var cts))
+            {
+                TryCancel(cts);
+            }
+            // A cancel for a request that already finished (or never existed) is normal:
+            // the webview sends it after its own timeout, racing the reply.
+        }
+
+        private static void TryCancel(CancellationTokenSource cts)
+        {
+            // The owning dispatch disposes it on completion, possibly mid-cancel.
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
         private void SendResult(string id, object? payload)

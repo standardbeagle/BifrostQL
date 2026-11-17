@@ -30,7 +30,9 @@
  *
  * - **Timeout**: every request carries its own `setTimeout` so a dead host
  *   doesn't leak pending promises forever. Default is 10s, override via
- *   the `options.timeoutMs` argument.
+ *   the `options.timeoutMs` argument. On timeout the module also sends
+ *   `{ kind: "cancel", payload: { id } }`: the host cancels that request's
+ *   CancellationToken, so a timed-out query stops on the database too.
  *
  * - **Malformed inbound**: the dispatcher swallows JSON parse failures and
  *   shape mismatches with a console warning. A single bad message must not
@@ -67,6 +69,9 @@ export class BridgeError extends Error {
 // genuinely-hung C# task surfaces as a UI error rather than a
 // silently-leaking promise.
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+// Reserved request kind, mirrored by BridgeDispatcher.CancelKind on the host.
+const CANCEL_KIND = "cancel";
 
 // Shape of the wire envelope. `payload` is typed as unknown because it can
 // be anything the caller passes, including primitives (number, string) as
@@ -159,6 +164,7 @@ export function sendBridgeRequest<T = unknown>(
     // entry in the pending map.
     const timeoutHandle = setTimeout(() => {
       pending.delete(id);
+      sendCancel(id);
       reject(
         new BridgeError(
           "timeout",
@@ -186,6 +192,20 @@ export function sendBridgeRequest<T = unknown>(
       );
     }
   });
+}
+
+/**
+ * Tells the host to cancel request `id`. Best effort: the request has already
+ * been rejected locally, and a host that finished meanwhile ignores it.
+ */
+function sendCancel(id: string): void {
+  try {
+    window.external.sendMessage(
+      JSON.stringify({ id: generateRequestId(), kind: CANCEL_KIND, payload: { id } } satisfies Envelope)
+    );
+  } catch (err) {
+    console.warn(`[native-bridge] could not send cancel for ${id}`, err);
+  }
 }
 
 /**

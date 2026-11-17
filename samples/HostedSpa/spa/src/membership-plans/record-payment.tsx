@@ -5,12 +5,7 @@ import {
   useAppMetadata,
   useSession,
 } from '@bifrostql/app-shell';
-import {
-  useBifrostQuery,
-  useBifrostMutation,
-  buildInsertMutation,
-  buildUpdateMutation,
-} from '@bifrostql/react';
+import { useBifrostQuery } from '@bifrostql/react';
 import { canReadFinanceFields } from './finance-fields';
 import { useWriteFeedback, WriteFeedbackRegion } from '../common/write-feedback';
 
@@ -33,12 +28,27 @@ const MEMBER_MEMBERSHIPS_ENTITY_KEY = 'main.member_memberships';
 const MEMBERS_WRITE = 'main.members.write';
 
 /**
+ * Path of the sidecar record-payment workflow endpoint. Same-origin in hosted
+ * mode, matching how `AppShellProvider` infers its GraphQL endpoint from the
+ * document origin (and how `EventCheckin` reaches its sibling endpoint).
+ */
+const RECORD_PAYMENT_ENDPOINT = '/workflows/membership/record-payment';
+
+/**
  * Payment-method vocabulary for the `method` select. The overlay declares the
  * field as a `select` but carries no enum option set (the same pattern as
  * `member_memberships.status`), so the vocabulary is supplied here. New
  * payments default to `card`.
  */
 const PAYMENT_METHODS = ['card', 'cash', 'check'];
+
+/**
+ * Most open invoices / recorded payments one list loads. A limit-less query
+ * would stop at the server's 100-row default window without saying so; this
+ * screen names its window and compares it with the envelope's unpaged `total`,
+ * showing a notice when rows were left out.
+ */
+const LIST_ROW_CAP = 500;
 
 /** Shape of a dues_payments row as loaded from GraphQL. */
 interface PaymentRow {
@@ -58,35 +68,66 @@ interface InvoiceRow {
   status: string | null;
 }
 
+/** Shape of a members row as loaded from GraphQL. */
+interface MemberRow {
+  id: number | string;
+  first_name: string | null;
+  last_name: string | null;
+}
+
+/** Distinct ids, as a stable array for a filter `_in` list. */
+function distinctIds(ids: Array<number | string | null | undefined>) {
+  return [...new Set(ids.filter((id) => id != null).map(String))]
+    .sort()
+    .map((id) => (/^\d+$/.test(id) ? Number(id) : id));
+}
+
+/** The operator-facing text for a refused record-payment request. */
+async function workflowFailureMessage(response: Response): Promise<string> {
+  if (response.status === 403) {
+    return 'You are not permitted to record this payment.';
+  }
+  if (response.status === 404) {
+    return 'That invoice no longer exists.';
+  }
+  if (response.status === 400) {
+    const text = await response.text();
+    return text ? text.replace(/^"|"$/g, '') : 'The payment was rejected.';
+  }
+  return `Recording the payment failed (HTTP ${response.status}).`;
+}
+
 /**
  * Record-payment screen.
  *
- * Lists every recorded `main.dues_payments` row, resolving each `invoice_id`
+ * Lists the most recent `main.dues_payments` rows, resolving each `invoice_id`
  * through `main.dues_invoices` to the billed member's display name — raw FK
- * ids are never shown. Recording a payment uses a {@link FieldControl}
- * `fk-lookup` `<select>` over open invoices (each labelled by member name and
- * invoiced amount, never a raw id), plus `amount_cents`, `paid_on`, and
- * `method`.
+ * ids are never shown, including for invoices already paid. Recording a
+ * payment uses a {@link FieldControl} `fk-lookup` `<select>` over open
+ * invoices (each labelled by member name and invoiced amount, never a raw
+ * id), plus `amount_cents`, `paid_on`, and `method`.
  *
- * Recording routes through two Bifrost mutations on the standard pipeline: an
- * `insert` on `dues_payments`, then an `update` on the invoice's
- * `member_memberships` row advancing its `status` to `active`. Both mutations
- * run through `tenant-filter` and the policy engine exactly as a direct
- * GraphQL mutation would — which means either can be rejected, so both are
- * awaited: the membership update is issued only after the payment insert has
- * actually succeeded, and the status the screen shows is read back off the
- * refetched `member_memberships` row rather than assumed to be `active`.
- * Failures surface in the screen's write-feedback region with the operator's
- * entered values left intact.
+ * Recording is ONE request to `POST /workflows/membership/record-payment`,
+ * which runs the whole operation server-side through the workflow executor:
+ * it inserts the `dues_payments` row, marks the invoice `paid`, advances the
+ * linked `member_memberships` row to `active`, and writes a
+ * `payment.recorded` audit entry. Every internal write runs through the same
+ * GraphQL mutation pipeline (`tenant-filter`, policy engine), and the
+ * endpoint pre-flights the policy and refuses a non-positive amount before
+ * any write. The screen never edits those tables directly, so a paid invoice
+ * cannot stay `open` and be paid again. The Record button is disabled while
+ * the request is in flight, so a double-click records one payment.
  *
- * Payment-provider integration (charging a card, reconciling an external
- * processor) is intentionally out of scope here: this screen records a
- * payment that has already been collected. A server-side workflow endpoint
- * that orchestrates a real provider is the documented future adapter point —
- * see `docs/src/content/docs/guides/workflow-mutations.md`.
+ * `amount_cents` is a finance column (`policy-read-deny` for non-finance
+ * roles, `write-requires: dues.manage` on payments), and the workflow needs
+ * it, so recording is offered only to sessions holding both
+ * `main.members.write` and `main.members.finance`.
  *
- * Mirrors the `MemberPlanAssignment` FK-free relationship-editor pattern. Must
- * be mounted within an `AppShellProvider`, inside `AppLayout` /
+ * Payment-provider integration (charging a card) is out of scope: this
+ * screen records a payment that has already been collected. A provider
+ * adapter would run inside the workflow endpoint, before the insert.
+ *
+ * Must be mounted within an `AppShellProvider`, inside `AppLayout` /
  * `ProtectedRoute`.
  */
 export function RecordPayment() {
@@ -101,6 +142,7 @@ export function RecordPayment() {
   // or render it; only finance_manager / admin (which hold
   // `main.members.finance`) see the amounts.
   const canReadFinance = canReadFinanceFields(permissions);
+  const canRecord = canWrite && canReadFinance;
 
   const paymentEntity = entities[DUES_PAYMENTS_ENTITY_KEY];
   const paymentQueryName = useMemo(
@@ -120,8 +162,9 @@ export function RecordPayment() {
     [],
   );
 
-  // Existing recorded payments. `amount_cents` is requested only for finance
-  // sessions — a non-finance session would have the column read-denied.
+  // Most recent recorded payments. `amount_cents` is requested only for
+  // finance sessions — a non-finance session would have the column
+  // read-denied.
   const paymentsQuery = useBifrostQuery<PaymentRow[]>(paymentQueryName, {
     fields: [
       'id',
@@ -130,8 +173,13 @@ export function RecordPayment() {
       'paid_on',
       'method',
     ],
+    sort: [{ field: 'paid_on', direction: 'desc' }],
+    pagination: { limit: LIST_ROW_CAP },
   });
-  const payments = paymentsQuery.data ?? [];
+  const payments = useMemo(
+    () => paymentsQuery.data ?? [],
+    [paymentsQuery.data],
+  );
 
   // Open invoices for the fk-lookup select. Only open invoices can take a
   // payment, mirroring the overlay's `status = open` default grid filter.
@@ -144,17 +192,49 @@ export function RecordPayment() {
       'status',
     ],
     filter: { status: { _eq: 'open' } },
+    pagination: { limit: LIST_ROW_CAP },
   });
   const invoices = useMemo(
     () => invoicesQuery.data ?? [],
     [invoicesQuery.data],
   );
 
-  // Members, to label invoices and payments by the billed member's name.
-  const membersQuery = useBifrostQuery<Array<Record<string, unknown>>>(
-    membersQueryName,
-    { fields: ['id', 'first_name', 'last_name'] },
+  // The invoices the listed payments were made against — usually `paid`, so
+  // absent from the open list. Loaded by id so each payment row can name its
+  // member.
+  const paymentInvoiceIds = useMemo(
+    () => distinctIds(payments.map((p) => p.invoice_id)),
+    [payments],
   );
+  const paymentInvoicesQuery = useBifrostQuery<
+    Array<Pick<InvoiceRow, 'id' | 'member_id'>>
+  >(invoiceQueryName, {
+    fields: ['id', 'member_id'],
+    filter: { id: { _in: paymentInvoiceIds } },
+    pagination: { limit: Math.max(paymentInvoiceIds.length, 1) },
+    enabled: paymentInvoiceIds.length > 0,
+  });
+  const paymentInvoices = useMemo(
+    () => paymentInvoicesQuery.data ?? [],
+    [paymentInvoicesQuery.data],
+  );
+
+  // Members, to label invoices and payments by the billed member's name —
+  // only the members those invoices name, never the whole roster.
+  const memberIds = useMemo(
+    () =>
+      distinctIds([
+        ...invoices.map((inv) => inv.member_id),
+        ...paymentInvoices.map((inv) => inv.member_id),
+      ]),
+    [invoices, paymentInvoices],
+  );
+  const membersQuery = useBifrostQuery<MemberRow[]>(membersQueryName, {
+    fields: ['id', 'first_name', 'last_name'],
+    filter: { id: { _in: memberIds } },
+    pagination: { limit: Math.max(memberIds.length, 1) },
+    enabled: memberIds.length > 0,
+  });
   const members = useMemo(
     () => membersQuery.data ?? [],
     [membersQuery.data],
@@ -171,7 +251,8 @@ export function RecordPayment() {
   };
 
   const invoiceById = (invoiceId: number | string | null | undefined) =>
-    invoices.find((inv) => String(inv.id) === String(invoiceId));
+    invoices.find((inv) => String(inv.id) === String(invoiceId)) ??
+    paymentInvoices.find((inv) => String(inv.id) === String(invoiceId));
 
   // Payment rows label their invoice by the billed member's name.
   const paymentInvoiceLabel = (
@@ -185,10 +266,9 @@ export function RecordPayment() {
   };
 
   // Open invoices in the fk-lookup select are labelled by member — and, for
-  // finance sessions, the invoiced amount. A non-finance session never has
-  // `amount_cents` (it is not queried), so its options are member-name only.
-  // The member-name lookup is inlined (rather than calling `memberLabel`) so
-  // the memo's dependencies are the source lists it actually reads.
+  // finance sessions, the invoiced amount. The member-name lookup is inlined
+  // (rather than calling `memberLabel`) so the memo's dependencies are the
+  // source lists it actually reads.
   const invoiceOptions = useMemo(
     () =>
       invoices.map((invoice) => {
@@ -211,27 +291,16 @@ export function RecordPayment() {
   );
 
   // Memberships, so the status shown after a payment is the row the server
-  // actually holds. The membership update invalidates this query, so a
-  // successful advance refetches to `active` and a scoped-away or rejected
-  // one keeps reporting the real, unchanged status.
+  // actually holds — read back after the workflow, never assumed `active`.
   const membershipsQuery = useBifrostQuery<
     Array<{ id: number | string; status: string | null }>
   >(membershipQueryName, {
     fields: ['id', 'status'],
-    enabled: canWrite,
+    enabled: canRecord,
   });
   const memberships = useMemo(
     () => membershipsQuery.data ?? [],
     [membershipsQuery.data],
-  );
-
-  const insertPayment = useBifrostMutation(
-    buildInsertMutation(paymentQueryName),
-    { invalidateQueries: [paymentQueryName, invoiceQueryName] },
-  );
-  const updateMembership = useBifrostMutation(
-    buildUpdateMutation(membershipQueryName),
-    { invalidateQueries: [membershipQueryName] },
   );
 
   // Record-form state.
@@ -239,6 +308,7 @@ export function RecordPayment() {
   const [newAmount, setNewAmount] = useState<unknown>('');
   const [newPaidOn, setNewPaidOn] = useState<unknown>('');
   const [newMethod, setNewMethod] = useState<unknown>('card');
+  const [recording, setRecording] = useState(false);
 
   const feedback = useWriteFeedback();
 
@@ -255,64 +325,57 @@ export function RecordPayment() {
           ?.status ?? null);
 
   const handleRecord = async () => {
-    if (!canWrite || !newInvoiceId) {
+    if (!canRecord || !newInvoiceId || recording) {
       return;
     }
-    const invoice = invoiceById(String(newInvoiceId));
-
-    // `amount_cents` is only collected (and only sent) for finance sessions —
-    // a non-finance session never renders its control, so it is omitted from
-    // the insert rather than sent as null.
-    const recorded = await feedback.run(
-      () =>
-        insertPayment.mutateAsync({
-          detail: {
-            invoice_id: newInvoiceId,
-            ...(canReadFinance
-              ? { amount_cents: newAmount === '' ? null : Number(newAmount) }
-              : {}),
-            paid_on: newPaidOn || null,
-            method: newMethod || null,
-          },
-        }),
-      'Payment recorded.',
+    // Only an open invoice can take a payment, so look in the open list.
+    const invoice = invoices.find(
+      (inv) => String(inv.id) === String(newInvoiceId),
     );
+    const amountCents = Number(newAmount);
 
-    // A rejected insert means no payment row exists. The membership must not
-    // be advanced off the back of it, and the operator's entered amount, date
-    // and method are kept so the write can be retried.
-    if (!recorded) {
-      return;
-    }
+    setRecording(true);
+    try {
+      const recorded = await feedback.run(async () => {
+        // Mirrors the endpoint's own `AmountCents <= 0` refusal so the
+        // operator gets the reason without a round trip.
+        if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+          throw new Error('Enter a payment amount in cents greater than 0.');
+        }
+        const response = await fetch(RECORD_PAYMENT_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            invoiceId: Number(newInvoiceId),
+            amountCents,
+            paidOn: newPaidOn || null,
+            method: newMethod || null,
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(await workflowFailureMessage(response));
+        }
+      }, 'Payment recorded.');
 
-    // Advance the invoice's membership to active: a recorded payment makes the
-    // member current. Skipped when the invoice has no linked membership.
-    if (invoice?.member_membership_id != null) {
-      const membershipId = invoice.member_membership_id;
-      const advanced = await feedback.run(
-        () =>
-          updateMembership
-            .mutateAsync({ detail: { id: membershipId, status: 'active' } })
-            .catch((cause: unknown) => {
-              // The payment IS recorded at this point; say so, so the operator
-              // does not retry it and double-record.
-              throw new Error(
-                `Payment recorded, but the membership could not be advanced: ${
-                  cause instanceof Error ? cause.message : String(cause)
-                }`,
-              );
-            }),
-        'Payment recorded and membership advanced.',
-      );
-      if (advanced) {
-        setPaidMembershipId(membershipId);
+      // A refused request wrote nothing; the operator's entered values are
+      // kept so the write can be retried.
+      if (!recorded) {
+        return;
       }
-    }
 
-    setNewInvoiceId('');
-    setNewAmount('');
-    setNewPaidOn('');
-    setNewMethod('card');
+      setPaidMembershipId(invoice?.member_membership_id ?? null);
+      setNewInvoiceId('');
+      setNewAmount('');
+      setNewPaidOn('');
+      setNewMethod('card');
+      await Promise.all([
+        paymentsQuery.refetch(),
+        invoicesQuery.refetch(),
+        membershipsQuery.refetch(),
+      ]);
+    } finally {
+      setRecording(false);
+    }
   };
 
   if (metadataLoading) {
@@ -335,9 +398,19 @@ export function RecordPayment() {
     );
   }
 
+  const paymentsTotal = paymentsQuery.total;
+  const invoicesTotal = invoicesQuery.total;
+
   return (
     <section data-testid="record-payment">
       <h2>{paymentEntity.label ?? 'Dues Payments'}</h2>
+
+      {paymentsTotal !== undefined && paymentsTotal > payments.length ? (
+        <p role="status" data-testid="record-payment-payments-truncated">
+          Showing the {payments.length} most recent of {paymentsTotal}{' '}
+          payments.
+        </p>
+      ) : null}
 
       <ul data-testid="record-payment-list">
         {payments.map((payment) => (
@@ -373,8 +446,20 @@ export function RecordPayment() {
         </p>
       ) : null}
 
-      {canWrite ? (
+      {canWrite && !canReadFinance ? (
+        <p data-testid="record-payment-finance-required">
+          Recording a payment requires finance access.
+        </p>
+      ) : null}
+
+      {canRecord ? (
         <div data-testid="record-payment-add">
+          {invoicesTotal !== undefined && invoicesTotal > invoices.length ? (
+            <p role="status" data-testid="record-payment-invoices-truncated">
+              Showing the first {invoices.length} of {invoicesTotal} open
+              invoices.
+            </p>
+          ) : null}
           <FieldControl
             name="invoice_id"
             field={paymentEntity.fields?.invoice_id}
@@ -384,15 +469,13 @@ export function RecordPayment() {
             fkTargetEntity={DUES_INVOICES_ENTITY_KEY}
             onChange={(value) => setNewInvoiceId(value)}
           />
-          {canReadFinance ? (
-            <FieldControl
-              name="amount_cents"
-              field={paymentEntity.fields?.amount_cents}
-              label="amount_cents"
-              value={newAmount}
-              onChange={(value) => setNewAmount(value)}
-            />
-          ) : null}
+          <FieldControl
+            name="amount_cents"
+            field={paymentEntity.fields?.amount_cents}
+            label="amount_cents"
+            value={newAmount}
+            onChange={(value) => setNewAmount(value)}
+          />
           <FieldControl
             name="paid_on"
             field={paymentEntity.fields?.paid_on}
@@ -410,11 +493,12 @@ export function RecordPayment() {
           />
           <button
             type="button"
+            disabled={recording}
             onClick={() => {
               void handleRecord();
             }}
           >
-            Record payment
+            {recording ? 'Recording…' : 'Record payment'}
           </button>
         </div>
       ) : null}

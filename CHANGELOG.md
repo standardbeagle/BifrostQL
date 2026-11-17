@@ -39,6 +39,20 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Fixed — tables with the same name in two schemas
+
+Several places looked a table up by its bare DB name, so a database with the same table name in two schemas crashed at load, bound to the wrong table, or could not address one of them.
+
+- **Model load:** WordPress and Drupal detection, and the synthetic foreign keys they add, no longer throw "An item with the same key has already been added" for two sites in two schemas. Each schema's tables get their own metadata and links.
+- **GraphQL names:** an emitted table name always wins over a `schema_name` alias of another table, and an alias two tables share resolves to neither. The schema that gets no alias is `schema-prefix-default`, not a hard-coded `dbo`.
+- **Lookup-table enums:** enums are keyed by schema and table, so a same-named lookup table in a second schema no longer fails the endpoint or rewrites the other table's filters. A bare `enum-ref` resolves in the column's own schema first; if two other schemas both define it, schema build fails and asks you to qualify it as `schema.table`.
+- **Name-based relationships:** a parent inferred from a column name is looked up in the child's schema first, and is not inferred when two other schemas both define it.
+- **Nested links:** a link two levels below a role-named link (`orders { billing_address { countries } }`) resolves from the parent's table instead of failing with "A requested field does not name a queryable table". A link or `_agg` nested under a collection now reads its key from its own parent row; before, a parent past the first could get another parent's related record.
+- **MCP:** `describe_table`, table resources and every data tool accept `schema.name`. A bare name two readable tables share is refused and the prompt lists the qualified names.
+- **Feeds:** the route and a scoped token's allow-list entries resolve to a table the same way, and the scope check compares the resolved table, not the route text. A bare name two schemas share is a not-found.
+- **Desktop UI:** Copy DDL and Edit-as-query send `schema.name`. The DDL bridge resolves DB names only; a GraphQL name is now a not-found.
+- `EnumTableConfig.MetadataKey` moved to `MetadataKeys.Enum.Table` (the key is still `enum`). `IQueryField.ToSqlData` takes the parent's `IDbTable?` instead of the parent field.
+
 ### Fixed — every front door reports a read the row ceiling cut, instead of truncating it
 
 `max-query-rows` clamps every LIMIT inside SQL generation. Adapters that paged or capped a read set `Limit = page + 1` themselves and compared the row count with their own page, so they never saw that clamp: under a ceiling at or below the page, the database returned the ceiling, the count never passed the page, and a cut answer read as complete. Each surface now takes its LIMIT, page and "more" test from one shared window that applies the same clamp the SQL does, and reports a cut in its own envelope. The page is at most one below the ceiling, so the probe row still fits; a surface with a fixed cap therefore refuses one row earlier than before at the defaults.

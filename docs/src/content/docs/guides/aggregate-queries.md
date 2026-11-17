@@ -42,6 +42,7 @@ type orders_aggregate {
 
 type orders_aggregateFields {
   amount: Decimal   # a decimal column
+  units: Decimal    # a bigint column
   quantity: Float   # an integer column
 }
 ```
@@ -52,9 +53,9 @@ type orders_aggregateFields {
 - **`_count`** is always available.
 - **`_sum` / `_avg` / `_min` / `_max`** are only emitted when the table has at
   least one numeric column; each resolves to an object with one field per
-  numeric column. A `decimal`/`numeric`/`money` column's field is `Decimal`, so
-  its totals arrive as exact decimal strings; every other numeric column's field
-  is `Float`. (`min`/`max` are restricted to numeric columns in this
+  numeric column. A `decimal`/`numeric`/`money` or `bigint` column's field is
+  `Decimal`, so its totals arrive as exact decimal strings; every other numeric
+  column's field is `Float`. (`min`/`max` are restricted to numeric columns in this
   release; date/string extrema are a deferred extension.)
 
 ### Example

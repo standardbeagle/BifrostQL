@@ -336,7 +336,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"\t{column.Name} : {column.GraphQlType}");
             }
 
-            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : Float");
+            builder.AppendLine($"_agg(operation: AggregateOperations! value: {_table.AggregateValueTypeName}!) : {AggregateNumberGraphType.TypeName}");
             // Track emitted relationship field names so self-referential tables
             // (single-link + multi-link both keyed by the same GraphQlName) don't
             // double-register the same field and crash schema build.

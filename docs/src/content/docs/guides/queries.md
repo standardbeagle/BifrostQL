@@ -168,6 +168,7 @@ Roll up related rows inline with `_agg`. It computes an aggregate over a child c
 - `value` names the path to aggregate — `{ joinTable: column }`, nested as deep as the relationship goes.
 - `operation` is one of `count`, `sum`, `avg`, `min`, `max`.
 - Alias each `_agg` (e.g. `sessionCount:`) when you request more than one.
+- The result type is `AggregateNumber`, written by the same rule as the grouped [`<table>Aggregate`](/BifrostQL/guides/aggregate-queries/) fields: `count` is a JSON integer; `sum`/`avg`/`min`/`max` over a `decimal`/`numeric`/`money` or `bigint` column is an exact decimal string (`"1029.98"`); over any other numeric column it is a JSON number.
 
 `_agg` runs across all four engines — SQL Server, PostgreSQL, MySQL, and SQLite — through the [dialect layer](/BifrostQL/reference/dialects/). Aggregating a column requires a nested foreign-key path; a bare-column aggregate raises a clear error.
 

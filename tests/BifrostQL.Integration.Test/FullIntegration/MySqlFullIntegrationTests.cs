@@ -631,9 +631,9 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         ";
         var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
         var byId = rows.ToDictionary(c => Int(c["categoryid"]));
-        Dbl(byId[1]["_agg"]).Should().Be(2);
-        Dbl(byId[2]["_agg"]).Should().Be(2);
-        Dbl(byId[3]["_agg"]).Should().Be(1);
+        Int(byId[1]["_agg"]).Should().Be(2);
+        Int(byId[2]["_agg"]).Should().Be(2);
+        Int(byId[3]["_agg"]).Should().Be(1);
     }
 
     [SkippableFact]
@@ -651,9 +651,9 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         ";
         var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
         var byId = rows.ToDictionary(c => Int(c["categoryid"]));
-        Dbl(byId[1]["_agg"]).Should().BeApproximately(1029.98, 0.01);
-        Dbl(byId[2]["_agg"]).Should().BeApproximately(94.98, 0.01);
-        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+        Dec(byId[1]["_agg"]).Should().BeApproximately(1029.98m, 0.01m);
+        Dec(byId[2]["_agg"]).Should().BeApproximately(94.98m, 0.01m);
+        Dec(byId[3]["_agg"]).Should().BeApproximately(24.99m, 0.01m);
     }
 
     [SkippableFact]
@@ -671,9 +671,9 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         ";
         var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
         var byId = rows.ToDictionary(c => Int(c["categoryid"]));
-        Dbl(byId[1]["_agg"]).Should().BeApproximately(514.99, 0.01);
-        Dbl(byId[2]["_agg"]).Should().BeApproximately(47.49, 0.01);
-        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+        Dec(byId[1]["_agg"]).Should().BeApproximately(514.99m, 0.01m);
+        Dec(byId[2]["_agg"]).Should().BeApproximately(47.49m, 0.01m);
+        Dec(byId[3]["_agg"]).Should().BeApproximately(24.99m, 0.01m);
     }
 
     [SkippableFact]
@@ -691,9 +691,9 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         ";
         var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
         var byId = rows.ToDictionary(c => Int(c["categoryid"]));
-        Dbl(byId[1]["_agg"]).Should().BeApproximately(29.99, 0.01);
-        Dbl(byId[2]["_agg"]).Should().BeApproximately(44.99, 0.01);
-        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+        Dec(byId[1]["_agg"]).Should().BeApproximately(29.99m, 0.01m);
+        Dec(byId[2]["_agg"]).Should().BeApproximately(44.99m, 0.01m);
+        Dec(byId[3]["_agg"]).Should().BeApproximately(24.99m, 0.01m);
     }
 
     [SkippableFact]
@@ -711,8 +711,8 @@ public class MySqlFullIntegrationTests : FullIntegrationTestBase, IAsyncLifetime
         ";
         var rows = ExtractPagedData(await ExecuteQueryAsync(query), "categories");
         var byId = rows.ToDictionary(c => Int(c["categoryid"]));
-        Dbl(byId[1]["_agg"]).Should().BeApproximately(999.99, 0.01);
-        Dbl(byId[2]["_agg"]).Should().BeApproximately(49.99, 0.01);
-        Dbl(byId[3]["_agg"]).Should().BeApproximately(24.99, 0.01);
+        Dec(byId[1]["_agg"]).Should().BeApproximately(999.99m, 0.01m);
+        Dec(byId[2]["_agg"]).Should().BeApproximately(49.99m, 0.01m);
+        Dec(byId[3]["_agg"]).Should().BeApproximately(24.99m, 0.01m);
     }
 }

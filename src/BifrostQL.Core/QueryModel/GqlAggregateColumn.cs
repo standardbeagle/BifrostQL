@@ -72,6 +72,16 @@ namespace BifrostQL.Core.QueryModel
         public AggregateOperationType? AggregateType { get; init; }
 
         /// <summary>
+        /// The wire form of this aggregate's values on the GraphQL <c>_agg</c> field
+        /// (<c>Int</c>, <c>Decimal</c> or <c>Float</c>, from
+        /// <see cref="AggregateSurface.RowAggregateScalar"/>); the reader coerces each
+        /// value to it through <see cref="AggregateNumberGraphType.Coerce"/>. Null for
+        /// aggregates built outside the GraphQL field (MCP declarative tools), which
+        /// keep the provider's value.
+        /// </summary>
+        public string? ResultScalar { get; init; }
+
+        /// <summary>
         /// Builds the per-row aggregate statement for the parent rows on
         /// <paramref name="parent"/>'s page. The first hop reads the parent table
         /// through <see cref="GqlObjectQuery.PagedRowWindowSql"/>: the parent

@@ -162,7 +162,10 @@ namespace BifrostQL.Core.Resolvers
                 // Route through the single DbConvert choke point so an all-NULL
                 // SUM/MIN/etc (DBNull) becomes null and does not break GraphQL scalar
                 // serialization — the same conversion ReadPerParentTotal relies on.
-                return ValueTask.FromResult<object?>(DbConvert(value));
+                var converted = DbConvert(value);
+                return ValueTask.FromResult(aggregate.ResultScalar is { } resultScalar
+                    ? AggregateNumberGraphType.Coerce(converted, resultScalar)
+                    : converted);
             }
             throw new BifrostExecutionError($"Unable to find queryField: {name} on table: {level.Alias}:{level.GraphQlName}");
         }

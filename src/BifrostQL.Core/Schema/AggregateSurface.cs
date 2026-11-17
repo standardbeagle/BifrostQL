@@ -72,13 +72,25 @@ namespace BifrostQL.Core.Schema
 
         /// <summary>
         /// The GraphQL scalar of one column's field on the aggregate-values object,
-        /// shared by every op group. A <c>Decimal</c> column keeps <c>Decimal</c>:
-        /// SUM/AVG/MIN/MAX of an exact column are exact in every supported dialect,
-        /// and a <c>Float</c> field would round them to a double before the client
-        /// saw them. Every other numeric column reads as <c>Float</c> (AVG of an
-        /// integer column is fractional).
+        /// shared by every op group. A <c>Decimal</c> or <c>BigInt</c> column reads as
+        /// <c>Decimal</c>: SUM/AVG/MIN/MAX of an exact column are exact in every
+        /// supported dialect, and a <c>Float</c> field would round them to a double
+        /// before the client saw them (a bigint SUM past 2^53, a NUMERIC(38,10) value
+        /// past 15–17 digits). Every other numeric column reads as <c>Float</c> (AVG of
+        /// an integer column is fractional).
         /// </summary>
         public static string ValueScalar(string columnGraphQlType) =>
-            columnGraphQlType == "Decimal" ? "Decimal" : "Float";
+            columnGraphQlType is "Decimal" or "BigInt" ? "Decimal" : "Float";
+
+        /// <summary>
+        /// The wire form of one per-row <c>_agg</c> result, by the same rule as the
+        /// grouped surface: COUNT is <c>Int</c> (the grouped <c>_count</c>), and
+        /// SUM/AVG/MIN/MAX take <see cref="ValueScalar"/> of the aggregated column.
+        /// <c>_agg</c> names its column at query time, so its one SDL type is the
+        /// <see cref="AggregateNumberGraphType"/> scalar, which writes each of these
+        /// forms; this decides which one a field's values take.
+        /// </summary>
+        public static string RowAggregateScalar(AggregateOperationType operation, string columnGraphQlType) =>
+            operation == AggregateOperationType.Count ? "Int" : ValueScalar(columnGraphQlType);
     }
 }

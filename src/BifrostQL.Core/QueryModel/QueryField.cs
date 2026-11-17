@@ -20,7 +20,7 @@ namespace BifrostQL.Core.QueryModel
         TableJoin ToJoin(IDbModel model, GqlObjectQuery parent);
         FieldType Type { get; }
         GqlObjectColumn ToScalarSql(IDbTable dbTable, IDbModel model);
-        GqlAggregateColumn ToAggregateSql(IDbTable dbTable);
+        GqlAggregateColumn ToAggregateSql(IDbTable dbTable, IDbModel model);
 
 
     }
@@ -103,7 +103,7 @@ namespace BifrostQL.Core.QueryModel
                 IsFragment = false,
                 IncludeResult = IncludeResult,
                 ScalarColumns = standardFields.Where(f => TypeOf(f) == FieldType.Scalar).Select(f => f.ToScalarSql(dbTable, model)).ToList(),
-                AggregateColumns = standardFields.Where(f => TypeOf(f) == FieldType.Aggregate).Select(f => f.ToAggregateSql(dbTable)).ToList(),
+                AggregateColumns = standardFields.Where(f => TypeOf(f) == FieldType.Aggregate).Select(f => f.ToAggregateSql(dbTable, model)).ToList(),
                 Sort = sort,
                 Limit = (int?)Arguments.FirstOrDefault(a => a.Name == "limit")?.Value,
                 Offset = (int?)Arguments.FirstOrDefault(a => a.Name == "offset")?.Value,
@@ -256,7 +256,7 @@ namespace BifrostQL.Core.QueryModel
         }
 
 
-        public GqlAggregateColumn ToAggregateSql(IDbTable dbTable)
+        public GqlAggregateColumn ToAggregateSql(IDbTable dbTable, IDbModel model)
         {
             var agg = Arguments.FirstOrDefault(a => a.Name == "operation")?.Value?.ToString() ?? throw new BifrostExecutionError("Aggregate query missing operation argument.");
             var aggType = (AggregateOperationType)Enum.Parse(typeof(AggregateOperationType), agg, true);
@@ -296,10 +296,12 @@ namespace BifrostQL.Core.QueryModel
                 value = objVal.Values.First();
             }
             var aggColumn = value?.ToString() ?? throw new BifrostExecutionError("Aggregate query value must be a column enum.");
+            var column = currentTable.GraphQlLookup[aggColumn];
 
-
-
-            return new GqlAggregateColumn(links, currentTable.GraphQlLookup[aggColumn].DbName, GetUniqueName(), aggType);
+            return new GqlAggregateColumn(links, column.DbName, GetUniqueName(), aggType)
+            {
+                ResultScalar = AggregateSurface.RowAggregateScalar(aggType, model.TypeMapper.GetGraphQlType(column.EffectiveDataType)),
+            };
 
         }
 

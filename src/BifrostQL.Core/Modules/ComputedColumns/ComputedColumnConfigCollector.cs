@@ -18,7 +18,17 @@ public static class ComputedColumnConfigCollector
     public static IReadOnlyList<ComputedColumnDefinition> FromTable(IDbTable table)
         => FromTable(table, null);
 
+    // Memoized per table, keyed on the model and its EAV configs (both feed the result) and
+    // on MetadataDictionary.Version, so a metadata write after load recomputes. Find runs
+    // once per selected field during document parsing; without the memo a 40-column
+    // selection re-parsed every computed, file-folder, state-machine, capability and EAV
+    // config 40 times per node.
+    private static readonly MetadataMemo<IReadOnlyList<ComputedColumnDefinition>> Memo = new();
+
     public static IReadOnlyList<ComputedColumnDefinition> FromTable(IDbTable table, IDbModel? model)
+        => Memo.GetOrCompute(table, model, model?.EavConfigs, () => Collect(table, model));
+
+    private static IReadOnlyList<ComputedColumnDefinition> Collect(IDbTable table, IDbModel? model)
     {
         var result = new List<ComputedColumnDefinition>();
         result.AddRange(ParseSql(table.GetMetadataValue(MetadataKeys.Computed.Sql)));
@@ -29,7 +39,7 @@ public static class ComputedColumnConfigCollector
         AddRowCapabilities(table, result);
         AddEavMeta(table, model, result);
         GuardRawSql(table, model, result);
-        return result;
+        return result.AsReadOnly();
     }
 
     /// <summary>

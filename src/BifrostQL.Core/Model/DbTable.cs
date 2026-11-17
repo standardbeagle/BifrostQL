@@ -26,7 +26,8 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public string TableSchema { get; init; } = null!;
         public string TableType { get; init; } = null!;
-        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+        private MetadataDictionary _metadata = new();
+        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.Wrap(value); }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
         public bool GetMetadataBool(string property, bool defaultValue) => Utils.MetadataSwitch.Parse(GetMetadataValue(property), defaultValue);
         public bool CompareMetadata(string property, string value)

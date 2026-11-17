@@ -17,7 +17,7 @@ namespace BifrostQL.Core.Model
         // CopyWith can clone every other member structurally (MemberwiseClone)
         // instead of hand-listing properties that drift when one is added.
         private string _graphQlName = null!;
-        private IDictionary<string, object?> _metadata = new Dictionary<string, object?>();
+        private MetadataDictionary _metadata = new();
 
         public string GraphQlName { get => _graphQlName; init => _graphQlName = value; }
         public string NormalizedName { get; init; } = null!;
@@ -103,7 +103,7 @@ namespace BifrostQL.Core.Model
         public bool RequiresInsertValue => !IsNullable && !HasDefault && !IsIdentity && !IsComputed;
         public bool IsPrimaryKey { get; init; } = false;
         public bool IsUnique { get; init; } = false;
-        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = value; }
+        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.Wrap(value); }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;
         public bool GetMetadataBool(string property, bool defaultValue) => Utils.MetadataSwitch.Parse(GetMetadataValue(property), defaultValue);
         public bool CompareMetadata(string property, string value)
@@ -242,7 +242,7 @@ namespace BifrostQL.Core.Model
         {
             var copy = (ColumnDto)MemberwiseClone();
             copy._graphQlName = graphQlName;
-            copy._metadata = metadata;
+            copy._metadata = MetadataDictionary.Wrap(metadata);
             return copy;
         }
 

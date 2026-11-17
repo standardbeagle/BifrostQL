@@ -10,11 +10,11 @@ namespace BifrostQL.Core.Auth;
 /// </summary>
 public static class PolicyConfigCollector
 {
-    // NOTE: parsed fresh on every call. TablePolicy is an immutable record, so sharing
-    // one instance is safe; what blocks a per-table memo is that IDbTable.Metadata is a
-    // mutable dictionary with no change signal (hosts and tests set policy keys after
-    // the model loads). A memo would serve the policy from before such a write, which
-    // for row-scope or deny keys widens access. Memoize only once metadata is frozen.
+    // Memoized per table. TablePolicy is an immutable record, so one instance is shared.
+    // IDbTable.Metadata is mutable (hosts and tests set policy keys after the model loads),
+    // so the memo is keyed on MetadataDictionary.Version: any metadata write recomputes,
+    // and a policy from before a row-scope or deny write is never served.
+    private static readonly MetadataMemo<TablePolicy> Memo = new();
 
     /// <summary>
     /// Builds the policy for a single table. Returns <see cref="TablePolicy.None"/>
@@ -25,8 +25,8 @@ public static class PolicyConfigCollector
         if (table is null)
             throw new ArgumentNullException(nameof(table));
 
-        return BuildPolicy(table, string.Equals(
-            table.GetMetadataValue(MetadataKeys.Policy.Default), "deny", StringComparison.OrdinalIgnoreCase));
+        return Memo.GetOrCompute(table, null, null, () => BuildPolicy(table, string.Equals(
+            table.GetMetadataValue(MetadataKeys.Policy.Default), "deny", StringComparison.OrdinalIgnoreCase)));
     }
 
     private static TablePolicy BuildPolicy(IDbTable table, bool denyByDefault)

@@ -249,7 +249,8 @@ namespace BifrostQL.Core.Model
         // Defaults to EMPTY, not null: a model built by object initializer (tests, tools) with
         // no metadata behaves as a no-metadata model — GetMetadataValue/CompareMetadata must
         // answer "absent", not NullReferenceException.
-        public IDictionary<string, object?> Metadata { get; init; } = new Dictionary<string, object?>();
+        private MetadataDictionary _metadata = new();
+        public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.Wrap(value); }
         public ITypeMapper TypeMapper { get; set; } = AnsiSqlTypeMapper.Instance;
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public BifrostQL.Core.Schema.EnumColumnMap? EnumColumns { get; set; }

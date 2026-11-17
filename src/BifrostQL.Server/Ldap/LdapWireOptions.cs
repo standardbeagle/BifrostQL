@@ -119,6 +119,17 @@ namespace BifrostQL.Server.Ldap
         public int MaxMembersPerEntry { get; set; } = 1000;
 
         /// <summary>
+        /// Hard cap on the <c>member</c> and <c>memberOf</c> values ONE search request resolves,
+        /// summed over every entry, both attributes and every group family. The per-entry bound
+        /// alone still lets a page of <see cref="MaxSearchResults"/> groups resolve
+        /// <c>MaxSearchResults × MaxMembersPerEntry</c> values. Each membership read is limited to
+        /// what is left of this total before its rows are consumed; a search that would exceed it
+        /// returns <c>adminLimitExceeded</c> rather than a silently truncated member list.
+        /// Default 10000. Must be at least 1.
+        /// </summary>
+        public int MaxMembershipValuesPerSearch { get; set; } = 10_000;
+
+        /// <summary>
         /// Whether an entry publishes the reverse <c>memberOf</c> attribute. Off by default: it
         /// costs an extra bounded query per search and most clients do not read it.
         /// </summary>

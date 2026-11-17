@@ -4,7 +4,7 @@ using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Server.Ldap
 {
-    /// <summary>Raised when a membership fan-out exceeds its configured per-entry bound.</summary>
+    /// <summary>Raised when a membership fan-out exceeds its per-entry or per-search bound.</summary>
     internal sealed class LdapMembershipLimitException : Exception
     {
         public LdapMembershipLimitException(string message) : base(message) { }
@@ -40,12 +40,36 @@ namespace BifrostQL.Server.Ldap
         private readonly LdapDirectoryIndex _index;
         private readonly LdapWireOptions _options;
 
+        // What is left of MaxMembershipValuesPerSearch. The search executor builds one resolver per
+        // search request, so this counts every membership read the request makes: member and
+        // memberOf, every chunk, every group family.
+        private int _membershipValuesLeft;
+
         public LdapMembershipResolver(
             IQueryIntentExecutor reads, LdapDirectoryIndex index, LdapWireOptions options)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _index = index ?? throw new ArgumentNullException(nameof(index));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _membershipValuesLeft = options.MaxMembershipValuesPerSearch;
+        }
+
+        private LdapMembershipLimitException PerEntryLimitExceeded() =>
+            new($"membership fan-out exceeded the {_options.MaxMembersPerEntry}-member per-entry bound.");
+
+        // The row limit for one leg-1 read: the per-entry ceiling for these keys, narrowed to what is
+        // left of the per-search total. The +1 probe row is added by the caller.
+        private int LegCeiling(int keyCount) =>
+            Math.Min(checked(keyCount * _options.MaxMembersPerEntry), _membershipValuesLeft);
+
+        // Charges a leg-1 read against the per-search total. Over it, the search is refused
+        // (adminLimitExceeded), never answered with a truncated member list.
+        private void SpendMembershipValues(int rows)
+        {
+            if (rows > _membershipValuesLeft)
+                throw new LdapMembershipLimitException(
+                    $"membership fan-out exceeded the {_options.MaxMembershipValuesPerSearch}-value per-search bound.");
+            _membershipValuesLeft -= rows;
         }
 
         /// <summary>
@@ -116,7 +140,7 @@ namespace BifrostQL.Server.Ldap
                 GraphQlName = link.TargetTable.GraphQlName,
                 Path = link.TargetTable.GraphQlName,
                 Filter = InFilter(link.TargetTable, link.JunctionSourceColumn, sourceKeys),
-                Limit = ceiling + 1,
+                Limit = LegCeiling(sourceKeys.Count) + 1,
             };
             query.ScalarColumns.Add(new GqlObjectColumn(link.JunctionSourceColumn.ColumnName));
             query.ScalarColumns.Add(new GqlObjectColumn(namingColumn.ColumnName));
@@ -125,16 +149,15 @@ namespace BifrostQL.Server.Ldap
                 new QueryIntent { Query = query, UserContext = userContext, Endpoint = _options.Endpoint }, ct);
 
             if (rows.Rows.Count > ceiling)
-                throw new LdapMembershipLimitException(
-                    $"membership fan-out exceeded the {_options.MaxMembersPerEntry}-member per-entry bound.");
+                throw PerEntryLimitExceeded();
+            SpendMembershipValues(rows.Rows.Count);
 
             foreach (var bucket in rows.Rows.GroupBy(r => Scalar(r, link.JunctionSourceColumn.ColumnName)))
             {
                 if (bucket.Key is null)
                     continue;
                 if (bucket.Count() > _options.MaxMembersPerEntry)
-                    throw new LdapMembershipLimitException(
-                        $"membership fan-out exceeded the {_options.MaxMembersPerEntry}-member per-entry bound.");
+                    throw PerEntryLimitExceeded();
 
                 var dns = new List<string>();
                 foreach (var row in bucket)
@@ -306,7 +329,7 @@ namespace BifrostQL.Server.Ldap
                 GraphQlName = link.JunctionTable.GraphQlName,
                 Path = link.JunctionTable.GraphQlName,
                 Filter = InFilter(link.JunctionTable, lookupColumn, keys),
-                Limit = ceiling + 1,
+                Limit = LegCeiling(keys.Count) + 1,
             };
             query.ScalarColumns.Add(new GqlObjectColumn(lookupColumn.ColumnName));
             query.ScalarColumns.Add(new GqlObjectColumn(resultColumn.ColumnName));
@@ -315,8 +338,8 @@ namespace BifrostQL.Server.Ldap
                 new QueryIntent { Query = query, UserContext = userContext, Endpoint = _options.Endpoint }, ct);
 
             if (result.Rows.Count > ceiling)
-                throw new LdapMembershipLimitException(
-                    $"membership fan-out exceeded the {_options.MaxMembersPerEntry}-member per-entry bound.");
+                throw PerEntryLimitExceeded();
+            SpendMembershipValues(result.Rows.Count);
 
             var pairs = new List<(object, object)>(result.Rows.Count);
             foreach (var row in result.Rows)
@@ -332,8 +355,7 @@ namespace BifrostQL.Server.Ldap
             foreach (var bucket in pairs.GroupBy(p => p.Item1))
             {
                 if (bucket.Count() > _options.MaxMembersPerEntry)
-                    throw new LdapMembershipLimitException(
-                        $"membership fan-out exceeded the {_options.MaxMembersPerEntry}-member per-entry bound.");
+                    throw PerEntryLimitExceeded();
             }
 
             return pairs;

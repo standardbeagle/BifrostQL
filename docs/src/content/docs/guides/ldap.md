@@ -74,6 +74,7 @@ builder.Services.AddSingleton<ILdapBindObserver, MyBindAuditor>();
 | `SearchBatchSize` | `200` | Rows consumed per pipeline round trip while filling a page. Each fetch reads one extra row to tell a full batch from the last, and the model's `max-query-rows` ceiling narrows the batch to one below the ceiling (the ceiling is at least 2; a smaller value fails model load). |
 | `MaxSearchDuration` | `30 s` | Wall-clock ceiling on one search; a client's `timeLimit` can only narrow it. |
 | `MaxMembersPerEntry` | `1000` | Cap on member DNs resolved for one group entry. Exceeding it answers `adminLimitExceeded` rather than returning a silently truncated member list. |
+| `MaxMembershipValuesPerSearch` | `10000` | Cap on `member` plus `memberOf` values one search request resolves, summed over every entry. Each membership read is limited to what is left before its rows are read. Exceeding it answers `adminLimitExceeded`. |
 | `MemberOfEnabled` | `false` | Whether entries publish the reverse `memberOf` attribute. Off by default: it costs an extra bounded query per search. |
 | `PagedResultsCookieSecret` | `null` | Secret keying the HMAC over paging cookies. Unset generates a random per-process key — safe, but cookies stop validating across restarts and across instances. |
 | `PagedResultsCookieTtl` | `10 min` | How long a paging cookie stays valid. |
@@ -324,9 +325,11 @@ are DNs built from the *target* family's own mapping, escaped like any other DN.
 Both join legs run as transformed intents under the bound identity, so a member the
 caller cannot see never appears — including when the junction row itself is visible
 but the target row is not. Membership is **not** expanded transitively, and a cyclic
-membership terminates. A group with more members than `MaxMembersPerEntry` answers
-`adminLimitExceeded` for the whole search rather than returning a truncated member
-list that would misreport who is in the group.
+membership terminates. A group with more members than `MaxMembersPerEntry`, or a
+search whose `member` and `memberOf` values add up to more than
+`MaxMembershipValuesPerSearch`, answers `adminLimitExceeded` for the whole search
+rather than returning a truncated member list that would misreport who is in the
+group.
 
 **`memberOf`** is the reverse, and is **off by default** (`MemberOfEnabled`). Two
 limits are worth stating plainly:
@@ -422,7 +425,7 @@ scope them.
 | Fatal wire violation / unknown protocolOp | `protocolError` (2) as a Notice of Disconnection, then close |
 | Search hit the result ceiling | `sizeLimitExceeded` (4), with the entries found so far |
 | Search hit the time ceiling | `timeLimitExceeded` (3) |
-| Membership fan-out over `MaxMembersPerEntry` | `adminLimitExceeded` (11) |
+| Membership fan-out over `MaxMembersPerEntry` or `MaxMembershipValuesPerSearch` | `adminLimitExceeded` (11) |
 | Unsupported **critical** control, or a bad/forged/expired paging cookie | `unavailableCriticalExtension` (12) |
 | Credentialed bind on a cleartext transport | `confidentialityRequired` (13) |
 | Any bind failure whatsoever | `invalidCredentials` (49) |

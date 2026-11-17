@@ -251,8 +251,9 @@ client (`TLS_REQCERT never`, dropping `-ZZ`) to make a step pass.
 - **`Size limit exceeded (4)`.** The server ceiling (`MaxSearchResults`, default
   1000) was reached. The entries returned are real; the set is partial. Page instead.
 - **`Admin limit exceeded (11)`.** A group has more members than
-  `MaxMembersPerEntry`. The search is refused rather than returning a truncated
-  member list.
+  `MaxMembersPerEntry`, or the search's `member`/`memberOf` values add up to more
+  than `MaxMembershipValuesPerSearch`. The search is refused rather than returning
+  a truncated member list. Narrow the filter or page with a smaller size.
 
 ## See also
 

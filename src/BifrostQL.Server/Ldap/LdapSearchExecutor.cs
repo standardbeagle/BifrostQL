@@ -34,7 +34,7 @@ namespace BifrostQL.Server.Ldap
     ///
     /// <para><b>Everything is bounded.</b> The effective result and time limits are the MINIMUM of
     /// the server's configured ceilings and whatever the client asked for, so a client can narrow
-    /// them and never raise them. The membership fan-out has its own per-entry bound. Reaching a
+    /// them and never raise them. The membership fan-out has its own per-entry and per-search bounds. Reaching a
     /// limit is reported (<c>sizeLimitExceeded</c>, <c>timeLimitExceeded</c>,
     /// <c>adminLimitExceeded</c>) rather than silently truncating, because a truncated result that
     /// looks complete is worse than an explicit partial one.</para>

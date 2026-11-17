@@ -48,14 +48,15 @@ namespace BifrostQL.Server.Ldap
                 "ldap front door ready on port {Port} (StartTLS {StartTls}; LDAPS {Ldaps}; writes are not " +
                 "enabled). Limits: max message {MaxMessage} bytes, nesting depth {Depth}, connections " +
                 "{MaxConnections}, idle {Idle}, search results {MaxResults} in {MaxDuration}, members per " +
-                "entry {MaxMembers}.",
+                "entry {MaxMembers}, membership values per search {MaxMembershipValues}.",
                 _options.Port,
                 _options.ServerCertificate is not null || !string.IsNullOrWhiteSpace(_options.TlsCertificatePath)
                     ? "available" : "unavailable (no certificate configured)",
                 _options.LdapsPort is { } ldapsPort ? $"on port {ldapsPort}" : "disabled",
                 _options.MaxMessageLength, _options.MaxNestingDepth,
                 _options.MaxConnections, _options.IdleTimeout,
-                _options.MaxSearchResults, _options.MaxSearchDuration, _options.MaxMembersPerEntry);
+                _options.MaxSearchResults, _options.MaxSearchDuration, _options.MaxMembersPerEntry,
+                _options.MaxMembershipValuesPerSearch);
             return Task.CompletedTask;
         }
 
@@ -103,6 +104,9 @@ namespace BifrostQL.Server.Ldap
             if (options.MaxMembersPerEntry < 1)
                 throw new ArgumentOutOfRangeException(nameof(options.MaxMembersPerEntry), options.MaxMembersPerEntry,
                     "ldap MaxMembersPerEntry must be at least 1.");
+            if (options.MaxMembershipValuesPerSearch < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.MaxMembershipValuesPerSearch), options.MaxMembershipValuesPerSearch,
+                    "ldap MaxMembershipValuesPerSearch must be at least 1.");
             if (options.MaxSearchDuration <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.MaxSearchDuration), options.MaxSearchDuration,
                     "ldap MaxSearchDuration must be positive.");

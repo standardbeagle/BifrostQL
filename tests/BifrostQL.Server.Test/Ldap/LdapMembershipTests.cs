@@ -270,6 +270,115 @@ namespace BifrostQL.Server.Test.Ldap
             outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
         }
 
+        // Three groups of two members each: every group is under a per-entry bound of 3, and the
+        // search resolves six member values in total.
+        private static LdapFakeIntentExecutor SeedThreeGroupsOfTwo(LdapFakeIntentExecutor pipeline)
+        {
+            var link = 0;
+            for (var g = 1; g <= 3; g++)
+            {
+                pipeline.WithRows("groups", Row(("id", g), ("name", $"group{g}")));
+                for (var m = 0; m < 2; m++)
+                {
+                    var user = 100 + g * 10 + m;
+                    pipeline.WithRows("users", Row(("id", user), ("username", $"user{user}")));
+                    pipeline.WithRows("user_groups", Row(("id", ++link), ("group_id", g), ("user_id", user)));
+                }
+            }
+            return pipeline;
+        }
+
+        [Fact]
+        public async Task Member_OverThePerSearchTotal_IsRefusedEvenWhenEveryEntryIsUnderItsBound()
+        {
+            // The per-entry bound alone lets one search resolve page size x MaxMembersPerEntry
+            // values (a million at the defaults). The per-search total binds on its own here: no
+            // group exceeds 3 members, but the search would resolve 6 values against a total of 4.
+            var (executor, pipeline) = BuildDirectory(o =>
+            {
+                o.MaxMembersPerEntry = 3;
+                o.MaxMembershipValuesPerSearch = 4;
+            });
+            SeedThreeGroupsOfTwo(pipeline);
+
+            var outcome = await executor.ExecuteAsync(
+                Search(), Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+            outcome.Diagnostic.Should().BeEmpty();
+            outcome.Entries.Should().BeEmpty("the search is refused, never answered with a truncated member list");
+            pipeline.Intents.Where(i => i.Query.TableName == "user_groups")
+                .Should().OnlyContain(i => i.Query.Limit <= 4 + 1,
+                    "the junction read is bounded by what is left of the total before rows are consumed");
+        }
+
+        [Fact]
+        public async Task Member_AtThePerSearchTotal_IsServed()
+        {
+            // Control for the fact above: the same fixture with the total at exactly 6 serves every
+            // member, so the refusal there comes from the total and not from the fixture.
+            var (executor, pipeline) = BuildDirectory(o =>
+            {
+                o.MaxMembersPerEntry = 3;
+                o.MaxMembershipValuesPerSearch = 6;
+            });
+            SeedThreeGroupsOfTwo(pipeline);
+
+            var outcome = await executor.ExecuteAsync(
+                Search(), Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.Success);
+            outcome.Entries.Should().HaveCount(3);
+            outcome.Entries.Should().OnlyContain(e => MemberValues(e, "member").Count == 2);
+        }
+
+        [Fact]
+        public async Task MemberOf_CountsAgainstThePerSearchTotal()
+        {
+            // The reverse hop draws on the same budget: six users, each in one group, against a
+            // total of 4.
+            var (executor, pipeline) = BuildDirectory(o =>
+            {
+                o.MaxMembersPerEntry = 3;
+                o.MaxMembershipValuesPerSearch = 4;
+            });
+            SeedThreeGroupsOfTwo(pipeline);
+            var people = Search(baseObject: "ou=people,dc=example,dc=com", attributes: new[] { "uid", "memberOf" });
+
+            var outcome = await executor.ExecuteAsync(
+                people, Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+        }
+
+        [Fact]
+        public async Task MemberOf_AtThePerSearchTotal_IsServed()
+        {
+            var (executor, pipeline) = BuildDirectory(o =>
+            {
+                o.MaxMembersPerEntry = 3;
+                o.MaxMembershipValuesPerSearch = 6;
+            });
+            SeedThreeGroupsOfTwo(pipeline);
+            var people = Search(baseObject: "ou=people,dc=example,dc=com", attributes: new[] { "uid", "memberOf" });
+
+            var outcome = await executor.ExecuteAsync(
+                people, Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.Success);
+            outcome.Entries.Should().HaveCount(6);
+            outcome.Entries.Should().OnlyContain(e => MemberValues(e, "memberOf").Count == 1);
+        }
+
+        [Fact]
+        public void Adapter_refuses_a_per_search_total_below_one()
+        {
+            var act = () => LdapWireAdapter.Validate(new LdapWireOptions { MaxMembershipValuesPerSearch = 0 });
+
+            act.Should().Throw<ArgumentOutOfRangeException>()
+                .Which.ParamName.Should().Be(nameof(LdapWireOptions.MaxMembershipValuesPerSearch));
+        }
+
         [Fact]
         public async Task Member_CyclicMembershipTerminatesAndIsNotExpandedTransitively()
         {

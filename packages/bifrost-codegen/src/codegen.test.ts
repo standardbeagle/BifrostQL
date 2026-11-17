@@ -62,11 +62,11 @@ describe("proto-parser", () => {
     const user = schema.messages[0]!;
     expect(user.name).toBe("UserRow");
     expect(user.fields).toEqual([
-      { name: "id", type: "int32", repeated: false, optional: false, number: 1 },
-      { name: "name", type: "string", repeated: false, optional: false, number: 2 },
-      { name: "email", type: "string", repeated: false, optional: true, number: 3 },
-      { name: "isActive", type: "bool", repeated: false, optional: false, number: 4 },
-      { name: "friendIds", type: "int64", repeated: true, optional: false, number: 5 },
+      { name: "id", type: "int32", repeated: false, optional: false, number: 1, oneof: null },
+      { name: "name", type: "string", repeated: false, optional: false, number: 2, oneof: null },
+      { name: "email", type: "string", repeated: false, optional: true, number: 3, oneof: null },
+      { name: "isActive", type: "bool", repeated: false, optional: false, number: 4, oneof: null },
+      { name: "friendIds", type: "int64", repeated: true, optional: false, number: 5, oneof: null },
     ]);
 
     const order = schema.messages[1]!;
@@ -102,6 +102,11 @@ describe("proto-parser", () => {
       "order_row",
     ]);
     expect(schema.messages[0]!.fields[1]!.type).toBe("UserRow");
+    expect(schema.messages[0]!.fields.map((f) => f.oneof)).toEqual([
+      null,
+      "payload",
+      "payload",
+    ]);
   });
 
   it("tolerates field options and reserved declarations", () => {
@@ -166,11 +171,13 @@ describe("ts-emitter", () => {
     expect(mapProtoType("sint32")).toBe("number");
     expect(mapProtoType("fixed32")).toBe("number");
     expect(mapProtoType("sfixed32")).toBe("number");
-    expect(mapProtoType("int64")).toBe("bigint");
-    expect(mapProtoType("uint64")).toBe("bigint");
-    expect(mapProtoType("sint64")).toBe("bigint");
-    expect(mapProtoType("fixed64")).toBe("bigint");
-    expect(mapProtoType("sfixed64")).toBe("bigint");
+    // 64-bit columns reach the client as JSON numbers (the server's BigInt
+    // scalar serializes a long), never as a JS bigint.
+    expect(mapProtoType("int64")).toBe("number");
+    expect(mapProtoType("uint64")).toBe("number");
+    expect(mapProtoType("sint64")).toBe("number");
+    expect(mapProtoType("fixed64")).toBe("number");
+    expect(mapProtoType("sfixed64")).toBe("number");
     expect(mapProtoType("float")).toBe("number");
     expect(mapProtoType("double")).toBe("number");
     expect(mapProtoType("string")).toBe("string");
@@ -192,20 +199,36 @@ describe("ts-emitter", () => {
         "  name: string;",
         "  email: string | null;",
         "  isActive: boolean;",
-        "  friendIds: bigint[];",
+        "  friendIds: number[];",
         "}",
         "",
       ].join("\n"),
     );
   });
 
-  it("uses bigint for repeated int64", () => {
-    const schema = parseProto(TWO_MESSAGE_SCHEMA);
-    // Sanity-check the mapping for the friendIds field above.
-    const user = schema.messages[0]!;
-    const friendIds = user.fields.find((f) => f.name === "friendIds")!;
-    expect(friendIds.type).toBe("int64");
-    expect(mapProtoType(friendIds.type)).toBe("bigint");
+  it("emits oneof members as optional properties, the server's BifrostMessage shape", () => {
+    // Shape of ProtoSchemaGenerator.AppendBifrostMessage: one row per table
+    // inside `oneof payload`, so a message carries at most one of them.
+    const schema = parseProto(`
+      syntax = "proto3";
+      message BifrostMessage {
+        string table = 1;
+        oneof payload {
+          UserRow users_row = 2;
+          OrderRow orders_row = 3;
+        }
+      }
+    `);
+    expect(emitMessage(schema.messages[0]!)).toBe(
+      [
+        "export interface BifrostMessage {",
+        "  table: string;",
+        "  users_row?: UserRow;",
+        "  orders_row?: OrderRow;",
+        "}",
+        "",
+      ].join("\n"),
+    );
   });
 
   it("emits snake_case field names as plain JS identifiers", () => {

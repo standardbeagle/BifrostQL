@@ -9,7 +9,8 @@
  *   - field declarations with optional `optional` / `repeated`, scalar types,
  *     and a positive field number.
  *   - enum <Name> { NAME = NUMBER; ... }
- *   - oneof <name> { <fields> } — flattened into the parent message's fields.
+ *   - oneof <name> { <fields> } — flattened into the parent message's fields,
+ *     each tagged with the oneof's name (`ProtoField.oneof`).
  *   - line comments (//) and block comments (/* ... *\/).
  *
  * Anything outside this subset throws a descriptive error including the line
@@ -29,6 +30,11 @@ export interface ProtoField {
   optional: boolean;
   /** Field number. */
   number: number;
+  /**
+   * Name of the enclosing `oneof`, or null. At most one member of a oneof is
+   * set, so the emitter makes each member optional.
+   */
+  oneof: string | null;
 }
 
 export interface ProtoMessage {
@@ -238,12 +244,12 @@ function parseField(cursor: Cursor): ProtoField {
   }
   expectChar(cursor, ";");
 
-  return { name, type, repeated, optional, number };
+  return { name, type, repeated, optional, number, oneof: null };
 }
 
 function parseOneof(cursor: Cursor, parent: ProtoField[]): void {
   // Already consumed `oneof`. Read name + body.
-  readIdentifier(cursor, "oneof name");
+  const oneof = readIdentifier(cursor, "oneof name");
   expectChar(cursor, "{");
   while (true) {
     skipTrivia(cursor);
@@ -252,7 +258,7 @@ function parseOneof(cursor: Cursor, parent: ProtoField[]): void {
       return;
     }
     if (cursor.done) fail(cursor, "unterminated oneof body");
-    parent.push(parseField(cursor));
+    parent.push({ ...parseField(cursor), oneof });
   }
 }
 

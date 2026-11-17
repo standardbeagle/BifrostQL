@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace BifrostQL.Server.Ldap
 {
     /// <summary>
@@ -34,13 +31,9 @@ namespace BifrostQL.Server.Ldap
         // values match case-insensitively, separator whitespace is insignificant), hashed. The
         // canonical form makes every respelling of one DN share ONE window — keyed on the raw
         // string, "cn=Alice, dc=x" and "CN=alice,dc=x" would each get a fresh per-account cap and
-        // the brute-force bound would never trip. The hash bounds the tracked key's length: a bind
-        // DN may run to nearly MaxMessageLength, and an unbounded attacker-controlled key would let
-        // each tracked counter cost ~1 MiB.
-        protected override string NormalizeAccountKey(string account)
-        {
-            var canonical = LdapDn.CanonicalKey(account) ?? account;
-            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
-        }
+        // the brute-force bound would never trip. The base hashes whatever this returns, which
+        // bounds the tracked key's length for every adapter.
+        protected override string CanonicalAccountName(string account) =>
+            LdapDn.CanonicalKey(account) ?? account;
     }
 }

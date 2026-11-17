@@ -91,6 +91,31 @@ namespace BifrostQL.Server.Test.Resp
                 "the account cap is per login, not per source: a different login from the same source is admitted");
         }
 
+        /// <summary>
+        /// The account name is attacker-controlled and arrives before authentication; a frame may
+        /// carry one close to 1 MiB. Tracked raw, every admitted attempt with a fresh long name
+        /// pinned that many bytes in the counter map for a whole window. The tracked key must cost
+        /// a fixed size whatever the name's length, while two spellings that differ only past the
+        /// first megabyte still count separately.
+        /// </summary>
+        [Fact]
+        public void A_huge_account_name_is_tracked_under_a_fixed_size_key()
+        {
+            var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            var limiter = new RespAuthRateLimiter(
+                maxPerSource: 100, maxPerAccount: 1, window: Window, clock: () => now);
+            var huge = new string('u', 1 << 20);
+
+            limiter.TryAttempt("10.0.0.1", huge + "a").Should().BeTrue();
+            limiter.TryAttempt("10.0.0.2", huge + "b").Should().BeTrue(
+                "a different account name has its own window, however long the shared prefix");
+            limiter.TryAttempt("10.0.0.3", huge + "a").Should().BeFalse(
+                "the same account name maps to the same window");
+
+            limiter.TrackedKeys.Should().OnlyContain(k => k.Length <= 2 + 64,
+                "an account key is stored as a fixed-size digest, never the raw wire string");
+        }
+
         // ---- fixtures --------------------------------------------------------
 
         private static Task<RespFixture> StartAsync(TimeProvider clock, int attemptsPerSource)

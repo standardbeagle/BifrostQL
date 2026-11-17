@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 
 namespace BifrostQL.Server
@@ -53,11 +55,6 @@ namespace BifrostQL.Server
         private readonly object _sweepGate = new();
         private DateTimeOffset _lastSweep = DateTimeOffset.MinValue;
 
-        /// <summary>
-        /// A subtype with no per-account axis (pgwire, where the one-attempt-per-connection shape
-        /// already bounds the account axis) passes <paramref name="maxPerAccount"/> as
-        /// <see cref="int.MaxValue"/> and admits with a null account.
-        /// </summary>
         protected ProtocolAuthAttemptLimiter(
             int maxPerSource, int maxPerAccount, TimeSpan window,
             Func<DateTimeOffset>? clock = null, int maxTrackedKeys = DefaultMaxTrackedKeys)
@@ -76,6 +73,9 @@ namespace BifrostQL.Server
         /// <summary>Number of tracked counters — for tests asserting the map stays bounded.</summary>
         internal int TrackedKeyCount => _windows.Count;
 
+        /// <summary>The tracked (axis+key) strings — for tests asserting what a key costs to hold.</summary>
+        internal IEnumerable<string> TrackedKeys => _windows.Keys;
+
         /// <summary>
         /// Counts one attempt against its source window and (when <paramref name="account"/> is
         /// non-null) its account window, and returns whether it is admitted. False when EITHER
@@ -85,7 +85,7 @@ namespace BifrostQL.Server
         /// </summary>
         protected bool TryAdmit(string source, string? account)
         {
-            var accountKey = account is null ? null : $"a:{NormalizeAccountKey(account)}";
+            var accountKey = account is null ? null : $"a:{HashAccountKey(CanonicalAccountName(account))}";
             var sourceKey = $"s:{source}";
             var now = _clock();
             var sourceWindow = Track(sourceKey, "s:", now);
@@ -113,11 +113,20 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// Maps the wire-supplied account name to its tracked key. The default tracks the raw
-        /// string; an adapter whose account names have a canonical comparison form (an LDAP bind
-        /// DN) overrides this so every respelling of one account shares ONE window.
+        /// Maps the wire-supplied account name to its canonical comparison form. The default is
+        /// the raw string; an adapter whose account names have a canonical form (an LDAP bind DN)
+        /// overrides this so every respelling of one account shares ONE window.
         /// </summary>
-        protected virtual string NormalizeAccountKey(string account) => account;
+        protected virtual string CanonicalAccountName(string account) => account;
+
+        /// <summary>
+        /// Every account key is stored as the SHA-256 of its canonical name, here in the base so
+        /// no adapter can forget it. The name is attacker-controlled and arrives before
+        /// authentication: tracked raw, a username near the frame cap (1 MiB) made each of the
+        /// up-to-<see cref="DefaultMaxTrackedKeys"/> counters cost megabytes.
+        /// </summary>
+        private static string HashAccountKey(string canonical) =>
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
 
         private int Peek((ConcurrentDictionary<string, Window> Map, string Key) window, DateTimeOffset now) =>
             window.Map.TryGetValue(window.Key, out var w) && now - w.Start < _window ? w.Count : 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBulkUpdatePayloads, buildStagedUpdatePayloads } from './mutation-payload';
+import { buildBulkUpdatePayloads, buildStagedUpdatePayloads, restoreBlankNulls } from './mutation-payload';
 import type { Column } from '../types/schema';
 
 function col(name: string, paramType: string, opts: Partial<Column> = {}): Column {
@@ -99,5 +99,32 @@ describe('buildStagedUpdatePayloads', () => {
             [{ order_id: '1', line_no: 1, status: 'a' }],
             () => undefined,
         )).toThrow(/no staged changes/);
+    });
+});
+
+describe('restoreBlankNulls', () => {
+    const notes = col('notes', 'String', { isNullable: true, dbType: 'nvarchar' });
+    const title = col('title', 'String!', { isNullable: false, dbType: 'nvarchar' });
+    const dueOn = col('dueOn', 'DateTime', { isNullable: true, dbType: 'date' });
+    const columns = [notes, title, dueOn];
+
+    it('sends NULL back for a nullable field the form showed as blank', () => {
+        // Editing only `title` used to write '' over the NULL notes and dueOn.
+        expect(restoreBlankNulls({ notes: '', title: 'renamed', dueOn: '' }, { notes: null, title: 'old', dueOn: null }, columns))
+            .toEqual({ notes: null, title: 'renamed', dueOn: null });
+    });
+
+    it('treats a cleared nullable date as NULL, never as an empty string', () => {
+        expect(restoreBlankNulls({ dueOn: '' }, { dueOn: '2024-04-01' }, columns)).toEqual({ dueOn: null });
+    });
+
+    it('keeps a deliberate empty string where it is a real value', () => {
+        // Nullable text that held text and was cleared, and NOT NULL text.
+        expect(restoreBlankNulls({ notes: '', title: '' }, { notes: 'was here', title: 'old' }, columns))
+            .toEqual({ notes: '', title: '' });
+    });
+
+    it('sends NULL for blank nullable fields on an insert', () => {
+        expect(restoreBlankNulls({ notes: '', title: 'x' }, {}, columns)).toEqual({ notes: null, title: 'x' });
     });
 });

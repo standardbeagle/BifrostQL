@@ -2,6 +2,7 @@ import { Column, Table } from "../types/schema";
 import { pkFilterFor, type PkFilter } from "./row-id";
 import { validateRowValues } from "./field-validation";
 import { isJsonColumn } from "./content-detect";
+import { isDateColumn } from "./date-input";
 import { baseParamType, isExactScalar, isIntegerScalar, isNumericScalar } from "./scalar-types";
 
 // BigInt/Decimal exceed what a JS number holds exactly: coercing through +val /
@@ -174,4 +175,27 @@ export function buildStagedUpdatePayloads(
         if (validationErrors.length > 0) throw new Error(validationErrors.join(' '));
         return coerceDetail(detail, writeColumns.map((column) => ({ column })), idColumns, pkFilter, false);
     });
+}
+
+/**
+ * The edit form shows NULL as an empty field: text and date inputs cannot hold
+ * null, so the form seeds them with ''. Saving an unrelated field then sent ''
+ * over every NULL it had shown. Map that '' back to null for a nullable column
+ * when the stored value was NULL (or absent, as on an insert), and for any
+ * nullable date column (an empty string is never a date). A nullable text
+ * column that held text and was cleared keeps '': an empty string is a real
+ * value there, and the form has no separate "set NULL" control.
+ */
+export function restoreBlankNulls(
+    formValues: Record<string, unknown>,
+    originalRow: Record<string, unknown>,
+    columns: Column[],
+): Record<string, unknown> {
+    const out = { ...formValues };
+    for (const column of columns) {
+        if (!column.isNullable || out[column.name] !== '') continue;
+        const original = originalRow[column.name];
+        if (original === null || original === undefined || isDateColumn(column)) out[column.name] = null;
+    }
+    return out;
 }

@@ -12,6 +12,7 @@ import { parsePkRoute, buildPkEqFilter, encodeRouteParts } from "./lib/row-id";
 import { validateFieldValue } from "./lib/field-validation";
 import { isComposite } from "./lib/fk";
 import { isDateColumn, isDateTimeColumn, toDateInputValue, preserveUntouchedDateValues } from "./lib/date-input";
+import { restoreBlankNulls } from "./lib/mutation-payload";
 import { matchesLabel } from "./lib/label-match";
 import { usableEnumLabels } from "./lib/format-value";
 import {
@@ -268,11 +269,9 @@ function DataEditDetail({ table, schema, editId, onClose }: { table: string, sch
             // offset and fractional seconds trimmed). For date fields the user
             // did not edit, send the original raw value so saving an unrelated
             // field cannot shift the stored instant.
-            const detail = preserveUntouchedDateValues(
-                formValues,
-                value,
-                editColumns.map(({ column: c }) => c),
-            );
+            // NULLs the form showed as '' go back as null, never as ''.
+            const columns = editColumns.map(({ column: c }) => c);
+            const detail = restoreBlankNulls(preserveUntouchedDateValues(formValues, value, columns), value, columns);
             const mutate = isInsert ? mutation.insert : mutation.update;
             await mutate(detail);
             onClose();

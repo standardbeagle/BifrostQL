@@ -22,7 +22,9 @@ namespace BifrostQL.Core.Modules.Crypto
         /// <summary>The real number of rows the pipeline actually updated (from
         /// <see cref="MutationIntentResult.AffectedRows"/>, NOT the update's return value). Lower
         /// than <see cref="RowsReEncrypted"/> when a tenant/policy scope narrowed a write to zero —
-        /// the sweep never bypasses that scope, it fails closed to no write.</summary>
+        /// the sweep never bypasses that scope, it fails closed to no write — or when the stored
+        /// value changed after the snapshot was read. Such a row is still stale only if the new
+        /// write used an old key, so re-running the sweep over a fresh read picks it up.</summary>
         public int RowsAffected { get; init; }
     }
 
@@ -93,6 +95,7 @@ namespace BifrostQL.Core.Modules.Crypto
                 scanned++;
 
                 var setData = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                var expectedEnvelopes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var column in encryptedColumns)
                 {
                     var raw = ReadColumn(row, column);
@@ -121,6 +124,7 @@ namespace BifrostQL.Core.Modules.Crypto
                         : _keyManager.GetDataKey(keyRef, storedVersion.Value);
                     var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
                     setData[column.GraphQlName] = FieldCipher.Decrypt(dek, envelope, aad);
+                    expectedEnvelopes[column.ColumnName] = envelope;
                 }
 
                 if (setData.Count == 0)
@@ -132,13 +136,22 @@ namespace BifrostQL.Core.Modules.Crypto
                             $"Row is missing primary-key column '{kc.ColumnName}' required to re-encrypt it."))
                     .ToList();
 
+                // The snapshot's envelopes guard the update (EncryptOnWriteMutationTransformer),
+                // so a value written after the snapshot is never overwritten with the old plaintext.
+                var rowContext = userContext is null
+                    ? new Dictionary<string, object?>()
+                    : new Dictionary<string, object?>(userContext);
+                rowContext[EncryptOnWriteMutationTransformer.ReEncryptionGuardKey] =
+                    new EncryptOnWriteMutationTransformer.ReEncryptionGuard(expectedEnvelopes);
+
                 var result = await _writer.ExecuteAsync(new MutationIntent
                 {
-                    Table = table.DbName,
+                    // Schema-qualified: a bare DbName is ambiguous when another schema holds the same name.
+                    Table = $"{table.TableSchema}.{table.DbName}",
                     Action = MutationIntentAction.Update,
                     Data = setData,
                     PrimaryKey = primaryKey,
-                    UserContext = userContext ?? new Dictionary<string, object?>(),
+                    UserContext = rowContext,
                     Endpoint = endpoint,
                 }, cancellationToken);
 

@@ -167,6 +167,31 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Sweep_FromAStaleSnapshot_LeavesAValueWrittenAfterTheReadUntouched()
+    {
+        var exec = BuildExecutor();
+        var id = await InsertAsync(exec, Plain1); // v1
+        _manager.Rotate(KeyRef);                   // -> v2 current
+        var snapshot = (await ReadRawAsync()).Single(r => r.id == id).ssn;
+
+        // A user rewrites the value between the sweep's read and its write.
+        await exec.ExecuteAsync(new MutationIntent
+        {
+            Table = "secrets", Action = MutationIntentAction.Update, Endpoint = EndpointPath,
+            Data = new Dictionary<string, object?> { ["ssn"] = Plain2 }, PrimaryKey = new object?[] { id },
+        });
+
+        var result = await new CryptoReEncryptionSweep(exec, _manager)
+            .ReEncryptRowsAsync(_model.GetTableFromDbName("secrets"), new[] { RawRow(id, snapshot) });
+
+        result.RowsReEncrypted.Should().Be(1);
+        result.RowsAffected.Should().Be(0, "the stored envelope no longer matches the snapshot");
+        var unmask = new CryptoReadProjector(_model, _manager, new[] { "compliance" });
+        unmask.Project("secrets", "ssn", (await ReadRawAsync()).Single(r => r.id == id).ssn)
+            .Should().Be(Plain2, "the user's newer value must not be overwritten with the snapshot's plaintext");
+    }
+
+    [Fact]
     public async Task Sweep_IsIdempotent_OverAlreadyCurrentRows()
     {
         var exec = BuildExecutor();

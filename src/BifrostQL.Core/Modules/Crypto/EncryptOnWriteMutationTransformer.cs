@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using BifrostQL.Core.Crypto;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules.Approval;
+using BifrostQL.Core.QueryModel;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Modules.Crypto
@@ -133,7 +134,46 @@ namespace BifrostQL.Core.Modules.Crypto
                 MutationType = mutationType,
                 Data = result,
                 Errors = errors.ToArray(),
+                AdditionalFilter = mutationType == MutationType.Update ? ReEncryptionPredicate(table, context) : null,
             });
+        }
+
+        /// <summary>
+        /// The <c>UserContext</c> key under which <see cref="CryptoReEncryptionSweep"/> places its
+        /// <see cref="ReEncryptionGuard"/>. Only a guard instance counts: a same-named claim
+        /// deserializes to a scalar, and the guard has no public constructor.
+        /// </summary>
+        internal const string ReEncryptionGuardKey = "bifrost.crypto.reencrypt-guard";
+
+        /// <summary>
+        /// The envelopes a re-encryption sweep read, by column name. Engine-only (invariant 14):
+        /// the constructor is internal, so only Core and its <c>InternalsVisibleTo</c> list mint one.
+        /// </summary>
+        internal sealed class ReEncryptionGuard
+        {
+            internal ReEncryptionGuard(IReadOnlyDictionary<string, string> expectedEnvelopes)
+                => ExpectedEnvelopes = expectedEnvelopes;
+
+            public IReadOnlyDictionary<string, string> ExpectedEnvelopes { get; }
+        }
+
+        // A sweep rewrites a value it decrypted from a snapshot. Guard the UPDATE on the stored
+        // envelope still being that snapshot: a write that landed in between leaves the row
+        // unmatched (zero rows, which the sweep reports as not rewritten) instead of being
+        // overwritten with the old plaintext under the new key.
+        private static TableFilter? ReEncryptionPredicate(IDbTable table, MutationTransformContext context)
+        {
+            if (!context.UserContext.TryGetValue(ReEncryptionGuardKey, out var value) || value is not ReEncryptionGuard guard)
+                return null;
+            TableFilter? combined = null;
+            foreach (var (columnName, envelope) in guard.ExpectedEnvelopes)
+            {
+                var column = ResolveColumn(table, columnName)
+                    ?? throw new Resolvers.BifrostExecutionError("The re-encryption guard names an unknown column.");
+                var predicate = TableFilterFactory.Equals(table, column.ColumnName, envelope);
+                combined = combined is null ? predicate : TableFilter.CombineAnd(combined, predicate);
+            }
+            return combined;
         }
 
         internal static bool IsEncrypted(ColumnDto column)

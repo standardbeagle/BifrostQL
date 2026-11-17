@@ -213,6 +213,26 @@ public static class SchemaReadVisibility
             && parent.HasColumns(link.ParentIds);
     }
 
+    /// <summary>
+    /// True when a many-to-many bridge may be published: its source, junction and target
+    /// tables are visible and so are the four columns it names. The same two-ended rule as
+    /// <see cref="IsLinkVisible"/>: a bridge naming a hidden column is dropped, not trimmed.
+    /// </summary>
+    public static bool IsManyToManyVisible(ManyToManyLink link, IEnumerable<VisibleTable> visible)
+    {
+        if (link is null) throw new ArgumentNullException(nameof(link));
+        if (visible is null) throw new ArgumentNullException(nameof(visible));
+
+        var candidates = visible as IReadOnlyCollection<VisibleTable> ?? visible.ToList();
+        return Find(candidates, link.SourceTable) is { } source
+            && Find(candidates, link.JunctionTable) is { } junction
+            && Find(candidates, link.TargetTable) is { } target
+            && source.HasColumn(link.SourceColumn.DbName)
+            && junction.HasColumn(link.JunctionSourceColumn.DbName)
+            && junction.HasColumn(link.JunctionTargetColumn.DbName)
+            && target.HasColumn(link.TargetColumn.DbName);
+    }
+
     private static VisibleTable? ProjectTable(IDbTable table, AppIdentity identity)
         => ProjectTable(null, table, identity);
 

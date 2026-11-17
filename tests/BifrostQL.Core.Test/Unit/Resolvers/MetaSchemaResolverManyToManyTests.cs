@@ -13,10 +13,11 @@ namespace BifrostQL.Core.Test.Unit.Resolvers;
 /// </summary>
 public sealed class MetaSchemaResolverManyToManyTests
 {
-    private static JsonElement ResolveTable(IDbModel model, string graphQlName)
+    private static JsonElement ResolveTable(IDbModel model, string graphQlName, IDictionary<string, object?>? userContext = null)
     {
         var resolver = new MetaSchemaResolver(model);
-        var result = resolver.ResolveAsync(new NullArgContext()).AsTask().GetAwaiter().GetResult();
+        var context = new NullArgContext { UserContext = userContext ?? new Dictionary<string, object?>() };
+        var result = resolver.ResolveAsync(context).AsTask().GetAwaiter().GetResult();
 
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
         var json = JsonSerializer.Serialize(result, options);
@@ -97,6 +98,49 @@ public sealed class MetaSchemaResolverManyToManyTests
         users.GetProperty("manyToManyJoins").GetArrayLength().Should().Be(0);
     }
 
+    /// <summary>
+    /// A bridge names one column on each of its three tables (four in all). When the caller's
+    /// policy hides any of them, publishing the bridge would disclose the hidden column's name,
+    /// so the bridge is dropped, the same rule single and multi joins follow. The empty denial
+    /// is the control: the same caller sees the bridge when every column is readable.
+    /// </summary>
+    [Theory]
+    [InlineData(null, null, 1)]
+    [InlineData("Users", "Id", 0)]
+    [InlineData("UserRoles", "UserId", 0)]
+    [InlineData("UserRoles", "RoleId", 0)]
+    [InlineData("Roles", "Id", 0)]
+    public void Projection_BridgeColumnHiddenByPolicy_DropsTheBridge(string? deniedTable, string? deniedColumn, int expected)
+    {
+        DbModelTestFixture.TableBuilder Policy(DbModelTestFixture.TableBuilder t, string table)
+        {
+            t.WithMetadata(MetadataKeys.Policy.Actions, "read");
+            return table == deniedTable ? t.WithMetadata(MetadataKeys.Policy.ReadDeny, deniedColumn!) : t;
+        }
+
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => Policy(t.WithPrimaryKey("Id").WithColumn("Name", "nvarchar"), "Users"))
+            .WithTable("Roles", t => Policy(t.WithPrimaryKey("Id").WithColumn("Label", "nvarchar"), "Roles"))
+            .WithTable("UserRoles", t => Policy(t
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("RoleId", "int"), "UserRoles"))
+            .WithSingleLink("UserRoles", "UserId", "Users", "Id", "Users")
+            .WithSingleLink("UserRoles", "RoleId", "Roles", "Id", "Roles")
+            .WithMultiLink("Users", "Id", "UserRoles", "UserId", "UserRoles")
+            .WithManyToManyLink("Users", "Id", "UserRoles", "UserId", "RoleId", "Roles", "Id")
+            .Build();
+        var member = new Dictionary<string, object?>
+        {
+            [MetadataKeys.Auth.DefaultUserIdContextKey] = "u1",
+            [MetadataKeys.Auth.DefaultRolesContextKey] = new[] { "member" },
+        };
+
+        var users = ResolveTable(model, "Users", member);
+
+        users.GetProperty("manyToManyJoins").GetArrayLength().Should().Be(expected);
+    }
+
     /// <summary>Minimal context: the resolver only reads the graphQlName argument.</summary>
     private sealed class NullArgContext : IBifrostFieldContext
     {
@@ -104,7 +148,7 @@ public sealed class MetaSchemaResolverManyToManyTests
         public string? FieldAlias => null;
         public object? Source => null;
         public IReadOnlyList<object> Path => Array.Empty<object>();
-        public IDictionary<string, object?> UserContext => new Dictionary<string, object?>();
+        public IDictionary<string, object?> UserContext { get; init; } = new Dictionary<string, object?>();
         public IServiceProvider? RequestServices => null;
         public bool HasSubFields => true;
         public object Document => null!;

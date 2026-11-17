@@ -261,8 +261,7 @@ namespace BifrostQL.Core.Resolvers
                             // resolves the target row; hasPayload marks junctions carrying
                             // extra columns the UI can reveal.
                             manyToManyJoins = t.ManyToManyLinks.Values
-                                .Where(m => SchemaReadVisibility.Find(visible, m.JunctionTable) != null
-                                    && SchemaReadVisibility.Find(visible, m.TargetTable) != null)
+                                .Where(m => SchemaReadVisibility.IsManyToManyVisible(m, visible))
                                 .Select(m => new
                             {
                                 name = m.JunctionTable.GraphQlName,

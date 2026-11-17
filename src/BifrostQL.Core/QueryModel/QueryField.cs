@@ -14,7 +14,9 @@ namespace BifrostQL.Core.QueryModel
         List<QueryArgument> Arguments { get; init; }
         List<string> Fragments { get; init; }
         string ToString();
-        GqlObjectQuery ToSqlData(IDbModel model, IQueryField? parent = null, string basePath = "");
+        /// <param name="parentTable">The already-resolved table of the enclosing node, or
+        /// null for a root field. A link field resolves against it, never by name.</param>
+        GqlObjectQuery ToSqlData(IDbModel model, IDbTable? parentTable = null, string basePath = "");
         TableJoin ToJoin(IDbModel model, GqlObjectQuery parent);
         FieldType Type { get; }
         GqlObjectColumn ToScalarSql(IDbTable dbTable, IDbModel model);
@@ -58,13 +60,12 @@ namespace BifrostQL.Core.QueryModel
             return Alias ?? Name;
         }
 
-        public GqlObjectQuery ToSqlData(IDbModel model, IQueryField? parent = null, string basePath = "")
+        public GqlObjectQuery ToSqlData(IDbModel model, IDbTable? parentTable = null, string basePath = "")
         {
             var path = string.IsNullOrWhiteSpace(basePath)
                 switch
             { true => GetUniqueName(), false => basePath + "->" + GetUniqueName() };
-            var tableName = ResolveTableName(model, parent, Name);
-            var dbTable = ResolveTable(model, tableName);
+            var dbTable = ResolveNodeTable(model, parentTable, out var linkKind);
             var rawSort = (IEnumerable<object?>?)Arguments.FirstOrDefault(a => a.Name == "sort")?.Value;
             var sort = rawSort?.Cast<string>()?.ToList() ?? new List<string>();
 
@@ -74,7 +75,7 @@ namespace BifrostQL.Core.QueryModel
             // child node emit a per-parent total and routes its `data` sub-selection
             // through the same unwrapping the top-level query uses below.
             // Single-links keep their bare object shape; many-to-many keep arrays.
-            if (parent != null && IsMultiLink(model, parent, Name))
+            if (linkKind is ResolvedLinkKind.Multi or ResolvedLinkKind.ManyToMany)
                 IncludeResult = true;
 
             var dataFields = Fields.FirstOrDefault(f => f.Name == "data")?.Fields ?? new List<IQueryField>();
@@ -96,7 +97,7 @@ namespace BifrostQL.Core.QueryModel
                 TableName = dbTable.DbName,
                 SchemaName = dbTable.TableSchema,
                 FieldName = NormalizeColumnName(Name),
-                GraphQlName = tableName,
+                GraphQlName = dbTable.GraphQlName,
                 Path = path,
                 QueryType = queryType,
                 IsFragment = false,
@@ -109,7 +110,7 @@ namespace BifrostQL.Core.QueryModel
                 Filter = BuildCombinedFilter(Arguments, dbTable),
                 Links = standardFields
                             .Where((f) => TypeOf(f) == FieldType.Link)
-                            .Select(f => f.ToSqlData(model, this, path))
+                            .Select(f => f.ToSqlData(model, dbTable, path))
                             .ToList(),
             };
             result.Joins.AddRange(
@@ -122,7 +123,7 @@ namespace BifrostQL.Core.QueryModel
             // context per node — nested join fields included, not just the root.
             result.ModuleQueryArguments =
                 Modules.ModuleApiRegistry.CaptureQueryArguments(BuildArgumentLookup(Arguments), dbTable);
-            if (parent == null)
+            if (parentTable == null)
                 result.ConnectLinks(model);
             return result;
         }
@@ -171,29 +172,30 @@ namespace BifrostQL.Core.QueryModel
             return table;
         }
 
-        private static bool IsMultiLink(IDbModel model, IQueryField parent, string fieldName)
+        /// <summary>
+        /// Resolves the table behind this node. A root field names a table. A link
+        /// field names a relationship of <paramref name="parentTable"/>, the parent
+        /// node's already-resolved table: its field name (<c>billing_address</c>,
+        /// <c>categories_children</c>) is a link name, not a table name, so it is
+        /// never looked up in the model. Which of several links to the same table
+        /// was navigated is recovered by field name in ConnectLinks.
+        /// <paramref name="linkKind"/> is <see cref="ResolvedLinkKind.None"/> for a root.
+        /// </summary>
+        private IDbTable ResolveNodeTable(IDbModel model, IDbTable? parentTable, out ResolvedLinkKind linkKind)
         {
-            var parentTable = ResolveTable(model, NormalizeColumnName(parent.Name));
-            // A single-link sharing the field name (self-referential FK) takes
-            // precedence inside TryResolveLink: it stays a bare object, so it is not
-            // paged. Many-to-many target collections page per source parent exactly
-            // like multi-links (the junction hop is transparent to the contract).
-            return TableLinkResolver.TryResolveLink(parentTable, NormalizeColumnName(fieldName)).Kind
-                is ResolvedLinkKind.Multi or ResolvedLinkKind.ManyToMany;
-        }
+            var fieldName = NormalizeColumnName(Name);
+            if (parentTable == null)
+            {
+                linkKind = ResolvedLinkKind.None;
+                return ResolveTable(model, fieldName);
+            }
 
-        private static string ResolveTableName(IDbModel model, IQueryField? parent, string fieldName)
-        {
-            var normalizedFieldName = NormalizeColumnName(fieldName);
-            if (parent == null)
-                return normalizedFieldName;
-
-            var parentTable = ResolveTable(model, NormalizeColumnName(parent.Name));
-            // The TABLE name, not the link's field name: the caller feeds this
-            // straight into a table lookup. Which of several links to that table
-            // was navigated is recovered later, by field name, in ConnectLinks.
-            return TableLinkResolver.TryResolveLink(parentTable, normalizedFieldName).TargetTable?.GraphQlName
-                ?? normalizedFieldName;
+            var link = TableLinkResolver.TryResolveLink(parentTable, fieldName);
+            linkKind = link.Kind;
+            return link.TargetTable ?? throw BifrostErrorSink.LookupMiss(
+                "A requested field does not name a queryable table.",
+                $"Query-field link miss: '{fieldName}' on table '{parentTable.GraphQlName}'.",
+                nameof(QueryField));
         }
 
         public TableJoin ToJoin(IDbModel model, GqlObjectQuery parent)

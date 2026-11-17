@@ -36,13 +36,17 @@ public static class RowScopeCompiler
 
     /// <summary>
     /// Compiles <paramref name="expression"/> against <paramref name="userContext"/>
-    /// into an equality <see cref="TableFilter"/> on <paramref name="table"/>.
+    /// into an equality <see cref="TableFilter"/> on <paramref name="table"/>. The context
+    /// value is converted to the column's type as <paramref name="typeMapper"/> (the model's
+    /// dialect mapper) classifies it.
     /// </summary>
     public static TableFilter Compile(
         string? expression,
         IDbTable table,
+        ITypeMapper typeMapper,
         IDictionary<string, object?> userContext)
     {
+        ArgumentNullException.ThrowIfNull(typeMapper);
         if (userContext is null)
             throw new ArgumentNullException(nameof(userContext));
         ArgumentNullException.ThrowIfNull(table);
@@ -55,7 +59,7 @@ public static class RowScopeCompiler
             throw new BifrostExecutionError(MissingContextMessage);
 
         return TableFilterFactory.Equals(table, term.Column,
-            ContextValueCoercer.Coerce(table, term.Column, value));
+            ContextValueCoercer.Coerce(typeMapper, table, term.Column, value));
     }
 
     /// <summary>

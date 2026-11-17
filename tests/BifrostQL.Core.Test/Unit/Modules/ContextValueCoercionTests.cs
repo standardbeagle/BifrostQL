@@ -4,6 +4,10 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.MySql;
+using BifrostQL.Ngsql;
+using BifrostQL.Sqlite;
+using BifrostQL.SqlServer;
 using FluentAssertions;
 
 namespace BifrostQL.Core.Test.Modules;
@@ -54,10 +58,11 @@ public sealed class ContextValueCoercionTests
     [Fact]
     public void RowScope_CoercesContextValueToBigint()
     {
-        var table = TenantModel().GetTableFromDbName("Orders");
+        var model = TenantModel();
+        var table = model.GetTableFromDbName("Orders");
 
         var filter = RowScopeCompiler.Compile(
-            "account_id = {user_id}", table,
+            "account_id = {user_id}", table, model.TypeMapper,
             new Dictionary<string, object?> { ["user_id"] = "7" });
 
         filter.Next!.Value.Should().BeOfType<long>().Which.Should().Be(7L);
@@ -128,6 +133,93 @@ public sealed class ContextValueCoercionTests
 
         exception.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
     }
+
+    // The coercer and the GraphQL schema judge a column's type from the same source: the
+    // model's dialect mapper. The schema declares the column with the mapper's GraphQL type;
+    // the tenant filter binds the context value as that type's CLR value. The coercer used to
+    // keep its own name table, so a Postgres int4 or a SQL Server money column was declared
+    // Int / Decimal in the schema while the claim bound as a string.
+    [Theory]
+    [MemberData(nameof(DialectColumnTypes))]
+    public void TenantFilter_BindsTheClrTypeOfTheSchemasGraphQlType(string dialect, string dataType, string claim)
+    {
+        var mapper = Mappers[dialect];
+        var model = DbModelTestFixture.Create()
+            .WithTypeMapper(mapper)
+            .WithTable("Orders", table => table
+                .WithPrimaryKey("id")
+                .WithColumn("id", "int")
+                .WithColumn("account_id", dataType)
+                .WithMetadata("tenant-filter", "account_id"))
+            .Build();
+        var context = new QueryTransformContext
+        {
+            Model = model,
+            UserContext = new Dictionary<string, object?> { ["tenant_id"] = claim },
+            QueryType = QueryType.Standard
+        };
+
+        var bound = new TenantFilterTransformer().GetAdditionalFilter(model.GetTableFromDbName("Orders"), context)!.Next!.Value;
+        var schemaType = model.TypeMapper.GetGraphQlType(model.GetTableFromDbName("Orders").ColumnLookup["account_id"].EffectiveDataType);
+
+        bound!.GetType().Should().Be(ClrTypeOfGraphQlScalar(schemaType, dataType),
+            $"{dialect} '{dataType}' is {schemaType} in the schema");
+    }
+
+    private static readonly IReadOnlyDictionary<string, ITypeMapper> Mappers = new Dictionary<string, ITypeMapper>
+    {
+        ["sqlserver"] = SqlServerTypeMapper.Instance,
+        ["postgres"] = PostgresTypeMapper.Instance,
+        ["mysql"] = MySqlTypeMapper.Instance,
+        ["sqlite"] = SqliteTypeMapper.Instance,
+    };
+
+    // The GraphQL scalar's runtime value type. uuid is declared String by every dialect but
+    // binds as a Guid, the one discriminator the mappers do not carry.
+    private static Type ClrTypeOfGraphQlScalar(string graphQlType, string dataType) =>
+        dataType is "uuid" or "uniqueidentifier" ? typeof(Guid) : graphQlType switch
+        {
+            "Int" => typeof(int),
+            "BigInt" => typeof(long),
+            "Short" => typeof(short),
+            "Byte" => typeof(byte),
+            "Decimal" => typeof(decimal),
+            "Float" => typeof(double),
+            "Boolean" => typeof(bool),
+            _ => typeof(string),
+        };
+
+    public static IEnumerable<object[]> DialectColumnTypes => new[]
+    {
+        new object[] { "sqlserver", "int", "7" },
+        new object[] { "sqlserver", "bigint", "7" },
+        new object[] { "sqlserver", "smallint", "7" },
+        new object[] { "sqlserver", "tinyint", "7" },
+        new object[] { "sqlserver", "money", "7.25" },
+        new object[] { "sqlserver", "smallmoney", "7.25" },
+        new object[] { "sqlserver", "decimal", "7.25" },
+        new object[] { "sqlserver", "float", "7.25" },
+        new object[] { "sqlserver", "bit", "true" },
+        new object[] { "sqlserver", "uniqueidentifier", "6f9619ff-8b86-d011-b42d-00c04fc964ff" },
+        new object[] { "sqlserver", "nvarchar", "acme" },
+        new object[] { "postgres", "int4", "7" },
+        new object[] { "postgres", "int8", "7" },
+        new object[] { "postgres", "int2", "7" },
+        new object[] { "postgres", "float8", "7.25" },
+        new object[] { "postgres", "numeric", "7.25" },
+        new object[] { "postgres", "bool", "true" },
+        new object[] { "postgres", "uuid", "6f9619ff-8b86-d011-b42d-00c04fc964ff" },
+        new object[] { "postgres", "text", "acme" },
+        new object[] { "mysql", "int", "7" },
+        new object[] { "mysql", "bigint", "7" },
+        new object[] { "mysql", "mediumint", "7" },
+        new object[] { "mysql", "double", "7.25" },
+        new object[] { "mysql", "decimal", "7.25" },
+        new object[] { "mysql", "varchar", "acme" },
+        new object[] { "sqlite", "integer", "7" },
+        new object[] { "sqlite", "real", "7.25" },
+        new object[] { "sqlite", "text", "acme" },
+    };
 
     private static IDbModel TenantModel() => DbModelTestFixture.Create()
         .WithTable("Orders", table => table

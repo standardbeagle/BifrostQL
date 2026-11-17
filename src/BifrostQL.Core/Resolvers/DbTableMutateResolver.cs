@@ -58,7 +58,7 @@ namespace BifrostQL.Core.Resolvers
                 // so a written result passes through it twice unchanged.
                 return Coerce(await OperationIdExecution.ExecuteAsync(
                     model, conFactory, context.UserContext, operationId, fingerprint,
-                    () => AuthorizeReplay(context, table, action),
+                    () => AuthorizeReplay(context, model.TypeMapper, table, action),
                     async scope => Coerce(await DispatchAsync(action, context, table, mutationTransformers, model, conFactory, dialect, scope)),
                     context.CancellationToken));
             }
@@ -119,19 +119,19 @@ namespace BifrostQL.Core.Resolvers
         /// (<see cref="OperationIdExecution.AuthorizeReplay"/>): for a save, per node of the
         /// recorded tree with the operation that node states; otherwise for the field's verb.
         /// </summary>
-        private static void AuthorizeReplay(IBifrostFieldContext context, IDbTable table, MutationAction action)
+        private static void AuthorizeReplay(IBifrostFieldContext context, ITypeMapper typeMapper, IDbTable table, MutationAction action)
         {
             if (action == MutationAction.Save)
             {
                 var tree = context.GetArgument<Dictionary<string, object?>>("save") ?? new();
                 foreach (var operation in new SaveTreeBuilder().BuildOperations(table, tree))
                     OperationIdExecution.AuthorizeReplay(
-                        operation.Table, TreeNodeAction(operation.OperationType), operation.Data, null, context.UserContext);
+                        operation.Table, typeMapper, TreeNodeAction(operation.OperationType), operation.Data, null, context.UserContext);
                 return;
             }
             var verb = action.ToString().ToLowerInvariant();
             var input = context.GetArgument<Dictionary<string, object?>>(verb) ?? new();
-            OperationIdExecution.AuthorizeReplay(table, action, input, ReadPrimaryKeyValues(context), context.UserContext);
+            OperationIdExecution.AuthorizeReplay(table, typeMapper, action, input, ReadPrimaryKeyValues(context), context.UserContext);
         }
 
         private static MutationAction TreeNodeAction(TreeSyncOperationType type) => type switch

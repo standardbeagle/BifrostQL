@@ -157,7 +157,7 @@ public sealed class TenantMutationTransformer : MetadataMutationTransformerBase
                 $"Tenant ID cannot be null for table '{fullTableName}'.")
             { ErrorCode = BifrostExecutionError.AccessDeniedCode };
 
-        return ContextValueCoercer.Coerce(table, GetTenantColumn(table, context), tenantId);
+        return ContextValueCoercer.Coerce(context.Model.TypeMapper, table, GetTenantColumn(table, context), tenantId);
     }
 
     private static string GetTenantColumn(IDbTable table, MutationTransformContext context) =>

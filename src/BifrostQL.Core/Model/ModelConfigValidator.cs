@@ -69,7 +69,7 @@ namespace BifrostQL.Core.Model
                 ValidateSoftDeleteNullability(table, errors);
                 ValidateAutoFilter(table, errors);
                 ValidateStateMachine(table, errors);
-                ValidatePolicy(table, errors);
+                ValidatePolicy(table, model.TypeMapper, errors);
                 ValidateCdcTokens(table, errors);
                 ValidateHistoryTokens(table, errors);
                 ValidateFtsColumns(table, errors);
@@ -705,7 +705,7 @@ namespace BifrostQL.Core.Model
         /// Unrecognized <c>policy-actions</c> tokens are surfaced too (the collector
         /// itself throws on them, for the same fail-open reason).
         /// </summary>
-        private static void ValidatePolicy(IDbTable table, List<string> errors)
+        private static void ValidatePolicy(IDbTable table, ITypeMapper typeMapper, List<string> errors)
         {
             Auth.TablePolicy policy;
             try
@@ -748,7 +748,7 @@ namespace BifrostQL.Core.Model
                     continue;
                 foreach (var literal in literals)
                 {
-                    if (!Auth.ContextValueCoercer.IsCoercible(literal, columnDto.DataType))
+                    if (!Auth.ContextValueCoercer.IsCoercible(typeMapper, literal, columnDto))
                         errors.Add(Problem(table, MetadataKeys.Policy.WritableValues, literal,
                             $"writable-values literal cannot be coerced to column '{columnDto.DbName}' ({columnDto.DataType})"));
                 }

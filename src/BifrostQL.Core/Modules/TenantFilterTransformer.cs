@@ -53,7 +53,7 @@ public sealed class TenantFilterTransformer : ContextValueFilterTransformerBase
         }
 
         return TableFilterFactory.Equals(table, columnName,
-            ContextValueCoercer.Coerce(table, columnName, tenantId));
+            ContextValueCoercer.Coerce(context.Model.TypeMapper, table, columnName, tenantId));
     }
 
     /// <summary>

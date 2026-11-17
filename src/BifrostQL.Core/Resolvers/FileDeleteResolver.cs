@@ -60,7 +60,7 @@ namespace BifrostQL.Core.Resolvers
 
             // Decode recordId into one value per key column (composite-key safe;
             // never the same scalar broadcast across every key column).
-            var keyData = FileRecordKey.BuildKeyData(table, recordId);
+            var keyData = FileRecordKey.BuildKeyData(table, model.TypeMapper, recordId);
 
             // Read the current pointer through the read-intent seam, so the same
             // filter chain a normal read applies (tenant isolation, soft delete,

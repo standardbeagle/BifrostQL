@@ -90,7 +90,7 @@ public sealed class PolicyFilterTransformer : IFilterTransformer, IColumnReadGua
         if (!RowScopeApplies(policy, identity))
             return null;
 
-        return RowScopeCompiler.Compile(policy.RowScopeExpression, table, context.UserContext);
+        return RowScopeCompiler.Compile(policy.RowScopeExpression, table, context.Model.TypeMapper, context.UserContext);
     }
 
     /// <summary>

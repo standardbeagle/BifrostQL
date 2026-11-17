@@ -67,7 +67,7 @@ namespace BifrostQL.Core.Resolvers
 
             // Get file metadata from database
             var metadataJson = await GetFileMetadataFromDatabase(
-                bifrost.ConnFactory, table, column, recordId, additionalFilter);
+                bifrost.ConnFactory, model.TypeMapper, table, column, recordId, additionalFilter);
             if (string.IsNullOrWhiteSpace(metadataJson))
             {
                 return null; // No file stored for this record, or filtered out (not our tenant / soft-deleted)
@@ -143,6 +143,7 @@ namespace BifrostQL.Core.Resolvers
 
         private static async Task<string?> GetFileMetadataFromDatabase(
             IDbConnFactory conFactory,
+            ITypeMapper typeMapper,
             IDbTable table,
             ColumnDto column,
             string recordId,
@@ -159,7 +160,7 @@ namespace BifrostQL.Core.Resolvers
 
                 // Decode recordId into one value per key column (composite-key safe;
                 // never the same scalar broadcast across every key column).
-                var keyData = FileRecordKey.BuildKeyData(table, recordId);
+                var keyData = FileRecordKey.BuildKeyData(table, typeMapper, recordId);
 
                 var whereClause = string.Join(" AND ", keyData.Keys.Select(k =>
                     $"{dialect.EscapeIdentifier(k)} = @{k}"));

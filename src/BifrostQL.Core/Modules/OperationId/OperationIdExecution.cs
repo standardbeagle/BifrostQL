@@ -247,7 +247,7 @@ namespace BifrostQL.Core.Modules.OperationId
         /// column whose name differs from its field would otherwise escape its refusal.
         /// </summary>
         internal static void AuthorizeReplay(
-            IDbTable table, MutationAction action, IReadOnlyDictionary<string, object?> input,
+            IDbTable table, ITypeMapper typeMapper, MutationAction action, IReadOnlyDictionary<string, object?> input,
             IReadOnlyList<object?>? primaryKeyValues, IDictionary<string, object?> userContext)
         {
             var data = DbParameterBinder.ToDbColumnKeys(table, action == MutationAction.Insert
@@ -262,7 +262,7 @@ namespace BifrostQL.Core.Modules.OperationId
                 _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
             };
             foreach (var check in checks)
-                PolicyMutationTransformer.Refuse(table, check, data, userContext)?.ThrowIfDenied();
+                PolicyMutationTransformer.Refuse(table, typeMapper, check, data, userContext)?.ThrowIfDenied();
         }
 
         /// <summary>

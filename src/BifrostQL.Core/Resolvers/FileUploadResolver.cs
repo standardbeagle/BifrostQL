@@ -66,7 +66,7 @@ namespace BifrostQL.Core.Resolvers
 
             // Decode recordId into one value per key column (composite-key safe;
             // never the same scalar broadcast across every key column).
-            var keyData = FileRecordKey.BuildKeyData(table, recordId);
+            var keyData = FileRecordKey.BuildKeyData(table, model.TypeMapper, recordId);
 
             // Confirm the row is visible to this caller BEFORE spending the upload,
             // through the same read chain a normal read applies. This is a cheap

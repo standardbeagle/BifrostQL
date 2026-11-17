@@ -78,7 +78,7 @@ namespace BifrostQL.Core.Resolvers
                 () =>
                 {
                     foreach (var action in parsed)
-                        OperationIdExecution.AuthorizeReplay(_table, action.Action, action.Data, null, context.UserContext);
+                        OperationIdExecution.AuthorizeReplay(_table, bifrost.Model.TypeMapper, action.Action, action.Data, null, context.UserContext);
                 },
                 async scope => await BatchMutationPipeline.ExecuteBatchAsync(_table, parsed, PipelineContext(scope)),
                 context.CancellationToken);

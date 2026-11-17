@@ -81,7 +81,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (data is null) throw new ArgumentNullException(nameof(data));
         if (context is null) throw new ArgumentNullException(nameof(context));
 
-        if (Refuse(table, mutationType, data, context.UserContext) is { } refusal)
+        if (Refuse(table, context.Model.TypeMapper, mutationType, data, context.UserContext) is { } refusal)
             return refusal;
 
         var policy = PolicyConfigCollector.FromTable(table);
@@ -106,7 +106,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
                 };
             }
             selfFilter = TableFilterBuilder.For(table).Compare(policy.SelfColumn, FilterOperators.Neq,
-                ContextValueCoercer.Coerce(table, policy.SelfColumn, userId)).Build();
+                ContextValueCoercer.Coerce(context.Model.TypeMapper, table, policy.SelfColumn, userId)).Build();
         }
 
         return new MutationTransformResult
@@ -128,6 +128,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
     /// </summary>
     internal static MutationTransformResult? Refuse(
         IDbTable table,
+        ITypeMapper typeMapper,
         MutationType mutationType,
         Dictionary<string, object?> data,
         IDictionary<string, object?> userContext)
@@ -177,8 +178,8 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
                 // coercible at model load (ModelConfigValidator), so only the supplied
                 // side can fail here.
                 var supplied = data[column];
-                valueAllowed = supplied is not null && TryCoerce(table, columnDto.DbName, supplied) is { } coerced
-                    && values.Any(value => ScalarEquals(coerced, ContextValueCoercer.Coerce(table, columnDto.DbName, value)));
+                valueAllowed = supplied is not null && TryCoerce(typeMapper, table, columnDto.DbName, supplied) is { } coerced
+                    && values.Any(value => ScalarEquals(coerced, ContextValueCoercer.Coerce(typeMapper, table, columnDto.DbName, value)));
             }
             if (!columnAllowed || !valueAllowed)
             {
@@ -201,11 +202,11 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
     private static TableFilter? CombineFilters(TableFilter? first, TableFilter? second) =>
         first is null ? second : second is null ? first : TableFilter.CombineAnd(first, second);
 
-    private static object? TryCoerce(IDbTable table, string column, object value)
+    private static object? TryCoerce(ITypeMapper typeMapper, IDbTable table, string column, object value)
     {
         try
         {
-            return ContextValueCoercer.Coerce(table, column, value);
+            return ContextValueCoercer.Coerce(typeMapper, table, column, value);
         }
         catch (BifrostExecutionError)
         {
@@ -244,7 +245,7 @@ public sealed class PolicyMutationTransformer : IMutationTransformer, IModuleNam
         if (!RowScopeApplies(policy, identity))
             return null;
 
-        return RowScopeCompiler.Compile(policy.RowScopeExpression, table, context.UserContext);
+        return RowScopeCompiler.Compile(policy.RowScopeExpression, table, context.Model.TypeMapper, context.UserContext);
     }
 
     private static PolicyAction ToPolicyAction(MutationType mutationType) => mutationType switch

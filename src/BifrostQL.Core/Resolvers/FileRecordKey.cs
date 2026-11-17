@@ -22,7 +22,7 @@ namespace BifrostQL.Core.Resolvers
     /// </summary>
     internal static class FileRecordKey
     {
-        public static Dictionary<string, object?> BuildKeyData(IDbTable table, string recordId)
+        public static Dictionary<string, object?> BuildKeyData(IDbTable table, ITypeMapper typeMapper, string recordId)
         {
             var keyColumns = table.KeyColumns.ToList();
             if (keyColumns.Count == 0)
@@ -46,7 +46,7 @@ namespace BifrostQL.Core.Resolvers
                 // One SQL-type-to-CLR table for the whole engine: the same helper the
                 // security transformers use to coerce context claims, so a uuid key
                 // parses instead of throwing InvalidCastException from Convert.ChangeType.
-                keyData[keyColumns[i].ColumnName] = Auth.ContextValueCoercer.ConvertToClrType(parts[i], keyColumns[i].DataType);
+                keyData[keyColumns[i].ColumnName] = Auth.ContextValueCoercer.ConvertToClrType(typeMapper, parts[i], keyColumns[i]);
 
             return keyData;
         }

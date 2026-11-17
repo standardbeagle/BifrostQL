@@ -38,7 +38,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["tenant_id"] = 42 };
 
         var filter = RowScopeCompiler.Compile(
-            "tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), context);
+            "tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), AnsiSqlTypeMapper.Instance, context);
 
         filter.TableName.Should().Be("Orders");
         filter.ColumnName.Should().Be("tenant_id");
@@ -53,7 +53,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["org_id"] = "acme" };
 
         var filter = RowScopeCompiler.Compile(
-            "   department_id   =   { org_id }   ", TableOf("Employees", "department_id"), context);
+            "   department_id   =   { org_id }   ", TableOf("Employees", "department_id"), AnsiSqlTypeMapper.Instance, context);
 
         filter.ColumnName.Should().Be("department_id");
         filter.Next!.Value.Should().Be("acme");
@@ -63,7 +63,7 @@ public class RowScopeCompilerTests
     public void Compile_MissingContextKey_ThrowsNonLeakingError()
     {
         var ex = Assert.Throws<BifrostExecutionError>(() =>
-            RowScopeCompiler.Compile("tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), EmptyContext));
+            RowScopeCompiler.Compile("tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), AnsiSqlTypeMapper.Instance, EmptyContext));
 
         // Non-leaking: the message must not echo the column or table name.
         ex.Message.Should().NotContain("tenant_id");
@@ -76,7 +76,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["tenant_id"] = null };
 
         var ex = Assert.Throws<BifrostExecutionError>(() =>
-            RowScopeCompiler.Compile("tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), context));
+            RowScopeCompiler.Compile("tenant_id = {tenant_id}", TableOf("Orders", "tenant_id"), AnsiSqlTypeMapper.Instance, context));
 
         ex.Message.Should().NotContain("tenant_id");
         ex.Message.Should().NotContain("Orders");
@@ -96,7 +96,7 @@ public class RowScopeCompilerTests
         var context = new Dictionary<string, object?> { ["tenant_id"] = 1 };
 
         var ex = Assert.Throws<BifrostExecutionError>(() =>
-            RowScopeCompiler.Compile(expression, TableOf("Orders", "tenant_id"), context));
+            RowScopeCompiler.Compile(expression, TableOf("Orders", "tenant_id"), AnsiSqlTypeMapper.Instance, context));
 
         // A malformed policy must fail closed and must not leak the table name.
         ex.Message.Should().NotContain("Orders");

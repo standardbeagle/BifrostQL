@@ -105,8 +105,8 @@ public sealed class RowCapabilityProvider : IComputedColumnProvider
 
         try
         {
-            var expected = ContextValueCoercer.Coerce(context.Table, column, contextValue);
-            var actual = ContextValueCoercer.ConvertToClrType(rowValue, columnDto.DataType);
+            var expected = ContextValueCoercer.Coerce(context.Model.TypeMapper, context.Table, column, contextValue);
+            var actual = ContextValueCoercer.ConvertToClrType(context.Model.TypeMapper, rowValue, columnDto);
             return actual is string actualText && expected is string expectedText
                 ? string.Equals(actualText, expectedText, StringComparison.OrdinalIgnoreCase)
                 : Equals(actual, expected);

@@ -1,4 +1,3 @@
-using System.Globalization;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 
@@ -21,10 +20,8 @@ namespace BifrostQL.Server.Grpc
     /// <para><b>Scope is structural, not remembered.</b> The pipeline narrows the write from the
     /// identity, so an out-of-tenant PK matches ZERO rows — "caller A cannot write caller B's row"
     /// holds because the pipeline ANDs the tenant/policy predicate, not because the adapter filtered.
-    /// A scoped-away Update/Delete is detected via <see cref="MutationIntentResult.AffectedRows"/> for
-    /// update (its <c>Value</c> is the KEY on a single-key table, inert as a count) and via
-    /// <see cref="MutationIntentResult.Value"/> for delete (which the pipeline sets to the affected
-    /// count itself, matching the GraphQL delete field) — invariant 8b. Either way a scoped-away write
+    /// A scoped-away Update/Delete is detected via <see cref="MutationIntentResult.AffectedRows"/>,
+    /// never <c>Value</c> (the KEY on a single-key update, inert as a count) — invariant 8b. A scoped-away write
     /// reports the SAME <c>affected_rows: 0</c> as a genuinely-absent row, so it is no existence
     /// oracle.</para>
     /// </summary>
@@ -106,10 +103,9 @@ namespace BifrostQL.Server.Grpc
             };
 
             var result = await executor.ExecuteAsync(intent, cancellationToken);
-            // For a delete the pipeline puts the affected count in Value (matching the GraphQL delete
-            // field) and leaves AffectedRows null — the reverse of update, so this reads Value deliberately.
-            return new GrpcMutationOutcome(
-                result.Value is null ? 0 : Convert.ToInt64(result.Value, CultureInfo.InvariantCulture), null);
+            // AffectedRows, never Value (invariant 8b): the intent executor reports a delete's count
+            // there just as it does an update's. A null count is treated as "did not write".
+            return new GrpcMutationOutcome(result.AffectedRows ?? 0, null);
         }
 
         /// <summary>

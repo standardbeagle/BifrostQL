@@ -26,7 +26,7 @@ describe('sqlserver adapter TLS defaults', () => {
 
   it('omits TrustServerCertificate from the connection string by default', () => {
     const data = sqlserver.createDefaultFormData() as SqlServerFormData;
-    expect(sqlserver.buildConnectionString({ ...data, database: 'db' })).not.toContain(
+    expect(sqlserver.buildConnectionString!({ ...data, database: 'db' })).not.toContain(
       'TrustServerCertificate',
     );
   });
@@ -34,7 +34,7 @@ describe('sqlserver adapter TLS defaults', () => {
   it('still honours an explicit opt-in', () => {
     const data = sqlserver.createDefaultFormData() as SqlServerFormData;
     expect(
-      sqlserver.buildConnectionString({ ...data, database: 'db', trustServerCertificate: true }),
+      sqlserver.buildConnectionString!({ ...data, database: 'db', trustServerCertificate: true }),
     ).toContain('TrustServerCertificate=True');
   });
 });
@@ -95,5 +95,18 @@ describe('isLoopbackSqlServer', () => {
     '',
   ])('treats %s as remote', (server) => {
     expect(isLoopbackSqlServer(server)).toBe(false);
+  });
+});
+
+describe('sqlite adapter request', () => {
+  // The client used to build `Data Source=${filePath}` unquoted and drop the
+  // createNew checkbox; the host builds the string, so only the fields travel.
+  it('sends the file path and createNew flag, never a client-built connection string', () => {
+    const sqlite = PROVIDER_ADAPTERS.sqlite;
+    const request = sqlite.buildConnectionRequest({ filePath: '/data/a;Mode=Memory.db', createNew: true }, 'a', NO_SSH, NO_WP);
+
+    expect(request).toMatchObject({ provider: 'sqlite', filePath: '/data/a;Mode=Memory.db', createNew: true });
+    expect(request.connectionString).toBeUndefined();
+    expect(sqlite.buildConnectionString).toBeUndefined();
   });
 });

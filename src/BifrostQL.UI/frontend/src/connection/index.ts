@@ -30,3 +30,13 @@ export {
   fetchVaultServers,
   connectVaultServer,
 } from './vault-servers';
+
+/**
+ * SQLite file client (test / bind)
+ */
+export {
+  testSqliteFile,
+  connectSqliteFile,
+  sqliteTargetOf,
+  type SqliteFileTarget,
+} from './sqlite-files';

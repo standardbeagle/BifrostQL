@@ -149,6 +149,10 @@ export interface ConnectionRequest {
   ssh?: SshConfig;
   tags?: string[];
   requiresCredential?: boolean;
+  /** SQLite form mode: the file to open. The host builds the connection string. */
+  filePath?: string;
+  /** SQLite form mode: create the file when it does not exist (otherwise it must). */
+  createNew?: boolean;
 }
 
 /**

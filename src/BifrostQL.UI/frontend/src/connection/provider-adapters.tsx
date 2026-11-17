@@ -56,7 +56,11 @@ export interface ProviderAdapter {
   /** Default server port for the provider (0 when N/A, e.g. file-based SQLite). */
   defaultPort: number;
   createDefaultFormData: () => ConnectionFormData;
-  buildConnectionString: (data: ConnectionFormData) => string;
+  /**
+   * Server providers only, for database discovery. SQLite has none: the host
+   * builds (and quotes) a SQLite connection string from the file path.
+   */
+  buildConnectionString?: (data: ConnectionFormData) => string;
   buildConnectionName: (data: ConnectionFormData) => string;
   validateFormData: (data: ConnectionFormData, ctx: ValidateContext) => ConnectionFormErrors;
   buildConnectionRequest: (
@@ -381,10 +385,6 @@ const mySqlAdapter: ProviderAdapter = {
 const sqliteAdapter: ProviderAdapter = {
   defaultPort: 0,
   createDefaultFormData: () => ({ filePath: '', createNew: false } satisfies SqliteFormData),
-  buildConnectionString: (data) => {
-    const d = data as SqliteFormData;
-    return `Data Source=${d.filePath}`;
-  },
   buildConnectionName: (data) => {
     const d = data as SqliteFormData;
     return d.filePath.split(/[/\\]/).pop() || d.filePath;
@@ -400,7 +400,8 @@ const sqliteAdapter: ProviderAdapter = {
     return {
       name,
       provider: 'sqlite',
-      connectionString: sqliteAdapter.buildConnectionString(d),
+      filePath: d.filePath,
+      createNew: d.createNew,
       database: d.filePath,
       requiresCredential: false,
     };

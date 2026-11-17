@@ -159,3 +159,72 @@ describe('useConnectionFlows vault session restore', () => {
     expect(loadSession()).toBeNull();
   });
 });
+
+describe('useConnectionFlows SQLite file binding', () => {
+  // The SQLite connect used to call only a connection test, so the header named
+  // the file while the server kept serving the previous database (or nothing).
+  type Call = { url: string; body: unknown };
+  let calls: Call[];
+
+  beforeEach(() => {
+    localStorage.clear();
+    calls = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (url.includes('/api/sqlite/connect')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ success: true, database: 'app.db', connectionString: 'Data Source=/data/app.db;Mode=ReadWrite' }),
+          } as Response);
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, servers: [] }) } as Response);
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  const bindCalls = () => calls.filter((c) => c.url.includes('/api/sqlite/connect'));
+
+  it('binds a form-mode file with its createNew flag and stores the host-built string', async () => {
+    const enterEditor = vi.fn();
+    const { result } = renderHook(() => useConnectionFlows({ restored: null, enterEditor, onRestoreFailed: () => {} }));
+
+    await act(async () => {
+      await result.current.handleConnect({ name: 'app.db', provider: 'sqlite', filePath: '/data/app.db', createNew: true });
+    });
+
+    expect(bindCalls().map((c) => c.body)).toEqual([{ filePath: '/data/app.db', createNew: true }]);
+    expect(calls.some((c) => c.url.includes('/api/connection/test'))).toBe(false);
+    expect(result.current.connectionInfo?.connectionString).toBe('Data Source=/data/app.db;Mode=ReadWrite');
+    expect(enterEditor).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds a recent SQLite connection by its stored connection string', async () => {
+    const { result } = renderHook(() => useConnectionFlows({ restored: null, enterEditor: () => {}, onRestoreFailed: () => {} }));
+
+    await act(async () => {
+      result.current.handleSelectRecentConnection(conn('r', 'recent'));
+    });
+
+    await waitFor(() => expect(bindCalls().map((c) => c.body)).toEqual([{ connectionString: 'Data Source=/tmp/r.db' }]));
+  });
+
+  it('re-binds a restored SQLite session and holds it in connecting until then', async () => {
+    const restoredSqlite = conn('s', 'saved');
+
+    const { result } = renderHook(() =>
+      useConnectionFlows({ restored: restoredSqlite, enterEditor: () => {}, onRestoreFailed: () => {} }));
+
+    expect(result.current.connectionState).toBe('connecting');
+    await waitFor(() => expect(result.current.connectionState).toBe('connected'));
+    expect(bindCalls().map((c) => c.body)).toEqual([{ connectionString: 'Data Source=/tmp/s.db' }]);
+  });
+});

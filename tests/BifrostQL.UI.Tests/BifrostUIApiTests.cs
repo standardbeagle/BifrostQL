@@ -59,38 +59,6 @@ public class BifrostUIApiTests
         _output.WriteLine($"Connected status: {connected}");
     }
 
-    [Fact]
-    public async Task TestConnectionEndpoint_RejectsEmptyConnectionString()
-    {
-        var payload = new { connectionString = "" };
-        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-
-        var response = await Client.PostAsync("/api/connection/test", content);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-
-        var responseText = await response.Content.ReadAsStringAsync();
-        Assert.Contains("required", responseText.ToLower());
-
-        _output.WriteLine("Connection endpoint correctly rejects empty connection string.");
-    }
-
-    [Fact]
-    public async Task TestConnectionEndpoint_InvalidConnection_ReturnsError()
-    {
-        var payload = new { connectionString = "Server=invalid;Database=nonexistent;User Id=test;Password=test;Connect Timeout=1" };
-        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-
-        var response = await Client.PostAsync("/api/connection/test", content);
-
-        // An unreachable server surfaces as a failed connection attempt.
-        Assert.False(response.IsSuccessStatusCode);
-
-        var responseText = await response.Content.ReadAsStringAsync();
-        _output.WriteLine($"Expected validation error: {response.StatusCode}");
-        _output.WriteLine($"Response: {responseText}");
-    }
-
     [Theory]
     [InlineData("northwind")]
     [InlineData("adventureworks-lite")]

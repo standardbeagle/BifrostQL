@@ -213,6 +213,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setAvailableDatabases(null);
     try {
       const partialData = { ...formData, database: 'master' } as ConnectionFormData;
+      if (!adapter.buildConnectionString) return;
       const connString = adapter.buildConnectionString(partialData);
       const isPeerAuth = provider === 'postgres'
         && (formData as PostgresFormData).authMethod === PostgresAuthMethod.Peer;

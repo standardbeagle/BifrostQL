@@ -5,52 +5,15 @@ using BifrostQL.Core.Utils;
 namespace BifrostQL.UI.Web
 {
     /// <summary>
-    /// Connection-oriented endpoints: test a connection string, list databases on
-    /// a server, the disabled legacy create tombstone, and the SQLite quickstart
-    /// creation stream (which self-binds the freshly created database).
+    /// Connection-oriented endpoints: list databases on a server, the disabled
+    /// legacy create tombstone, and the SQLite quickstart creation stream (which
+    /// self-binds the freshly created database). SQLite file test/connect live in
+    /// <see cref="SqliteEndpoints"/>.
     /// </summary>
     public static class ConnectionEndpoints
     {
         public static void MapConnectionEndpoints(this WebApplication app, ConnectionState state)
         {
-            // API endpoint to test a connection string
-            app.MapPost("/api/connection/test", async (ConnectionTestRequest request, CancellationToken ct) =>
-            {
-                if (string.IsNullOrWhiteSpace(request.ConnectionString))
-                {
-                    return Results.BadRequest(new { error = "Connection string is required" });
-                }
-
-                try
-                {
-                    var provider = request.Provider != null
-                        ? DbConnFactoryResolver.ParseProviderName(request.Provider)
-                        : DbConnFactoryResolver.DetectProvider(request.ConnectionString);
-                    var factory = DbConnFactoryResolver.Create(request.ConnectionString, provider);
-                    await using var conn = factory.GetConnection();
-                    await conn.OpenAsync(ct);
-
-                    return Results.Ok(new
-                    {
-                        success = true,
-                        message = $"Successfully connected to {conn.Database} via {provider}",
-                        database = conn.Database,
-                        provider = provider.ToString().ToLowerInvariant()
-                    });
-                }
-                catch (Exception ex)
-                {
-                    // Driver text can embed the full connection string (Password=
-                    // and all) — scrub before it crosses the HTTP boundary, same
-                    // contract as the vault connect endpoint.
-                    return Results.BadRequest(new
-                    {
-                        success = false,
-                        error = SecretScrubber.Scrub(ex.Message) ?? ""
-                    });
-                }
-            });
-
             // POST /api/databases - Lists available databases on the server
             app.MapPost("/api/databases", async (ListDatabasesRequest request, CancellationToken ct) =>
             {

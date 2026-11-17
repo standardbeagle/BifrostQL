@@ -34,10 +34,10 @@ connection tests assert on failure handling rather than on a reachable server.
 ## API surface under test
 
 Defined in `src/BifrostQL.UI/Web/` (`ConnectionEndpoints.cs`,
-`MetadataEndpoints.cs`):
+`SqliteEndpoints.cs`, `MetadataEndpoints.cs`):
 
 - `GET /api/health`
-- `POST /api/connection/test` — validate a connection without persisting it
+- `POST /api/sqlite/test`, `POST /api/sqlite/connect` — check / bind a SQLite file (`SqliteEndpoints.cs`)
 - `POST /api/databases` — list databases on a server
 - `POST /api/database/create-quickstart` — create a SQLite quickstart database
 

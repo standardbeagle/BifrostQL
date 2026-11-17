@@ -130,6 +130,7 @@ namespace BifrostQL.UI.Web
 
             app.MapMetadataEndpoints(state);
             app.MapConnectionEndpoints(state);
+            app.MapSqliteEndpoints(state);
             app.MapSshEndpoints(sshTunnel);
             app.MapVaultEndpoints(state, sshTunnel);
 

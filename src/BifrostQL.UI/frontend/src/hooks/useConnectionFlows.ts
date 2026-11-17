@@ -10,6 +10,9 @@ import {
   MAX_RECENT_CONNECTIONS,
   fetchVaultServers,
   connectVaultServer,
+  testSqliteFile,
+  connectSqliteFile,
+  sqliteTargetOf,
   type ConnectionRequest,
 } from '../connection';
 import type { VaultServer } from '../connection/types';
@@ -87,12 +90,31 @@ export interface UseConnectionFlowsResult {
  * connections, and vault-server discovery. On success each flow publishes a
  * ConnectionInfo and transitions to the editor via `enterEditor`.
  */
+/** How a restored session re-binds the server, or null when it cannot. */
+function restoreBinding(restored: ConnectionInfo | null): { label: string; rebind: () => Promise<unknown> } | null {
+  const vaultName = restored?.vaultServerName;
+  if (vaultName) {
+    return {
+      label: vaultName,
+      rebind: async () => {
+        const result = await connectVaultServer(vaultName);
+        if (!result.success) throw new Error(result.error || 'the server refused the saved connection');
+      },
+    };
+  }
+  if (restored?.provider === 'sqlite' && restored.connectionString) {
+    const connectionString = restored.connectionString;
+    return { label: restored.name, rebind: () => connectSqliteFile({ connectionString }) };
+  }
+  return null;
+}
+
 export function useConnectionFlows({ restored, enterEditor, onRestoreFailed }: UseConnectionFlowsParams): UseConnectionFlowsResult {
-  // A restored vault session is 'connecting' until the server has re-activated
-  // it: the shell holds the editor until then, so nothing introspects or queries
-  // whatever the server happens to be bound to (or nothing at all).
+  // A restored vault or SQLite session is 'connecting' until the server has
+  // re-bound it: the shell holds the editor until then, so nothing introspects or
+  // queries whatever the server happens to be bound to (or nothing at all).
   const [connectionState, setConnectionState] = useState<ConnectionState>(
-    restored?.vaultServerName ? 'connecting' : restored ? 'connected' : 'idle',
+    restoreBinding(restored) ? 'connecting' : restored ? 'connected' : 'idle',
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(restored);
@@ -112,22 +134,18 @@ export function useConnectionFlows({ restored, enterEditor, onRestoreFailed }: U
 
   // Restore backend connection if we have a saved session (survives page reloads).
   //
-  // Only vault-backed sessions can be restored automatically: the raw-
-  // connection-string restore path used to POST the (potentially password-
-  // bearing) string to /api/connection/set, but that endpoint was deleted
-  // with task XGSUbdBiIzla so no password ever crosses HTTP. Non-vault
-  // sessions still render their editor view from the sessionStorage session, but the
-  // server-side schema cache will rebind on the next explicit connect via
-  // the credential prompt flow. Any initial command-line connection string
-  // (bifrostui "<connection>") is bound at startup by Program.cs, so the
-  // common dev-launch case still works without this effect.
+  // Vault sessions re-activate by name and SQLite sessions re-bind their file
+  // (credential-free). Other raw-string sessions are not restored: the old path
+  // POSTed the (potentially password-bearing) string to /api/connection/set,
+  // deleted with task XGSUbdBiIzla so no password ever crosses HTTP. Any initial
+  // command-line connection string (bifrostui "<connection>") is bound at
+  // startup by Program.cs.
   useEffect(() => {
-    const vaultName = restored?.vaultServerName;
-    if (!vaultName) return;
+    const binding = restoreBinding(restored);
+    if (!binding) return;
     let live = true;
-    connectVaultServer(vaultName)
-      .then((result) => {
-        if (!result.success) throw new Error(result.error || 'the server refused the saved connection');
+    binding.rebind()
+      .then(() => {
         if (live) setConnectionState('connected');
       })
       .catch((cause: unknown) => {
@@ -135,7 +153,7 @@ export function useConnectionFlows({ restored, enterEditor, onRestoreFailed }: U
         setConnectionInfo(null);
         saveSession(null);
         setConnectionState('error');
-        setErrorMessage(`Could not reconnect to "${vaultName}": ${cause instanceof Error ? cause.message : String(cause)}`);
+        setErrorMessage(`Could not reconnect to "${binding.label}": ${cause instanceof Error ? cause.message : String(cause)}`);
         onRestoreFailed();
       });
     return () => { live = false; };
@@ -172,17 +190,10 @@ export function useConnectionFlows({ restored, enterEditor, onRestoreFailed }: U
       setConnectionState('testing');
       setErrorMessage(null);
 
-      if (request.provider === 'sqlite' && request.connectionString) {
-        const response = await fetch('/api/connection/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionString: request.connectionString }),
-        });
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || 'Connection test failed');
-        }
-        return result.success;
+      const sqliteTarget = request.provider === 'sqlite' ? sqliteTargetOf(request) : null;
+      if (sqliteTarget) {
+        await testSqliteFile(sqliteTarget);
+        return true;
       }
 
       setErrorMessage('Use Connect to save credentials and validate this server.');
@@ -202,21 +213,16 @@ export function useConnectionFlows({ restored, enterEditor, onRestoreFailed }: U
       setConnectionState('connecting');
       setErrorMessage(null);
 
-      if (resolvedProvider === 'sqlite' && request.connectionString) {
-        const response = await fetch('/api/connection/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionString: request.connectionString }),
-        });
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || 'Connection failed');
-        }
+      const sqliteTarget = resolvedProvider === 'sqlite' ? sqliteTargetOf(request) : null;
+      if (sqliteTarget) {
+        // Binds the file on the server: a test alone left the server serving
+        // the previous database while the header named this one.
+        const bound = await connectSqliteFile(sqliteTarget);
 
         const info: ConnectionInfo = {
           id: Date.now().toString(),
           name: request.name,
-          connectionString: request.connectionString,
+          connectionString: bound.connectionString,
           connectedAt: new Date().toISOString(),
           server: 'localhost',
           database: request.database ?? request.name,

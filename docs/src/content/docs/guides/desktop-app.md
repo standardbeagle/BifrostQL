@@ -116,6 +116,7 @@ The desktop app bundles a full BifrostQL server inside a native window:
 - **Encrypted credential vault** -- Saved servers are listed through `/api/vault/servers`; connecting uses `/api/vault/connect` so credentials stay server-side.
 - **SSH and WordPress helpers** -- Optional SSH tunnels plus WordPress database credential discovery through `wp-cli`.
 - **GraphQL playground/editor** -- Built-in editor at `/graphiql` and the React table editor loaded from the app shell.
+- **SQLite files** -- `/api/sqlite/connect` opens a file and binds it (loopback callers only). The host builds the connection string from the path and opens it read-write; a missing file is an error unless **Create new database at this path** is ticked. A reloaded SQLite session re-binds its file the same way.
 - **SQLite quickstarts** -- Create local demo databases through `/api/database/create-quickstart` and stream progress with Server-Sent Events.
 - **Transport toggle** -- Header toggle switches the editor between HTTP and binary WebSocket transports. All editor GraphQL queries — schema, data grid, mutations, stats — route through the selected transport.
 - **Health check** -- `/api/health` reports server status and connection state.
@@ -172,7 +173,7 @@ bifrostui
 │   ├── /bifrost-ws       — Binary WebSocket endpoint
 │   ├── /graphiql         — GraphQL playground
 │   ├── /api/providers    — Available database providers
-│   ├── /api/connection/* — Connection testing
+│   ├── /api/sqlite/*     — SQLite file test / bind
 │   ├── /api/vault/*      — Server-side credential vault
 │   ├── /api/ssh/*        — SSH tunnel and WordPress discovery helpers
 │   ├── /api/database/*   — SQLite quickstart database creation

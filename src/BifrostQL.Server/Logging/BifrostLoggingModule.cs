@@ -10,12 +10,13 @@ using System.Collections.Generic;
 
 namespace BifrostQL.Server.Logging
 {
+    /// <summary>
+    /// Settings read by Bifrost's own GraphQL error logging and query observer. Sinks, files
+    /// and minimum levels belong to the host's logging configuration (<c>Logging:LogLevel</c>,
+    /// a provider of its choice), not to this type.
+    /// </summary>
     public class BifrostLoggingConfiguration
     {
-        public string? LogFilePath { get; set; }
-        public LogLevel MinimumLevel { get; set; } = LogLevel.Information;
-        public bool EnableConsole { get; set; } = true;
-        public bool EnableFile { get; set; } = true;
         public bool EnableQueryLogging { get; set; } = true;
         public int SlowQueryThresholdMs { get; set; } = 1000;
         public bool LogSql { get; set; } = false;
@@ -32,7 +33,7 @@ namespace BifrostQL.Server.Logging
             _config = config ?? new BifrostLoggingConfiguration();
         }
 
-        public void HandleGraphQLError(ExecutionError error, IDictionary<string, object?>? userContext = null)
+        public void HandleGraphQLError(ExecutionError error)
         {
             var logLevel = DetermineLogLevel(error);
             var data = new Dictionary<string, object?>
@@ -43,13 +44,11 @@ namespace BifrostQL.Server.Logging
                 ["data"] = error.Data
             };
 
-            if (userContext != null)
-            {
-                data["userContext"] = userContext;
-            }
-
+            // The inner exception carries the stack and the driver/transformer detail; without
+            // it a resolver fault logged only its wrapper message.
             _logger.Log(
                 logLevel,
+                error.InnerException,
                 "GraphQL Error: {Message} Details: {@Details}",
                 error.Message,
                 data

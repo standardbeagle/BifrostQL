@@ -44,9 +44,15 @@ public sealed class QueryLoggingObserver : IQueryObserver
                 var durationMs = context.Duration?.TotalMilliseconds ?? 0;
                 if (durationMs >= _config.SlowQueryThresholdMs)
                 {
-                    if (_logger.IsEnabled(LogLevel.Warning))
+                    // SQL text follows LogSql at every level, slow-query warnings included.
+                    if (!_logger.IsEnabled(LogLevel.Warning))
+                        break;
+                    if (_config.LogSql)
                         _logger.LogWarning("Slow query: Table={Table} Duration={Duration}ms RowCount={RowCount} Sql={Sql} CorrelationId={CorrelationId}",
                             context.Table.DbName, durationMs, context.RowCount, context.Sql, correlationId);
+                    else
+                        _logger.LogWarning("Slow query: Table={Table} Duration={Duration}ms RowCount={RowCount} CorrelationId={CorrelationId}",
+                            context.Table.DbName, durationMs, context.RowCount, correlationId);
                 }
                 else if (_logger.IsEnabled(LogLevel.Information))
                 {

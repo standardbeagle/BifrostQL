@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NSubstitute;
 using Xunit;
 using BifrostQL.Server.Logging;
 
@@ -21,12 +22,7 @@ namespace BifrostQL.Server.Test.Logging
             loggerFactory.AddProvider(new TestLoggerProvider(logMessages));
 
             var logger = loggerFactory.CreateLogger<BifrostLoggingModule>();
-            var config = new BifrostLoggingConfiguration
-            {
-                EnableConsole = true,
-                EnableFile = false,
-                MinimumLevel = LogLevel.Debug
-            };
+            var config = new BifrostLoggingConfiguration();
             var module = new BifrostLoggingModule(logger, config);
 
             var executionError = new ExecutionError("Test error message")
@@ -56,12 +52,7 @@ namespace BifrostQL.Server.Test.Logging
             loggerFactory.AddProvider(new TestLoggerProvider(logMessages));
 
             var logger = loggerFactory.CreateLogger<BifrostLoggingModule>();
-            var config = new BifrostLoggingConfiguration
-            {
-                EnableConsole = true,
-                EnableFile = false,
-                MinimumLevel = LogLevel.Debug
-            };
+            var config = new BifrostLoggingConfiguration();
             var module = new BifrostLoggingModule(logger, config);
 
             var validationError = new ValidationError("Test validation error");
@@ -143,18 +134,73 @@ namespace BifrostQL.Server.Test.Logging
             Assert.Contains(logMessages, m => m.Level == LogLevel.Error);
         }
 
+        [Fact]
+        public void LoggingModule_LogsTheInnerException_SoTheFaultStackIsKept()
+        {
+            var (module, _, exceptions) = CreateModuleWithExceptions();
+            var cause = new InvalidOperationException("driver detail");
+
+            module.HandleGraphQLError(new ExecutionError("An unhandled error has occurred.", cause));
+
+            Assert.Single(exceptions);
+            Assert.Same(cause, exceptions[0]);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task SlowQueryWarning_OmitsSql_UnlessLogSqlIsOn()
+        {
+            var messages = new List<(LogLevel Level, string Message)>();
+            var factory = new LoggerFactory();
+            factory.AddProvider(new TestLoggerProvider(messages));
+            var context = SlowQueryContext("SELECT secret_column FROM t");
+
+            var quiet = new QueryLoggingObserver(factory.CreateLogger<QueryLoggingObserver>(),
+                new BifrostLoggingConfiguration { LogSql = false, SlowQueryThresholdMs = 0 });
+            await quiet.OnQueryPhaseAsync(BifrostQL.Core.Modules.QueryPhase.AfterExecute, context);
+
+            var verbose = new QueryLoggingObserver(factory.CreateLogger<QueryLoggingObserver>(),
+                new BifrostLoggingConfiguration { LogSql = true, SlowQueryThresholdMs = 0 });
+            await verbose.OnQueryPhaseAsync(BifrostQL.Core.Modules.QueryPhase.AfterExecute, context);
+
+            Assert.Equal(2, messages.Count);
+            Assert.All(messages, m => Assert.Equal(LogLevel.Warning, m.Level));
+            Assert.DoesNotContain("secret_column", messages[0].Message);
+            // Control: the same context does carry the SQL when LogSql is on.
+            Assert.Contains("secret_column", messages[1].Message);
+        }
+
+        private static BifrostQL.Core.Modules.QueryObserverContext SlowQueryContext(string sql)
+        {
+            var table = NSubstitute.Substitute.For<BifrostQL.Core.Model.IDbTable>();
+            table.DbName.Returns("t");
+            return new BifrostQL.Core.Modules.QueryObserverContext
+            {
+                Table = table,
+                Sql = sql,
+                Duration = TimeSpan.FromSeconds(5),
+                UserContext = new Dictionary<string, object?>(),
+                Model = NSubstitute.Substitute.For<BifrostQL.Core.Model.IDbModel>(),
+                QueryType = default,
+                Path = "t",
+            };
+        }
+
+        private static (BifrostLoggingModule Module, List<(LogLevel Level, string Message)> Messages, List<Exception> Exceptions) CreateModuleWithExceptions()
+        {
+            var messages = new List<(LogLevel Level, string Message)>();
+            var exceptions = new List<Exception>();
+            var factory = new LoggerFactory();
+            factory.AddProvider(new TestLoggerProvider(messages, exceptions));
+            return (new BifrostLoggingModule(factory.CreateLogger<BifrostLoggingModule>(), new BifrostLoggingConfiguration()), messages, exceptions);
+        }
+
         private static (BifrostLoggingModule Module, List<(LogLevel Level, string Message)> Messages) CreateModule()
         {
             var logMessages = new List<(LogLevel Level, string Message)>();
             var loggerFactory = new LoggerFactory();
             loggerFactory.AddProvider(new TestLoggerProvider(logMessages));
             var logger = loggerFactory.CreateLogger<BifrostLoggingModule>();
-            var module = new BifrostLoggingModule(logger, new BifrostLoggingConfiguration
-            {
-                EnableConsole = true,
-                EnableFile = false,
-                MinimumLevel = LogLevel.Debug
-            });
+            var module = new BifrostLoggingModule(logger, new BifrostLoggingConfiguration());
             return (module, logMessages);
         }
     }
@@ -162,15 +208,17 @@ namespace BifrostQL.Server.Test.Logging
     public class TestLoggerProvider : ILoggerProvider
     {
         private readonly List<(LogLevel Level, string Message)> _logMessages;
+        private readonly List<Exception>? _exceptions;
 
-        public TestLoggerProvider(List<(LogLevel Level, string Message)> logMessages)
+        public TestLoggerProvider(List<(LogLevel Level, string Message)> logMessages, List<Exception>? exceptions = null)
         {
             _logMessages = logMessages;
+            _exceptions = exceptions;
         }
 
         public ILogger CreateLogger(string categoryName)
         {
-            return new TestLogger(_logMessages);
+            return new TestLogger(_logMessages, _exceptions);
         }
 
         public void Dispose() { }
@@ -179,10 +227,12 @@ namespace BifrostQL.Server.Test.Logging
     internal class TestLogger : ILogger
     {
         private readonly List<(LogLevel Level, string Message)> _logMessages;
+        private readonly List<Exception>? _exceptions;
 
-        public TestLogger(List<(LogLevel Level, string Message)> logMessages)
+        public TestLogger(List<(LogLevel Level, string Message)> logMessages, List<Exception>? exceptions = null)
         {
             _logMessages = logMessages;
+            _exceptions = exceptions;
         }
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -200,6 +250,8 @@ namespace BifrostQL.Server.Test.Logging
 
             var message = formatter(state, exception);
             _logMessages.Add((logLevel, message));
+            if (exception != null)
+                _exceptions?.Add(exception);
         }
     }
 }

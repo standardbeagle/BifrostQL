@@ -10,10 +10,9 @@ Error handling and logging can be configured in your `appsettings.json` file und
 {
   "BifrostQL": {
     "Logging": {
-      "EnableConsole": true,
-      "EnableFile": true,
-      "MinimumLevel": "Information",
-      "FilePath": "logs/bifrostql.log"
+      "EnableQueryLogging": true,
+      "SlowQueryThresholdMs": 1000,
+      "LogSql": false
     }
   }
 }
@@ -21,10 +20,11 @@ Error handling and logging can be configured in your `appsettings.json` file und
 
 ### Configuration Options
 
-- `EnableConsole`: (boolean, default: true) - Enables logging to console
-- `EnableFile`: (boolean, default: true) - Enables logging to file
-- `MinimumLevel`: (string, default: "Information") - Minimum log level to capture. Valid values are "Trace", "Debug", "Information", "Warning", "Error", "Critical"
-- `FilePath`: (string, optional) - Custom log file path. If not specified, logs will be written to the default location: "logs/bifrostql-{date}.log"
+- `EnableQueryLogging`: (boolean, default: true) - Logs each executed query
+- `SlowQueryThresholdMs`: (int, default: 1000) - Queries slower than this log a warning
+- `LogSql`: (boolean, default: false) - Includes the SQL text in query logs, the slow-query warning included
+
+Sinks (console, file) and minimum levels come from the host's standard `Logging` configuration and logging providers, not from this section.
 
 ## Error Types
 
@@ -87,10 +87,9 @@ For custom error handling needs, you can implement your own error handling logic
 services.AddGraphQL(b => b
     .AddBifrostErrorLogging(options => 
     {
-        options.EnableConsole = true;
-        options.EnableFile = true;
-        options.MinimumLevel = LogLevel.Debug;
-        options.LogFilePath = "custom/path/to/logs";
+        options.EnableQueryLogging = true;
+        options.SlowQueryThresholdMs = 500;
+        options.LogSql = true;
     }));
 ```
 

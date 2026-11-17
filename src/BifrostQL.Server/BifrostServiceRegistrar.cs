@@ -577,10 +577,6 @@ namespace BifrostQL.Server
                     .AddComplexityAnalyzer(c => GraphQlComplexityLimits.Apply(c, maxDepth, maxComplexity))
                     .AddBifrostErrorLogging(options =>
                     {
-                        options.EnableConsole = loggingConfig?.GetValue("EnableConsole", true) ?? true;
-                        options.EnableFile = loggingConfig?.GetValue("EnableFile", true) ?? true;
-                        options.MinimumLevel = loggingConfig?.GetValue("MinimumLevel", LogLevel.Information) ?? LogLevel.Information;
-                        options.LogFilePath = loggingConfig?.GetValue<string>("FilePath");
                         options.EnableQueryLogging = loggingConfig?.GetValue("EnableQueryLogging", true) ?? true;
                         options.SlowQueryThresholdMs = loggingConfig?.GetValue("SlowQueryThresholdMs", 1000) ?? 1000;
                         options.LogSql = loggingConfig?.GetValue("LogSql", false) ?? false;

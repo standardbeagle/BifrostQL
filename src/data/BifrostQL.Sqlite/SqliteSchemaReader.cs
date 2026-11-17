@@ -32,39 +32,18 @@ public sealed class SqliteSchemaReader : ISchemaReader
             tableNames.Add(((string)tablesReader["name"], (string)tablesReader["type"]));
         }
 
-        // For each table, get column information and constraints
+        // Every per-table read binds the name as a value through the pragma
+        // table-valued functions; a name from sqlite_master is data, never SQL text.
         foreach (var (tableName, tableType) in tableNames)
         {
-            // First, collect all constraints for this table
-            await CollectConstraintsAsync(connection, tableName, columnConstraints, foreignKeys);
-            await CollectIndexesAsync(connection, tableName, indexes);
-
-            // Then read columns (which will use the constraints)
-            var columnsCmd = connection.CreateCommand();
-            columnsCmd.CommandText = $"PRAGMA table_xinfo({tableName})";
-
-            await using var colReader = await columnsCmd.ExecuteReaderAsync();
-            var rawCols = new List<(string name, string type, bool notNull, bool isPk, bool isComputed, bool hasDefault)>();
-
-            while (await colReader.ReadAsync())
-            {
-                var hidden = (long)colReader["hidden"];
-                // hidden: 0=normal, 1=hidden rowid, 2=virtual generated, 3=stored generated
-                if (hidden == 1)
-                    continue;
-
-                rawCols.Add((
-                    (string)colReader["name"],
-                    (string)colReader["type"],
-                    ((long)colReader["notnull"]) == 1,
-                    ((long)colReader["pk"]) > 0,
-                    hidden is 2 or 3,
-                    colReader["dflt_value"] is not DBNull
-                ));
-            }
+            var rawCols = await ReadColumnsAsync(connection, tableName);
+            var tableIndexes = await ReadIndexesAsync(connection, tableName);
+            CollectConstraints(tableName, rawCols, tableIndexes, columnConstraints);
+            await CollectForeignKeysAsync(connection, tableName, columnConstraints, foreignKeys);
+            CollectSortableIndexes(tableName, tableIndexes, indexes);
 
             // AUTOINCREMENT requires single INTEGER PRIMARY KEY - composite PKs cannot be identity
-            var pkCount = rawCols.Count(c => c.isPk);
+            var pkCount = rawCols.Count(c => c.IsPk);
             var tableColumns = new List<ColumnDto>();
             var ordinal = 1;
 
@@ -123,135 +102,170 @@ public sealed class SqliteSchemaReader : ISchemaReader
         return new SchemaData(columnConstraints, allColumns.ToArray(), tables, foreignKeys, indexes);
     }
 
-    /// <summary>
-    /// Collects every index on <paramref name="tableName"/> (unique and not).
-    /// Partial indexes are skipped — they cover a subset of rows, so they cannot
-    /// serve an arbitrary ORDER BY. Expression-key indexes are skipped for the
-    /// same reason: index_info reports a NULL column name for expression keys,
-    /// and there is no column a client could sort by. SQLite rowid tables are
-    /// physically ordered by rowid, so no index is marked clustered.
-    /// </summary>
-    private static async Task CollectIndexesAsync(DbConnection connection, string tableName, List<DbIndex> indexes)
-    {
-        var listCmd = connection.CreateCommand();
-        listCmd.CommandText = $"PRAGMA index_list({tableName})";
+    private sealed record RawColumn(string Name, string Type, bool NotNull, bool IsPk, bool IsComputed, bool HasDefault);
 
-        var indexRows = new List<(string Name, bool IsUnique, string Origin)>();
+    /// <summary>One index row from <c>pragma_index_list</c>, with its key columns (null for an expression key).</summary>
+    private sealed record RawIndex(string Name, bool IsUnique, bool IsPartial, string Origin, IReadOnlyList<string?> Columns);
+
+    private static DbCommand Command(DbConnection connection, string sql, string name)
+    {
+        var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        var p = cmd.CreateParameter();
+        p.ParameterName = "@name";
+        p.Value = name;
+        cmd.Parameters.Add(p);
+        return cmd;
+    }
+
+    private static async Task<List<RawColumn>> ReadColumnsAsync(DbConnection connection, string tableName)
+    {
+        await using var cmd = Command(connection,
+            "SELECT name, type, \"notnull\", pk, hidden, dflt_value FROM pragma_table_xinfo(@name)", tableName);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        var columns = new List<RawColumn>();
+        while (await reader.ReadAsync())
+        {
+            // hidden: 0=normal, 1=hidden rowid, 2=virtual generated, 3=stored generated
+            var hidden = (long)reader["hidden"];
+            if (hidden == 1)
+                continue;
+            columns.Add(new RawColumn(
+                (string)reader["name"],
+                (string)reader["type"],
+                (long)reader["notnull"] == 1,
+                (long)reader["pk"] > 0,
+                hidden is 2 or 3,
+                reader["dflt_value"] is not DBNull));
+        }
+        return columns;
+    }
+
+    private static async Task<List<RawIndex>> ReadIndexesAsync(DbConnection connection, string tableName)
+    {
+        var rows = new List<(string Name, bool IsUnique, bool IsPartial, string Origin)>();
+        await using (var listCmd = Command(connection,
+                         "SELECT name, \"unique\", origin, partial FROM pragma_index_list(@name)", tableName))
         await using (var listReader = await listCmd.ExecuteReaderAsync())
         {
             while (await listReader.ReadAsync())
             {
-                if ((long)listReader["partial"] == 1)
-                    continue;
-                indexRows.Add((
+                rows.Add((
                     (string)listReader["name"],
                     (long)listReader["unique"] == 1,
+                    (long)listReader["partial"] == 1,
                     (string)listReader["origin"]));
             }
         }
 
-        foreach (var (indexName, isUnique, origin) in indexRows)
+        var indexes = new List<RawIndex>(rows.Count);
+        foreach (var row in rows)
         {
-            var infoCmd = connection.CreateCommand();
-            infoCmd.CommandText = $"PRAGMA index_info({indexName})";
+            var columns = new List<string?>();
+            await using var infoCmd = Command(connection,
+                "SELECT name FROM pragma_index_info(@name) ORDER BY seqno", row.Name);
+            await using var infoReader = await infoCmd.ExecuteReaderAsync();
+            while (await infoReader.ReadAsync())
+                columns.Add(infoReader["name"] as string);
+            indexes.Add(new RawIndex(row.Name, row.IsUnique, row.IsPartial, row.Origin, columns));
+        }
+        return indexes;
+    }
 
-            var columnNames = new List<string>();
-            var hasExpressionKey = false;
-            await using (var infoReader = await infoCmd.ExecuteReaderAsync())
-            {
-                while (await infoReader.ReadAsync())
-                {
-                    if (infoReader["name"] is DBNull)
-                    {
-                        hasExpressionKey = true;
-                        break;
-                    }
-                    columnNames.Add((string)infoReader["name"]);
-                }
-            }
-
-            if (hasExpressionKey || columnNames.Count == 0)
+    /// <summary>
+    /// Collects every index on <paramref name="tableName"/> (unique and not) a client
+    /// could sort by. Partial indexes are skipped — they cover a subset of rows, so
+    /// they cannot serve an arbitrary ORDER BY. Expression-key indexes are skipped for
+    /// the same reason: index_info reports a NULL column name for expression keys, and
+    /// there is no column a client could sort by. SQLite rowid tables are physically
+    /// ordered by rowid, so no index is marked clustered.
+    /// </summary>
+    private static void CollectSortableIndexes(string tableName, IEnumerable<RawIndex> tableIndexes, List<DbIndex> indexes)
+    {
+        foreach (var index in tableIndexes)
+        {
+            if (index.IsPartial || index.Columns.Count == 0 || index.Columns.Any(c => c is null))
                 continue;
-
             indexes.Add(new DbIndex
             {
-                Name = indexName,
+                Name = index.Name,
                 TableSchema = "main",
                 TableName = tableName,
-                IsUnique = isUnique,
+                IsUnique = index.IsUnique,
                 IsClustered = false,
-                IsPrimaryKey = origin == "pk",
-                ColumnNames = columnNames,
+                IsPrimaryKey = index.Origin == "pk",
+                ColumnNames = index.Columns.Select(c => c!).ToList(),
             });
         }
     }
 
-    private static async Task CollectConstraintsAsync(DbConnection connection, string tableName, Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints, List<DbForeignKey> foreignKeys)
+    private static List<ColumnConstraintDto> ConstraintsFor(Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints, ColumnRef colRef)
     {
-        // Get primary key information from table_xinfo (pk column)
-        var pkCmd = connection.CreateCommand();
-        pkCmd.CommandText = $"PRAGMA table_xinfo({tableName})";
-
-        await using var pkReader = await pkCmd.ExecuteReaderAsync();
-        while (await pkReader.ReadAsync())
+        if (!columnConstraints.TryGetValue(colRef, out var list))
         {
-            var hidden = (long)pkReader["hidden"];
-            if (hidden == 1)
-                continue;
+            list = new List<ColumnConstraintDto>();
+            columnConstraints[colRef] = list;
+        }
+        return list;
+    }
 
-            var isPk = ((long)pkReader["pk"]) > 0;
-            if (!isPk)
-                continue;
+    private static ColumnConstraintDto Constraint(string tableName, string columnName, string name, string type) => new()
+    {
+        ConstraintCatalog = "main",
+        ConstraintSchema = "main",
+        ConstraintName = name,
+        TableCatalog = "main",
+        TableSchema = "main",
+        TableName = tableName,
+        ColumnName = columnName,
+        ConstraintType = type,
+    };
 
-            var columnName = (string)pkReader["name"];
-            var colRef = new ColumnRef("main", "main", tableName, columnName);
-
-            if (!columnConstraints.ContainsKey(colRef))
-                columnConstraints[colRef] = new List<ColumnConstraintDto>();
-
-            columnConstraints[colRef].Add(new ColumnConstraintDto
-            {
-                ConstraintCatalog = "main",
-                ConstraintSchema = "main",
-                ConstraintName = $"PK_{tableName}",
-                TableCatalog = "main",
-                TableSchema = "main",
-                TableName = tableName,
-                ColumnName = columnName,
-                ConstraintType = "PRIMARY KEY",
-            });
+    private static void CollectConstraints(string tableName, IEnumerable<RawColumn> columns, IEnumerable<RawIndex> tableIndexes,
+        Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints)
+    {
+        foreach (var column in columns.Where(c => c.IsPk))
+        {
+            var colRef = new ColumnRef("main", "main", tableName, column.Name);
+            ConstraintsFor(columnConstraints, colRef).Add(Constraint(tableName, column.Name, $"PK_{tableName}", "PRIMARY KEY"));
         }
 
-        // Get foreign key information. Each FK can span multiple columns;
-        // foreign_key_list returns one row per child column with the same
-        // `id`, so group by id to produce a single DbForeignKey per FK.
-        var fkCmd = connection.CreateCommand();
-        fkCmd.CommandText = $"PRAGMA foreign_key_list({tableName})";
+        foreach (var index in tableIndexes.Where(i => i.IsUnique))
+        {
+            foreach (var columnName in index.Columns)
+            {
+                // An expression key has no column to mark.
+                if (columnName is null)
+                    continue;
+                var colRef = new ColumnRef("main", "main", tableName, columnName);
+                var constraints = ConstraintsFor(columnConstraints, colRef);
+                // Skip if already has PRIMARY KEY constraint (SQLite often creates unique index for PK)
+                if (constraints.Any(c => c.ConstraintType == "PRIMARY KEY"))
+                    continue;
+                constraints.Add(Constraint(tableName, columnName, index.Name, "UNIQUE"));
+            }
+        }
+    }
 
+    /// <summary>
+    /// Each FK can span multiple columns; foreign_key_list returns one row per child
+    /// column with the same <c>id</c>, so group by id to produce a single
+    /// <see cref="DbForeignKey"/> per FK.
+    /// </summary>
+    private static async Task CollectForeignKeysAsync(DbConnection connection, string tableName,
+        Dictionary<ColumnRef, List<ColumnConstraintDto>> columnConstraints, List<DbForeignKey> foreignKeys)
+    {
         var fkRows = new List<(long id, string parentTable, string fromCol, string toCol)>();
+        await using (var fkCmd = Command(connection,
+                         "SELECT id, seq, \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(@name) ORDER BY id, seq", tableName))
         await using (var fkReader = await fkCmd.ExecuteReaderAsync())
         {
             while (await fkReader.ReadAsync())
             {
                 var columnName = (string)fkReader["from"];
-                var colRef = new ColumnRef("main", "main", tableName, columnName);
-
-                if (!columnConstraints.ContainsKey(colRef))
-                    columnConstraints[colRef] = new List<ColumnConstraintDto>();
-
                 var fkId = (long)fkReader["id"];
-                columnConstraints[colRef].Add(new ColumnConstraintDto
-                {
-                    ConstraintCatalog = "main",
-                    ConstraintSchema = "main",
-                    ConstraintName = $"FK_{tableName}_{fkId}",
-                    TableCatalog = "main",
-                    TableSchema = "main",
-                    TableName = tableName,
-                    ColumnName = columnName,
-                    ConstraintType = "FOREIGN KEY",
-                });
-
+                var colRef = new ColumnRef("main", "main", tableName, columnName);
+                ConstraintsFor(columnConstraints, colRef).Add(Constraint(tableName, columnName, $"FK_{tableName}_{fkId}", "FOREIGN KEY"));
                 fkRows.Add((fkId, (string)fkReader["table"], columnName, (string)fkReader["to"]));
             }
         }
@@ -269,54 +283,6 @@ public sealed class SqliteSchemaReader : ISchemaReader
                 ParentTableName = ordered[0].parentTable,
                 ParentColumnNames = ordered.Select(r => r.toCol).ToArray(),
             });
-        }
-
-        // Get unique index information
-        var uniqueCmd = connection.CreateCommand();
-        uniqueCmd.CommandText = $"PRAGMA index_list({tableName})";
-
-        await using var uniqueReader = await uniqueCmd.ExecuteReaderAsync();
-        var uniqueIndexes = new List<(string name, bool isUnique)>();
-        while (await uniqueReader.ReadAsync())
-        {
-            var indexName = (string)uniqueReader["name"];
-            var isUnique = (long)uniqueReader["unique"] == 1;
-            uniqueIndexes.Add((indexName, isUnique));
-        }
-
-        foreach (var (indexName, isUnique) in uniqueIndexes)
-        {
-            if (!isUnique)
-                continue;
-
-            var indexInfoCmd = connection.CreateCommand();
-            indexInfoCmd.CommandText = $"PRAGMA index_info({indexName})";
-
-            await using var indexInfoReader = await indexInfoCmd.ExecuteReaderAsync();
-            while (await indexInfoReader.ReadAsync())
-            {
-                var columnName = (string)indexInfoReader["name"];
-                var colRef = new ColumnRef("main", "main", tableName, columnName);
-
-                if (!columnConstraints.ContainsKey(colRef))
-                    columnConstraints[colRef] = new List<ColumnConstraintDto>();
-
-                // Skip if already has PRIMARY KEY constraint (SQLite often creates unique index for PK)
-                if (columnConstraints[colRef].Any(c => c.ConstraintType == "PRIMARY KEY"))
-                    continue;
-
-                columnConstraints[colRef].Add(new ColumnConstraintDto
-                {
-                    ConstraintCatalog = "main",
-                    ConstraintSchema = "main",
-                    ConstraintName = indexName,
-                    TableCatalog = "main",
-                    TableSchema = "main",
-                    TableName = tableName,
-                    ColumnName = columnName,
-                    ConstraintType = "UNIQUE",
-                });
-            }
         }
     }
 }

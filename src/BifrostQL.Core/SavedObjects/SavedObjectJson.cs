@@ -14,6 +14,13 @@ public static class SavedObjectJson
     /// <summary>Default cap on a definition's serialized size (256 KB). Guards against unbounded payloads.</summary>
     public const int DefaultMaxDefinitionBytes = 256 * 1024;
 
+    /// <summary>
+    /// Cap on an id's length, in characters. The id is a key column of the DB store, and a key
+    /// column is bounded on SQL Server and MySQL; the file store holds the same cap so an object
+    /// saved on the desktop can move to a hosted store.
+    /// </summary>
+    public const int MaxIdLength = QueryModel.SqlColumnDefinition.KeyTextMaxLength;
+
     private static readonly JsonSerializerOptions Options = CreateOptions();
 
     private static JsonSerializerOptions CreateOptions()
@@ -69,7 +76,8 @@ public static class SavedObjectJson
 
     /// <summary>
     /// Enforces the saved-object invariants shared by every store and transport:
-    /// non-empty id and name, a definition within the size cap, and a non-negative
+    /// non-empty id (at most <see cref="MaxIdLength"/> characters) and name, a definition within
+    /// the size cap, and a non-negative
     /// version. The <see cref="SavedObjectType"/> enum already rejects unknown type
     /// strings at deserialization. Returns the object unchanged when valid.
     /// </summary>
@@ -79,6 +87,9 @@ public static class SavedObjectJson
 
         if (string.IsNullOrWhiteSpace(obj.Id))
             throw new SavedObjectValidationException("Saved object 'id' is required.");
+        if (obj.Id.Length > MaxIdLength)
+            throw new SavedObjectValidationException(
+                $"Saved object 'id' is {obj.Id.Length} characters, exceeding the {MaxIdLength}-character cap.");
         if (string.IsNullOrWhiteSpace(obj.Name))
             throw new SavedObjectValidationException("Saved object 'name' is required.");
         if (obj.Version < 0)

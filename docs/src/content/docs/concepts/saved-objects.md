@@ -70,8 +70,12 @@ Two storage backends sit behind one `ISavedObjectStore` interface:
 - **Desktop** — a local JSON file store under the profile directory.
 - **Hosted** — a database-table backend
   ([`DbSavedObjectStore`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/SavedObjects/DbSavedObjectStore.cs)),
-  opt-in via configuration and off by default, with parameterized SQL across
-  all dialects.
+  with parameterized SQL across all dialects. No host wires it by default: pass
+  a `DbSavedObjectStore` to `AddBifrostSavedObjects` to use it. Its key columns
+  are bounded text (`VARCHAR(128)`, `NVARCHAR(128)` on SQL Server), so an `id`
+  is at most 128 characters on both backends. A list returns at most
+  `maxListRows` objects (default 100,000). A longer list fails instead of
+  being cut short.
 
 Clients reach the store through the same `useFetcher()` seam the rest of the
 editor uses (`examples/edit-db/src/common/saved-objects.ts`), never a second

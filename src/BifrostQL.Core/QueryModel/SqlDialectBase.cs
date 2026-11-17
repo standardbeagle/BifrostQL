@@ -203,6 +203,7 @@ public abstract class SqlDialectBase : ISqlDialect
     {
         SqlColumnKind.Text => "TEXT",
         SqlColumnKind.Int => "INTEGER",
+        SqlColumnKind.KeyText => $"VARCHAR({SqlColumnDefinition.KeyTextMaxLength})",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 

@@ -34,13 +34,15 @@ public sealed class SavedObjectStoreTests : IDisposable
         return new FileSavedObjectStore(dir);
     }
 
-    private ISavedObjectStore DbStore()
+    private ISavedObjectStore DbStore() => DbStore(DbSavedObjectStore.DefaultMaxListRows, out _);
+
+    private DbSavedObjectStore DbStore(int maxListRows, out SqliteConnection keepAlive)
     {
         var conn = $"Data Source=bifrost_so_{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
-        var keep = new SqliteConnection(conn);
-        keep.Open();
-        _keepAlive.Add(keep);
-        return new DbSavedObjectStore(new SqliteDbConnFactory(conn));
+        keepAlive = new SqliteConnection(conn);
+        keepAlive.Open();
+        _keepAlive.Add(keepAlive);
+        return new DbSavedObjectStore(new SqliteDbConnFactory(conn), maxListRows: maxListRows);
     }
 
     public static IEnumerable<object[]> Backends => new[]
@@ -267,5 +269,69 @@ public sealed class SavedObjectStoreTests : IDisposable
         SavedObjectOwner.FromUserContext(
             new Dictionary<string, object?> { ["user_id"] = "  " }).Should().BeNull();
         SavedObjectOwner.FromUserContext(null).Should().BeNull();
+    }
+
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task Put_IdOverTheKeyCap_IsRejected(string backend)
+    {
+        var store = Make(backend);
+        var atCap = new string('q', SavedObjectJson.MaxIdLength);
+
+        // The cap itself is allowed; one character more is refused on both backends.
+        await store.PutAsync(Alice, Obj(SavedObjectType.Query, atCap, "at cap", 0));
+        var act = () => store.PutAsync(Alice, Obj(SavedObjectType.Query, atCap + "q", "over cap", 0));
+
+        await act.Should().ThrowAsync<SavedObjectValidationException>().WithMessage("*'id'*128*");
+    }
+
+    [Fact]
+    public async Task DbStore_KeyColumns_AreBoundedText()
+    {
+        // SQL Server refuses NVARCHAR(MAX) and MySQL refuses TEXT as a key column, so the
+        // provisioned key columns must use the bounded kind on every dialect.
+        var store = DbStore(DbSavedObjectStore.DefaultMaxListRows, out var conn);
+        await store.PutAsync(Alice, Obj(SavedObjectType.Query, "q1", "one", 0));
+
+        var types = new Dictionary<string, string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"PRAGMA table_info({DbSavedObjectStore.DefaultTableName})";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                types[reader.GetString(1)] = reader.GetString(2);
+        }
+
+        types.Should().Contain("owner", "VARCHAR(128)")
+            .And.Contain("type", "VARCHAR(128)")
+            .And.Contain("id", "VARCHAR(128)")
+            .And.Contain("definition", "TEXT");
+    }
+
+    [Fact]
+    public void KeyText_RendersBoundedOnEveryDialect()
+    {
+        BifrostQL.SqlServer.SqlServerDialect.Instance.RenderColumnType(BifrostQL.Core.QueryModel.SqlColumnKind.KeyText)
+            .Should().Be("NVARCHAR(128)");
+        BifrostQL.MySql.MySqlDialect.Instance.RenderColumnType(BifrostQL.Core.QueryModel.SqlColumnKind.KeyText)
+            .Should().Be("VARCHAR(128)");
+        BifrostQL.Ngsql.PostgresDialect.Instance.RenderColumnType(BifrostQL.Core.QueryModel.SqlColumnKind.KeyText)
+            .Should().Be("VARCHAR(128)");
+    }
+
+    [Fact]
+    public async Task DbStore_ListOverTheCap_IsRefusedNotCutShort()
+    {
+        var store = DbStore(maxListRows: 2, out _);
+        await store.PutAsync(Alice, Obj(SavedObjectType.Query, "q1", "one", 0));
+        await store.PutAsync(Alice, Obj(SavedObjectType.Query, "q2", "two", 0));
+
+        // Exactly at the cap: the full list.
+        (await store.ListAsync(Alice, null)).Select(o => o.Id).Should().BeEquivalentTo("q1", "q2");
+
+        await store.PutAsync(Alice, Obj(SavedObjectType.Query, "q3", "three", 0));
+        var act = () => store.ListAsync(Alice, null);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*more than 2*");
     }
 }

@@ -26,20 +26,27 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
 {
     public const string DefaultTableName = "_bifrost_saved_objects";
 
+    /// <summary>The most objects one list returns; a list with more is refused, never cut short.</summary>
+    public const int DefaultMaxListRows = 100_000;
+
     private readonly IDbConnFactory _connFactory;
     private readonly ISqlDialect _dialect;
     private readonly string _tableName;
     private readonly int _maxDefinitionBytes;
     private readonly int _timeoutSeconds;
+    private readonly int _maxListRows;
 
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialized;
 
     private static readonly IReadOnlyList<SqlColumnDefinition> Columns = new[]
     {
-        new SqlColumnDefinition("owner", SqlColumnKind.Text, Nullable: false, PrimaryKey: true),
-        new SqlColumnDefinition("type", SqlColumnKind.Text, Nullable: false, PrimaryKey: true),
-        new SqlColumnDefinition("id", SqlColumnKind.Text, Nullable: false, PrimaryKey: true),
+        // Key columns are bounded: SQL Server refuses NVARCHAR(MAX) and MySQL refuses TEXT as an
+        // index key. owner is 64 characters, type a short enum name, id capped by
+        // SavedObjectJson.MaxIdLength.
+        new SqlColumnDefinition("owner", SqlColumnKind.KeyText, Nullable: false, PrimaryKey: true),
+        new SqlColumnDefinition("type", SqlColumnKind.KeyText, Nullable: false, PrimaryKey: true),
+        new SqlColumnDefinition("id", SqlColumnKind.KeyText, Nullable: false, PrimaryKey: true),
         new SqlColumnDefinition("name", SqlColumnKind.Text, Nullable: false),
         new SqlColumnDefinition("folder", SqlColumnKind.Text, Nullable: true),
         new SqlColumnDefinition("definition", SqlColumnKind.Text, Nullable: false),
@@ -50,13 +57,16 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
         IDbConnFactory connFactory,
         string? tableName = null,
         int maxDefinitionBytes = SavedObjectJson.DefaultMaxDefinitionBytes,
-        int timeoutSeconds = 30)
+        int timeoutSeconds = 30,
+        int maxListRows = DefaultMaxListRows)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxListRows, 1);
         _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
         _dialect = connFactory.Dialect;
         _tableName = string.IsNullOrWhiteSpace(tableName) ? DefaultTableName : tableName;
         _maxDefinitionBytes = maxDefinitionBytes;
         _timeoutSeconds = timeoutSeconds;
+        _maxListRows = maxListRows;
     }
 
     private string TableRef => _dialect.TableReference(null, _tableName);
@@ -96,7 +106,15 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
             parameters["type"] = TypeValue(type.Value);
         }
 
-        var result = await RawSqlExecutor.ExecuteAsync(_connFactory, sql, parameters, _timeoutSeconds, maxRows: 100_000, cancellationToken);
+        // The cap goes in the query, with an ORDER BY, and reads one row past it: the extra row
+        // is the sentinel that tells a full list from a truncated one. ISavedObjectStore has no
+        // paging, so a list that would be cut short fails instead of dropping objects silently.
+        sql += _dialect.Pagination(new[] { Col("type"), Col("id") }, offset: null, limit: _maxListRows + 1);
+        var result = await RawSqlExecutor.ExecuteAsync(_connFactory, sql, parameters, _timeoutSeconds, maxRows: _maxListRows, cancellationToken);
+        if (result.Truncated)
+            throw new InvalidOperationException(
+                $"The saved-object list holds more than {_maxListRows} objects, the store's list cap; " +
+                "the list is refused rather than cut short.");
         return result.Rows.Select(MapRow).ToList();
     }
 

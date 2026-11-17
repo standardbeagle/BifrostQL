@@ -56,6 +56,7 @@ public sealed class SqlServerDialect : SqlDialectBase
     {
         SqlColumnKind.Text => "NVARCHAR(MAX)",
         SqlColumnKind.Int => "INT",
+        SqlColumnKind.KeyText => $"NVARCHAR({SqlColumnDefinition.KeyTextMaxLength})",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 

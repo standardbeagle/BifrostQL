@@ -4,8 +4,21 @@
  * `onProgress` and returning the connection string carried by the final
  * `Complete!` event (or '' if none was seen).
  *
+ * A server event flagged `error: true` rejects with that event's message: it is the
+ * real failure ("Failed to insert seed data: …"), and the stream ends right after it.
+ *
  * The caller guards on `response.body` before invoking this.
  */
+/** One `data:` frame written by the host's `SseWriter.Event`. */
+interface QuickStartEvent {
+  stage?: string;
+  percent?: number;
+  message?: string;
+  error?: boolean;
+  connectionString?: string;
+  provider?: string;
+}
+
 export async function parseQuickStartStream(
   response: Response,
   onProgress: (message: string) => void,
@@ -17,13 +30,10 @@ export async function parseQuickStartStream(
 
   const processLine = (line: string) => {
     if (!line.startsWith('data: ')) return;
-    try {
-      const event = JSON.parse(line.slice(6));
-      if (event.message) onProgress(event.message);
-      if (event.connectionString) connectionString = event.connectionString;
-    } catch {
-      // skip malformed SSE data lines
-    }
+    const event = JSON.parse(line.slice(6)) as QuickStartEvent;
+    if (event.error) throw new Error(event.message || 'Quickstart database creation failed');
+    if (event.message) onProgress(event.message);
+    if (event.connectionString) connectionString = event.connectionString;
   };
 
   for (;;) {

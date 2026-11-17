@@ -66,5 +66,30 @@ namespace BifrostQL.Core.QueryModel
 
             return ResolvedLink.None;
         }
+
+        /// <summary>
+        /// Refuses a composite-key link on a path that can only join on one column pair:
+        /// joining a <c>(tenant_id, id)</c> key on <c>id</c> alone matches rows of other
+        /// tenants that share the id. Relationship filters, <c>_agg</c> paths and
+        /// many-to-many collections join on <see cref="TableLinkDto.ChildId"/> /
+        /// <see cref="TableLinkDto.ParentId"/> or the bridge's single columns, so each
+        /// calls this before building SQL. Single and multi link collections emit every
+        /// column pair and need no guard.
+        /// </summary>
+        public static void RequireSingleColumnKey(TableLinkDto link, string fieldName, string use)
+        {
+            if (link.IsComposite)
+                throw CompositeRefusal(fieldName, use);
+        }
+
+        /// <inheritdoc cref="RequireSingleColumnKey(TableLinkDto, string, string)"/>
+        public static void RequireSingleColumnKey(ManyToManyLink link, string fieldName, string use)
+        {
+            if (link.IsComposite)
+                throw CompositeRefusal(fieldName, use);
+        }
+
+        private static Resolvers.BifrostExecutionError CompositeRefusal(string fieldName, string use)
+            => new($"Relationship '{fieldName}' joins on a composite key, which {use} does not support.");
     }
 }

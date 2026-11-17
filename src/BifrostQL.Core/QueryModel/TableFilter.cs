@@ -509,6 +509,7 @@ namespace BifrostQL.Core.QueryModel
                 throw new BifrostExecutionError(
                     $"Filter references unknown single-link relationship '{ColumnName}' on table '{TableName}'.{hint}");
             }
+            TableLinkResolver.RequireSingleColumnKey(link, ColumnName, "a relationship filter");
             var (joinSql, joinParams) = BuildSqlParameterized(this, link, ctx, aliases, includeValue: false);
             var ej = dialect.EscapeIdentifier(aliases.Next());
             var fullJoin = $" INNER JOIN ({joinSql}) {ej} ON {ej}.{dialect.EscapeIdentifier("joinid")} = {dialect.EscapeIdentifier(alias ?? table.DbName)}.{dialect.EscapeIdentifier(link.ChildId.ColumnName)}";

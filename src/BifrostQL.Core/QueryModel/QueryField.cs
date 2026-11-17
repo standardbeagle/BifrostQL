@@ -281,9 +281,11 @@ namespace BifrostQL.Core.QueryModel
                 switch (resolved.Kind)
                 {
                     case ResolvedLinkKind.Single:
+                        TableLinkResolver.RequireSingleColumnKey(resolved.Link!, linkName, "an _agg path");
                         links.Add((LinkDirection.ManyToOne, resolved.Link!));
                         break;
                     case ResolvedLinkKind.Multi:
+                        TableLinkResolver.RequireSingleColumnKey(resolved.Link!, linkName, "an _agg path");
                         links.Add((LinkDirection.OneToMany, resolved.Link!));
                         break;
                     default:

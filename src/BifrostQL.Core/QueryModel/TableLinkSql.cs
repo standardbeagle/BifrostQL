@@ -10,8 +10,10 @@ namespace BifrostQL.Core.QueryModel;
 /// sole caller (<see cref="GqlAggregateColumn.ToSqlParameterized"/>) already holds
 /// an <see cref="ISqlDialect"/>, so nothing in Model needs a dialect anymore.
 ///
-/// NOTE: these use the link's FIRST source/destination column only — a single-column
-/// FK assumption. Composite-key links are not correlated here (see AGENTS.md).
+/// These use the link's FIRST source/destination column only — a single-column FK
+/// assumption. <see cref="QueryField.ToAggregateSql"/> refuses a composite link
+/// through <see cref="TableLinkResolver.RequireSingleColumnKey(TableLinkDto, string, string)"/>
+/// before any of this runs.
 /// </summary>
 public static class TableLinkSql
 {

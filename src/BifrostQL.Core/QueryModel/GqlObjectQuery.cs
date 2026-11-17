@@ -712,6 +712,7 @@ namespace BifrostQL.Core.QueryModel
                 if (resolved.Kind == ResolvedLinkKind.ManyToMany)
                 {
                     var m2mLink = resolved.ManyToMany!;
+                    TableLinkResolver.RequireSingleColumnKey(m2mLink, fieldName, "a many-to-many collection");
                     // Single source->target join that bridges through the junction
                     // table. Keying by the source key (src_id = source column) keeps
                     // the collection per-parent and lets the same window-paging the

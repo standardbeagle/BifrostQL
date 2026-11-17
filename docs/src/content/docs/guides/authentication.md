@@ -95,6 +95,20 @@ builder.Services.AddBifrostLocalAuth(
 
 A successful login produces an `AppIdentity` with `Provider` set to `local`, the email as the login name, and roles parsed from the delimited roles column.
 
+### Login throttling and session lifetime
+
+Login attempts are counted per source IP and per account before the password is checked, so a flood of guesses never reaches the hash verifier. Over either cap the endpoint answers `429` with the same text whether or not the account exists:
+
+| Option | Default | Effect |
+|---|---|---|
+| `MaxLoginAttemptsPerSource` | `20` | Attempts one IP may make per window, across all accounts. |
+| `MaxLoginAttemptsPerAccount` | `10` | Attempts against one login per window, from any IP. |
+| `LoginAttemptWindow` | `5 min` | The window both caps count over. |
+| `SessionLifetime` | `8 h` | Absolute cookie lifetime from sign-in. Activity does not extend it. |
+| `SessionRevalidationInterval` | `1 min` | How often a live cookie is re-checked against the user table. A deleted user is signed out, and changed roles or tenant are picked up, within one interval. |
+
+A successful login whose stored hash uses outdated parameters is rehashed in place.
+
 ## OIDC providers (Microsoft 365 and Google)
 
 BifrostQL normalizes authenticated OIDC principals into the same `AppIdentity` contract local auth produces. Each provider ships a claim mapper that knows which raw claim types carry the subject, email, name, tenant, and group memberships.

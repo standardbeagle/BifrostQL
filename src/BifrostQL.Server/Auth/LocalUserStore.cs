@@ -75,17 +75,38 @@ namespace BifrostQL.Server.Auth
         public string SessionPath { get; set; } = "/auth/session";
 
         /// <summary>
-        /// Maximum failed login attempts, per client IP + login, allowed within
-        /// <see cref="LockoutWindow"/> before the endpoint responds 429 and stops verifying.
-        /// Blunts online password guessing. Set to 0 to disable throttling. Defaults to 10.
+        /// Login attempts one client IP may make within <see cref="LoginAttemptWindow"/>, across
+        /// every login it names, before the endpoint answers 429 without verifying. Every attempt
+        /// counts (it is reserved before the password hash runs). Must be at least 1. Defaults to 20.
         /// </summary>
-        public int MaxFailedLoginAttempts { get; set; } = 10;
+        public int MaxLoginAttemptsPerSource { get; set; } = 20;
 
         /// <summary>
-        /// Sliding window over which <see cref="MaxFailedLoginAttempts"/> is counted, and the
-        /// duration a caller is locked out once the limit is exceeded. Defaults to 5 minutes.
+        /// Login attempts one login may receive within <see cref="LoginAttemptWindow"/>, from every
+        /// source IP combined, before the endpoint answers 429 without verifying. Bounds guessing
+        /// spread over many IPs; the cost is that a flood against one login also holds its owner
+        /// out until the window rolls over. Must be at least 1. Defaults to 10.
         /// </summary>
-        public TimeSpan LockoutWindow { get; set; } = TimeSpan.FromMinutes(5);
+        public int MaxLoginAttemptsPerAccount { get; set; } = 10;
+
+        /// <summary>
+        /// Fixed window over which both login-attempt caps are counted. Defaults to 5 minutes.
+        /// </summary>
+        public TimeSpan LoginAttemptWindow { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// Absolute lifetime of a login session cookie, counted from sign-in. Activity does not
+        /// extend it. Defaults to 8 hours.
+        /// </summary>
+        public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
+
+        /// <summary>
+        /// How often an issued session re-reads its user row. A deleted user is signed out and a
+        /// changed tenant, role list or household replaces the cookie's claims, at the first
+        /// request after this interval. <see cref="TimeSpan.Zero"/> re-reads on every request.
+        /// Defaults to 1 minute.
+        /// </summary>
+        public TimeSpan SessionRevalidationInterval { get; set; } = TimeSpan.FromMinutes(1);
     }
 
     /// <summary>
@@ -165,6 +186,9 @@ namespace BifrostQL.Server.Auth
             _dummyHash = _passwordHasher.HashPassword(DummyUser, DummyPassword);
         }
 
+        /// <summary>The <see cref="AppIdentity.Provider"/> every local-auth identity carries.</summary>
+        public const string ProviderName = "local";
+
         private const string DummyUser = " bifrost-timing-guard";
         private const string DummyPassword = " bifrost-timing-guard-password";
 
@@ -194,64 +218,123 @@ namespace BifrostQL.Server.Auth
             await using var conn = _connFactory.GetConnection();
             await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
 
+            var row = await ReadUserRowAsync(conn, dialect, _options.LoginColumn, login, cancellationToken)
+                .ConfigureAwait(false);
+            if (row is null || string.IsNullOrEmpty(row.Id) || string.IsNullOrEmpty(row.PasswordHash))
+            {
+                // No such user (or an unusable row): still spend the hashing cost so the
+                // response time does not reveal that the account is absent (timing-oracle defense).
+                SpendDummyVerification(login, password);
+                return LocalLoginResult.Failure();
+            }
+
+            var verification = _passwordHasher.VerifyHashedPassword(login, row.PasswordHash, password);
+            if (verification == PasswordVerificationResult.Failed)
+                return LocalLoginResult.Failure();
+
+            // A hash in an older format or below the current work factor verified, so the
+            // plaintext is in hand: upgrade the stored hash now, or it stays weak forever.
+            if (verification == PasswordVerificationResult.SuccessRehashNeeded)
+                await StorePasswordHashAsync(conn, dialect, row.Id, _passwordHasher.HashPassword(login, password), cancellationToken)
+                    .ConfigureAwait(false);
+
+            return LocalLoginResult.Success(
+                await BuildIdentityAsync(conn, dialect, row, login, cancellationToken).ConfigureAwait(false));
+        }
+
+        /// <summary>
+        /// Re-reads the user by its stable id and rebuilds the identity a fresh login would
+        /// produce (tenant, roles, household), without a password. Null when the row is gone.
+        /// The cookie session revalidates against this, so a role change, tenant move or
+        /// deleted row reaches an already-issued session within
+        /// <see cref="LocalAuthOptions.SessionRevalidationInterval"/>.
+        /// </summary>
+        public async Task<AppIdentity?> FindIdentityByIdAsync(string id, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return null;
+
+            var dialect = _connFactory.Dialect;
+            await using var conn = _connFactory.GetConnection();
+            await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            var row = await ReadUserRowAsync(conn, dialect, _options.IdColumn, id, cancellationToken)
+                .ConfigureAwait(false);
+            if (row is null || string.IsNullOrEmpty(row.Id) || string.IsNullOrEmpty(row.Login))
+                return null;
+
+            return await BuildIdentityAsync(conn, dialect, row, row.Login, cancellationToken).ConfigureAwait(false);
+        }
+
+        private sealed record UserRow(
+            string? Id, string? PasswordHash, string? DisplayName, string? TenantId, string? Roles, string? Login);
+
+        private async Task<UserRow?> ReadUserRowAsync(
+            DbConnection conn, ISqlDialect dialect, string keyColumn, string keyValue, CancellationToken cancellationToken)
+        {
             await using var command = conn.CreateCommand();
             command.CommandText =
                 $"SELECT {dialect.EscapeIdentifier(_options.IdColumn)}, " +
                 $"{dialect.EscapeIdentifier(_options.PasswordHashColumn)}, " +
                 $"{dialect.EscapeIdentifier(_options.DisplayNameColumn)}, " +
                 $"{dialect.EscapeIdentifier(_options.TenantColumn)}, " +
-                $"{dialect.EscapeIdentifier(_options.RolesColumn)} " +
+                $"{dialect.EscapeIdentifier(_options.RolesColumn)}, " +
+                $"{dialect.EscapeIdentifier(_options.LoginColumn)} " +
                 $"FROM {dialect.EscapeIdentifier(_options.UserTable)} " +
-                $"WHERE {dialect.EscapeIdentifier(_options.LoginColumn)} = @login";
+                $"WHERE {dialect.EscapeIdentifier(keyColumn)} = @key";
 
-            var loginParam = command.CreateParameter();
-            loginParam.ParameterName = "@login";
-            loginParam.DbType = DbType.String;
-            loginParam.Value = login;
-            command.Parameters.Add(loginParam);
+            var keyParam = command.CreateParameter();
+            keyParam.ParameterName = "@key";
+            keyParam.DbType = DbType.String;
+            keyParam.Value = keyValue;
+            command.Parameters.Add(keyParam);
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                // No such user: still spend the hashing cost so the response time does not
-                // reveal that the account is absent (timing-oracle defense).
-                SpendDummyVerification(login, password);
-                return LocalLoginResult.Failure();
-            }
+                return null;
+            return new UserRow(
+                GetString(reader, 0), GetString(reader, 1), GetString(reader, 2),
+                GetString(reader, 3), GetString(reader, 4), GetString(reader, 5));
+        }
 
-            var id = GetString(reader, 0);
-            var storedHash = GetString(reader, 1);
-            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(storedHash))
-            {
-                SpendDummyVerification(login, password);
-                return LocalLoginResult.Failure();
-            }
+        private async Task StorePasswordHashAsync(
+            DbConnection conn, ISqlDialect dialect, string id, string hash, CancellationToken cancellationToken)
+        {
+            await using var command = conn.CreateCommand();
+            command.CommandText =
+                $"UPDATE {dialect.EscapeIdentifier(_options.UserTable)} " +
+                $"SET {dialect.EscapeIdentifier(_options.PasswordHashColumn)} = @hash " +
+                $"WHERE {dialect.EscapeIdentifier(_options.IdColumn)} = @id";
 
-            var verification = _passwordHasher.VerifyHashedPassword(login, storedHash, password);
-            if (verification == PasswordVerificationResult.Failed)
-                return LocalLoginResult.Failure();
+            var hashParam = command.CreateParameter();
+            hashParam.ParameterName = "@hash";
+            hashParam.DbType = DbType.String;
+            hashParam.Value = hash;
+            command.Parameters.Add(hashParam);
 
-            var displayName = GetString(reader, 2);
-            var tenantId = GetString(reader, 3);
-            var roles = ParseRoles(GetString(reader, 4));
+            var idParam = command.CreateParameter();
+            idParam.ParameterName = "@id";
+            idParam.DbType = DbType.String;
+            idParam.Value = id;
+            command.Parameters.Add(idParam);
 
-            // The app-user reader must be closed before the connection can serve
-            // the member-enrichment query below.
-            await reader.DisposeAsync().ConfigureAwait(false);
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
 
-            var claims = await ResolveMemberClaimsAsync(conn, dialect, id, cancellationToken)
+        private async Task<AppIdentity> BuildIdentityAsync(
+            DbConnection conn, ISqlDialect dialect, UserRow row, string login, CancellationToken cancellationToken)
+        {
+            var claims = await ResolveMemberClaimsAsync(conn, dialect, row.Id!, cancellationToken)
                 .ConfigureAwait(false);
 
-            var identity = new AppIdentity(
-                id: id,
-                provider: "local",
+            return new AppIdentity(
+                id: row.Id!,
+                provider: ProviderName,
                 email: login,
-                displayName: string.IsNullOrWhiteSpace(displayName) ? null : displayName,
-                tenantId: string.IsNullOrWhiteSpace(tenantId) ? null : tenantId,
-                roles: roles,
+                displayName: string.IsNullOrWhiteSpace(row.DisplayName) ? null : row.DisplayName,
+                tenantId: string.IsNullOrWhiteSpace(row.TenantId) ? null : row.TenantId,
+                roles: ParseRoles(row.Roles),
                 claims: claims);
-
-            return LocalLoginResult.Success(identity);
         }
 
         /// <summary>

@@ -51,9 +51,7 @@ public class ProtocolAuthAttemptLimiterSourceScanTests
             "the scan's attempt-counter-map anchor must match the base, or it matches nothing and guards nothing");
 
         // The window arithmetic's data shapes may live in the base ONLY. A re-added copy
-        // under any new type or method name still carries the same attempt-bucket map. (The
-        // sweep-gate name is deliberately NOT an anchor: LocalAuthEndpoint's LoginThrottle is a
-        // failure lockout, not an attempt window, and shares the sweep idiom legitimately.)
+        // under any new type or method name still carries the same attempt-bucket map.
         var windowShape = new Regex(@"record struct Window\s*\(", RegexOptions.Compiled);
         var bucketMap = new Regex(@"ConcurrentDictionary<string,\s*Window>", RegexOptions.Compiled);
 
@@ -77,8 +75,9 @@ public class ProtocolAuthAttemptLimiterSourceScanTests
                 Path.Combine(serverRoot!, "Resp", "RespAuthRateLimiter.cs"),
                 Path.Combine(serverRoot!, "Pgwire", "PgAuthRateLimiter.cs"),
                 Path.Combine(serverRoot!, "OData", "ODataBasicAuthRateLimiter.cs"),
+                Path.Combine(serverRoot!, "Auth", "LocalLoginRateLimiter.cs"),
             },
-            "LDAP, RESP, pgwire and OData Basic each keep a per-adapter subtype with its own budget — " +
+            "LDAP, RESP, pgwire, OData Basic and local-auth login each keep a per-adapter subtype with its own budget — " +
             "registering the shared base directly would let two front doors consume one budget");
     }
 

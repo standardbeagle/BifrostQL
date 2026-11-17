@@ -1,6 +1,4 @@
-using System.Collections.Concurrent;
 using System.Security.Claims;
-using System.Threading;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using Microsoft.AspNetCore.Authentication;
@@ -21,15 +19,6 @@ namespace BifrostQL.Server.Auth
     /// </summary>
     public static class LocalAuthEndpoint
     {
-        /// <summary>
-        /// Process-wide login throttle. Keyed by client IP + login so neither a single IP
-        /// spraying many accounts nor many IPs hammering one account is unbounded. In-memory
-        /// and best-effort (a load-balanced deployment throttles per node); pair with an
-        /// edge rate limiter for cross-node guarantees.
-        /// </summary>
-        private static readonly LoginThrottle Throttle = new();
-
-
         /// <summary>
         /// Registers the local auth login and logout endpoints on the application pipeline.
         /// Call after authentication middleware so the issued cookie is honored on
@@ -54,7 +43,9 @@ namespace BifrostQL.Server.Auth
         /// stable id, email, display name, provider, tenant, roles, and the household
         /// provider claim (when the login resolved one).
         /// </summary>
-        public static ClaimsPrincipal BuildPrincipal(AppIdentity identity)
+        public static ClaimsPrincipal BuildPrincipal(AppIdentity identity) => BuildPrincipal(identity, validatedAt: null);
+
+        private static ClaimsPrincipal BuildPrincipal(AppIdentity identity, DateTimeOffset? validatedAt)
         {
             if (identity == null) throw new ArgumentNullException(nameof(identity));
 
@@ -63,6 +54,9 @@ namespace BifrostQL.Server.Auth
                 new(ClaimTypes.NameIdentifier, identity.Id),
                 new(LocalAuthClaims.Provider, identity.Provider),
             };
+            if (validatedAt is { } at)
+                claims.Add(new Claim(LocalAuthClaims.ValidatedAt,
+                    at.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
             if (!string.IsNullOrWhiteSpace(identity.Email))
                 claims.Add(new Claim(ClaimTypes.Email, identity.Email));
@@ -118,13 +112,12 @@ namespace BifrostQL.Server.Auth
                 return;
             }
 
-            var options = context.RequestServices.GetService<LocalAuthOptions>();
-            var throttleKey = BuildThrottleKey(context, request.Login);
-
-            // Fail closed against online guessing: once a caller (IP + login) exceeds the
-            // configured failure budget, stop verifying and respond 429 until the window
-            // elapses. Verification is never even attempted while locked out.
-            if (options != null && Throttle.IsLockedOut(throttleKey, options))
+            // Fail closed against online guessing: the attempt is counted against its source IP
+            // and the login it names BEFORE the hash is verified, and refused when either window
+            // is full. Reserving at admission means parallel requests cannot all slip past a
+            // check-then-record gap; the account axis bounds guessing spread over many IPs.
+            var limiter = context.RequestServices.GetRequiredService<LocalLoginRateLimiter>();
+            if (!limiter.TryLogin(ProtocolSourceKey.Of(RemoteEndPoint(context)), request.Login))
             {
                 context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
                 return;
@@ -136,165 +129,69 @@ namespace BifrostQL.Server.Auth
 
             if (!result.Succeeded || result.Identity == null)
             {
-                if (options != null)
-                    Throttle.RecordFailure(throttleKey, options);
-
                 // Same response for missing user and wrong password: do not leak which.
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
             }
 
-            Throttle.Clear(throttleKey);
-
-            var principal = BuildPrincipal(result.Identity);
+            var principal = BuildPrincipal(result.Identity, Now(context));
             await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
                 .ConfigureAwait(false);
 
             context.Response.StatusCode = StatusCodes.Status204NoContent;
         }
 
-        private static string BuildThrottleKey(HttpContext context, string login)
-        {
-            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            return ip + "|" + login.Trim().ToLowerInvariant();
-        }
-
         /// <summary>
-        /// In-memory sliding-window failure counter with lockout. Not a substitute for an
-        /// edge rate limiter, but denies a naive online brute-force from a single node.
+        /// Cookie <c>OnValidatePrincipal</c> for local-auth sessions. A session issued by the
+        /// login endpoint carries its claims from sign-in, so without this an admin's role
+        /// removal, a tenant move or a deleted row would not reach a live cookie until it
+        /// expired. Once <see cref="LocalAuthOptions.SessionRevalidationInterval"/> has passed
+        /// since the last check, the user row is re-read: a missing row rejects the principal
+        /// and signs the cookie out; otherwise the claims are rebuilt from the row and the
+        /// cookie re-issued with its sign-in expiry kept. Principals from other providers (an OIDC
+        /// re-issue) pass through untouched.
         /// </summary>
-        internal sealed class LoginThrottle
+        public static async Task ValidateSessionAsync(CookieValidatePrincipalContext context)
         {
-            private sealed class Entry
+            var principal = context.Principal;
+            if (principal?.FindFirst(LocalAuthClaims.Provider)?.Value != LocalUserStore.ProviderName)
+                return;
+
+            var services = context.HttpContext.RequestServices;
+            var options = services.GetRequiredService<LocalAuthOptions>();
+            var now = Now(context.HttpContext);
+            if (long.TryParse(principal.FindFirst(LocalAuthClaims.ValidatedAt)?.Value,
+                    System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
+                    out var validatedSeconds)
+                && now - DateTimeOffset.FromUnixTimeSeconds(validatedSeconds) < options.SessionRevalidationInterval)
+                return;
+
+            var id = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var identity = id is null
+                ? null
+                : await services.GetRequiredService<LocalUserStore>()
+                    .FindIdentityByIdAsync(id, context.HttpContext.RequestAborted).ConfigureAwait(false);
+            if (identity is null)
             {
-                public int Failures;
-                public DateTimeOffset WindowStart;
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)
+                    .ConfigureAwait(false);
+                return;
             }
 
-            private readonly ConcurrentDictionary<string, Entry> _entries = new();
-
-            // Hard cap on tracked keys. Entries are only removed on a SUCCESSFUL login for the
-            // exact key, so a peer rotating login strings or source IPs would otherwise grow this
-            // map without bound on the unauthenticated path. RecordFailure enforces the cap on
-            // INSERT: an already-tracked key always updates in place (a victim already being
-            // brute-forced is never evicted, so its lockout can never be bypassed), but a brand-new
-            // key past the cap is refused after a throttled sweep of elapsed entries fails to free a
-            // slot. Beyond the cap the in-process throttle degrades to best-effort — the edge rate
-            // limiter is the real control (see the type summary) — but memory stays bounded and the
-            // hot path stays O(1) amortized (the O(n) sweep runs at most once per lockout window).
-            internal const int DefaultMaxTrackedKeys = 10_000;
-            private readonly int _maxTrackedKeys;
-            private readonly object _sweepGate = new();
-            private DateTimeOffset _lastSweepUtc = DateTimeOffset.MinValue;
-
-            public LoginThrottle() : this(DefaultMaxTrackedKeys) { }
-
-            // Test seam: a lower cap makes the prune-when-over-cap behaviour exercisable
-            // without materializing ten thousand entries.
-            internal LoginThrottle(int maxTrackedKeys) => _maxTrackedKeys = maxTrackedKeys;
-
-            /// <summary>Number of tracked keys — for tests asserting the map stays bounded.</summary>
-            internal int TrackedKeyCount => _entries.Count;
-
-            public bool IsLockedOut(string key, LocalAuthOptions options)
-            {
-                if (options.MaxFailedLoginAttempts <= 0)
-                    return false;
-                if (!_entries.TryGetValue(key, out var entry))
-                    return false;
-
-                lock (entry)
-                {
-                    if (DateTimeOffset.UtcNow - entry.WindowStart >= options.LockoutWindow)
-                    {
-                        // Window elapsed: the caller is no longer locked out.
-                        entry.Failures = 0;
-                        entry.WindowStart = DateTimeOffset.UtcNow;
-                        return false;
-                    }
-
-                    return entry.Failures >= options.MaxFailedLoginAttempts;
-                }
-            }
-
-            public void RecordFailure(string key, LocalAuthOptions options)
-            {
-                if (options.MaxFailedLoginAttempts <= 0)
-                    return;
-
-                // Already-tracked key: update in place. An account already being brute-forced stays
-                // tracked and locked out regardless of map pressure — it is never evicted, so the
-                // cap can never be turned into a throttle bypass.
-                if (_entries.TryGetValue(key, out var existing))
-                {
-                    Touch(existing, options);
-                    return;
-                }
-
-                // New key: enforce the hard cap BEFORE inserting. First try to reclaim slots held by
-                // entries whose lockout window has fully elapsed (they carry no live lockout —
-                // IsLockedOut resets them on read anyway — so dropping them changes no decision). If
-                // the map is still full of LIVE entries, refuse to track the new key rather than
-                // evict a live counter (that would drop a victim's lockout) or grow without bound (a
-                // memory-exhaustion DoS on the unauthenticated path).
-                if (_entries.Count >= _maxTrackedKeys)
-                {
-                    TrySweepElapsed(options.LockoutWindow);
-                    if (_entries.Count >= _maxTrackedKeys)
-                        return;
-                }
-
-                var entry = _entries.GetOrAdd(key, _ => new Entry { WindowStart = DateTimeOffset.UtcNow });
-                Touch(entry, options);
-            }
-
-            private static void Touch(Entry entry, LocalAuthOptions options)
-            {
-                lock (entry)
-                {
-                    if (DateTimeOffset.UtcNow - entry.WindowStart >= options.LockoutWindow)
-                    {
-                        entry.Failures = 0;
-                        entry.WindowStart = DateTimeOffset.UtcNow;
-                    }
-                    entry.Failures++;
-                }
-            }
-
-            private void TrySweepElapsed(TimeSpan window)
-            {
-                // At most one full-map scan per lockout window, and one thread at a time: a sustained
-                // at-cap flood costs O(1) amortized per RecordFailure, never an O(n) scan per failure.
-                // A thread that finds the sweep already running (or run too recently) skips it and the
-                // caller simply refuses the new key — correctness never depends on the sweep firing.
-                if (!Monitor.TryEnter(_sweepGate))
-                    return;
-                try
-                {
-                    var now = DateTimeOffset.UtcNow;
-                    if (now - _lastSweepUtc < window)
-                        return;
-                    _lastSweepUtc = now;
-                    foreach (var kvp in _entries)
-                    {
-                        var entry = kvp.Value;
-                        bool elapsed;
-                        lock (entry)
-                            elapsed = now - entry.WindowStart >= window;
-                        if (elapsed)
-                            // Conditional remove: only drops THIS entry instance, so a key another
-                            // thread just re-activated (GetOrAdd reuses the object) is not dropped.
-                            _entries.TryRemove(KeyValuePair.Create(kvp.Key, entry));
-                    }
-                }
-                finally
-                {
-                    Monitor.Exit(_sweepGate);
-                }
-            }
-
-            public void Clear(string key) => _entries.TryRemove(key, out _);
+            context.ReplacePrincipal(BuildPrincipal(identity, now));
+            // A renewal re-issues the cookie expiring at now + (ExpiresUtc - IssuedUtc). Moving
+            // IssuedUtc to now makes that the ORIGINAL expiry, so carrying fresh claims never
+            // extends the session past SessionLifetime from sign-in.
+            context.Properties.IssuedUtc = now;
+            context.ShouldRenew = true;
         }
+
+        private static DateTimeOffset Now(HttpContext context) =>
+            (context.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
+
+        private static System.Net.EndPoint? RemoteEndPoint(HttpContext context) =>
+            context.Connection.RemoteIpAddress is { } ip ? new System.Net.IPEndPoint(ip, 0) : null;
 
         private static async Task HandleLogoutAsync(HttpContext context)
         {
@@ -370,6 +267,12 @@ namespace BifrostQL.Server.Auth
         /// can re-surface it as the <c>household_id</c> provider claim.
         /// </summary>
         public const string Household = "bifrost:household";
+
+        /// <summary>
+        /// Claim carrying when the session's claims were last read from the user row (Unix
+        /// seconds). Drives <see cref="LocalAuthOptions.SessionRevalidationInterval"/>.
+        /// </summary>
+        public const string ValidatedAt = "bifrost:validated";
     }
 
     /// <summary>JSON body accepted by the local auth login endpoint.</summary>

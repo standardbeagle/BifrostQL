@@ -31,9 +31,12 @@ namespace BifrostQL.Server
             var options = new BifrostQL.Server.Auth.LocalAuthOptions();
             configure?.Invoke(options);
 
+            // Constructed now so an invalid attempt budget fails at startup, not on first login.
+            var loginLimiter = BifrostQL.Server.Auth.LocalLoginRateLimiter.From(options);
             var connFactory = DbConnFactoryResolver.Create(connectionString);
 
             services.AddSingleton(options);
+            services.AddSingleton(loginLimiter);
             services.AddSingleton(connFactory);
             services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalUserStore(
                 sp.GetRequiredService<IDbConnFactory>(),
@@ -45,7 +48,17 @@ namespace BifrostQL.Server
                 {
                     cookieOptions.LoginPath = options.LoginPath;
                     cookieOptions.LogoutPath = options.LogoutPath;
+                    // Absolute lifetime: activity never extends a session past SessionLifetime,
+                    // so a stolen cookie has a fixed end. Revalidation keeps its claims current.
+                    cookieOptions.ExpireTimeSpan = options.SessionLifetime;
+                    cookieOptions.SlidingExpiration = false;
+                    cookieOptions.Events.OnValidatePrincipal = BifrostQL.Server.Auth.LocalAuthEndpoint.ValidateSessionAsync;
                 });
+            // The session clock and the revalidation clock are one clock: a host-registered
+            // TimeProvider drives both cookie expiry and LocalAuthEndpoint's revalidation stamp.
+            services.AddOptions<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme)
+                .PostConfigure<IServiceProvider>((cookieOptions, sp) =>
+                    cookieOptions.TimeProvider = sp.GetService<TimeProvider>() ?? cookieOptions.TimeProvider);
 
             return services;
         }

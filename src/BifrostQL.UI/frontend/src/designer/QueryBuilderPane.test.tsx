@@ -287,12 +287,6 @@ describe("edit-as-query seed", () => {
 
   it("refuses a bare name two schemas share, like an unknown table, and seeds the qualified one", async () => {
     // dbo.orders is listed first, so a first-match lookup would silently seed it.
-    const twoSchemas = (): BuilderSchema => {
-      const s = schema();
-      s.tables = [...s.tables, { schema: "sales", name: "orders", qualified: "sales.orders" }];
-      s.columns = [...s.columns, { table: "sales.orders", name: "region", type: "varchar", nullable: true, isPrimaryKey: false }];
-      return s;
-    };
     bridge.getBuilderSchema.mockResolvedValue(twoSchemas());
     const bareHandled = vi.fn();
     render(<QueryBuilderPane seedTable="orders" onSeedHandled={bareHandled} />);

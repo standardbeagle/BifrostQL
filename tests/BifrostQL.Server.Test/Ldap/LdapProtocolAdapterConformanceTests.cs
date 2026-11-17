@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using FluentAssertions;
 using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Ldap;
@@ -186,6 +187,56 @@ namespace BifrostQL.Server.Test.Ldap
         /// silently dropped — a filter that quietly did nothing would make the parameterization
         /// fact pass for the wrong reason.
         /// </summary>
+        // ---- (c2) table existence probe -------------------------------------
+        //
+        // A table reaches the LDAP wire only through an entry mapping, so the denied table carries
+        // one; otherwise the probe would stop at "not mapped" and never reach the policy gate. The
+        // probe searches the table's own container (base-object addressing) and the whole tree with
+        // its object class (filter addressing), the two ways a client can name a table here.
+
+        protected override bool AdapterSupportsTableExistenceProbe => true;
+
+        protected override string ReadDeniedTableRule =>
+            $"*.{ReadDeniedTable} {{ policy-read-deny: secret; ldap-object-class: {ReadDeniedTable}Entry; "
+            + $"ldap-dn-template: cn={{secret}},ou={ReadDeniedTable}; ldap-attributes: cn=secret,entryId=id }}";
+
+        protected override async Task<string> ProbeTableReadAsync(string table, ClaimsPrincipal principal)
+        {
+            var options = new LdapWireOptions { Endpoint = EndpointPath, PagedResultsCookieSecret = "conformance-cookie-secret" };
+            var search = new LdapSearchExecutor(Host.Services.GetRequiredService<IQueryIntentExecutor>(), options);
+            var authenticator = new LdapBindAuthenticator(
+                new ConformanceCredentialStore(principal), new ConformanceHasher(),
+                BifrostAuthContextFactory.Instance, options, services: Host.Services);
+            await using var fixture = await LdapFixture.StartAsync(
+                options, authenticator: authenticator, tls: true, search: search);
+
+            await fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(
+                name: BindDn, password: ConformanceCredentialStore.Secret)));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            var searches = new[]
+            {
+                ($"ou={table},{BaseDn}", LdapSearchScope.SingleLevel, (byte[]?)null),
+                (BaseDn, LdapSearchScope.WholeSubtree, LdapWire.FilterEquality("objectClass", table + "Entry")),
+            };
+            var transcript = new StringBuilder();
+            var messageId = 2;
+            foreach (var (baseObject, scope, filter) in searches)
+            {
+                await fixture.Client.SendAsync(LdapWire.Message(messageId++, LdapWire.SearchRequest(
+                    baseObject: baseObject, scope: scope, filter: filter, attributes: new[] { "cn" })));
+                while (true)
+                {
+                    var (envelope, response) = await fixture.Client.ReadRawResponseAsync().WaitAsync(Timeout)
+                        ?? throw new InvalidOperationException("the LDAP front door closed without answering.");
+                    // Raw BER, so matchedDN and the diagnostic text are compared too.
+                    transcript.Append(response.OpTag).Append(" ").Append(response.ResultCode).Append(" ").Append(Encoding.Latin1.GetString(envelope)).Append('\n');
+                    if (response.OpTag == LdapProtocol.SearchResultDone) break;
+                }
+            }
+            return transcript.ToString();
+        }
+
         private static byte[]? BuildFilter(IReadOnlyDictionary<string, object?>? filter)
         {
             if (filter is null || filter.Count == 0)

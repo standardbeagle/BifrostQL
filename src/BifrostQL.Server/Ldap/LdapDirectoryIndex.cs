@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 
 namespace BifrostQL.Server.Ldap
@@ -97,7 +98,8 @@ namespace BifrostQL.Server.Ldap
     /// caller answers with one uniform result code and no diagnostic. Nothing in the resolution
     /// path consults row data, so the shape of the answer cannot vary with what exists.</para>
     ///
-    /// <para>Note that resolution never authorizes: it narrows the DN space to candidate TABLES.
+    /// <para>Note that resolution never authorizes rows: it narrows the DN space to candidate
+    /// TABLES (on a search, only tables the identity may read at all, via <see cref="ReadableBy"/>).
     /// Whether the bound identity may read any row of those tables is decided by the query pipeline
     /// (tenant, policy, soft-delete) on the executed intent, which is the same gate the GraphQL
     /// front door enforces — never a second, weaker check here
@@ -159,6 +161,21 @@ namespace BifrostQL.Server.Ldap
             }
 
             return new LdapDirectoryIndex(directory, targets, baseKey);
+        }
+
+        /// <summary>
+        /// This index narrowed to the families whose table the identity may read
+        /// (<see cref="SchemaReadVisibility.ProjectTable"/>, the evaluator the pipeline enforces).
+        /// A search resolves against this view, so a container or entry of a read-denied table
+        /// resolves to <see cref="LdapScopeKind.NoSuchObject"/> exactly like one that does not
+        /// exist, and a subtree search never reaches the denied family (invariant 9).
+        /// </summary>
+        public LdapDirectoryIndex ReadableBy(IDictionary<string, object?> userContext)
+        {
+            var readable = _targets
+                .Where(t => SchemaReadVisibility.ProjectTable(t.Table, userContext) is not null)
+                .ToList();
+            return readable.Count == _targets.Count ? this : new LdapDirectoryIndex(Model, readable, _baseKey);
         }
 
         // The container is the DN template minus its RDN, suffixed with the base DN. The template's

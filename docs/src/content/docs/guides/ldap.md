@@ -405,6 +405,9 @@ should check:
 - A search for another tenant's entry **by its exact DN** is answered identically
   to a search for a DN that does not exist. Both produce `noSuchObject` with an
   empty diagnostic, so the wire never confirms that an account exists.
+- A container or entry of a table the caller may not read at all resolves like one
+  that is not configured: `noSuchObject` for a base inside it, and no entries from a
+  subtree search above it. The wire never confirms that the table is mapped.
 - A filter naming another tenant's attribute value matches nothing.
 - A `member` list never names an entry outside the caller's scope, in either
   direction of the join.
@@ -433,7 +436,7 @@ scope them.
 | StartTLS with no certificate configured | `unavailable` (52) |
 | StartTLS out of order | `operationsError` (1) |
 | Unsupported extended operation; bind or search on a listener with no seam to serve it | `unwillingToPerform` (53) |
-| Base names nothing published, is malformed, is outside the base DN, or names a row this identity cannot see | `noSuchObject` (32) |
+| Base names nothing published, is malformed, is outside the base DN, names a table this identity may not read, or names a row this identity cannot see | `noSuchObject` (32) |
 | Any internal fault | `operationsError` (1), diagnostic blanked |
 
 **Diagnostics are sanitized.** An internal exception can wrap raw driver or

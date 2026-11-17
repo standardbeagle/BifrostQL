@@ -303,6 +303,13 @@ namespace BifrostQL.Server.Test.Ldap
             return envelope is null ? null : LdapWire.ParseResponse(envelope);
         }
 
+        /// <summary>Reads one response envelope with its raw bytes, or null on a clean EOF.</summary>
+        public async Task<(byte[] Envelope, LdapResponse Response)?> ReadRawResponseAsync(CancellationToken ct = default)
+        {
+            var envelope = await ReadEnvelopeAsync(ct);
+            return envelope is null ? null : (envelope, LdapWire.ParseResponse(envelope));
+        }
+
         private async Task<byte[]?> ReadEnvelopeAsync(CancellationToken ct)
         {
             var tag = await ReadByteAsync(ct);

@@ -168,6 +168,12 @@ namespace BifrostQL.Server.Ldap
                 return LdapSearchOutcome.Refused(LdapResultCode.NoSuchObject);
             }
 
+            // An identified session resolves against the families it may read, so a denied
+            // table's container answers noSuchObject like a missing one (invariant 9). An
+            // anonymous session reaches only discovery entries below, whatever it names.
+            if (session.UserContext is { Count: > 0 } readerContext)
+                index = index.ReadableBy(readerContext);
+
             var resolution = index.Resolve(request.BaseObject, request.Scope);
             if (resolution.Kind == LdapScopeKind.NoSuchObject)
                 return LdapSearchOutcome.Refused(LdapResultCode.NoSuchObject);

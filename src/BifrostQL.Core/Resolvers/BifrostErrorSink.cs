@@ -67,8 +67,8 @@ namespace BifrostQL.Core.Resolvers
         /// attached first. Unlike <see cref="Attach"/> this DOES overwrite; it is
         /// <c>internal</c>, which is the <c>InternalsVisibleTo</c> boundary
         /// (Server, the dialect packages, Benchmarks, Core.Test), not a test-only one.
-        /// Two scopes on parallel threads overwrite each other; only
-        /// <c>TableLookupErrorSinkTests</c> uses it today.
+        /// Two scopes on parallel threads overwrite each other, so every Core.Test class
+        /// that calls it joins the non-parallel <c>ErrorSinkLoggerCollection</c>.
         /// </summary>
         internal static IDisposable OverrideForTesting(ILogger logger)
         {

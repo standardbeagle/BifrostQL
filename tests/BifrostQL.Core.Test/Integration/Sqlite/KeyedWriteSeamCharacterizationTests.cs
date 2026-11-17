@@ -61,6 +61,7 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// half — the column that must be ABSENT is named explicitly — so perturbing the
 /// expectation makes them fail.</para>
 /// </summary>
+[Collection(BifrostQL.Core.Test.ErrorSinkLoggerCollection.Name)]
 public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
 {
     private const string ConnString = "Data Source=bifrost_keyed_write_characterization;Mode=Memory;Cache=Shared";

@@ -14,6 +14,7 @@ namespace BifrostQL.Core.Test.Modules;
 /// token in the SET, flags <see cref="MutationTransformResult.ConflictOnNoRows"/>, and
 /// rejects a missing token or an unsupported token type.
 /// </summary>
+[Collection(BifrostQL.Core.Test.ErrorSinkLoggerCollection.Name)]
 public sealed class ConcurrencyMutationTransformerTests
 {
     private static IDbModel IntTokenModel() =>

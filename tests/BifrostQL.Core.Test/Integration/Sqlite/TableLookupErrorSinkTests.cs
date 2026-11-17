@@ -22,6 +22,7 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// same builders <see cref="TableLookupWireSafetyTests"/> uses) and asserts the
 /// sink captured the raw name while the wire error stayed sanitized.
 /// </summary>
+[Collection(BifrostQL.Core.Test.ErrorSinkLoggerCollection.Name)]
 public sealed class TableLookupErrorSinkTests : IAsyncLifetime
 {
     private const string ConnString = "Data Source=bifrost_table_lookup_sink_test;Mode=Memory;Cache=Shared";

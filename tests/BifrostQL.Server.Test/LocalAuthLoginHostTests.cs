@@ -57,12 +57,14 @@ namespace BifrostQL.Server.Test
                 File.Delete(_dbPath);
         }
 
-        private async Task<HttpClient> StartAsync(Action<LocalAuthOptions> configure)
+        private async Task<HttpClient> StartAsync(
+            Action<LocalAuthOptions> configure, Action<IServiceCollection>? services = null)
         {
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
             builder.Services.AddSingleton<TimeProvider>(_clock);
             builder.Services.AddBifrostLocalAuth(ConnectionString, configure);
+            services?.Invoke(builder.Services);
             _app = builder.Build();
             // TestServer has no remote address; let each request name its source IP.
             _app.Use((context, next) =>
@@ -131,18 +133,75 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task ParallelGuesses_FromOneSource_AreAdmittedOnlyUpToTheCap()
         {
-            var client = await StartAsync(o =>
+            const int cap = 4;
+            const int attempts = 20;
+            var gate = new GatedHasher(attempts);
+            var client = await StartAsync(
+                o =>
+                {
+                    o.MaxLoginAttemptsPerSource = cap;
+                    o.MaxLoginAttemptsPerAccount = 1000;
+                },
+                services => services.AddSingleton(sp => new LocalUserStore(
+                    sp.GetRequiredService<IDbConnFactory>(), sp.GetRequiredService<LocalAuthOptions>(), gate)));
+
+            // Every attempt is in flight at once: the hasher holds each verification open until
+            // all 20 requests have either reached it or been refused, so no failure can be
+            // recorded before every request has passed (or failed) admission. A limiter that
+            // checks first and counts only after a failed verify lets all 20 into the hasher.
+            var sends = Enumerable.Range(0, attempts).Select(async _ =>
             {
-                o.MaxLoginAttemptsPerSource = 4;
-                o.MaxLoginAttemptsPerAccount = 1000;
-            });
+                var response = await PostLoginAsync(client, "wrong", "10.0.0.1");
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                    gate.Settle();
+                return response;
+            }).ToList();
+            await gate.AllSettled.WaitAsync(TimeSpan.FromSeconds(30));
+            gate.Release();
+            var responses = await Task.WhenAll(sends);
 
-            var responses = await Task.WhenAll(
-                Enumerable.Range(0, 20).Select(_ => PostLoginAsync(client, "wrong", "10.0.0.1")));
+            gate.Entered.Should().Be(cap,
+                "each attempt is reserved before the hash runs, so only the cap's worth reach the verifier");
+            responses.Count(r => r.StatusCode == HttpStatusCode.Unauthorized).Should().Be(cap);
+            responses.Count(r => r.StatusCode == HttpStatusCode.TooManyRequests).Should().Be(attempts - cap);
+        }
 
-            responses.Count(r => r.StatusCode == HttpStatusCode.Unauthorized).Should().Be(4,
-                "each attempt is reserved before the hash runs, so parallel requests cannot all pass the check");
-            responses.Count(r => r.StatusCode == HttpStatusCode.TooManyRequests).Should().Be(16);
+        /// <summary>
+        /// A hasher whose verification blocks until <see cref="Release"/>, counting the callers that
+        /// reached it. <see cref="AllSettled"/> completes once every expected request has either
+        /// entered the verifier or been refused before it (<see cref="Settle"/>).
+        /// </summary>
+        private sealed class GatedHasher : IPasswordHasher<string>
+        {
+            private readonly PasswordHasher<string> _inner = new(
+                Microsoft.Extensions.Options.Options.Create(new PasswordHasherOptions { IterationCount = 1_000 }));
+            private readonly ManualResetEventSlim _release = new(false);
+            private readonly TaskCompletionSource _allSettled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly int _expected;
+            private int _entered;
+            private int _settled;
+
+            public GatedHasher(int expected) => _expected = expected;
+
+            public int Entered => Volatile.Read(ref _entered);
+            public Task AllSettled => _allSettled.Task;
+            public void Release() => _release.Set();
+
+            public void Settle()
+            {
+                if (Interlocked.Increment(ref _settled) == _expected)
+                    _allSettled.TrySetResult();
+            }
+
+            public string HashPassword(string user, string password) => _inner.HashPassword(user, password);
+
+            public PasswordVerificationResult VerifyHashedPassword(string user, string hashedPassword, string providedPassword)
+            {
+                Interlocked.Increment(ref _entered);
+                Settle();
+                _release.Wait(TimeSpan.FromSeconds(30));
+                return PasswordVerificationResult.Failed;
+            }
         }
 
         [Fact]

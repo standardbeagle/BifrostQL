@@ -72,10 +72,7 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
         _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
         _dialect = connFactory.Dialect;
         _tableName = string.IsNullOrWhiteSpace(tableName) ? DefaultTableName : tableName;
-        if (!_tableName.StartsWith(BifrostSystemTables.SavedObjectsPrefix, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException(
-                $"The saved-object table name must start with '{BifrostSystemTables.SavedObjectsPrefix}', " +
-                "the prefix every served model hides.", nameof(tableName));
+        BifrostSystemTables.RequirePrefix(_tableName, BifrostSystemTables.SavedObjectsPrefix, nameof(tableName));
         _maxDefinitionBytes = maxDefinitionBytes;
         _timeoutSeconds = timeoutSeconds;
         _maxListRows = maxListRows;

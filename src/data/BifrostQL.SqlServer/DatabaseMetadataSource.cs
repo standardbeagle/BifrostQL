@@ -15,11 +15,12 @@ namespace BifrostQL.SqlServer
 
         public int Priority => 100;
 
-        public DatabaseMetadataSource(string connectionString, string configTableName = "_bifrost_config")
+        public DatabaseMetadataSource(string connectionString, string configTableName = BifrostSystemTables.ConfigPrefix)
         {
             ArgumentNullException.ThrowIfNull(connectionString, nameof(connectionString));
             ArgumentNullException.ThrowIfNull(configTableName, nameof(configTableName));
             var (schema, table) = SplitConfigTableName(configTableName);
+            BifrostSystemTables.RequirePrefix(table, BifrostSystemTables.ConfigPrefix, nameof(configTableName));
             _connectionString = connectionString;
             _configTableSchema = schema;
             _configTableName = table;

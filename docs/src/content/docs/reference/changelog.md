@@ -44,6 +44,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`RowScopeCompiler.Compile` takes an `ITypeMapper`**, so row-scope comparisons convert context values by the column's dialect type.
 - **Declarative MCP tool documents load at host start, with async I/O.** `AddBifrostMcpTools` no longer reads the document; a missing or malformed one fails `StartAsync` instead of the registration call. `IDeclarativeToolDocumentSource.OpenRead()` is now `OpenReadAsync(CancellationToken)`, `DeclarativeToolDocumentLoader.Load()` is `LoadAsync(CancellationToken)`, and `DeclarativeToolDocument` is no longer a DI service: resolve `DeclarativeToolDocumentProvider` and await `GetAsync`.
 - **A `DbSavedObjectStore` table name must start with `_bifrost_saved_objects`.** Any other configured name throws `ArgumentException` at construction. Rename a custom table, for example `_bifrost_saved_objects_tenant_a`.
+- The SQL Server metadata tables (`_bifrost_config`, `_bifrost_app_metadata`) are hidden from every served model. They sat in the served database, so a client could read or rewrite the tenant, soft-delete and policy metadata of the API it was calling. `DatabaseMetadataSource` and `DatabaseAppMetadataSource` now refuse a configured table name outside those prefixes (breaking for custom names: rename the table to start with the prefix).
 
 ### Security — third review pass
 

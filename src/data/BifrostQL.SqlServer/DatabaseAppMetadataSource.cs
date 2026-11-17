@@ -1,4 +1,5 @@
 using BifrostQL.Core.AppMetadata;
+using BifrostQL.Core.Model;
 using Microsoft.Data.SqlClient;
 
 namespace BifrostQL.SqlServer
@@ -19,11 +20,12 @@ namespace BifrostQL.SqlServer
 
         public DatabaseAppMetadataSource(
             string connectionString,
-            string tableName = "_bifrost_app_metadata",
+            string tableName = BifrostSystemTables.AppMetadataPrefix,
             int priority = 100)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
             ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+            BifrostSystemTables.RequirePrefix(tableName, BifrostSystemTables.AppMetadataPrefix, nameof(tableName));
             _connectionString = connectionString;
             _tableName = tableName.Replace("]", "]]");
             Priority = priority;

@@ -574,9 +574,9 @@ public class MetadataSourceTests
     }
 
     [Fact]
-    public void DatabaseMetadataSource_CustomTableName_Accepted()
+    public void DatabaseMetadataSource_CustomTableNameInsideTheReservedPrefix_Accepted()
     {
-        var source = new DatabaseMetadataSource("Server=fake;Database=fake;", "_custom_config");
+        var source = new DatabaseMetadataSource("Server=fake;Database=fake;", "_bifrost_config_custom");
         source.Priority.Should().Be(100);
     }
 

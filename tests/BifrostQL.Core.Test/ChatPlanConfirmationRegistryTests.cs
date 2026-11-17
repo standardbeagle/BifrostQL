@@ -1,5 +1,6 @@
 using BifrostQL.Core.Modules.Chat;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace BifrostQL.Core.Test;
@@ -50,10 +51,17 @@ public class ChatPlanConfirmationRegistryTests
     [Fact]
     public async Task Timeout_ResolvesAsADeny_AndRemovesTheEntry()
     {
-        var registry = new ChatPlanConfirmationRegistry();
-        var pending = registry.Register("t1|u1", "42", TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        // Injected clock: the timeout fires when the test advances time, not when a loaded
+        // machine gets round to a 50 ms wall-clock timer. The real wait budget is far beyond
+        // anything the advanced clock needs.
+        var clock = new FakeTimeProvider();
+        var registry = new ChatPlanConfirmationRegistry(clock);
+        var pending = registry.Register("t1|u1", "42", TimeSpan.FromMinutes(1), CancellationToken.None);
+        pending.Decision.IsCompleted.Should().BeFalse("the timeout has not elapsed on the injected clock");
 
-        var decision = await pending.Decision.WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromMinutes(1));
+
+        var decision = await pending.Decision.WaitAsync(TimeSpan.FromMinutes(1));
 
         decision.Approved.Should().BeFalse();
         decision.Reason.Should().Contain("timed out");

@@ -59,6 +59,13 @@ namespace BifrostQL.Core.Modules.Chat
         public const string ConversationContextKey = "bifrost:chat-conversation";
 
         private readonly ConcurrentDictionary<string, Entry> _pending = new(StringComparer.Ordinal);
+        private readonly TimeProvider _timeProvider;
+
+        /// <param name="timeProvider">The clock the confirmation timeout runs on; <see cref="TimeProvider.System"/> when null.</param>
+        public ChatPlanConfirmationRegistry(TimeProvider? timeProvider = null)
+        {
+            _timeProvider = timeProvider ?? TimeProvider.System;
+        }
 
         private sealed class Entry
         {
@@ -107,7 +114,7 @@ namespace BifrostQL.Core.Modules.Chat
 
             // Timeout = DENY: the parked loop receives a declined result and the model
             // continues; nothing is written.
-            entry.Timeout = new CancellationTokenSource(timeout);
+            entry.Timeout = new CancellationTokenSource(timeout, _timeProvider);
             entry.Timeout.Token.Register(() =>
             {
                 if (TryTake(confirmationId, entry))

@@ -16,7 +16,8 @@ namespace BifrostQL.Server.Test
 
             options.HttpsPort.Should().Be(5001);
             options.HttpPort.Should().Be(5000);
-            options.ListenAddress.Should().Be(IPAddress.Any);
+            options.ListenAddress.Should().Be(IPAddress.Loopback,
+                "an undeclared listener posture is loopback; widening to 0.0.0.0 is the operator's call");
         }
 
         [Fact]

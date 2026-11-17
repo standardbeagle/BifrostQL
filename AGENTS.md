@@ -67,6 +67,7 @@ Undeclared means `loopback`. Widening (loopback → lan → public) is the opera
 | LDAP / LDAPS | 389 / `LdapsPort` (null = off) | loopback (`LdapWireOptions.BindAddress`) | 100 shared across both | `AuthenticationTimeout` 30 s, `TlsHandshakeTimeout` 30 s | `IdleTimeout` 5 min (credentialed only) | 1 MiB |
 | gRPC | 5090 | loopback (`GrpcWireOptions.BindAddress`) | `MaxConcurrentConnections` 100 | Kestrel HTTP/2 | Kestrel | Kestrel |
 | HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host Kestrel | host's | host | host | host | host |
+| HTTP/3 `UseBifrostHttp3` (HTTPS + plaintext HTTP) | 5001 / `HttpPort` 5000 (null = off) | loopback (`BifrostHttp3Options.ListenAddress`, Host key `BifrostQL:Http3:ListenAddress`) | host Kestrel | host | host | host |
 | Binary WS `/bifrost-ws` | host Kestrel | host's | `UseBifrostBinary(maxConnections:)` 100 per mount; 16 concurrent requests per connection (`MaxConcurrentRequestsPerConnection`) | `firstFrameTimeout` 30 s | `idleTimeout` 10 min | frame 4 MiB; reassembly 64 MiB/session, 128 MiB/connection (received bytes) |
 | LLM chat `/_chat` | host Kestrel | host's | host | identity gate before body read | one SSE stream per conversation | `MaxMessageLength` 32768 chars; body 4×that + 1 KiB (received bytes) |
 | CLI `bifrost serve` | `--port` 5000 | loopback `127.0.0.1` (Host header must be loopback, no CORS); `--host` widens with a warning | Kestrel default | none: no auth, loopback is the only gate | Kestrel | Kestrel |

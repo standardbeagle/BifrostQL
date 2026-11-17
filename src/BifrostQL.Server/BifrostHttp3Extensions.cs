@@ -30,9 +30,12 @@ namespace BifrostQL.Server
         public int? HttpPort { get; set; } = 5000;
 
         /// <summary>
-        /// The IP address to bind to. Defaults to <see cref="IPAddress.Any"/>.
+        /// The IP address both endpoints bind to. Defaults to <see cref="IPAddress.Loopback"/>:
+        /// an undeclared exposure is loopback. Binding <see cref="IPAddress.Any"/> (or a LAN
+        /// address) publishes the HTTPS endpoint and the plaintext <see cref="HttpPort"/> to
+        /// that network, so widening is an explicit operator decision.
         /// </summary>
-        public IPAddress ListenAddress { get; set; } = IPAddress.Any;
+        public IPAddress ListenAddress { get; set; } = IPAddress.Loopback;
     }
 
     public static class BifrostHttp3Extensions

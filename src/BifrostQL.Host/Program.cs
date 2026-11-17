@@ -42,6 +42,10 @@ if (http3Config.GetValue("Enabled", false))
             opts.HttpsPort = httpsPort;
         if (http3Config.GetValue<int?>("HttpPort") is int httpPort)
             opts.HttpPort = httpPort;
+        // Loopback unless the operator widens it; IPAddress.Parse fails startup on a typo
+        // rather than silently falling back to some other bind.
+        if (http3Config["ListenAddress"] is { Length: > 0 } listenAddress)
+            opts.ListenAddress = System.Net.IPAddress.Parse(listenAddress);
     });
 }
 

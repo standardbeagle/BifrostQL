@@ -45,6 +45,8 @@ This configuration reference covers every BifrostQL setting. BifrostQL is config
 | `BifrostQL:Metadata` | string[] | `[]` | Array of metadata configuration rules |
 | `BifrostQL:Http3:Enabled` | bool | `false` | Enable HTTP/3 (QUIC) support |
 | `BifrostQL:Http3:HttpsPort` | int | `5001` | HTTPS port for HTTP/3 |
+| `BifrostQL:Http3:HttpPort` | int | `5000` | Plaintext HTTP/1.1 + HTTP/2 port |
+| `BifrostQL:Http3:ListenAddress` | IP address | `127.0.0.1` | Address both HTTP/3 endpoints bind to. Set `0.0.0.0` to expose them beyond loopback (the plaintext port too) |
 
 ## Metadata rule syntax
 

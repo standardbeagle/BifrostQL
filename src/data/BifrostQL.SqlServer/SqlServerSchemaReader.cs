@@ -8,7 +8,7 @@ namespace BifrostQL.SqlServer;
 /// <summary>
 /// SQL Server implementation of schema reader using INFORMATION_SCHEMA views.
 /// Queries CONSTRAINT_COLUMN_USAGE, COLUMNS, and TABLES views in a single batch.
-/// Identity columns are detected via COLUMNPROPERTY(..., 'IsIdentity').
+/// Identity and computed flags come from sys.columns, joined by quoted object name.
 /// </summary>
 public sealed class SqlServerSchemaReader : ISchemaReader
 {
@@ -44,37 +44,42 @@ INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.colu
 WHERE i.is_unique = 1
   AND i.is_primary_key = 0
   AND t.is_ms_shipped = 0;
-SELECT [TABLE_CATALOG]
-      ,[TABLE_SCHEMA]
-      ,[TABLE_NAME]
-      ,[COLUMN_NAME]
-      ,[ORDINAL_POSITION]
-      ,[COLUMN_DEFAULT]
-      ,[IS_NULLABLE]
-      ,[DATA_TYPE]
-      ,[CHARACTER_MAXIMUM_LENGTH]
-      ,[CHARACTER_OCTET_LENGTH]
-      ,[NUMERIC_PRECISION]
-      ,[NUMERIC_PRECISION_RADIX]
-      ,[NUMERIC_SCALE]
-      ,[DATETIME_PRECISION]
-      ,[CHARACTER_SET_CATALOG]
-      ,[CHARACTER_SET_SCHEMA]
-      ,[CHARACTER_SET_NAME]
-      ,[COLLATION_CATALOG]
-      ,[COLLATION_SCHEMA]
-      ,[COLLATION_NAME]
-      ,[DOMAIN_CATALOG]
-      ,[DOMAIN_SCHEMA]
-      ,[DOMAIN_NAME]
-      ,COLUMNPROPERTY (OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),COLUMN_NAME ,'IsIdentity') [IS_IDENTITY]
-      ,ISNULL(COLUMNPROPERTY (OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),COLUMN_NAME ,'IsComputed'), 0) [IS_COMPUTED]
+SELECT C.[TABLE_CATALOG]
+      ,C.[TABLE_SCHEMA]
+      ,C.[TABLE_NAME]
+      ,C.[COLUMN_NAME]
+      ,C.[ORDINAL_POSITION]
+      ,C.[COLUMN_DEFAULT]
+      ,C.[IS_NULLABLE]
+      ,C.[DATA_TYPE]
+      ,C.[CHARACTER_MAXIMUM_LENGTH]
+      ,C.[CHARACTER_OCTET_LENGTH]
+      ,C.[NUMERIC_PRECISION]
+      ,C.[NUMERIC_PRECISION_RADIX]
+      ,C.[NUMERIC_SCALE]
+      ,C.[DATETIME_PRECISION]
+      ,C.[CHARACTER_SET_CATALOG]
+      ,C.[CHARACTER_SET_SCHEMA]
+      ,C.[CHARACTER_SET_NAME]
+      ,C.[COLLATION_CATALOG]
+      ,C.[COLLATION_SCHEMA]
+      ,C.[COLLATION_NAME]
+      ,C.[DOMAIN_CATALOG]
+      ,C.[DOMAIN_SCHEMA]
+      ,C.[DOMAIN_NAME]
+      ,CAST(SC.[is_identity] AS int) [IS_IDENTITY]
+      ,CAST(SC.[is_computed] AS int) [IS_COMPUTED]
       -- Identity and rowversion (DATA_TYPE 'timestamp') are server-assigned; COLUMN_DEFAULT is NULL for both.
-      ,CASE WHEN [COLUMN_DEFAULT] IS NOT NULL OR [DATA_TYPE] = 'timestamp'
-            OR COLUMNPROPERTY (OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME),COLUMN_NAME ,'IsIdentity') = 1
+      ,CASE WHEN C.[COLUMN_DEFAULT] IS NOT NULL OR C.[DATA_TYPE] = 'timestamp'
+            OR SC.[is_identity] = 1
             THEN 1 ELSE 0 END [HAS_DEFAULT]
-  FROM [INFORMATION_SCHEMA].[COLUMNS]
-  ORDER BY [TABLE_CATALOG],[TABLE_SCHEMA],[TABLE_NAME],[ORDINAL_POSITION];
+  FROM [INFORMATION_SCHEMA].[COLUMNS] C
+  -- Resolve the column by quoted name: OBJECT_ID('s.report.v2') would read a dotted
+  -- table name as db.schema.table and find nothing.
+  LEFT JOIN sys.columns SC
+    ON SC.[object_id] = OBJECT_ID(QUOTENAME(C.[TABLE_SCHEMA]) + '.' + QUOTENAME(C.[TABLE_NAME]))
+   AND SC.[name] = C.[COLUMN_NAME]
+  ORDER BY C.[TABLE_CATALOG],C.[TABLE_SCHEMA],C.[TABLE_NAME],C.[ORDINAL_POSITION];
 SELECT [TABLE_CATALOG]
       ,[TABLE_SCHEMA]
       ,[TABLE_NAME]

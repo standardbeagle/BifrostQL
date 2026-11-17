@@ -133,6 +133,44 @@ public sealed class ColumnDefaultAndComputedReaderTests
         }
     }
 
+    [SkippableFact]
+    public async Task SqlServer_reader_reads_identity_of_a_table_whose_name_needs_quoting()
+    {
+        // OBJECT_ID('schema.report.v2') reads the dotted name as db.schema.table and
+        // returns NULL, so an unquoted lookup reported IS_IDENTITY as NULL and the
+        // whole model load threw converting it.
+        var connString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER");
+        Skip.If(string.IsNullOrEmpty(connString), "BIFROST_TEST_SQLSERVER not set");
+
+        var schema = $"bq_quote_{Guid.NewGuid():N}";
+        await using var conn = new SqlConnection(connString);
+        await conn.OpenAsync();
+        await ExecAsync(conn, $"CREATE SCHEMA [{schema}]");
+        await ExecAsync(conn, $"""
+            CREATE TABLE [{schema}].[report.v2] (
+                id int IDENTITY(1,1) PRIMARY KEY,
+                name nvarchar(50) NOT NULL,
+                name_len AS LEN(name)
+            );
+            """);
+        try
+        {
+            var data = await new BifrostQL.SqlServer.SqlServerSchemaReader().ReadSchemaAsync(conn);
+            var cols = data.RawColumns.Where(c => c.TableSchema == schema && c.TableName == "report.v2")
+                .ToDictionary(c => c.ColumnName);
+
+            cols["id"].IsIdentity.Should().BeTrue();
+            cols["id"].HasDefault.Should().BeTrue("identity is server-filled");
+            cols["name"].IsIdentity.Should().BeFalse();
+            cols["name"].HasDefault.Should().BeFalse();
+            cols["name_len"].IsComputed.Should().BeTrue();
+        }
+        finally
+        {
+            await ExecAsync(conn, $"DROP TABLE [{schema}].[report.v2]; DROP SCHEMA [{schema}];");
+        }
+    }
+
     private static void AssertFlags(IReadOnlyDictionary<string, ColumnDto> cols)
     {
         cols["name"].HasDefault.Should().BeFalse("NOT NULL with no default: the one insert-required shape");

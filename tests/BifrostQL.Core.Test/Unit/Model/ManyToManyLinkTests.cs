@@ -321,6 +321,51 @@ public sealed class ManyToManyLinkTests
     }
 
     [Fact]
+    public void Metadata_ManyToManyConfig_TargetSideLinkIsReversed()
+    {
+        // "Assignments" has a surrogate key and a name that references neither endpoint,
+        // so AutoDetect bows out: the Roles -> Users link exists only because the
+        // metadata on Users declared the bridge. It must point back at Users, joining
+        // Roles.Id to RoleId, not repeat the Users -> Roles link under Roles.
+        var model = DbModelTestFixture.Create()
+            .WithTable("Users", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Name", "nvarchar")
+                .WithMetadata("many-to-many", "Roles:Assignments"))
+            .WithTable("Roles", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("Label", "nvarchar"))
+            .WithTable("Assignments", t => t
+                .WithSchema("dbo")
+                .WithPrimaryKey("Id")
+                .WithColumn("UserId", "int")
+                .WithColumn("RoleId", "int"))
+            .WithForeignKey("FK_Assignments_Users", "Assignments", "UserId", "Users", "Id")
+            .WithForeignKey("FK_Assignments_Roles", "Assignments", "RoleId", "Roles", "Id")
+            .Build();
+
+        var users = model.GetTableFromDbName("Users");
+        var roles = model.GetTableFromDbName("Roles");
+
+        var forward = users.ManyToManyLinks["Roles"];
+        forward.SourceTable.Should().BeSameAs(users);
+        forward.TargetTable.Should().BeSameAs(roles);
+        forward.JunctionSourceColumn.ColumnName.Should().Be("UserId");
+
+        roles.ManyToManyLinks.Should().ContainKey("Users");
+        var reverse = roles.ManyToManyLinks["Users"];
+        reverse.SourceTable.Should().BeSameAs(roles);
+        reverse.TargetTable.Should().BeSameAs(users);
+        reverse.SourceColumn.Should().BeSameAs(forward.TargetColumn);
+        reverse.TargetColumn.Should().BeSameAs(forward.SourceColumn);
+        reverse.JunctionSourceColumn.ColumnName.Should().Be("RoleId");
+        reverse.JunctionTargetColumn.ColumnName.Should().Be("UserId");
+        reverse.JunctionTable.Should().BeSameAs(forward.JunctionTable);
+    }
+
+    [Fact]
     public void Metadata_ManyToManyConfig_WithPayloadJunction_FlagsHasPayload()
     {
         var model = DbModelTestFixture.Create()

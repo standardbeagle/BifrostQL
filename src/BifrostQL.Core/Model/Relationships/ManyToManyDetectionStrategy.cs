@@ -82,7 +82,11 @@ namespace BifrostQL.Core.Model.Relationships
                     };
 
                     sourceTable.ManyToManyLinks.TryAdd(targetTable.GraphQlName, link);
-                    targetTable.ManyToManyLinks.TryAdd(sourceTable.GraphQlName, link);
+                    // The target side walks the same bridge the other way round: its field
+                    // returns source rows and joins from the target's own key, as AutoDetect
+                    // builds it. Storing the forward link here named the field after the
+                    // target and joined source keys against target rows.
+                    targetTable.ManyToManyLinks.TryAdd(sourceTable.GraphQlName, Reverse(link));
                 }
             }
         }
@@ -328,6 +332,19 @@ namespace BifrostQL.Core.Model.Relationships
                 .Where(l => string.Equals(l.ParentTable.GraphQlName, parent.GraphQlName, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(l => l.ParentFieldName, StringComparer.Ordinal)
                 .ToArray();
+
+        private static ManyToManyLink Reverse(ManyToManyLink link) => new()
+        {
+            SourceTable = link.TargetTable,
+            TargetTable = link.SourceTable,
+            JunctionTable = link.JunctionTable,
+            SourceColumn = link.TargetColumn,
+            JunctionSourceColumn = link.JunctionTargetColumn,
+            JunctionTargetColumn = link.JunctionSourceColumn,
+            TargetColumn = link.SourceColumn,
+            HasPayload = link.HasPayload,
+            IsComposite = link.IsComposite,
+        };
 
         private static void AddManyToManyLink(
             IDbTable sourceTable, IDbTable junctionTable, IDbTable targetTable,

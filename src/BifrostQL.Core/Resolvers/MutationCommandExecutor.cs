@@ -163,13 +163,50 @@ namespace BifrostQL.Core.Resolvers
         public static string BuildFilteredCountSql(string tableRef, string whereSql)
             => $"SELECT COUNT(*) FROM {tableRef} WHERE {whereSql};";
 
-        public static async ValueTask<object?> ExecuteScalar(DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// Runs a single-row INSERT with its identity read (a RETURNING clause or a trailing
+        /// <c>SELECT LastInsertedIdentity</c>) and reports both the identity and the REAL number of
+        /// rows the INSERT changed. A trigger can drop the row (SQLite <c>RAISE(IGNORE)</c>, a
+        /// Postgres BEFORE trigger returning NULL), so "returned without throwing" is not "wrote one
+        /// row" (invariant 8b).
+        ///
+        /// <para>The count is the reader's <see cref="DbDataReader.RecordsAffected"/>, read after
+        /// every result set is drained. It is clamped to 1 because the statement inserts one VALUES
+        /// row: SQL Server folds trigger-issued DML into that count, which must not read as extra
+        /// inserted rows. The identity keeps ExecuteScalar's shape: null when no row came back,
+        /// <see cref="DBNull"/> for a SQL NULL.</para>
+        /// </summary>
+        public static async ValueTask<(object? Identity, int AffectedRows)> ExecuteInsert(
+            DbConnection conn, DbTransaction transaction, string sql, Dictionary<string, object?> data, CancellationToken cancellationToken = default)
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
             cmd.Transaction = transaction;
             AddParameters(cmd, data);
-            return await cmd.ExecuteScalarAsync(cancellationToken);
+
+            object? identity = null;
+            var identityRead = false;
+            int recordsAffected;
+            await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken))
+            {
+                do
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        if (identityRead || reader.FieldCount == 0)
+                            continue;
+                        identity = reader.GetValue(0);
+                        identityRead = true;
+                    }
+                } while (await reader.NextResultAsync(cancellationToken));
+                await reader.CloseAsync();
+                recordsAffected = reader.RecordsAffected;
+            }
+
+            // No row written means no identity: SQLite's last_insert_rowid() would otherwise hand
+            // back the PREVIOUS insert's key for a row the trigger dropped.
+            var affected = Math.Clamp(recordsAffected, 0, 1);
+            return (affected == 0 ? null : identity, affected);
         }
 
         // transaction may be null when the caller manages the transaction at the SQL

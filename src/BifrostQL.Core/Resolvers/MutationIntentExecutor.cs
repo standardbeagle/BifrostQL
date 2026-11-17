@@ -155,8 +155,8 @@ public sealed class MutationIntentResult
     /// tenant/policy/soft-delete filter, or the row vanished between the read and
     /// the write; an adapter that reports that as success is lying to its caller.</para>
     ///
-    /// <para>Populated for Update and Delete. Null for Insert, which reports a
-    /// generated identity rather than an affected-row count.</para>
+    /// <para>Populated for every action. An Insert reports 0 when a trigger dropped
+    /// the row (and then <see cref="Value"/>, the generated identity, is null).</para>
     /// </summary>
     public int? AffectedRows { get; init; }
 }
@@ -308,20 +308,20 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             return new MutationIntentResult { Value = updateValue, AffectedRows = affectedRows };
         }
 
-        var value = intent.Action switch
+        if (intent.Action is MutationIntentAction.Insert or MutationIntentAction.Restore)
         {
-            MutationIntentAction.Insert => await InsertAsync(table, intent, ctx),
-            MutationIntentAction.Restore => await InsertAsync(table, intent, ctx),
-            MutationIntentAction.Delete => await TableMutationPipeline.DeleteAsync(
-                table, MergePrimaryKey(table, intent), ctx),
-            _ => throw new BifrostExecutionError($"Unsupported mutation intent action '{intent.Action}'."),
-        };
+            // The real count, not "returned without throwing": a trigger can drop the row.
+            var (insertValue, insertedRows) = await InsertAsync(table, intent, ctx);
+            return new MutationIntentResult { Value = insertValue, AffectedRows = insertedRows };
+        }
+
+        if (intent.Action != MutationIntentAction.Delete)
+            throw new BifrostExecutionError($"Unsupported mutation intent action '{intent.Action}'.");
+        var value = await TableMutationPipeline.DeleteAsync(table, MergePrimaryKey(table, intent), ctx);
         return new MutationIntentResult
         {
             Value = value,
-            AffectedRows = intent.Action == MutationIntentAction.Delete && value is int deleteAffectedRows
-                ? deleteAffectedRows
-                : intent.Action == MutationIntentAction.Restore ? 1 : null,
+            AffectedRows = value is int deleteAffectedRows ? deleteAffectedRows : null,
         };
     }
 
@@ -386,7 +386,7 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             "it is not available to external callers.");
     }
 
-    private static Task<object?> InsertAsync(IDbTable table, MutationIntent intent, MutationPipelineContext ctx)
+    private static Task<(object? Value, int AffectedRows)> InsertAsync(IDbTable table, MutationIntent intent, MutationPipelineContext ctx)
     {
         // An insert creates a new row; a positional PrimaryKey addresses an
         // existing one. Accepting-and-ignoring it could silently turn an intended
@@ -395,7 +395,7 @@ public sealed class MutationIntentExecutor : IMutationIntentExecutor
             throw new BifrostExecutionError(
                 $"MutationIntent.PrimaryKey is not valid for an insert into '{table.DbName}'; put key values in Data or use Update.");
 
-        return TableMutationPipeline.InsertAsync(
+        return TableMutationPipeline.InsertWithAffectedRowsAsync(
             table, new Dictionary<string, object?>(intent.Data, StringComparer.OrdinalIgnoreCase), ctx);
     }
 

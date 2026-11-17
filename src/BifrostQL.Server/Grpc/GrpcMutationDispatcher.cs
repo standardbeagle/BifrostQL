@@ -27,7 +27,7 @@ namespace BifrostQL.Server.Grpc
     /// </summary>
     internal static class GrpcMutationDispatcher
     {
-        /// <summary>Inserts a new row from the request's column values; returns 1 (or throws) and the generated identity.</summary>
+        /// <summary>Inserts a new row from the request's column values; returns the REAL affected count (0 when a trigger dropped the row) and the generated identity.</summary>
         public static async Task<GrpcMutationOutcome> InsertAsync(
             IMutationIntentExecutor executor,
             IDbTable table,
@@ -49,9 +49,10 @@ namespace BifrostQL.Server.Grpc
             };
 
             var result = await executor.ExecuteAsync(intent, cancellationToken);
-            // Insert either creates its one row or throws (a policy write-deny surfaces as a fault, not a
-            // zero-affected no-op); Value carries the generated identity.
-            return new GrpcMutationOutcome(1, result.Value?.ToString());
+            // AffectedRows, never a constant (invariant 8b): a policy write-deny throws, but a trigger
+            // can drop the row and the INSERT still succeeds with 0 rows. Null is not success. Value
+            // carries the generated identity.
+            return new GrpcMutationOutcome(result.AffectedRows ?? 0, result.Value?.ToString());
         }
 
         /// <summary>Updates the addressed row's SET columns; returns the REAL affected count (0 when scoped away).</summary>

@@ -179,7 +179,20 @@ namespace BifrostQL.Core.Resolvers
                 await notify();
         }
 
+        /// <summary>
+        /// Executes an insert and returns ONLY the generated identity. Callers that report a
+        /// row count (protocol adapters) use <see cref="InsertWithAffectedRowsAsync"/>: a trigger
+        /// can drop the row, so returning without a throw is not "wrote one row".
+        /// </summary>
         public static async Task<object?> InsertAsync(
+            IDbTable table, Dictionary<string, object?> data, MutationPipelineContext ctx) =>
+            (await InsertWithAffectedRowsAsync(table, data, ctx)).Value;
+
+        /// <summary>
+        /// Executes an insert and returns the generated identity plus the REAL number of rows the
+        /// INSERT changed (0 or 1). Events and observers fire only when a row was written.
+        /// </summary>
+        public static async Task<(object? Value, int AffectedRows)> InsertWithAffectedRowsAsync(
             IDbTable table, Dictionary<string, object?> data, MutationPipelineContext ctx)
         {
             GuardNotHistoryTarget(table, ctx.Model);
@@ -190,6 +203,7 @@ namespace BifrostQL.Core.Resolvers
             // can read and lock state that commits with the write), and a veto or a failed
             // write rolls back as a unit.
             object? result = null;
+            var affectedRows = 0;
             string? pendingApproval = null;
             await RunInTransactionAsync(ctx, async (conn, transaction) =>
             {
@@ -221,18 +235,22 @@ namespace BifrostQL.Core.Resolvers
                     pendingApproval = divertMessage;
                     return;
                 }
-                result = HandleDecimals(await MutationCommandExecutor.ExecuteScalar(conn, transaction, sql, data, ctx.CancellationToken));
+                var (identity, affected) = await MutationCommandExecutor.ExecuteInsert(conn, transaction, sql, data, ctx.CancellationToken);
+                result = HandleDecimals(identity);
+                affectedRows = affected;
                 // After-write, still in-transaction: the outbox writer runs here so the
                 // event can name the generated identity (result) returned by the insert.
-                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result, affectedRows: 1);
+                // The hooks skip AffectedRows == 0, so a trigger-dropped row emits no event.
+                await MutationNotifier.RunInTransactionHooksAsync(ctx.Services, hookContext, result, affectedRows);
             });
             // Thrown AFTER the commit so the enqueued pending row survives; never
             // reported as success-as-applied.
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
-            await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
-                ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext, affectedRows: 1));
-            return result;
+            if (affectedRows > 0)
+                await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
+                    ctx.Services, table, MutationType.Insert, data, result, ctx.UserContext, affectedRows));
+            return (result, affectedRows);
         }
 
         /// <summary>

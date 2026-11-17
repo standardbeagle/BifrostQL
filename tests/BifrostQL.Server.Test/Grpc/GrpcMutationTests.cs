@@ -26,6 +26,7 @@ namespace BifrostQL.Server.Test.Grpc
             "*.widgets { grpc-write: enabled }",
             "*.order_lines { grpc-write: enabled }",
             "*.orders { tenant-filter: tenant_id; grpc-write: enabled }",
+            "*.gated_widgets { grpc-write: enabled }",
             // readonly_t deliberately carries NO grpc-write metadata.
         };
 
@@ -44,6 +45,10 @@ namespace BifrostQL.Server.Test.Grpc
             "DROP TABLE IF EXISTS readonly_t",
             "CREATE TABLE readonly_t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
             "INSERT INTO readonly_t(id, name) VALUES (1,'ro')",
+            // A BEFORE INSERT trigger that silently drops a row: the INSERT succeeds and affects 0 rows.
+            "DROP TABLE IF EXISTS gated_widgets",
+            "CREATE TABLE gated_widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            "CREATE TRIGGER gated_widgets_drop BEFORE INSERT ON gated_widgets WHEN NEW.name = 'drop' BEGIN SELECT RAISE(IGNORE); END",
         };
 
         public async Task InitializeAsync()
@@ -90,6 +95,25 @@ namespace BifrostQL.Server.Test.Grpc
             var row = await _client.GetAsync(
                 "order_lines", new Dictionary<string, object?> { ["order_id"] = 10, ["line_no"] = 3 }, User());
             Convert.ToInt32(row!["qty"]).Should().Be(99);
+        }
+
+        /// <summary>
+        /// Invariant 8b: Insert reported a hard-coded <c>affected_rows: 1</c>. A trigger that drops the
+        /// row makes the INSERT succeed with zero rows changed; the wire must say 0, and say 1 for the
+        /// row the trigger keeps.
+        /// </summary>
+        [Fact]
+        public async Task Insert_reports_the_real_affected_count_when_a_trigger_drops_the_row()
+        {
+            var dropped = await _client.InsertAsync(
+                "gated_widgets", new Dictionary<string, object?> { ["name"] = "drop" }, User());
+            var kept = await _client.InsertAsync(
+                "gated_widgets", new Dictionary<string, object?> { ["name"] = "keep" }, User());
+
+            dropped.AffectedRows.Should().Be(0);
+            kept.AffectedRows.Should().Be(1);
+            var rows = await _client.ListAsync("gated_widgets", User());
+            rows.Select(r => r["name"]).Should().Equal("keep");
         }
 
         // ---- criterion 4: Update reports the REAL affected count via AffectedRows, incl. PK value 0 ----

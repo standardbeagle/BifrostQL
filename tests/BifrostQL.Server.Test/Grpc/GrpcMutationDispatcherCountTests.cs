@@ -46,6 +46,33 @@ namespace BifrostQL.Server.Test.Grpc
             outcome.AffectedRows.Should().Be(affected);
         }
 
+        [Theory]
+        [InlineData(1)]
+        [InlineData(0)]
+        public async Task Insert_reports_AffectedRows_not_a_constant(int affected)
+        {
+            var executor = Returning(new MutationIntentResult { Value = 42, AffectedRows = affected });
+
+            var outcome = await GrpcMutationDispatcher.InsertAsync(
+                executor, WidgetTable(), new Dictionary<string, object?> { ["name"] = "w" },
+                new Dictionary<string, object?>(), endpoint: null, CancellationToken.None);
+
+            outcome.AffectedRows.Should().Be(affected);
+            outcome.ReturnedKey.Should().Be("42");
+        }
+
+        [Fact]
+        public async Task Insert_with_no_count_reports_zero()
+        {
+            var executor = Returning(new MutationIntentResult { Value = 42, AffectedRows = null });
+
+            var outcome = await GrpcMutationDispatcher.InsertAsync(
+                executor, WidgetTable(), new Dictionary<string, object?> { ["name"] = "w" },
+                new Dictionary<string, object?>(), endpoint: null, CancellationToken.None);
+
+            outcome.AffectedRows.Should().Be(0);
+        }
+
         [Fact]
         public async Task Delete_with_no_count_reports_zero()
         {

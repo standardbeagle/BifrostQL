@@ -107,6 +107,39 @@ namespace BifrostQL.Server.Auth
         /// Defaults to 1 minute.
         /// </summary>
         public TimeSpan SessionRevalidationInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
+        /// PBKDF2 iteration count for password hashes this host writes (ASP.NET Core Identity V3:
+        /// PBKDF2-HMAC-SHA512, 128-bit salt, 256-bit subkey). A stored hash below the count still
+        /// verifies and is rehashed at the configured count on the next successful login.
+        /// Defaults to <see cref="DefaultPasswordHashIterations"/> (OWASP's figure for
+        /// PBKDF2-HMAC-SHA512); must be at least <see cref="MinPasswordHashIterations"/>, the
+        /// framework default, so configuration can only strengthen it.
+        /// </summary>
+        public int PasswordHashIterations { get; set; } = DefaultPasswordHashIterations;
+
+        /// <summary>Default <see cref="PasswordHashIterations"/>: 210,000.</summary>
+        public const int DefaultPasswordHashIterations = 210_000;
+
+        /// <summary>Lowest accepted <see cref="PasswordHashIterations"/>: 100,000, the ASP.NET Core default.</summary>
+        public const int MinPasswordHashIterations = 100_000;
+
+        /// <summary>
+        /// The password hasher these options configure. Throws when
+        /// <see cref="PasswordHashIterations"/> is below <see cref="MinPasswordHashIterations"/>;
+        /// <c>AddBifrostLocalAuth</c> calls it at startup so a weak setting never reaches a login.
+        /// </summary>
+        public IPasswordHasher<string> CreatePasswordHasher()
+        {
+            if (PasswordHashIterations < MinPasswordHashIterations)
+                throw new ArgumentOutOfRangeException(nameof(PasswordHashIterations), PasswordHashIterations,
+                    $"LocalAuthOptions.PasswordHashIterations must be at least {MinPasswordHashIterations}.");
+            return new PasswordHasher<string>(Microsoft.Extensions.Options.Options.Create(new PasswordHasherOptions
+            {
+                CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV3,
+                IterationCount = PasswordHashIterations,
+            }));
+        }
     }
 
     /// <summary>
@@ -171,7 +204,7 @@ namespace BifrostQL.Server.Auth
         /// <param name="options">Table and column configuration for the app-user rows.</param>
         /// <param name="passwordHasher">
         /// Password hasher used to verify the submitted password against the stored hash.
-        /// Defaults to <see cref="PasswordHasher{TUser}"/> when not supplied.
+        /// Defaults to <see cref="LocalAuthOptions.CreatePasswordHasher"/> when not supplied.
         /// </param>
         public LocalUserStore(
             IDbConnFactory connFactory,
@@ -180,7 +213,7 @@ namespace BifrostQL.Server.Auth
         {
             _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
             _options = options ?? throw new ArgumentNullException(nameof(options));
-            _passwordHasher = passwordHasher ?? new PasswordHasher<string>();
+            _passwordHasher = passwordHasher ?? options.CreatePasswordHasher();
             // Compute the throwaway hash once so a user-miss can verify against it in
             // constant-ish time relative to a real verification (see _dummyHash).
             _dummyHash = _passwordHasher.HashPassword(DummyUser, DummyPassword);

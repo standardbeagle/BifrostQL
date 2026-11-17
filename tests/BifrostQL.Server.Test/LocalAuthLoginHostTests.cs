@@ -288,5 +288,52 @@ namespace BifrostQL.Server.Test
             current.VerifyHashedPassword(Login, stored, Password).Should().Be(PasswordVerificationResult.Success,
                 "the replacement hash is at the current work factor and still matches the password");
         }
+
+        /// <summary>The PBKDF2 iteration count stored in an ASP.NET Core Identity V3 hash (bytes 5-8, big-endian).</summary>
+        private static int V3Iterations(string hash)
+        {
+            var bytes = Convert.FromBase64String(hash);
+            bytes[0].Should().Be(0x01, "an Identity V3 hash");
+            return System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(5, 4));
+        }
+
+        [Fact]
+        public async Task DefaultStore_RehashesAFrameworkDefaultHash_AtTheOwaspIterationCount()
+        {
+            // The framework default (100,000 iterations of PBKDF2-HMAC-SHA512) is below OWASP's
+            // 210,000. A hash written at it must verify and be lifted on the next login.
+            var frameworkHash = new PasswordHasher<string>().HashPassword(Login, Password);
+            V3Iterations(frameworkHash).Should().Be(100_000, "control: the framework default the store used to write");
+            using (var conn = new SqliteConnection(ConnectionString))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "UPDATE app_users SET password_hash = @h WHERE id = 'user-1'";
+                cmd.Parameters.AddWithValue("@h", frameworkHash);
+                cmd.ExecuteNonQuery();
+            }
+            var store = new LocalUserStore(new SqliteDbConnFactory(ConnectionString), new LocalAuthOptions());
+
+            (await store.VerifyCredentialsAsync(Login, Password)).Succeeded.Should().BeTrue();
+
+            using (var conn = new SqliteConnection(ConnectionString))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT password_hash FROM app_users WHERE id = 'user-1'";
+                V3Iterations((string)cmd.ExecuteScalar()!).Should().Be(LocalAuthOptions.DefaultPasswordHashIterations);
+            }
+            LocalAuthOptions.DefaultPasswordHashIterations.Should().Be(210_000);
+        }
+
+        [Fact]
+        public void IterationCount_BelowTheFrameworkDefault_FailsAtStartup()
+        {
+            var services = new ServiceCollection();
+
+            var act = () => services.AddBifrostLocalAuth(ConnectionString, o => o.PasswordHashIterations = 99_999);
+
+            act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*PasswordHashIterations*");
+        }
     }
 }

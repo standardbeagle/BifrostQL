@@ -33,6 +33,7 @@ namespace BifrostQL.Server
 
             // Constructed now so an invalid attempt budget fails at startup, not on first login.
             var loginLimiter = BifrostQL.Server.Auth.LocalLoginRateLimiter.From(options);
+            _ = options.CreatePasswordHasher();
             var connFactory = DbConnFactoryResolver.Create(connectionString);
 
             services.AddSingleton(options);

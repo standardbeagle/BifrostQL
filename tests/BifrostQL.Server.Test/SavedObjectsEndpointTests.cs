@@ -44,14 +44,15 @@ public sealed class SavedObjectsEndpointTests : IDisposable
     private async Task<HttpClient> BuildClientAsync(
         Action<BifrostSavedObjectsOptions>? configure = null,
         ClaimsPrincipal? user = null,
-        IBifrostAuthContextFactory? authFactory = null)
+        IBifrostAuthContextFactory? authFactory = null,
+        ISavedObjectStore? store = null)
     {
         var builder = new HostBuilder().ConfigureWebHost(web =>
         {
             web.UseTestServer();
             web.ConfigureServices(services =>
             {
-                services.AddBifrostSavedObjects(new FileSavedObjectStore(_dir));
+                services.AddBifrostSavedObjects(store ?? new FileSavedObjectStore(_dir));
                 if (authFactory != null)
                     services.AddSingleton(authFactory);
             });
@@ -107,6 +108,60 @@ public sealed class SavedObjectsEndpointTests : IDisposable
         var stale = await client.PutAsync("/_saved-objects/form/f1",
             Body("""{"id":"f1","type":"form","name":"stale","definition":{},"version":1}"""));
         stale.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task NumericType_IsRejected_AndNothingIsPersisted()
+    {
+        var client = await BuildClientAsync();
+
+        // 999 is no SavedObjectType. Enum.TryParse and the integer-tolerant enum converter both
+        // accepted it, persisting under saved-objects/<owner>/999/, a directory ListAsync never
+        // enumerates: invisible, undeletable through listing, unbounded.
+        var resp = await client.PutAsync("/_saved-objects/999/x",
+            Body("""{"id":"x","type":999,"name":"n","definition":{},"version":0}"""));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        Directory.Exists(_dir).Should().BeFalse("a refused type writes nothing to disk");
+    }
+
+    [Fact]
+    public async Task OversizedBody_IsRefusedWith413_CountingReceivedBytes()
+    {
+        var client = await BuildClientAsync(o =>
+        {
+            o.RequireAuth = false;
+            o.MaxRequestBodyBytes = 1024;
+        });
+        var json = $$"""{"id":"q1","type":"query","name":"n","definition":{"pad":"{{new string('x', 4096)}}"},"version":0}""";
+        // Chunked, no Content-Length: the cap must count what arrives, not what is declared.
+        var content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/_saved-objects/query/q1") { Content = content };
+        request.Headers.TransferEncodingChunked = true;
+
+        var resp = await client.SendAsync(request);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        Directory.Exists(_dir).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreatesPastThePerOwnerCap_AreRefused_UpdatesAreNot()
+    {
+        var client = await BuildClientAsync(o => o.RequireAuth = false,
+            store: new FileSavedObjectStore(_dir, maxObjectsPerOwner: 2));
+        (await client.PutAsync("/_saved-objects/query/a", Body("""{"id":"a","type":"query","name":"a","definition":{},"version":0}""")))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        (await client.PutAsync("/_saved-objects/form/b", Body("""{"id":"b","type":"form","name":"b","definition":{},"version":0}""")))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var third = await client.PutAsync("/_saved-objects/query/c",
+            Body("""{"id":"c","type":"query","name":"c","definition":{},"version":0}"""));
+        third.StatusCode.Should().Be(HttpStatusCode.InsufficientStorage);
+
+        (await client.PutAsync("/_saved-objects/query/a", Body("""{"id":"a","type":"query","name":"a2","definition":{},"version":1}""")))
+            .StatusCode.Should().Be(HttpStatusCode.OK, "an update adds no object, so the cap never refuses it");
     }
 
     [Fact]

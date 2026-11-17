@@ -27,6 +27,13 @@ namespace BifrostQL.Server
         /// anyone inherits by not thinking about it.</para>
         /// </summary>
         public bool RequireAuth { get; set; } = true;
+
+        /// <summary>
+        /// Largest PUT body read, in received bytes (default 512 KiB: twice the 256 KB definition
+        /// cap, leaving room for the envelope). A larger body is refused with 413 before it is
+        /// buffered, so the definition cap is not the first bound a request meets.
+        /// </summary>
+        public int MaxRequestBodyBytes { get; set; } = 2 * SavedObjectJson.DefaultMaxDefinitionBytes;
     }
 
     /// <summary>
@@ -115,6 +122,15 @@ namespace BifrostQL.Server
             {
                 await WriteError(context, StatusCodes.Status409Conflict, ex.Message);
             }
+            catch (SavedObjectQuotaExceededException ex)
+            {
+                await WriteError(context, StatusCodes.Status507InsufficientStorage, ex.Message);
+            }
+            catch (RequestBodyTooLargeException)
+            {
+                await WriteError(context, StatusCodes.Status413PayloadTooLarge,
+                    $"The request body exceeds the {_options.MaxRequestBodyBytes}-byte limit.");
+            }
         }
 
         private async Task DispatchAsync(HttpContext context, ISavedObjectStore store, string owner, string[] segments)
@@ -152,7 +168,7 @@ namespace BifrostQL.Server
             else if (HttpMethods.IsPut(method) && segments.Length == 2)
             {
                 var type = SavedObjectJson.ParseType(segments[0]);
-                var body = await ReadBody(context);
+                var body = await ReadBody(context, _options.MaxRequestBodyBytes);
                 var incoming = SavedObjectJson.Deserialize(body);
                 if (incoming.Type != type || !string.Equals(incoming.Id, segments[1], StringComparison.Ordinal))
                     throw new SavedObjectValidationException("Saved object 'type'/'id' in the body must match the URL path.");
@@ -170,10 +186,28 @@ namespace BifrostQL.Server
             await WriteError(context, StatusCodes.Status405MethodNotAllowed, $"Unsupported {method} on '{context.Request.Path}'.");
         }
 
-        private static async Task<string> ReadBody(HttpContext context)
+        /// <summary>
+        /// Reads the body up to <paramref name="maxBytes"/> received bytes, counting what
+        /// arrives rather than trusting Content-Length, and throws past the cap.
+        /// </summary>
+        private static async Task<string> ReadBody(HttpContext context, int maxBytes)
         {
-            using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
-            return await reader.ReadToEndAsync(context.RequestAborted);
+            if (context.Request.ContentLength > maxBytes)
+                throw new RequestBodyTooLargeException();
+            using var buffer = new MemoryStream();
+            var chunk = new byte[16 * 1024];
+            int read;
+            while ((read = await context.Request.Body.ReadAsync(chunk, context.RequestAborted)) > 0)
+            {
+                if (buffer.Length + read > maxBytes)
+                    throw new RequestBodyTooLargeException();
+                buffer.Write(chunk, 0, read);
+            }
+            return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+        }
+
+        private sealed class RequestBodyTooLargeException : Exception
+        {
         }
 
         private static async Task WriteJson(HttpContext context, int status, string json)

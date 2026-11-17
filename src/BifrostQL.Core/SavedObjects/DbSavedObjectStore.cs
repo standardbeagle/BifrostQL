@@ -35,6 +35,7 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
     private readonly int _maxDefinitionBytes;
     private readonly int _timeoutSeconds;
     private readonly int _maxListRows;
+    private readonly int _maxObjectsPerOwner;
 
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialized;
@@ -58,9 +59,12 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
         string? tableName = null,
         int maxDefinitionBytes = SavedObjectJson.DefaultMaxDefinitionBytes,
         int timeoutSeconds = 30,
-        int maxListRows = DefaultMaxListRows)
+        int maxListRows = DefaultMaxListRows,
+        int maxObjectsPerOwner = SavedObjectJson.DefaultMaxObjectsPerOwner)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxListRows, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxObjectsPerOwner, 1);
+        _maxObjectsPerOwner = maxObjectsPerOwner;
         _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
         _dialect = connFactory.Dialect;
         _tableName = string.IsNullOrWhiteSpace(tableName) ? DefaultTableName : tableName;
@@ -145,6 +149,10 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
         {
             if (obj.Version != 0)
                 throw new SavedObjectVersionConflictException(obj.Type, obj.Id, obj.Version, 0);
+            // Check-then-insert: concurrent creates by one owner can overshoot the cap by the
+            // number in flight, which bounds growth all the same.
+            if (await CountAsync(owner, cancellationToken) >= _maxObjectsPerOwner)
+                throw new SavedObjectQuotaExceededException(_maxObjectsPerOwner);
             return await InsertAsync(owner, obj, cancellationToken);
         }
 
@@ -152,6 +160,14 @@ public sealed class DbSavedObjectStore : ISavedObjectStore
             throw new SavedObjectVersionConflictException(obj.Type, obj.Id, obj.Version, existing.Version);
 
         return await UpdateAsync(owner, obj, cancellationToken);
+    }
+
+    private async Task<long> CountAsync(string owner, CancellationToken cancellationToken)
+    {
+        var sql = $"SELECT COUNT(*) AS {Col("n")} FROM {TableRef} WHERE {Col("owner")} = @owner";
+        var parameters = new Dictionary<string, object?> { ["owner"] = SavedObjectOwner.Require(owner) };
+        var result = await RawSqlExecutor.ExecuteAsync(_connFactory, sql, parameters, _timeoutSeconds, maxRows: 1, cancellationToken);
+        return Convert.ToInt64(result.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<SavedObject> InsertAsync(string owner, SavedObject obj, CancellationToken cancellationToken)

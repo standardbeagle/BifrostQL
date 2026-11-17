@@ -21,6 +21,12 @@ public static class SavedObjectJson
     /// </summary>
     public const int MaxIdLength = QueryModel.SqlColumnDefinition.KeyTextMaxLength;
 
+    /// <summary>
+    /// Default cap on how many objects one owner may hold (1000). Without it an authenticated
+    /// caller could PUT fresh ids until the disk or table filled.
+    /// </summary>
+    public const int DefaultMaxObjectsPerOwner = 1000;
+
     private static readonly JsonSerializerOptions Options = CreateOptions();
 
     private static JsonSerializerOptions CreateOptions()
@@ -31,7 +37,9 @@ public static class SavedObjectJson
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             PropertyNameCaseInsensitive = true,
         };
-        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        // Names only: with integer values allowed, a body type of 999 deserialized to an
+        // undefined enum value and was persisted under a directory ListAsync never enumerates.
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
         return options;
     }
 
@@ -85,6 +93,8 @@ public static class SavedObjectJson
     {
         ArgumentNullException.ThrowIfNull(obj);
 
+        if (!Enum.IsDefined(obj.Type))
+            throw new SavedObjectValidationException("Saved object 'type' is not a known saved-object type.");
         if (string.IsNullOrWhiteSpace(obj.Id))
             throw new SavedObjectValidationException("Saved object 'id' is required.");
         if (obj.Id.Length > MaxIdLength)
@@ -131,14 +141,34 @@ public static class SavedObjectJson
         return doc.RootElement.Clone();
     }
 
-    /// <summary>Parses a <see cref="SavedObjectType"/> from its camelCase wire name; throws on an unknown value.</summary>
+    /// <summary>
+    /// Parses a <see cref="SavedObjectType"/> from its camelCase wire name; throws on an unknown
+    /// value. Only names are accepted: <see cref="Enum.TryParse{TEnum}(string, bool, out TEnum)"/>
+    /// also accepts any numeric string ("999"), which is not a type.
+    /// </summary>
     public static SavedObjectType ParseType(string value)
     {
-        if (Enum.TryParse<SavedObjectType>(value, ignoreCase: true, out var type))
+        if (Enum.GetNames<SavedObjectType>().Contains(value, StringComparer.OrdinalIgnoreCase)
+            && Enum.TryParse<SavedObjectType>(value, ignoreCase: true, out var type))
             return type;
         throw new SavedObjectValidationException(
             $"Unknown saved-object type '{value}'. Valid types: {string.Join(", ", Enum.GetNames<SavedObjectType>()).ToLowerInvariant()}.");
     }
+}
+
+/// <summary>
+/// Raised when a create would take an owner past its object cap. The HTTP layer maps this to
+/// 507 Insufficient Storage; updates to an existing object are never refused by the cap.
+/// </summary>
+public sealed class SavedObjectQuotaExceededException : Exception
+{
+    public SavedObjectQuotaExceededException(int maxObjectsPerOwner)
+        : base($"The saved-object limit of {maxObjectsPerOwner} objects has been reached. Delete an object before creating another.")
+    {
+        MaxObjectsPerOwner = maxObjectsPerOwner;
+    }
+
+    public int MaxObjectsPerOwner { get; }
 }
 
 /// <summary>Raised for a malformed or invalid saved-object request. The HTTP layer maps this to 400.</summary>

@@ -73,6 +73,48 @@ public sealed class SavedObjectStoreTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Backends))]
+    public async Task PerOwnerCap_RefusesCreates_NotUpdates_AndIsPerOwner(string backend)
+    {
+        ISavedObjectStore store;
+        if (backend == "file")
+        {
+            var dir = Path.Combine(Path.GetTempPath(), $"bifrost-so-{Guid.NewGuid():N}");
+            _tempDirs.Add(dir);
+            store = new FileSavedObjectStore(dir, maxObjectsPerOwner: 2);
+        }
+        else
+        {
+            var conn = $"Data Source=bifrost_so_{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
+            var keep = new SqliteConnection(conn);
+            keep.Open();
+            _keepAlive.Add(keep);
+            store = new DbSavedObjectStore(new SqliteDbConnFactory(conn), maxObjectsPerOwner: 2);
+        }
+
+        await store.PutAsync(Alice, Obj(SavedObjectType.Query, "a", "a", 0));
+        await store.PutAsync(Alice, Obj(SavedObjectType.Form, "b", "b", 0));
+
+        var third = () => store.PutAsync(Alice, Obj(SavedObjectType.Query, "c", "c", 0));
+        await third.Should().ThrowAsync<SavedObjectQuotaExceededException>();
+
+        (await store.PutAsync(Alice, Obj(SavedObjectType.Query, "a", "renamed", 1))).Version.Should().Be(2,
+            "an update adds no object");
+        (await store.PutAsync(Bob, Obj(SavedObjectType.Query, "c", "c", 0))).Version.Should().Be(1,
+            "the cap is per owner: Alice's objects do not count against Bob");
+    }
+
+    [Fact]
+    public void Validate_RefusesAnUndefinedType()
+    {
+        var undefined = Obj((SavedObjectType)999, "x", "x", 0);
+        var act = () => SavedObjectJson.Validate(undefined);
+        act.Should().Throw<SavedObjectValidationException>();
+        var parse = () => SavedObjectJson.ParseType("999");
+        parse.Should().Throw<SavedObjectValidationException>();
+    }
+
+    [Theory]
+    [MemberData(nameof(Backends))]
     public async Task SaveLoadRenameDelete_RoundTrips(string backend)
     {
         var store = Make(backend);

@@ -44,7 +44,8 @@ stores but does not interpret.
 The `type` enum
 ([`SavedObjectType`](https://github.com/standardbeagle/BifrostQL/blob/main/src/BifrostQL.Core/SavedObjects/SavedObject.cs))
 is `query`, `form`, `report`, or `dashboard`; an unrecognized value is rejected
-rather than silently coerced.
+rather than silently coerced. The type is accepted only as its name: a numeric
+value such as `"type": 7` is a `400`, never an out-of-range enum.
 
 `version` is an **optimistic-concurrency token**: a create carries `0` and the
 store persists `1`; an update must carry the version it last read, and the
@@ -64,6 +65,17 @@ serves a small REST surface (default base path `/_saved-objects`, configurable):
 | `GET /_saved-objects/{type}/{id}` | fetch one (`404` if absent) |
 | `PUT /_saved-objects/{type}/{id}` | create/update (`409` on stale version, `400` on invalid) |
 | `DELETE /_saved-objects/{type}/{id}` | delete (`204`) |
+
+Two caps bound what one caller can store:
+
+- **Request body** — `BifrostSavedObjectsOptions.MaxRequestBodyBytes` (default
+  512 KiB, twice the 256 KiB definition cap). The middleware counts the bytes it
+  actually receives, so a chunked body with no `Content-Length` is cut off at the
+  cap with `413`.
+- **Objects per owner** — both stores refuse a *create* past
+  `SavedObjectJson.DefaultMaxObjectsPerOwner` (1000, a constructor argument on
+  `FileSavedObjectStore` and `DbSavedObjectStore`) with `507`. Updates and
+  deletes of existing objects still work at the cap.
 
 Two storage backends sit behind one `ISavedObjectStore` interface:
 

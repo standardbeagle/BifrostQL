@@ -25,13 +25,19 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
     private const string RootFolder = "saved-objects";
     private readonly string _baseDir;
     private readonly int _maxDefinitionBytes;
+    private readonly int _maxObjectsPerOwner;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-    public FileSavedObjectStore(string baseDir, int maxDefinitionBytes = SavedObjectJson.DefaultMaxDefinitionBytes)
+    public FileSavedObjectStore(
+        string baseDir,
+        int maxDefinitionBytes = SavedObjectJson.DefaultMaxDefinitionBytes,
+        int maxObjectsPerOwner = SavedObjectJson.DefaultMaxObjectsPerOwner)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseDir);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxObjectsPerOwner, 1);
         _baseDir = baseDir;
         _maxDefinitionBytes = maxDefinitionBytes;
+        _maxObjectsPerOwner = maxObjectsPerOwner;
     }
 
     private string TypeDir(string owner, SavedObjectType type)
@@ -92,6 +98,10 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
             var path = PathFor(owner, obj.Type, obj.Id);
             var existing = await ReadFileAsync(path, cancellationToken);
             var nextVersion = ResolveNextVersion(obj, existing);
+            // Counted under the write lock, so concurrent creates in this process cannot
+            // overshoot the cap. Only a create adds an object; an update never trips it.
+            if (existing == null && CountObjects(owner) >= _maxObjectsPerOwner)
+                throw new SavedObjectQuotaExceededException(_maxObjectsPerOwner);
 
             var toWrite = obj with { Version = nextVersion };
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -107,6 +117,18 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
         {
             _writeLock.Release();
         }
+    }
+
+    private int CountObjects(string owner)
+    {
+        var count = 0;
+        foreach (var type in Enum.GetValues<SavedObjectType>())
+        {
+            var dir = TypeDir(owner, type);
+            if (Directory.Exists(dir))
+                count += Directory.EnumerateFiles(dir, "*.json").Count();
+        }
+        return count;
     }
 
     public Task DeleteAsync(string owner, SavedObjectType type, string id, CancellationToken cancellationToken = default)

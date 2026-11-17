@@ -84,6 +84,14 @@ describe('formatColumnValue (render)', () => {
         expect(container.textContent?.replace(/\D/g, '')).toBe('9007199254740993');
     });
 
+    it('groups a Decimal sent as a decimal string without rounding it', () => {
+        const { container } = render(
+            <>{formatColumnValue('123456789012345678.25', col({ paramType: 'Decimal', metadata: { 'display-format': 'number' } }))}</>
+        );
+        expect(container.textContent).not.toBe('123456789012345678.25');
+        expect(container.textContent?.replace(/\D/g, '')).toBe('12345678901234567825');
+    });
+
     it('falls back to raw text for an unparseable date', () => {
         const { container } = render(<>{formatColumnValue('not-a-date', col({ dbType: 'datetime2' }))}</>);
         expect(container.textContent).toBe('not-a-date');

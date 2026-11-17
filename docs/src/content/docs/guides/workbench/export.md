@@ -25,8 +25,9 @@ in the repo.
   `+`, `-`, `@`, tab, or carriage return gets a leading apostrophe so a
   spreadsheet opens it as text instead of running it as a formula. Numeric
   column values arrive typed and are left alone, so a negative number stays a
-  number. The server writes `BigInt` as a decimal string (a JSON number rounds
-  past 2^53), so a negative bigint reaches the export as the text `-5`. A string
+  number. The server writes `BigInt` and `Decimal` as decimal strings (a JSON
+  number rounds past 15–17 significant digits), so a negative bigint or decimal
+  reaches the export as the text `-5` or `-12.50`. A string
   holding only a numeric literal (`-5`, `+12.50`, `-1.5e3`) opens in Excel as
   that number and runs nothing, so it is exempt too; anything past the literal
   (`-5+cmd`) is still prefixed.

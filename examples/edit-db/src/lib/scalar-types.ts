@@ -46,6 +46,28 @@ export function isExactScalar(paramType: string | undefined): boolean {
     return EXACT_SCALARS.has(baseParamType(paramType));
 }
 
+const DECIMAL_TEXT = /^([+-]?)(\d+)(?:\.(\d+))?$/;
+
+/**
+ * Orders two plain decimal strings exactly ("-3" < "9.5" < "10" <
+ * "9007199254740993"), or returns null when either is not plain decimal text.
+ * The server writes BigInt and Decimal values as such strings; text order would
+ * put "10" before "9", and Number() rounds past 15–17 significant digits.
+ */
+export function compareDecimalText(left: string, right: string): number | null {
+    const l = DECIMAL_TEXT.exec(left);
+    const r = DECIMAL_TEXT.exec(right);
+    if (!l || !r) return null;
+    const scale = Math.max(l[3]?.length ?? 0, r[3]?.length ?? 0);
+    const scaled = (m: RegExpExecArray): bigint => {
+        const magnitude = BigInt(m[2] + (m[3] ?? '').padEnd(scale, '0'));
+        return m[1] === '-' ? -magnitude : magnitude;
+    };
+    const a = scaled(l);
+    const b = scaled(r);
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** DateTime and DateTimeOffset — the columns whose bounds are instants. */
 export function isTimestampScalar(paramType: string | undefined): boolean {
     return TIMESTAMP_SCALARS.has(baseParamType(paramType));

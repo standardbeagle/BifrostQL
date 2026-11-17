@@ -320,6 +320,21 @@ describe('grouping keys sent as BigInt strings', () => {
             .toEqual(['-3', '9', '10', '9007199254740992', '9007199254740993']);
     });
 
+    it('orders Decimal keys by value, not as text', () => {
+        const prices = { name: 'prices', graphQlName: 'prices', columns: [
+            { name: 'price', graphQlName: 'price', label: 'Price', paramType: 'Decimal' },
+        ] } as unknown as Table;
+        const data = { pricesAggregate: [
+            { price: '10.5', _count: 1 },
+            { price: '9.25', _count: 1 },
+            { price: '-3.75', _count: 1 },
+            { price: '123456789012345678.0123456789', _count: 1 },
+            { price: '123456789012345678.0123456788', _count: 1 },
+        ] };
+        expect(readGroupingResult(data, prices, prices.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
+            .toEqual(['-3.75', '9.25', '10.5', '123456789012345678.0123456788', '123456789012345678.0123456789']);
+    });
+
     it('keeps text order for a text column of digit strings', () => {
         const data = serverGrouping([{ status: '10', _count: 1 }, { status: '9', _count: 1 }]);
         expect(readGroupingResult(data, orders, orders.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))

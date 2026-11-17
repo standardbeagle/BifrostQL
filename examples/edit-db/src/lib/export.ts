@@ -36,8 +36,8 @@ const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
 /**
  * A complete decimal numeric literal. Excel opens it as that number and runs
  * nothing, so a signed one is exempt from the formula guard. This is what keeps
- * negative BigInt values (which the server writes as decimal strings, since a
- * JSON number rounds past 2^53) and exact decimals sent as text unprefixed.
+ * negative BigInt and Decimal values (which the server writes as decimal
+ * strings, since a JSON number rounds past 15-17 significant digits) unprefixed.
  */
 const NUMERIC_LITERAL = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 

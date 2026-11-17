@@ -173,7 +173,7 @@ export function enumLabelFor(value: unknown, column: Column): string | null {
 // Intl formatters are expensive to construct (hundreds of µs) and cheap to call, so
 // every one a cell uses is built once here.
 const numberFmt = new Intl.NumberFormat(undefined);
-const INTEGER_TEXT = /^-?\d+$/;
+const DECIMAL_TEXT = /^-?\d+(?:\.\d+)?$/;
 const percentFmt = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 2 });
 
 /** Renders one cell value of a column. Built once per column by {@link columnFormatter}. */
@@ -208,10 +208,11 @@ function formatterFor(fmt: DisplayFormat | null): (value: unknown) => ReactNode 
         case 'percent': {
             const display = fmt === 'percent' ? percentFmt : numberFmt;
             return (value) => {
-                // The server sends BigInt as a decimal string; through Number() a
-                // value past 2^53 would display a different integer.
-                if (typeof value === 'string' && INTEGER_TEXT.test(value)) {
-                    return <span title={value}>{display.format(BigInt(value))}</span>;
+                // The server sends BigInt and Decimal as decimal strings. Intl
+                // formats a numeric string exactly; through Number() a value past
+                // 15–17 significant digits would display different digits.
+                if (typeof value === 'string' && DECIMAL_TEXT.test(value)) {
+                    return <span title={value}>{display.format(value as Intl.StringNumericLiteral)}</span>;
                 }
                 const num = typeof value === 'number' ? value : Number(value);
                 if (isNaN(num)) return String(value);

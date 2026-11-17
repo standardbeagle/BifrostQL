@@ -2,7 +2,7 @@ import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Column, Table } from '../types/schema';
 import { buildColumnFilters, getGraphQlType, parseTableFilterString } from './query-builder';
 import { coerceForGql } from './fk';
-import { isIntegerScalar, isNumericScalar } from './scalar-types';
+import { compareDecimalText, isExactScalar, isNumericScalar } from './scalar-types';
 
 /** URL parameter that owns the selected grouping field. */
 export const GRID_GROUP_BY_PARAM = 'gb';
@@ -177,36 +177,33 @@ export function buildGridGroupingRequest(
     };
 }
 
-const INTEGER_TEXT = /^-?\d+$/;
-
 /**
  * Defined aggregate ordering for the server-grouped replacement surface.
- * `integerKeys` is set for an integer key column: BigInt keys arrive as
- * decimal strings and must compare as integers, or "10" sorts before "9"
- * (Number() would merge distinct keys past 2^53). A text column of digit
- * strings keeps text order.
+ * `exactKeys` is set for a BigInt or Decimal key column: those keys arrive as
+ * decimal strings and must compare by value, or "10" sorts before "9" (and
+ * Number() would merge distinct keys past 15–17 significant digits). A text
+ * column of digit strings keeps text order.
  */
-export function compareGroupingRowsByKey(left: GroupingRow, right: GroupingRow, integerKeys = false): number {
+export function compareGroupingRowsByKey(left: GroupingRow, right: GroupingRow, exactKeys = false): number {
     if (left.value === right.value) return 0;
     if (left.value === null || left.value === undefined) return -1;
     if (right.value === null || right.value === undefined) return 1;
     if (typeof left.value === 'number' && typeof right.value === 'number') return left.value - right.value;
-    if (integerKeys && typeof left.value === 'string' && typeof right.value === 'string' && INTEGER_TEXT.test(left.value) && INTEGER_TEXT.test(right.value)) {
-        const l = BigInt(left.value);
-        const r = BigInt(right.value);
-        return l < r ? -1 : l > r ? 1 : 0;
+    if (exactKeys && typeof left.value === 'string' && typeof right.value === 'string') {
+        const byValue = compareDecimalText(left.value, right.value);
+        if (byValue !== null) return byValue;
     }
     return String(left.value).localeCompare(String(right.value));
 }
 
 /** Sort aggregate buckets by the selected key/count direction with a stable key tie-breaker. */
-export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort: GroupingSort = DEFAULT_GROUPING_SORT, integerKeys = false): number {
+export function compareGroupingRows(left: GroupingRow, right: GroupingRow, sort: GroupingSort = DEFAULT_GROUPING_SORT, exactKeys = false): number {
     if (sort.field === 'count') {
         const byCount = left.count - right.count;
         if (byCount !== 0) return sort.desc ? -byCount : byCount;
-        return compareGroupingRowsByKey(left, right, integerKeys);
+        return compareGroupingRowsByKey(left, right, exactKeys);
     }
-    const byKey = compareGroupingRowsByKey(left, right, integerKeys);
+    const byKey = compareGroupingRowsByKey(left, right, exactKeys);
     return sort.desc ? -byKey : byKey;
 }
 
@@ -233,7 +230,7 @@ export function readGroupingResult(data: Record<string, unknown> | undefined, ta
     const probe = data?.[GROUPING_PROBE_FIELD];
     if (!Array.isArray(probe)) throw new Error('The grouping response is missing its truncation probe.');
     const truncated = isGroupingTruncated(raw.length, probe.length);
-    const integerKeys = isIntegerScalar(groupBy.paramType);
+    const exactKeys = isExactScalar(groupBy.paramType);
     // Couple each server row to its configured sum before ordering; never
     // calculate a measure from the current flat page.
     const rows = raw.slice(0, GROUPING_BUCKET_CAP).map((source) => {
@@ -243,7 +240,7 @@ export function readGroupingResult(data: Record<string, unknown> | undefined, ta
             count: Number(record._count ?? 0),
             sum: sumBy ? (record._sum as Record<string, unknown> | undefined)?.[sumBy.graphQlName] : undefined,
         };
-    }).sort((left, right) => compareGroupingRows(left, right, sort, integerKeys));
+    }).sort((left, right) => compareGroupingRows(left, right, sort, exactKeys));
     return { rows, truncated };
 }
 

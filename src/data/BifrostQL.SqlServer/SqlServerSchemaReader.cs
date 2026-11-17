@@ -68,7 +68,8 @@ SELECT C.[TABLE_CATALOG]
       ,C.[DOMAIN_SCHEMA]
       ,C.[DOMAIN_NAME]
       ,CAST(SC.[is_identity] AS int) [IS_IDENTITY]
-      ,CAST(SC.[is_computed] AS int) [IS_COMPUTED]
+      -- rowversion (DATA_TYPE 'timestamp') is engine-assigned on every write: read-only like a computed column.
+      ,CASE WHEN SC.[is_computed] = 1 OR C.[DATA_TYPE] = 'timestamp' THEN 1 ELSE 0 END [IS_COMPUTED]
       -- Identity and rowversion (DATA_TYPE 'timestamp') are server-assigned; COLUMN_DEFAULT is NULL for both.
       ,CASE WHEN C.[COLUMN_DEFAULT] IS NOT NULL OR C.[DATA_TYPE] = 'timestamp'
             OR SC.[is_identity] = 1

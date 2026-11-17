@@ -168,6 +168,10 @@ namespace BifrostQL.Core.Schema
         private bool IsBlindIndexTarget(ColumnDto column) =>
             BlindIndexTargets.Count > 0 && BlindIndexTargets.Contains(column.DbName);
 
+        private bool IsConcurrencyToken(ColumnDto column) =>
+            string.Equals(_table.GetMetadataValue(MetadataKeys.Concurrency.Token)?.Trim(), column.ColumnName,
+                StringComparison.OrdinalIgnoreCase);
+
         private Auth.TablePolicy? _writePolicy;
 
         /// <summary>
@@ -426,7 +430,11 @@ namespace BifrostQL.Core.Schema
                     continue;
                 if (identityType == IdentityType.None && column.IsIdentity)
                     continue;
-                if (column.IsComputed)
+                // A computed column is never written, with one exception: an engine-managed
+                // concurrency token (SQL Server rowversion) rides the update input so the
+                // client can send the version it read; the transformer guards on it and
+                // drops it from the SET.
+                if (column.IsComputed && !(action == MutateActions.Update && IsConcurrencyToken(column)))
                     continue;
                 if (IsBlindIndexTarget(column))
                     continue;

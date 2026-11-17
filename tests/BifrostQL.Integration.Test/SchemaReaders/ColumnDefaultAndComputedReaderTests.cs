@@ -125,7 +125,7 @@ public sealed class ColumnDefaultAndComputedReaderTests
 
             AssertFlags(cols);
             cols["row_ver"].HasDefault.Should().BeTrue("a rowversion is server-assigned and cannot be inserted");
-            cols["row_ver"].IsComputed.Should().BeFalse();
+            cols["row_ver"].IsComputed.Should().BeTrue("a rowversion is engine-assigned on every write, so it is never a write input");
         }
         finally
         {

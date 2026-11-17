@@ -22,10 +22,10 @@ namespace BifrostQL.Core.Modules;
 /// and its predicate AND-combines with tenant/soft-delete/policy filters. Applies only
 /// to UPDATE (an INSERT starts a new row; a DELETE is not token-guarded here).
 ///
-/// Token type support: numeric (incremented) and datetime (restamped). DB-managed
-/// tokens (SQL Server <c>rowversion</c>, Postgres <c>xmin</c>) are rejected with a
-/// clear error rather than silently left un-bumped — supporting them is a documented
-/// follow-up.
+/// Token type support: numeric (incremented), datetime (restamped), and a SQL Server
+/// <c>rowversion</c> (guarded only: the engine advances it, and it leaves the SET). Other
+/// DB-managed tokens (Postgres <c>xmin</c>) are rejected with a clear error rather than
+/// silently left un-bumped.
 /// </summary>
 public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformerBase
 {
@@ -69,6 +69,9 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
                 mutationType, data);
 
         var clientVersion = data[tokenKey]!;
+        if (context.Model.TypeMapper.IsRowVersion(column.EffectiveDataType))
+            return GuardRowVersion(table, mutationType, data, columnName, column, tokenKey, clientVersion);
+
         if (!TryBump(context.Model.TypeMapper.GetGraphQlType(column.EffectiveDataType), clientVersion, out var bumped, out var reason))
             return Rejected(
                 $"The concurrency token '{column.GraphQlName}' {reason}.",
@@ -84,6 +87,55 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
             AdditionalFilter = TableFilterFactory.Equals(table, columnName, clientVersion),
             ConflictOnNoRows = true,
         };
+    }
+
+    /// <summary>
+    /// A database-managed row version (SQL Server <c>rowversion</c>): the engine advances
+    /// it on every write, so Bifrost only guards. The client's value (base64 on the wire,
+    /// the shape a read returns) is decoded and bound as binary in the WHERE, and the token
+    /// leaves the SET: the column is read-only, and writing it would fail in the database.
+    /// </summary>
+    private static MutationTransformResult GuardRowVersion(
+        IDbTable table, MutationType mutationType, Dictionary<string, object?> data,
+        string columnName, ColumnDto column, string tokenKey, object clientVersion)
+    {
+        if (!TryDecodeRowVersion(clientVersion, out var version))
+            return Rejected(
+                $"The concurrency token '{column.GraphQlName}' carried a value that is not a base64 row version.",
+                $"Undecodable row-version token '{columnName}' on table '{table.TableSchema}.{table.DbName}'.",
+                mutationType, data);
+
+        var next = new Dictionary<string, object?>(data);
+        next.Remove(tokenKey);
+        return new MutationTransformResult
+        {
+            MutationType = MutationType.Update,
+            Data = next,
+            AdditionalFilter = TableFilterFactory.Equals(table, columnName, version),
+            ConflictOnNoRows = true,
+        };
+    }
+
+    private static bool TryDecodeRowVersion(object clientVersion, out byte[] version)
+    {
+        switch (clientVersion)
+        {
+            case byte[] bytes:
+                version = bytes;
+                return true;
+            case string text:
+                try
+                {
+                    version = Convert.FromBase64String(text);
+                    return version.Length > 0;
+                }
+                catch (FormatException)
+                {
+                    break;
+                }
+        }
+        version = Array.Empty<byte>();
+        return false;
     }
 
     /// <summary>
@@ -119,7 +171,7 @@ public sealed class ConcurrencyMutationTransformer : MetadataMutationTransformer
             return true;
         }
         bumped = null;
-        reason = $"has unsupported type '{graphQlType}' — only numeric and datetime tokens are supported (DB-managed rowversion/xmin tokens are not yet supported)";
+        reason = $"has unsupported type '{graphQlType}' — only numeric and datetime tokens are supported (DB-managed xmin tokens are not supported)";
         return false;
     }
 

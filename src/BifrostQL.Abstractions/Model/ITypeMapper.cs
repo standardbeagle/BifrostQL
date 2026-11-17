@@ -92,4 +92,14 @@ public interface ITypeMapper
     /// instead of failing in the database.
     /// </summary>
     TemporalValueRange? GetTemporalRange(string dataType) => null;
+
+    /// <summary>
+    /// True when the type is a database-managed row version: an opaque binary counter the
+    /// engine advances on every write (SQL Server <c>rowversion</c>, spelled <c>timestamp</c>
+    /// in the catalog). It is never a write input and never a date/time; as a
+    /// <c>concurrency-token</c> it guards the UPDATE without being bumped by Bifrost. Bare
+    /// <c>timestamp</c> means this only on SQL Server; every other engine reads it as a
+    /// date-time, so the judgement belongs to the dialect's mapper.
+    /// </summary>
+    bool IsRowVersion(string dataType) => false;
 }

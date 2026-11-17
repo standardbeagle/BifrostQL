@@ -33,7 +33,8 @@ public sealed class SqlServerTypeMapper : ITypeMapper
     /// Type mapping: int->Int, smallint->Short, tinyint->Byte, bigint->BigInt,
     /// decimal/numeric/money/smallmoney->Decimal, float/real->Float, bit->Boolean,
     /// datetime/datetime2/smalldatetime->DateTime, datetimeoffset->DateTimeOffset,
-    /// json->JSON. All other types (varchar, nvarchar, uniqueidentifier, xml, etc.) map to String.
+    /// json->JSON. rowversion/timestamp is binary (base64 String), never DateTime. All other
+    /// types (varchar, nvarchar, uniqueidentifier, xml, etc.) map to String.
     /// </remarks>
     public string GetGraphQlType(string dataType)
     {
@@ -51,6 +52,9 @@ public sealed class SqlServerTypeMapper : ITypeMapper
             "datetime" or "datetime2" or "smalldatetime" => "DateTime",
             "datetimeoffset" => "DateTimeOffset",
             "json" => "JSON",
+            // rowversion (catalog spelling 'timestamp') is an 8-byte binary counter, not a
+            // date-time. Like every binary column it travels as a base64 String.
+            "timestamp" or "rowversion" => "String",
             _ => "String",
         };
     }
@@ -93,6 +97,11 @@ public sealed class SqlServerTypeMapper : ITypeMapper
         if (normalized.Contains("(max)")) return true;
         return normalized is "text" or "ntext" or "image" or "xml";
     }
+
+    /// <inheritdoc />
+    /// <remarks>T-SQL <c>timestamp</c> is a synonym for <c>rowversion</c>, never a date-time.</remarks>
+    public bool IsRowVersion(string dataType)
+        => StringNormalizer.NormalizeType(dataType) is "timestamp" or "rowversion";
 
     /// <inheritdoc />
     /// <remarks>T-SQL tinyint is unsigned (0..255); the interface default covers

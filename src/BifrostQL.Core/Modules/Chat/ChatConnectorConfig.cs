@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Utils;
 
@@ -167,16 +168,24 @@ namespace BifrostQL.Core.Modules.Chat
                 planOperations, toolDescription);
         }
 
+        private static readonly ConditionalWeakTable<IDbModel, IReadOnlyList<ChatConnectorBinding>> BindingsByModel = new();
+
         /// <summary>
         /// Collects every connector table in the model, in table order. Per-table parse
         /// errors (<see cref="FromTable"/>) propagate; there is no cross-table
-        /// constraint — any number of tables may be connectors.
+        /// constraint — any number of tables may be connectors. Memoized per model instance
+        /// (a loaded model never changes; a reload is a new instance), so each chat message and
+        /// media fetch does not re-parse every table's metadata. A parse error is not memoized.
         /// </summary>
         public static IReadOnlyList<ChatConnectorBinding> FromModel(IDbModel model)
         {
             if (model is null)
                 throw new ArgumentNullException(nameof(model));
+            return BindingsByModel.GetValue(model, Collect);
+        }
 
+        private static IReadOnlyList<ChatConnectorBinding> Collect(IDbModel model)
+        {
             var connectors = new List<ChatConnectorBinding>();
             foreach (var table in model.Tables)
             {
@@ -184,7 +193,7 @@ namespace BifrostQL.Core.Modules.Chat
                 if (config.IsConnector)
                     connectors.Add(new ChatConnectorBinding(table, config));
             }
-            return connectors;
+            return connectors.AsReadOnly();
         }
 
         private static IReadOnlySet<string> ParseTypes(IDbTable table)

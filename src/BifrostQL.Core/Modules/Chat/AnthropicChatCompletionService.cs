@@ -199,10 +199,18 @@ namespace BifrostQL.Core.Modules.Chat
                 throw new ArgumentException(
                     "MaxToolIterations must be at least 1.", nameof(tools));
 
-            return tools.Tools.Select(MapToolDefinition).ToList();
+            return tools.Tools.Select(definition => (ToolUnion)MapToolDefinition(definition)).ToList();
         }
 
-        private static ToolUnion MapToolDefinition(ChatToolDefinition definition)
+        // Tool definitions are memoized per model by ChatConnectorRegistry, so the parsed wire
+        // tool is memoized per definition instance: each completion reuses it instead of
+        // deserializing every input schema again. A mapping fault is not memoized.
+        private static readonly ConditionalWeakTable<ChatToolDefinition, Tool> WireTools = new();
+
+        internal static Tool MapToolDefinition(ChatToolDefinition definition)
+            => WireTools.GetValue(definition, MapToolDefinitionUncached);
+
+        private static Tool MapToolDefinitionUncached(ChatToolDefinition definition)
         {
             if (string.IsNullOrWhiteSpace(definition.Description))
                 throw new InvalidOperationException(

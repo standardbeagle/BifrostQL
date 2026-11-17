@@ -65,6 +65,53 @@ public class ChatConnectorRegistryTests
 
     // ---- tool-set building ----
 
+    /// <summary>Counts how often the registry asks it for definitions.</summary>
+    private sealed class CountingConnector : IChatConnector
+    {
+        public int Calls;
+        public int Priority => 100;
+
+        public IReadOnlyList<ChatToolDefinition> GetToolDefinitions(IDbModel model, ChatConnectorBinding binding)
+        {
+            Interlocked.Increment(ref Calls);
+            return new[] { new ChatToolDefinition($"q_{binding.Table.DbName}", "Query.", """{"type":"object"}""") };
+        }
+
+        public Task<ChatToolResult> ExecuteAsync(
+            string toolName, string inputJson, IDictionary<string, object?> authContext, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public void BuildToolSet_IsBuiltOncePerModelInstance()
+    {
+        // Every chat message used to rebuild the tool set from the cached model: parse every
+        // table's connector metadata, ask every connector, run the name regex per tool.
+        var connector = new CountingConnector();
+        var registry = new ChatConnectorRegistry(new IChatConnector[] { connector });
+        var model = ConnectorModel("documents");
+
+        var first = registry.BuildToolSet(model);
+        var second = registry.BuildToolSet(model);
+
+        second.Should().BeSameAs(first);
+        connector.Calls.Should().Be(1);
+        ChatConnectorConfig.FromModel(model).Should().BeSameAs(ChatConnectorConfig.FromModel(model));
+
+        // Control: a reloaded model is a new instance and gets its own build.
+        registry.BuildToolSet(ConnectorModel("documents")).Should().NotBeSameAs(first);
+        connector.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public void WireTool_IsParsedOncePerDefinition()
+    {
+        var definition = new ChatToolDefinition("q_documents", "Query.", """{"type":"object","properties":{}}""");
+
+        AnthropicChatCompletionService.MapToolDefinition(definition)
+            .Should().BeSameAs(AnthropicChatCompletionService.MapToolDefinition(definition));
+    }
+
     [Fact]
     public void BuildToolSet_CollectsDefinitionsPerConnectorPerBinding_InPriorityOrder()
     {

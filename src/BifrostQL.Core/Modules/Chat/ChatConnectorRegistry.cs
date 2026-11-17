@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,7 @@ namespace BifrostQL.Core.Modules.Chat
         private static readonly Regex ValidToolName = new("^[a-zA-Z0-9_-]{1,64}$", RegexOptions.Compiled);
 
         private readonly IReadOnlyList<IChatConnector> _connectors;
+        private readonly ConditionalWeakTable<IDbModel, ChatToolSet> _toolSets = new();
 
         public ChatConnectorRegistry(IEnumerable<IChatConnector> connectors)
         {
@@ -45,7 +47,13 @@ namespace BifrostQL.Core.Modules.Chat
         {
             if (model is null)
                 throw new ArgumentNullException(nameof(model));
+            // Memoized per model instance: the set is immutable and the caller's identity binds
+            // per request through ChatToolSet.CreateExecutor. A build fault is not memoized.
+            return _toolSets.GetValue(model, Build);
+        }
 
+        private ChatToolSet Build(IDbModel model)
+        {
             var bindings = ChatConnectorConfig.FromModel(model);
             var tools = new Dictionary<string, ChatToolSet.RegisteredTool>(StringComparer.Ordinal);
             var order = new List<string>();

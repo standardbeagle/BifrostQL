@@ -782,12 +782,22 @@ namespace BifrostQL.Core.QueryModel
             // "same table via two paths nulls the deeper one" bug. The reader
             // resolves level by level, so the correct join is always a direct
             // child of the current node.
-            return Joins.FirstOrDefault(j => (alias != null && j.Alias == alias) || j.Name == name);
+            //
+            // Match on the response key (alias, else name), the same key JoinName
+            // carries: one link selected twice (`live: posts(...)`, `drafts: posts(...)`)
+            // is two joins, and also matching by link name handed the second alias the
+            // first join's rows.
+            var responseKey = alias ?? name;
+            return Joins.FirstOrDefault(j => (j.Alias ?? j.Name) == responseKey);
         }
 
         public GqlAggregateColumn? GetAggregate(string? alias, string name)
         {
-            return AggregateColumns.FirstOrDefault(j => (alias != null && j.FinalColumnGraphQlName == alias) || j.FinalColumnGraphQlName == name);
+            // FinalColumnGraphQlName is the response key (QueryField.GetUniqueName), so
+            // match on that alone: `_agg(...)` beside `total: _agg(...)` are two columns,
+            // and also matching by field name handed `total` the first one's value.
+            var responseKey = alias ?? name;
+            return AggregateColumns.FirstOrDefault(c => c.FinalColumnGraphQlName == responseKey);
         }
 
         public override string ToString()

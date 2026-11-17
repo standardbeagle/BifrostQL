@@ -385,6 +385,12 @@ namespace BifrostQL.Core.QueryModel
 
         private static void AddJoinSqlParameterized(SqlBuildContext ctx, IDictionary<string, ParameterizedSql> sqls, QueryLink queryLink)
         {
+            // _agg statements correlate to the root page only (AddSqlParameterized's
+            // root loop); below the root no statement is built and the reader would
+            // find no result set for the field. Refuse it rather than fail opaquely.
+            if (queryLink.Join.ConnectedTable.AggregateColumns.Count > 0)
+                throw new Resolvers.BifrostExecutionError(
+                    $"_agg is supported only on root table fields, not under '{queryLink.Join.Alias ?? queryLink.Join.Name}'.");
             var main = GetRestrictedSqlParameterized(ctx.Model, ctx.Dialect, ctx.Parameters, queryLink);
             var sql = ToConnectedSqlParameterized(ctx.Model, ctx.Dialect, ctx.Parameters, main, queryLink.Join);
             sqls[queryLink.Join.JoinName] = sql;

@@ -83,7 +83,7 @@ the schema gets the same model as the owner, including composite key order.
 ### Type mapping specifics
 
 **SQL Server**:
-- `money`, `smallmoney` map to `Decimal`
+- `numeric`, `money` and `smallmoney` map to `Decimal`, the same as `decimal`, so they get `_sum`/`_avg` and numeric filters
 - `uniqueidentifier` maps to `String`
 - `nvarchar`, `nchar`, `ntext` map to `String`
 

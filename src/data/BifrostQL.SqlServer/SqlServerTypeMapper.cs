@@ -31,7 +31,7 @@ public sealed class SqlServerTypeMapper : ITypeMapper
     /// <inheritdoc />
     /// <remarks>
     /// Type mapping: int->Int, smallint->Short, tinyint->Byte, bigint->BigInt,
-    /// decimal->Decimal, float/real->Float, bit->Boolean,
+    /// decimal/numeric/money/smallmoney->Decimal, float/real->Float, bit->Boolean,
     /// datetime/datetime2/smalldatetime->DateTime, datetimeoffset->DateTimeOffset,
     /// json->JSON. All other types (varchar, nvarchar, uniqueidentifier, xml, etc.) map to String.
     /// </remarks>
@@ -43,7 +43,9 @@ public sealed class SqlServerTypeMapper : ITypeMapper
             "smallint" => "Short",
             "tinyint" => "Byte",
             "bigint" => "BigInt",
-            "decimal" => "Decimal",
+            // numeric is decimal under another name; money/smallmoney are fixed-point
+            // and SqlClient reads them as System.Decimal.
+            "decimal" or "numeric" or "money" or "smallmoney" => "Decimal",
             "float" or "real" => "Float",
             "bit" => "Boolean",
             "datetime" or "datetime2" or "smalldatetime" => "DateTime",

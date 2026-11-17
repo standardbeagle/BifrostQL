@@ -42,8 +42,11 @@ public class TypeMapperTests
         [InlineData("xml", "String")]
         [InlineData("date", "String")]
         [InlineData("time", "String")]
-        [InlineData("money", "String")]
-        [InlineData("numeric", "String")]
+        // T-SQL numeric is decimal under another name; money and smallmoney are
+        // fixed-point and SqlClient reads them as System.Decimal.
+        [InlineData("numeric", "Decimal")]
+        [InlineData("money", "Decimal")]
+        [InlineData("smallmoney", "Decimal")]
         [InlineData("image", "String")]
         [InlineData("geography", "String")]
         [InlineData("geometry", "String")]

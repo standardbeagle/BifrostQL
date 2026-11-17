@@ -601,16 +601,17 @@ namespace BifrostQL.Server.Pgwire
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
             CancellationToken ct)
         {
+            // RowDescription and DataRows are buffered; CommandComplete flushes them in one go.
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.RowDescription,
-                PgBackend.RowDescription(columns), ct);
+                PgBackend.RowDescription(columns), ct, flush: false);
 
+            var values = new string?[columns.Count];
             foreach (var row in rows)
             {
-                var values = columns
-                    .Select(c => PgValueEncoder.ToText(row.TryGetValue(c.Name, out var v) ? v : null))
-                    .ToList();
+                for (var i = 0; i < columns.Count; i++)
+                    values[i] = PgValueEncoder.ToText(row.TryGetValue(columns[i].Name, out var v) ? v : null);
                 await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.DataRow,
-                    PgBackend.DataRow(values), ct);
+                    PgBackend.DataRow(values), ct, flush: false);
             }
 
             await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.CommandComplete,

@@ -9,13 +9,17 @@ namespace BifrostQL.Server.Pgwire
     /// <see cref="Stream"/> so it can be driven over a real socket in tests and wrapped
     /// by <see cref="System.Net.Security.SslStream"/> after the SSLRequest upgrade; this
     /// adapter is the only Kestrel-specific glue between the two. Reads pull from the
-    /// pipe reader; writes push to the pipe writer (flush-through, since the protocol
-    /// flushes explicitly after each frame).
+    /// pipe reader; writes buffer in the pipe writer until the codec's explicit flush at a
+    /// message boundary, or until <see cref="MaxUnflushedBytes"/> accumulate.
     /// </summary>
     internal sealed class DuplexPipeStream : Stream
     {
         private readonly PipeReader _reader;
         private readonly PipeWriter _writer;
+        private int _unflushedBytes;
+
+        /// <summary>Unflushed bytes after which a write flushes on its own.</summary>
+        internal const int MaxUnflushedBytes = 64 * 1024;
 
         public DuplexPipeStream(IDuplexPipe pipe)
         {
@@ -55,14 +59,23 @@ namespace BifrostQL.Server.Pgwire
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             _writer.Write(buffer.Span);
-            await _writer.FlushAsync(cancellationToken);
+            _unflushedBytes += buffer.Length;
+            // Writes accumulate in the pipe until the caller's explicit FlushAsync (every codec
+            // flushes at its own message boundary), so a result set of N rows costs one flush,
+            // not N. The bound keeps a large unflushed result from growing the pipe without limit
+            // and hands the transport's backpressure to the writer.
+            if (_unflushedBytes >= MaxUnflushedBytes)
+                await FlushAsync(cancellationToken);
         }
 
         public override void Write(byte[] buffer, int offset, int count)
             => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
 
         public override async Task FlushAsync(CancellationToken cancellationToken)
-            => await _writer.FlushAsync(cancellationToken);
+        {
+            _unflushedBytes = 0;
+            await _writer.FlushAsync(cancellationToken);
+        }
 
         public override void Flush() => FlushAsync(CancellationToken.None).GetAwaiter().GetResult();
 

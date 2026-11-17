@@ -59,6 +59,32 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Select_ManyRows_FlushesOncePerResult_NotOncePerRow()
+        {
+            // Every backend frame used to be written AND flushed, so a 50-row result cost 50+
+            // flushes (one pipe flush, one send, per DataRow). Rows now ride in the buffer until
+            // the result ends.
+            var rows = Enumerable.Range(1, 50)
+                .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+                {
+                    ["id"] = i, ["name"] = $"user{i}", ["active"] = true,
+                })
+                .ToArray();
+            var executor = FakeExecutor(UsersTable(), rows, out _);
+            FlushCountingStream? counter = null;
+            await using var fixture = await PgSession.StartAsync(
+                executor, wrapServerStream: s => counter = new FlushCountingStream(s));
+            var flushesBefore = counter!.Flushes;
+
+            await fixture.Client.SendQueryAsync("SELECT id, name FROM users");
+            var result = await fixture.Client.ReadQueryResultAsync().WaitAsync(Timeout);
+
+            result.Rows.Should().HaveCount(50);
+            (counter.Flushes - flushesBefore).Should().BeLessThanOrEqualTo(2,
+                "one flush ends the result (CommandComplete) and one the exchange (ReadyForQuery)");
+        }
+
+        [Fact]
         public async Task Simple_queries_resolve_the_query_seams_once_per_connection()
         {
             var executor = FakeExecutor(UsersTable(), Array.Empty<IReadOnlyDictionary<string, object?>>(), out _);
@@ -89,6 +115,42 @@ namespace BifrostQL.Server.Test.Pgwire
             {
                 _lookups.AddOrUpdate(serviceType, 1, (_, n) => n + 1);
                 return _inner.GetService(serviceType);
+            }
+        }
+
+        private sealed class FlushCountingStream : Stream
+        {
+            private readonly Stream _inner;
+            private int _flushes;
+
+            public FlushCountingStream(Stream inner) => _inner = inner;
+
+            public int Flushes => Volatile.Read(ref _flushes);
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => true;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+            public override void Flush() { Interlocked.Increment(ref _flushes); _inner.Flush(); }
+            public override Task FlushAsync(CancellationToken cancellationToken)
+            {
+                Interlocked.Increment(ref _flushes);
+                return _inner.FlushAsync(cancellationToken);
+            }
+            public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+                => _inner.ReadAsync(buffer, cancellationToken);
+            public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+                => _inner.WriteAsync(buffer, cancellationToken);
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) _inner.Dispose();
+                base.Dispose(disposing);
             }
         }
 

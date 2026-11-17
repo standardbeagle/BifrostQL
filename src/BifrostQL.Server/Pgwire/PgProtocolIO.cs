@@ -45,14 +45,16 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         public static async Task<PgFrontendMessage> ReadMessageAsync(Stream stream, CancellationToken ct)
         {
-            var typeByte = new byte[1];
-            await stream.ReadExactlyAsync(typeByte, ct);
-            var length = await ReadInt32Async(stream, ct);
+            // One 5-byte header read ([type][Int32 len]) instead of a 1-byte and a 4-byte one.
+            var header = new byte[5];
+            await stream.ReadExactlyAsync(header, ct);
+            var type = header[0];
+            var length = BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1));
             if (length < 4 || length > MaxMessageLength)
-                throw new PgProtocolException($"Invalid message length {length} for type '{(char)typeByte[0]}'.");
+                throw new PgProtocolException($"Invalid message length {length} for type '{(char)type}'.");
 
             var body = await ReadBodyAsync(stream, length - 4, ct);
-            return new PgFrontendMessage(typeByte[0], body);
+            return new PgFrontendMessage(type, body);
         }
 
         // The body grows as its bytes arrive: the length was checked against the cap, but a
@@ -61,15 +63,23 @@ namespace BifrostQL.Server.Pgwire
             => await ReceivedByteBuffer.ReadAsync(stream, length, ct)
                 ?? throw new EndOfStreamException("pgwire frame ended before its declared length.");
 
-        /// <summary>Writes a typed backend message (<c>[type][Int32 len][body]</c>) and flushes.</summary>
-        public static async Task WriteMessageAsync(Stream stream, byte type, ReadOnlyMemory<byte> body, CancellationToken ct)
+        /// <summary>
+        /// Writes a typed backend message (<c>[type][Int32 len][body]</c>) and, unless
+        /// <paramref name="flush"/> is false, flushes. A result set's RowDescription and DataRows
+        /// pass false so they ride in the transport buffer until the message that ends the result
+        /// (CommandComplete, an error, ReadyForQuery) flushes them together: one flush per result,
+        /// not one per row.
+        /// </summary>
+        public static async Task WriteMessageAsync(
+            Stream stream, byte type, ReadOnlyMemory<byte> body, CancellationToken ct, bool flush = true)
         {
             var frame = new byte[1 + 4 + body.Length];
             frame[0] = type;
             BinaryPrimitives.WriteInt32BigEndian(frame.AsSpan(1, 4), 4 + body.Length);
             body.Span.CopyTo(frame.AsSpan(5));
             await stream.WriteAsync(frame, ct);
-            await stream.FlushAsync(ct);
+            if (flush)
+                await stream.FlushAsync(ct);
         }
 
         /// <summary>Writes a single raw byte (the 'S'/'N' answer to SSLRequest) and flushes.</summary>

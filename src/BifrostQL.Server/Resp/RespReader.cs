@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -38,6 +39,10 @@ namespace BifrostQL.Server.Resp
         private int _start;
         private int _end;
         private int _frameRemaining;
+        // Reused across lines; dropped after an unusually long line so one long inline command
+        // does not pin its buffer for the life of the connection.
+        private ArrayBufferWriter<byte> _line = new();
+        private const int RetainedLineCapacity = 4096;
 
         public RespReader(Stream stream, int maxBulkLength, int maxElements, int maxNestingDepth, int maxFrameLength)
         {
@@ -208,23 +213,56 @@ namespace BifrostQL.Server.Resp
 
         private async Task<string> ReadLineAsync(CancellationToken ct)
         {
-            using var line = new MemoryStream();
-            while (true)
+            // Scans the read buffer for CR instead of pulling one byte at a time into a fresh
+            // MemoryStream. A line that fits in the buffer decodes straight from it; one that spans
+            // reads accumulates in a reused writer.
+            _line.ResetWrittenCount();
+            string? text = null;
+            while (text is null)
             {
-                var b = await ReadRawByteAsync(ct);
-                if (b < 0)
+                if (_start >= _end && !await FillAsync(ct))
                     throw new RespProtocolException("unexpected end of stream while reading a line.");
-                if (b == RespProtocol.Cr)
-                {
-                    var next = await ReadRawByteAsync(ct);
-                    if (next != RespProtocol.Lf)
-                        throw new RespProtocolException("expected LF after CR.");
-                    return Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
-                }
-                if (line.Length >= _maxBulkLength)
-                    throw new RespProtocolException($"line exceeds maximum length {_maxBulkLength}.");
-                line.WriteByte((byte)b);
+                text = TakeLineChunk();
             }
+            if (_line.Capacity > RetainedLineCapacity)
+                _line = new ArrayBufferWriter<byte>();
+
+            await ReadRawByteAsync(ct); // the CR found above
+            var next = await ReadRawByteAsync(ct);
+            if (next != RespProtocol.Lf)
+                throw new RespProtocolException("expected LF after CR.");
+            return text;
+        }
+
+        // Takes the buffered bytes up to the next CR (leaving the CR unread) and returns the line,
+        // or banks them in _line and returns null when the buffer ends before a CR.
+        private string? TakeLineChunk()
+        {
+            var available = _buffer.AsSpan(_start, _end - _start);
+            var cr = available.IndexOf(RespProtocol.Cr);
+            var take = cr < 0 ? available.Length : cr;
+
+            // Same refusal order as charging byte by byte: the byte that would overflow the line
+            // is charged to the frame budget first, so whichever cap that byte breaks first is
+            // the one reported.
+            var lineRoom = _maxBulkLength - _line.WrittenCount;
+            if (take > lineRoom)
+            {
+                Consume(lineRoom + 1);
+                throw new RespProtocolException($"line exceeds maximum length {_maxBulkLength}.");
+            }
+            Consume(take);
+            _start += take;
+
+            if (cr < 0)
+            {
+                _line.Write(available);
+                return null;
+            }
+            if (_line.WrittenCount == 0)
+                return Encoding.UTF8.GetString(available[..cr]);
+            _line.Write(available[..cr]);
+            return Encoding.UTF8.GetString(_line.WrittenSpan);
         }
 
         private async Task<byte[]> ReadExactAsync(int count, CancellationToken ct)

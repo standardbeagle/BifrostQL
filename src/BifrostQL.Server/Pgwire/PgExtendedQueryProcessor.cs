@@ -386,13 +386,15 @@ namespace BifrostQL.Server.Pgwire
             var remaining = rows.Count - start;
             var take = maxRows <= 0 ? remaining : Math.Min(maxRows, remaining);
 
+            // DataRows are buffered; the PortalSuspended / CommandComplete below flushes them.
+            var columns = resolved.Columns;
+            var textValues = new string?[columns.Count];
             for (var i = 0; i < take; i++)
             {
                 var row = rows[start + i];
-                var textValues = resolved.Columns
-                    .Select(c => PgValueEncoder.ToText(row.TryGetValue(c.Name, out var v) ? v : null))
-                    .ToList();
-                await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.DataRow, PgBackend.DataRow(textValues), ct);
+                for (var c = 0; c < columns.Count; c++)
+                    textValues[c] = PgValueEncoder.ToText(row.TryGetValue(columns[c].Name, out var v) ? v : null);
+                await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.DataRow, PgBackend.DataRow(textValues), ct, flush: false);
             }
             portal.Position = start + take;
 

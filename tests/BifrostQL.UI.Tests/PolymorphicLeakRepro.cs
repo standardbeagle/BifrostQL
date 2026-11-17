@@ -44,9 +44,7 @@ public sealed class PolymorphicLeakRepro
         foreach (var (schema, size) in new[] { ("crm", (string?)null), ("crm", "sample") })
         {
             var sql = (size == null ? await QuickstartSchemas.LoadSchemaSql(schema) : await QuickstartSchemas.LoadSeedSql(schema, size))!;
-            var stmts = sql.Split(';', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries)
-                .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-            await QuickstartSchemas.ExecuteStatementsAsync(factory, stmts, default);
+            await QuickstartSchemas.ExecuteScriptAsync(factory, sql, default);
         }
 
         var model = await new DbModelLoader(factory, new MetadataLoader(new[] { Rule })).LoadAsync();

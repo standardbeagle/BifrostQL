@@ -62,18 +62,12 @@ public class QuickStartEndToEndTests : IDisposable
         var ddlSql = await QuickstartSchemas.LoadSchemaSql(schema);
         ddlSql.Should().NotBeNull($"schema '{schema}' DDL should exist as embedded resource");
 
-        var ddlStatements = ddlSql!.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-
-        ddlStatements.Should().NotBeEmpty($"schema '{schema}' should have DDL statements");
-        await QuickstartSchemas.ExecuteStatementsAsync(factory, ddlStatements, CancellationToken.None);
+        await QuickstartSchemas.ExecuteScriptAsync(factory, ddlSql!, CancellationToken.None);
 
         var seedSql = await QuickstartSchemas.LoadSeedSql(schema, dataSize);
         if (seedSql != null)
         {
-            var seedStatements = seedSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-            await QuickstartSchemas.ExecuteStatementsAsync(factory, seedStatements, CancellationToken.None);
+            await QuickstartSchemas.ExecuteScriptAsync(factory, seedSql, CancellationToken.None);
         }
 
         var conn = factory.GetConnection();
@@ -90,16 +84,12 @@ public class QuickStartEndToEndTests : IDisposable
         var factory = DbConnFactoryResolver.Create(connectionString, BifrostDbProvider.Sqlite);
 
         var ddlSql = (await QuickstartSchemas.LoadSchemaSql(schema))!;
-        var ddlStatements = ddlSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-        await QuickstartSchemas.ExecuteStatementsAsync(factory, ddlStatements, CancellationToken.None);
+        await QuickstartSchemas.ExecuteScriptAsync(factory, ddlSql, CancellationToken.None);
 
         var seedSql = await QuickstartSchemas.LoadSeedSql(schema, dataSize);
         if (seedSql != null)
         {
-            var seedStatements = seedSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-            await QuickstartSchemas.ExecuteStatementsAsync(factory, seedStatements, CancellationToken.None);
+            await QuickstartSchemas.ExecuteScriptAsync(factory, seedSql, CancellationToken.None);
         }
 
         // Load schema using DbModelLoader — same path as BifrostQL middleware
@@ -190,6 +180,43 @@ public class QuickStartEndToEndTests : IDisposable
         var sql = await QuickstartSchemas.LoadSchemaSql(schema);
         sql.Should().NotBeNull($"DDL for '{schema}' should be an embedded resource");
         sql.Should().Contain("CREATE TABLE", $"DDL for '{schema}' should create tables");
+    }
+
+    public static IEnumerable<object[]> EveryOfferedQuickstart() =>
+        QuickstartSchemas.SchemaNames.SelectMany(schema =>
+            QuickstartSchemas.DataSizes.Select(size => new object[] { schema, size }));
+
+    [Fact]
+    public void SchemaNames_AreDerivedFromTheEmbeddedDdl()
+    {
+        QuickstartSchemas.SchemaNames.Should().BeEquivalentTo(new[]
+        {
+            "blog", "classroom", "crm", "ecommerce", "membership-manager",
+            "org-model", "project-tracker", "sqlite-advanced",
+        }, "every Schemas/<name>.sql is offered, and seed files are not schemas");
+    }
+
+    /// <summary>
+    /// Runs every schema/size the endpoint accepts through the endpoint's own executor.
+    /// membership-manager's seed has a ';' inside a string literal
+    /// ('…the club; bypasses the policy engine'), which a Split(';') executor cut into an
+    /// unterminated literal.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(EveryOfferedQuickstart))]
+    public async Task EveryOfferedQuickstart_CreatesAndSeedsThroughTheEndpointExecutor(string schema, string dataSize)
+    {
+        await using var conn = await CreateAndSeedDatabase(schema, dataSize);
+        (await GetTableNames(conn)).Should().NotBeEmpty($"'{schema}' DDL should create tables");
+    }
+
+    [Fact]
+    public async Task MembershipManagerSeed_KeepsASemicolonInsideAStringLiteral()
+    {
+        await using var conn = await CreateAndSeedDatabase("membership-manager", "sample");
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM roles WHERE description LIKE '%club; bypasses the policy engine%'";
+        Convert.ToInt32(await cmd.ExecuteScalarAsync()).Should().Be(1);
     }
 
     [Theory]

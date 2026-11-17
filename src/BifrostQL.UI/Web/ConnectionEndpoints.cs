@@ -109,13 +109,13 @@ namespace BifrostQL.UI.Web
             // POST /api/database/create-quickstart - Creates a SQLite quickstart database
             app.MapPost("/api/database/create-quickstart", (QuickstartRequest request, CancellationToken ct) =>
             {
-                var validSchemas = new[] { "blog", "ecommerce", "crm", "classroom", "project-tracker", "sqlite-advanced", "org-model", "membership-manager" };
+                var validSchemas = QuickstartSchemas.SchemaNames;
                 if (string.IsNullOrWhiteSpace(request.Schema) || !validSchemas.Contains(request.Schema))
                 {
                     return Results.BadRequest(new { error = $"Invalid schema. Must be one of: {string.Join(", ", validSchemas)}" });
                 }
 
-                var validSizes = new[] { "sample", "full" };
+                var validSizes = QuickstartSchemas.DataSizes;
                 var dataSize = string.IsNullOrWhiteSpace(request.DataSize) ? "sample" : request.DataSize;
                 if (!validSizes.Contains(dataSize))
                 {
@@ -142,16 +142,13 @@ namespace BifrostQL.UI.Web
                         yield break;
                     }
 
-                    yield return SseWriter.Event("Creating tables", 30, "Executing DDL statements");
+                    yield return SseWriter.Event("Creating tables", 30, "Executing DDL script");
 
-                    // Execute DDL - yields not allowed in try-catch, so run all statements then report
-                    var ddlStatements = ddlSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-
+                    // Execute DDL - yields not allowed in try-catch, so run the script then report
                     Exception? ddlError = null;
                     try
                     {
-                        await QuickstartSchemas.ExecuteStatementsAsync(factory, ddlStatements, ct);
+                        await QuickstartSchemas.ExecuteScriptAsync(factory, ddlSql, ct);
                     }
                     catch (Exception ex)
                     {
@@ -164,7 +161,7 @@ namespace BifrostQL.UI.Web
                         yield break;
                     }
 
-                    yield return SseWriter.Event("Schema created", 70, $"Created {ddlStatements.Length} tables");
+                    yield return SseWriter.Event("Schema created", 70, $"Created the {request.Schema} schema");
 
                     yield return SseWriter.Event("Loading seed data", 75, $"Loading {dataSize} dataset");
 
@@ -172,13 +169,10 @@ namespace BifrostQL.UI.Web
 
                     if (seedSql != null)
                     {
-                        var seedStatements = seedSql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                            .Where(s => !string.IsNullOrWhiteSpace(s)).ToArray();
-
                         Exception? seedError = null;
                         try
                         {
-                            await QuickstartSchemas.ExecuteStatementsAsync(factory, seedStatements, ct);
+                            await QuickstartSchemas.ExecuteScriptAsync(factory, seedSql, ct);
                         }
                         catch (Exception ex)
                         {
@@ -191,7 +185,7 @@ namespace BifrostQL.UI.Web
                             yield break;
                         }
 
-                        yield return SseWriter.Event("Data loaded", 95, $"Inserted {seedStatements.Length} data batches");
+                        yield return SseWriter.Event("Data loaded", 95, $"Loaded the {dataSize} dataset");
                     }
                     else
                     {

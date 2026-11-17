@@ -288,14 +288,21 @@ namespace BifrostQL.AdapterConformance
             => throw new NotSupportedException(
                 $"{GetType().Name} sets {nameof(AdapterCarriesOperationId)} but does not override {nameof(ExecuteUnrecordableMutationAsync)}.");
 
-        private IEnumerable<string> FixtureMetadataRules => AdapterSupportsOperationIdRefusal
-            ? MetadataRules.Concat(new[]
+        private IEnumerable<string> FixtureMetadataRules
+        {
+            get
             {
-                ":root { operation-id-store: main.operation_ids }",
-                "*.operation_ids { visibility: hidden }",
-                OperationIdLedgerRule,
-            })
-            : MetadataRules;
+                var rules = AdapterSupportsOperationIdRefusal
+                    ? MetadataRules.Concat(new[]
+                    {
+                        ":root { operation-id-store: main.operation_ids }",
+                        "*.operation_ids { visibility: hidden }",
+                        OperationIdLedgerRule,
+                    })
+                    : MetadataRules;
+                return AdapterSupportsTableExistenceProbe ? rules.Append(ReadDeniedTableRule) : rules;
+            }
+        }
 
         public virtual async Task InitializeAsync()
         {
@@ -329,6 +336,12 @@ namespace BifrostQL.AdapterConformance
                 )
                 """);
             await Exec("INSERT INTO documents(id, title, body) VALUES (1, 'public title', 'secret body')");
+            if (AdapterSupportsTableExistenceProbe)
+            {
+                await Exec($"DROP TABLE IF EXISTS {ReadDeniedTable}");
+                await Exec($"CREATE TABLE {ReadDeniedTable} (id INTEGER PRIMARY KEY, secret TEXT NOT NULL)");
+                await Exec($"INSERT INTO {ReadDeniedTable}(id, secret) VALUES (1, 'classified')");
+            }
             if (AdapterSupportsOperationIdRefusal)
             {
                 await Exec("DROP TABLE IF EXISTS ledger");
@@ -643,6 +656,64 @@ namespace BifrostQL.AdapterConformance
         public async Task Read_WithoutTenantIdentity_FailsClosed()
         {
             await AssertReadRejectedAsync(OrdersRequest(principal: null), "Tenant context required");
+        }
+
+        // ---- (c2) table existence is not an oracle (opt-in) -----------------
+        //
+        // A table that exists but the caller may not read must answer exactly like a table that
+        // does not exist: same status, same code, same message, byte for byte (invariant 9: assert
+        // body equality). Otherwise any caller can enumerate the schema by probing names.
+
+        /// <summary>
+        /// Whether the derivation implements <see cref="ProbeTableReadAsync"/>. Opting in adds the
+        /// read-denied <see cref="ReadDeniedTable"/> to the fixture.
+        /// </summary>
+        protected virtual bool AdapterSupportsTableExistenceProbe => false;
+
+        /// <summary>A table that exists and that <see cref="ReadDeniedTableRule"/> denies for read.</summary>
+        protected const string ReadDeniedTable = "vault";
+
+        /// <summary>A table that does not exist. Same length as <see cref="ReadDeniedTable"/>, so a
+        /// length-prefixed wire that echoes the name still compares byte for byte.</summary>
+        protected const string MissingTable = "ghost";
+
+        /// <summary>
+        /// The metadata that makes <see cref="ReadDeniedTable"/> unreadable to every fixture caller:
+        /// a policy with no <c>policy-actions</c> allows nothing, so the table is denied wholesale.
+        /// A derivation whose wire publishes a table only under an extra opt-in (an LDAP entry
+        /// mapping, a write allow-list) overrides this to add that opt-in, so the probe reaches the
+        /// policy gate rather than stopping at "not published".
+        /// </summary>
+        protected virtual string ReadDeniedTableRule => $"*.{ReadDeniedTable} {{ policy-read-deny: secret }}";
+
+        /// <summary>
+        /// Sends one read of <paramref name="table"/> through the adapter's real wire as
+        /// <paramref name="principal"/> and returns the COMPLETE wire answer rendered as text
+        /// (status, code, message, body; raw bytes where the wire is binary). Never throws for a
+        /// refusal: the refusal is the artefact under comparison. Required when
+        /// <see cref="AdapterSupportsTableExistenceProbe"/> is true.
+        /// </summary>
+        protected virtual Task<string> ProbeTableReadAsync(string table, ClaimsPrincipal principal)
+            => throw new NotSupportedException(
+                $"{GetType().Name} sets {nameof(AdapterSupportsTableExistenceProbe)} but does not override {nameof(ProbeTableReadAsync)}.");
+
+        [Fact]
+        public async Task Read_UnknownTable_And_ReadDeniedTable_AnswerIdentically()
+        {
+            if (!AdapterSupportsTableExistenceProbe) return;
+            var principal = TenantPrincipal("probe-user", "tenant-a");
+
+            // The caller's own argument may be echoed back; it is masked so the comparison covers
+            // everything else in the answer.
+            var denied = (await ProbeTableReadAsync(ReadDeniedTable, principal)).Replace(ReadDeniedTable, "<table>");
+            var missing = (await ProbeTableReadAsync(MissingTable, principal)).Replace(MissingTable, "<table>");
+            var readable = (await ProbeTableReadAsync("orders", principal)).Replace("orders", "<table>");
+
+            (await DbScalarAsync($"SELECT COUNT(*) FROM {ReadDeniedTable}")).Should().Be(1L,
+                "control: the denied table exists and holds a row");
+            readable.Should().NotBe(missing, "control: the probe reaches a table the caller can read");
+            denied.Should().Be(missing,
+                "a read-denied table must answer exactly like a table that does not exist");
         }
 
         // ---- (d) mutation facts (write-capable adapters only) ---------------

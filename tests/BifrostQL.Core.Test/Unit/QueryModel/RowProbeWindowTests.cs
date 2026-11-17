@@ -93,6 +93,9 @@ public sealed class RowProbeWindowTests
     [Fact]
     public void CeilingOfOne_YieldsAnEmptyPageThatAlwaysReportsTheCut()
     {
+        // The window math for a ceiling of 1, on a DbModel built directly. A loaded model
+        // never reaches this: ModelConfigValidator rejects max-query-rows below
+        // RowProbeWindow.MinimumCeiling (2), because this page is always empty.
         var window = RowProbeWindow.For(Model(maxQueryRows: 1), 10);
 
         window.Page.Should().Be(0);

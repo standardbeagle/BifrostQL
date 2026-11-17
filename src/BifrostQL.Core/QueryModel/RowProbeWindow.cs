@@ -24,6 +24,14 @@ namespace BifrostQL.Core.QueryModel
             Clamped = clamped;
         }
 
+        /// <summary>
+        /// The smallest <c>max-query-rows</c> a model may set: one row of page plus the
+        /// sentinel. At 1 every probe page is empty (<see cref="Page"/> 0), so a surface that
+        /// pages by probe (OData, gRPC List) returns an empty page with no continuation.
+        /// <c>ModelConfigValidator</c> rejects anything lower at load.
+        /// </summary>
+        public const int MinimumCeiling = 2;
+
         /// <summary>The most rows the surface returns: the requested page, narrowed by the ceiling.</summary>
         public int Page { get; }
 

@@ -197,9 +197,9 @@ Cursor-paginated primary-key enumeration of one table. The reply is the Redis SC
   non-positive or unparseable COUNT is a syntax error. The model's
   `max-query-rows` ceiling narrows the page further, to one below the ceiling,
   because each page reads one extra row to tell a full page from the last. A
-  narrowed page still returns a cursor, so iteration reaches every key. A
-  ceiling of `1` leaves no room for that row, and SCAN answers
-  `-ERR SCAN needs a row ceiling of at least 2 to page`.
+  narrowed page still returns a cursor, so iteration reaches every key. The
+  ceiling is at least `2` (a smaller `max-query-rows` fails model load), which
+  leaves room for that row.
 - **TYPE** is accepted and ignored — a Bifrost row has no single Redis type, so
   filtering by it would be dishonest.
 - The **cursor** is opaque, integrity-protected, and encodes only a primary-key

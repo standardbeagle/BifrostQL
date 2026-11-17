@@ -172,6 +172,18 @@ namespace BifrostQL.Core.QueryModel
         public const int DefaultRowWindow = 100;
 
         /// <summary>
+        /// The model's <c>max-query-rows</c> ceiling, or <see cref="DefaultMaxQueryRows"/>
+        /// when unset. The one parse of the key: <see cref="ResolveRowWindow"/> clamps with
+        /// it and <c>ModelConfigValidator</c> checks it at load, so the two cannot disagree.
+        /// A present value that is not a positive integer throws.
+        /// </summary>
+        public static int MaxQueryRows(IDbModel dbModel) =>
+            Utils.MetadataNumber.PositiveInt(
+                dbModel.GetMetadataValue(MetadataKeys.Model.MaxQueryRows),
+                DefaultMaxQueryRows,
+                MetadataKeys.Model.MaxQueryRows);
+
+        /// <summary>
         /// Resolves the row window for a read surface to a NON-nullable value:
         /// <paramref name="requested"/> ?? <see cref="DefaultRowWindow"/>, clamped to
         /// the model's max-query-rows ceiling. A bare null is therefore correct by
@@ -188,10 +200,7 @@ namespace BifrostQL.Core.QueryModel
         {
             if (requested == 0)
                 return 0;
-            var ceiling = Utils.MetadataNumber.PositiveInt(
-                dbModel.GetMetadataValue(MetadataKeys.Model.MaxQueryRows),
-                DefaultMaxQueryRows,
-                MetadataKeys.Model.MaxQueryRows);
+            var ceiling = MaxQueryRows(dbModel);
             var limit = requested ?? DefaultRowWindow;
             if (limit < 0 || limit > ceiling)
                 return ceiling;

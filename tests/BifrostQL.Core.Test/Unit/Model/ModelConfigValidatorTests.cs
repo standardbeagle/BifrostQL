@@ -576,4 +576,33 @@ public class ModelConfigValidatorTests
 
         act.Should().NotThrow();
     }
+    private static IDbModel MaxQueryRowsModel(string maxQueryRows) =>
+        DbModelTestFixture.Create()
+            .WithModelMetadata(MetadataKeys.Model.MaxQueryRows, maxQueryRows)
+            .WithTable("Users", t => t.WithSchema("dbo").WithPrimaryKey("Id"))
+            .Build();
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0")]
+    public void Validate_MaxQueryRowsBelowTwo_ThrowsNamingTheKey(string maxQueryRows)
+    {
+        // A ceiling of 1 leaves a probe page of 0 rows (the one fetched row is the
+        // truncation sentinel), so OData and gRPC List return an empty page with no
+        // continuation. Reject it at load, like a non-positive value.
+        var act = () => ModelConfigValidator.Validate(MaxQueryRowsModel(maxQueryRows));
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(":root")
+            .And.Contain(MetadataKeys.Model.MaxQueryRows)
+            .And.Contain($"'{maxQueryRows}'");
+    }
+
+    [Fact]
+    public void Validate_MaxQueryRowsOfTwo_Passes()
+    {
+        var act = () => ModelConfigValidator.Validate(MaxQueryRowsModel("2"));
+
+        act.Should().NotThrow();
+    }
 }

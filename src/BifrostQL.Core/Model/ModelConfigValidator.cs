@@ -53,6 +53,7 @@ namespace BifrostQL.Core.Model
                 if (policyDefault is not null && !string.Equals(policyDefault, "allow", StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(policyDefault, "deny", StringComparison.OrdinalIgnoreCase))
                     errors.Add($"  :root [{MetadataKeys.Policy.Default}]: value must be 'allow' or 'deny'");
+                ValidateMaxQueryRows(model, errors);
             }
 
             var rootAdminRole = Auth.PolicyConfigCollector.NormalizeAdminRole(
@@ -117,6 +118,31 @@ namespace BifrostQL.Core.Model
                 throw new InvalidOperationException(
                     "Invalid BifrostQL metadata configuration:" + Environment.NewLine +
                     string.Join(Environment.NewLine, errors));
+            }
+        }
+
+        /// <summary>
+        /// <c>max-query-rows</c>, parsed by <see cref="QueryModel.GqlObjectQuery.MaxQueryRows"/>
+        /// (the parse every row read clamps with), must also leave room for a probe page:
+        /// <see cref="QueryModel.RowProbeWindow"/> spends one row of the ceiling on the
+        /// truncation sentinel, so a ceiling of 1 gives OData and gRPC List an empty page
+        /// with no continuation.
+        /// </summary>
+        private static void ValidateMaxQueryRows(IDbModel model, List<string> errors)
+        {
+            var raw = model.GetMetadataValue(MetadataKeys.Model.MaxQueryRows);
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+            try
+            {
+                if (QueryModel.GqlObjectQuery.MaxQueryRows(model) < QueryModel.RowProbeWindow.MinimumCeiling)
+                    errors.Add($"  :root [{MetadataKeys.Model.MaxQueryRows}]: '{raw}' must be at least " +
+                        $"{QueryModel.RowProbeWindow.MinimumCeiling}; a paged read spends one row of the ceiling " +
+                        "on the truncation sentinel, so a ceiling of 1 returns empty pages.");
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add($"  :root [{MetadataKeys.Model.MaxQueryRows}]: '{raw}': {ex.Message}");
             }
         }
 

@@ -197,22 +197,21 @@ namespace BifrostQL.Server.Auth
         /// PBKDF2-HMAC-SHA512, 128-bit salt, 256-bit subkey). A stored hash below the count still
         /// verifies and is rehashed at the configured count on the next successful login.
         /// Defaults to <see cref="DefaultPasswordHashIterations"/> (OWASP's figure for
-        /// PBKDF2-HMAC-SHA512); must be at least <see cref="MinPasswordHashIterations"/>, the
-        /// framework default, so configuration can only strengthen it.
+        /// PBKDF2-HMAC-SHA512); must be at least <see cref="MinPasswordHashIterations"/>, the same
+        /// figure, so configuration can only strengthen it. Tests that need cheap hashing pass their
+        /// own <see cref="IPasswordHasher{TUser}"/> to <see cref="LocalUserStore"/> instead.
         /// </summary>
         public int PasswordHashIterations { get; set; } = DefaultPasswordHashIterations;
 
         /// <summary>Default <see cref="PasswordHashIterations"/>: 210,000.</summary>
         public const int DefaultPasswordHashIterations = 210_000;
 
-        /// <summary>Lowest accepted <see cref="PasswordHashIterations"/>: 100,000, the ASP.NET Core default.</summary>
-        public const int MinPasswordHashIterations = 100_000;
-
         /// <summary>
-        /// The password hasher these options configure. Throws when
-        /// <see cref="PasswordHashIterations"/> is below <see cref="MinPasswordHashIterations"/>;
-        /// <c>AddBifrostLocalAuth</c> calls it at startup so a weak setting never reaches a login.
+        /// Lowest accepted <see cref="PasswordHashIterations"/>: 210,000, the OWASP Password Storage
+        /// Cheat Sheet figure for PBKDF2-HMAC-SHA512. The ASP.NET Core default (100,000) is below it.
         /// </summary>
+        public const int MinPasswordHashIterations = DefaultPasswordHashIterations;
+
         /// <summary>
         /// Throws on a setting no login could honour. <c>AddBifrostLocalAuth</c> calls it at startup;
         /// the runtime reads the same properties, so there is no second parser to drift.
@@ -251,6 +250,11 @@ namespace BifrostQL.Server.Auth
         internal TimeSpan SessionTouchInterval =>
             TimeSpan.FromTicks(Math.Min(TimeSpan.FromMinutes(1).Ticks, SessionIdleTimeout.Ticks / 15));
 
+        /// <summary>
+        /// The password hasher these options configure. Throws when
+        /// <see cref="PasswordHashIterations"/> is below <see cref="MinPasswordHashIterations"/>;
+        /// <see cref="Validate"/> calls it at startup so a weak setting never reaches a login.
+        /// </summary>
         public IPasswordHasher<string> CreatePasswordHasher()
         {
             if (PasswordHashIterations < MinPasswordHashIterations)

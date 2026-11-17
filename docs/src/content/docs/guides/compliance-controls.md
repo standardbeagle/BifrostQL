@@ -29,7 +29,7 @@ signed in through OIDC are owned by the identity provider; see [Gaps](#gaps).
 | PCI 8.3.6 password strength | At least 12 characters, with a letter and a digit. | `MinPasswordLength` (12), `PasswordRequiresLetterAndDigit` (true), `MaxPasswordLength` (256) | `PasswordPolicyViolationAsync` on the password-change endpoint. |
 | PCI 8.3.7 password reuse | Not the current password or any of the last 4. | `PasswordHistoryCount` (4) | Same; hashes kept in `_bifrost_auth_password_history`. |
 | PCI 8.3.9 rotation | A password older than the limit cannot sign in until it is changed. | `MaxPasswordAge` (off) | `PasswordExpiredAsync` in the login handler. |
-| PCI 8.3.2 credential storage | PBKDF2-HMAC-SHA512, 210,000 iterations (the OWASP Password Storage Cheat Sheet figure). Older hashes are upgraded at the next sign-in. Below 100,000 fails at startup. | `PasswordHashIterations` (210,000) | `LocalAuthOptions.CreatePasswordHasher`. |
+| PCI 8.3.2 credential storage | PBKDF2-HMAC-SHA512, 210,000 iterations (the OWASP Password Storage Cheat Sheet figure). Older hashes are upgraded at the next sign-in. Below 210,000 fails at startup. | `PasswordHashIterations` (210,000) | `LocalAuthOptions.CreatePasswordHasher`. |
 | PCI 8.2.1, HIPAA 164.312(a)(2)(i) unique user id | Every session carries the app-user's stable id. | `IdColumn` | `AppIdentity.Id`. |
 
 Session ids are 256-bit random values. The cookie carries the id; the database keeps

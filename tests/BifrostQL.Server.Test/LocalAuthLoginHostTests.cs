@@ -734,14 +734,26 @@ namespace BifrostQL.Server.Test
             LocalAuthOptions.DefaultPasswordHashIterations.Should().Be(210_000);
         }
 
-        [Fact]
-        public void IterationCount_BelowTheFrameworkDefault_FailsAtStartup()
+        [Theory]
+        [InlineData(99_999)]
+        [InlineData(209_999)]
+        public void IterationCount_BelowTheOwaspFigure_FailsAtStartup(int iterations)
         {
             var services = new ServiceCollection();
 
-            var act = () => services.AddBifrostLocalAuth(ConnectionString, o => o.PasswordHashIterations = 99_999);
+            var act = () => services.AddBifrostLocalAuth(ConnectionString, o => o.PasswordHashIterations = iterations);
 
-            act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*PasswordHashIterations*");
+            act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*PasswordHashIterations*at least 210000*");
+        }
+
+        [Fact]
+        public void IterationCount_AtTheOwaspFigure_IsAccepted()
+        {
+            var services = new ServiceCollection();
+
+            var act = () => services.AddBifrostLocalAuth(ConnectionString, o => o.PasswordHashIterations = 210_000);
+
+            act.Should().NotThrow("control: the floor itself is a valid setting");
         }
     }
 }

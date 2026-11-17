@@ -3,6 +3,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Validation;
 using BifrostQL.Core.QueryModel.TestFixtures;
 using FluentAssertions;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace BifrostQL.Core.Test.Modules;
@@ -158,13 +159,38 @@ public sealed class ServerValidationHardeningTests
     }
 
     [Fact]
-    public async Task Pattern_AlreadyAnchored_IsNotDoubleWrapped()
+    public async Task Pattern_AlreadyAnchored_StillMatchesTheWholeValue()
     {
         var model = PatternModel("^[0-9]{3}$");
         var table = model.GetTableFromDbName("T");
 
         (await Run(table, model, new() { ["Code"] = "123" })).Should().BeEmpty();
         (await Run(table, model, new() { ["Code"] = "12" })).Should().Contain("Code is invalid.");
+    }
+
+    // A leading ^ used to skip the full-string wrap, so the pattern only had to match a prefix
+    // (or, with an alternation, any substring).
+    [Theory]
+    [InlineData("^[a-z]+", "abc123")]
+    [InlineData("^a|b", "xxb")]
+    public async Task Pattern_StartingWithCaret_IsStillAFullStringMatch(string pattern, string value)
+    {
+        var model = PatternModel(pattern);
+        var table = model.GetTableFromDbName("T");
+
+        (await Run(table, model, new() { ["Code"] = value })).Should().Contain("Code is invalid.");
+    }
+
+    [Fact]
+    public void PatternMatcher_IsCompiledOnce_LinearTime_WithNoWallClockTimeout()
+    {
+        var matcher = ExtendedServerValidationTransformer.PatternMatcher("[0-9]{3}");
+
+        matcher.Should().NotBeNull();
+        matcher!.Options.Should().HaveFlag(RegexOptions.NonBacktracking);
+        matcher.MatchTimeout.Should().Be(Regex.InfiniteMatchTimeout,
+            "a wall-clock timeout turns host load into validation errors (invariant 1)");
+        ExtendedServerValidationTransformer.PatternMatcher("[0-9]{3}").Should().BeSameAs(matcher);
     }
 
     [Fact]
@@ -178,16 +204,16 @@ public sealed class ServerValidationHardeningTests
     }
 
     [Fact]
-    public async Task Pattern_Catastrophic_TimesOutInsteadOfHanging()
+    public async Task Pattern_Catastrophic_IsMatchedInLinearTime()
     {
-        // A ReDoS pattern + adversarial input must not hang the mutation; the
-        // bounded match time surfaces a clean error.
+        // A ReDoS pattern + adversarial input must not hang the mutation. The linear-time
+        // engine answers it as an ordinary mismatch.
         var model = PatternModel("(a+)+$");
         var table = model.GetTableFromDbName("T");
 
-        var input = new string('a', 50) + "!";
+        var input = new string('a', 50_000) + "!";
         (await Run(table, model, new() { ["Code"] = input }))
-            .Should().Contain("Code could not be validated (pattern too complex).");
+            .Should().Equal("Code is invalid.");
     }
 
     [Fact]

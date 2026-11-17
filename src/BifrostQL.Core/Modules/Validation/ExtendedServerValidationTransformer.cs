@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using BifrostQL.Core.Model;
-using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Modules.Crypto;
+using BifrostQL.Core.Resolvers;
 
 namespace BifrostQL.Core.Modules.Validation;
 
@@ -239,36 +240,49 @@ public sealed class ExtendedServerValidationTransformer : IMutationTransformer, 
         }
     }
 
-    // Bounds a single pattern match so a pathological (ReDoS) metadata pattern
-    // can't hang a mutation.
-    private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
+    // One compiled matcher per declared pattern, built on first use. Patterns come from model
+    // metadata, so the set is bounded by the config. A pattern the engine cannot compile maps to
+    // null and reports the invalid-pattern error on every write, without re-parsing it.
+    private static readonly ConcurrentDictionary<string, Regex?> PatternMatchers = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The matcher for a declared pattern. Always anchored as <c>^(?:pattern)$</c>, exactly like
+    /// the HTML5 <c>pattern</c> attribute and the client validators: a full-string match, even
+    /// when the pattern starts with <c>^</c> (<c>^[a-z]+</c> must not accept <c>abc123</c>, nor
+    /// <c>^a|b</c> any string containing <c>b</c>). <see cref="RegexOptions.NonBacktracking"/>
+    /// with <see cref="Regex.InfiniteMatchTimeout"/> (invariant 1): matching is linear in the
+    /// input, so a pathological pattern cannot hang a write, and host load cannot turn a valid
+    /// value into a timeout error. The engine refuses backreferences and lookarounds, so such a
+    /// pattern reports as invalid. Null when the pattern does not compile.
+    /// </summary>
+    internal static Regex? PatternMatcher(string pattern) => PatternMatchers.GetOrAdd(pattern, static p =>
+    {
+        try
+        {
+            return new Regex($"^(?:{p})$", RegexOptions.NonBacktracking | RegexOptions.CultureInvariant,
+                Regex.InfiniteMatchTimeout);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    });
 
     private static void ValidatePattern(ColumnDto column, ValidationRules rules, object? value, List<string> errors)
     {
         if (rules.Pattern == null)
             return;
 
-        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
-
-        // Anchor the pattern exactly like the HTML5 `pattern` attribute, the React
-        // client validator, and the legacy form validator: a full-string match,
-        // not a substring one. Without this the server is MORE permissive than the
-        // client/HTML form, so a value the UI rejects would still be accepted here.
-        var pattern = rules.Pattern.StartsWith('^') ? rules.Pattern : $"^(?:{rules.Pattern})$";
-
-        try
-        {
-            if (!Regex.IsMatch(text, pattern, RegexOptions.None, RegexTimeout))
-                errors.Add(rules.PatternMessage ?? $"{column.GraphQlName} is invalid.");
-        }
-        catch (RegexMatchTimeoutException)
-        {
-            errors.Add($"{column.GraphQlName} could not be validated (pattern too complex).");
-        }
-        catch (ArgumentException)
+        var matcher = PatternMatcher(rules.Pattern);
+        if (matcher is null)
         {
             errors.Add($"{column.GraphQlName} has an invalid validation pattern.");
+            return;
         }
+
+        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+        if (!matcher.IsMatch(text))
+            errors.Add(rules.PatternMessage ?? $"{column.GraphQlName} is invalid.");
     }
 
     private static void ValidateInputType(ColumnDto column, ValidationRules rules, object? value, List<string> errors)

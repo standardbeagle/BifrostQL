@@ -126,8 +126,11 @@ dbo.contacts.email {
 
 Supported built-in rules are `required`, `min`, `max`, `minlength`, `maxlength`,
 `step`, `pattern`, `pattern-message`, and `input-type` (`email`/`url`). Patterns
-are anchored as a full-string match (like the HTML5 `pattern` attribute), and a
-pathological pattern is bounded so it cannot hang a mutation.
+are always anchored as a full-string match (like the HTML5 `pattern` attribute), even
+when they start with `^`. Each pattern is compiled once and matched by .NET's
+non-backtracking engine, so matching takes time linear in the input and a pathological
+pattern cannot hang a mutation. That engine does not support backreferences or
+lookarounds: a pattern that uses them is reported as an invalid validation pattern.
 
 Alongside the declared rules, **schema-derived validation** enforces what the
 database schema itself declares, so a value the engine would reject fails with a

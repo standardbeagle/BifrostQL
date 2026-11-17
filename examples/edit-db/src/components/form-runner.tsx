@@ -43,6 +43,7 @@ import {
 } from '../lib/form-widget';
 import { nextIndex, canNavigate, positionLabel, type NavDirection } from '../lib/form-runner-nav';
 import { FormSubformPanel } from './form-subform';
+import { ConfirmDialog } from './confirm-dialog';
 import type { ChildFilterPlan } from '../lib/form-subform';
 
 const EMPTY_VALUES: Record<string, unknown> = {};
@@ -188,6 +189,8 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
   const [draft, setDraft] = useState<Record<string, unknown>>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // Delete is irreversible: the footer button only opens a confirmation.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [jump, setJump] = useState('');
   const [total, setTotal] = useState(0);
 
@@ -411,7 +414,10 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
 
   const remove = useCallback(async () => {
     const pk = pkFilterFor(currentRow, table);
-    if (!pk) return;
+    if (!pk) {
+      setFormError("This record has no complete key, so it can't be deleted.");
+      return;
+    }
     try {
       await del.deleteRow(pk);
       setMode('browse');
@@ -488,9 +494,19 @@ export function FormRunnerView({ table, definition, fieldMetadata, onClose, sche
           {isNew ? 'Create' : 'Save'}
         </button>
         {!isNew && !noRecords && (
-          <button type="button" className={classes.btn} onClick={remove} disabled={del.isPending}>Delete</button>
+          <button type="button" className={classes.btn} onClick={() => setConfirmingDelete(true)} disabled={del.isPending}>Delete</button>
         )}
       </div>
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title={`Delete this ${table.label ?? table.name} record?`}
+        description="This can't be undone."
+        confirmLabel="Delete"
+        variant="destructive"
+        isPending={del.isPending}
+        onConfirm={() => { setConfirmingDelete(false); void remove(); }}
+      />
     </div>
   );
 }

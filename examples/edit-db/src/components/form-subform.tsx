@@ -8,6 +8,7 @@ import { childFilterPlan, childPrefill } from '../lib/form-subform';
 import { assertGraphQlName } from '../lib/query-builder';
 import { pkFilterFor, rowIdOf } from '../lib/row-id';
 import { FormRunnerView } from './form-runner';
+import { ConfirmDialog } from './confirm-dialog';
 
 interface Props { parent: Table; child: Table; subform: FormSubform; row: Record<string, unknown>; }
 
@@ -33,6 +34,9 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
   const queryClient = useQueryClient();
   const remove = useDeleteMutation(child);
   const [activeForm, setActiveForm] = useState<{ kind: 'create' | 'edit'; row?: Record<string, unknown>; index?: number } | null>(null);
+  // Delete asks first, and a refusal or server error is shown, never dropped.
+  const [pendingDelete, setPendingDelete] = useState<Record<string, unknown> | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const join = useMemo<Join>(() => ({ name: subform.relationship, fieldName: subform.relationship, sourceColumnNames: subform.parentColumns, destinationTable: child.name, destinationColumnNames: subform.childColumns }), [subform, child.name]);
   const plan = useMemo(() => childFilterPlan(parent, child, join, row), [parent, child, join, row]);
   const fields = useMemo(() => child.columns.map((c) => { assertGraphQlName(c.name, 'form subform field'); return c.name; }), [child]);
@@ -50,9 +54,18 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
   if (error) return <p role="alert" className={classes.error}>Failed to load {subform.label}: {(error as Error).message}</p>;
   const rows = data?.[child.name]?.data ?? [];
   const deleteRow = async (childRow: Record<string, unknown>) => {
+    setDeleteError(null);
     const pk = pkFilterFor(childRow, child);
-    if (!pk) return;
-    await remove.deleteRow(pk);
+    if (!pk) {
+      setDeleteError("This record has no complete key, so it can't be deleted.");
+      return;
+    }
+    try {
+      await remove.deleteRow(pk);
+    } catch (e) {
+      setDeleteError(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     await queryClient.invalidateQueries({ queryKey: key });
   };
   const closeChildForm = async () => {
@@ -62,6 +75,7 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
   return <section className={classes.root} aria-label={subform.label}>
     <h3 className={classes.title}>{subform.label}</h3>
     <button type="button" onClick={() => setActiveForm({ kind: 'create' })}>Add {subform.label}</button>
+    {deleteError && <p role="alert" className={classes.error}>{deleteError}</p>}
     {activeForm ? <div className={classes.childForm}>
       <FormRunnerView
         key={activeForm.kind === 'create' ? 'create' : rowIdOf(activeForm.row!, child, activeForm.index ?? 0)}
@@ -75,8 +89,18 @@ export function FormSubformPanel({ parent, child, subform, row }: Props) {
         onClose={() => { void closeChildForm(); }}
       />
     </div> : rows.length === 0 ? <p className={classes.notice}>No related records.</p> : subform.mode === 'grid' ? (
-      <table className={classes.table}><thead><tr>{child.columns.map((c) => <th key={c.name} className={classes.cell}>{c.label}</th>)}<th /></tr></thead><tbody>{rows.map((r, index) => <tr key={rowIdOf(r, child, index)}>{child.columns.map((c) => <td key={c.name} className={classes.cell}>{String(r[c.name] ?? '')}</td>)}<td><button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => deleteRow(r)} disabled={remove.isPending}>Delete</button></td></tr>)}</tbody></table>
-    ) : <div>{rows.map((r, index) => <article key={rowIdOf(r, child, index)} className={classes.card}>{child.columns.map((c) => <div key={c.name}><strong>{c.label}: </strong>{String(r[c.name] ?? '')}</div>)}<button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => deleteRow(r)} disabled={remove.isPending}>Delete</button></article>)}</div>}
+      <table className={classes.table}><thead><tr>{child.columns.map((c) => <th key={c.name} className={classes.cell}>{c.label}</th>)}<th /></tr></thead><tbody>{rows.map((r, index) => <tr key={rowIdOf(r, child, index)}>{child.columns.map((c) => <td key={c.name} className={classes.cell}>{String(r[c.name] ?? '')}</td>)}<td><button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => setPendingDelete(r)} disabled={remove.isPending}>Delete</button></td></tr>)}</tbody></table>
+    ) : <div>{rows.map((r, index) => <article key={rowIdOf(r, child, index)} className={classes.card}>{child.columns.map((c) => <div key={c.name}><strong>{c.label}: </strong>{String(r[c.name] ?? '')}</div>)}<button type="button" onClick={() => setActiveForm({ kind: 'edit', row: r, index })}>Edit</button><button type="button" onClick={() => setPendingDelete(r)} disabled={remove.isPending}>Delete</button></article>)}</div>}
+    <ConfirmDialog
+      open={pendingDelete !== null}
+      onOpenChange={(open) => { if (!open) setPendingDelete(null); }}
+      title={`Delete this ${child.label ?? child.name} record?`}
+      description="This can't be undone."
+      confirmLabel="Delete"
+      variant="destructive"
+      isPending={remove.isPending}
+      onConfirm={() => { const target = pendingDelete; setPendingDelete(null); if (target) void deleteRow(target); }}
+    />
   </section>;
 }
 // Theme-token classes (see form-runner.tsx): follows light/dark mode.

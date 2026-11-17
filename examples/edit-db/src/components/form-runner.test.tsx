@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
@@ -344,7 +344,11 @@ describe('FormRunnerView — composite (2-column) PK', () => {
     fireEvent.click(screen.getByLabelText('Go to key'));
     await waitFor(() => expect(screen.getByLabelText('Qty')).toHaveValue(8));
 
+    // Delete only asks; nothing is removed until the dialog is confirmed.
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(db.getRows()).toHaveLength(2);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(db.getRows()).toHaveLength(1));
     expect(db.getRows()[0]).toMatchObject({ order_id: 10, line_no: 1 });
   });

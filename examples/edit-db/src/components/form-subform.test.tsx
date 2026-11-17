@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -81,5 +81,24 @@ describe('FormSubformPanel', () => {
       expect(b.text).toContain('filter: {and: [{tenant_id: {_eq: $parent_tenant_id}}, {order_id: {_eq: $parent_order_id}}]}');
       expect(b.variables).toMatchObject({ parent_tenant_id: 7, parent_order_id: 42, limit: 1, offset: 0 });
     }
+  });
+
+  it('asks before deleting a child row and shows a failed delete instead of dropping it', async () => {
+    const deletes: unknown[] = [];
+    const query = vi.fn(async (text: string, variables?: Record<string, unknown>) => {
+      if (text.includes('FormSubform_order_lines')) return { order_lines: { data: [{ tenant_id: 7, order_id: 42, line_no: 1, qty: 3 }] } };
+      if (text.includes('(delete:')) { deletes.push(variables); throw new Error('conflicted with the REFERENCE constraint'); }
+      throw new Error(`unexpected query: ${text}`);
+    });
+    render(createElement(FormSubformPanel, { parent, child, subform, row: { tenant_id: 7, order_id: 42 } }), { wrapper: wrapper({ query: query as GraphQLFetcher['query'] }) });
+
+    await screen.findByText('3');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(deletes).toEqual([]);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deletes).toHaveLength(1));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Delete failed: conflicted with the REFERENCE constraint');
   });
 });

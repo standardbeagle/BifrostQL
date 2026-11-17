@@ -32,10 +32,15 @@ namespace BifrostQL.Server
         public string? Endpoint { get; set; }
 
         /// <summary>
-        /// Upper bound on a served blob. The read seam materializes the column value
-        /// in memory (there is no DB-side windowed blob read yet), so this bounds
-        /// SERVER memory per request; HTTP Range only windows the wire. Over the cap
-        /// is an explicit 413, never a truncated body. Default 32 MiB.
+        /// Upper bound on a served blob, in decoded bytes. Over the cap is an explicit 413,
+        /// never a truncated body; HTTP Range only windows the wire. Default 32 MiB.
+        ///
+        /// <para>Known gap: this does NOT bound server memory for an oversized row. The read
+        /// seam has no DB-side length probe or windowed blob read, so the driver materializes
+        /// the whole column value (as a base64 string) before the cap is checked. What the cap
+        /// does avoid is the second copy: the decoded size is computed from the base64 length
+        /// and an oversized value is refused before it is decoded. A served value costs its
+        /// base64 string plus one decoded array.</para>
         /// </summary>
         public int MaxBlobBytes { get; set; } = 32 * 1024 * 1024;
     }
@@ -246,21 +251,29 @@ namespace BifrostQL.Server
 
             // The read seam materializes blobs as base64 (ReaderEnum.DbConvert);
             // byte[] is accepted for providers that hand bytes through untouched.
-            var bytes = value switch
+            // The cap is checked on the decoded size BEFORE decoding, so an oversized
+            // value is refused without allocating its decoded copy.
+            long? size = value switch
             {
-                byte[] raw => raw,
-                string base64 => TryFromBase64(base64),
+                byte[] raw => raw.Length,
+                string base64 => Base64DecodedLength(base64),
                 _ => null,
             };
-            if (bytes is null)
+            if (size is null)
             {
                 await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
                 return;
             }
-            if (bytes.Length > _options.MaxBlobBytes)
+            if (size > _options.MaxBlobBytes)
             {
                 await WriteTextAsync(context, StatusCodes.Status413PayloadTooLarge,
                     $"The value exceeds the {_options.MaxBlobBytes}-byte blob limit.");
+                return;
+            }
+            var bytes = value as byte[] ?? TryFromBase64((string)value!);
+            if (bytes is null)
+            {
+                await WriteTextAsync(context, StatusCodes.Status404NotFound, NotFoundBody);
                 return;
             }
 
@@ -367,6 +380,19 @@ namespace BifrostQL.Server
                 default:
                     value = raw; return true;
             }
+        }
+
+        /// <summary>
+        /// The byte count <paramref name="base64"/> decodes to, from its length and padding
+        /// alone, or null when the length cannot be canonical base64 (decoding would fail).
+        /// </summary>
+        internal static long? Base64DecodedLength(string base64)
+        {
+            if (base64.Length % 4 != 0)
+                return null;
+            var padding = base64.EndsWith("==", StringComparison.Ordinal) ? 2
+                : base64.EndsWith('=') ? 1 : 0;
+            return base64.Length / 4 * 3L - padding;
         }
 
         private static byte[]? TryFromBase64(string base64)

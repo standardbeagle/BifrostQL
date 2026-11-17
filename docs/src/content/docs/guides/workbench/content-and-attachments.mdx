@@ -70,6 +70,9 @@ to a magic-byte-verified image allowlist served with `nosniff`; everything
 else, PDFs included, downloads as an attachment so stored markup can never
 execute on the app origin. Responses are capped by `MaxBlobBytes`
 (default 32 MiB) — over the cap is an explicit `413`, never a truncated body.
+The cap bounds the response, not the read: the database driver still loads the
+whole column value before the size is checked, so an oversized row costs server
+memory once per request even though it is refused.
 
 ```bash
 # The photo stored in attachments row 1, as a plain URL:

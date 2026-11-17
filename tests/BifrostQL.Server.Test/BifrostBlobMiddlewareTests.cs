@@ -207,6 +207,28 @@ namespace BifrostQL.Server.Test
             System.Text.Encoding.UTF8.GetString(body).Should().Contain("8-byte");
         }
 
+        [Theory]
+        [InlineData(0)]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        [InlineData(5)]
+        public void Base64DecodedLength_MatchesTheDecodedArray_ForEveryPadding(int byteCount)
+        {
+            // The 413 check runs on this arithmetic instead of decoding, so it must agree with
+            // the decoder exactly at every padding length (0, 1 and 2 '=' characters).
+            var encoded = Convert.ToBase64String(Enumerable.Range(0, byteCount).Select(i => (byte)i).ToArray());
+
+            BifrostBlobMiddleware.Base64DecodedLength(encoded).Should().Be(byteCount);
+        }
+
+        [Fact]
+        public void Base64DecodedLength_RefusesANonCanonicalLength()
+        {
+            BifrostBlobMiddleware.Base64DecodedLength("abc").Should().BeNull();
+        }
+
         [Fact]
         public async Task RequireAuth_RefusesAnAnonymousCaller()
         {

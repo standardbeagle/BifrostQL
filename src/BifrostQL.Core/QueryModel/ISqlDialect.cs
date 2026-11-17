@@ -117,6 +117,14 @@ public interface ISqlDialect
     }
 
     /// <summary>
+    /// Checks client-authored SQL (<c>_rawQuery</c>) before it runs: it must be one
+    /// SELECT, lexed with this engine's own quoting and comment rules
+    /// (<see cref="Resolvers.RawSqlValidator"/>), so text the engine runs as code
+    /// cannot hide inside what a generic lexer reads as a string or comment.
+    /// </summary>
+    Resolvers.RawSqlValidationResult ValidateReadOnlySql(string sql);
+
+    /// <summary>
     /// The prefix character for parameterized query parameters. All dialects use "@".
     /// </summary>
     string ParameterPrefix { get; }

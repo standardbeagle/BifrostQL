@@ -13,6 +13,11 @@ namespace BifrostQL.SqlServer;
 /// </summary>
 public sealed class SqlServerDialect : SqlDialectBase
 {
+    private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.SqlServer);
+
+    /// <inheritdoc />
+    public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly SqlServerDialect Instance = new();
 

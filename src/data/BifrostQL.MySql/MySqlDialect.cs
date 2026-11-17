@@ -1,3 +1,4 @@
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 
@@ -10,6 +11,11 @@ namespace BifrostQL.MySql;
 /// </summary>
 public sealed class MySqlDialect : LimitOffsetDialectBase
 {
+    private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.MySql);
+
+    /// <inheritdoc />
+    public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly MySqlDialect Instance = new();
 

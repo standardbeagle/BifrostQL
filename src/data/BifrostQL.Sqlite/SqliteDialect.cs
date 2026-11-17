@@ -11,6 +11,11 @@ namespace BifrostQL.Sqlite;
 /// </summary>
 public sealed class SqliteDialect : StandardConcatDialectBase
 {
+    private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.Sqlite);
+
+    /// <inheritdoc />
+    public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly SqliteDialect Instance = new();
 

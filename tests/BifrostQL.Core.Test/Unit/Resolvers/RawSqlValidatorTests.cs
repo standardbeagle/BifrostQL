@@ -10,7 +10,26 @@ namespace BifrostQL.Core.Test.Resolvers;
 
 public sealed class RawSqlValidatorTests
 {
-    private readonly RawSqlValidator _validator = new();
+    // Dialect-neutral facts hold under every engine's lexicon: a payload is refused
+    // when ANY engine would run it as code, and accepted only when every engine agrees.
+    private readonly AllLexicons _validator = new();
+
+    private sealed class AllLexicons
+    {
+        private readonly RawSqlValidator[] _validators = Enum.GetValues<RawSqlLexicon>()
+            .Select(l => new RawSqlValidator(l)).ToArray();
+
+        public RawSqlValidationResult Validate(string? sql)
+        {
+            foreach (var validator in _validators)
+            {
+                var result = validator.Validate(sql);
+                if (!result.IsValid)
+                    return result;
+            }
+            return RawSqlValidationResult.Ok();
+        }
+    }
 
     // Access internal SchemaGenerator via reflection, matching existing test patterns (StoredProcedureTests)
     private static readonly MethodInfo SchemaTextFromModelMethod = typeof(DbSchema).Assembly
@@ -426,11 +445,23 @@ public sealed class RawSqlValidatorTests
         result.IsValid.Should().BeTrue();
     }
 
-    [Fact]
-    public void Validate_BracketQuotedIdentifierWithKeyword_ReturnsValid()
+    [Theory]
+    [InlineData(RawSqlLexicon.SqlServer)]
+    [InlineData(RawSqlLexicon.Sqlite)]
+    public void Validate_BracketQuotedIdentifierWithKeyword_ReturnsValid(RawSqlLexicon lexicon)
     {
-        var result = _validator.Validate("SELECT [Into] FROM Users");
+        var result = new RawSqlValidator(lexicon).Validate("SELECT [Into] FROM Users");
         result.IsValid.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(RawSqlLexicon.Postgres)]
+    [InlineData(RawSqlLexicon.MySql)]
+    public void Validate_BracketIsCodeWhereTheEngineHasNoBracketIdentifiers_ReturnsFail(RawSqlLexicon lexicon)
+    {
+        var result = new RawSqlValidator(lexicon).Validate("SELECT [Into] FROM Users");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("INTO");
     }
 
     [Fact]
@@ -476,6 +507,82 @@ public sealed class RawSqlValidatorTests
         // '#' starts a comment on MySQL only; the scanner treats it as code so
         // the semicolon and DROP are seen.
         var result = _validator.Validate("SELECT 1 # ; DROP TABLE Users");
+        result.IsValid.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Dialect Lexing Gaps
+
+    // Each payload reads as one harmless statement to a lexer that does not know the
+    // engine's own quoting or comment rules, while the engine runs the hidden write.
+    [Theory]
+    [InlineData("SELECT $a$ ' $a$; DELETE FROM t; --'")]                      // Postgres dollar quote
+    [InlineData("SELECT $$ ' $$; DELETE FROM t; --'")]                        // Postgres empty-tag dollar quote
+    [InlineData("SELECT \"\\\"\" ; DELETE FROM t; -- \"")]                    // MySQL backslash in "..."
+    [InlineData("SELECT ('{}'::jsonb)[']'] ; DELETE FROM t; --']")]            // Postgres: [ is code
+    [InlineData("SELECT 1 /* /* */ ' */ ; DELETE FROM t; --'")]               // nested block comment (Postgres, SQL Server)
+    [InlineData("SELECT 1 --' \n ; DELETE FROM t --'")]                       // -- without space still a comment (SQL Server, Postgres, SQLite)
+    [InlineData("SELECT 1 # ' \n ; DELETE FROM t; -- '")]                     // MySQL # comment hides an opening quote
+    [InlineData("SELECT 1 -- x\r; DELETE FROM t")]                             // Postgres ends a line comment at CR
+    [InlineData("SELECT 1 /*M! ; DELETE FROM t */")]                          // MariaDB executable comment
+    public void Validate_PayloadHiddenByDialectQuoting_ReturnsFail(string sql)
+    {
+        var result = _validator.Validate(sql);
+        result.IsValid.Should().BeFalse();
+    }
+
+    // T-SQL needs no semicolon between statements, and these verbs write or change the session.
+    [Theory]
+    [InlineData("SELECT 1 DECLARE @p varbinary(16) SELECT @p=TEXTPTR(body) FROM dbo.docs WHERE id=1 WRITETEXT dbo.docs.body @p 'x'", "DECLARE")]
+    [InlineData("SELECT 1 UPDATETEXT dbo.docs.body @p 0 NULL 'x'", "UPDATETEXT")]
+    [InlineData("SELECT 1 DISABLE TRIGGER ALL ON dbo.audit", "DISABLE")]
+    [InlineData("SELECT 1 KILL 57", "KILL")]
+    [InlineData("SELECT 1 USE otherdb", "USE")]
+    [InlineData("SELECT 1 WAITFOR DELAY '00:01'", "WAITFOR")]
+    [InlineData("SELECT 1 RECONFIGURE", "RECONFIGURE")]
+    [InlineData("SELECT 1 COMMIT", "COMMIT")]
+    [InlineData("SELECT 1 SET IMPLICIT_TRANSACTIONS OFF", "SET")]
+    [InlineData("SELECT pg_terminate_backend(57)", "PG_TERMINATE_BACKEND")]
+    [InlineData("SELECT set_config('role', 'admin', false)", "SET_CONFIG")]
+    [InlineData("SELECT dblink_exec('dbname=x', 'DROP TABLE t')", "DBLINK_EXEC")]
+    [InlineData("SELECT LOAD_FILE('/etc/passwd')", "LOAD_FILE")]
+    [InlineData("SELECT load_extension('evil')", "LOAD_EXTENSION")]
+    public void Validate_SessionOrWriteVerbWithoutSemicolon_ReturnsFail(string sql, string verb)
+    {
+        var result = _validator.Validate(sql);
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().Contain(verb);
+    }
+
+    // Each engine's own quoting, accepted under that engine's lexicon.
+    [Theory]
+    [InlineData(RawSqlLexicon.Postgres, "SELECT $$a;b DELETE$$ AS t")]
+    [InlineData(RawSqlLexicon.Postgres, "SELECT $body$ it's; $body$ AS t")]
+    [InlineData(RawSqlLexicon.Postgres, "SELECT 1 /* outer /* inner */ still comment; DELETE */")]
+    [InlineData(RawSqlLexicon.Postgres, "SELECT $1::int")]
+    [InlineData(RawSqlLexicon.SqlServer, "SELECT 1 --; DELETE FROM t")]
+    [InlineData(RawSqlLexicon.SqlServer, "SELECT [a]]; DELETE] FROM t")]
+    [InlineData(RawSqlLexicon.MySql, "SELECT `a``; DELETE` FROM t")]
+    [InlineData(RawSqlLexicon.MySql, "SELECT 1 # ; DELETE FROM t")]
+    [InlineData(RawSqlLexicon.Sqlite, "SELECT `delete` FROM t")]
+    public void Validate_EngineQuoting_ReturnsValid(RawSqlLexicon lexicon, string sql)
+    {
+        var result = new RawSqlValidator(lexicon).Validate(sql);
+        result.IsValid.Should().BeTrue(result.ErrorMessage);
+    }
+
+    // The same text under an engine that reads it differently runs the hidden statement.
+    [Theory]
+    [InlineData(RawSqlLexicon.SqlServer, "SELECT $$a;b DELETE$$ AS t")]
+    [InlineData(RawSqlLexicon.Sqlite, "SELECT 1 /* outer /* inner */ still comment; DELETE */")]
+    [InlineData(RawSqlLexicon.MySql, "SELECT 1 --; DELETE FROM t")]
+    [InlineData(RawSqlLexicon.Sqlite, "SELECT [a]]; DELETE] FROM t")]
+    [InlineData(RawSqlLexicon.Postgres, "SELECT 1 # ; DELETE FROM t")]
+    [InlineData(RawSqlLexicon.SqlServer, "SELECT `delete` FROM t")]
+    public void Validate_OtherEngineQuoting_ReturnsFail(RawSqlLexicon lexicon, string sql)
+    {
+        var result = new RawSqlValidator(lexicon).Validate(sql);
         result.IsValid.Should().BeFalse();
     }
 

@@ -22,7 +22,6 @@ namespace BifrostQL.Core.Resolvers
         public const string MaxRowsMetadataKey = MetadataKeys.RawSql.MaxRows;
 
         private readonly IDbModel _model;
-        private readonly RawSqlValidator _validator = new();
 
         public RawSqlQueryResolver(IDbModel model)
         {
@@ -41,7 +40,10 @@ namespace BifrostQL.Core.Resolvers
                 ? context.GetArgument<int>("timeout")
                 : GetConfiguredTimeout();
 
-            var validationResult = _validator.Validate(sql);
+            var bifrost = new BifrostContextAdapter(context);
+            var conFactory = bifrost.ConnFactory;
+
+            var validationResult = conFactory.Dialect.ValidateReadOnlySql(sql);
             if (!validationResult.IsValid)
                 throw new BifrostExecutionError($"SQL validation failed: {validationResult.ErrorMessage}");
 
@@ -52,9 +54,6 @@ namespace BifrostQL.Core.Resolvers
                 timeout = DefaultTimeoutSeconds;
 
             var maxRows = GetConfiguredMaxRows();
-
-            var bifrost = new BifrostContextAdapter(context);
-            var conFactory = bifrost.ConnFactory;
 
             return await ExecuteQueryAsync(conFactory, sql, paramsArg, timeout, maxRows);
         }

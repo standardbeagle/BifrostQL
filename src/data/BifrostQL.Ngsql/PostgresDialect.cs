@@ -1,3 +1,4 @@
+using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Utils;
@@ -11,6 +12,11 @@ namespace BifrostQL.Ngsql;
 /// </summary>
 public sealed class PostgresDialect : StandardConcatDialectBase
 {
+    private static readonly RawSqlValidator RawSqlValidator = new(RawSqlLexicon.Postgres);
+
+    /// <inheritdoc />
+    public override RawSqlValidationResult ValidateReadOnlySql(string sql) => RawSqlValidator.Validate(sql);
+
     /// <summary>Shared singleton instance.</summary>
     public static readonly PostgresDialect Instance = new();
 

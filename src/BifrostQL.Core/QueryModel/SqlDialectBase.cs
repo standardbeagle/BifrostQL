@@ -40,6 +40,9 @@ public abstract class SqlDialectBase : ISqlDialect
     }
 
     /// <inheritdoc />
+    public abstract RawSqlValidationResult ValidateReadOnlySql(string sql);
+
+    /// <inheritdoc />
     public virtual string ParameterPrefix => "@";
 
     /// <inheritdoc />

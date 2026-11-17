@@ -15,4 +15,13 @@ describe('chartFilter', () => {
   it('drops unknown columns rather than turning user strings into GraphQL fields', () => {
     expect(chartFilter([{ id: 'status) { evil', value: { operator: '_eq', value: 'paid' } }], table)).toBeUndefined();
   });
+
+  it('carries a composite FK tuple filter into the aggregate filter as an AND of every column', () => {
+    const lines = { graphQlName: 'orderLines', name: 'order_lines', columns: [
+      { name: 'order_region', graphQlName: 'order_region', paramType: 'String' },
+      { name: 'order_no', graphQlName: 'order_no', paramType: 'BigInt' },
+    ] } as unknown as Table;
+    expect(chartFilter([{ id: 'order_region', value: { operator: '_fk_tuple', value: [['order_region', 'eu'], ['order_no', '9007199254740993']] } }], lines))
+      .toEqual({ and: [{ order_region: { _eq: 'eu' } }, { order_no: { _eq: '9007199254740993' } }] });
+  });
 });

@@ -20,6 +20,8 @@ import {
     pickIndexedSortColumn,
     dayBoundary,
     type ColumnFilterValue,
+    FK_TUPLE_OPERATOR,
+    fkTupleFilterObject,
 } from './query-builder';
 import { buildPkEqFilter, encodeRouteParts } from './row-id';
 import type { Table, SchemaContextValue, Column, Join, TableIndex } from '../types/schema';
@@ -1694,5 +1696,78 @@ describe('pickIndexedSortColumn', () => {
     it('returns null when no index leads on a known column', () => {
         const table = tableWith([ix('ghost', ['gone'])], [col('a')]);
         expect(pickIndexedSortColumn(table)).toBeNull();
+    });
+});
+
+// ── composite-FK tuple filters and the cf codec ─────────────────────────────
+describe('composite FK tuple filter', () => {
+    const lines = makeTable({
+        name: 'lines', graphQlName: 'lines',
+        columns: [
+            makeColumn({ name: 'id', graphQlName: 'id', paramType: 'Int!', isPrimaryKey: true }),
+            makeColumn({ name: 'tenant_id', graphQlName: 'tenant_id', paramType: 'Int' }),
+            makeColumn({ name: 'order_id', graphQlName: 'order_id', paramType: 'BigInt' }),
+            makeColumn({ name: 'name', graphQlName: 'name', paramType: 'String' }),
+        ],
+    });
+    const exact = '9007199254740993';
+    const tuple = { id: 'tenant_id', value: { operator: FK_TUPLE_OPERATOR, value: [['tenant_id', '7'], ['order_id', exact]] } as ColumnFilterValue };
+
+    it('filters on every FK column, each bound as its own scalar', () => {
+        const result = buildColumnFilters([tuple], lines);
+        expect(result.errors).toEqual([]);
+        expect(result.filterTexts).toEqual(['{and: [{tenant_id: {_eq: $cf_tenant_id_0_0}}, {order_id: {_eq: $cf_tenant_id_0_1}}]}']);
+        expect(result.params).toEqual(['$cf_tenant_id_0_0: Int', '$cf_tenant_id_0_1: BigInt']);
+        expect(result.variables).toEqual({ cf_tenant_id_0_0: 7, cf_tenant_id_0_1: exact });
+    });
+
+    it('refuses the whole tuple when a pair names a column that is not on the table', () => {
+        const bad = { id: 'tenant_id', value: { operator: FK_TUPLE_OPERATOR, value: [['tenant_id', '7'], ['nope', '1']] } as ColumnFilterValue };
+        const result = buildColumnFilters([bad], lines);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toMatch(/'nope'/);
+        expect(result.filterTexts).toEqual([]);
+        expect(result.variables).toEqual({});
+    });
+
+    it('refuses a malformed tuple value', () => {
+        for (const value of [[], 'x', [['tenant_id']], [['tenant_id', '7'], ['tenant_id', '8']], [['bad name', '1']], [['tenant_id', null]], [['tenant_id', {}]]]) {
+            const result = buildColumnFilters([{ id: 'tenant_id', value: { operator: FK_TUPLE_OPERATOR, value } }], lines);
+            expect(result.errors).toEqual([expect.stringMatching(/malformed/)]);
+        }
+    });
+
+    it('builds the same predicate as a filter object for variable-passing surfaces', () => {
+        expect(fkTupleFilterObject(tuple.value.value, lines)).toEqual({ and: [{ tenant_id: { _eq: 7 } }, { order_id: { _eq: exact } }] });
+        expect(fkTupleFilterObject([['nope', '1']], lines)).toBeNull();
+    });
+
+    it('round-trips a tuple filter through the cf param with the BigInt part exact', () => {
+        const cfParam = serializeColumnFilters([tuple]);
+        const roundTripped = new URLSearchParams(new URLSearchParams({ cf: cfParam }).toString()).get('cf')!;
+        const restored = deserializeColumnFilters(roundTripped);
+        expect(restored).toEqual([tuple]);
+        const parts = (restored[0].value as ColumnFilterValue).value as [string, unknown][];
+        expect(parts[1][1]).toBe(exact);
+        expect(BigInt(parts[1][1] as string)).toBe(9007199254740993n);
+        // A mixed cf of a single-column filter and a tuple filter survives whole.
+        const mixed = [{ id: 'name', value: { operator: '_eq', value: 'x' } as ColumnFilterValue }, tuple];
+        expect(deserializeColumnFilters(serializeColumnFilters(mixed))).toEqual(mixed);
+    });
+
+    it('still decodes cf links written before tuple filters existed', () => {
+        // Literal strings in the pre-tuple format, as bookmarked links carry them.
+        expect(deserializeColumnFilters('[["name","_eq","x"],["tenant_id","_between",[1,5]],["name","_null",true]]')).toEqual([
+            { id: 'name', value: { operator: '_eq', value: 'x' } },
+            { id: 'tenant_id', value: { operator: '_between', value: [1, 5] } },
+            { id: 'name', value: { operator: '_null', value: true } },
+        ]);
+        expect(deserializeColumnFilters('[["order_id","_eq","9007199254740993"]]')[0].value).toEqual({ operator: '_eq', value: '9007199254740993' });
+    });
+
+    it('drops a tuple triple whose value is malformed instead of guessing a filter', () => {
+        expect(deserializeColumnFilters(JSON.stringify([['tenant_id', FK_TUPLE_OPERATOR, [['tenant_id', '7'], ['tenant_id', '8']]], ['name', '_eq', 'x']])))
+            .toEqual([{ id: 'name', value: { operator: '_eq', value: 'x' } }]);
+        expect(deserializeColumnFilters(JSON.stringify([['tenant_id', FK_TUPLE_OPERATOR, '7']]))).toEqual([]);
     });
 });

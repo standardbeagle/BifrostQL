@@ -326,6 +326,13 @@ describe('getTableColumns: FK filter column', () => {
         expect(meta('tenant_id').isCompositeFk).toBe(true);
     });
 
+    it('gives a composite FK anchor every column pair for the tuple filter, and members none', () => {
+        expect(meta('tenant_id').fkSourceColumns).toEqual(['tenant_id', 'code']);
+        expect(meta('tenant_id').fkDestinationColumns).toEqual(['tenant_id', 'code']);
+        expect(meta('code').fkSourceColumns).toBeUndefined();
+        expect(meta('owner_id').fkSourceColumns).toBeUndefined();
+    });
+
     it('points a single-column FK dropdown at the destination column it references', () => {
         expect(meta('owner_id').joinFkColumn).toBe('uid');
     });

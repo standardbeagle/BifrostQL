@@ -29,6 +29,37 @@ export interface ColumnFilterValue {
     value: unknown;
 }
 
+/**
+ * Operator of a composite-FK tuple filter: "rows whose FK columns equal this
+ * parent row's key". It sits on the FK's anchor column, and its value is a
+ * {@link FkTupleValue} naming EVERY source column of the FK, so the predicate is
+ * an AND of `{col: {_eq: $v}}` per column, never one column's guess.
+ */
+export const FK_TUPLE_OPERATOR = "_fk_tuple";
+
+/**
+ * Ordered `[childColumn, value]` pairs of a tuple filter, in the FK's source
+ * column order. Pairs, not an object: the order is the FK's, and no column name
+ * can collide with an object key like `__proto__`. Values stay as the server
+ * sent them (BigInt/Decimal keys as decimal strings) and are coerced per child
+ * column when the predicate is built.
+ */
+export type FkTupleValue = [string, string | number | boolean][];
+
+/** Whether `value` is a well-formed {@link FkTupleValue}: ≥1 pair, valid distinct column names, scalar values. */
+export function isFkTupleValue(value: unknown): value is FkTupleValue {
+    if (!Array.isArray(value) || value.length === 0) return false;
+    const seen = new Set<string>();
+    for (const pair of value) {
+        if (!Array.isArray(pair) || pair.length !== 2) return false;
+        const [column, part] = pair;
+        if (!isGraphQlName(column) || seen.has(column)) return false;
+        if (typeof part !== "string" && typeof part !== "boolean" && !(typeof part === "number" && Number.isFinite(part))) return false;
+        seen.add(column);
+    }
+    return true;
+}
+
 interface ColumnWithJoin extends Column {
     joinTable?: Join;
     joinLabelColumn?: string;
@@ -311,6 +342,64 @@ function coerceFilterValue(value: unknown, gqlType: string, column: string, erro
     }
 }
 
+/**
+ * The predicate of a composite-FK tuple filter: `{and: [{col: {_eq: $v}}, ...]}`
+ * over every pair, each value bound as its own column's scalar. Null (with the
+ * reason pushed onto `errors`) when the value is malformed or names a column
+ * that is not on this table: the whole tuple is refused, never applied in part.
+ */
+function buildFkTupleClause(
+    value: unknown,
+    table: Table,
+    varPrefix: string,
+    anchor: string,
+    errors: string[],
+): { variables: Record<string, unknown>; params: string[]; filterText: string } | null {
+    if (!isFkTupleValue(value)) {
+        errors.push(`The foreign-key filter on column '${anchor}' is malformed.`);
+        return null;
+    }
+    const variables: Record<string, unknown> = {};
+    const params: string[] = [];
+    const clauses: string[] = [];
+    for (let k = 0; k < value.length; k++) {
+        const [name, part] = value[k];
+        const column = table.columns.find((c) => c.name === name);
+        if (!column) {
+            errors.push(`The foreign-key filter on column '${anchor}' names column '${name}', which is not on this table.`);
+            return null;
+        }
+        const gqlType = getGraphQlType(column.paramType);
+        const coerced = coerceFilterValue(part, gqlType, name, errors);
+        if (coerced === INVALID_FILTER_VALUE) return null;
+        const varName = `${varPrefix}_${k}`;
+        variables[varName] = coerced;
+        params.push(`$${varName}: ${gqlType}`);
+        clauses.push(`{${name}: {_eq: $${varName}}}`);
+    }
+    const filterText = clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(', ')}]}`;
+    return { variables, params, filterText };
+}
+
+/**
+ * The same tuple predicate as a GraphQL input OBJECT (for surfaces that pass the
+ * filter as a variable, like the chart), keyed by each column's GraphQL name.
+ * Null when the tuple would be refused by {@link buildColumnFilters}.
+ */
+export function fkTupleFilterObject(value: unknown, table: Table): Record<string, unknown> | null {
+    const errors: string[] = [];
+    if (!isFkTupleValue(value)) return null;
+    const clauses: Record<string, unknown>[] = [];
+    for (const [name, part] of value) {
+        const column = table.columns.find((c) => c.name === name);
+        if (!column) return null;
+        const coerced = coerceFilterValue(part, getGraphQlType(column.paramType), name, errors);
+        if (coerced === INVALID_FILTER_VALUE) return null;
+        clauses.push({ [column.graphQlName]: { _eq: coerced } });
+    }
+    return clauses.length === 1 ? clauses[0] : { and: clauses };
+}
+
 export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Table): ColumnFilterResult {
     const variables: Record<string, unknown> = {};
     const params: string[] = [];
@@ -331,6 +420,14 @@ export function buildColumnFilters(columnFilters: ColumnFiltersState, table: Tab
         }
         if (!isGraphQlName(cf.id)) {
             errors.push(`Column '${String(cf.id)}' is not a valid column name.`);
+            continue;
+        }
+        if (filterValue.operator === FK_TUPLE_OPERATOR) {
+            const tuple = buildFkTupleClause(filterValue.value, table, `cf_${cf.id}_${i}`, cf.id, errors);
+            if (!tuple) continue;
+            Object.assign(variables, tuple.variables);
+            params.push(...tuple.params);
+            filterTexts.push(tuple.filterText);
             continue;
         }
         if (!isFilterOperator(filterValue.operator, col.paramType)) {
@@ -399,11 +496,27 @@ export function collectFilterErrors(
     return header.error ? [header.error, ...columns.errors] : columns.errors;
 }
 
+/**
+ * The `cf` URL param codec — its one producer and one consumer.
+ *
+ * Format: a JSON array of `[columnId, operator, value]` triples.
+ * - Single-column filters: `value` is the scalar (or `[lo, hi]` for
+ *   `_between`), as it always was, so every cf link written before tuple
+ *   filters existed decodes unchanged.
+ * - Composite-FK tuple filters: `operator` is {@link FK_TUPLE_OPERATOR} and
+ *   `value` is the {@link FkTupleValue} pair list, e.g.
+ *   `["tenant_id","_fk_tuple",[["tenant_id","7"],["order_id","9007199254740993"]]]`.
+ *
+ * Key values travel as JSON strings when the server sent strings (BigInt,
+ * Decimal), so no value passes through a JS number. A triple that fails
+ * validation is dropped on decode, never guessed into a different filter.
+ */
 export function serializeColumnFilters(columnFilters: ColumnFiltersState): string {
     if (columnFilters.length === 0) return "";
     return JSON.stringify(columnFilters.map((cf) => [cf.id, (cf.value as ColumnFilterValue).operator, (cf.value as ColumnFilterValue).value]));
 }
 
+/** Decodes a `cf` param written by {@link serializeColumnFilters}; see the format there. */
 export function deserializeColumnFilters(raw: string): ColumnFiltersState {
     try {
         if (!raw) return [];
@@ -419,8 +532,10 @@ export function deserializeColumnFilters(raw: string): ColumnFiltersState {
 
 function isSerializedColumnFilter(value: unknown): value is [string, string, unknown] {
     if (!Array.isArray(value) || value.length !== 3) return false;
-    const [id, operator] = value;
-    return isGraphQlName(id) && typeof operator === "string" && columnFilterOperatorSet.has(operator);
+    const [id, operator, filterValue] = value;
+    if (!isGraphQlName(id) || typeof operator !== "string") return false;
+    if (operator === FK_TUPLE_OPERATOR) return isFkTupleValue(filterValue);
+    return columnFilterOperatorSet.has(operator);
 }
 
 /**

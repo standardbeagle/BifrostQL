@@ -18,7 +18,7 @@ import { TextFilter } from '@/components/filters/text-filter';
 import { NumberFilter } from '@/components/filters/number-filter';
 import { DateFilter } from '@/components/filters/date-filter';
 import { BooleanFilter } from '@/components/filters/boolean-filter';
-import { FkFilter } from '@/components/filters/fk-filter';
+import { FkFilter, FkTupleFilter } from '@/components/filters/fk-filter';
 import type { Column as ColumnSchema } from '@/types/schema';
 import { isNumericScalar, isTimestampScalar } from '@/lib/scalar-types';
 import type { DataTableFeatures } from '@/lib/table-features';
@@ -62,6 +62,12 @@ interface FkMeta {
      */
     joinFkColumn: string | null;
     isSelfReference: boolean;
+    /**
+     * Set on a composite FK's ANCHOR column only: every source/destination column
+     * pair, so the header offers a tuple filter (pick one parent row, filter the
+     * child on all FK columns). Member columns keep their type-based filter.
+     */
+    tuple: { sourceColumns: string[]; destinationColumns: string[] } | null;
 }
 
 function getFkMeta<TData extends RowData, TValue>(column: Column<DataTableFeatures, TData, TValue>): FkMeta | null {
@@ -70,12 +76,17 @@ function getFkMeta<TData extends RowData, TValue>(column: Column<DataTableFeatur
         joinLabelColumn?: string;
         joinFkColumn?: string;
         isSelfReference?: boolean;
+        fkSourceColumns?: string[];
+        fkDestinationColumns?: string[];
     } | undefined;
     if (meta?.joinTable) return {
         joinTable: meta.joinTable,
         joinLabelColumn: meta.joinLabelColumn ?? 'id',
         joinFkColumn: meta.joinFkColumn ?? null,
         isSelfReference: meta.isSelfReference === true,
+        tuple: meta.fkSourceColumns && meta.fkDestinationColumns
+            ? { sourceColumns: meta.fkSourceColumns, destinationColumns: meta.fkDestinationColumns }
+            : null,
     };
     return null;
 }
@@ -229,10 +240,13 @@ export function DataTableColumnHeader<TData extends RowData, TValue>({
     // falls back to the ordinary type-based filter — a working filter on the right
     // column beats an FK dropdown silently pointed at the wrong one.
     const fkFilterColumn = fkMeta?.joinFkColumn ?? null;
-    const showTextFilter = !fkFilterColumn && isStringColumn(column);
-    const showNumericFilter = !fkFilterColumn && isNumericColumn(column);
-    const showDateFilter = !fkFilterColumn && isDateColumn(column);
-    const showBooleanFilter = !fkFilterColumn && isBooleanColumn(column);
+    // A composite FK's anchor filters on the whole tuple instead.
+    const fkTuple = fkMeta?.tuple ?? null;
+    const typeFilter = !fkFilterColumn && !fkTuple;
+    const showTextFilter = typeFilter && isStringColumn(column);
+    const showNumericFilter = typeFilter && isNumericColumn(column);
+    const showDateFilter = typeFilter && isDateColumn(column);
+    const showBooleanFilter = typeFilter && isBooleanColumn(column);
     const columnSchema = getColumnSchema(column);
 
     const headerButton = (
@@ -383,6 +397,23 @@ export function DataTableColumnHeader<TData extends RowData, TValue>({
                                         </DropdownMenuSubTrigger>
                                         <DropdownMenuSubContent>
                                             <FkFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} joinFkColumn={fkFilterColumn} />
+                                        </DropdownMenuSubContent>
+                                    </DropdownMenuSub>
+                                </>
+                            )}
+                            {fkMeta && fkTuple && (
+                                <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuSub>
+                                        <DropdownMenuSubTrigger>
+                                            <Filter className={cn(
+                                                'size-3.5',
+                                                hasFilter ? 'text-primary' : 'text-muted-foreground'
+                                            )} />
+                                            Filter
+                                        </DropdownMenuSubTrigger>
+                                        <DropdownMenuSubContent>
+                                            <FkTupleFilter column={column} joinTable={fkMeta.joinTable} joinLabelColumn={fkMeta.joinLabelColumn} sourceColumns={fkTuple.sourceColumns} destinationColumns={fkTuple.destinationColumns} />
                                         </DropdownMenuSubContent>
                                     </DropdownMenuSub>
                                 </>

@@ -56,6 +56,7 @@ vi.mock('@/components/filters/boolean-filter', () => ({
 
 vi.mock('@/components/filters/fk-filter', () => ({
   FkFilter: () => <div>FkFilter</div>,
+  FkTupleFilter: ({ sourceColumns }: { sourceColumns: string[] }) => <div>FkTupleFilter:{sourceColumns.join(',')}</div>,
 }));
 
 function createMockColumn(overrides: Partial<ColumnSchema> = {}): ColumnSchema {
@@ -176,6 +177,29 @@ describe('DataTableColumnHeader filter controls per column type', () => {
     render(<DataTableColumnHeader column={column} table={createMockTable()} title="Test Column" />);
 
     expect(screen.getByText(expectedFilter)).toBeInTheDocument();
+  });
+});
+
+describe('DataTableColumnHeader composite FK filter', () => {
+  function fkColumn(meta: Record<string, unknown>) {
+    const schema = createMockColumn({ paramType: 'Int' });
+    return {
+      ...createMockTanStackColumn(schema),
+      columnDef: { meta: { column: schema, paramType: 'Int', filterOperators: getFilterOperators('Int'), joinTable: 'orders', joinLabelColumn: 'title', ...meta } },
+    } as unknown as Column<DataTableFeatures, Row, unknown>;
+  }
+
+  it('offers the tuple filter on a composite FK anchor instead of a one-column type filter', () => {
+    render(<DataTableColumnHeader column={fkColumn({ isCompositeFk: true, fkSourceColumns: ['tenant_id', 'order_id'], fkDestinationColumns: ['tenant_id', 'id'] })} table={createMockTable()} title="Order" />);
+    expect(screen.getByText('FkTupleFilter:tenant_id,order_id')).toBeInTheDocument();
+    expect(screen.queryByText('NumberFilter')).not.toBeInTheDocument();
+    expect(screen.queryByText('FkFilter')).not.toBeInTheDocument();
+  });
+
+  it('keeps the type filter on a composite FK member column', () => {
+    render(<DataTableColumnHeader column={fkColumn({ isCompositeFk: true, isCompositeFkMember: true })} table={createMockTable()} title="Order part" />);
+    expect(screen.getByText('NumberFilter')).toBeInTheDocument();
+    expect(screen.queryByText(/FkTupleFilter/)).not.toBeInTheDocument();
   });
 });
 

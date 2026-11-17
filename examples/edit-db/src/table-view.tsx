@@ -19,7 +19,7 @@ import type { DrillFrame } from './lib/drill-stack';
 import { encodePkRoute, parsePkRoute, pkColumnsOf, pkFilterFor, rowIdOf, buildPkEqFilter, type PkFilter } from './lib/row-id';
 import { buildSingleRowQuery, buildRowsByPkQuery } from './lib/query-builder';
 import { describeDeleteRows } from './lib/delete-summary';
-import { buildColumnFilters, getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './lib/query-builder';
+import { buildColumnFilters, FK_TUPLE_OPERATOR, fkTupleFilterObject, getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './lib/query-builder';
 import { useFetcher } from './common/fetcher';
 import type { ColumnFiltersState } from '@tanstack/react-table';
 
@@ -51,6 +51,11 @@ export function chartFilter(filters: ColumnFiltersState, table: Table): Record<s
     for (const filter of filters) {
         const value = filter.value as ColumnFilterValue;
         const column = table.columns.find((candidate) => candidate.name === filter.id);
+        if (column && value.operator === FK_TUPLE_OPERATOR) {
+            const tuple = fkTupleFilterObject(value.value, table);
+            if (tuple) clauses.push(tuple);
+            continue;
+        }
         if (!column || !getFilterOperators(column.paramType).includes(value.operator)) continue;
         if (value.value === undefined || (value.value === '' && value.operator !== '_null')) continue;
         clauses.push({ [column.graphQlName]: { [value.operator]: value.value } });

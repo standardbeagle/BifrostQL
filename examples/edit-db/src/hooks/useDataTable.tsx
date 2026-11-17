@@ -156,9 +156,9 @@ function buildJoinColumn(
     const joinLabelColumn = joinSchema?.labelColumn ?? 'id';
     const composite = isComposite(anchorJoin);
     // The destination column this FK column points at. A composite FK has no
-    // single one: its FK dropdown would list one column's values (repeated,
-    // one per tuple) and filter on that column alone, matching rows of other
-    // tuples. It falls back to the column's ordinary type-based filter.
+    // single one: a single-column dropdown would filter on that column alone,
+    // matching rows of other tuples. Its anchor gets the tuple filter instead
+    // (fkSourceColumns/fkDestinationColumns), which filters on every FK column.
     const fkColumn = composite ? null : fkDestinationColumnFor(anchorJoin, c.name);
     // Self-referential FK: column points back at the same table
     // (e.g. categories.parent_id -> categories.id). Label it clearly
@@ -177,6 +177,8 @@ function buildJoinColumn(
             joinFkColumn: fkColumn ?? undefined,
             isSelfReference,
             isCompositeFk: composite,
+            fkSourceColumns: composite ? anchorJoin.sourceColumnNames : undefined,
+            fkDestinationColumns: composite ? anchorJoin.destinationColumnNames : undefined,
         }),
         cell: ({ row }) => {
             const joined = getSingleJoinRow(row.original, anchorJoin);

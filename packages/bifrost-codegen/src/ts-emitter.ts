@@ -3,7 +3,7 @@
  *
  * Type mapping (matches BifrostQL ProtoSchemaGenerator.GetProtoType output):
  *   - int32 / uint32 / sint32 / fixed32 / sfixed32 → number
- *   - int64 / uint64 / sint64 / fixed64 / sfixed64 → number
+ *   - int64 / uint64 / sint64 / fixed64 / sfixed64 → string
  *   - float / double                                → number
  *   - string                                        → string
  *   - bool                                          → boolean
@@ -12,11 +12,11 @@
  *   - optional T                                    → T | null
  *   - oneof member T                                → optional property `?: T`
  *
- * 64-bit integers are `number`, not `bigint`: rows reach the client as JSON
- * (GraphQL over HTTP, or the binary client's JSON.parse of the Result
- * payload), and the server's `BigInt` scalar writes a JSON number, so the
- * runtime value is a `number`. Beyond 2^53 that number has already lost
- * precision; a key that must stay exact has to travel as a string.
+ * 64-bit integers are `string`, not `number` or `bigint`: rows reach the client
+ * as JSON (GraphQL over HTTP, or the binary client's JSON.parse of the Result
+ * payload), and the server's `BigInt` scalar writes every value as a decimal
+ * string, because a JSON number past 2^53 rounds in JSON.parse. That is also
+ * proto3's canonical JSON form for 64-bit integers.
  *
  * Unknown type tokens are passed through verbatim as message/enum references
  * (e.g. `UserRow`, `Status`). Because each message/enum is emitted to its own
@@ -35,11 +35,11 @@ const SCALAR_MAP: Readonly<Record<string, string>> = {
   sint32: "number",
   fixed32: "number",
   sfixed32: "number",
-  int64: "number",
-  uint64: "number",
-  sint64: "number",
-  fixed64: "number",
-  sfixed64: "number",
+  int64: "string",
+  uint64: "string",
+  sint64: "string",
+  fixed64: "string",
+  sfixed64: "string",
   float: "number",
   double: "number",
   string: "string",

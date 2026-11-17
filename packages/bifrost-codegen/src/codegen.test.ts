@@ -171,13 +171,13 @@ describe("ts-emitter", () => {
     expect(mapProtoType("sint32")).toBe("number");
     expect(mapProtoType("fixed32")).toBe("number");
     expect(mapProtoType("sfixed32")).toBe("number");
-    // 64-bit columns reach the client as JSON numbers (the server's BigInt
-    // scalar serializes a long), never as a JS bigint.
-    expect(mapProtoType("int64")).toBe("number");
-    expect(mapProtoType("uint64")).toBe("number");
-    expect(mapProtoType("sint64")).toBe("number");
-    expect(mapProtoType("fixed64")).toBe("number");
-    expect(mapProtoType("sfixed64")).toBe("number");
+    // 64-bit columns reach the client as decimal strings (the server's BigInt
+    // scalar never writes a JSON number, which JSON.parse rounds past 2^53).
+    expect(mapProtoType("int64")).toBe("string");
+    expect(mapProtoType("uint64")).toBe("string");
+    expect(mapProtoType("sint64")).toBe("string");
+    expect(mapProtoType("fixed64")).toBe("string");
+    expect(mapProtoType("sfixed64")).toBe("string");
     expect(mapProtoType("float")).toBe("number");
     expect(mapProtoType("double")).toBe("number");
     expect(mapProtoType("string")).toBe("string");
@@ -199,7 +199,7 @@ describe("ts-emitter", () => {
         "  name: string;",
         "  email: string | null;",
         "  isActive: boolean;",
-        "  friendIds: number[];",
+        "  friendIds: string[];",
         "}",
         "",
       ].join("\n"),

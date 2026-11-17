@@ -5,5 +5,5 @@ export interface UserRow {
   name: string;
   email: string | null;
   isActive: boolean;
-  friendIds: number[];
+  friendIds: string[];
 }

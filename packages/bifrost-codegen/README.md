@@ -7,9 +7,10 @@ file per message and enum plus an `index.ts` barrel:
 bifrostql-codegen --proto-file schema.proto --out packages/@bifrostql/types/src/generated
 ```
 
-The interfaces describe rows as they arrive in JSON. `int64` maps to `number`
-(the server's `BigInt` scalar writes a JSON number, so it is never a JS
-`bigint`), and `oneof` members are optional properties.
+The interfaces describe rows as they arrive in JSON. `int64` maps to `string`
+(the server's `BigInt` scalar writes every value as a decimal string, so a key
+past 2^53 is never rounded by `JSON.parse`), and `oneof` members are optional
+properties.
 
 ## Grant catalogue
 

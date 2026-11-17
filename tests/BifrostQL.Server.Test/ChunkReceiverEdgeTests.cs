@@ -179,12 +179,30 @@ namespace BifrostQL.Server.Test
                 reassemblyTtl: TimeSpan.FromMinutes(5),
                 maxTotalReassemblyBytes: 1500);
 
-            // Two sessions each declaring 800 bytes: first is fine (800 <= 1500), the second
-            // would push the aggregate to 1600 > 1500 and must be rejected before allocation.
-            receiver.AddChunk(Chunk(1, new byte[] { 1 }, 0, 2, 0, 800)).Should().BeNull();
-            var act = () => receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 800));
+            // Two sessions each delivering 800 bytes: the first is held (800 <= 1500), the second
+            // would push the held bytes to 1600 > 1500 and is refused before it is retained.
+            receiver.AddChunk(Chunk(1, new byte[800], 0, 2, 0, 900)).Should().BeNull();
+            var act = () => receiver.AddChunk(Chunk(2, new byte[800], 0, 2, 0, 900));
 
             act.Should().Throw<InvalidOperationException>().WithMessage("*Aggregate*");
+            receiver.AllocatedBytes.Should().Be(800, "the refused chunk is not retained");
+        }
+
+        [Fact]
+        public void AggregateCap_CountsReceivedBytes_NotDeclaredTotals()
+        {
+            // The aggregate used to admit sessions by their DECLARED totals, so two one-byte
+            // frames declaring 800 bytes each used up the 1500-byte budget and every later
+            // chunked upload on the connection was refused, though only 2 bytes were held.
+            var receiver = new ChunkReceiver(
+                maxReassemblyBytes: 1000,
+                maxPendingReassemblies: 8,
+                reassemblyTtl: TimeSpan.FromMinutes(5),
+                maxTotalReassemblyBytes: 1500);
+
+            receiver.AddChunk(Chunk(1, new byte[] { 1 }, 0, 2, 0, 800)).Should().BeNull();
+            receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 800)).Should().BeNull();
+            receiver.AddChunk(Chunk(3, new byte[] { 1, 2 }, 0, 1, 0, 2)).Should().Equal(1, 2);
         }
 
         [Fact]

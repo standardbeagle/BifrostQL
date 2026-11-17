@@ -42,10 +42,11 @@ namespace BifrostQL.Server
         public static readonly TimeSpan DefaultReassemblyTtl = TimeSpan.FromMinutes(2);
 
         /// <summary>
-        /// Default cap on the TOTAL bytes across all concurrent reassembly sessions for one
-        /// connection (128 MB). Without an aggregate cap, N concurrent sessions each declaring
-        /// the per-session maximum could pin N × max bytes (e.g. 16 × 64 MB ≈ 1 GB) from only
-        /// kilobytes of traffic. This bounds the whole connection, not just each session.
+        /// Default cap on the TOTAL received bytes held across all concurrent reassembly sessions
+        /// for one connection (128 MB). Without an aggregate cap, N concurrent sessions each
+        /// delivering up to the per-session maximum could pin N × max bytes (e.g. 16 × 64 MB ≈
+        /// 1 GB). The cap counts bytes that arrived, never the client-declared totals, so frames
+        /// that declare large totals and send little cannot use up the budget.
         /// </summary>
         public const int DefaultMaxTotalReassemblyBytes = 128 * 1024 * 1024;
 
@@ -55,7 +56,6 @@ namespace BifrostQL.Server
         private readonly int _maxPendingReassemblies;
         private readonly TimeSpan _reassemblyTtl;
         private readonly long _maxTotalReassemblyBytes;
-        private long _currentReassemblyBytes;
 
         public ChunkReceiver()
             : this(DefaultMaxReassemblyBytes, DefaultMaxPendingReassemblies, DefaultReassemblyTtl)
@@ -133,18 +133,13 @@ namespace BifrostQL.Server
                         $"Too many pending chunked transfers: limit is {_maxPendingReassemblies}");
                 }
 
-                // Aggregate cap: bound TOTAL in-flight reassembly memory for this connection,
-                // not just each individual session, so many concurrent sessions cannot sum to
-                // a much larger allocation than any single session's limit.
-                if (_currentReassemblyBytes + (long)chunk.TotalBytes > _maxTotalReassemblyBytes)
-                {
-                    throw new InvalidOperationException(
-                        $"Aggregate in-flight reassembly memory would exceed the {_maxTotalReassemblyBytes}-byte per-connection limit");
-                }
-
+                EnsureAggregateRoom(chunk);
                 state = new ReassemblyState(chunk.ChunkTotal, chunk.TotalBytes);
                 _pending[chunk.RequestId] = state;
-                _currentReassemblyBytes += (long)chunk.TotalBytes;
+            }
+            else
+            {
+                EnsureAggregateRoom(chunk);
             }
 
             var before = state.ReceivedBytes;
@@ -161,9 +156,22 @@ namespace BifrostQL.Server
                 return null;
 
             _pending.Remove(chunk.RequestId);
-            _currentReassemblyBytes -= state.DeclaredBytes;
             _currentAllocatedBytes -= state.ReceivedBytes;
             return state.GetAssembledPayload();
+        }
+
+        /// <summary>
+        /// Aggregate cap: bounds the received bytes held across every pending session on this
+        /// connection, so many sessions under the per-session limit cannot sum past it. Checked
+        /// before the chunk is retained.
+        /// </summary>
+        private void EnsureAggregateRoom(BifrostMessage chunk)
+        {
+            if (_currentAllocatedBytes + chunk.Payload.Length > _maxTotalReassemblyBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Aggregate in-flight reassembly memory would exceed the {_maxTotalReassemblyBytes}-byte per-connection limit");
+            }
         }
 
         /// <summary>
@@ -199,10 +207,7 @@ namespace BifrostQL.Server
             foreach (var requestId in stale)
             {
                 if (_pending.TryGetValue(requestId, out var evicted))
-                {
-                    _currentReassemblyBytes -= evicted.DeclaredBytes;
                     _currentAllocatedBytes -= evicted.ReceivedBytes;
-                }
                 _pending.Remove(requestId);
             }
         }
@@ -242,7 +247,7 @@ namespace BifrostQL.Server
                 DeclaredBytes = (long)totalBytes;
             }
 
-            /// <summary>The declared payload size this session reserved (for the aggregate cap).</summary>
+            /// <summary>The declared payload size: offsets must fall inside it and deliveries must sum to it.</summary>
             public long DeclaredBytes { get; }
 
             /// <summary>Bytes actually delivered so far — the memory this session holds.</summary>
@@ -274,7 +279,7 @@ namespace BifrostQL.Server
 
                 // Retained bytes can never exceed the declared total: overlapping or repeated
                 // fragments must not let a transfer hold more than it promised (the per-session
-                // and aggregate caps are expressed against the declared total).
+                // cap is expressed against the declared total).
                 if (ReceivedBytes + data.Length > DeclaredBytes)
                     throw new InvalidOperationException(
                         $"Delivered bytes exceed the {DeclaredBytes}-byte payload the transfer declared");

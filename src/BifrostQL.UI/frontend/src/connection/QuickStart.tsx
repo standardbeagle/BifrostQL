@@ -52,6 +52,20 @@ const SCHEMAS: SchemaInfo[] = [
     description: 'Sensors, readings, JSON configs & file attachments',
     features: 'JSON documents, images & PDFs in blob columns, generated columns',
   },
+  {
+    id: 'org-model',
+    icon: '\uD83C\uDFE2',
+    name: 'Org Model',
+    description: 'Tenants, roles, permissions, users & memberships',
+    features: 'Multi-tenant foundation, invitations, audit log (sample data only)',
+  },
+  {
+    id: 'membership-manager',
+    icon: '\uD83C\uDFDF',
+    name: 'Membership Manager',
+    description: 'Households, members, plans, dues & events',
+    features: 'Built on the org model: invoices, payments, RSVPs, attendance (sample data only)',
+  },
 ];
 
 export const QuickStart: React.FC<QuickStartProps> = ({

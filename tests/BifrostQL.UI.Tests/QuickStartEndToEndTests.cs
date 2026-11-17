@@ -197,6 +197,32 @@ public class QuickStartEndToEndTests : IDisposable
     }
 
     /// <summary>
+    /// The Quick Start screen is a hand-written card list. It offered six of the eight
+    /// schemas the endpoint accepts (org-model and membership-manager had no card), so
+    /// the list drifted from the server the moment a schema was added.
+    /// </summary>
+    [Fact]
+    public void QuickstartCardsMatchTheServer()
+    {
+        var source = File.ReadAllText(QuickStartCardsPath());
+        var cardIds = System.Text.RegularExpressions.Regex
+            .Matches(source, @"\bid:\s*'([a-z0-9-]+)'")
+            .Select(m => m.Groups[1].Value)
+            .ToList();
+
+        cardIds.Should().NotBeEmpty("the anchor must find the SCHEMAS cards");
+        cardIds.Should().OnlyHaveUniqueItems();
+        cardIds.Should().BeEquivalentTo(QuickstartSchemas.SchemaNames,
+            "QuickStart.tsx offers a card for exactly the schemas the host serves");
+    }
+
+    private static string QuickStartCardsPath([System.Runtime.CompilerServices.CallerFilePath] string sourceFile = "")
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFile)!, "..", ".."));
+        return Path.Combine(repoRoot, "src", "BifrostQL.UI", "frontend", "src", "connection", "QuickStart.tsx");
+    }
+
+    /// <summary>
     /// Runs every schema/size the endpoint accepts through the endpoint's own executor.
     /// membership-manager's seed has a ';' inside a string literal
     /// ('…the club; bypasses the policy engine'), which a Split(';') executor cut into an

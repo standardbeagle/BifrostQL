@@ -70,13 +70,13 @@ The schemas live inside the desktop app as embedded resources. Build it to get a
 `bifrostui` binary — see the [desktop database explorer](/BifrostQL/guides/desktop-app/)
 guide — or run `./dev-ui.sh` from a repository checkout.
 
-Open the app without a connection string and the Quick Start screen offers
-`blog`, `ecommerce`, `crm`, `classroom`, and `project-tracker` as cards. Pick one,
-pick `sample` or `full`, and the app writes a fresh SQLite file to your temp
-directory, applies the DDL, applies the seed, and connects.
+Open the app without a connection string and the Quick Start screen offers a
+card for every schema above. Pick one, pick `sample` or `full`, and the app
+writes a fresh SQLite file to your temp directory, applies the DDL, applies the
+seed, and connects. Choosing `full` for a schema without a full seed installs the
+DDL only.
 
-The remaining three — `org-model`, `membership-manager`, and `sqlite-advanced` —
-have no card yet. They are created through the same endpoint the cards call:
+The cards call one endpoint, which you can also call yourself:
 
 ```bash
 curl -N -X POST http://localhost:5000/api/database/create-quickstart \

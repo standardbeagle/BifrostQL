@@ -24,9 +24,19 @@ export const PROVIDERS: ProviderInfo[] = [
 ];
 
 /**
- * QuickStart schema templates
+ * QuickStart schema templates. Mirrors the host's QuickstartSchemas.SchemaNames (derived from the embedded
+ * Schemas/<name>.sql resources). QuickstartCardsMatchTheServer in
+ * BifrostQL.UI.Tests fails when the cards in QuickStart.tsx drift from it.
  */
-export type QuickStartSchema = 'blog' | 'ecommerce' | 'crm' | 'classroom' | 'project-tracker' | 'sqlite-advanced';
+export type QuickStartSchema =
+  | 'blog'
+  | 'ecommerce'
+  | 'crm'
+  | 'classroom'
+  | 'project-tracker'
+  | 'sqlite-advanced'
+  | 'org-model'
+  | 'membership-manager';
 
 /**
  * Data size options for quickstart

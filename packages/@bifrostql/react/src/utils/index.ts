@@ -31,6 +31,7 @@ export type {
   LookupOptions,
   RowField,
 } from './crud-helpers';
+export type { RowKeyColumns, RowKeyValue } from './row-identity';
 export { diff, detectConflicts } from './diff-engine';
 export type { DiffStrategy, DiffResult } from './diff-engine';
 export {

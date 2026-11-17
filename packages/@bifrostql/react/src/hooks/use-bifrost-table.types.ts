@@ -7,6 +7,7 @@ import type {
   TableFilter,
   CompoundFilter,
 } from '../types';
+import type { RowKeyColumns } from '../utils/row-identity';
 
 /** Built-in aggregate functions for column summaries. */
 export type AggregateFn = 'sum' | 'avg' | 'min' | 'max' | 'count';
@@ -180,8 +181,17 @@ export interface SelectionState<T = Record<string, unknown>> {
 /** Configuration for fetching child/detail rows when a parent row is expanded. */
 export interface ChildQueryConfig {
   table: string;
-  parentKeyField?: string;
-  childFilterField?: string;
+  /**
+   * Parent column(s) whose values select the children. Defaults to the
+   * table's `rowKey`. A composite key lists every column.
+   */
+  parentKeyField?: RowKeyColumns;
+  /**
+   * Child column(s) matched against `parentKeyField`, paired by position.
+   * Defaults to `parentKeyField`. Must name as many columns as
+   * `parentKeyField`, or expanding a row reports an error.
+   */
+  childFilterField?: RowKeyColumns;
   fields?: string[];
 }
 
@@ -556,7 +566,13 @@ export interface UseBifrostTableOptions<
   clientSideSort?: boolean | ClientSideSortConfig;
   clientSideFilter?: boolean | ClientSideFilterConfig;
   filterDebounceMs?: number;
-  rowKey?: string;
+  /**
+   * The column(s) identifying a row. Defaults to `'id'`. A table with a
+   * composite primary key passes every key column, in key order
+   * (`['order_id', 'line_no']`); one column of a composite key would merge
+   * distinct rows in selection, editing and expansion.
+   */
+  rowKey?: RowKeyColumns;
   urlSync?: boolean | UrlSyncConfig;
   localStorage?: LocalStorageConfig;
   aggregates?: Record<string, AggregateConfig>;

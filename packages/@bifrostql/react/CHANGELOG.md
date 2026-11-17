@@ -27,6 +27,21 @@ the call-site update it requires.
   `variables` too. `buildFilterInput` and `tableFilterTypeName` are exported
   for callers that build their own documents. One document now serves every
   filter value, so the query cache keys on the variables instead of the text.
+- **`useBifrostDiff` refuses to change a key column.** The key columns in the
+  update's `detail` select the row, and a changed key value used to overwrite
+  the `id`, retargeting the update at another row. The mutation now rejects
+  without sending; change a key with a dedicated mutation.
+
+### Fixed
+
+- **Composite primary keys.** `useBifrostTable`/`BifrostTable` `rowKey`,
+  `childQuery.parentKeyField`/`childFilterField` and `useBifrostDiff`
+  `idField` accept a list of key columns. Selection, editing and expansion
+  identify a row by every listed column, child rows are filtered on an AND
+  over every column pair, and `useBifrostDiff` sends every key column and
+  keeps last-known state per row. A scalar `id` for a composite key, a row
+  missing a key column, or parent/child lists of different lengths fail
+  with an error instead of matching on one column.
 
 ### Deprecated
 

@@ -7,6 +7,7 @@ import type {
   BatchSaveFn,
   SaveErrorFn,
 } from '../use-bifrost-table.types';
+import { rowIdentity, type RowKeyColumns } from '../../utils/row-identity';
 
 export interface UseTableEditingOptions<T> {
   columns: ColumnConfig[];
@@ -14,7 +15,7 @@ export interface UseTableEditingOptions<T> {
   /** Whether the policy projection lets this caller write the column. */
   writable: (field: string) => boolean;
   data: T[];
-  rowKey: string;
+  rowKey: RowKeyColumns;
   autoSave: boolean;
   onRowUpdate: RowUpdateFn | undefined;
   onBatchSave: BatchSaveFn | undefined;
@@ -154,7 +155,7 @@ export function useTableEditing<T = Record<string, unknown>>({
   const rowsByKey = useMemo(() => {
     const map = new Map<string, Record<string, unknown>>();
     for (const row of data as Record<string, unknown>[]) {
-      map.set(String(row[rowKey]), row);
+      map.set(rowIdentity(row, rowKey), row);
     }
     return map;
   }, [data, rowKey]);

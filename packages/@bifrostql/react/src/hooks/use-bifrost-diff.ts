@@ -6,13 +6,23 @@ import { buildUpdateMutation } from '../utils/mutation-builder';
 import { diff, detectConflicts } from '../utils/diff-engine';
 import type { DiffStrategy, DiffResult } from '../utils/diff-engine';
 import { invalidateBifrostQueries } from '../utils/invalidation';
+import {
+  resolveRowKey,
+  rowIdentity,
+  type RowKeyColumns,
+  type RowKeyValue,
+} from '../utils/row-identity';
 
 /** Options for the {@link useBifrostDiff} hook. */
 export interface UseBifrostDiffOptions {
   /** The database table name to update. */
   table: string;
-  /** The primary key field name (used to identify the row). */
-  idField: string;
+  /**
+   * The primary-key column(s) identifying the row. A composite key lists
+   * every column in key order (`['order_id', 'line_no']`), and each mutation's
+   * `id` must then be an object naming all of them.
+   */
+  idField: RowKeyColumns;
   /** Comparison strategy: `'shallow'` or `'deep'` (default). */
   strategy?: DiffStrategy;
   /**
@@ -28,8 +38,11 @@ export interface UseBifrostDiffOptions {
 
 /** Input for a diff-based mutation, providing original and updated row states. */
 export interface DiffMutationInput {
-  /** The row's primary key value. */
-  id: string | number;
+  /**
+   * The row's key: a scalar for a single-column `idField`, or an object
+   * naming every `idField` column. A scalar for a composite key throws.
+   */
+  id: RowKeyValue;
   /** The original (baseline) row data fetched from the server. */
   original: Record<string, unknown>;
   /** The locally modified row data. */
@@ -99,13 +112,25 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
   // track a single row.
   const lastKnownRef = useRef<Map<string, Record<string, unknown>>>(new Map());
 
+  // Every key column, or a throw: a composite row identified by one column
+  // would update (and conflict-check) every row sharing that value.
+  const idFieldSignature =
+    typeof idField === 'string' ? idField : idField.join('\u0000');
+  const keyOf = useCallback(
+    (id: RowKeyValue): Record<string, unknown> =>
+      resolveRowKey(table, idField, id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [table, idFieldSignature],
+  );
+
   const resolveLastKnown = useCallback(
-    (id: string | number): Record<string, unknown> | null => {
-      const byId = lastKnownRef.current.get(String(id));
+    (id: RowKeyValue): Record<string, unknown> | null => {
+      const byId = lastKnownRef.current.get(rowIdentity(keyOf(id), idField));
       if (byId) return byId;
       return lastKnownRef.current.get(DEFAULT_LAST_KNOWN_KEY) ?? null;
     },
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keyOf],
   );
 
   const mutation = useMutation<unknown, Error, DiffMutationInput>({
@@ -127,7 +152,20 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
         }
       }
 
-      const detail = { [idField]: id, ...result.changed };
+      const keyValues = keyOf(id);
+      const changedKeys = Object.keys(keyValues).filter(
+        (column) => column in result.changed,
+      );
+      if (changedKeys.length > 0) {
+        // The key columns in `detail` select the row, so a changed key value
+        // would retarget the update at a different row.
+        return Promise.reject(
+          new Error(
+            `useBifrostDiff cannot change key column(s) ${changedKeys.join(', ')}: they identify the row being updated.`,
+          ),
+        );
+      }
+      const detail = { ...result.changed, ...keyValues };
       const gql = buildUpdateMutation(table);
 
       return executeGraphQL(
@@ -169,11 +207,13 @@ export function useBifrostDiff(options: UseBifrostDiffOptions) {
   );
 
   const setLastKnown = useCallback(
-    (state: Record<string, unknown>, id?: string | number) => {
-      const key = id != null ? String(id) : DEFAULT_LAST_KNOWN_KEY;
+    (state: Record<string, unknown>, id?: RowKeyValue) => {
+      const key =
+        id != null ? rowIdentity(keyOf(id), idField) : DEFAULT_LAST_KNOWN_KEY;
       lastKnownRef.current.set(key, state);
     },
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keyOf],
   );
 
   return {

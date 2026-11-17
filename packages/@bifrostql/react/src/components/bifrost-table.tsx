@@ -23,6 +23,7 @@ import { rowsToCsv, triggerDownload } from '../utils/table-export';
 import { getTheme } from './table-theme';
 import type { AnyThemeName, TableTheme } from './table-theme';
 import { InlineCellEditor } from './inline-cell-editor';
+import { rowIdentity, type RowKeyColumns } from '../utils/row-identity';
 
 // ---------------------------------------------------------------------------
 // Theme context for composable sub-components
@@ -574,7 +575,7 @@ export interface RowAction<T = Record<string, unknown>> {
 interface TableRowsProps<T> {
   data: T[];
   visibleColumns: ColumnConfig[];
-  rowKey: string;
+  rowKey: RowKeyColumns;
   striped: boolean;
   hoverable: boolean;
   rowCan: (row: T, action: RowCapability) => boolean;
@@ -630,7 +631,10 @@ function TableRows<T>({
     <>
       {data.map((row, rowIndex) => {
         const rowRecord = row as Record<string, unknown>;
-        const key = String(rowRecord[rowKey] ?? rowIndex);
+        const key =
+          typeof rowKey === 'string'
+            ? String(rowRecord[rowKey] ?? rowIndex)
+            : rowIdentity(rowRecord, rowKey);
         const isHovered = hoverable && hoveredRowIndex === rowIndex;
         const isStriped = striped && rowIndex % 2 === 1;
         const isExpanded = expandable && expansion.expandedRows.has(key);
@@ -860,7 +864,7 @@ export interface BifrostTableProps<
   renderExpandedRow?: (row: T) => ReactNode;
   onRowClick?: (row: T) => void;
   rowActions?: RowAction<T>[];
-  rowKey?: string;
+  rowKey?: RowKeyColumns;
   pagination?: PaginationConfig;
   defaultSort?: readonly SortOptionFor<T>[];
   /** Uncontrolled filter seed, read once on mount. */
@@ -989,13 +993,13 @@ export function BifrostTable<T = Record<string, unknown>>(
 
   const handleExpandAll = useCallback(() => {
     const allKeys = table.data.map((row) =>
-      String((row as Record<string, unknown>)[rowKey]),
+      rowIdentity(row as Record<string, unknown>, rowKey),
     );
     table.expansion.expandAll(allKeys);
     if (childQuery) {
       for (const row of table.data) {
         const rowRecord = row as Record<string, unknown>;
-        const k = String(rowRecord[rowKey]);
+        const k = rowIdentity(rowRecord, rowKey);
         table.expansion.fetchChildData(k, rowRecord);
       }
     }

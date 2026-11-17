@@ -5,6 +5,7 @@ import {
   buildUpdateMutation,
   buildDeleteMutation,
 } from './mutation-builder';
+import { resolveRowKey, type RowKeyValue } from './row-identity';
 
 /**
  * Typed CRUD helper layer for entity screens.
@@ -30,7 +31,7 @@ export type RowField<TRow> = Extract<keyof TRow, string>;
  * Decimal key values should be carried as decimal strings so a JS number
  * coercion cannot round away the trailing digits.
  */
-export type RowKey = string | number | Record<string, unknown>;
+export type RowKey = RowKeyValue;
 
 /** Configuration for {@link createCrudHelpers}. */
 export interface CrudHelpersConfig {
@@ -155,40 +156,6 @@ export interface TypedDeleteOperation extends TypedOperation<
 
 /** The conventional single primary-key column, used when none is configured. */
 const DEFAULT_PRIMARY_KEYS: readonly string[] = ['id'];
-
-/**
- * Resolve a caller-supplied row key into a complete `{ column: value }` map
- * covering every primary-key column.
- *
- * A scalar is only accepted for a single-column key — guessing which column a
- * scalar meant on a composite key would silently target the wrong rows, so it
- * throws instead. A key object must supply every column for the same reason.
- */
-function resolveRowKey(
-  table: string,
-  primaryKeys: readonly string[],
-  key: RowKey,
-): Record<string, unknown> {
-  if (typeof key === 'object' && key !== null) {
-    const missing = primaryKeys.filter((column) => key[column] === undefined);
-    if (missing.length > 0) {
-      throw new Error(
-        `Cannot identify a row in "${table}": key is missing primary-key column(s) ${missing.join(', ')}.`,
-      );
-    }
-    return Object.fromEntries(
-      primaryKeys.map((column) => [column, key[column]]),
-    );
-  }
-
-  if (primaryKeys.length !== 1) {
-    throw new Error(
-      `Cannot identify a row in "${table}": it has a composite primary key (${primaryKeys.join(', ')}), so pass an object such as { ${primaryKeys.join(': …, ')}: … } instead of a single value.`,
-    );
-  }
-
-  return { [primaryKeys[0]]: key };
-}
 
 /** Build an AND-of-equalities filter covering every primary-key column. */
 function keyFilter(keyValues: Record<string, unknown>): AdvancedFilter {

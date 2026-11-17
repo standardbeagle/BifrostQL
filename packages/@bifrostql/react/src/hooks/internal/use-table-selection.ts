@@ -1,28 +1,26 @@
 import { useCallback, useState } from 'react';
 import type { SelectionState } from '../use-bifrost-table.types';
+import { sameRowKey, type RowKeyColumns } from '../../utils/row-identity';
 
 export interface UseTableSelectionResult<T> {
   selection: SelectionState<T>;
   toggleRow: (row: T) => void;
 }
 
-/** Owns row-selection state keyed by `rowKey`. */
+/** Owns row-selection state keyed by `rowKey` (every key column). */
 export function useTableSelection<T = Record<string, unknown>>(
-  rowKey: string,
+  rowKey: RowKeyColumns,
 ): UseTableSelectionResult<T> {
   const [selectedRows, setSelectedRows] = useState<T[]>([]);
 
   const toggleRow = useCallback(
     (row: T) => {
       setSelectedRows((prev) => {
-        const key = (row as Record<string, unknown>)[rowKey];
-        const exists = prev.some(
-          (r) => (r as Record<string, unknown>)[rowKey] === key,
-        );
-        if (exists) {
-          return prev.filter(
-            (r) => (r as Record<string, unknown>)[rowKey] !== key,
-          );
+        const target = row as Record<string, unknown>;
+        const isTarget = (r: T) =>
+          sameRowKey(r as Record<string, unknown>, target, rowKey);
+        if (prev.some(isTarget)) {
+          return prev.filter((r) => !isTarget(r));
         }
         return [...prev, row];
       });

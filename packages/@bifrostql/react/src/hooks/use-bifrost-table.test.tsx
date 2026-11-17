@@ -946,6 +946,105 @@ describe('useBifrostTable', () => {
     });
   });
 
+  describe('composite row keys', () => {
+    // Two lines of one order: they share order_id and differ on line_no.
+    const line1 = { order_id: 7, line_no: 1, qty: 2 };
+    const line2 = { order_id: 7, line_no: 2, qty: 5 };
+
+    it('selects rows that share one key column as distinct rows', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            table: 'users',
+            columns: defaultColumns,
+            rowKey: ['order_id', 'line_no'],
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act
+      act(() => {
+        result.current.selection.toggleRow(line1);
+      });
+      act(() => {
+        result.current.selection.toggleRow(line2);
+      });
+
+      // Assert: both lines selected; neither toggled the other off.
+      expect(result.current.selection.selectedRows).toEqual([line1, line2]);
+
+      // Act: toggling line1 again removes only line1.
+      act(() => {
+        result.current.selection.toggleRow({ ...line1, qty: 99 });
+      });
+      expect(result.current.selection.selectedRows).toEqual([line2]);
+    });
+
+    it('filters expanded children on every parent key column', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { lines: paged([]) } });
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            table: 'users',
+            columns: defaultColumns,
+            expandable: true,
+            rowKey: ['order_id', 'line_no'],
+            childQuery: { table: 'lines', fields: ['id'] },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act
+      act(() => {
+        result.current.expansion.fetchChildData('row', line2);
+      });
+
+      // Assert: an AND over both key columns, never one column alone.
+      await waitFor(() => {
+        const childBody = lastQueryBodySelecting('lines');
+        expect(childBody.variables).toEqual({
+          filter: {
+            and: [{ order_id: { _eq: 7 } }, { line_no: { _eq: 2 } }],
+          },
+        });
+      });
+    });
+
+    it('reports a parent/child key column count mismatch on the row', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { lines: paged([]) } });
+      const { result } = renderHook(
+        () =>
+          useBifrostTable({
+            table: 'users',
+            columns: defaultColumns,
+            expandable: true,
+            rowKey: ['order_id', 'line_no'],
+            childQuery: {
+              table: 'lines',
+              fields: ['id'],
+              childFilterField: 'order_id',
+            },
+          }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act
+      act(() => {
+        result.current.expansion.fetchChildData('row', line2);
+      });
+
+      // Assert: refused on the row; no child query joined on one column.
+      expect(
+        result.current.expansion.getChildData('row').error?.message,
+      ).toMatch(/same number of columns/);
+      expect(() => lastQueryBodySelecting('lines')).toThrow();
+    });
+  });
+
   describe('integration', () => {
     it('combines sorting, filtering, and pagination in query', async () => {
       globalThis.fetch = createFetchMock({ data: { users: paged([]) } });

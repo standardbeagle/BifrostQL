@@ -407,4 +407,104 @@ describe('useBifrostDiff', () => {
       queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id name } }'],
     });
   });
+
+  describe('composite keys', () => {
+    const KEY = ['order_id', 'line_no'] as const;
+
+    it('identifies the row by every key column', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { order_items: 1 } });
+      const { result } = renderHook(
+        () => useBifrostDiff({ table: 'order_items', idField: KEY }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act
+      await act(async () => {
+        await result.current.mutateAsync({
+          id: { order_id: 7, line_no: 3 },
+          original: { qty: 1 },
+          updated: { qty: 5 },
+        });
+      });
+
+      // Assert
+      const [, fetchOptions] = (globalThis.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls[0];
+      expect(JSON.parse(fetchOptions.body).variables.detail).toEqual({
+        order_id: 7,
+        line_no: 3,
+        qty: 5,
+      });
+    });
+
+    it('refuses a scalar id for a composite key without sending', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { order_items: 1 } });
+      const { result } = renderHook(
+        () => useBifrostDiff({ table: 'order_items', idField: KEY }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act / Assert
+      await act(async () => {
+        await expect(
+          result.current.mutateAsync({
+            id: 7,
+            original: { qty: 1 },
+            updated: { qty: 5 },
+          }),
+        ).rejects.toThrow(/composite primary key/);
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('keeps last-known state per composite row', async () => {
+      // Arrange: line 1's last-known qty differs from what line 2's edit
+      // started from; a shared bucket would call line 2's save a conflict.
+      globalThis.fetch = createFetchMock({ data: { order_items: 1 } });
+      const { result } = renderHook(
+        () => useBifrostDiff({ table: 'order_items', idField: KEY }),
+        { wrapper: createWrapper() },
+      );
+      act(() => {
+        result.current.setLastKnown(
+          { order_id: 7, line_no: 1, qty: 40 },
+          { order_id: 7, line_no: 1 },
+        );
+      });
+
+      // Act
+      const preview = result.current.preview({
+        id: { order_id: 7, line_no: 2 },
+        original: { qty: 1 },
+        updated: { qty: 5 },
+      });
+
+      // Assert
+      expect(preview.conflicts).toEqual([]);
+    });
+
+    it('refuses to change a key column', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { order_items: 1 } });
+      const { result } = renderHook(
+        () => useBifrostDiff({ table: 'order_items', idField: KEY }),
+        { wrapper: createWrapper() },
+      );
+
+      // Act / Assert: the key columns select the row, so a changed key value
+      // would update a different row.
+      await act(async () => {
+        await expect(
+          result.current.mutateAsync({
+            id: { order_id: 7, line_no: 3 },
+            original: { order_id: 7, line_no: 3, qty: 1 },
+            updated: { order_id: 7, line_no: 4, qty: 1 },
+          }),
+        ).rejects.toThrow(/cannot change key column\(s\) line_no/);
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -2,17 +2,21 @@ import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { BifrostContext } from '../../components/bifrost-provider';
 import { executeGraphQL } from '../../utils/graphql-client';
 import { buildGraphqlQuery } from '../../utils/query-builder';
+import {
+  keyEqualityFilter,
+  type RowKeyColumns,
+} from '../../utils/row-identity';
 import type {
   ChildQueryConfig,
   ChildRowData,
   ExpansionState,
 } from '../use-bifrost-table.types';
-import type { PagedResult } from '../../types';
+import type { AdvancedFilter, PagedResult } from '../../types';
 
 export interface UseTableExpansionOptions {
   expandable: boolean;
   childQuery: ChildQueryConfig | undefined;
-  rowKey: string;
+  rowKey: RowKeyColumns;
 }
 
 export interface UseTableExpansionResult {
@@ -72,6 +76,28 @@ export function useTableExpansion({
       if (childCacheRef.current.has(rowId)) return;
       if (childLoadingRows.has(rowId)) return;
 
+      // Join every key column. A composite parent key matched on one column
+      // would load other parents' children; a mismatched column count or a
+      // missing parent value is reported on the row instead of guessed.
+      const parentKeyField = childQuery.parentKeyField ?? rowKey;
+      const childFilterField = childQuery.childFilterField ?? parentKeyField;
+      let childFilter: AdvancedFilter;
+      try {
+        childFilter = keyEqualityFilter(
+          parentRow,
+          parentKeyField,
+          childFilterField,
+        ) as AdvancedFilter;
+      } catch (err) {
+        setChildErrors((prev) =>
+          new Map(prev).set(
+            rowId,
+            err instanceof Error ? err : new Error(String(err)),
+          ),
+        );
+        return;
+      }
+
       const existing = childAbortRef.current.get(rowId);
       if (existing) existing.abort();
       const controller = new AbortController();
@@ -89,13 +115,9 @@ export function useTableExpansion({
         return next;
       });
 
-      const parentKeyField = childQuery.parentKeyField ?? rowKey;
-      const childFilterField = childQuery.childFilterField ?? parentKeyField;
-      const parentValue = parentRow[parentKeyField];
-
       const { query, variables } = buildGraphqlQuery(childQuery.table, {
         fields: childQuery.fields,
-        filter: { [childFilterField]: { _eq: parentValue as string | number } },
+        filter: childFilter,
       });
 
       executeGraphQL<Record<string, PagedResult>>(

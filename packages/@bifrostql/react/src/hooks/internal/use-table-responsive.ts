@@ -5,6 +5,7 @@ import {
   getColumnsForBreakpoint,
 } from '../../utils/table-breakpoints';
 import { canAccessWindow } from '../../utils/dom-env';
+import { rowIdentity, type RowKeyColumns } from '../../utils/row-identity';
 import type {
   BreakpointConfig,
   CardViewRow,
@@ -18,7 +19,7 @@ export interface UseTableResponsiveOptions<T> {
   responsiveColumns: ResponsiveColumnConfig[] | undefined;
   visibleColumns: string[];
   columns: ColumnConfig[];
-  rowKey: string;
+  rowKey: RowKeyColumns;
   data: T[];
 }
 
@@ -113,7 +114,7 @@ export function useTableResponsive<T = Record<string, unknown>>({
   const cardViewData = useMemo((): CardViewRow<T>[] => {
     const colMap = new Map(columns.map((c) => [c.field, c]));
     return data.map((row) => {
-      const rk = String((row as Record<string, unknown>)[rowKey]);
+      const rk = rowIdentity(row as Record<string, unknown>, rowKey);
       const fields = responsiveVisibleColumns.map((field) => {
         const col = colMap.get(field);
         return {

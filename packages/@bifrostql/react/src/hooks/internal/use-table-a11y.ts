@@ -10,6 +10,7 @@ import type {
   ColumnConfig,
   FocusPosition,
 } from '../use-bifrost-table.types';
+import { rowIdentity, type RowKeyColumns } from '../../utils/row-identity';
 
 export interface UseTableA11yOptions<T> {
   sort: SortOption[];
@@ -23,7 +24,7 @@ export interface UseTableA11yOptions<T> {
    * the column-level answer exists.
    */
   isCellEditable: (row: T | undefined, field: string) => boolean;
-  rowKey: string;
+  rowKey: RowKeyColumns;
   selectedRows: T[];
   expandedRows: Set<string>;
   editingCell: { rowKey: string; field: string } | null;
@@ -159,7 +160,7 @@ export function useTableA11y<T = Record<string, unknown>>({
   const rowKeySet = useMemo(() => {
     const keys = new Set<string>();
     for (const row of data as Record<string, unknown>[]) {
-      keys.add(String(row[rowKey]));
+      keys.add(rowIdentity(row, rowKey));
     }
     return keys;
   }, [data, rowKey]);
@@ -167,7 +168,7 @@ export function useTableA11y<T = Record<string, unknown>>({
   const selectedKeySet = useMemo(() => {
     const keys = new Set<string>();
     for (const row of selectedRows as Record<string, unknown>[]) {
-      keys.add(String(row[rowKey]));
+      keys.add(rowIdentity(row, rowKey));
     }
     return keys;
   }, [selectedRows, rowKey]);
@@ -295,7 +296,7 @@ export function useTableA11y<T = Record<string, unknown>>({
             const row = data[rowIndex];
             if (visField && row && isCellEditable(row, visField)) {
               startEditing(
-                String((row as Record<string, unknown>)[rowKey]),
+                rowIdentity(row as Record<string, unknown>, rowKey),
                 visField,
               );
             }

@@ -90,7 +90,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     clientSideSort: clientSideSortProp,
     clientSideFilter: clientSideFilterProp,
     filterDebounceMs = 300,
-    rowKey = 'id',
+    rowKey: rowKeyProp = 'id',
     urlSync,
     localStorage: localStorageConfig,
     aggregates: aggregateConfigs,
@@ -198,6 +198,13 @@ export function useBifrostTable<T = Record<string, unknown>>(
     });
 
   const dataAsRecords = dataWithComputed as Record<string, unknown>[];
+
+  // An inline `rowKey={['a', 'b']}` is a new array every render; key the memo
+  // on its contents so the internal hooks' callbacks stay stable.
+  const rowKeySignature =
+    typeof rowKeyProp === 'string' ? rowKeyProp : rowKeyProp.join('\u0000');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const rowKey = useMemo(() => rowKeyProp, [rowKeySignature]);
 
   const { selection, toggleRow } = useTableSelection<T>(rowKey);
 

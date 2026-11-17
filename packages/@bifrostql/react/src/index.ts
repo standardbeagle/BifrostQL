@@ -167,6 +167,8 @@ export type {
   DetailOptions,
   LookupOptions,
   RowField,
+  RowKeyColumns,
+  RowKeyValue,
 } from './utils';
 export type {
   BifrostConfig,

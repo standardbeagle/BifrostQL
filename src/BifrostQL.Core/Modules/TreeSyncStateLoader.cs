@@ -62,7 +62,8 @@ public sealed class TreeSyncStateLoader
     public async Task<Dictionary<string, object?>?> LoadAsync(
         IDbTable table,
         Dictionary<string, object?> submitted,
-        IDbConnFactory connFactory)
+        IDbConnFactory connFactory,
+        CancellationToken cancellationToken = default)
     {
         var keyCol = SingleKey(table);
         if (keyCol == null)
@@ -71,28 +72,37 @@ public sealed class TreeSyncStateLoader
             return null;
 
         await using var conn = connFactory.GetConnection();
-        await conn.OpenAsync();
+        await conn.OpenAsync(cancellationToken);
 
-        var row = await LoadRowAsync(table, keyCol, pk, conn);
+        var row = await LoadRowAsync(table, keyCol, pk, conn, cancellationToken);
         if (row == null)
             return null;
 
-        await PopulateChildrenAsync(table, row, ChildLinkKeys(submitted, table), conn, depth: 0);
+        await PopulateChildrenAsync(table, new[] { row }, ChildLinkKeys(submitted, table), conn, depth: 0, cancellationToken);
         return row;
     }
 
+    // Loads one level of the tree for every row of `rows` (all of the same table): one query per
+    // included link for the whole level, not one per parent row, then the next level the same way.
     private async Task PopulateChildrenAsync(
         IDbTable table,
-        Dictionary<string, object?> row,
+        IReadOnlyList<Dictionary<string, object?>> rows,
         ISet<string> includedLinks,
         DbConnection conn,
-        int depth)
+        int depth,
+        CancellationToken cancellationToken)
     {
-        if (depth + 1 >= _maxDepth)
+        if (depth + 1 >= _maxDepth || rows.Count == 0)
             return;
 
         var keyCol = SingleKey(table);
-        if (keyCol == null || !row.TryGetValue(keyCol.ColumnName, out var parentPk) || parentPk == null)
+        if (keyCol == null)
+            return;
+        var parents = new List<(Dictionary<string, object?> Row, object Pk)>(rows.Count);
+        foreach (var row in rows)
+            if (row.TryGetValue(keyCol.ColumnName, out var parentPk) && parentPk != null)
+                parents.Add((row, parentPk));
+        if (parents.Count == 0)
             return;
 
         foreach (var (linkKey, link) in table.MultiLinks)
@@ -105,7 +115,8 @@ public sealed class TreeSyncStateLoader
             if (fkColumn == null)
                 continue;
 
-            var children = await LoadChildrenAsync(childTable, fkColumn, parentPk, link.TypePredicate, conn);
+            var childrenByParent = await LoadChildrenAsync(
+                childTable, fkColumn, parents.Select(p => p.Pk).ToList(), link.TypePredicate, conn, cancellationToken);
 
             // Descend into every one of the child table's own collections (bounded
             // by maxDepth). Freshly loaded child rows carry no nested collections
@@ -118,39 +129,100 @@ public sealed class TreeSyncStateLoader
             // child's grandchildren. An empty grand-link set made the recursion a
             // no-op past depth 1, causing both bugs.
             var grandLinks = new HashSet<string>(childTable.MultiLinks.Keys, StringComparer.OrdinalIgnoreCase);
-            foreach (var child in children)
-                await PopulateChildrenAsync(childTable, child, grandLinks, conn, depth + 1);
-
-            row[linkKey] = children;
+            var level = new List<Dictionary<string, object?>>();
+            foreach (var (row, pk) in parents)
+            {
+                var children = childrenByParent.TryGetValue(ParentKey.Of(pk), out var found)
+                    ? found
+                    : new List<Dictionary<string, object?>>();
+                row[linkKey] = children;
+                level.AddRange(children);
+            }
+            await PopulateChildrenAsync(childTable, level, grandLinks, conn, depth + 1, cancellationToken);
         }
     }
 
+    // The largest number of parent keys bound into one IN list. SQL Server caps a command at
+    // 2100 parameters, and the row filter adds its own.
+    private const int MaxParentKeysPerQuery = 500;
+
+    // A parent key as a grouping key. The parent's key and the child's FK come back from the
+    // provider as possibly different CLR types (int vs long, decimal), so numbers compare by value.
+    private readonly record struct ParentKey(object Value)
+    {
+        public static ParentKey Of(object value) => new(value switch
+        {
+            byte or sbyte or short or ushort or int or uint or long or ulong or decimal
+                => Convert.ToDecimal(value, System.Globalization.CultureInfo.InvariantCulture),
+            byte[] bytes => Convert.ToBase64String(bytes),
+            _ => value,
+        });
+    }
+
     private async Task<Dictionary<string, object?>?> LoadRowAsync(
-        IDbTable table, ColumnDto keyCol, object pk, DbConnection conn)
+        IDbTable table, ColumnDto keyCol, object pk, DbConnection conn, CancellationToken cancellationToken)
     {
         var rows = await QueryAsync(table,
             $"{_dialect.EscapeIdentifier(keyCol.ColumnName)} = {DbParameterBinder.ComparisonPlaceholder(_dialect, "@pk", keyCol.DataType, pk)}",
             new Dictionary<string, object?> { ["@pk"] = pk },
-            conn);
+            conn, cancellationToken);
         return rows.Count > 0 ? rows[0] : null;
     }
 
-    private async Task<List<Dictionary<string, object?>>> LoadChildrenAsync(
-        IDbTable childTable, string fkColumn, object parentPk,
-        LinkConstantPredicate? predicate, DbConnection conn)
+    // The children of every parent in parentPks, grouped by parent key, in database order.
+    private async Task<Dictionary<ParentKey, List<Dictionary<string, object?>>>> LoadChildrenAsync(
+        IDbTable childTable, string fkColumn, IReadOnlyList<object> parentPks,
+        LinkConstantPredicate? predicate, DbConnection conn, CancellationToken cancellationToken)
     {
-        var where = $"{_dialect.EscapeIdentifier(fkColumn)} = {DbParameterBinder.ComparisonPlaceholder(_dialect, "@fk", childTable.ColumnLookup[fkColumn].DataType, parentPk)}";
-        var parameters = new Dictionary<string, object?> { ["@fk"] = parentPk };
-        if (predicate != null)
+        var grouped = new Dictionary<ParentKey, List<Dictionary<string, object?>>>();
+        var fkDataType = childTable.ColumnLookup[fkColumn].DataType;
+        for (var offset = 0; offset < parentPks.Count; offset += MaxParentKeysPerQuery)
         {
-            where += $" AND {_dialect.EscapeIdentifier(predicate.Column.ColumnName)} = {DbParameterBinder.ComparisonPlaceholder(_dialect, "@disc", predicate.Column.DataType, predicate.Value)}";
-            parameters["@disc"] = predicate.Value;
+            var chunk = parentPks.Skip(offset).Take(MaxParentKeysPerQuery).ToList();
+            var parameters = new Dictionary<string, object?>();
+            var placeholders = new List<string>(chunk.Count);
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                var name = $"@fk{i}";
+                parameters[name] = chunk[i];
+                placeholders.Add(DbParameterBinder.ComparisonPlaceholder(_dialect, name, fkDataType, chunk[i]));
+            }
+            var where = $"{_dialect.EscapeIdentifier(fkColumn)} IN ({string.Join(", ", placeholders)})";
+            if (predicate != null)
+            {
+                where += $" AND {_dialect.EscapeIdentifier(predicate.Column.ColumnName)} = {DbParameterBinder.ComparisonPlaceholder(_dialect, "@disc", predicate.Column.DataType, predicate.Value)}";
+                parameters["@disc"] = predicate.Value;
+            }
+
+            var (rows, fkReadable) = await QueryAsync(childTable, where, parameters, conn, cancellationToken, groupColumn: fkColumn);
+            foreach (var row in rows)
+            {
+                // The FK is read to group the rows. A caller who may not read it never sees
+                // it in the diff either: it is dropped once the row is placed.
+                row.TryGetValue(fkColumn, out var fk);
+                if (!fkReadable)
+                    row.Remove(fkColumn);
+                if (fk is null)
+                    continue;
+                var key = ParentKey.Of(fk);
+                if (!grouped.TryGetValue(key, out var list))
+                    grouped[key] = list = new List<Dictionary<string, object?>>();
+                list.Add(row);
+            }
         }
-        return await QueryAsync(childTable, where, parameters, conn);
+        return grouped;
     }
 
     private async Task<List<Dictionary<string, object?>>> QueryAsync(
-        IDbTable table, string whereClause, Dictionary<string, object?> parameters, DbConnection conn)
+        IDbTable table, string whereClause, Dictionary<string, object?> parameters, DbConnection conn,
+        CancellationToken cancellationToken)
+        => (await QueryAsync(table, whereClause, parameters, conn, cancellationToken, groupColumn: null)).Rows;
+
+    // groupColumn is selected even when the caller may not read it (Readable reports which), so
+    // the loader can place each child under its parent.
+    private async Task<(List<Dictionary<string, object?>> Rows, bool GroupColumnReadable)> QueryAsync(
+        IDbTable table, string whereClause, Dictionary<string, object?> parameters, DbConnection conn,
+        CancellationToken cancellationToken, string? groupColumn)
     {
         // The whole read chain for this table, in one place. InternalDiff because the
         // loaded rows are consumed ONLY by TreeSyncEngine's diff and never returned to
@@ -166,9 +238,14 @@ public sealed class TreeSyncStateLoader
         // SELECT every column regardless of the column read guard.
         var columns = chain.ReadableColumns;
         if (columns.Count == 0)
-            return new List<Dictionary<string, object?>>();
+            return (new List<Dictionary<string, object?>>(), false);
 
-        var columnSql = string.Join(", ", columns.Select(c => _dialect.EscapeIdentifier(c.ColumnName)));
+        var groupColumnReadable = groupColumn is not null
+            && columns.Any(c => string.Equals(c.ColumnName, groupColumn, StringComparison.OrdinalIgnoreCase));
+        var selected = columns.Select(c => c.ColumnName).ToList();
+        if (groupColumn is not null && !groupColumnReadable)
+            selected.Add(groupColumn);
+        var columnSql = string.Join(", ", selected.Select(_dialect.EscapeIdentifier));
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
 
         // Apply this table's own tenant/soft-delete/policy filter to the read so
@@ -205,9 +282,9 @@ public sealed class TreeSyncStateLoader
             // lives. A raw reader loop here is what left encrypted columns as stored
             // envelopes, so every submitted plaintext compared unequal to them and an
             // unchanged encrypted field was rewritten on every single sync.
-            return await chain.ReadRowsAsync(cmd, StringComparer.OrdinalIgnoreCase);
+            return (await chain.ReadRowsAsync(cmd, StringComparer.OrdinalIgnoreCase, cancellationToken), groupColumnReadable);
         }
-        catch (Exception ex) when (ex is not BifrostExecutionError)
+        catch (Exception ex) when (ex is not BifrostExecutionError and not OperationCanceledException)
         {
             throw BifrostExecutionError.FromDatabaseException(ex);
         }

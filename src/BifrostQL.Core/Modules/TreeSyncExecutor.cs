@@ -58,24 +58,28 @@ public sealed class TreeSyncExecutor
     /// <param name="model">Model for the transform context (required when <paramref name="transformers"/> is set).</param>
     /// <param name="userContext">Per-request user context for the transform context.</param>
     /// <param name="services">Request services for the transform context.</param>
+    /// <param name="cancellationToken">The request's abort signal. Every statement observes it;
+    /// the rollback does not, so an aborted tree still releases its transaction.</param>
     public async Task<object?> ExecuteAsync(
         IReadOnlyList<TreeSyncOperation> operations,
         IDbConnFactory connFactory,
         IMutationTransformers? transformers = null,
         IDbModel? model = null,
         IDictionary<string, object?>? userContext = null,
-        IServiceProvider? services = null)
+        IServiceProvider? services = null,
+        CancellationToken cancellationToken = default)
     {
         if (operations.Count == 0)
             return null;
         GuardNotHistoryTargets(operations, model);
+        cancellationToken.ThrowIfCancellationRequested();
 
         await using var conn = connFactory.GetConnection();
-        await conn.OpenAsync();
+        await conn.OpenAsync(cancellationToken);
 
         // Transaction control as SQL on the open connection (dialect keywords),
         // not the ADO.NET DbTransaction API — the boundary shows up in the SQL.
-        await ExecuteRawAsync(conn, _dialect.BeginTransactionSql);
+        await ExecuteRawAsync(conn, _dialect.BeginTransactionSql, cancellationToken);
 
         TreeRun run;
         try
@@ -84,12 +88,15 @@ public sealed class TreeSyncExecutor
             // node's delta attaches to). Per-ACTION state is built fresh for each operation.
             run = await RunOperationsAsync(
                 operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
-                connFactory, transformers, model, userContext, services, recordsOperationId: false);
-            await ExecuteRawAsync(conn, _dialect.CommitTransactionSql);
+                connFactory, transformers, model, userContext, services, recordsOperationId: false, cancellationToken);
+            await ExecuteRawAsync(conn, _dialect.CommitTransactionSql, cancellationToken);
         }
         catch (Exception ex)
         {
-            try { await ExecuteRawAsync(conn, _dialect.RollbackTransactionSql); } catch { /* surface the original error */ }
+            try { await ExecuteRawAsync(conn, _dialect.RollbackTransactionSql, CancellationToken.None); } catch { /* surface the original error */ }
+            // A request abort propagates as itself, like MutationCommandExecutor.RunInTransactionAsync.
+            if (ex is OperationCanceledException)
+                throw;
             throw BifrostExecutionError.FromDatabaseException(ex);
         }
 
@@ -114,7 +121,8 @@ public sealed class TreeSyncExecutor
         IMutationTransformers transformers,
         IDbModel model,
         IDictionary<string, object?> userContext,
-        IServiceProvider? services)
+        IServiceProvider? services,
+        CancellationToken cancellationToken = default)
     {
         if (operations.Count == 0)
             return null;
@@ -125,7 +133,7 @@ public sealed class TreeSyncExecutor
         {
             var run = await RunOperationsAsync(
                 operations, conn, transaction, scope.TransactionState,
-                connFactory, transformers, model, userContext, services, recordsOperationId: true);
+                connFactory, transformers, model, userContext, services, recordsOperationId: true, cancellationToken);
             rootId = run.RootId;
         });
         return rootId;
@@ -164,7 +172,8 @@ public sealed class TreeSyncExecutor
         IDbModel? model,
         IDictionary<string, object?>? userContext,
         IServiceProvider? services,
-        bool recordsOperationId)
+        bool recordsOperationId,
+        CancellationToken cancellationToken)
     {
         // Known PK per parent table GraphQL name. Pre-seeded with parents that
         // already exist (update/delete/PK-bearing ops) so a new child can link to
@@ -185,6 +194,7 @@ public sealed class TreeSyncExecutor
 
         foreach (var op in operations)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // Resolve FK links BEFORE transforming so audit / policy see the
             // final data (including the parent PK just inserted this run).
             ResolveForeignKeys(op, idsByTable, idsByInstance);
@@ -221,6 +231,7 @@ public sealed class TreeSyncExecutor
                     Transaction = transaction,
                     Dialect = _dialect,
                     RecordsOperationId = recordsOperationId,
+                    CancellationToken = cancellationToken,
                 };
                 var result = await transformers.TransformAsync(op.Table, mutationType, data, ctx);
                 result.ThrowIfDenied();
@@ -286,7 +297,7 @@ public sealed class TreeSyncExecutor
             switch (mutationType)
             {
                 case MutationType.Insert:
-                    var id = await ExecuteInsertAsync(conn, transaction, op.Table, data);
+                    var id = await ExecuteInsertAsync(conn, transaction, op.Table, data, cancellationToken);
                     idsByTable[op.Table.GraphQlName] = id;
                     idsByInstance[op.InstanceId] = id;
                     if (op.Depth == 0)
@@ -294,7 +305,7 @@ public sealed class TreeSyncExecutor
                     opResult = id;
                     break;
                 case MutationType.Update:
-                    opResult = await ExecuteUpdateAsync(conn, transaction, op.Table, data, additionalFilter);
+                    opResult = await ExecuteUpdateAsync(conn, transaction, op.Table, data, additionalFilter, cancellationToken);
                     MutationCommandExecutor.EnsureAffectedRows(
                         (int)opResult, conflictOnNoRows, inferredTarget,
                         $"{op.Table.TableSchema}.{op.Table.DbName}");
@@ -304,7 +315,7 @@ public sealed class TreeSyncExecutor
                     if (deleteData.Count == 0)
                         throw new BifrostExecutionError(
                             "A delete requires a primary key or at least one predicate column to scope the affected rows.");
-                    var deleted = await ExecuteDeleteAsync(conn, transaction, op.Table, deleteData, additionalFilter);
+                    var deleted = await ExecuteDeleteAsync(conn, transaction, op.Table, deleteData, additionalFilter, cancellationToken);
                     MutationCommandExecutor.EnsureAffectedRows(
                         deleted, conflictOnNoRows, inferredTarget,
                         $"{op.Table.TableSchema}.{op.Table.DbName}");
@@ -368,7 +379,8 @@ public sealed class TreeSyncExecutor
             idsByTable[op.Table.GraphQlName] = pk;
     }
 
-    private async Task<object?> ExecuteInsertAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data)
+    private async Task<object?> ExecuteInsertAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data,
+        CancellationToken cancellationToken)
     {
         var tableRef = _dialect.TableReference(table.TableSchema, table.DbName);
         var columns = string.Join(",", data.Keys.Select(k => _dialect.EscapeIdentifier(k)));
@@ -382,13 +394,13 @@ public sealed class TreeSyncExecutor
         cmd.Transaction = transaction;
         cmd.CommandText = sql;
         AddParameters(cmd, data);
-        return HandleDecimals(await cmd.ExecuteScalarAsync());
+        return HandleDecimals(await cmd.ExecuteScalarAsync(cancellationToken));
     }
 
     // Returns the affected-row count so the caller can skip emitting a CDC event for a
     // zero-row no-op. Returns 0 for the degenerate no-key / no-set-columns case.
     private async Task<int> ExecuteUpdateAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data,
-        (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
+        (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter, CancellationToken cancellationToken)
     {
         var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, data);
         if (keyData.Count == 0 || setData.Count == 0)
@@ -400,11 +412,11 @@ public sealed class TreeSyncExecutor
         cmd.CommandText = MutationCommandExecutor.BuildUpdateSql(_dialect, table, tableRef, setData.Keys, keyData, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
-        return await cmd.ExecuteNonQueryAsync();
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<int> ExecuteDeleteAsync(DbConnection conn, DbTransaction? transaction, IDbTable table, Dictionary<string, object?> data,
-        (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
+        (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter, CancellationToken cancellationToken)
     {
         if (data.Count == 0)
             return 0;
@@ -415,16 +427,16 @@ public sealed class TreeSyncExecutor
         cmd.CommandText = MutationCommandExecutor.BuildDeleteSql(_dialect, table, tableRef, data, additionalFilter.WhereSuffix);
         AddParameters(cmd, data);
         AddExtraParameters(cmd, additionalFilter.Parameters);
-        return await cmd.ExecuteNonQueryAsync();
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     // Issues a plain (parameterless) statement on the open connection. Used for
     // the dialect's transaction-control keywords.
-    private static async Task ExecuteRawAsync(DbConnection conn, string sql)
+    private static async Task ExecuteRawAsync(DbConnection conn, string sql, CancellationToken cancellationToken)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
-        await cmd.ExecuteNonQueryAsync();
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
 }

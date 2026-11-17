@@ -128,4 +128,50 @@ public sealed class TreeSyncExecutorTests : IDisposable
             "SELECT COUNT(*) FROM companies", null, 30, 1000);
         Convert.ToInt64(companiesRows.Rows[0][0]).Should().Be(0);
     }
+
+    // A client abort part-way through a tree stops the remaining statements, rolls the tree
+    // back, and surfaces as the cancellation itself, not as a database error.
+    [Fact]
+    public async Task ClientAbort_MidTree_StopsTheRemainingNodes_AndRollsBack()
+    {
+        await CreateSchemaAsync();
+        var model = BuildModel();
+        var companies = model.GetTableFromDbName("companies");
+        var submitted = new Dictionary<string, object?>
+        {
+            ["name"] = "Acme",
+            ["notes"] = new List<Dictionary<string, object?>> { new() { ["content"] = "First" } },
+        };
+        var ops = new TreeSyncEngine(model).ComputeOperations(companies, submitted, existing: null);
+
+        using var abort = new CancellationTokenSource();
+        var transformers = new MutationTransformersWrap
+        {
+            Transformers = new IMutationTransformer[] { new AbortWhenReaching("notes", abort) },
+        };
+
+        var act = async () => await new TreeSyncExecutor(_factory.Dialect).ExecuteAsync(
+            ops, _factory, transformers, model, new Dictionary<string, object?>(), services: null, abort.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        var companyRows = await RawSqlExecutor.ExecuteAsync(_factory, "SELECT COUNT(*) FROM companies", null, 30, 1000);
+        Convert.ToInt64(companyRows.Rows[0][0]).Should().Be(0, "the aborted tree rolls its parent insert back");
+        var noteRows = await RawSqlExecutor.ExecuteAsync(_factory, "SELECT COUNT(*) FROM notes", null, 30, 1000);
+        Convert.ToInt64(noteRows.Rows[0][0]).Should().Be(0, "the node after the abort never runs");
+    }
+
+    // The client aborts while the chain is transforming the named table's node.
+    private sealed class AbortWhenReaching(string dbName, CancellationTokenSource abort) : IMutationTransformer
+    {
+        public int Priority => 200;
+        public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context) => true;
+
+        public ValueTask<MutationTransformResult> TransformAsync(
+            IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationTransformContext context)
+        {
+            if (table.DbName == dbName)
+                abort.Cancel();
+            return ValueTask.FromResult(new MutationTransformResult { MutationType = mutationType, Data = data });
+        }
+    }
 }

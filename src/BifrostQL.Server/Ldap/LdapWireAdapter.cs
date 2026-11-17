@@ -85,9 +85,6 @@ namespace BifrostQL.Server.Ldap
             if (options.MaxConnections < 1)
                 throw new ArgumentOutOfRangeException(nameof(options.MaxConnections), options.MaxConnections,
                     "ldap MaxConnections must be at least 1.");
-            if (options.MaxOutstandingOperations < 1)
-                throw new ArgumentOutOfRangeException(nameof(options.MaxOutstandingOperations), options.MaxOutstandingOperations,
-                    "ldap MaxOutstandingOperations must be at least 1.");
             if (options.IdleTimeout <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.IdleTimeout), options.IdleTimeout,
                     "ldap IdleTimeout must be positive.");

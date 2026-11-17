@@ -64,12 +64,6 @@ namespace BifrostQL.Server.Ldap
         public int MaxConnections { get; set; } = 100;
 
         /// <summary>
-        /// Maximum number of simultaneously-outstanding operations on a single connection, bounding a
-        /// client that pipelines requests without waiting. Default 64.
-        /// </summary>
-        public int MaxOutstandingOperations { get; set; } = 64;
-
-        /// <summary>
         /// How long a connection may sit idle (no complete message received) before it is closed.
         /// Bounds a peer that opens a socket and stalls, holding a connection slot indefinitely.
         /// Default 5 minutes.

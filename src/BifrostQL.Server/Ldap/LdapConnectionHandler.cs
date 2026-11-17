@@ -24,9 +24,9 @@ namespace BifrostQL.Server.Ldap
     /// protocolOp is a fatal protocol error. The client always gets a reply, never a hang
     /// (criterion 4).</item>
     /// <item>An idle connection is closed after <see cref="LdapWireOptions.IdleTimeout"/>; the front
-    /// door admits at most <see cref="LdapWireOptions.MaxConnections"/> connections and each
-    /// connection at most <see cref="LdapWireOptions.MaxOutstandingOperations"/> in-flight
-    /// operations (criteria 2, 3).</item>
+    /// door admits at most <see cref="LdapWireOptions.MaxConnections"/> connections, and each
+    /// connection runs one operation at a time: the next request is read only after the
+    /// current one is answered (criteria 2, 3).</item>
     /// <item>A credential is never accepted on a cleartext transport: a credentialed bind is
     /// refused with <c>confidentialityRequired</c> before the presented secret is read, unless the
     /// connection is confidential (LDAPS, or a completed StartTLS).</item>
@@ -129,7 +129,6 @@ namespace BifrostQL.Server.Ldap
         private async Task RunSessionAsync(
             Stream stream, ProtocolPreAuthDeadline deadline, CancellationToken ct, string source, bool tlsEstablished)
         {
-            var outstanding = new LdapOutstandingOperationLimiter(_options.MaxOutstandingOperations);
             // Read through a buffer so the framing reader costs one socket read per burst instead of
             // one per byte — and so anything the peer PIPELINED behind the current message is visible
             // to this process rather than sitting unseen in the kernel (see LdapBufferedStream).
@@ -183,45 +182,32 @@ namespace BifrostQL.Server.Ldap
                     if (request is null)
                         return; // clean EOF: peer closed
 
-                    if (!outstanding.TryAcquire())
+                    // One operation at a time: the next request is not read until this one is
+                    // answered, so pipelining is bounded by this loop plus TCP backpressure.
+                    var dispatch = await DispatchAsync(wire, request, session, source, ct);
+                    if (request.Operation is LdapBindRequest)
                     {
-                        _logger.LogWarning("ldap connection exceeded the {Max}-outstanding-operation cap; closing.",
-                            _options.MaxOutstandingOperations);
-                        await TrySendAsync(wire, LdapMessageWriter.NoticeOfDisconnection(
-                            LdapResultCode.UnwillingToPerform, "too many outstanding operations"), ct);
-                        return;
+                        if (session.Authenticated && !session.IsAnonymous)
+                            // A credentialed bind is the one action that retires the deadline.
+                            deadline.RetireOnCredentialedAction();
+                        else
+                            // Anonymous or failed: an armed deadline is NEVER moved (a failed
+                            // bind, or an anonymous re-bind, must not slide it or the peer holds
+                            // the slot forever) — the host's re-arm is a no-op while armed. Only
+                            // a session that WAS credentialed — a failed re-bind reset it to
+                            // anonymous (RFC 4511 §4.2.1), or it re-bound anonymously — gets one
+                            // fresh window armed here.
+                            deadline.ReArmOnReturnToAnonymous();
                     }
-                    try
+                    if (!dispatch.KeepOpen)
+                        return; // Unbind / fatal op: close the connection
+                    if (dispatch.Upgraded is { } upgraded)
                     {
-                        var dispatch = await DispatchAsync(wire, request, session, source, ct);
-                        if (request.Operation is LdapBindRequest)
-                        {
-                            if (session.Authenticated && !session.IsAnonymous)
-                                // A credentialed bind is the one action that retires the deadline.
-                                deadline.RetireOnCredentialedAction();
-                            else
-                                // Anonymous or failed: an armed deadline is NEVER moved (a failed
-                                // bind, or an anonymous re-bind, must not slide it or the peer holds
-                                // the slot forever) — the host's re-arm is a no-op while armed. Only
-                                // a session that WAS credentialed — a failed re-bind reset it to
-                                // anonymous (RFC 4511 §4.2.1), or it re-bound anonymously — gets one
-                                // fresh window armed here.
-                                deadline.ReArmOnReturnToAnonymous();
-                        }
-                        if (!dispatch.KeepOpen)
-                            return; // Unbind / fatal op: close the connection
-                        if (dispatch.Upgraded is { } upgraded)
-                        {
-                            // StartTLS completed. Everything after this reads and writes through the
-                            // confidential stream, framed by a FRESH reader over a FRESH buffer, so no
-                            // byte and no decoder state can survive the upgrade (RFC 4511 §4.14.3.1).
-                            wire = upgraded;
-                            reader = NewReader();
-                        }
-                    }
-                    finally
-                    {
-                        outstanding.Release();
+                        // StartTLS completed. Everything after this reads and writes through the
+                        // confidential stream, framed by a FRESH reader over a FRESH buffer, so no
+                        // byte and no decoder state can survive the upgrade (RFC 4511 §4.14.3.1).
+                        wire = upgraded;
+                        reader = NewReader();
                     }
                 }
             }

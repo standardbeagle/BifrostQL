@@ -69,7 +69,6 @@ builder.Services.AddSingleton<ILdapBindObserver, MyBindAuditor>();
 | `MaxNestingDepth` | `32` | How deeply a filter may nest. The decoder recurses per level, so an unbounded filter would overflow the stack — which is uncatchable and takes the whole host process down. |
 | `MaxFilterComponents` | `1024` | Total filter nodes in one SearchRequest. |
 | `MaxSearchAttributes` | `1024` | Attributes one SearchRequest may name. |
-| `MaxOutstandingOperations` | `64` | In-flight operations on one connection. |
 | `MaxSearchResults` | `1000` | Hard ceiling on entries from one search. A client's own `sizeLimit` can only narrow it. |
 | `MaxPageSize` | `500` | Largest page the paged-results control may request; a larger request is narrowed, never honoured. |
 | `SearchBatchSize` | `200` | Rows consumed per pipeline round trip while filling a page. Each fetch reads one extra row to tell a full batch from the last, and the model's `max-query-rows` ceiling narrows the batch (a ceiling of 1 refuses searches with `adminLimitExceeded`). |

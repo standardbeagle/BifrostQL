@@ -209,7 +209,7 @@ function tableSchema(table: SchemaTable): string | null {
 
 /** A rendered row: either a collapsible schema header or a table link. */
 type ListRow =
-  | { kind: 'group'; schema: string; count: number; collapsed: boolean }
+  | { kind: 'group'; schema: string | null; count: number; collapsed: boolean }
   | { kind: 'table'; schema: string | null; table: SchemaTable };
 
 interface SchemaGroupHeaderProps {
@@ -287,7 +287,9 @@ export function TableList() {
   const { stats, isLoading: statsLoading } = useTableStats(showStats);
 
   const [query, setQuery] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Keyed by schema, with null for the unqualified-table group: the same key
+  // the grouping map uses, so the header toggles the group it labels.
+  const [collapsed, setCollapsed] = useState<Set<string | null>>(new Set());
   const [page, setPage] = useState(0);
 
   const path = usePath();
@@ -335,11 +337,11 @@ export function TableList() {
   const rows = useMemo<ListRow[]>(() => {
     const out: ListRow[] = [];
     if (multiSchema) {
-      const order = [...schemas, ...(grouped.has(null) ? [null as unknown as string] : [])];
+      const order: (string | null)[] = [...schemas, ...(grouped.has(null) ? [null] : [])];
       for (const schema of order) {
-        const tables = grouped.get(schema === undefined ? null : schema) ?? [];
+        const tables = grouped.get(schema) ?? [];
         const isCollapsed = !searching && collapsed.has(schema);
-        out.push({ kind: 'group', schema: schema ?? '(no schema)', count: tables.length, collapsed: isCollapsed });
+        out.push({ kind: 'group', schema, count: tables.length, collapsed: isCollapsed });
         if (!isCollapsed) {
           for (const t of tables) out.push({ kind: 'table', schema, table: t });
         }
@@ -370,7 +372,7 @@ export function TableList() {
       ? pageRows[0].schema
       : null;
 
-  const toggle = (schema: string) =>
+  const toggle = (schema: string | null) =>
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(schema)) next.delete(schema); else next.add(schema);
@@ -444,8 +446,8 @@ export function TableList() {
             {pageRows.map((row) =>
               row.kind === 'group' ? (
                 <SchemaGroupHeader
-                  key={`g:${row.schema}`}
-                  schema={row.schema}
+                  key={row.schema === null ? 'g-none' : `g:${row.schema}`}
+                  schema={row.schema ?? '(no schema)'}
                   count={row.count}
                   collapsed={row.collapsed}
                   onToggle={() => toggle(row.schema)}

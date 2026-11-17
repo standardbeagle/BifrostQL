@@ -310,6 +310,22 @@ describe('TableList — search, grouping, paging', () => {
     expect(screen.getByText('Orders')).toBeInTheDocument();
   });
 
+  it('collapses the group of unqualified tables like any other', () => {
+    mockSchema([
+      makeTable('dbo.users', 'Users'),
+      makeTable('sales.orders', 'Orders'),
+      makeTable('loose', 'Loose'),
+    ]);
+    render(<TableList />);
+
+    const noSchema = screen.getByRole('button', { name: /\(no schema\)/ });
+    expect(screen.getByText('Loose')).toBeInTheDocument();
+    fireEvent.click(noSchema);
+    expect(screen.queryByText('Loose')).not.toBeInTheDocument();
+    expect(noSchema).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('Users')).toBeInTheDocument();
+  });
+
   it('does not render schema headers for a single-schema database', () => {
     mockSchema([makeTable('dbo.users', 'Users'), makeTable('dbo.orders', 'Orders')]);
     render(<TableList />);

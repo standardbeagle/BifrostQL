@@ -112,7 +112,7 @@ e.Metadata = new[]
 
 | Key | Level | Meaning |
 |-----|-------|---------|
-| `ldap-base-dn` | model (`:root`) | The base DN every entry is rooted under. Required once any table opts in — a mapped model with nowhere to root its entries is a startup failure. |
+| `ldap-base-dn` | model (`:root`) | The base DN every entry is rooted under. Required once any table opts in — a mapped model with nowhere to root its entries is a startup failure. Parsed as an RFC 4514 DN, the same parse the listener uses: escape a comma, plus, equals or backslash in a value with a backslash (`o=Acme\, Inc,dc=example,dc=com`). |
 | `ldap-object-class` | table | Comma-separated objectClasses the rows present as. **Presence of this key is the opt-in**; a present-but-empty value is rejected. |
 | `ldap-dn-template` | table | The DN, relative to the base DN. The leftmost component is the RDN — `attribute={column}` — and every remaining component is a static `attribute=value` path segment. |
 | `ldap-attributes` | table | Comma-separated `attribute=column` mappings the directory returns. The RDN's naming attribute must appear here, or a search could never surface the value the entry is named by. |

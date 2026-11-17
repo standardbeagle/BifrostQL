@@ -1,8 +1,8 @@
-using BifrostQL.Server.Ldap;
+using BifrostQL.Core.Model;
 using FluentAssertions;
 using Xunit;
 
-namespace BifrostQL.Server.Test.Ldap
+namespace BifrostQL.Core.Test.Ldap
 {
     /// <summary>
     /// Distinguished-name syntax (RFC 4514). An entry's DN is built from a COLUMN VALUE, so the

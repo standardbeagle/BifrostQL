@@ -1,3 +1,5 @@
+using BifrostQL.Core.Model;
+
 namespace BifrostQL.Server.Ldap
 {
     /// <summary>

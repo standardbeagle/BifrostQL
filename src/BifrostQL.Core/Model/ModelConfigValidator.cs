@@ -1964,11 +1964,6 @@ namespace BifrostQL.Core.Model
             }
         }
 
-        // A single DN component, e.g. "dc=example" or "ou=people": attribute=value with no
-        // placeholder. The base DN and the static DN-template path are both chains of these.
-        private static readonly System.Text.RegularExpressions.Regex DnComponentGrammar =
-            new(@"^[A-Za-z][A-Za-z0-9-]*=[^,=]+$", System.Text.RegularExpressions.RegexOptions.Compiled);
-
         /// <summary>
         /// Fail-fast validation for the LDAP directory mapping contract (<c>ldap-*</c>). A
         /// misconfiguration must be caught at model load, before a listener is ever opened: an
@@ -2030,7 +2025,9 @@ namespace BifrostQL.Core.Model
                 errors.Add(
                     $"  :root [{MetadataKeys.Ldap.BaseDn}]: {mapped.Count} table(s) map to LDAP but no base DN " +
                     "is configured; the directory has nowhere to root its entries.");
-            else if (!IsValidDn(baseDn))
+            // The same RFC 4514 parse LdapDirectoryIndex.Build roots the directory with, so an
+            // escaped base DN ('o=Acme\, Inc') loads and one the listener would refuse does not.
+            else if (LdapDn.CanonicalKey(baseDn) is null)
                 errors.Add(
                     $"  :root [{MetadataKeys.Ldap.BaseDn}]: '{baseDn}' is not a valid DN " +
                     "(expected a comma-separated chain of 'attribute=value', e.g. 'dc=example,dc=com').");
@@ -2151,10 +2148,6 @@ namespace BifrostQL.Core.Model
                     $"the membership target table '{target.TableSchema}.{target.DbName}' is not LDAP-mapped " +
                     $"(no '{MetadataKeys.Ldap.ObjectClass}'); a member DN cannot be constructed for an unmapped table."));
         }
-
-        private static bool IsValidDn(string dn) =>
-            dn.Split(',', StringSplitOptions.TrimEntries)
-              .All(component => component.Length > 0 && DnComponentGrammar.IsMatch(component));
 
         private static string FirstPresentLdapKey(IDbTable table)
         {

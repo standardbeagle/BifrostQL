@@ -522,4 +522,36 @@ public class LdapMappingValidationTests
             .And.Contain(MetadataKeys.Ldap.DnTemplate);
     }
 
+    [Theory]
+    // RFC 4514 escapes, as the runtime LDAP index parses the base DN.
+    [InlineData(@"o=Acme\, Inc,dc=example,dc=com")]
+    [InlineData(@"o=Acme\2C Inc,dc=example,dc=com")]
+    [InlineData(@"o=a\=b,dc=example,dc=com")]
+    public void Validate_BaseDnWithEscapes_DoesNotThrow(string baseDn)
+    {
+        var model = ValidUsersDirectory()
+            .WithModelMetadata(MetadataKeys.Ldap.BaseDn, baseDn)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData(@"dc=example\")]
+    [InlineData(@"dc=example\4,dc=com")] // half a hex escape
+    [InlineData("dc=example,,dc=com")]
+    [InlineData("=example,dc=com")]
+    public void Validate_BaseDnTheRuntimeRefuses_Throws(string baseDn)
+    {
+        var model = ValidUsersDirectory()
+            .WithModelMetadata(MetadataKeys.Ldap.BaseDn, baseDn)
+            .Build();
+
+        var act = () => ModelConfigValidator.Validate(model);
+
+        act.Should().Throw<InvalidOperationException>()
+            .Which.Message.Should().Contain(MetadataKeys.Ldap.BaseDn).And.Contain("not a valid DN");
+    }
 }

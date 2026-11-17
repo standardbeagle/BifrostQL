@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace BifrostQL.Server.Ldap
+namespace BifrostQL.Core.Model
 {
     /// <summary>One component of a distinguished name: its attribute type and its unescaped value.</summary>
     internal readonly record struct LdapRdn(string Attribute, string Value);

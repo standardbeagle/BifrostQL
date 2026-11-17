@@ -8,6 +8,7 @@ import {
   resolveUrlSyncConfig,
 } from '../utils/table-option-resolvers';
 import { mergeFiltersForQuery } from '../utils/table-client-ops';
+import { resolveAllowedPageSizes } from '../utils/page-size';
 import { useTableA11y } from './internal/use-table-a11y';
 import { useTableColumnManagement } from './internal/use-table-column-management';
 import { useTableData } from './internal/use-table-data';
@@ -118,6 +119,12 @@ export function useBifrostTable<T = Record<string, unknown>>(
   const clientFilterConfig =
     resolveClientSideFilterConfig(clientSideFilterProp);
   const initialPageSize = paginationConfig?.pageSize ?? 25;
+  const pageSizeOptions = paginationConfig?.pageSizeOptions;
+  const allowedPageSizes = useMemo(
+    () => resolveAllowedPageSizes(pageSizeOptions, initialPageSize),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pageSizeOptions?.join(','), initialPageSize],
+  );
 
   const queryState = useTableQueryState({
     columns,
@@ -128,6 +135,7 @@ export function useBifrostTable<T = Record<string, unknown>>(
     syncConfig,
     localStorageConfig,
     initialPageSize,
+    allowedPageSizes,
     filterDebounceMs,
   });
   const {

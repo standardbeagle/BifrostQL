@@ -42,6 +42,11 @@ the call-site update it requires.
   keeps last-known state per row. A scalar `id` for a composite key, a row
   missing a key column, or parent/child lists of different lengths fail
   with an error instead of matching on one column.
+- **A URL page size is limited to the table's page sizes.** `useBifrostTable`
+  restored any `<prefix>_size` from the URL or browser history, so a crafted
+  link could request a page of any size. Only `pagination.pageSizeOptions`
+  (default `[10, 25, 50, 100]`) plus the table's own `pageSize` are accepted;
+  anything else falls back to `pageSize`.
 
 ### Deprecated
 

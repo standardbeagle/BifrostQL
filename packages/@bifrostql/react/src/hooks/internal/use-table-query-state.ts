@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readFromUrl, writeToUrl } from '../../utils/url-state';
 import { canAccessWindow } from '../../utils/dom-env';
+import { clampPageSize } from '../../utils/page-size';
 import { countActiveFilters } from '../../utils/table-client-ops';
 import {
   readFiltersFromLocalStorage,
@@ -42,6 +43,8 @@ export interface UseTableQueryStateOptions {
   syncConfig: ResolvedUrlSyncConfig;
   localStorageConfig: LocalStorageConfig | undefined;
   initialPageSize: number;
+  /** Page sizes a URL or history entry may restore; anything else falls back. */
+  allowedPageSizes: readonly number[];
   filterDebounceMs: number;
 }
 
@@ -72,6 +75,7 @@ export function useTableQueryState({
   syncConfig,
   localStorageConfig,
   initialPageSize,
+  allowedPageSizes,
   filterDebounceMs,
 }: UseTableQueryStateOptions): UseTableQueryStateResult {
   // -------------------------------------------------------------------------
@@ -127,8 +131,8 @@ export function useTableQueryState({
     useState<CompoundFilter | null>(null);
   const [presets, setPresets] = useState<FilterPreset[]>(initialPresets);
   const [page, setPage] = useState(initialUrlState?.page ?? 0);
-  const [pageSize, setPageSizeState] = useState(
-    initialUrlState?.pageSize ?? initialPageSize,
+  const [pageSize, setPageSizeState] = useState(() =>
+    clampPageSize(initialUrlState?.pageSize, allowedPageSizes, initialPageSize),
   );
 
   const urlDebounceTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -261,12 +265,23 @@ export function useTableQueryState({
       setFilters(urlState.filter ?? defaultFilter);
       setDebouncedFilters(urlState.filter ?? defaultFilter);
       setPage(urlState.page ?? 0);
-      if (urlState.pageSize) setPageSizeState(urlState.pageSize);
+      if (urlState.pageSize) {
+        setPageSizeState(
+          clampPageSize(urlState.pageSize, allowedPageSizes, initialPageSize),
+        );
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [syncConfig.enabled, syncConfig.prefix, defaultSort, defaultFilter]);
+  }, [
+    syncConfig.enabled,
+    syncConfig.prefix,
+    defaultSort,
+    defaultFilter,
+    allowedPageSizes,
+    initialPageSize,
+  ]);
 
   // -------------------------------------------------------------------------
   // localStorage persistence: sort and (opt-in) filters

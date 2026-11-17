@@ -1179,6 +1179,56 @@ describe('useBifrostTable', () => {
       expect(result.current.pagination.pageSize).toBe(50);
     });
 
+    function setUrlSearch(search: string) {
+      Object.defineProperty(window, 'location', {
+        writable: true,
+        configurable: true,
+        value: { href: `http://localhost/users${search}`, search },
+      });
+    }
+
+    it('ignores a URL page size outside the defaults', async () => {
+      // Arrange: a crafted link asking for a million rows per page.
+      setUrlSearch('?table_size=1000000');
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
+
+      // Act
+      const { result } = renderHook(
+        () => useBifrostTable({ table: 'users', columns: defaultColumns }),
+        { wrapper: createWrapper() },
+      );
+
+      // Assert: the table's own default, and the query asks for it.
+      expect(result.current.pagination.pageSize).toBe(25);
+      await waitFor(() =>
+        expect(lastQueryBodySelecting('users').query).toContain('limit: 25'),
+      );
+    });
+
+    it('accepts only configured page sizes from the URL', async () => {
+      // Arrange
+      globalThis.fetch = createFetchMock({ data: { users: paged([]) } });
+      const configured = {
+        table: 'users',
+        columns: defaultColumns,
+        pagination: { pageSize: 20, pageSizeOptions: [20, 40] },
+      };
+
+      // Act / Assert: a listed option is restored ...
+      setUrlSearch('?table_size=40');
+      const listed = renderHook(() => useBifrostTable(configured), {
+        wrapper: createWrapper(),
+      });
+      expect(listed.result.current.pagination.pageSize).toBe(40);
+
+      // ... a default option the table did not list is not.
+      setUrlSearch('?table_size=50');
+      const unlisted = renderHook(() => useBifrostTable(configured), {
+        wrapper: createWrapper(),
+      });
+      expect(unlisted.result.current.pagination.pageSize).toBe(20);
+    });
+
     it('URL state overrides defaults on mount', async () => {
       Object.defineProperty(window, 'location', {
         writable: true,

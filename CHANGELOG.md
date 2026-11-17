@@ -42,10 +42,44 @@ On `main` after v0.4.28; not yet on NuGet.
 ### Breaking — third review pass
 
 - **Stored-procedure config is removed.** BifrostQL never loaded or executed stored procedures; the keys were accepted and did nothing. `sp-include`, `sp-exclude` and `stored-procedure-role` are now unknown `:root` keys, so a model that still sets one fails at load: delete them. `IDbModel.StoredProcedures`, `DbStoredProcedure` and the unused `MultiDbConfig` / `DatabaseFieldConfig` / `CrossDbJoinConfig` types are removed, and the `DbModel.FromTables` overloads lose their stored-procedure parameter. Nothing public replaces them; multi-database hosting stays on `BifrostMultiDbOptions`.
+- **`Decimal` is sent as a decimal string** (`"19.99"`), not a JSON number, so values past a double's 15–17 digits keep every digit. Input still accepts a number or a string. Clients that read `Decimal` fields as numbers must parse the string. On `<table>Aggregate`, `_sum`/`_avg`/`_min`/`_max` over a decimal column are typed `Decimal` instead of `Float`. The proto schema maps `decimal` to `string`, so `@bifrostql/codegen` emits `string` for it.
+- **`@bifrostql/codegen` maps proto `bytes` to a base64 `string`** (was `Uint8Array`), matching what the server writes into JSON.
+- **Binary transport:** a full ack window pauses a chunked response instead of closing the connection after 30 s. `ChunkSender.DefaultAckTimeout` is removed; use `ChunkSender.NoAckTimeout` or pass `UseBifrostBinary(ackTimeout:)`, which drops only the stalled response with `CHUNK_ACK_TIMEOUT`.
+- **`TreeSyncStateLoader.LoadAsync` takes an open `DbConnection`** instead of an `IDbConnFactory`; tree-sync now loads its diff inside the write transaction.
+- **The AppMetadata, Blob and SavedObjects mounts inherit the endpoint's `DisableAuth`** through `MountAuthRequirement`. An anonymous endpoint now serves them anonymously unless `RequireAuth = true`; with no identifiable endpoint they fail closed.
+- **Local auth keeps server-side sessions.** Cookies issued before the upgrade carry no session id, so every user signs in again once. Sessions end after 15 idle minutes by default (8 h absolute is unchanged). A role, tenant or household change ends the user's sessions instead of updating them.
+- **`AddBifrostLocalAuth` needs DDL and write rights** for its `_bifrost_auth_*` tables, created at host start. Missing rights fail the start, not the first login. Register your own `ILocalAuthStateStore` to keep them elsewhere.
+- **Local password hashes use PBKDF2-HMAC-SHA512 at 210,000 iterations** (2.1× the work per login). Existing hashes upgrade at the next sign-in.
+
+### Security — third review pass
+
+- Local auth: logout, password change, disable, delete and admin action (`POST /auth/admin/revoke-sessions`) revoke sessions server-side; `MaxConcurrentSessions` caps them.
+- Local auth: an account locks after 10 consecutive failed logins for 30 minutes (`LockoutThreshold`, `LockoutDuration`; null waits for `/auth/admin/unlock`). This is separate from the rate limiter.
+- Local auth: `/auth/password` enforces at least 12 characters with a letter and a digit, refuses the last 4 passwords, and supports opt-in `MaxPasswordAge`.
+- Local auth: sign-in, logout, lockout, password and session events go to an audit trail (`IAuthAuditSink`, log category `BifrostQL.Audit.Authentication`) with no secrets.
+- Blob and chat-media size caps are measured in the database (`DATALENGTH` / `LENGTH`) before the value is read.
+- New guide: [Compliance controls](/BifrostQL/guides/compliance-controls/) maps HIPAA, SOX and PCI DSS requirements to shipped controls and names each gap.
+
+### Fixed — third review pass
+
+- Numbers inside native JSON columns (Postgres json/jsonb, MySQL json) keep their exact text on read and write.
+- Tree-sync reads the existing rows under an update lock inside its write transaction, so a concurrent writer can no longer change the diff between load and write.
+- Binary transport: Error frames carry a machine-readable `error_code` (protobuf field 13); the client requeues concurrency refusals by code. A stream no longer times out while its consumer still holds received chunks. Requests over 4 MiB are sent as chunks the server reassembles (up to 64 MiB); larger ones are refused before sending.
+- edit-db: grouping reports truncation under any `max-query-rows`, including ceilings below 1001, and names the real group count.
+- edit-db: a Boolean key, filter or field value other than true/false/0/1 is refused with a clear error instead of being read by truthiness.
+- edit-db: a composite foreign key's header filter selects one parent row and filters on every FK column; the `cf` URL parameter adds a `_fk_tuple` form and still reads old links.
+- edit-db and `@bifrostql/react`: grouping, sort, aggregates and number/percent formats read `Decimal` strings exactly.
+
+### Changed — third review pass
+
+- EAV `_meta` reads a whole page's attributes in one query per 500 parents instead of one per row (1000 rows: 752 → 172 ms on SQL Server, 1099 → 132 ms on Postgres). New public seam `IBatchComputedColumnProvider`.
+- Nested collections two or more levels deep restrict to the parent page's rows instead of every child of the root page (about 8–13× faster on a 3-level fixture).
+- Parsed table policy and computed-column config are memoized per table and invalidated on any metadata write (about 48 µs → 0.5 µs per lookup).
+- edit-db: nullable text fields have an explicit "Set NULL" control in the form and grid cell, so clearing a field saves `''`.
 
 ### Breaking — second review pass
 
-- **`BigInt` is sent as a decimal string.** The scalar now writes every value as a string; input still accepts a number or a string. A JSON number past 2^53 rounds in every browser's `JSON.parse`, so a bigint key shown or sent back could name a different row. Clients that read `BigInt` fields as numbers must accept strings. `Decimal` is unchanged. `@bifrostql/codegen` maps 64-bit proto integers to `string` to match.
+- **`BigInt` is sent as a decimal string.** The scalar now writes every value as a string; input still accepts a number or a string. A JSON number past 2^53 rounds in every browser's `JSON.parse`, so a bigint key shown or sent back could name a different row. Clients that read `BigInt` fields as numbers must accept strings. `Decimal` now follows the same rule (third review pass). `@bifrostql/codegen` maps 64-bit proto integers to `string` to match.
 - **SQL Server `numeric`, `money` and `smallmoney` map to `Decimal`** (were `String`). Clients sending string literals for these columns must send numbers.
 - **`UseBifrostHttp3` binds `127.0.0.1` by default.** Set `BifrostHttp3Options.ListenAddress` (Host key `BifrostQL:Http3:ListenAddress`) to widen it.
 - **NATS CDC publishes through JetStream** and waits for the ack. It needs a stream bound to `bifrostql.>`; without one the publish fails as transient.

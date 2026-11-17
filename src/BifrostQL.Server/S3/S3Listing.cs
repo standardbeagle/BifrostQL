@@ -43,8 +43,16 @@ namespace BifrostQL.Server.S3
     /// prefix-filtered candidate set and slicing it — bounded by
     /// <see cref="S3Options.MaxListMaterialize"/>. A bucket with more addressable
     /// objects than that cap fails fast with a curated error rather than silently
-    /// truncating a listing (which would lie about completeness). Keyset pagination over
-    /// a database-computed key is the scale path beyond this slice.</para>
+    /// truncating a listing (which would lie about completeness). Each page re-reads that
+    /// candidate set, so a full walk reads about N * ceil(N / max-keys) rows.</para>
+    ///
+    /// <para><b>Why not a primary-key seek.</b> S3 lists in UTF-8 key order and clients
+    /// (<c>aws s3 sync</c>, rclone) merge listings on that assumption. Object keys are
+    /// <c>column/pk</c> strings, whose order is not the database's PK order: integer keys
+    /// sort "10" before "9", and GUID and collation order differ too. A seek on the PK
+    /// would return pages out of key order, which a sync with <c>--delete</c> can act on
+    /// wrongly. A seek needs either a listing-order contract change (column, then PK
+    /// order) or an ORDER BY on a dialect-computed key expression; both are open.</para>
     /// </summary>
     public sealed class S3Listing
     {

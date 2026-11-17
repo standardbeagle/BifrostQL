@@ -51,19 +51,20 @@ namespace BifrostQL.Server.Test.Grpc
         }
 
         [Fact]
-        public async Task A_wholly_denied_table_is_still_refused_by_the_pipeline()
+        public async Task A_wholly_denied_table_is_refused_like_a_missing_method()
         {
             // Control: the projection narrows columns only. A table the caller may not read at all
-            // still reaches the pipeline and gets its authoritative PERMISSION_DENIED (invariant 10).
-            // No policy-actions: the evaluator's empty AllowedActions denies the table wholesale.
+            // is refused as UNIMPLEMENTED with the host's own unregistered-method text, so it
+            // answers like a table that has no method (invariant 9). No policy-actions: the
+            // evaluator's empty AllowedActions denies the table wholesale.
             var deniedTable = new[] { "*.documents { policy-read-deny: body }" };
             await using var harness = await GrpcRealDbHarness.StartAsync("denied-table-read", deniedTable, SeedSql);
             var client = new GrpcWireTestClient(harness.Invoker, harness.Contract);
 
-            // No orderBy: a denied table exposes no visible columns, so naming one would be refused
-            // as an unknown field before the pipeline runs.
             var act = () => client.ListAsync("documents", User());
-            (await act.Should().ThrowAsync<RpcException>()).Which.StatusCode.Should().Be(StatusCode.PermissionDenied);
+            var status = (await act.Should().ThrowAsync<RpcException>()).Which.Status;
+            status.StatusCode.Should().Be(StatusCode.Unimplemented);
+            status.Detail.Should().Be("Method is unimplemented.");
         }
     }
 }

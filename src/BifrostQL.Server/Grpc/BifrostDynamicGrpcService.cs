@@ -1,3 +1,4 @@
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
@@ -55,7 +56,7 @@ namespace BifrostQL.Server.Grpc
             byte[] request, ServerCallContext context)
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
-                var userContext = ResolveIdentity(context);
+                var userContext = ResolveReader(table, context);
                 var values = GrpcMessageCodec.DecodeRequest(requestMessage, request);
                 var row = await GrpcReadDispatcher.GetByKeyAsync(
                     _executor, table, values, userContext, _options.Endpoint, context.CancellationToken);
@@ -74,7 +75,7 @@ namespace BifrostQL.Server.Grpc
             IDbTable table, GrpcMessage requestMessage, GrpcMessage rowMessage, byte[] request, ServerCallContext context)
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
-                var userContext = ResolveIdentity(context);
+                var userContext = ResolveReader(table, context);
                 var compiled = await CompileAsync(table, requestMessage, request, userContext);
                 var rows = await GrpcReadDispatcher.RunAsync(
                     _executor, compiled.Query, userContext, _options.Endpoint, context.CancellationToken);
@@ -88,7 +89,7 @@ namespace BifrostQL.Server.Grpc
             IServerStreamWriter<byte[]> responseStream, ServerCallContext context)
             => GrpcStatusMapper.GuardAsync(context, _logger, async () =>
             {
-                var userContext = ResolveIdentity(context);
+                var userContext = ResolveReader(table, context);
 
                 // Stream shares the SAME compiler as List, so the same filter/sort/page yields the same
                 // ordered rows (criterion 4). The compiled query's Limit (page size, itself clamped to
@@ -206,5 +207,20 @@ namespace BifrostQL.Server.Grpc
         /// </summary>
         private IDictionary<string, object?> ResolveIdentity(ServerCallContext context)
             => GrpcIdentityGate.ResolveIdentity(context, _authFactory, _logger);
+
+        /// <summary>
+        /// <see cref="ResolveIdentity"/> for a read RPC, refusing a table the caller may not read
+        /// with the status the gRPC host gives a method that is not registered at all, before the
+        /// request is decoded. A missing table has no method, so a denied table must answer the
+        /// same way or Get/List/Stream become an existence oracle (invariant 9). Writes resolve
+        /// against the full schema and let the pipeline decide (invariant 7).
+        /// </summary>
+        private IDictionary<string, object?> ResolveReader(IDbTable table, ServerCallContext context)
+        {
+            var userContext = ResolveIdentity(context);
+            if (SchemaReadVisibility.ProjectTable(table, userContext) is null)
+                throw new RpcException(new Status(StatusCode.Unimplemented, GrpcStatusMapper.UnimplementedMethodMessage));
+            return userContext;
+        }
     }
 }

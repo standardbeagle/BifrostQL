@@ -30,6 +30,13 @@ namespace BifrostQL.Server.Grpc
         internal const string RowNotFoundMessage = "No row matches the supplied key.";
 
         /// <summary>
+        /// The detail Grpc.AspNetCore answers, with <see cref="StatusCode.Unimplemented"/>, for a
+        /// method that is not registered. A read of a table the caller may not read answers with
+        /// exactly this, so it cannot be told from a table that does not exist.
+        /// </summary>
+        internal const string UnimplementedMethodMessage = "Method is unimplemented.";
+
+        /// <summary>
         /// Maps <paramref name="ex"/> to the gRPC status to fault the call with. A caller
         /// cancellation/deadline is distinguished from an internal failure; everything that is not
         /// a curated adapter fault is sanitized to INTERNAL with detail logged.

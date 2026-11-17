@@ -1,5 +1,6 @@
 using BifrostQL.Core.Auth;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using BifrostQL.AdapterConformance;
 using BifrostQL.Core.Model;
@@ -216,6 +217,51 @@ namespace BifrostQL.Server.Test.Grpc
                 default:
                     throw new ArgumentOutOfRangeException(nameof(request), request.Action, "unknown mutation action");
             }
+        }
+
+        // ---- (c2) table existence probe -------------------------------------
+        //
+        // Raw calls on the dynamic service: the probe does not go through the contract-typed client,
+        // because the contract (built from the visible schema) has no messages for either table.
+
+        protected override bool AdapterSupportsTableExistenceProbe => true;
+
+        protected override async Task<string> ProbeTableReadAsync(string table, ClaimsPrincipal principal)
+        {
+            var invoker = _channel!.CreateCallInvoker();
+            var bytes = Marshallers.Create<byte[]>(v => v, b => b);
+            var transcript = new StringBuilder();
+            foreach (var (type, verb) in new[]
+                     {
+                         (MethodType.Unary, "Get"), (MethodType.Unary, "List"), (MethodType.ServerStreaming, "Stream"),
+                     })
+            {
+                var method = new Method<byte[], byte[]>(type, "bifrostql.BifrostQuery", verb + table, bytes, bytes);
+                var options = new CallOptions(IdentityFor(principal));
+                transcript.Append(verb).Append(" => ");
+                try
+                {
+                    if (type == MethodType.Unary)
+                    {
+                        var response = await invoker.AsyncUnaryCall(method, null, options, Array.Empty<byte>());
+                        transcript.Append("OK ").Append(Convert.ToHexString(response));
+                    }
+                    else
+                    {
+                        using var call = invoker.AsyncServerStreamingCall(method, null, options, Array.Empty<byte>());
+                        while (await call.ResponseStream.MoveNext(CancellationToken.None))
+                            transcript.Append(Convert.ToHexString(call.ResponseStream.Current)).Append(';');
+                        transcript.Append("OK");
+                    }
+                }
+                catch (RpcException ex)
+                {
+                    transcript.Append(ex.StatusCode).Append(" \"").Append(ex.Status.Detail).Append("\" trailers=")
+                        .Append(string.Join(",", ex.Trailers.Select(t => $"{t.Key}:{(t.IsBinary ? Convert.ToHexString(t.ValueBytes) : t.Value)}")));
+                }
+                transcript.Append('\n');
+            }
+            return transcript.ToString();
         }
 
         /// <summary>Positionally binds the kit's primary-key values to the table's PK columns (composite-safe).</summary>

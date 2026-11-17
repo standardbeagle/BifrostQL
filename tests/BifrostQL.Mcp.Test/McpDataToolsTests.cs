@@ -655,15 +655,15 @@ namespace BifrostQL.Mcp.Test
             text.Should().NotContain("main.orders", "the wire must not name a schema-qualified table");
         }
 
-        private Task<CallToolResult> QueryOrdersWith(Func<IDictionary<string, object?>> provider)
+        private Task<CallToolResult> QueryOrdersWith(Func<CancellationToken, ValueTask<IDictionary<string, object?>>> provider)
             => QueryOrdersWith(provider, toolPolicy: null);
 
         private async Task<CallToolResult> QueryOrdersWith(
-            Func<IDictionary<string, object?>> provider, McpToolPolicyOptions? toolPolicy)
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> provider, McpToolPolicyOptions? toolPolicy)
         {
             var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
             var options = BifrostMcpServerFactory.CreateServerOptions(
-                executor, userContextProvider: provider, toolPolicy: toolPolicy);
+                executor, toolPolicy: toolPolicy, userContextProviderAsync: provider);
 
             var clientToServer = new Pipe();
             var serverToClient = new Pipe();
@@ -702,7 +702,7 @@ namespace BifrostQL.Mcp.Test
             var provider = BifrostMcpAdapter.CreateUserContextProvider(
                 factory, _host.Services, new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
 
-            provider().Should().BeEmpty(
+            (await provider(default)).Should().BeEmpty(
                 "a stdio session carries no principal, so the shared factory projects an empty default context");
 
             var result = await QueryOrdersWith(provider);
@@ -722,7 +722,7 @@ namespace BifrostQL.Mcp.Test
             var provider = BifrostMcpAdapter.CreateUserContextProvider(
                 factory, _host.Services, new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
 
-            var ctx = provider();
+            var ctx = await provider(default);
             ctx.Should().ContainKey("tenant_id");
             ctx["tenant_id"].Should().Be("A");
 
@@ -796,7 +796,7 @@ namespace BifrostQL.Mcp.Test
                 var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
                 var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-                provider().Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
+                (await provider(default)).Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
 
                 var result = await QueryOrdersWith(provider);
                 result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
@@ -821,7 +821,7 @@ namespace BifrostQL.Mcp.Test
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            provider().Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
+            (await provider(default)).Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().NotBeTrue(result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text);
@@ -831,7 +831,7 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void CredentialSource_StdioAndHttp_HitIdenticalProjection()
+        public async Task CredentialSource_StdioAndHttp_HitIdenticalProjection()
         {
             // Criterion 1: the projection call site is IDENTICAL for both transports — swapping the
             // env credential-read for the header credential-read produces the same projected
@@ -842,11 +842,11 @@ namespace BifrostQL.Mcp.Test
             Environment.SetEnvironmentVariable(envVar, TenantAToken);
             try
             {
-                var stdio = BifrostMcpAdapter.CreateUserContextProvider(
-                    factory, _host.Services, BearerOptionsWith(McpCredentialSources.FromEnvironment(envVar)))();
-                var http = BifrostMcpAdapter.CreateUserContextProvider(
+                var stdio = await BifrostMcpAdapter.CreateUserContextProvider(
+                    factory, _host.Services, BearerOptionsWith(McpCredentialSources.FromEnvironment(envVar)))(default);
+                var http = await BifrostMcpAdapter.CreateUserContextProvider(
                     factory, _host.Services,
-                    BearerOptionsWith(McpCredentialSources.FromAuthorizationHeader(() => $"Bearer {TenantAToken}")))();
+                    BearerOptionsWith(McpCredentialSources.FromAuthorizationHeader(() => $"Bearer {TenantAToken}")))(default);
 
                 // Same projected identity keys and the same tenant scope from either transport —
                 // the credential-read step is the only difference (deep-comparing the principal
@@ -876,8 +876,8 @@ namespace BifrostQL.Mcp.Test
             foreach (var options in new[] { absentEnv, absentHeader })
             {
                 var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-                var act = () => provider();
-                act.Should().Throw<McpIdentityException>(
+                Func<Task> act = async () => await provider(default);
+                await act.Should().ThrowAsync<McpIdentityException>(
                     "an absent credential mints no identity — the request is refused, never anonymous");
 
                 var result = await QueryOrdersWith(provider);
@@ -922,8 +922,8 @@ namespace BifrostQL.Mcp.Test
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            var act = () => provider();
-            act.Should().Throw<McpIdentityException>(
+            Func<Task> act = async () => await provider(default);
+            await act.Should().ThrowAsync<McpIdentityException>(
                 "no identity could be established, so the request is refused — not served anonymously");
 
             var result = await QueryOrdersWith(provider);
@@ -942,7 +942,7 @@ namespace BifrostQL.Mcp.Test
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            provider().Should().BeEmpty("the explicit anonymous opt-in mints no identity");
+            (await provider(default)).Should().BeEmpty("the explicit anonymous opt-in mints no identity");
 
             var result = await QueryOrdersWith(provider);
             result.IsError.Should().BeTrue();
@@ -1005,7 +1005,7 @@ namespace BifrostQL.Mcp.Test
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            var ctx = provider();
+            var ctx = await provider(default);
             ctx.Should().ContainKey("tenant_id");
             ctx["tenant_id"].Should().Be("A");
 
@@ -1045,8 +1045,8 @@ namespace BifrostQL.Mcp.Test
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            var act = () => provider();
-            act.Should().Throw<McpIdentityException>(
+            Func<Task> act = async () => await provider(default);
+            await act.Should().ThrowAsync<McpIdentityException>(
                 "an absent or invalid bearer token mints no identity — never a degraded pass-through");
 
             var result = await QueryOrdersWith(provider);
@@ -1105,8 +1105,8 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            var act = () => provider();
-            act.Should().Throw<McpIdentityException>(
+            Func<Task> act = async () => await provider(default);
+            await act.Should().ThrowAsync<McpIdentityException>(
                 "no store is configured, so the upstream token is never exchanged and nothing is served");
 
             var result = await QueryOrdersWith(provider);
@@ -1131,8 +1131,8 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            var act = () => provider();
-            act.Should().Throw<McpIdentityException>(
+            Func<Task> act = async () => await provider(default);
+            await act.Should().ThrowAsync<McpIdentityException>(
                 "a null exchange result mints no identity — the request is refused, never served anonymously");
 
             store.Invocations.Should().BeGreaterThan(0, "the store was consulted, then refused — not skipped");
@@ -1160,7 +1160,7 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            var ctx = provider();
+            var ctx = await provider(default);
             ctx.Should().ContainKey("tenant_id");
             ctx["tenant_id"].Should().Be("A");
 
@@ -1192,8 +1192,8 @@ namespace BifrostQL.Mcp.Test
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
 
-            provider();
-            provider();
+            await provider(default);
+            await provider(default);
             store.Invocations.Should().Be(2,
                 "the store is consulted per provider() call — identity is re-resolved each tool call, not captured once");
 
@@ -1206,11 +1206,66 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
+        public async Task TokenExchange_IsAwaited_NotBlocked_AndCarriesTheCallersCancellationToken()
+        {
+            // The stdio provider used to bridge the store's ExchangeAsync with
+            // GetAwaiter().GetResult() on CancellationToken.None: a slow IdP pinned a thread per
+            // tool call and a cancelled call kept waiting on the exchange. The provider now
+            // returns while the exchange is still pending and hands the store the call's token.
+            var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
+            var store = new GatedExchangeStore(TenantAPrincipal());
+            var options = new McpAuthOptions
+            {
+                Mode = McpAuthMode.Bearer,
+                CredentialSource = () => UpstreamIdpToken,
+                CredentialStore = store,
+            };
+            var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
+            using var call = new CancellationTokenSource();
+
+            var pending = provider(call.Token);
+            await store.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            pending.IsCompleted.Should().BeFalse("the provider awaits the exchange instead of blocking on it");
+            store.ReceivedToken.Should().Be(call.Token, "the exchange runs on the tool call's own token");
+
+            store.Release.SetResult();
+            var context = await pending;
+            context.Should().ContainKey("tenant_id").WhoseValue.Should().Be("A");
+        }
+
+        private sealed class GatedExchangeStore(ClaimsPrincipal result) : IMcpCredentialStore
+        {
+            public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public CancellationToken ReceivedToken { get; private set; }
+
+            public async Task<ClaimsPrincipal?> ExchangeAsync(string upstreamToken, CancellationToken cancellationToken)
+            {
+                ReceivedToken = cancellationToken;
+                Entered.SetResult();
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                return result;
+            }
+        }
+
+        [Fact]
+        public void CreateServerOptions_RefusesBothProviderShapes()
+        {
+            var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
+            var act = () => BifrostMcpServerFactory.CreateServerOptions(
+                executor,
+                userContextProvider: () => new Dictionary<string, object?>(),
+                userContextProviderAsync: _ => ValueTask.FromResult<IDictionary<string, object?>>(new Dictionary<string, object?>()));
+            act.Should().Throw<ArgumentException>().WithParameterName("userContextProviderAsync");
+        }
+
+        [Fact]
         public async Task OneToolCall_RunsTheCredentialExchangeOnce_EvenWhenTheRoleGateAlsoNeedsIdentity()
         {
             // A single tool call asked for identity twice when role gating is configured — once for
             // the gate's roles, once for the tool — and on stdio every ask re-ran the IdP exchange
-            // (network I/O bridged onto the synchronous provider seam). One call is one caller, so
+            // (network I/O awaited on the provider seam). One call is one caller, so
             // the call resolves identity once. The memo is per CALL: the next call re-resolves, so
             // a revoked credential still stops working at the next request.
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
@@ -1305,8 +1360,8 @@ namespace BifrostQL.Mcp.Test
             };
 
             var provider = BifrostMcpAdapter.CreateUserContextProvider(factory, _host.Services, options);
-            var act = () => provider();
-            act.Should().Throw<McpIdentityException>(
+            Func<Task> act = async () => await provider(default);
+            await act.Should().ThrowAsync<McpIdentityException>(
                 "no upstream credential is presented, so no exchange is attempted and nothing is served");
             store.Invocations.Should().Be(0, "an absent credential is never handed to the store");
 

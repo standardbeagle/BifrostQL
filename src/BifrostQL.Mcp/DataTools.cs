@@ -181,7 +181,7 @@ namespace BifrostQL.Mcp
         public static async Task<JsonObject> ExecuteQueryAsync(
             IQueryIntentExecutor executor,
             string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             CallToolRequestParams parameters,
             CancellationToken cancellationToken)
         {
@@ -193,7 +193,7 @@ namespace BifrostQL.Mcp
             // One identity snapshot per call: it resolves the caller's visible tables AND
             // scopes the intent, so the table a caller may NAME and the rows it may READ
             // can never come from two different identities.
-            var userContext = userContextProvider();
+            var userContext = await userContextProvider(cancellationToken).ConfigureAwait(false);
             ValidatedQuery validated;
 
             if (cursorText is not null)
@@ -396,7 +396,7 @@ namespace BifrostQL.Mcp
         public static async Task<JsonObject> ExecuteRowContextAsync(
             IQueryIntentExecutor executor,
             string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             CallToolRequestParams parameters,
             CancellationToken cancellationToken)
         {
@@ -408,7 +408,7 @@ namespace BifrostQL.Mcp
                 ?? throw new ToolPromptException("Missing required argument 'id' (the row's primary-key value).");
 
             var model = await executor.GetModelAsync(endpoint);
-            var userContext = userContextProvider();
+            var userContext = await userContextProvider(cancellationToken).ConfigureAwait(false);
             // Resolve through the caller's readable projection so a read-denied table is
             // "Unknown table" — its key shape is not disclosed by the prompt below (invariant 4),
             // matching bifrost_describe_table.

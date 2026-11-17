@@ -113,7 +113,7 @@ namespace BifrostQL.Mcp
         public static async Task<JsonObject> ExecuteAsync(
             IQueryIntentExecutor executor,
             string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             CallToolRequestParams parameters,
             CancellationToken cancellationToken)
         {
@@ -123,7 +123,7 @@ namespace BifrostQL.Mcp
                     "Missing required argument 'table'. Call bifrost_schema_overview to list the available tables.");
 
             var model = await executor.GetModelAsync(endpoint);
-            var userContext = userContextProvider();
+            var userContext = await userContextProvider(cancellationToken).ConfigureAwait(false);
             // Resolve through the caller's readable projection: a read-denied table is
             // "Unknown table", indistinguishable from a non-existent one, so its columns/keys
             // are never enumerated in the argument prompts below (invariant 4), exactly as

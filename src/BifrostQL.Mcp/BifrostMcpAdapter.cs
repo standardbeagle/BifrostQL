@@ -215,22 +215,22 @@ namespace BifrostQL.Mcp
         /// reads no claims and builds no predicate; an unmapped issuer or an absent/invalid
         /// token yields no identity, never an anonymous pass-through.
         /// </summary>
-        internal static Func<IDictionary<string, object?>> CreateUserContextProvider(
+        internal static Func<CancellationToken, ValueTask<IDictionary<string, object?>>> CreateUserContextProvider(
             IBifrostAuthContextFactory authContextFactory, IServiceProvider services, McpAuthOptions authOptions)
-            => () =>
+            => async cancellationToken =>
             {
                 // <paramref name="services"/> is the adapter's captured ROOT provider (the
                 // stdio transport has no per-request scope). Project inside a dedicated
                 // scope so the scoped per-request IGrantResolver (S2) resolves: from the
                 // root it would throw under scope validation, faulting the call — or, with
                 // validation off, go root-captive.
-                using var scope = services.CreateScope();
+                await using var scope = services.CreateAsyncScope();
                 var carrier = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
 
                 // Bearer mode: validate the presented token BEFORE any identity is minted. Only a
-                // valid token attaches a principal.
+                // valid token attaches a principal. The token exchange is awaited end to end.
                 var principal = authOptions.Mode == McpAuthMode.Bearer
-                    ? ValidateBearer(authOptions)
+                    ? await ValidateBearerAsync(authOptions, cancellationToken).ConfigureAwait(false)
                     : null;
 
                 // No identity means no service: fail closed for real. Anonymous access exists
@@ -256,7 +256,8 @@ namespace BifrostQL.Mcp
         /// exchange or an invalid token means no identity. The adapter itself never inspects the
         /// token or its claims — it hands the whole candidate principal to the factory.
         /// </summary>
-        private static ClaimsPrincipal? ValidateBearer(McpAuthOptions authOptions)
+        private static async ValueTask<ClaimsPrincipal?> ValidateBearerAsync(
+            McpAuthOptions authOptions, CancellationToken cancellationToken)
         {
             var token = ResolveCredential(authOptions);
             if (string.IsNullOrEmpty(token))
@@ -265,12 +266,9 @@ namespace BifrostQL.Mcp
             // Token-exchange store is the opt-in OIDC path: when configured it, not the static
             // validator, resolves the candidate principal. It returns null on a failed/unknown
             // exchange (fail closed), mirroring IPgCredentialStore — never an ambient identity.
-            // The store's exchange is async (real IdP calls are network I/O), but the per-tool-call
-            // userContextProvider seam this runs under is synchronous; bridge at that boundary.
+            // Real IdP calls are network I/O, so the exchange is awaited on the call's own token.
             if (authOptions.CredentialStore is not null)
-                return authOptions.CredentialStore
-                    .ExchangeAsync(token, CancellationToken.None)
-                    .GetAwaiter().GetResult();
+                return await authOptions.CredentialStore.ExchangeAsync(token, cancellationToken).ConfigureAwait(false);
 
             if (authOptions.ValidateBearerToken is null)
                 return null;
@@ -281,8 +279,8 @@ namespace BifrostQL.Mcp
         /// Resolves the HTTP transport's per-session principal by extracting the bearer from the
         /// session-initiating request's <c>Authorization</c> header (slice C's
         /// <see cref="McpCredentialSources.ExtractBearerToken"/> seam) and running the async
-        /// credential exchange / validation. Unlike <see cref="ValidateBearer"/> — the synchronous
-        /// stdio path — this is <b>awaited end to end</b>: the token-exchange I/O never crosses a
+        /// credential exchange / validation. Like <see cref="ValidateBearerAsync"/> — the stdio path —
+        /// it is <b>awaited end to end</b>: the token-exchange I/O never crosses a
         /// <c>GetAwaiter().GetResult()</c> bridge on the context-bearing ASP.NET path (see
         /// docs/solutions/bifrostql/mcp-slice-d-oidc-credential-store-async-bridge). An absent header,
         /// a non-bearer mode, or a failed/unknown exchange yields <c>null</c> — no identity, never an
@@ -367,7 +365,7 @@ namespace BifrostQL.Mcp
         /// <see cref="StartAsync"/> so the startup posture is observable without engaging the
         /// stdio transport.
         /// </summary>
-        internal Func<IDictionary<string, object?>> ConfigureAuth()
+        internal Func<CancellationToken, ValueTask<IDictionary<string, object?>>> ConfigureAuth()
         {
             LogStartupAuthPosture(_logger, _authOptions);
             return CreateUserContextProvider(_authContextFactory, _services, _authOptions);
@@ -411,7 +409,7 @@ namespace BifrostQL.Mcp
             var declarativeTools = _services.GetService(typeof(DeclarativeToolDocument)) as DeclarativeToolDocument;
             var options = BifrostMcpServerFactory.CreateServerOptions(
                 _executor,
-                userContextProvider: ConfigureAuth(),
+                userContextProviderAsync: ConfigureAuth(),
                 mutationExecutor: _mutationExecutor,
                 enableWrites: _authOptions.EnableWrites,
                 toolPolicy: _authOptions.ToolPolicy,

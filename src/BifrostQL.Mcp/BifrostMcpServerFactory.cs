@@ -167,6 +167,9 @@ namespace BifrostQL.Mcp
         /// (<see cref="BifrostMcpAdapter"/>, <c>AddBifrostMcpHttp</c>); an embedding
         /// host calling this directly must supply one too, or declare
         /// <c>McpAuthMode.AnonymousDev</c> deliberately.
+        /// <paramref name="userContextProviderAsync"/> is the same seam for a provider that
+        /// does I/O to resolve identity (a token exchange): it is awaited on the call's
+        /// cancellation token. Supply at most one of the two providers.
         /// <paramref name="beforeRequestAsync"/> is the per-request identity seam: when
         /// supplied it runs at the start of EVERY handler (inside the error funnel) so a
         /// transport that can re-derive identity per request — the HTTP one — does so
@@ -182,13 +185,21 @@ namespace BifrostQL.Mcp
             McpToolPolicyOptions? toolPolicy = null,
             ILogger? logger = null,
             DeclarativeToolDocument? declarativeTools = null,
-            Func<CancellationToken, ValueTask>? beforeRequestAsync = null)
+            Func<CancellationToken, ValueTask>? beforeRequestAsync = null,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>>? userContextProviderAsync = null)
         {
             if (executor is null) throw new ArgumentNullException(nameof(executor));
+            if (userContextProvider is not null && userContextProviderAsync is not null)
+                throw new ArgumentException(
+                    "Supply either userContextProvider or userContextProviderAsync, not both.",
+                    nameof(userContextProviderAsync));
             // Reject name collisions/duplicates before publishing any surface so a
             // declarative tool can never shadow a built-in or another declarative tool.
             ValidateDeclarativeToolNames(declarativeTools);
-            var contextProvider = userContextProvider ?? (() => new Dictionary<string, object?>());
+            var contextProvider = userContextProviderAsync
+                ?? (userContextProvider is { } syncProvider
+                    ? _ => ValueTask.FromResult(syncProvider())
+                    : _ => ValueTask.FromResult<IDictionary<string, object?>>(new Dictionary<string, object?>()));
             var policy = toolPolicy ?? new McpToolPolicyOptions();
 
             // The write surface is OFF by construction: it only lists (and only
@@ -242,7 +253,7 @@ namespace BifrostQL.Mcp
                         return new ListToolsResult
                         {
                             Tools = gate.GatesAnything
-                                ? gate.Filter(tools, ResolveRoles(contextProvider))
+                                ? gate.Filter(tools, await ResolveRolesAsync(contextProvider, ct))
                                 : tools,
                         };
                     }),
@@ -362,8 +373,8 @@ namespace BifrostQL.Mcp
         /// Narrows a user-context provider to ONE resolution per tool call. A single call can ask
         /// for identity several times — the role gate, then the tool itself, then the visibility
         /// projection — and on the stdio transport each ask re-ran the configured
-        /// <see cref="IMcpCredentialStore"/> exchange (real IdP network I/O, bridged onto the
-        /// synchronous provider seam). One call is one caller, so resolving once is the right
+        /// <see cref="IMcpCredentialStore"/> exchange (real IdP network I/O, awaited on the
+        /// provider seam). One call is one caller, so resolving once is the right
         /// answer as well as the cheap one.
         ///
         /// <para>The memo is scoped to the CALL and never outlives it, deliberately: a session-wide
@@ -371,18 +382,20 @@ namespace BifrostQL.Mcp
         /// fail-open the HTTP transport's per-request revalidation exists to prevent. A failed
         /// resolution is not memoized either, so a refusal is re-derived rather than pinned.</para>
         /// </summary>
-        private static Func<IDictionary<string, object?>> OncePerCall(
-            Func<IDictionary<string, object?>> userContextProvider)
+        private static Func<CancellationToken, ValueTask<IDictionary<string, object?>>> OncePerCall(
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider)
         {
             IDictionary<string, object?>? resolved = null;
-            return () => resolved ??= userContextProvider();
+            return async cancellationToken =>
+                resolved ??= await userContextProvider(cancellationToken).ConfigureAwait(false);
         }
 
-        private static IReadOnlyCollection<string> ResolveRoles(Func<IDictionary<string, object?>> userContextProvider)
+        private static async ValueTask<IReadOnlyCollection<string>> ResolveRolesAsync(
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider, CancellationToken cancellationToken)
         {
             try
             {
-                return PolicyIdentity.ExtractRoles(userContextProvider());
+                return PolicyIdentity.ExtractRoles(await userContextProvider(cancellationToken).ConfigureAwait(false));
             }
             catch (UnmappedOidcIssuerException)
             {
@@ -435,7 +448,7 @@ namespace BifrostQL.Mcp
         /// </summary>
         private static async ValueTask<CallToolResult> CallToolAsync(
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
-            McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            McpToolAccessGate gate, string? endpoint, Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             DeclarativeToolDocument? declarativeTools,
             Func<CancellationToken, ValueTask>? beforeRequestAsync, ILogger? logger,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
@@ -550,7 +563,7 @@ namespace BifrostQL.Mcp
 
         private static async ValueTask<CallToolResult> DispatchToolAsync(
             IQueryIntentExecutor executor, IMutationIntentExecutor? mutationExecutor, bool writesActive,
-            McpToolAccessGate gate, string? endpoint, Func<IDictionary<string, object?>> userContextProvider,
+            McpToolAccessGate gate, string? endpoint, Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             DeclarativeToolDocument? declarativeTools,
             Func<CancellationToken, ValueTask>? beforeRequestAsync,
             CallToolRequestParams? parameters, CancellationToken cancellationToken)
@@ -580,7 +593,7 @@ namespace BifrostQL.Mcp
             // Roles come only from the shared factory's user context (ResolveRoles); an unresolved identity
             // has no roles and is refused.
             if (gate.GatesAnything && gate.IsGated(parameters.Name)
-                && !gate.IsVisible(parameters.Name, ResolveRoles(userContextProvider)))
+                && !gate.IsVisible(parameters.Name, await ResolveRolesAsync(userContextProvider, cancellationToken)))
             {
                 return ErrorResult($"Tool '{parameters.Name}' is not available for the current identity.");
             }
@@ -622,7 +635,7 @@ namespace BifrostQL.Mcp
                     ? new Dictionary<string, JsonElement>()
                     : new Dictionary<string, JsonElement>(parameters.Arguments);
                 return StructuredResult(await DeclarativeMutationTool.ExecuteAsync(
-                    mutationExecutor!, executor, declarative, endpoint, mutationArgs, userContextProvider(), cancellationToken));
+                    mutationExecutor!, executor, declarative, endpoint, mutationArgs, await userContextProvider(cancellationToken), cancellationToken));
             }
             if (declarative is not null)
             {
@@ -632,7 +645,7 @@ namespace BifrostQL.Mcp
                     : new Dictionary<string, JsonElement>(parameters.Arguments);
                 return StructuredResult(await DeclarativeToolSurface.ExecuteAsync(
                     declarative, declarativeModel, executor, endpoint,
-                    arguments, userContextProvider(), cancellationToken));
+                    arguments, await userContextProvider(cancellationToken), cancellationToken));
             }
 
             var model = await executor.GetModelAsync(endpoint);
@@ -641,7 +654,7 @@ namespace BifrostQL.Mcp
             // invariant 4). The schema tools previously read the raw model, so an
             // unauthenticated caller in the default FailClosed mode enumerated every
             // table, key, FK edge and column it could not read a single row of.
-            var visible = SchemaReadVisibility.Project(model, userContextProvider());
+            var visible = SchemaReadVisibility.Project(model, await userContextProvider(cancellationToken));
             switch (parameters.Name)
             {
                 case SchemaOverviewToolName:
@@ -671,13 +684,13 @@ namespace BifrostQL.Mcp
 
         private static async ValueTask<ListResourcesResult> ListResourcesAsync(
             IQueryIntentExecutor executor, string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider, CancellationToken cancellationToken)
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var model = await executor.GetModelAsync(endpoint);
             // Same gate as the schema tools: a resource per table the caller may READ,
             // never one per table in the model (invariant 4).
-            var visible = SchemaReadVisibility.Project(model, userContextProvider());
+            var visible = SchemaReadVisibility.Project(model, await userContextProvider(cancellationToken));
             var resources = new List<Resource>
             {
                 new()
@@ -707,7 +720,7 @@ namespace BifrostQL.Mcp
 
         private static async ValueTask<ReadResourceResult> ReadResourceAsync(
             IQueryIntentExecutor executor, string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             ReadResourceRequestParams? parameters, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -718,7 +731,7 @@ namespace BifrostQL.Mcp
                     McpErrorCode.ResourceNotFound);
 
             var model = await executor.GetModelAsync(endpoint);
-            var visible = SchemaReadVisibility.Project(model, userContextProvider());
+            var visible = SchemaReadVisibility.Project(model, await userContextProvider(cancellationToken));
             if (string.Equals(uri, OverviewResourceUri, StringComparison.Ordinal))
                 return JsonResource(uri, SchemaDescriber.BuildOverview(visible, fullDetail: true));
 

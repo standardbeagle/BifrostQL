@@ -332,10 +332,10 @@ namespace BifrostQL.Mcp.Test
             finally { await client.DisposeAsync(); }
         }
 
-        private async Task<CallToolResult> StdioQueryOrdersAsync(Func<IDictionary<string, object?>> provider)
+        private async Task<CallToolResult> StdioQueryOrdersAsync(Func<CancellationToken, ValueTask<IDictionary<string, object?>>> provider)
         {
             var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
-            var options = BifrostMcpServerFactory.CreateServerOptions(executor, EndpointPath, provider);
+            var options = BifrostMcpServerFactory.CreateServerOptions(executor, EndpointPath, userContextProviderAsync: provider);
 
             var clientToServer = new System.IO.Pipelines.Pipe();
             var serverToClient = new System.IO.Pipelines.Pipe();

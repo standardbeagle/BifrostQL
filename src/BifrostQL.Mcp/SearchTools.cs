@@ -124,7 +124,7 @@ namespace BifrostQL.Mcp
         public static async Task<JsonObject> ExecuteAsync(
             IQueryIntentExecutor executor,
             string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             CallToolRequestParams parameters,
             CancellationToken cancellationToken)
         {
@@ -136,7 +136,7 @@ namespace BifrostQL.Mcp
                     $"term must be at least {MinTermLength} characters — a shorter term would match nearly every row.");
 
             var model = await executor.GetModelAsync(endpoint);
-            var userContext = userContextProvider();
+            var userContext = await userContextProvider(cancellationToken).ConfigureAwait(false);
             // Search only sweeps tables this caller may READ: the automatic all-tables
             // sweep must not iterate — nor name in its per-table totals — a table the
             // caller cannot SELECT (protocol-adapter-security invariant 4).

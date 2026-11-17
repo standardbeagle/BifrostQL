@@ -130,7 +130,7 @@ namespace BifrostQL.Mcp
             IQueryIntentExecutor executor,
             IMutationIntentExecutor mutationExecutor,
             string? endpoint,
-            Func<IDictionary<string, object?>> userContextProvider,
+            Func<CancellationToken, ValueTask<IDictionary<string, object?>>> userContextProvider,
             CallToolRequestParams parameters,
             CancellationToken cancellationToken)
         {
@@ -148,7 +148,7 @@ namespace BifrostQL.Mcp
             // a read-denied table so the write reaches the pipeline for the AUTHORITATIVE
             // decision: read visibility is not a write gate.
             var model = await executor.GetModelAsync(endpoint);
-            var userContext = userContextProvider();
+            var userContext = await userContextProvider(cancellationToken).ConfigureAwait(false);
             var table = ResolveTable(model, userContext, requestedTable);
             var tableName = table.DbName;
             var keyColumnCount = table.KeyColumns.Count();

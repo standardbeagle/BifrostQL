@@ -1,3 +1,4 @@
+import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BifrostBinaryClient,
@@ -44,7 +45,25 @@ function buildChunkFrames(
   inner: BifrostMessage,
   chunkSize: number
 ): Uint8Array[] {
-  const serialized = encodeMessage(inner);
+  return sliceIntoChunkFrames(requestId, encodeMessage(inner), chunkSize);
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+/** Slices a serialized message into Chunk frames, as ChunkSender.SplitIntoChunks does. */
+function sliceIntoChunkFrames(
+  requestId: number,
+  serialized: Uint8Array,
+  chunkSize: number
+): Uint8Array[] {
   const totalBytes = serialized.length;
   const total = Math.ceil(totalBytes / chunkSize);
   const frames: Uint8Array[] = [];
@@ -335,7 +354,11 @@ describe("ingestStreamingChunk", () => {
 
   it("returns true when the chunk validates and is accepted", async () => {
     const queue = new StreamingQueue(1, () => {});
-    const fragment = new Uint8Array([10, 20, 30]);
+    const payload = new Uint8Array([10, 20, 30]);
+    // A one-chunk transfer: the fragment is the whole serialized message.
+    const fragment = encodeMessage(
+      emptyMessage({ requestId: 1, type: BifrostMessageType.Result, payload })
+    );
     const ok = ingestStreamingChunk(
       queue,
       chunkMessage({
@@ -344,7 +367,7 @@ describe("ingestStreamingChunk", () => {
           sequence: 0,
           total: 1,
           offset: 0,
-          totalBytes: 3,
+          totalBytes: fragment.length,
           checksum: crc32(fragment),
         },
       })
@@ -354,7 +377,7 @@ describe("ingestStreamingChunk", () => {
     const first = await queue.next();
     expect(first.done).toBe(false);
     if (!first.done) {
-      expect(first.value.bytes).toEqual(fragment);
+      expect(first.value.bytes).toEqual(payload);
       expect(first.value.isLast).toBe(true);
     }
     const done = await queue.next();
@@ -471,6 +494,68 @@ describe("BifrostBinaryClient.stream()", () => {
     expect(collected[0]!.totalChunks).toBe(1);
     expect(collected[0]!.isLast).toBe(true);
     expect(collected[0]!.bytes).toEqual(payload);
+  });
+
+  it("yields only payload bytes for a chunked response, the same bytes as the non-chunked path", async () => {
+    const ws = tracker.last;
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ data: { rows: "x".repeat(300) } })
+    );
+
+    const small = client.stream("{ small }");
+    const smallId = decodeMessage(ws.sentFrames[0]!).requestId;
+    ws.receive(
+      encodeMessage(
+        emptyMessage({ requestId: smallId, type: BifrostMessageType.Result, payload })
+      )
+    );
+    const unchunked: Uint8Array[] = [];
+    for await (const chunk of small) unchunked.push(chunk.bytes);
+
+    const big = client.stream("{ big }");
+    const bigId = decodeMessage(ws.sentFrames.at(-1)!).requestId;
+    // Chunk size 3 puts fragment boundaries inside the envelope's tag and
+    // length varints, as the server's slicing can.
+    const frames = buildChunkFrames(
+      bigId,
+      emptyMessage({ requestId: bigId, type: BifrostMessageType.Result, payload }),
+      3
+    );
+    for (const frame of frames) ws.receive(frame);
+    const chunked: StreamChunk[] = [];
+    for await (const chunk of big) chunked.push(chunk);
+
+    expect(chunked).toHaveLength(frames.length);
+    expect(concatBytes(chunked.map((c) => c.bytes))).toEqual(payload);
+    expect(concatBytes(unchunked)).toEqual(payload);
+  });
+
+  it("fails a chunked stream whose envelope carries errors, before yielding payload", async () => {
+    const ws = tracker.last;
+    const iterator = client.stream("{ big }");
+    const sentId = decodeMessage(ws.sentFrames[0]!).requestId;
+    // The server writes the errors ahead of the payload (BifrostMessage.WriteEnvelope).
+    const inner = new BinaryWriter()
+      .tag(1, WireType.Varint)
+      .uint32(sentId)
+      .tag(2, WireType.Varint)
+      .int32(BifrostMessageType.Result)
+      .tag(6, WireType.LengthDelimited)
+      .string("column secret denied")
+      .tag(5, WireType.LengthDelimited)
+      .bytes(new TextEncoder().encode(JSON.stringify({ data: { a: "y".repeat(60) } })))
+      .finish();
+    for (const frame of sliceIntoChunkFrames(sentId, inner, 16)) ws.receive(frame);
+
+    const seen: StreamChunk[] = [];
+    let caught: Error | null = null;
+    try {
+      for await (const chunk of iterator) seen.push(chunk);
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught?.message).toBe("column secret denied");
+    expect(concatBytes(seen.map((c) => c.bytes))).toHaveLength(0);
   });
 
   it("server Error frame mid-stream causes the iterator to throw", async () => {

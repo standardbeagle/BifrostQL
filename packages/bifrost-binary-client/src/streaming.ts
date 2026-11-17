@@ -37,6 +37,7 @@
  * given the underlying transport.
  */
 import { emptyChunkInfo, verifyChecksum } from "./chunking.js";
+import { StreamPayloadExtractor } from "./stream-payload.js";
 import {
   BifrostMessageType,
   encodeMessage,
@@ -56,7 +57,13 @@ export interface StreamChunk {
   sequence: number;
   /** Total number of chunks in this transfer. */
   totalChunks: number;
-  /** Raw payload bytes of this chunk. */
+  /**
+   * This chunk's share of the response payload (the GraphQL response JSON).
+   * Concatenating `bytes` over every chunk gives the same bytes whether or
+   * not the server chunked the response. The first chunk of a chunked
+   * response is shorter than the rest: the protobuf envelope it also
+   * carried is stripped.
+   */
   bytes: Uint8Array;
   /** True only for the chunk where `sequence === totalChunks - 1`. */
   isLast: boolean;
@@ -104,6 +111,11 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
     reject: (err: Error) => void;
   } | null = null;
   private cleanup: (() => void) | null = null;
+  /**
+   * Set once a chunked frame arrives: chunk bytes are slices of the
+   * serialized message, so the envelope is stripped as chunks drain in order.
+   */
+  private extractor: StreamPayloadExtractor | null = null;
 
   constructor(
     public readonly requestId: number,
@@ -173,6 +185,9 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
 
     this.pendingChunks.set(chunk.sequence, chunk);
     this.drainContiguous();
+    if (this.errorValue !== null) {
+      return;
+    }
     if (
       this.totalChunks > 0 &&
       this.nextSequence === this.totalChunks &&
@@ -182,6 +197,16 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
       return;
     }
     this.wakeConsumer();
+  }
+
+  /**
+   * Accepts a verified fragment of a chunked response. Its bytes are a slice
+   * of the serialized BifrostMessage; the consumer receives only the payload
+   * part (see StreamPayloadExtractor).
+   */
+  pushFragment(chunk: StreamChunk): void {
+    this.extractor ??= new StreamPayloadExtractor();
+    this.push(chunk);
   }
 
   /**
@@ -217,14 +242,25 @@ export class StreamingQueue implements AsyncIterableIterator<StreamChunk> {
 
   /**
    * Pulls every contiguous chunk starting at `nextSequence` out of the
-   * pending map and appends to the ready queue.
+   * pending map and appends to the ready queue, stripping the envelope from
+   * chunked fragments in order. An envelope that carries server errors, or
+   * is malformed, errors the queue.
    */
   private drainContiguous(): void {
     while (this.pendingChunks.has(this.nextSequence)) {
       const chunk = this.pendingChunks.get(this.nextSequence)!;
       this.pendingChunks.delete(this.nextSequence);
-      this.ready.push(chunk);
       this.nextSequence++;
+      if (this.extractor) {
+        try {
+          chunk.bytes = this.extractor.take(chunk.bytes);
+          if (chunk.isLast) this.extractor.finish();
+        } catch (err) {
+          this.error(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+      }
+      this.ready.push(chunk);
     }
   }
 
@@ -349,7 +385,7 @@ export function ingestStreamingChunk(
     return false;
   }
 
-  queue.push({
+  queue.pushFragment({
     requestId: message.requestId,
     sequence: info.sequence,
     totalChunks: info.total,

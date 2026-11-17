@@ -40,7 +40,7 @@ for await (const chunk of client.stream("{ download_large_blob }")) {
 }
 ```
 
-Each chunk is CRC32-verified inline and yielded in `sequence` order. `client.streamMutation()` is the streaming counterpart for mutations.
+Each chunk is CRC32-verified inline and yielded in `sequence` order. `chunk.bytes` holds only payload bytes (the GraphQL response JSON), so concatenating them gives the same bytes `query()` would parse, whether or not the server chunked the response. `client.streamMutation()` is the streaming counterpart for mutations.
 
 ## Auto-reconnect
 

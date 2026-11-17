@@ -201,10 +201,10 @@ Each `StreamChunk` carries:
 | `requestId` | The request id of the originating query. |
 | `sequence` | 0-based chunk index, always emitted in ascending order. |
 | `totalChunks` | Total number of chunks in this transfer. |
-| `bytes` | Raw payload bytes for this chunk. |
+| `bytes` | This chunk's share of the response payload, the GraphQL response JSON (`{"data": ...}`). |
 | `isLast` | True only when `sequence === totalChunks - 1`. |
 
-Chunks arrive in sequence even if the wire delivered them out of order — the client buffers and reorders internally. Mutations have a streaming counterpart, `client.streamMutation()`, with the same shape.
+Chunks arrive in sequence even if the wire delivered them out of order — the client buffers and reorders internally. Concatenating `bytes` across all chunks gives the same payload whether or not the server chunked the response: a chunk frame carries a slice of the whole serialized protobuf message, and the client strips that message's envelope, so the first chunk is a few bytes shorter than the rest. If the envelope carries errors, the iterator throws with their text before yielding any payload, as it does for an unchunked `Result` with errors. Mutations have a streaming counterpart, `client.streamMutation()`, with the same shape.
 
 ## Auto-reconnect
 

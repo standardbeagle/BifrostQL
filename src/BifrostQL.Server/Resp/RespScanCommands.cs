@@ -181,14 +181,11 @@ namespace BifrostQL.Server.Resp
                 return null;
             }
 
-            var table = model.Tables.FirstOrDefault(t =>
-                string.Equals(t.DbName, token, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(t.GraphQlName, token, StringComparison.OrdinalIgnoreCase));
-            if (table is null)
-            {
-                error = $"{RespProtocol.ErrPrefix}unknown table '{token}'";
+            // The same resolution GET uses: a name shared by two schemas' tables is ambiguous,
+            // never "whichever table enumerates first", so SCAN cannot page a different table
+            // than GET would address with the same token.
+            if (!RespReadEngine.TryResolveTable(model, token, out var table, out error))
                 return null;
-            }
 
             keyPrefix = token;
             return table;

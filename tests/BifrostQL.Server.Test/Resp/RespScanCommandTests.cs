@@ -174,6 +174,25 @@ namespace BifrostQL.Server.Test.Resp
         // ---- MATCH / table validation --------------------------------------
 
         [Fact]
+        public async Task Scan_AmbiguousTableName_IsCleanError_NeverScansAGuessedTable()
+        {
+            // widgets in two schemas. GET already refuses the bare name as ambiguous; SCAN took
+            // the first model-order table and paged it, so one token addressed different tables
+            // on the two commands.
+            var model = BuildModel();
+            var shadow = FakeTable("widgets", Col("id", "int", 1, pk: true));
+            shadow.TableSchema.Returns("audit");
+            var tables = model.Tables.Append(shadow).ToArray();
+            model.Tables.Returns(tables);
+            var (executor, services) = Arrange(Tenant1, model);
+
+            var reply = await Handle(services, "SCAN", "0", "MATCH", "widgets:*");
+
+            reply.Should().BeOfType<RespError>().Which.Message.Should().Contain("ambiguous");
+            executor.Intents.Should().BeEmpty("an ambiguous name must never scan a guessed table");
+        }
+
+        [Fact]
         public async Task Scan_ProjectsOnlyPrimaryKeyColumns()
         {
             var (executor, services) = Arrange(Tenant1);
@@ -266,9 +285,10 @@ namespace BifrostQL.Server.Test.Resp
         private static readonly IDictionary<string, object?> Tenant2 =
             new Dictionary<string, object?> { ["tenantId"] = 2 };
 
-        private static (FakeScanExecutor executor, IServiceProvider services) Arrange(IDictionary<string, object?> tenant)
+        private static (FakeScanExecutor executor, IServiceProvider services) Arrange(
+            IDictionary<string, object?> tenant, IDbModel? model = null)
         {
-            var executor = new FakeScanExecutor(BuildModel());
+            var executor = new FakeScanExecutor(model ?? BuildModel());
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(executor)
                 .AddSingleton(CursorKey())

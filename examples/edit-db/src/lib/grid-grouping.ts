@@ -1,6 +1,7 @@
 import type { ColumnFiltersState } from '@tanstack/react-table';
 import type { Column, Table } from '../types/schema';
-import { getFilterOperators, tableFilterTypeName, type ColumnFilterValue } from './query-builder';
+import { buildColumnFilters, getGraphQlType, parseTableFilterString } from './query-builder';
+import { coerceForGql } from './fk';
 
 /** URL parameter that owns the selected grouping field. */
 export const GRID_GROUP_BY_PARAM = 'gb';
@@ -84,32 +85,39 @@ export function withoutGroupingUrlParams(search: URLSearchParams): URLSearchPara
     return next;
 }
 
-function asFilter(filters: ColumnFiltersState, table: Table, headerFilter: string): Record<string, unknown> | undefined {
-    const clauses: Record<string, unknown>[] = [];
+/** The grid's active predicate as declarations, clauses and variables. */
+interface ActivePredicate {
+    params: string[];
+    clauses: string[];
+    variables: Record<string, unknown>;
+}
 
-    // Header filters predate the column-filter URL state. Parse only the small,
-    // validated tuple format used by the grid; malformed history is ignored.
-    try {
-        const parsed = JSON.parse(headerFilter) as unknown;
-        if (Array.isArray(parsed) && parsed.length === 4) {
-            const [name, operator, value, type] = parsed;
-            const column = typeof name === 'string' ? table.columns.find((candidate) => candidate.name === name) : undefined;
-            if (column && type === column.paramType && typeof operator === 'string' && getFilterOperators(column.paramType).includes(operator)) {
-                clauses.push({ [column.graphQlName]: { [operator]: operator === '_null' ? Boolean(value) : value } });
-            }
-        }
-    } catch { /* malformed URL filter: same fail-closed behavior as the grid */ }
+/**
+ * The predicate the grid's list query applies, built by the grid's OWN
+ * builders (parseTableFilterString + buildColumnFilters): grouping counts the
+ * rows the grid shows, including the date-filter day widening and scalar
+ * coercion those builders do. A filter the grid cannot apply throws rather
+ * than counting over a wider row set; the grid refuses to run in that case
+ * too, and useDataTable does not request grouping while it does.
+ */
+function activePredicate(table: Table, columnFilters: ColumnFiltersState, headerFilter: string): ActivePredicate {
+    const header = parseTableFilterString(headerFilter);
+    const columns = buildColumnFilters(columnFilters, table);
+    const errors = header.error ? [header.error, ...columns.errors] : columns.errors;
+    if (errors.length > 0) throw new Error(`The grouping filter can't be applied: ${errors.join(' ')}`);
+    return {
+        params: [...(header.param ? [header.param.replace(/^,\s*/, '')] : []), ...columns.params],
+        clauses: [...(header.filterText ? [header.filterText] : []), ...columns.filterTexts],
+        variables: { ...header.variables, ...columns.variables },
+    };
+}
 
-    for (const filter of filters) {
-        const value = filter.value as ColumnFilterValue;
-        const column = table.columns.find((candidate) => candidate.name === filter.id);
-        if (!column || !getFilterOperators(column.paramType).includes(value.operator)) continue;
-        // _null is a boolean predicate. Empty input is valid for it (the filter
-        // controls represent "is null" as true), but not for value operators.
-        if (value.operator !== '_null' && (value.value === undefined || value.value === null || value.value === '')) continue;
-        clauses.push({ [column.graphQlName]: { [value.operator]: value.operator === '_null' ? Boolean(value.value) : value.value } });
-    }
-    return clauses.length === 0 ? undefined : clauses.length === 1 ? clauses[0] : { and: clauses };
+function andAll(clauses: readonly string[]): string {
+    return clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(', ')}]}`;
+}
+
+function declarations(params: readonly string[]): string {
+    return params.length > 0 ? `(${params.join(', ')})` : '';
 }
 
 /** Builds the schema-derived aggregate document used by the grouped grid. */
@@ -124,12 +132,11 @@ export function buildGridGroupingRequest(
     for (const name of [table.name, table.graphQlName, groupBy.graphQlName, ...(sumBy ? [sumBy.graphQlName] : [])]) {
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
     }
-    const filter = asFilter(columnFilters, table, headerFilter);
-    const declarations = filter ? `($filter: ${tableFilterTypeName(table)})` : '';
-    const args = [filter ? 'filter: $filter' : '', `groupBy: [${groupBy.graphQlName}]`].filter(Boolean).join(', ');
+    const active = activePredicate(table, columnFilters, headerFilter);
+    const args = [active.clauses.length > 0 ? `filter: ${andAll(active.clauses)}` : '', `groupBy: [${groupBy.graphQlName}]`].filter(Boolean).join(', ');
     return {
-        query: `query GridGrouping${declarations} { ${table.name}Aggregate(${args}) { ${groupBy.graphQlName} _count${sumBy ? ` _sum { ${sumBy.graphQlName} }` : ''} } }`,
-        variables: filter ? { filter } : {},
+        query: `query GridGrouping${declarations(active.params)} { ${table.name}Aggregate(${args}) { ${groupBy.graphQlName} _count${sumBy ? ` _sum { ${sumBy.graphQlName} }` : ''} } }`,
+        variables: active.variables,
         groupBy,
         sumBy,
         sort,
@@ -186,16 +193,19 @@ export function buildGridGroupMemberRequest(table: Table, groupBy: Column, value
     for (const name of [table.name, table.graphQlName, groupBy.graphQlName, ...table.columns.map((column) => column.graphQlName)]) {
         if (!GRAPHQL_NAME.test(name)) throw new Error('Invalid schema-derived grouping name.');
     }
-    const active = asFilter(columnFilters, table, headerFilter);
+    const active = activePredicate(table, columnFilters, headerFilter);
     // A null bucket is a predicate, not equality to null; empty strings remain _eq "".
-    const member = { [groupBy.graphQlName]: value === null || value === undefined ? { _null: true } : { _eq: value } };
-    const filter = active ? { and: [active, member] } : member;
+    // The key is bound as the column's own scalar, coerced like a grid filter value.
+    const isNullBucket = value === null || value === undefined;
+    const memberType = getGraphQlType(groupBy.paramType);
+    const memberClause = isNullBucket ? `{${groupBy.graphQlName}: {_null: true}}` : `{${groupBy.graphQlName}: {_eq: $member}}`;
+    const params = [...active.params, ...(isNullBucket ? [] : [`$member: ${memberType}`]), `$sort: [${table.graphQlName}SortEnum!]`, '$limit: Int', '$offset: Int'];
     const fields = table.columns.map((column) => column.graphQlName).join(' ');
     return {
-        query: `query GridGroupMembers($filter: ${tableFilterTypeName(table)}, $sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int) { ${table.name}(filter: $filter sort: $sort limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
+        query: `query GridGroupMembers${declarations(params)} { ${table.name}(filter: ${andAll([...active.clauses, memberClause])} sort: $sort limit: $limit offset: $offset) { total offset limit data { ${fields} } } }`,
         // Member ordering deliberately remains the active flat-grid order.
         // It is bound as a GraphQL variable, never interpolated from UI state.
-        variables: { filter, sort: [...sort], limit: 50, offset: 0 },
+        variables: { ...active.variables, ...(isNullBucket ? {} : { member: coerceForGql(value, memberType) }), sort: [...sort], limit: 50, offset: 0 },
         responseKey: table.name,
     };
 }

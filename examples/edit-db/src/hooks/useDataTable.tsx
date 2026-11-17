@@ -748,10 +748,12 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     });
 
     const groupingRequest = useMemo(
-        () => table && groupingColumn
+        // No grouping while a filter can't be applied: the grid shows that
+        // error instead of rows, and the builder refuses the same filters.
+        () => table && groupingColumn && !filterError
             ? buildGridGroupingRequest(table, groupingColumn, effectiveColumnFilters, filterString, groupingSumColumn, groupingSort)
             : null,
-        [table, groupingColumn, groupingSumColumn, effectiveColumnFilters, filterString, groupingSort],
+        [table, groupingColumn, groupingSumColumn, effectiveColumnFilters, filterString, groupingSort, filterError],
     );
     const groupingQuery = useQuery({
         queryKey: ['tableGrouping', table?.name, groupingRequest?.query, groupingRequest?.variables],

@@ -40,10 +40,9 @@ describe('grid grouping request', () => {
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'status', value: { operator: '_null', value: true } },
         ], '');
-        expect(request.query).toContain('ordersAggregate(filter: $filter, groupBy: [status])');
+        expect(request.query).toContain('ordersAggregate(filter: {status: {_null: true}}, groupBy: [status])');
         expect(request.query).toContain('_count');
-        expect(request.query).not.toContain('limit:');
-        expect(request.variables).toEqual({ filter: { status: { _null: true } } });
+        expect(request.variables).toEqual({});
     });
 
     it('defines deterministic aggregate ordering by group key or server count direction', () => {
@@ -66,11 +65,9 @@ describe('grid grouping request', () => {
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'amount', value: { operator: '_gte', value: 10 } },
         ], JSON.stringify(['status', '_neq', 'cancelled', 'String']), groupingSumColumnFromUrl('amount', orders));
-        expect(request.variables).toEqual({
-            filter: { and: [{ status: { _neq: 'cancelled' } }, { amount: { _gte: 10 } }] },
-        });
+        expect(request.query).toContain('filter: {and: [{status: {_neq: $filter} }, {amount: {_gte: $cf_amount_0}}]}');
+        expect(request.variables).toMatchObject({ filter: 'cancelled', cf_amount_0: '10' });
         expect(request.query).toContain('_count _sum { amount }');
-        expect(request.query).not.toContain('limit:');
         expect(request.query).not.toContain('offset:');
     });
 
@@ -99,16 +96,51 @@ describe('grid grouping request', () => {
     it('expands only the selected group and merges active filters, including distinct null and empty-string semantics', () => {
         const nullMembers = buildGridGroupMemberRequest(orders, orders.columns[0], null, [{ id: 'amount', value: { operator: '_gte', value: 10 } }], '', ['amount_desc']);
         expect(nullMembers.query).toContain('$sort: [ordersSortEnum!]');
-        expect(nullMembers.query).toContain('orders(filter: $filter sort: $sort limit: $limit offset: $offset)');
-        expect(nullMembers.variables.filter).toEqual({ and: [{ amount: { _gte: 10 } }, { status: { _null: true } }] });
-        expect(nullMembers.variables.sort).toEqual(['amount_desc']);
+        expect(nullMembers.query).toContain('orders(filter: {and: [{amount: {_gte: $cf_amount_0}}, {status: {_null: true}}]} sort: $sort limit: $limit offset: $offset)');
+        expect(nullMembers.query).not.toContain('$member');
+        expect(nullMembers.variables).toMatchObject({ cf_amount_0: '10', sort: ['amount_desc'] });
         expect(nullMembers.responseKey).toBe('orders');
-        expect(buildGridGroupMemberRequest(orders, orders.columns[0], '', [], '').variables.filter).toEqual({ status: { _eq: '' } });
+        const emptyMembers = buildGridGroupMemberRequest(orders, orders.columns[0], '', [], '');
+        expect(emptyMembers.query).toContain('orders(filter: {status: {_eq: $member}}');
+        expect(emptyMembers.variables.member).toBe('');
     });
 
     it('maps aggregate result rows rather than summing page rows and defines key-ascending group order', () => {
         expect(readGroupingRows({ ordersAggregate: [{ status: 'paid', _count: 42 }, { status: null, _count: 3 }] }, orders, orders.columns[0]))
             .toEqual([{ value: null, count: 3 }, { value: 'paid', count: 42 }]);
+    });
+});
+
+describe('grid grouping filters match the grid query', () => {
+    const events = {
+        name: 'events', graphQlName: 'events', columns: [
+            { name: 'kind', graphQlName: 'kind', label: 'Kind', paramType: 'String' },
+            { name: 'at', graphQlName: 'at', label: 'At', paramType: 'DateTime' },
+            { name: 'level', graphQlName: 'level', label: 'Level', paramType: 'Int' },
+        ],
+    } as unknown as Table;
+
+    it('widens a date-only "on" filter to the same day range the grid uses', () => {
+        const request = buildGridGroupingRequest(events, events.columns[0], [
+            { id: 'at', value: { operator: '_eq', value: '2024-03-01' } },
+        ], '');
+        expect(request.query).toContain('{at: {_between: [$cf_at_0_lo, $cf_at_0_hi]}}');
+        expect(request.variables).toEqual({ cf_at_0_lo: '2024-03-01T00:00:00.000', cf_at_0_hi: '2024-03-01T23:59:59.999' });
+    });
+
+    it('sends a drill value that arrived as text as the column scalar', () => {
+        const request = buildGridGroupingRequest(events, events.columns[0], [
+            { id: 'level', value: { operator: '_eq', value: '5' } },
+        ], '');
+        expect(request.variables).toEqual({ cf_level_0: 5 });
+        expect(buildGridGroupMemberRequest(events, events.columns[2], '5', [], '').variables.member).toBe(5);
+    });
+
+    it('refuses a filter the grid would refuse instead of counting a wider row set', () => {
+        expect(() => buildGridGroupingRequest(events, events.columns[0], [], '["kind", "_eq", "x"]')).toThrow(/can't be applied/);
+        expect(() => buildGridGroupingRequest(events, events.columns[0], [
+            { id: 'level', value: { operator: '_contains', value: '5' } },
+        ], '')).toThrow(/can't be applied/);
     });
 });
 
@@ -154,14 +186,17 @@ function unknownTypeErrors(query: string, sdl: string): string[] {
 }
 
 describe('grid grouping documents validate against the generated schema', () => {
-    it('declares the generated TableFilter<name>Input for the filtered aggregate', () => {
+    it('declares each filter variable as its column scalar for the filtered aggregate', () => {
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'status', value: { operator: '_eq', value: 'paid' } },
+            { id: 'amount', value: { operator: '_gte', value: '10' } },
         ], '');
 
         expect(unknownTypeErrors(request.query, ORDERS_SDL)).toEqual([]);
-        expect(request.query).toContain('($filter: TableFilterordersInput)');
-        expect(request.query).not.toContain('ordersFilter');
+        expect(declaredVariableTypes(request.query)).toEqual([
+            { variable: 'cf_status_0', type: 'String' },
+            { variable: 'cf_amount_1', type: 'Decimal' },
+        ]);
     });
 
     it('declares no variables at all when the aggregate carries no filter', () => {
@@ -175,7 +210,7 @@ describe('grid grouping documents validate against the generated schema', () => 
         const request = buildGridGroupMemberRequest(orders, orders.columns[0], 'paid', [], '', ['amount_desc']);
 
         expect(declaredVariableTypes(request.query)).toEqual([
-            { variable: 'filter', type: 'TableFilterordersInput' },
+            { variable: 'member', type: 'String' },
             { variable: 'sort', type: 'ordersSortEnum' },
             { variable: 'limit', type: 'Int' },
             { variable: 'offset', type: 'Int' },

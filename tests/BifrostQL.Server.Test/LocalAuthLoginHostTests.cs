@@ -32,6 +32,16 @@ namespace BifrostQL.Server.Test
         private WebApplication? _app;
         private readonly FakeTimeProvider _clock = new(DateTimeOffset.UtcNow);
 
+        /// <summary>
+        /// A 1,000-iteration hasher for fixtures. These facts exercise sessions, lockout and rate
+        /// limits, not the work factor; at the production 210,000 every login costs one full PBKDF2
+        /// run, which put most facts here at 3-50 s each. The V3 hash embeds its own iteration
+        /// count, so seeds and the store agree and no rehash runs. The production work factor keeps
+        /// its own facts below, on stores built without this hasher.
+        /// </summary>
+        private static readonly PasswordHasher<string> CheapHasher = new(
+            Microsoft.Extensions.Options.Options.Create(new PasswordHasherOptions { IterationCount = 1_000 }));
+
         public Task InitializeAsync()
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
@@ -43,7 +53,7 @@ namespace BifrostQL.Server.Test
                 "display_name TEXT, tenant_id TEXT, roles TEXT);" +
                 "INSERT INTO app_users VALUES ('user-1', @email, @hash, 'Alice', 'club-7', 'admin,editor');";
             cmd.Parameters.AddWithValue("@email", Login);
-            cmd.Parameters.AddWithValue("@hash", new PasswordHasher<string>().HashPassword(Login, Password));
+            cmd.Parameters.AddWithValue("@hash", CheapHasher.HashPassword(Login, Password));
             cmd.ExecuteNonQuery();
             return Task.CompletedTask;
         }
@@ -64,6 +74,10 @@ namespace BifrostQL.Server.Test
             builder.WebHost.UseTestServer();
             builder.Services.AddSingleton<TimeProvider>(_clock);
             builder.Services.AddBifrostLocalAuth(ConnectionString, configure);
+            // The production registrar, with only the hasher swapped through the store's constructor
+            // seam. A fact's own services run after, so it can still replace the store.
+            builder.Services.AddSingleton(sp => new LocalUserStore(
+                sp.GetRequiredService<IDbConnFactory>(), sp.GetRequiredService<LocalAuthOptions>(), CheapHasher));
             services?.Invoke(builder.Services);
             _app = builder.Build();
             // TestServer has no remote address; let each request name its source IP.
@@ -312,7 +326,7 @@ namespace BifrostQL.Server.Test
             var client = await StartAsync(o => o.SessionRevalidationInterval = TimeSpan.Zero);
             var cookie = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
 
-            var newHash = new PasswordHasher<string>().HashPassword(Login, "a different passphrase");
+            var newHash = CheapHasher.HashPassword(Login, "a different passphrase");
             Execute($"UPDATE app_users SET password_hash = '{newHash}' WHERE id = 'user-1'");
 
             (await GetSessionAsync(client, cookie)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -359,7 +373,7 @@ namespace BifrostQL.Server.Test
         public async Task AdminEndpoint_RevokesAnotherUsersSessions_OnlyForTheAdminRole()
         {
             Execute("INSERT INTO app_users VALUES ('user-2', 'bob@club.test', " +
-                    $"'{new PasswordHasher<string>().HashPassword("bob@club.test", Password)}', 'Bob', 'club-7', 'member')");
+                    $"'{CheapHasher.HashPassword("bob@club.test", Password)}', 'Bob', 'club-7', 'member')");
             var client = await StartAsync(o => o.AdminRole = "admin");
             var admin = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
             using var bobLogin = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
@@ -435,7 +449,7 @@ namespace BifrostQL.Server.Test
         public async Task IndefiniteLockout_EndsOnlyWhenAnAdministratorUnlocks()
         {
             Execute("INSERT INTO app_users VALUES ('admin-1', 'root@club.test', " +
-                    $"'{new PasswordHasher<string>().HashPassword("root@club.test", Password)}', 'Root', 'club-7', 'admin')");
+                    $"'{CheapHasher.HashPassword("root@club.test", Password)}', 'Root', 'club-7', 'admin')");
             var client = await StartForLockoutAsync(o =>
             {
                 o.LockoutThreshold = 3;

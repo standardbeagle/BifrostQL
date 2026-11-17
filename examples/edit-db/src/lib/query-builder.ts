@@ -659,23 +659,27 @@ function buildDrillQuery(
     tableSchema: Table,
     dataColumns: string,
     allFields: string,
+    columnFilters: ColumnFiltersState,
     filterTable?: string,
     filterColumn?: string,
     forExport = false,
 ): string | null {
     const drill = resolveDrillDown(table, schema, filterTable, filterColumn);
+    // The drill grid's OWN column filters (local state, never the main grid's
+    // URL filters) narrow the child rows inside the parent scope.
+    const own = buildColumnFilters(columnFilters, table);
+    const ownParams = own.params.map((p) => `, ${p}`).join("");
     if (drill && canFlatFilterDrill(drill.childJoin)) {
         // Simple single-column FK: query the child table directly with a flat
         // FK filter — a "parent grid with a filter applied" rather than MODEL
         // B's nested parent traversal. The grid's own table is the query root,
         // so paging/sort drive it natively and the response keeps the standard
-        // `{ <table>: { data } }` shape (no unwrap). Global header/column
-        // filters are keyed off the MAIN grid and must not bleed into this
-        // child, so only the FK predicate is applied.
+        // `{ <table>: { data } }` shape (no unwrap). Only the FK predicate and
+        // the drill grid's own column filters apply.
         const fkCol = drill.childJoin.destinationColumnNames[0];
         const parentPkType = getPkTypes(drill.parentTable)[0]?.gqlType ?? "Int";
-        const param = `, $id: ${parentPkType}`;
-        const flatFilter = `filter: { ${fkCol}: { _eq: $id } }`;
+        const param = `, $id: ${parentPkType}${ownParams}`;
+        const flatFilter = `filter: ${andFilters([`{ ${fkCol}: { _eq: $id } }`, ...own.filterTexts])}`;
         const flatMultiJoinFields = forExport ? '' : buildMultiJoinFields(
             schema,
             tableSchema.multiJoins.filter((join) => !sameJoin(join, drill.childJoin)),
@@ -684,12 +688,10 @@ function buildDrillQuery(
         return queryEnvelope(table, param, flatFilter, flatFields);
     }
     if (drill) {
-        // The header filter + column filters are global URL params keyed off the
-        // MAIN (first) grid's table. Drill child grids show a different table
-        // scoped to one parent row, so those filters must NOT bleed into the
-        // child. Drop the grid filter args here (and the $filter/$cf param decls
-        // they require — declaring unused GraphQL variables is an error).
-        const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort) { total offset limit data {${allFields}} }`;
+        // The child collection field takes the drill grid's own column filters;
+        // the main grid's URL filters never reach a drill (see useDataTable).
+        const childFilter = own.filterTexts.length > 0 ? ` filter: ${andFilters(own.filterTexts)}` : '';
+        const childField = `${drill.childField}(limit: $limit offset: $offset sort: $sort${childFilter}) { total offset limit data {${allFields}} }`;
 
         const parentPkTypes = getPkTypes(drill.parentTable);
         // A parent with NO declared key cannot be addressed by id. Guessing a
@@ -711,6 +713,7 @@ function buildDrillQuery(
             const clauses = parentPkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
             parentFilter = `{and: [${clauses.join(', ')}]}`;
         }
+        param += ownParams;
         return `query Get${table.name}($sort: [${table.graphQlName}SortEnum!], $limit: Int, $offset: Int ${param}) { ${drill.parentTable.name}(filter: ${parentFilter}) { data { ${childField} } } }`;
     }
     // A drill was explicitly requested (id + filterTable/filterColumn) but the
@@ -723,10 +726,15 @@ function buildDrillQuery(
     return null;
 }
 
+/** One predicate from several: the lone clause, or an `and` of them all. */
+function andFilters(clauses: readonly string[]): string {
+    return clauses.length === 1 ? clauses[0] : `{and: [${clauses.join(", ")}]}`;
+}
+
 /**
  * Single-record lookup keyed by the table's own primary key (composite-aware).
  */
-function buildByIdQuery(table: Table, tableSchema: Table, allFields: string): string | null {
+function buildByIdQuery(table: Table, tableSchema: Table, allFields: string, columnFilters: ColumnFiltersState): string | null {
     const pkTypes = getPkTypes(tableSchema);
     // Same refusal as the drill path: a keyless table has no by-id lookup, and
     // guessing a column named "id" produces a filter on a column that need not
@@ -746,7 +754,10 @@ function buildByIdQuery(table: Table, tableSchema: Table, allFields: string): st
         const clauses = pkTypes.map((t) => `{${t.name}: {_eq: $pk_${t.name}}}`);
         filterText = `{and: [${clauses.join(', ')}]}`;
     }
-    return queryEnvelope(table, param, `filter: ${filterText}`, allFields);
+    // The grid's own column filters still apply on top of the key.
+    const own = buildColumnFilters(columnFilters, table);
+    param += own.params.map((p) => `, ${p}`).join("");
+    return queryEnvelope(table, param, `filter: ${andFilters([filterText, ...own.filterTexts])}`, allFields);
 }
 
 /**
@@ -825,19 +836,19 @@ export function buildQuery(
     const multiJoinFields = forExport ? '' : buildMultiJoinFields(schema, tableSchema.multiJoins);
     const allFields = multiJoinFields ? `${dataColumns} ${multiJoinFields}` : dataColumns;
 
+    // Refuse to emit a query whose predicate is narrower than the filters the UI
+    // claims are active — that query returns rows the user believes are filtered
+    // out, and select-all + Delete over it destroys the wrong rows. Same refusal
+    // shape as the unresolvable-drill branch: null, and the caller reports it.
+    if (collectFilterErrors(table, filterString, columnFilters).length > 0) return null;
+
     if (id && (filterColumn || filterTable)) {
-        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, filterTable, filterColumn, forExport);
+        return buildDrillQuery(table, schema, tableSchema, dataColumns, allFields, columnFilters, filterTable, filterColumn, forExport);
     }
 
     if (id && !filterTable && !filterColumn) {
-        return buildByIdQuery(table, tableSchema, allFields);
+        return buildByIdQuery(table, tableSchema, allFields, columnFilters);
     }
-
-    // Refuse to emit a list query whose predicate is narrower than the filters the
-    // UI claims are active — that query returns rows the user believes are filtered
-    // out, and select-all + Delete over it destroys the wrong rows. Same refusal
-    // shape as the unresolvable-drill branch above: null, and the caller reports it.
-    if (collectFilterErrors(table, filterString, columnFilters).length > 0) return null;
 
     return buildListQuery(table, filterString, columnFilters, allFields);
 }

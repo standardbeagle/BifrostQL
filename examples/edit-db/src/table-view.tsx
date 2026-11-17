@@ -535,7 +535,9 @@ export function TableView({ table, id, filterTable, filterColumn, selectedRowId,
                 onToggleStacking={onToggleStacking}
                 exportRows={exportRows}
                 totalRows={totalRows}
-                groupableColumns={table.columns}
+                // A drill or by-key grid is scoped by `id`; grouping counts the
+                // whole table, so it is offered on unscoped grids only.
+                groupableColumns={id ? undefined : table.columns}
                 grouping={grouping}
                 onGroupingChange={onGroupingChange}
                 onGroupingSumChange={onGroupingSumChange}

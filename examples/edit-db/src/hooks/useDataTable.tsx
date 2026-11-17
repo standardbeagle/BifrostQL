@@ -569,10 +569,16 @@ export function resolveConfiguredSort(
 export function useDataTable(table: Table | null, id?: string, filterTable?: string, filterColumn?: string, onExpandContent?: (rowIndex: number, columnName: string) => void, onOpenColumn?: (panel: DrillFrame) => void): UseDataTableResult {
     const { search } = useSearchParams();
     const navigate = useNavigate();
-    const filterString = search.get('filter') ?? '';
-    const cfParam = search.get('cf') ?? '';
-    const gbParam = search.get('gb');
-    const gsParam = search.get('gs');
+    // A grid scoped by `id` (a drill child grid, or a by-key lookup) shows a
+    // different row set than the main grid, which owns the URL's filter, cf, gb
+    // and gs params. It reads none of them and keeps its column filters in
+    // local state: the main grid's filters name the main table's columns, and a
+    // drill grid's filters written to `cf` would filter the main grid too.
+    const scopedById = !!id;
+    const filterString = scopedById ? '' : search.get('filter') ?? '';
+    const cfParam = scopedById ? '' : search.get('cf') ?? '';
+    const gbParam = scopedById ? null : search.get('gb');
+    const gsParam = scopedById ? null : search.get('gs');
     // Memoized because its result feeds `queryVariables`, whose OBJECT IDENTITY is
     // part of the react-query key. A fresh `variables` object every render meant
     // that memo never hit, so the key changed on every render — the query was
@@ -605,6 +611,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         if (sorting !== configuredSort) setSorting(configuredSort);
         if (groupingSort !== DEFAULT_GROUPING_SORT) setGroupingSort(DEFAULT_GROUPING_SORT);
         if (pageIndex !== 0) setPageIndex(0);
+        // A scoped grid's filters are local state, so nothing else clears them.
+        if (scopedById && columnFilters.length > 0) setColumnFilters([]);
     }
 
     // Keep column-filter state reconciled with the URL `cf` param. Without this,
@@ -614,7 +622,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // belonging to a different table. Reconciled while rendering, so the state
     // never commits out of step with the URL.
     const [reconciledCf, setReconciledCf] = useState(cfParam);
-    if (reconciledCf !== cfParam) {
+    if (!scopedById && reconciledCf !== cfParam) {
         setReconciledCf(cfParam);
         setColumnFilters((prev) => reconcileColumnFiltersFromUrl(prev, cfParam));
     }
@@ -625,8 +633,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     // own. When two tables share a column name (id, name, created_at, ...) a
     // stale filter would otherwise leak into the new table's query.
     const effectiveColumnFilters = useMemo(
-        () => reconcileColumnFiltersFromUrl(columnFilters, cfParam),
-        [columnFilters, cfParam],
+        () => scopedById ? columnFilters : reconcileColumnFiltersFromUrl(columnFilters, cfParam),
+        [scopedById, columnFilters, cfParam],
     );
     // gb is URL-owned just like cf, and a grouping column is meaningful only
     // within its source table. On a table switch the gb value carried over is
@@ -818,8 +826,8 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
     const onColumnFiltersChange = useCallback((newFilters: ColumnFiltersState) => {
         setColumnFilters(newFilters);
         setPageIndex(0);
-        syncFiltersToUrl(newFilters);
-    }, [syncFiltersToUrl]);
+        if (!scopedById) syncFiltersToUrl(newFilters);
+    }, [scopedById, syncFiltersToUrl]);
 
     const onPageIndexChange = useCallback((newPageIndex: number) => {
         setPageIndex(newPageIndex);

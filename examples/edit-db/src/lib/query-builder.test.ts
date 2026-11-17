@@ -904,7 +904,7 @@ describe('buildQuery', () => {
         expect(q).not.toContain('categories_children(');
     });
 
-    it('does NOT push the main grid filters into the nested child field args', () => {
+    it("applies the drill grid's own column filters inside the parent scope", () => {
         const child = makeTable({
             name: 'assignments',
             graphQlName: 'assignments',
@@ -923,12 +923,13 @@ describe('buildQuery', () => {
         const schema = makeSchema([parent, child]);
         const cf = [{ id: 'credits', value: { operator: '_gt', value: 3 } as ColumnFilterValue }];
         const q = buildQuery(child, schema, '', cf, '5', 'courses')!;
-        // The header filter + column filters are global URL params scoped to the
-        // MAIN grid's table. Drill child grids must ignore them — no $cf param decl
-        // and the only predicate is the FK scope.
-        expect(q).not.toContain('$cf_credits');
-        expect(q).not.toContain('_gt');
-        expect(q).toContain('assignments(sort: $sort limit: $limit offset: $offset filter: { course_id: { _eq: $id } })');
+        // A drill grid's column filters are its own local state (useDataTable
+        // never hands it the main grid's URL filters), so they narrow the child
+        // rows on top of the FK scope.
+        expect(q).toContain('$cf_credits_0: Int');
+        expect(q).toContain('assignments(sort: $sort limit: $limit offset: $offset filter: {and: [{ course_id: { _eq: $id } }, {credits: {_gt: $cf_credits_0}}]})');
+        // A filter the drill grid cannot apply refuses the query, as on the main grid.
+        expect(buildQuery(child, schema, '', [{ id: 'nope', value: { operator: '_eq', value: 1 } as ColumnFilterValue }], '5', 'courses')).toBeNull();
     });
 
     it('returns null (does NOT emit an unfiltered query) when a drill cannot resolve', () => {

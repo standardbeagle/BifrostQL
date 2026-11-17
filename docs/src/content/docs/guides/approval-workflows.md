@@ -131,9 +131,13 @@ through the checks above.
 Reads stay published so approvers can list the queue, and every read is scoped the way a
 decision is: a caller sees only changes queued in their own tenant (their tenant claim
 equals the row's `tenant`), and a caller with no tenant claim sees only changes queued
-without one. The scope is applied by the read filter funnel itself, on every read surface,
-whatever filter transformers the host registered. Declare a read policy on the store (for
-example `policy-actions: read[manager]`) to choose who inside a tenant may list it;
+without one. Inside the tenant a caller sees only their own changes (`requester` equals
+their `user_id`) and the changes to gated tables they could review: they hold the table's
+`approver-role` and its policy lets them read it. The queue holds each change's full payload
+and the requester's roles and permissions, so a tenant member who is neither the requester
+nor a reviewer of that table sees nothing of it. The scope is applied by the read filter
+funnel itself, on every read surface, whatever filter transformers the host registered. A
+read policy on the store (for example `policy-actions: read[manager]`) narrows it further;
 decisions do not need any write grant on the store. State-machine metadata on the store (see
 `PendingChangeStore.StateMachineMetadata`) is optional: it describes the lifecycle to
 readers, but no store write passes through the state-machine transformer.

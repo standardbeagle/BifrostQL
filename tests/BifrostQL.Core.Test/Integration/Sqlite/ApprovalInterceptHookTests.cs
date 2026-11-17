@@ -990,8 +990,32 @@ public sealed class ApprovalInterceptHookTests : IAsyncLifetime
         (await ListAsync(ApproverContext("bob", "manager", tenantId: 1))).Should().Equal("tenant-one-change");
         (await ListAsync(ApproverContext("bob", "manager", tenantId: 2))).Should().BeEmpty(
             "another tenant's queued change, payload and requester are invisible");
-        (await ListAsync(new Dictionary<string, object?> { ["user_id"] = "carol" })).Should().Equal(
+        (await ListAsync(new Dictionary<string, object?> { ["user_id"] = "carol", ["roles"] = new[] { "manager" } })).Should().Equal(
             new[] { "tenantless-change" }, "a caller with no tenant sees only changes queued without one");
+    }
+
+    [Fact]
+    public async Task StoreReads_ShowQueuedPayloadsOnlyToTheRequesterAndTheTablesApprovers()
+    {
+        // Same tenant throughout: the payload bypasses the target table's policy, so a tenant
+        // member who neither queued the change nor could review it must not read it.
+        var executor = BuildExecutor();
+        await EnqueueAsync(executor, "queued-by-alice", RequesterContext());
+
+        async Task<bool> SeesAsync(IDictionary<string, object?> caller)
+        {
+            var result = await ExecuteGraphQlAsync(
+                "{ pending_changes { data { intended_payload } } }", caller, readFilters: true);
+            result.Errors.Should().BeNullOrEmpty();
+            return new GraphQL.SystemTextJson.GraphQLSerializer().Serialize(result).Contains("queued-by-alice");
+        }
+
+        (await SeesAsync(ApproverContext("mallory", "member"))).Should().BeFalse(
+            "a same-tenant caller without the approver role reads nothing from the queue");
+        (await SeesAsync(new Dictionary<string, object?> { ["tenant_id"] = 1 })).Should().BeFalse(
+            "an anonymous same-tenant caller reads nothing from the queue");
+        (await SeesAsync(RequesterContext())).Should().BeTrue("the requester sees their own change");
+        (await SeesAsync(ApproverContext("bob", "manager"))).Should().BeTrue("an approver of the table sees it");
     }
 
     // ---- fail-closed: a gated write with no store table is refused, not applied ----

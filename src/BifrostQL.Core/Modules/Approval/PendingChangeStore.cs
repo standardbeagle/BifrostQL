@@ -4,6 +4,7 @@ using System.Data.Common;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -142,7 +143,7 @@ namespace BifrostQL.Core.Modules.Approval
         /// approved, without the decision's tenant, self-approval, role and policy checks.
         /// <c>TableMutationPipeline.GuardNotHistoryTarget</c> refuses every such write, and
         /// <see cref="FilterTransformersWrap"/> scopes every read to the caller's tenant
-        /// (<see cref="TenantScopeFilter"/>). A same-named table in a model with no approval
+        /// and its approvers (<see cref="ReadScopeFilter"/>). A same-named table in a model with no approval
         /// gate is an ordinary application table and is left alone.
         /// </summary>
         internal static bool IsApprovalQueue(IDbModel model, IDbTable table)
@@ -154,19 +155,70 @@ namespace BifrostQL.Core.Modules.Approval
                && model.Tables.Any(candidate => ApprovalConfig.FromTable(candidate).RequiresApproval);
 
         /// <summary>
-        /// The row scope of every read of the queue: changes queued in the caller's tenant (the
-        /// claim under the model's tenant-context key, compared in the string form the gate
-        /// stores), or, for a caller with no tenant claim, changes queued without one. The
-        /// queue holds each change's intended payload and requester identity, so a read is
-        /// scoped exactly as a decision is (<see cref="ApprovalDecisionService"/>).
+        /// The row scope of every read of the queue. Two conditions, ANDed:
+        /// <list type="bullet">
+        /// <item>Tenant: changes queued in the caller's tenant (the claim under the model's
+        /// tenant-context key, compared in the string form the gate stores), or, for a caller
+        /// with no tenant claim, changes queued without one.</item>
+        /// <item>Audience: the caller's own changes (<c>requester</c> equals their policy subject),
+        /// or changes to a gated table the caller could review: they hold its
+        /// <c>approver-role</c> and its policy lets them read it.</item>
+        /// </list>
+        /// The queue holds each change's intended payload and requester identity, which bypass
+        /// the target table's own policy. Without the audience condition every member of a
+        /// tenant read every queued payload, including columns the target table's policy
+        /// denies them, and every requester's roles and permissions.
         /// </summary>
-        internal static TableFilter TenantScopeFilter(IDbModel model, IDbTable store, IDictionary<string, object?> userContext)
+        internal static TableFilter ReadScopeFilter(IDbModel model, IDbTable store, IDictionary<string, object?> userContext)
         {
             var tenantKey = TenantFilterTransformer.ResolveTenantContextKey(model);
             var tenant = userContext.TryGetValue(tenantKey, out var value) ? value?.ToString() : null;
-            return tenant is null
+            var tenantScope = tenant is null
                 ? TableFilterFactory.IsNull(store, ColTenant)
                 : TableFilterFactory.Equals(store, ColTenant, tenant);
+
+            var audience = new List<TableFilter>();
+            // An anonymous caller has no subject of its own: "anonymous" names every such caller.
+            if (userContext.TryGetValue(MetadataKeys.Auth.DefaultUserIdContextKey, out var subject)
+                && !string.IsNullOrWhiteSpace(subject?.ToString()))
+                audience.Add(TableFilterFactory.Equals(store, ColRequester, PolicyIdentity.FromUserContext(userContext).Id));
+            var reviewable = ReviewableTables(model, PolicyIdentity.FromUserContext(userContext, tenantKey));
+            if (reviewable.Count > 0)
+                audience.Add(TableFilterFactory.In(store, ColTable, reviewable));
+
+            // Nobody to show: a predicate no row satisfies (the table column is NOT NULL).
+            var audienceScope = audience.Count switch
+            {
+                0 => TableFilterFactory.IsNull(store, ColTable),
+                1 => audience[0],
+                _ => new TableFilter { FilterType = FilterType.Or, Or = audience },
+            };
+            return new TableFilter { FilterType = FilterType.And, And = new List<TableFilter> { tenantScope, audienceScope } };
+        }
+
+        // The gated tables whose changes the caller could review: the same role and policy
+        // grant a decision checks (ApprovalDecisionService.Authorize), with the read action
+        // standing in for the change's own verb. An unevaluable policy hides the table.
+        private static List<object?> ReviewableTables(IDbModel model, AppIdentity identity)
+        {
+            var policy = new PolicyEvaluator();
+            var result = new List<object?>();
+            foreach (var table in model.Tables)
+            {
+                var config = ApprovalConfig.FromTable(table);
+                if (!config.RequiresApproval
+                    || !identity.Roles.Any(role => string.Equals(role, config.ApproverRole, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                try
+                {
+                    if (policy.CanAct(PolicyConfigCollector.FromTable(table), PolicyAction.Read, identity) == PolicyDecision.Allow)
+                        result.Add($"{table.TableSchema}.{table.DbName}");
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            }
+            return result;
         }
 
         /// <summary>The refusal every mutation path returns for a write to the store.</summary>

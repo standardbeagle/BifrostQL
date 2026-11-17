@@ -153,17 +153,19 @@ else
 // Dev identity stamp (opt-in): BifrostQL:DevIdentity = "<subject>". The chat
 // endpoints (and anything else identity-gated) refuse anonymous callers, so
 // local demos need SOME principal. This is a demo convenience, not an auth
-// scheme: it refuses to run in Production outright, and it logs a warning at
+// scheme: it refuses to run outside Development and the shipped ChatDemo profile
+// (examples/chat), so Staging or any other environment name fails closed, and it
+// logs a warning at
 // startup because stamping every request with a fixed identity is a posture
 // change worth seeing in the logs. Real deployments use local auth, OIDC, or
 // JWT bearer instead.
 var devIdentity = app.Configuration["BifrostQL:DevIdentity"];
 if (!string.IsNullOrWhiteSpace(devIdentity))
 {
-    if (app.Environment.IsProduction())
+    if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("ChatDemo"))
         throw new InvalidOperationException(
-            "BifrostQL:DevIdentity stamps a fixed identity on every request and must not run in Production. " +
-            "Configure real authentication instead.");
+            "BifrostQL:DevIdentity stamps a fixed identity on every request and runs only in the Development " +
+            "or ChatDemo environment. Configure real authentication instead.");
     app.Logger.LogWarning(
         "BifrostQL:DevIdentity is set: every request runs as '{Subject}'. Demo/development use only.",
         devIdentity);

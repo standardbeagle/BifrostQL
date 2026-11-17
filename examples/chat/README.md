@@ -58,7 +58,7 @@ Around the pair, the sample grows three **connector scenarios** (see the
 metadata, enables the chat endpoints (`BifrostQL:Chat:Enabled`), and stamps a
 dev-only identity (`BifrostQL:DevIdentity` — the chat endpoints are
 fail-closed and refuse anonymous callers; the stamp logs a startup warning and
-refuses to run in a Production environment). `UseBifrostChat` resolves the
+refuses to run in any environment other than Development or ChatDemo). `UseBifrostChat` resolves the
 completion service at startup, so the host refuses to start without an API
 key:
 

@@ -67,6 +67,8 @@ app.UseBifrostAppMetadata();                    // GET /_app-metadata
 app.UseBifrostAppMetadata(o => o.Path = "/meta");
 ```
 
+**Authentication.** The mount takes the auth requirement of the GraphQL endpoint it filters against (`GraphQlEndpoint`, or the single registered endpoint). It requires a signed-in caller unless that endpoint sets `DisableAuth`, and it also requires one when it cannot tell which endpoint it serves: none registered, or several with none named. `RequireAuth` overrides the inherited value. Set `true` to keep the overlay closed in front of an anonymous GraphQL endpoint, or `false` to open it. Mount it after `UseBifrostQL()` / `UseBifrostEndpoints()`, which add the authentication middleware. Mounted earlier, it sees every caller as anonymous and refuses them all wherever auth is required.
+
 The endpoint serves the overlay as the **stable camelCase JSON contract** defined by `AppMetadataJson` — the same portable, RN-friendly shape the model serializes to. When no overlay is registered, the endpoint returns an empty overlay rather than 404, so clients always receive the stable contract.
 
 ## Example: a Membership Manager

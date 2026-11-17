@@ -4,7 +4,8 @@ namespace BifrostQL.Server
 {
     /// <summary>
     /// The ONE derivation of whether an HTTP-mounted front door (binary WebSocket,
-    /// protocol frontend, GraphQL mount) requires an authenticated identity. H8 and H14
+    /// protocol frontend, GraphQL mount, <c>/_app-metadata</c>, <c>/_blob</c>,
+    /// <c>/_saved-objects</c>) requires an authenticated identity. H8 and H14
     /// each carried a private copy of this decision (one on the binary mount, one on the
     /// frontend mount); two copies of one security decision drift, one copy cannot
     /// (<c>MountAuthRequirementSourceScanTests</c> in BifrostQL.Server.Test pins the single-derivation shape).
@@ -26,12 +27,14 @@ namespace BifrostQL.Server
         /// <summary>
         /// Resolves the auth requirement for a mount serving the endpoint registered at
         /// <paramref name="endpointPath"/> (for the frontend/GraphQL mounts this IS the
-        /// mount path; the binary mount threads its <c>graphqlPath</c>). The single-endpoint
+        /// mount path; the binary mount threads its <c>graphqlPath</c>; the app-metadata,
+        /// blob and saved-objects mounts thread their configured endpoint, null when none is
+        /// named). The single-endpoint
         /// fallback mirrors <c>BifrostEngine.ExecuteAsync</c>'s own schema fallback: if the
         /// auth resolution and the schema resolution ever targeted different endpoints, the
         /// mount would authorize against one endpoint and serve another.
         /// </summary>
-        internal static bool Resolve(IServiceProvider services, string endpointPath)
+        internal static bool Resolve(IServiceProvider services, string? endpointPath)
         {
             var multiDb = services.GetService<BifrostMultiDbOptions>();
             if (multiDb != null)

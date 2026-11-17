@@ -17,16 +17,18 @@ namespace BifrostQL.Server
         public string Path { get; set; } = "/_saved-objects";
 
         /// <summary>
-        /// When true (the DEFAULT), a caller must present an identity that projects to a non-empty
-        /// Bifrost user context, or the request is refused with 401.
+        /// Overrides whether a caller must present an identity that projects to a non-empty
+        /// Bifrost user context (otherwise 401). Null (the default) inherits the requirement from
+        /// <c>MountAuthRequirement</c>: the single registered GraphQL endpoint's (required unless
+        /// it sets <c>DisableAuth</c>), and required whenever no endpoint, or more than one, is
+        /// registered.
         ///
-        /// <para>This endpoint carries PUT and DELETE. Defaulting it open meant any anonymous caller
-        /// who could reach the port could overwrite or delete any saved object — while the strictly
-        /// less sensitive, read-only <c>/_info</c> endpoint defaulted CLOSED. Clearing this is a
-        /// deliberate choice a deployment makes for a trusted-loopback desktop host, not a default
-        /// anyone inherits by not thinking about it.</para>
+        /// <para>This endpoint carries PUT and DELETE. Anonymous callers share ONE owner partition,
+        /// so <c>false</c> (or inheriting from an anonymous endpoint) is a choice for a
+        /// trusted-loopback desktop host. Set <c>true</c> to keep the endpoint closed in front of
+        /// an anonymous GraphQL endpoint.</para>
         /// </summary>
-        public bool RequireAuth { get; set; } = true;
+        public bool? RequireAuth { get; set; }
 
         /// <summary>
         /// Largest PUT body read, in received bytes (default 512 KiB: twice the 256 KB definition
@@ -58,11 +60,20 @@ namespace BifrostQL.Server
     {
         private readonly RequestDelegate _next;
         private readonly BifrostSavedObjectsOptions _options;
+        private readonly bool _requiresAuth;
 
-        public BifrostSavedObjectsMiddleware(RequestDelegate next, BifrostSavedObjectsOptions options)
+        /// <param name="next">The next middleware.</param>
+        /// <param name="options">Endpoint options.</param>
+        /// <param name="requiresAuth">
+        /// Whether a caller must carry a projected identity. <c>UseBifrostSavedObjects</c> derives it
+        /// from <c>MountAuthRequirement</c> (or the explicit <see cref="BifrostSavedObjectsOptions.RequireAuth"/>
+        /// override); it is required here so no construction path can default it.
+        /// </param>
+        public BifrostSavedObjectsMiddleware(RequestDelegate next, BifrostSavedObjectsOptions options, bool requiresAuth)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _requiresAuth = requiresAuth;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -77,10 +88,10 @@ namespace BifrostQL.Server
             // An IsAuthenticated flag on its own is not an identity: a subject-less principal, or
             // one from an OIDC issuer with no registered claim mapper, projects to an EMPTY context
             // (or throws), and either must be a 401 here exactly as it is on the GraphQL, binary,
-            // gRPC and MCP gates. A projection FAULT is refused even when RequireAuth is cleared —
+            // gRPC and MCP gates. A projection FAULT is refused even when the mount does not require auth —
             // opting out of authentication is not opting into accepting a broken credential.
             var outcome = BifrostIdentityGate.Project(context, out var userContext);
-            if (BifrostIdentityGate.Refuses(outcome, _options.RequireAuth))
+            if (BifrostIdentityGate.Refuses(outcome, _requiresAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
@@ -91,7 +102,7 @@ namespace BifrostQL.Server
             // owner is an impersonation parameter, not isolation. A projected identity that yields
             // no stable owner key is refused rather than treated as a shared/global owner, which
             // would merge every such caller into one bucket. The anonymous partition is reachable
-            // only through the explicit RequireAuth=false opt-in.
+            // only when the mount does not require auth (an anonymous endpoint, or RequireAuth=false).
             var owner = outcome == BifrostIdentityOutcome.Projected
                 ? SavedObjectOwner.FromUserContext(userContext)
                 : SavedObjectOwner.Anonymous;

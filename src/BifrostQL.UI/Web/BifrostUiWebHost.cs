@@ -116,18 +116,6 @@ namespace BifrostQL.UI.Web
                 .AllowAnyHeader()
                 .SetIsOriginAllowed(_ => false));
 
-            // /_saved-objects must be registered BEFORE the static-file and SPA-fallback
-            // handlers below. Without it the designer's GET /_saved-objects/query fell
-            // through to index.html and the rail rendered the browser's raw JSON-parse
-            // SyntaxError. RequireAuth is cleared to match this host's posture: it runs
-            // with BifrostQL:DisableAuth, so no request ever carries a Bifrost identity
-            // and the default-closed gate would 401 every call. As with the vault and
-            // SSH APIs, that posture is what --expose warns about.
-            app.UseBifrostSavedObjects(o => o.RequireAuth = false);
-            // Direct binary links (Range-capable) for blob columns — same trusted-
-            // loopback auth posture as the saved-objects endpoint on this desktop host.
-            app.UseBifrostBlobs(o => o.RequireAuth = false);
-
             app.MapMetadataEndpoints(state);
             app.MapConnectionEndpoints(state);
             app.MapSqliteEndpoints(state);
@@ -140,6 +128,19 @@ namespace BifrostQL.UI.Web
 
             // BifrostQL GraphQL endpoint — always registered, connection set dynamically
             app.UseBifrostQL();
+
+            // /_saved-objects and /_blob mount AFTER UseBifrostQL (the HTTP-mount order rule:
+            // a mount ahead of the authentication middleware UseBifrostQL adds sees every
+            // caller as anonymous) and, being middleware, still run before the SPA fallback
+            // endpoint below. Without that the designer's GET /_saved-objects/query fell
+            // through to index.html and the rail rendered the browser's raw JSON-parse
+            // SyntaxError. RequireAuth is cleared explicitly to state this host's posture: it
+            // runs with BifrostQL:DisableAuth, so no request ever carries a Bifrost identity.
+            // As with the vault and SSH APIs, that posture is what --expose warns about.
+            app.UseBifrostSavedObjects(o => o.RequireAuth = false);
+            // Direct binary links (Range-capable) for blob columns — same trusted-
+            // loopback auth posture as the saved-objects endpoint on this desktop host.
+            app.UseBifrostBlobs(o => o.RequireAuth = false);
 
             // Binary WebSocket transport at /bifrost-ws — the frontend's Binary toggle
             // routes editor queries here. allowedOrigins stays null (same-origin only):

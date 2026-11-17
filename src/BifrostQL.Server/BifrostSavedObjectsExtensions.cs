@@ -21,7 +21,13 @@ namespace BifrostQL.Server
             return services;
         }
 
-        /// <summary>Adds the <c>/_saved-objects</c> CRUD middleware to the pipeline.</summary>
+        /// <summary>
+        /// Adds the <c>/_saved-objects</c> CRUD middleware to the pipeline. Mount it after
+        /// <c>UseBifrostQL()</c> / <c>UseBifrostEndpoints()</c>: a mount ahead of the authentication
+        /// middleware they add sees every caller as anonymous. The auth requirement comes from
+        /// <c>MountAuthRequirement</c> unless <see cref="BifrostSavedObjectsOptions.RequireAuth"/>
+        /// overrides it.
+        /// </summary>
         public static IApplicationBuilder UseBifrostSavedObjects(
             this IApplicationBuilder app,
             Action<BifrostSavedObjectsOptions>? configure = null)
@@ -29,8 +35,12 @@ namespace BifrostQL.Server
             ArgumentNullException.ThrowIfNull(app);
             var options = new BifrostSavedObjectsOptions();
             configure?.Invoke(options);
+            // Saved objects belong to no single endpoint: a null path resolves to the single
+            // registered endpoint's requirement, and fails closed with none or several.
+            var requiresAuth = options.RequireAuth
+                ?? MountAuthRequirement.Resolve(app.ApplicationServices, endpointPath: null);
             if (options.Enabled)
-                app.UseMiddleware<BifrostSavedObjectsMiddleware>(options);
+                app.UseMiddleware<BifrostSavedObjectsMiddleware>(options, requiresAuth);
             return app;
         }
     }

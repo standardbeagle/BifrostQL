@@ -20,6 +20,8 @@ BifrostQL has three distinct, coexisting pipelines. Saved objects ride the
 | **App-metadata overlay** | `GET /_app-metadata` | read-only | camelCase JSON describing client presentation (labels, forms, grids). |
 | **Saved-object store** | `/_saved-objects` (CRUD) | read/write | camelCase JSON holding user-authored query/form/report/dashboard definitions. |
 
+**Authentication.** `UseBifrostSavedObjects()` takes its auth requirement from the single registered GraphQL endpoint. It requires a signed-in caller unless that endpoint sets `DisableAuth`, and always requires one when no endpoint, or more than one, is registered. `RequireAuth` overrides the inherited value. Every signed-in caller gets an owner partition derived from their identity, while all anonymous callers share one partition. An anonymous mount is therefore a choice for a trusted-loopback desktop host; set `RequireAuth = true` to keep the store closed in front of an anonymous GraphQL endpoint. Mount it after `UseBifrostQL()` / `UseBifrostEndpoints()`.
+
 The saved-object store is a **parallel, write-capable pipeline** that follows
 the same camelCase-JSON conventions as the app-metadata overlay but is a
 **separate endpoint**. Saved-object definitions are **never written into schema

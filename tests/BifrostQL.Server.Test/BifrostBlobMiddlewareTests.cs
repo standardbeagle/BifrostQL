@@ -65,7 +65,7 @@ namespace BifrostQL.Server.Test
         {
             var options = new BifrostBlobOptions { RequireAuth = false };
             configure?.Invoke(options);
-            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, options);
+            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, options, options.RequireAuth!.Value);
             var context = new DefaultHttpContext { RequestServices = _harness.Services };
             context.Request.Method = method;
             context.Request.Path = path;
@@ -124,7 +124,7 @@ namespace BifrostQL.Server.Test
 
         private async Task<(int Status, byte[] Body, IHeaderDictionary Headers)> RequestWithHeaderAsync(string range)
         {
-            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, new BifrostBlobOptions { RequireAuth = false });
+            var middleware = new BifrostBlobMiddleware(_ => Task.CompletedTask, new BifrostBlobOptions(), requiresAuth: false);
             var context = new DefaultHttpContext { RequestServices = _harness.Services };
             context.Request.Method = "GET";
             context.Request.Path = "/_blob/files/data";

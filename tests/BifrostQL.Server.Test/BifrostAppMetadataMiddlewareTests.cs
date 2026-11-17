@@ -66,7 +66,7 @@ namespace BifrostQL.Server.Test
             var options = new BifrostAppMetadataOptions { Path = "/_app-metadata" };
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext
             {
@@ -95,7 +95,7 @@ namespace BifrostQL.Server.Test
         {
             var options = new BifrostAppMetadataOptions();
             RequestDelegate next = _ => Task.CompletedTask;
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext
             {
@@ -119,7 +119,7 @@ namespace BifrostQL.Server.Test
         {
             var options = new BifrostAppMetadataOptions();
             RequestDelegate next = _ => Task.CompletedTask;
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext
             {
@@ -144,7 +144,7 @@ namespace BifrostQL.Server.Test
             var options = new BifrostAppMetadataOptions { Path = "/_app-metadata" };
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext { RequestServices = BuildServices() };
             context.Request.Method = HttpMethods.Get;
@@ -161,7 +161,7 @@ namespace BifrostQL.Server.Test
             var options = new BifrostAppMetadataOptions { Path = "/_app-metadata" };
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext { RequestServices = BuildServices() };
             context.Request.Method = HttpMethods.Post;
@@ -178,7 +178,7 @@ namespace BifrostQL.Server.Test
             var options = new BifrostAppMetadataOptions { Path = "/_app-metadata" };
             var called = false;
             RequestDelegate next = _ => { called = true; return Task.CompletedTask; };
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext
             {
@@ -198,13 +198,16 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task Middleware_Returns401ByDefaultForAnAnonymousCaller()
         {
-            // Default options — no RequireAuth set. The overlay is introspection, so an
+            // Default options — no RequireAuth set — and no Bifrost endpoint registered: the
+            // requirement UseBifrostAppMetadata derives (MountAuthRequirement) fails closed, so an
             // anonymous caller gets nothing without an explicit deployment opt-in.
             var options = new BifrostAppMetadataOptions();
+            var services = BuildServices(SampleOverlay());
             RequestDelegate next = _ => Task.CompletedTask;
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(
+                next, options, options.RequireAuth ?? MountAuthRequirement.Resolve(services, options.GraphQlEndpoint));
 
-            var context = new DefaultHttpContext { RequestServices = BuildServices(SampleOverlay()) };
+            var context = new DefaultHttpContext { RequestServices = services };
             context.Request.Method = HttpMethods.Get;
             context.Request.Path = "/_app-metadata";
 
@@ -219,7 +222,7 @@ namespace BifrostQL.Server.Test
             // The explicit opt-in that used to be the silent default.
             var options = new BifrostAppMetadataOptions { RequireAuth = false };
             RequestDelegate next = _ => Task.CompletedTask;
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: false);
 
             var context = new DefaultHttpContext { RequestServices = BuildServices(SampleOverlay()) };
             context.Request.Method = HttpMethods.Get;
@@ -236,7 +239,7 @@ namespace BifrostQL.Server.Test
         {
             var options = new BifrostAppMetadataOptions { RequireAuth = true };
             RequestDelegate next = _ => Task.CompletedTask;
-            var middleware = new BifrostAppMetadataMiddleware(next, options);
+            var middleware = new BifrostAppMetadataMiddleware(next, options, requiresAuth: true);
 
             var context = new DefaultHttpContext { RequestServices = BuildServices() };
             context.Request.Method = HttpMethods.Get;
@@ -253,7 +256,7 @@ namespace BifrostQL.Server.Test
             // IsAuthenticated is not an identity (invariant 12): a principal whose claims project
             // to an EMPTY user context is Anonymous, and /_blob and /_saved-objects answer it 401.
             var options = new BifrostAppMetadataOptions();
-            var middleware = new BifrostAppMetadataMiddleware(_ => Task.CompletedTask, options);
+            var middleware = new BifrostAppMetadataMiddleware(_ => Task.CompletedTask, options, requiresAuth: true);
             var context = new DefaultHttpContext
             {
                 RequestServices = BuildServices(SampleOverlay(), new EmptyProjectionAuthFactory()),
@@ -278,11 +281,11 @@ namespace BifrostQL.Server.Test
 
             options.Enabled.Should().BeTrue();
             options.Path.Should().Be("/_app-metadata");
-            // CHANGED DEFAULT. This assertion previously read `BeFalse()` — it encoded an
-            // unauthenticated, unfiltered introspection endpoint as the intended out-of-the-box
-            // behaviour. It is re-pointed, not deleted: the open endpoint is now the explicit
-            // opt-in covered by Middleware_ServesAnonymousCallersOnlyWhenAuthIsExplicitlyDisabled.
-            options.RequireAuth.Should().BeTrue();
+            // No override by default: the mount inherits the served endpoint's requirement through
+            // MountAuthRequirement, which fails closed (Middleware_Returns401ByDefaultForAnAnonymousCaller).
+            // The open endpoint stays an explicit opt-in
+            // (Middleware_ServesAnonymousCallersOnlyWhenAuthIsExplicitlyDisabled).
+            options.RequireAuth.Should().BeNull();
         }
     }
 }

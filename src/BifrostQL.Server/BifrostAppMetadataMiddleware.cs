@@ -25,16 +25,20 @@ namespace BifrostQL.Server
         public string Path { get; set; } = "/_app-metadata";
 
         /// <summary>
-        /// Whether authentication is required to access the endpoint.
-        /// Default: <c>true</c>.
+        /// Overrides whether authentication is required to access the endpoint. Null (the
+        /// default) inherits the requirement of the GraphQL endpoint the overlay is filtered
+        /// against (<see cref="GraphQlEndpoint"/>) through <c>MountAuthRequirement</c>, the one
+        /// derivation every HTTP mount uses: required unless that endpoint sets
+        /// <c>DisableAuth</c>, and required whenever the endpoint cannot be identified (none
+        /// registered, or several with none named).
         ///
         /// <para>The overlay enumerates entities, fields, grid columns and relationships — an
-        /// introspection surface, not a public asset. Every other Bifrost transport gate requires
-        /// identity and narrows what it returns from it, so this one does too. Setting it to
-        /// <c>false</c> publishes the whole overlay to anonymous callers and is a deliberate
-        /// deployment decision, never the default.</para>
+        /// introspection surface — and is always narrowed to what the caller may read. Set this
+        /// only to state a posture the endpoint configuration cannot express: <c>true</c> to
+        /// keep the overlay closed in front of an anonymous GraphQL endpoint, <c>false</c> to
+        /// open it in front of an authenticated one.</para>
         /// </summary>
-        public bool RequireAuth { get; set; } = true;
+        public bool? RequireAuth { get; set; }
 
         /// <summary>
         /// The registered GraphQL endpoint path whose cached model the overlay is filtered
@@ -54,8 +58,9 @@ namespace BifrostQL.Server
     /// the schema-metadata system already exposes; the two coexist and neither
     /// is merged into the other.
     ///
-    /// <para>Being introspection, it is gated like one: authentication is required by default
-    /// (<see cref="BifrostAppMetadataOptions.RequireAuth"/>), identity is projected through the
+    /// <para>Being introspection, it is gated like one: the auth requirement is the served
+    /// endpoint's, derived once at mount time by <c>MountAuthRequirement</c> and passed in as a
+    /// required constructor argument (fail closed when the endpoint cannot be identified), identity is projected through the
     /// shared <see cref="IBifrostAuthContextFactory"/>, and the served overlay is narrowed to the
     /// entities and fields that caller may READ under the same policy evaluator the query path
     /// enforces (.claude/rules/protocol-adapter-security.md invariant 4).</para>
@@ -64,11 +69,20 @@ namespace BifrostQL.Server
     {
         private readonly RequestDelegate _next;
         private readonly BifrostAppMetadataOptions _options;
+        private readonly bool _requiresAuth;
 
-        public BifrostAppMetadataMiddleware(RequestDelegate next, BifrostAppMetadataOptions options)
+        /// <param name="next">The next middleware.</param>
+        /// <param name="options">Endpoint options.</param>
+        /// <param name="requiresAuth">
+        /// Whether a caller must carry a projected identity. <c>UseBifrostAppMetadata</c> derives it
+        /// from <c>MountAuthRequirement</c> (or the explicit <see cref="BifrostAppMetadataOptions.RequireAuth"/>
+        /// override); it is required here so no construction path can default it.
+        /// </param>
+        public BifrostAppMetadataMiddleware(RequestDelegate next, BifrostAppMetadataOptions options, bool requiresAuth)
         {
             _next = next;
             _options = options;
+            _requiresAuth = requiresAuth;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -86,7 +100,7 @@ namespace BifrostQL.Server
             // alone is not an identity: an authenticated principal that projects to an EMPTY
             // context used to be served the overlay here while both siblings answered 401.
             var outcome = BifrostIdentityGate.Project(context, out var userContext);
-            if (BifrostIdentityGate.Refuses(outcome, _options.RequireAuth))
+            if (BifrostIdentityGate.Refuses(outcome, _requiresAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
@@ -116,8 +130,9 @@ namespace BifrostQL.Server
         /// <para>Filtering needs a schema model to authorize against. When no
         /// <see cref="IQueryIntentExecutor"/> is registered, this process hosts no Bifrost data
         /// path at all — there is no table whose readability the overlay could contradict — so
-        /// the overlay is served as authored. That case is guarded by <see cref="BifrostAppMetadataOptions.RequireAuth"/>
-        /// alone, which is why it defaults on. If the model IS registered but cannot be
+        /// the overlay is served as authored. That case is guarded by the auth requirement alone:
+        /// with no Bifrost endpoint registered, <c>MountAuthRequirement</c> resolves it to
+        /// "required". If the model IS registered but cannot be
         /// resolved, the request fails rather than silently degrading to an unfiltered
         /// overlay.</para>
         /// </summary>

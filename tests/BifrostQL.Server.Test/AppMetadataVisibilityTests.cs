@@ -97,14 +97,28 @@ namespace BifrostQL.Server.Test
         };
 
         [Fact]
-        public async Task An_anonymous_caller_is_rejected_by_default()
+        public async Task An_anonymous_caller_is_rejected_when_the_overlay_requires_auth()
+        {
+            // This host's GraphQL endpoint sets DisableAuth, so the inherited default is open
+            // (HttpMountAuthRequirementTests pins the inheritance and its fail-closed default).
+            // RequireAuth = true keeps the overlay closed in front of an anonymous endpoint.
+            var client = await StartAsync(requireAuth: true);
+
+            using var response = await client.GetAsync("/_app-metadata");
+
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "the overlay is introspection and RequireAuth = true must close it");
+        }
+
+        [Fact]
+        public async Task The_overlay_inherits_the_anonymous_endpoint_it_filters_against()
         {
             var client = await StartAsync();
 
             using var response = await client.GetAsync("/_app-metadata");
 
-            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
-                "the overlay is introspection and must not be world-readable by default");
+            response.StatusCode.Should().Be(HttpStatusCode.OK,
+                "with RequireAuth unset the overlay carries its GraphQL endpoint's DisableAuth posture");
         }
 
         [Fact]

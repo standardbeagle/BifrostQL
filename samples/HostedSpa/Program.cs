@@ -129,8 +129,11 @@ app.UseBifrostLocalAuth();
 // through the standard pipeline — see MembershipWorkflowEndpoints.
 app.MapMembershipWorkflows();
 
-// App-metadata overlay endpoint (/_app-metadata) before the SPA fallback.
-app.UseBifrostAppMetadata();
+// App-metadata overlay endpoint (/_app-metadata) before the SPA fallback. The GraphQL
+// endpoint runs with DisableAuth (identity comes from the local-auth cookie, and policy
+// decides what each caller sees), so the mount would inherit an anonymous posture from it;
+// RequireAuth = true keeps the overlay for signed-in members only.
+app.UseBifrostAppMetadata(o => o.RequireAuth = true);
 
 // Static SPA assets plus an index.html route fallback. The GraphQL playground
 // lives at /playground and the sidecar workflow endpoints under /workflows, so

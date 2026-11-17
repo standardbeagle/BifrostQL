@@ -17,11 +17,13 @@ namespace BifrostQL.Server
         public string Path { get; set; } = "/_blob";
 
         /// <summary>
-        /// Same rationale as the saved-objects endpoint: this serves row data, so a
-        /// caller must present an identity that projects to a non-empty Bifrost user
-        /// context. Clearing it is a deliberate trusted-loopback desktop choice.
+        /// Overrides whether a caller must present an identity that projects to a non-empty
+        /// Bifrost user context. Null (the default) inherits the requirement of the GraphQL
+        /// endpoint blobs are read from (<see cref="Endpoint"/>) through <c>MountAuthRequirement</c>:
+        /// the blob URL serves the same rows the endpoint does, so it carries the same gate, and it
+        /// fails closed when the endpoint cannot be identified.
         /// </summary>
-        public bool RequireAuth { get; set; } = true;
+        public bool? RequireAuth { get; set; }
 
         /// <summary>
         /// The registered GraphQL endpoint whose cached model/connection blobs are
@@ -81,11 +83,22 @@ namespace BifrostQL.Server
         private readonly RequestDelegate _next;
         private readonly BifrostBlobOptions _options;
         private readonly ILogger<BifrostBlobMiddleware>? _logger;
+        private readonly bool _requiresAuth;
 
-        public BifrostBlobMiddleware(RequestDelegate next, BifrostBlobOptions options, ILogger<BifrostBlobMiddleware>? logger = null)
+        /// <param name="next">The next middleware.</param>
+        /// <param name="options">Endpoint options.</param>
+        /// <param name="requiresAuth">
+        /// Whether a caller must carry a projected identity. <c>UseBifrostBlobs</c> derives it from
+        /// <c>MountAuthRequirement</c> (or the explicit <see cref="BifrostBlobOptions.RequireAuth"/>
+        /// override); it is required here so no construction path can default it.
+        /// </param>
+        /// <param name="logger">Server-side diagnostics.</param>
+        public BifrostBlobMiddleware(
+            RequestDelegate next, BifrostBlobOptions options, bool requiresAuth, ILogger<BifrostBlobMiddleware>? logger = null)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _requiresAuth = requiresAuth;
             _logger = logger;
         }
 
@@ -107,7 +120,7 @@ namespace BifrostQL.Server
             // Identity through the SHARED gate — the same seam every other transport
             // gate uses; an unprojectable credential is refused even without RequireAuth.
             var outcome = BifrostIdentityGate.Project(context, out var userContext);
-            if (BifrostIdentityGate.Refuses(outcome, _options.RequireAuth))
+            if (BifrostIdentityGate.Refuses(outcome, _requiresAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
@@ -431,12 +444,20 @@ namespace BifrostQL.Server
 
     public static class BifrostBlobExtensions
     {
-        /// <summary>Mounts the direct binary-link endpoint (see <see cref="BifrostBlobMiddleware"/>).</summary>
+        /// <summary>
+        /// Mounts the direct binary-link endpoint (see <see cref="BifrostBlobMiddleware"/>). Mount it
+        /// after <c>UseBifrostQL()</c> / <c>UseBifrostEndpoints()</c>: a mount ahead of the
+        /// authentication middleware they add sees every caller as anonymous. The auth requirement
+        /// is the served endpoint's (<c>MountAuthRequirement</c>) unless
+        /// <see cref="BifrostBlobOptions.RequireAuth"/> overrides it.
+        /// </summary>
         public static IApplicationBuilder UseBifrostBlobs(this IApplicationBuilder app, Action<BifrostBlobOptions>? configure = null)
         {
             var options = new BifrostBlobOptions();
             configure?.Invoke(options);
-            return app.UseMiddleware<BifrostBlobMiddleware>(options);
+            var requiresAuth = options.RequireAuth
+                ?? MountAuthRequirement.Resolve(app.ApplicationServices, options.Endpoint);
+            return app.UseMiddleware<BifrostBlobMiddleware>(options, requiresAuth);
         }
     }
 }

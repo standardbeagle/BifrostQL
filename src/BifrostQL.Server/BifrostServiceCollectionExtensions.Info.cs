@@ -48,6 +48,12 @@ namespace BifrostQL.Server
         /// camelCase JSON contract for SPA and React Native clients. The endpoint
         /// returns an empty overlay when none has been registered via
         /// <c>AddBifrostAppMetadata</c>, so it always serves the stable contract.
+        ///
+        /// <para>Mount it after <c>UseBifrostQL()</c> / <c>UseBifrostEndpoints()</c>: those add the
+        /// authentication middleware, and a mount ahead of it sees every caller as anonymous (it then
+        /// refuses them all when auth is required; it never serves them). The auth requirement is the
+        /// served endpoint's, derived here by <c>MountAuthRequirement</c> unless
+        /// <see cref="BifrostAppMetadataOptions.RequireAuth"/> overrides it.</para>
         /// </summary>
         public static IApplicationBuilder UseBifrostAppMetadata(
             this IApplicationBuilder app,
@@ -56,8 +62,10 @@ namespace BifrostQL.Server
             var options = new BifrostAppMetadataOptions();
             configure?.Invoke(options);
 
+            var requiresAuth = options.RequireAuth
+                ?? MountAuthRequirement.Resolve(app.ApplicationServices, options.GraphQlEndpoint);
             if (options.Enabled)
-                app.UseMiddleware<BifrostAppMetadataMiddleware>(options);
+                app.UseMiddleware<BifrostAppMetadataMiddleware>(options, requiresAuth);
 
             return app;
         }

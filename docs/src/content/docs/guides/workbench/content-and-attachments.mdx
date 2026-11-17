@@ -81,8 +81,12 @@ curl -O 'http://127.0.0.1:5000/_blob/attachments/content?k.attachment_id=1'
 curl -H 'Range: bytes=1048576-' '…/_blob/attachments/content?k.attachment_id=1'
 ```
 
-Mount it with `app.UseBifrostBlobs(...)`; the workbench desktop host serves it
-by default.
+Mount it with `app.UseBifrostBlobs(...)` after `UseBifrostQL()` /
+`UseBifrostEndpoints()`; the workbench desktop host serves it by default. The
+mount takes the auth requirement of the GraphQL endpoint it reads from
+(`Endpoint`, or the single registered one), so a blob URL is gated exactly like
+the rows it serves. It requires a signed-in caller when that endpoint cannot be
+identified, and `RequireAuth` overrides the inherited value.
 
 The **IoT Sensors** Quick Start schema ships with both: JSON documents in its
 `specifications`, `metadata`, and `configuration` columns, and real PNG photos

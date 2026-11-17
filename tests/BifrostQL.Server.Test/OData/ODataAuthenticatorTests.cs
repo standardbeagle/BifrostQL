@@ -75,11 +75,11 @@ namespace BifrostQL.Server.Test.OData
             var auth = Build(store);
 
             var ok = new DefaultHttpContext();
-            ok.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ok, ODataTestAuth.Username, ODataTestAuth.Password);
             (await auth.AuthenticateAsync(ok, CancellationToken.None)).Should().NotBeEmpty();
 
             var wrong = new DefaultHttpContext();
-            wrong.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, "wrong-password");
+            ODataTestAuth.SetBasicOverHttps(wrong, ODataTestAuth.Username, "wrong-password");
             await AuthShouldThrow(auth, wrong);
         }
 
@@ -97,7 +97,7 @@ namespace BifrostQL.Server.Test.OData
             var store = new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal("basic-sub"));
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ctx, ODataTestAuth.Username, ODataTestAuth.Password);
 
             var userContext = await Build(store).AuthenticateAsync(ctx, CancellationToken.None);
 
@@ -122,7 +122,7 @@ namespace BifrostQL.Server.Test.OData
             var store = new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, "wrong-password");
+            ODataTestAuth.SetBasicOverHttps(ctx, ODataTestAuth.Username, "wrong-password");
 
             var ex = await AuthShouldThrow(Build(store), ctx);
             ex.HttpStatus.Should().Be(401);
@@ -134,7 +134,7 @@ namespace BifrostQL.Server.Test.OData
             var store = new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader("nobody", ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ctx, "nobody", ODataTestAuth.Password);
 
             var ex = await AuthShouldThrow(Build(store), ctx);
             ex.HttpStatus.Should().Be(401);
@@ -160,7 +160,7 @@ namespace BifrostQL.Server.Test.OData
             hasher.VerifyCalls = 0; // discard the constructor's dummy-hash provisioning
 
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(username, ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ctx, username, ODataTestAuth.Password);
 
             await AuthShouldThrow(auth, ctx);
             hasher.VerifyCalls.Should().Be(1,
@@ -240,7 +240,7 @@ namespace BifrostQL.Server.Test.OData
             var ctx = new DefaultHttpContext();
             ctx.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(ip);
             ctx.Connection.RemotePort = 40000 + Random.Shared.Next(1000); // ports must not split a source
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(username, password);
+            ODataTestAuth.SetBasicOverHttps(ctx, username, password);
             return ctx;
         }
 
@@ -266,7 +266,7 @@ namespace BifrostQL.Server.Test.OData
             var store = new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal(), enabled: false);
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ctx, ODataTestAuth.Username, ODataTestAuth.Password);
 
             var ex = await AuthShouldThrow(Build(store), ctx);
             ex.HttpStatus.Should().Be(401);
@@ -278,7 +278,7 @@ namespace BifrostQL.Server.Test.OData
             // Basic is optional; a Bearer-only deployment registers no store, so a Basic
             // request must fail closed rather than degrade to anonymous.
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ctx, ODataTestAuth.Username, ODataTestAuth.Password);
 
             var ex = await AuthShouldThrow(Build(store: null), ctx);
             ex.HttpStatus.Should().Be(401);
@@ -288,7 +288,7 @@ namespace BifrostQL.Server.Test.OData
         public async Task Malformed_basic_header_fails_closed_with_401()
         {
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = "Basic not-valid-base64!!";
+            ODataTestAuth.SetAuthorizationOverHttps(ctx, "Basic not-valid-base64!!");
 
             var ex = await AuthShouldThrow(BuildWithUser(), ctx);
             ex.HttpStatus.Should().Be(401);
@@ -302,7 +302,7 @@ namespace BifrostQL.Server.Test.OData
             var store = new FakeODataBasicCredentialStore().Add(
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.SubjectlessPrincipal());
             var ctx = new DefaultHttpContext();
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, ODataTestAuth.Password);
+            ODataTestAuth.SetBasicOverHttps(ctx, ODataTestAuth.Username, ODataTestAuth.Password);
 
             var ex = await AuthShouldThrow(Build(store), ctx);
             ex.HttpStatus.Should().Be(403);

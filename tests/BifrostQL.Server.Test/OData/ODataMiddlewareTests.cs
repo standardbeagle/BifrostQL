@@ -78,7 +78,7 @@ namespace BifrostQL.Server.Test.OData
                 ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
             var ctx = new DefaultHttpContext();
             ctx.Request.Method = "GET";
-            ctx.Request.Headers.Authorization = ODataTestAuth.BasicHeader(ODataTestAuth.Username, "wrong-password");
+            ODataTestAuth.SetBasicOverHttps(ctx, ODataTestAuth.Username, "wrong-password");
 
             var (status, _, body) = await Run(Build(store), ctx);
 

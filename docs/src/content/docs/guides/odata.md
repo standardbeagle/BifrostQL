@@ -69,6 +69,7 @@ enabling OData touches no GraphQL or binary service.
 | `MaxBasicAuthAttemptsPerSource` | `100` | Basic credential attempts one client IP may make per `BasicAuthAttemptWindow`, across all usernames. |
 | `MaxBasicAuthAttemptsPerAccount` | `100` | Basic credential attempts one username may receive per `BasicAuthAttemptWindow`, across all clients. |
 | `BasicAuthAttemptWindow` | `1 min` | The window both Basic attempt caps count over. |
+| `AllowCleartextBasicAuth` | `false` | Development-only. Accept Basic credentials on a non-HTTPS request. Off: such a request gets `403 HttpsRequired` before the credential is read. On: a startup warning is logged. Behind a TLS-terminating proxy, configure forwarded headers instead (see [Basic over HTTPS only](#basic-over-https-only)). |
 
 ## Authentication
 
@@ -102,8 +103,8 @@ from "wrong password" by timing or response (anti-enumeration). Basic attempts
 are capped per client IP and per username (`MaxBasicAuthAttemptsPerSource`,
 `MaxBasicAuthAttemptsPerAccount`). An attempt over either cap is refused with
 `429` before the credential store is asked or any hashing runs, with the same
-answer whether or not the account exists. Basic credentials travel in the clear
-on plain HTTP; serve the endpoint over HTTPS when you accept them. A subject-less
+answer whether or not the account exists. Basic on plain HTTP is refused (see
+below). A subject-less
 principal, an unmapped OIDC issuer, or a projection that yields an empty user
 context all fail closed with `403` — never a degraded or anonymous context. No
 projection detail ever reaches the wire; it is logged server-side only.
@@ -114,6 +115,38 @@ projection detail ever reaches the wire; it is logged server-side only.
 > password itself (a plaintext-equivalent). Stores must now provision
 > `PasswordHash` with `new PasswordHasher<string>().HashPassword(username, password)`
 > at credential-creation time and discard the plaintext.
+
+### Basic over HTTPS only
+
+A Basic request on plain HTTP is refused with `403` and code `HttpsRequired`
+("Basic credentials are accepted only over HTTPS.") before the header is
+decoded, the attempt caps are charged, or the credential store is asked. The
+answer is the same for every username and password. Bearer requests are not
+affected by this check.
+
+The endpoint decides "HTTPS" from `HttpRequest.IsHttps` and nothing else. It
+never reads a raw `X-Forwarded-Proto` header, because any client can send one.
+Behind a TLS-terminating reverse proxy, `IsHttps` describes the proxy-to-app hop
+until you tell ASP.NET Core to trust the proxy:
+
+```csharp
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownProxies.Add(IPAddress.Parse("10.0.0.5")); // your proxy
+});
+
+app.UseForwardedHeaders(); // before UseBifrostOData()
+app.UseBifrostOData();
+```
+
+For local development without TLS, set `AllowCleartextBasicAuth = true`. It is
+off by default and logs a warning at startup when on. Never enable it on a
+deployment that real clients reach.
+
+> **Breaking (unreleased):** Basic on plain HTTP used to be accepted. It now
+> returns `403 HttpsRequired` unless the request arrives over HTTPS (directly or
+> through a trusted forwarded-headers proxy) or `AllowCleartextBasicAuth` is set.
 
 ### Credential caveats for BI tools
 
@@ -261,6 +294,7 @@ Every error is an OData v4 JSON error envelope:
 |--------|--------|------|
 | `400` | `BadRequest` | A malformed request the caller can correct — an unknown/ambiguous property, a non-integer or out-of-range `$top`/`$skip`, a duplicated or unsupported query option, a `$filter` that exceeds a resource bound, a rejected `$expand` shape, or a bad continuation token. |
 | `401` | `Unauthorized` | Absent, malformed, or invalid credentials. The response carries a `WWW-Authenticate: Basic realm="…", Bearer` challenge. |
+| `403` | `HttpsRequired` | A Basic credential arrived on plain HTTP and `AllowCleartextBasicAuth` is off. Refused before the credential is read. |
 | `403` | `Forbidden` | Authenticated, but the identity is unacceptable — subject-less, unmapped issuer, or an empty projection. |
 | `404` | `NotFound` | The addressed entity set does not exist **or is not visible to this identity** — deliberately indistinguishable, so the endpoint is never an existence oracle for tables the caller may not read. |
 | `501` | `NotImplemented` | A recognized addressing shape that is out of scope for this endpoint (key predicate, navigation segment). |

@@ -27,6 +27,15 @@ namespace BifrostQL.Server.OData
             => new("Unauthorized", 401, message);
 
         /// <summary>
+        /// A Basic credential arrived on a cleartext (non-HTTPS) request while
+        /// <see cref="ODataOptions.AllowCleartextBasicAuth"/> is off. Raised before the header is
+        /// decoded, so the text never depends on the account. 403, not 401: re-sending the same
+        /// credential over the same transport cannot succeed.
+        /// </summary>
+        public static ODataProtocolException HttpsRequired()
+            => new("HttpsRequired", 403, "Basic credentials are accepted only over HTTPS.");
+
+        /// <summary>
         /// The caller's source or the presented username has used its credential attempts for
         /// the current window. The text is the same whether or not the account exists.
         /// </summary>

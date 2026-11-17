@@ -36,6 +36,20 @@ namespace BifrostQL.Server.Test.OData
 
         public static string BasicHeader(string username, string password)
             => "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+
+        /// <summary>
+        /// Puts a Basic credential on an HTTPS request. Basic on cleartext is refused before the
+        /// header is read (<see cref="ODataOptions.AllowCleartextBasicAuth"/>), so every fact
+        /// exercising the credential path itself must run over HTTPS.
+        /// </summary>
+        public static void SetBasicOverHttps(Microsoft.AspNetCore.Http.HttpContext ctx, string username, string password)
+            => SetAuthorizationOverHttps(ctx, BasicHeader(username, password));
+
+        public static void SetAuthorizationOverHttps(Microsoft.AspNetCore.Http.HttpContext ctx, string authorization)
+        {
+            ctx.Request.IsHttps = true;
+            ctx.Request.Headers.Authorization = authorization;
+        }
     }
 
     /// <summary>

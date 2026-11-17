@@ -93,5 +93,21 @@ namespace BifrostQL.Server.OData
 
         /// <summary>The window both Basic attempt caps count over. Default: 1 minute.</summary>
         public TimeSpan BasicAuthAttemptWindow { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
+        /// Development-only override: accept <c>Basic</c> credentials on a cleartext (non-HTTPS)
+        /// request. <b>Off by default.</b> While off, a Basic request whose
+        /// <c>HttpRequest.IsHttps</c> is false is refused with 403 <c>HttpsRequired</c> before the
+        /// header is decoded, the attempt limiter is charged or the credential store is asked, so
+        /// the refusal never varies by account. Turning it on logs a startup warning. Bearer
+        /// requests are unaffected.
+        ///
+        /// <para>Behind a TLS-terminating reverse proxy, <c>IsHttps</c> describes the proxy-to-app
+        /// hop unless the host runs <c>UseForwardedHeaders</c> (with <c>XForwardedProto</c> and the
+        /// proxy in <c>KnownProxies</c>/<c>KnownNetworks</c>) before <c>UseBifrostOData</c>.
+        /// Configure that instead of this override. A raw <c>X-Forwarded-Proto</c> header is
+        /// client-forgeable and is never read here.</para>
+        /// </summary>
+        public bool AllowCleartextBasicAuth { get; set; }
     }
 }

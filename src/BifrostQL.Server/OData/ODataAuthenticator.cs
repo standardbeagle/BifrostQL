@@ -50,6 +50,7 @@ namespace BifrostQL.Server.OData
         private readonly IODataBasicCredentialStore? _basicStore;
         private readonly IPasswordHasher<string> _passwordHasher;
         private readonly ODataBasicAuthRateLimiter _basicAttempts;
+        private readonly bool _allowCleartextBasicAuth;
         private readonly ILogger? _logger;
 
         /// <param name="options">Supplies the Basic attempt caps; null uses <see cref="ODataOptions"/> defaults.</param>
@@ -80,6 +81,15 @@ namespace BifrostQL.Server.OData
             _basicAttempts = new ODataBasicAuthRateLimiter(
                 options.MaxBasicAuthAttemptsPerSource, options.MaxBasicAuthAttemptsPerAccount,
                 options.BasicAuthAttemptWindow, clock);
+            _allowCleartextBasicAuth = options.AllowCleartextBasicAuth;
+
+            // The middleware takes this authenticator as a constructor dependency, and the host
+            // builds middleware when it builds the pipeline, so this warning fires at startup.
+            if (_allowCleartextBasicAuth)
+                _logger?.LogWarning(
+                    "OData AllowCleartextBasicAuth is ON: Basic passwords are accepted on non-HTTPS " +
+                    "requests and may cross the wire in the clear. Development only. Behind a " +
+                    "TLS-terminating proxy, configure UseForwardedHeaders instead.");
         }
 
         /// <summary>
@@ -91,7 +101,17 @@ namespace BifrostQL.Server.OData
         {
             var authHeader = context.Request.Headers.Authorization.ToString();
             if (authHeader.StartsWith(BasicPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                // Refuse a Basic credential on cleartext before decoding it, charging the attempt
+                // limiter or asking the store (new-front-door checklist), so the refusal never
+                // varies by account. Request.IsHttps is the only transport signal read. Behind a
+                // TLS-terminating proxy it is true only when the host's UseForwardedHeaders
+                // middleware trusted that proxy's X-Forwarded-Proto; the raw header is
+                // client-forgeable and never consulted here.
+                if (!context.Request.IsHttps && !_allowCleartextBasicAuth)
+                    throw ODataProtocolException.HttpsRequired();
                 return await AuthenticateBasicAsync(context, authHeader, ct);
+            }
 
             // Bearer (or any scheme the host's auth middleware already validated): the principal
             // is on HttpContext.User. An unauthenticated request fails closed with 401.

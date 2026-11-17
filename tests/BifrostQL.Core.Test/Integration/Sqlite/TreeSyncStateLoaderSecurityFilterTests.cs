@@ -116,7 +116,9 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
         // fix this would load and return tenant 2's row unfiltered — usable as an
         // existence probe. The security-filtered load must treat it as not found.
         var tree = new Dictionary<string, object?> { ["company_id"] = 2L, ["name"] = "Globex" };
-        var existing = await loader.LoadAsync(companies, tree, _factory);
+        await using var conn = _factory.GetConnection();
+        await conn.OpenAsync();
+        var existing = await loader.LoadAsync(companies, tree, conn);
 
         existing.Should().BeNull();
     }
@@ -140,7 +142,9 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
             ["name"] = "Acme",
             ["notes"] = new List<Dictionary<string, object?>>(),
         };
-        var existing = await loader.LoadAsync(companies, tree, _factory);
+        await using var conn = _factory.GetConnection();
+        await conn.OpenAsync();
+        var existing = await loader.LoadAsync(companies, tree, conn);
 
         existing.Should().NotBeNull();
         var notes = (List<Dictionary<string, object?>>)existing!["notes"]!;
@@ -168,7 +172,9 @@ public sealed class TreeSyncStateLoaderSecurityFilterTests : IDisposable
             _factory.Dialect, model, new Dictionary<string, object?>());
 
         var tree = new Dictionary<string, object?> { ["company_id"] = 2L, ["name"] = "Globex" };
-        var existing = await loader.LoadAsync(companies, tree, _factory);
+        await using var conn = _factory.GetConnection();
+        await conn.OpenAsync();
+        var existing = await loader.LoadAsync(companies, tree, conn);
 
         existing.Should().NotBeNull();
     }

@@ -229,7 +229,7 @@ public sealed class SlowQueryLogger : IQueryObserver
 
 ## Nested mutations run the full pipeline
 
-When you write a parent row and its children in one mutation (tree-sync), **every nested operation flows through the same transformer pipeline** and the whole tree commits in **one SQL-level transaction** (`BEGIN … COMMIT`, rolled back on any failure). Tenant filters, soft-delete rewrites, audit columns, validators, and before-commit hooks all apply to children exactly as they do to top-level rows — there is no "back door" that skips your rules.
+When you write a parent row and its children in one mutation (tree-sync), **every nested operation flows through the same transformer pipeline** and the whole tree commits in **one SQL-level transaction** (`BEGIN … COMMIT`, rolled back on any failure). The existing rows the diff is computed from are read inside that same transaction under an update lock (SQL Server `UPDLOCK`, Postgres/MySQL `FOR UPDATE`), so no other writer can change a loaded row between the diff and the writes. On Postgres the lock on the root row also holds a concurrent insert of a child under that root until the sync commits. SQLite has no row locks; a concurrent writer there gets `SQLITE_BUSY`. Tenant filters, soft-delete rewrites, audit columns, validators, and before-commit hooks all apply to children exactly as they do to top-level rows — there is no "back door" that skips your rules.
 
 ## Fail fast on bad config
 

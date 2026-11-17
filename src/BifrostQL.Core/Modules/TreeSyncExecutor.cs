@@ -72,6 +72,50 @@ public sealed class TreeSyncExecutor
         if (operations.Count == 0)
             return null;
         GuardNotHistoryTargets(operations, model);
+        return await RunInTreeTransactionAsync(connFactory, conn => RunOperationsAsync(
+            operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
+            connFactory, transformers, model, userContext, services, recordsOperationId: false, cancellationToken),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Loads the existing subtree for <paramref name="tree"/>, diffs it and writes the
+    /// operations, all on one connection inside one transaction. The loader takes an update
+    /// lock on every row it reads, so no other writer can change or delete a loaded row
+    /// between the diff and the writes; on Postgres the root's lock also holds back a
+    /// concurrent child INSERT (its FK check needs a key-share lock on the parent) until the
+    /// sync commits. Isolation stays READ COMMITTED.
+    /// </summary>
+    public async Task<object?> SyncAsync(
+        IDbTable table,
+        Dictionary<string, object?> tree,
+        TreeSyncStateLoader loader,
+        TreeSyncEngine engine,
+        IDbConnFactory connFactory,
+        IMutationTransformers transformers,
+        IDbModel model,
+        IDictionary<string, object?> userContext,
+        IServiceProvider? services,
+        CancellationToken cancellationToken = default)
+    {
+        return await RunInTreeTransactionAsync(connFactory, async conn =>
+        {
+            var existing = await loader.LoadAsync(table, tree, conn, cancellationToken);
+            var operations = engine.ComputeOperations(table, tree, existing);
+            GuardNotHistoryTargets(operations, model);
+            if (operations.Count == 0)
+                return new TreeRun(null, null);
+            return await RunOperationsAsync(
+                operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
+                connFactory, transformers, model, userContext, services, recordsOperationId: false, cancellationToken);
+        }, cancellationToken);
+    }
+
+    // Opens a connection and runs body inside the tree's SQL-level transaction: commit on
+    // success, rollback on any failure.
+    private async Task<object?> RunInTreeTransactionAsync(
+        IDbConnFactory connFactory, Func<DbConnection, Task<TreeRun>> body, CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
         await using var conn = connFactory.GetConnection();
@@ -84,11 +128,7 @@ public sealed class TreeSyncExecutor
         TreeRun run;
         try
         {
-            // Per-TRANSACTION state for the whole tree (the deferred held change set every
-            // node's delta attaches to). Per-ACTION state is built fresh for each operation.
-            run = await RunOperationsAsync(
-                operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
-                connFactory, transformers, model, userContext, services, recordsOperationId: false, cancellationToken);
+            run = await body(conn);
             await ExecuteRawAsync(conn, _dialect.CommitTransactionSql, cancellationToken);
         }
         catch (Exception ex)

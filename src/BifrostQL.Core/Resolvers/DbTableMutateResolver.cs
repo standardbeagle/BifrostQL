@@ -413,15 +413,12 @@ namespace BifrostQL.Core.Resolvers
             // tenant's root primary key loaded and diffed that tenant's row.
             var loader = new TreeSyncStateLoader(
                 dialect, model, context.UserContext, context.RequestServices);
-            var existing = await loader.LoadAsync(table, tree, conFactory, context.CancellationToken);
-
-            var engine = new TreeSyncEngine(model);
-            var operations = engine.ComputeOperations(table, tree, existing);
-
+            // Load, diff and write share one connection and one transaction (SyncAsync),
+            // so a concurrent writer cannot slip a change in between the load and the writes.
             var executor = new TreeSyncExecutor(dialect);
-            var rootId = await executor.ExecuteAsync(
-                operations, conFactory, mutationTransformers, model, context.UserContext, context.RequestServices,
-                context.CancellationToken);
+            var rootId = await executor.SyncAsync(
+                table, tree, loader, new TreeSyncEngine(model), conFactory, mutationTransformers, model,
+                context.UserContext, context.RequestServices, context.CancellationToken);
             // On a pure insert the executor returns the generated PK; on an update
             // the root already has one, so fall back to the submitted key value.
             rootId ??= RootKeyValue(table, tree);

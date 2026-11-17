@@ -102,7 +102,9 @@ public sealed class TreeSyncMultiLevelTests : IDisposable
         };
 
         var loader = new TreeSyncStateLoader(_factory.Dialect, model, new Dictionary<string, object?>());
-        var existing = await loader.LoadAsync(organizations, tree, _factory);
+        await using var conn = _factory.GetConnection();
+        await conn.OpenAsync();
+        var existing = await loader.LoadAsync(organizations, tree, conn);
         var ops = new TreeSyncEngine(model).ComputeOperations(organizations, tree, existing);
 
         // The grandchild must be reconciled as an UPDATE (loader saw it), never an

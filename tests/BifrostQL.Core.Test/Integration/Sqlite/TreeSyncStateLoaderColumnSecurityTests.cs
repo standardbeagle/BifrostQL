@@ -113,7 +113,9 @@ public sealed class TreeSyncStateLoaderColumnSecurityTests : IDisposable
             Services());
 
         var tree = new Dictionary<string, object?> { ["person_id"] = 1L, ["name"] = "ada" };
-        return await loader.LoadAsync(people, tree, _factory);
+        await using var conn = _factory.GetConnection();
+        await conn.OpenAsync();
+        return await loader.LoadAsync(people, tree, conn);
     }
 
     [Fact]
@@ -149,7 +151,9 @@ public sealed class TreeSyncStateLoaderColumnSecurityTests : IDisposable
             ["name"] = "ada",
             ["ssn"] = Secret,
         };
-        var existing = await loader.LoadAsync(people, tree, _factory);
+        await using var conn = _factory.GetConnection();
+        await conn.OpenAsync();
+        var existing = await loader.LoadAsync(people, tree, conn);
         var ops = new TreeSyncEngine(model).ComputeOperations(people, tree, existing);
 
         ops.Should().BeEmpty();

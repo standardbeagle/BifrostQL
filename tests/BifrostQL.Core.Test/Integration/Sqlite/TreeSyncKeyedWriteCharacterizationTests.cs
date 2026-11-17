@@ -495,7 +495,9 @@ public sealed class TreeSyncKeyedWriteCharacterizationTests : IDisposable
         var orders = model.GetTableFromDbName("orders");
         var factory = Logging(captured);
         var loader = new TreeSyncStateLoader(_raw.Dialect, model, UserContext());
-        var existing = await loader.LoadAsync(orders, tree, factory);
+        await using var conn = factory.GetConnection();
+        await conn.OpenAsync();
+        var existing = await loader.LoadAsync(orders, tree, conn);
         var ops = new TreeSyncEngine(model).ComputeOperations(orders, tree, existing);
         return await new TreeSyncExecutor(_raw.Dialect).ExecuteAsync(
             ops, factory, Transformers(), model, UserContext());

@@ -58,11 +58,17 @@ public sealed class TreeSyncStateLoader
     /// <summary>
     /// Returns the existing subtree for the submitted root, or null when the root
     /// has no primary key, the row does not exist, or the key is composite.
+    ///
+    /// Reads on <paramref name="conn"/> (open), which is the sync's write connection:
+    /// <see cref="TreeSyncExecutor.SyncAsync"/> loads inside the transaction that applies
+    /// the diff. Every read takes the dialect's update lock (SQL Server <c>UPDLOCK</c>,
+    /// Postgres/MySQL <c>FOR UPDATE</c>), so the loaded rows stay as loaded until the
+    /// transaction ends. Outside a transaction the lock is released when the statement ends.
     /// </summary>
     public async Task<Dictionary<string, object?>?> LoadAsync(
         IDbTable table,
         Dictionary<string, object?> submitted,
-        IDbConnFactory connFactory,
+        DbConnection conn,
         CancellationToken cancellationToken = default)
     {
         var keyCol = SingleKey(table);
@@ -70,9 +76,6 @@ public sealed class TreeSyncStateLoader
             return null;
         if (!TryGetValueCI(submitted, keyCol.ColumnName, out var pk) || pk == null)
             return null;
-
-        await using var conn = connFactory.GetConnection();
-        await conn.OpenAsync(cancellationToken);
 
         var row = await LoadRowAsync(table, keyCol, pk, conn, cancellationToken);
         if (row == null)
@@ -243,7 +246,9 @@ public sealed class TreeSyncStateLoader
             ? whereClause
             : $"{whereClause} AND ({securityWhere})";
 
-        var sql = $"SELECT {columnSql} FROM {tableRef} WHERE {combinedWhere}";
+        // The update lock holds every loaded row until the sync's transaction ends, so a
+        // concurrent writer cannot change or delete a row between this diff and its writes.
+        var sql = $"SELECT {columnSql} FROM {tableRef}{_dialect.UpdateLockTableHint} WHERE {combinedWhere}{_dialect.UpdateLockClause}";
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;

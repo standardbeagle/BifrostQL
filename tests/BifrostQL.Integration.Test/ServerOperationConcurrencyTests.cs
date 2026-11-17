@@ -1125,8 +1125,10 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
             [LinkTo("sync_notes")] = new List<object?>(),
         };
 
+        await using var conn = ConnFactory.GetConnection();
+        await conn.OpenAsync();
         var loaded = await new TreeSyncStateLoader(ConnFactory.Dialect, Model, new Dictionary<string, object?>())
-            .LoadAsync(orders, submitted, ConnFactory);
+            .LoadAsync(orders, submitted, conn);
 
         loaded.Should().NotBeNull("the root's key arrives as text");
         loaded!["title"].Should().Be("mine");
@@ -1138,7 +1140,7 @@ public sealed class PostgresServerOperationConcurrencyTests : ServerOperationRow
         var imports = Model.GetTableFromDbName("sync_imports");
         var importNotes = imports.MultiLinks.Single(link => link.Value.ChildTable.DbName == "sync_notes").Key;
         var loadedImport = await new TreeSyncStateLoader(ConnFactory.Dialect, Model, new Dictionary<string, object?>())
-            .LoadAsync(imports, new Dictionary<string, object?> { ["code"] = import.ToString(), [importNotes] = new List<object?>() }, ConnFactory);
+            .LoadAsync(imports, new Dictionary<string, object?> { ["code"] = import.ToString(), [importNotes] = new List<object?>() }, conn);
         ((List<Dictionary<string, object?>>)loadedImport![importNotes]!).Should().ContainSingle()
             .Which["body"].Should().Be("import note", "the parent's text key meets a uuid child column");
     }

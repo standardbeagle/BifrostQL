@@ -203,6 +203,51 @@ describe("DashboardPane", () => {
     expect(screen.getByLabelText("Customers").textContent).toContain("3");
   });
 
+  it("shows a tile whose request builder throws as a tile error, not a blank app", async () => {
+    // assertDashboardName throws synchronously inside the request builder; it
+    // used to escape the effect and unmount the whole pane (no error boundary).
+    const badName: DashboardDefinition = { ...definition, tiles: definition.tiles.map((tile) => tile.id === "orders" ? { ...tile, config: { table: "not a name", label: "Orders" } } : tile) };
+    await openDashboardPane(memoryStore([dashboard(badName)]));
+    expect((await screen.findAllByRole("alert")).some((alert) => alert.textContent?.includes("Count failed: Invalid GraphQL table."))).toBe(true);
+    expect(screen.getByLabelText("Customers").textContent).toContain("3");
+  });
+
+  it("disables the add-tile buttons until the schema loads, and says why when it fails", async () => {
+    let failSchema: (reason: Error) => void = () => {};
+    const live = { query: vi.fn((query: string) => query.includes("DashboardSchema")
+      ? new Promise((_, reject) => { failSchema = reject; })
+      : fetcher().query(query)) };
+    render(<DashboardPane fetcher={live as never} store={memoryStore() as never} />);
+    expect((screen.getByRole("button", { name: "Add chart" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Add table" }) as HTMLButtonElement).disabled).toBe(true);
+    failSchema(new Error("schema offline"));
+    expect(await screen.findByText(/Schema failed to load.*schema offline/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Add count" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("reports a table tile with no columns once instead of refetching in a loop", async () => {
+    const noColumns: DashboardDefinition = { ...definition, tiles: [{ ...definition.tiles[3], config: { table: "orders", columns: [], limit: 3 } }] };
+    const live = fetcher();
+    await openDashboardPane(memoryStore([dashboard(noColumns)]), live);
+    expect(await screen.findByText("Table failed: Table tile has no columns to show.")).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((live.query.mock.calls as Array<[string]>).filter(([query]) => String(query).includes("DashboardTable"))).toHaveLength(0);
+  });
+
+  it("does not refetch a saved-query tile on each dashboard-name keystroke", async () => {
+    const visualQuery = { id: "north-orders", type: "query", name: "North orders", version: 1, definition: { kind: "bifrost.visual-query", version: 1, state: { tables: [{ table: "dbo.orders", alias: null }], columns: [], joins: [], filter: null, rowLimit: null } } };
+    const bound: DashboardDefinition = { ...definition, tiles: [{ id: "north", kind: "count", title: "North", ref: "north-orders", layout: { x: 0, y: 0, w: 3, h: 3 } }] };
+    const live = fetcher();
+    await openDashboardPane(memoryStore([dashboard(bound), visualQuery] as any[]), live);
+    await waitFor(() => expect(screen.getByLabelText("North orders").textContent).toContain("7"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    const countCalls = () => (live.query.mock.calls as Array<[string]>).filter(([query]) => String(query).includes("DashboardCount")).length;
+    const before = countCalls();
+    for (const value of ["O", "Op", "Ops"]) fireEvent.change(screen.getByLabelText("Dashboard name"), { target: { value } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(countCalls()).toBe(before);
+  });
+
   it("does not cascade-delete dashboards when another saved object disappears", async () => {
     const store = memoryStore([dashboard({ ...definition, tiles: [{ ...definition.tiles[1], ref: "query-1", config: undefined }] })]);
     // Simulate the unrelated saved-object deletion: only that object leaves the store.

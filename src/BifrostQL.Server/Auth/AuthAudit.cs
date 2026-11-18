@@ -60,6 +60,7 @@ namespace BifrostQL.Server.Auth
         public const string Administrator = "administrator";
         public const string Roles = "roles";
         public const string Tenant = "tenant";
+        public const string RateLimited = "rate-limited";
     }
 
     /// <summary>

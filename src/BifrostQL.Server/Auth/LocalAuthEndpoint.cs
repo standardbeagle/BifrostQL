@@ -127,7 +127,7 @@ namespace BifrostQL.Server.Auth
             var limiter = context.RequestServices.GetRequiredService<LocalLoginRateLimiter>();
             if (!limiter.TryLogin(ProtocolSourceKey.Of(RemoteEndPoint(context)), request.Login))
             {
-                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                await RefuseRateLimitedAsync(context, AuthAuditKind.LoginFailed).ConfigureAwait(false);
                 return;
             }
 
@@ -339,6 +339,20 @@ namespace BifrostQL.Server.Auth
             context.ShouldRenew = true;
         }
 
+        /// <summary>
+        /// Answers 429 for an attempt the rate limiter refused and audits it as a failed
+        /// <paramref name="kind"/> (PCI DSS 10.2.1.4). The refusal runs before any account lookup, so
+        /// the event names no subject, and it never records the login name typed: a mistyped
+        /// password in the login field would otherwise land in the audit log.
+        /// </summary>
+        private static async Task RefuseRateLimitedAsync(HttpContext context, AuthAuditKind kind)
+        {
+            await context.RequestServices.GetRequiredService<LocalAuthAudit>().RecordAsync(Now(context), kind,
+                AuthAuditOutcome.Failure, null, null, SourceIp(context), AuthAuditReasons.RateLimited,
+                context.RequestAborted).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        }
+
         private static async Task RejectAsync(CookieValidatePrincipalContext context)
         {
             context.RejectPrincipal();
@@ -440,7 +454,7 @@ namespace BifrostQL.Server.Auth
             var limiter = context.RequestServices.GetRequiredService<LocalLoginRateLimiter>();
             if (!limiter.TryLogin(ProtocolSourceKey.Of(RemoteEndPoint(context)), request.Login))
             {
-                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                await RefuseRateLimitedAsync(context, AuthAuditKind.PasswordChangeRejected).ConfigureAwait(false);
                 return;
             }
 

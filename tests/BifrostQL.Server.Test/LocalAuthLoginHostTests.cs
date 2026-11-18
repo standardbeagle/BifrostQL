@@ -693,6 +693,34 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task RateLimitedAttempts_AreAudited_WithoutTheTypedLoginName()
+        {
+            var client = await StartAsync(o =>
+            {
+                o.MaxLoginAttemptsPerSource = 100;
+                o.MaxLoginAttemptsPerAccount = 1;
+            });
+
+            (await PostLoginAsync(client, "wrong", "10.0.0.9")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "control: the first attempt is inside the window");
+            (await PostLoginAsync(client, Password, "10.0.0.9")).StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+            (await ChangePasswordAsync(client, Password, "a brand new passphrase 9")).StatusCode
+                .Should().Be(HttpStatusCode.TooManyRequests);
+
+            var audit = await AuditAsync();
+            var refusals = audit.Where(e => e.Reason == AuthAuditReasons.RateLimited).ToList();
+            refusals.Select(e => e.Kind).Should().BeEquivalentTo(new[]
+            {
+                AuthAuditKind.LoginFailed, AuthAuditKind.PasswordChangeRejected,
+            }, "PCI DSS 10.2.1.4: a refused access attempt is an invalid access attempt");
+            refusals.Should().OnlyContain(e => e.Outcome == AuthAuditOutcome.Failure && e.SubjectId == null,
+                "the refusal runs before any account lookup, so it names no account");
+            refusals.Single(e => e.Kind == AuthAuditKind.LoginFailed).SourceIp.Should().Be("10.0.0.9");
+            refusals.Should().OnlyContain(e => e.ActorId == null && e.Reason != Login && e.SourceIp != Login,
+                "the audit never records the login name typed");
+        }
+
+        [Fact]
         public async Task LoginAudit_RecordsSuccessAndFailure_WithoutCredentials()
         {
             var client = await StartAsync(_ => { });

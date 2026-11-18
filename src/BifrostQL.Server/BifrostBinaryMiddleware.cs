@@ -412,6 +412,7 @@ namespace BifrostQL.Server
 
             // Arms ReaderStop CloseHandshakeTimeout after the close frame, on the injected clock.
             private ITimer? _readerStopTimer;
+            private int _readerStopArmed;
 
             private int _readDeadlinePassed;
             private Task _readDeadlineClose = Task.CompletedTask;
@@ -651,20 +652,16 @@ namespace BifrostQL.Server
             /// </summary>
             private void StopReaderAfterCloseHandshake()
             {
-                var timer = _timeProvider.CreateTimer(static state =>
+                if (Interlocked.Exchange(ref _readerStopArmed, 1) != 0)
+                    return;
+                Volatile.Write(ref _readerStopTimer, _timeProvider.CreateTimer(static state =>
                 {
                     try
                     {
                         ((CancellationTokenSource)state!).Cancel();
                     }
                     catch (ObjectDisposedException) { }
-                }, ReaderStop, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-                if (Interlocked.CompareExchange(ref _readerStopTimer, timer, null) != null)
-                {
-                    timer.Dispose();
-                    return;
-                }
-                timer.Change(CloseHandshakeTimeout, Timeout.InfiniteTimeSpan);
+                }, ReaderStop, CloseHandshakeTimeout, Timeout.InfiniteTimeSpan));
             }
 
             public void Dispose()

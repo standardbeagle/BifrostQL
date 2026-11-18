@@ -103,6 +103,11 @@ namespace BifrostQL.Server
         /// abandoned, with an Error frame coded <see cref="BinaryErrorCode.ChunkAckTimeout"/>.
         /// Runs on the registered <see cref="TimeProvider"/>.
         /// </param>
+        /// <param name="writeTimeout">
+        /// Deadline for one socket write, every frame the server sends included (default 30 s).
+        /// A peer that stops reading is aborted when a write misses it, which releases its
+        /// admission slot. Runs on the registered <see cref="TimeProvider"/>.
+        /// </param>
         /// <returns>The application builder for chaining.</returns>
         public static IApplicationBuilder UseBifrostBinary(
             this IApplicationBuilder app,
@@ -115,7 +120,8 @@ namespace BifrostQL.Server
             int maxConnections = BifrostBinaryMiddleware.DefaultMaxConnections,
             TimeSpan? firstFrameTimeout = null,
             TimeSpan? idleTimeout = null,
-            TimeSpan? ackTimeout = null)
+            TimeSpan? ackTimeout = null,
+            TimeSpan? writeTimeout = null)
         {
             var engine = app.ApplicationServices.GetRequiredService<IBifrostEngine>();
             // The schema-resolution key is the GraphQL endpoint path, not the WebSocket mount
@@ -145,6 +151,7 @@ namespace BifrostQL.Server
                     // "unset" sentinel here.
                     firstFrameTimeout ?? default,
                     idleTimeout ?? default,
+                    writeTimeout ?? default,
                     app.ApplicationServices.GetService<TimeProvider>() ?? TimeProvider.System));
             return app;
         }

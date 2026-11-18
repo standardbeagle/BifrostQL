@@ -53,6 +53,18 @@ namespace BifrostQL.Server.Test
         /// </summary>
         public int? FailAfterSends { get; set; }
 
+        /// <summary>
+        /// When set, the send past this many frames never completes: a peer that stopped reading
+        /// (a zero TCP window). The parked send honours cancellation the way a real WebSocket
+        /// does, by aborting the socket. <see cref="SendStalled"/> completes once a send parks.
+        /// </summary>
+        public int? StallAfterSends { get; init; }
+
+        private readonly TaskCompletionSource _sendStalled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes when a send parks under <see cref="StallAfterSends"/>.</summary>
+        public Task SendStalled => _sendStalled.Task;
+
         /// <summary>Queues a ChunkAck to be returned by the next ReceiveAsync.</summary>
         public void EnqueueAck(uint requestId = 0, uint sequence = 0)
         {
@@ -125,6 +137,9 @@ namespace BifrostQL.Server.Test
         {
             lock (_gate)
             {
+                if (StallAfterSends.HasValue && SentFrames.Count >= StallAfterSends.Value)
+                    return StallAsync(cancellationToken);
+
                 if (FailAfterSends.HasValue && SentFrames.Count >= FailAfterSends.Value)
                 {
                     _state = WebSocketState.Aborted;
@@ -152,6 +167,21 @@ namespace BifrostQL.Server.Test
                 Sent?.Invoke(sent);
             }
             return Task.CompletedTask;
+        }
+
+        private async Task StallAsync(CancellationToken cancellationToken)
+        {
+            _sendStalled.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // A real WebSocket aborts itself when a pending operation is cancelled.
+                Abort();
+                throw;
+            }
         }
 
         public override async Task<WebSocketReceiveResult> ReceiveAsync(
@@ -254,7 +284,11 @@ namespace BifrostQL.Server.Test
         public override string? CloseStatusDescription => null;
         public override string? SubProtocol => null;
 
-        public override void Abort() => _state = WebSocketState.Aborted;
+        public override void Abort()
+        {
+            _state = WebSocketState.Aborted;
+            _changed.Release();
+        }
         public override void Dispose() { }
 
         /// <summary>The status the server closed with, or null while the socket is open.</summary>

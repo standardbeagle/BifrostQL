@@ -95,6 +95,14 @@ namespace BifrostQL.Server
         public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromMinutes(10);
 
         /// <summary>
+        /// Default deadline for one socket write (a frame, or a close frame). A peer that stops
+        /// reading (a zero TCP window) would otherwise park the write, the send lock behind it
+        /// and the reader waiting on that lock forever, so the idle deadline never runs again and
+        /// the admission slot is never released. A write past this deadline aborts the connection.
+        /// </summary>
+        public static readonly TimeSpan DefaultWriteTimeout = TimeSpan.FromSeconds(30);
+
+        /// <summary>
         /// Whether this mount serves an endpoint that requires authentication. When true, an
         /// upgrade whose caller does not project to a real Bifrost identity is closed before a
         /// single frame is read — the binary transport carries the same GraphQL surface as the
@@ -113,6 +121,7 @@ namespace BifrostQL.Server
 
         private readonly TimeSpan _firstFrameTimeout;
         private readonly TimeSpan _idleTimeout;
+        private readonly TimeSpan _writeTimeout;
 
         /// <summary>Admitted connections on this mount (diagnostics/tests).</summary>
         internal int ActiveConnections => _limiter.Count;
@@ -155,6 +164,7 @@ namespace BifrostQL.Server
             int maxConnections = DefaultMaxConnections,
             TimeSpan firstFrameTimeout = default,
             TimeSpan idleTimeout = default,
+            TimeSpan writeTimeout = default,
             TimeProvider? timeProvider = null)
         {
             _next = next;
@@ -176,8 +186,11 @@ namespace BifrostQL.Server
                 throw new ArgumentOutOfRangeException(nameof(firstFrameTimeout));
             if (idleTimeout < TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(idleTimeout));
+            if (writeTimeout < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(writeTimeout));
             _firstFrameTimeout = firstFrameTimeout == default ? DefaultFirstFrameTimeout : firstFrameTimeout;
             _idleTimeout = idleTimeout == default ? DefaultIdleTimeout : idleTimeout;
+            _writeTimeout = writeTimeout == default ? DefaultWriteTimeout : writeTimeout;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -326,6 +339,9 @@ namespace BifrostQL.Server
             internal const int FragmentedSendMinPayload = 16 * 1024;
 
             private readonly SemaphoreSlim _sendLock = new(1, 1);
+            private readonly TimeSpan _writeTimeout;
+            private readonly TimeProvider _timeProvider;
+            private readonly ILogger _logger;
             private readonly ConcurrentDictionary<Task, byte> _running = new();
 
             // Request ids executing or transferring on this connection.
@@ -340,8 +356,18 @@ namespace BifrostQL.Server
                 public Task? Work;
             }
 
-            public BinaryConnection(WebSocket webSocket, HttpContext httpContext, ChunkSender chunkSender, ChunkBuffer chunkBuffer)
+            public BinaryConnection(
+                WebSocket webSocket,
+                HttpContext httpContext,
+                ChunkSender chunkSender,
+                ChunkBuffer chunkBuffer,
+                TimeSpan writeTimeout,
+                TimeProvider timeProvider,
+                ILogger logger)
             {
+                _writeTimeout = writeTimeout;
+                _timeProvider = timeProvider;
+                _logger = logger;
                 WebSocket = webSocket;
                 HttpContext = httpContext;
                 ChunkSender = chunkSender;
@@ -449,6 +475,8 @@ namespace BifrostQL.Server
             /// the lock only orders the writes, which a WebSocket allows one at a time. A payload
             /// of at least <see cref="FragmentedSendMinPayload"/> bytes goes out as a second
             /// fragment after the envelope, so it is never copied into a frame-sized array.
+            /// The write runs under the write deadline (<see cref="WriteWithDeadlineAsync"/>); the
+            /// wait for the lock is bounded by the same deadline on whichever write holds it.
             /// </summary>
             public async Task SendAsync(BifrostMessage message, CancellationToken cancellationToken)
             {
@@ -458,13 +486,82 @@ namespace BifrostQL.Server
                 await _sendLock.WaitAsync(cancellationToken);
                 try
                 {
-                    await WebSocket.SendAsync(head, WebSocketMessageType.Binary, endOfMessage: !fragmented, cancellationToken);
-                    if (fragmented)
-                        await WebSocket.SendAsync(payload, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+                    await WriteWithDeadlineAsync(async token =>
+                    {
+                        await WebSocket.SendAsync(head, WebSocketMessageType.Binary, endOfMessage: !fragmented, token);
+                        if (fragmented)
+                            await WebSocket.SendAsync(payload, WebSocketMessageType.Binary, endOfMessage: true, token);
+                    }, cancellationToken);
                 }
                 finally
                 {
                     _sendLock.Release();
+                }
+            }
+
+            /// <summary>
+            /// Runs one socket write under the write deadline, on the injected clock. A peer that
+            /// stops reading parks the write once the transport's buffers fill; past the deadline
+            /// the connection is aborted (<see cref="AbortStalledPeer"/>), which ends the reader
+            /// and every request, so the admission slot is released. The caller sees the
+            /// cancellation, as it would for a connection that ended under it.
+            /// </summary>
+            private async Task WriteWithDeadlineAsync(Func<CancellationToken, Task> write, CancellationToken cancellationToken)
+            {
+                using var deadline = new CancellationTokenSource(_writeTimeout, _timeProvider);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+                try
+                {
+                    await write(linked.Token);
+                }
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    AbortStalledPeer();
+                    throw;
+                }
+            }
+
+            /// <summary>
+            /// A write missed its deadline: the peer is not reading. No close frame can reach it
+            /// (that is a write too), so the socket is aborted and the reader and requests stop.
+            /// </summary>
+            private void AbortStalledPeer()
+            {
+                _logger.LogWarning(
+                    "Binary peer did not take a frame within the {WriteTimeout} write deadline; aborting the connection",
+                    _writeTimeout);
+                CloseWith = (WebSocketCloseStatus.PolicyViolation, "Write deadline exceeded");
+                WebSocket.Abort();
+                try
+                {
+                    Closing.Cancel();
+                    ReaderStop.Cancel();
+                }
+                catch (ObjectDisposedException) { }
+            }
+
+            /// <summary>
+            /// The close handshake at the end of the connection, once nothing else writes. Bounded
+            /// by <see cref="CloseHandshakeTimeout"/> on the injected clock: a peer that neither
+            /// takes the close frame nor echoes it is aborted instead of holding the slot.
+            /// </summary>
+            public async Task CloseAsync()
+            {
+                if (WebSocket.State is not (WebSocketState.Open or WebSocketState.CloseReceived))
+                    return;
+                using var deadline = new CancellationTokenSource(CloseHandshakeTimeout, _timeProvider);
+                try
+                {
+                    await WebSocket.CloseAsync(CloseWith.Status, CloseWith.Reason, deadline.Token);
+                }
+                catch (WebSocketException)
+                {
+                    // Already closed, ignore
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogDebug("Binary peer did not complete the close handshake; aborting the connection");
+                    WebSocket.Abort();
                 }
             }
 
@@ -494,7 +591,8 @@ namespace BifrostQL.Server
                     try
                     {
                         if (WebSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-                            await WebSocket.CloseOutputAsync(status, reason, CancellationToken.None);
+                            await WriteWithDeadlineAsync(
+                                token => WebSocket.CloseOutputAsync(status, reason, token), CancellationToken.None);
                     }
                     finally
                     {
@@ -544,7 +642,8 @@ namespace BifrostQL.Server
             var chunkBuffer = new ChunkBuffer();
             var chunkSender = new ChunkSender(
                 _chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout, timeProvider: _timeProvider);
-            using var connection = new BinaryConnection(webSocket, httpContext, chunkSender, chunkBuffer);
+            using var connection = new BinaryConnection(
+                webSocket, httpContext, chunkSender, chunkBuffer, _writeTimeout, _timeProvider, _logger);
 
             try
             {
@@ -635,22 +734,7 @@ namespace BifrostQL.Server
                 await connection.DrainAsync();
                 // Every request has ended, so nothing else writes: the full close handshake
                 // is safe here.
-                if (webSocket.State == WebSocketState.Open || webSocket.State == WebSocketState.CloseReceived)
-                {
-                    try
-                    {
-                        await webSocket.CloseAsync(
-                            connection.CloseWith.Status, connection.CloseWith.Reason, CancellationToken.None);
-                    }
-                    catch (WebSocketException)
-                    {
-                        // Already closed, ignore
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        // Aborted by a cancelled receive, ignore
-                    }
-                }
+                await connection.CloseAsync();
             }
         }
 

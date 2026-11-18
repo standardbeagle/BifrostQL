@@ -44,7 +44,9 @@ namespace BifrostQL.Server.Test.Pgwire
             TimeSpan? handshakeTimeout = null,
             bool allowCleartextWithoutTls = true,
             TimeProvider? timeProvider = null,
-            TimeSpan? writeTimeout = null)
+            TimeSpan? writeTimeout = null,
+            long maxSessionStatementBytes = 8L * 1024 * 1024,
+            long maxSessionPortalBytes = 32L * 1024 * 1024)
         {
             var options = new PgWireOptions
             {
@@ -58,6 +60,8 @@ namespace BifrostQL.Server.Test.Pgwire
                 MaxPortals = maxPortals,
                 HandshakeTimeout = handshakeTimeout ?? TimeSpan.FromSeconds(30),
                 WriteTimeout = writeTimeout ?? TimeSpan.FromSeconds(60),
+                MaxSessionStatementBytes = maxSessionStatementBytes,
+                MaxSessionPortalBytes = maxSessionPortalBytes,
             };
             Registry = new PgCancellationRegistry();
             Limiter = new PgwireConnectionLimiter(maxConnections);

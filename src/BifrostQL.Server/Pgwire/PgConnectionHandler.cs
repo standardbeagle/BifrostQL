@@ -487,7 +487,8 @@ namespace BifrostQL.Server.Pgwire
             var extended = new PgExtendedQueryProcessor(
                 stream, userContext, seams.Executor, seams.Translator, seams.Catalog,
                 _options.Endpoint, cancellation, ct, _logger,
-                _options.MaxPreparedStatements, _options.MaxPortals);
+                _options.MaxPreparedStatements, _options.MaxPortals,
+                _options.MaxSessionStatementBytes, _options.MaxSessionPortalBytes);
 
             while (true)
             {
@@ -510,7 +511,12 @@ namespace BifrostQL.Server.Pgwire
                         // A simple query is an implicit sync point: it is refused while the
                         // extended protocol is skipping to a Sync, matching pg semantics.
                         if (!extended.IsSkipping)
+                        {
+                            // A simple query runs in its own implicit transaction, which ends any
+                            // open portals just as Sync does.
+                            extended.EndImplicitTransaction();
                             await HandleSimpleQueryAsync(stream, message.Body, seams, userContext, cancellation, ct);
+                        }
                         break;
 
                     case PgWireProtocol.ParseMessage:

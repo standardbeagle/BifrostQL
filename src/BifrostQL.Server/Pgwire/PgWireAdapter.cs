@@ -42,6 +42,13 @@ namespace BifrostQL.Server.Pgwire
                 throw new ArgumentOutOfRangeException(nameof(_options.WriteTimeout), _options.WriteTimeout,
                     "pgwire WriteTimeout must be positive: an unbounded write lets a peer that stops reading hold its slot forever.");
 
+            if (_options.MaxSessionStatementBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(_options.MaxSessionStatementBytes), _options.MaxSessionStatementBytes,
+                    "pgwire MaxSessionStatementBytes must be positive.");
+            if (_options.MaxSessionPortalBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(_options.MaxSessionPortalBytes), _options.MaxSessionPortalBytes,
+                    "pgwire MaxSessionPortalBytes must be positive.");
+
             if (_options.AuthMethod == PgAuthMethod.Cleartext && _options.AllowCleartextPasswordWithoutTls)
                 _logger.LogWarning(
                     "pgwire: AllowCleartextPasswordWithoutTls is ON — passwords may cross the wire in the " +

@@ -75,16 +75,13 @@ namespace BifrostQL.Server.Test.Pgwire
             await client.SendSyncAsync();
             (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout)).ParseComplete.Should().BeTrue();
 
-            for (var i = 0; i < 2; i++)
-            {
-                await client.SendBindAsync($"p{i}", "s");
-                await client.SendSyncAsync();
-                (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout)).HasError.Should().BeFalse();
-            }
-
+            // Portals close at Sync, so the cap binds within ONE Sync batch.
+            await client.SendBindAsync("p0", "s");
+            await client.SendBindAsync("p1", "s");
             await client.SendBindAsync("p2", "s");
             await client.SendSyncAsync();
             var refused = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            refused.MessageOrder.Count(t => t == PgWireProtocol.BindComplete).Should().Be(2);
             refused.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateConfigurationLimitExceeded);
 
             // The session survives the refusal and the unnamed portal (exempt) still executes.
@@ -94,6 +91,134 @@ namespace BifrostQL.Server.Test.Pgwire
             var unnamed = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
             unnamed.HasError.Should().BeFalse();
             unnamed.CommandTag.Should().Be("SELECT 1");
+        }
+
+        // ---- byte budgets and portal lifetime ----------------------------------
+
+        private static IReadOnlyList<IReadOnlyDictionary<string, object?>> WideUsers(int count, int nameLength)
+            => Enumerable.Range(1, count)
+                .Select(i => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+                {
+                    ["id"] = i, ["name"] = new string('n', nameLength), ["active"] = true,
+                })
+                .ToList();
+
+        [Fact]
+        public async Task A_portal_does_not_survive_Sync()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(WideUsers(3, 4), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            await client.SendParseAsync("s", "SELECT id FROM users");
+            await client.SendBindAsync("p", "s");
+            await client.SendExecuteAsync("p", maxRows: 1);
+            // Control: inside the batch the suspended portal resumes.
+            await client.SendExecuteAsync("p", maxRows: 1);
+            await client.SendSyncAsync();
+            var batch = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            batch.HasError.Should().BeFalse();
+            batch.Rows.Should().HaveCount(2);
+
+            // Sync ended the implicit transaction, which closes every portal (pg protocol).
+            await client.SendExecuteAsync("p", maxRows: 1);
+            await client.SendSyncAsync();
+            var after = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            after.Rows.Should().BeEmpty("a closed portal must not keep serving its cached rows");
+            after.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidSqlStatementName);
+
+            // The named statement is session state, not transaction state: it survives Sync.
+            await client.SendBindAsync("p", "s");
+            await client.SendExecuteAsync("p");
+            await client.SendSyncAsync();
+            (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout)).CommandTag.Should().Be("SELECT 3");
+        }
+
+        [Fact]
+        public async Task A_simple_query_closes_open_portals()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(WideUsers(3, 4), out _);
+            await using var harness = new PgWireTestHarness(executor);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            await client.SendParseAsync("s", "SELECT id FROM users");
+            await client.SendBindAsync("p", "s");
+            await client.SendExecuteAsync("p", maxRows: 1);
+            await client.SendFlushAsync();
+            await client.SendQueryAsync("SELECT id FROM users");
+            await client.SendExecuteAsync("p", maxRows: 1);
+            await client.SendSyncAsync();
+
+            // Execute(p, 1) -> one row + PortalSuspended, then the simple query's own cycle.
+            var first = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            first.PortalSuspended.Should().BeTrue();
+            first.Rows.Should().HaveCount(1 + 3);
+            var after = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            after.Rows.Should().BeEmpty("the simple query's implicit transaction closed the portal");
+            after.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateInvalidSqlStatementName);
+        }
+
+        [Fact]
+        public async Task Suspended_portals_are_capped_by_retained_bytes_and_draining_frees_the_budget()
+        {
+            // 10 rows of ~1 KiB: a portal suspended after one row retains ~9 KiB. The budget fits
+            // one such portal but not two, so the second refusal is the SUM binding, not one portal.
+            var executor = PgWireTestHarness.UsersExecutor(WideUsers(10, 1000), out _);
+            await using var harness = new PgWireTestHarness(executor, maxSessionPortalBytes: 15_000);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            await client.SendParseAsync("s", "SELECT id, name FROM users");
+            await client.SendBindAsync("p0", "s");
+            await client.SendExecuteAsync("p0", maxRows: 1);
+            await client.SendBindAsync("p1", "s");
+            await client.SendExecuteAsync("p1", maxRows: 1);
+            await client.SendSyncAsync();
+            var overBudget = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+
+            overBudget.PortalSuspended.Should().BeTrue("the first portal fits the budget alone");
+            overBudget.Rows.Should().HaveCount(1, "the refused suspension sends no row at all");
+            overBudget.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateConfigurationLimitExceeded);
+
+            // Draining the first portal returns its bytes, so the second now fits.
+            await client.SendBindAsync("p0", "s");
+            await client.SendExecuteAsync("p0", maxRows: 1);
+            await client.SendExecuteAsync("p0");
+            await client.SendBindAsync("p1", "s");
+            await client.SendExecuteAsync("p1", maxRows: 1);
+            await client.SendSyncAsync();
+            var drained = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            drained.HasError.Should().BeFalse();
+            drained.Rows.Should().HaveCount(10 + 1);
+        }
+
+        [Fact]
+        public async Task Named_statements_are_capped_by_total_SQL_bytes()
+        {
+            var executor = PgWireTestHarness.UsersExecutor(OneUser(), out _);
+            var sql = "SELECT id FROM users WHERE id = 1 OR id = 2 OR id = 3"; // 52 bytes
+            await using var harness = new PgWireTestHarness(executor, maxSessionStatementBytes: 100);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            await client.SendParseAsync("s0", sql);
+            await client.SendSyncAsync();
+            (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout)).HasError.Should().BeFalse();
+
+            // Two statements are well under the count cap but over the byte budget together.
+            await client.SendParseAsync("s1", sql);
+            await client.SendSyncAsync();
+            (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout))
+                .ErrorSqlState.Should().Be(PgWireProtocol.SqlStateConfigurationLimitExceeded);
+
+            // The unnamed statement is exempt even past the budget...
+            await client.SendParseAsync("", sql + " OR id = 4 OR id = 5 OR id = 6 OR id = 7 OR id = 8");
+            await client.SendSyncAsync();
+            (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout)).HasError.Should().BeFalse();
+
+            // ...and Close('S') returns the bytes.
+            await client.SendCloseStatementAsync("s0");
+            await client.SendParseAsync("s1", sql);
+            await client.SendSyncAsync();
+            (await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout)).HasError.Should().BeFalse();
         }
     }
 }

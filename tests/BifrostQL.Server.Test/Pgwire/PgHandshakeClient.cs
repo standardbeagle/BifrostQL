@@ -499,6 +499,9 @@ namespace BifrostQL.Server.Test.Pgwire
             await WriteFrontendAsync(PgWireProtocol.CloseMessage, body.ToArray());
         }
 
+        /// <summary>Flush (H): asks the server to send what it has buffered; no ReadyForQuery follows.</summary>
+        public async Task SendFlushAsync() => await WriteFrontendAsync(PgWireProtocol.FlushMessage, Array.Empty<byte>());
+
         public async Task SendSyncAsync() => await WriteFrontendAsync(PgWireProtocol.SyncMessage, Array.Empty<byte>());
 
         /// <summary>

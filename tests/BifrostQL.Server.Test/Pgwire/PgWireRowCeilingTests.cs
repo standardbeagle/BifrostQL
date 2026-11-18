@@ -151,22 +151,20 @@ namespace BifrostQL.Server.Test.Pgwire
 
             await client.SendParseAsync("", "SELECT id FROM small ORDER BY id");
             await client.SendBindAsync("p", "");
+            // Both pages in ONE Sync batch: Sync ends the implicit transaction and closes the
+            // portal (pg protocol), so resuming is only possible before it.
+            await client.SendExecuteAsync("p", maxRows: 100);
             await client.SendExecuteAsync("p", maxRows: 100);
             await client.SendSyncAsync();
-            var first = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            var paged = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
 
-            first.HasError.Should().BeFalse();
-            first.Rows.Should().HaveCount(100);
-            first.PortalSuspended.Should().BeTrue("rows remain past the first max_rows page");
-
-            await client.SendExecuteAsync("p", maxRows: 100);
-            await client.SendSyncAsync();
-            var second = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
-
-            second.HasError.Should().BeFalse();
-            second.Rows.Should().HaveCount(SmallRows - 100);
-            second.Rows[^1][0].Should().Be(SmallRows.ToString(CultureInfo.InvariantCulture));
-            second.CommandTag.Should().Be($"SELECT {SmallRows - 100}");
+            paged.HasError.Should().BeFalse();
+            paged.PortalSuspended.Should().BeTrue("rows remain past the first max_rows page");
+            paged.MessageOrder.TakeWhile(t => t != PgWireProtocol.PortalSuspended)
+                .Count(t => t == PgWireProtocol.DataRow).Should().Be(100);
+            paged.Rows.Should().HaveCount(SmallRows);
+            paged.Rows[^1][0].Should().Be(SmallRows.ToString(CultureInfo.InvariantCulture));
+            paged.CommandTag.Should().Be($"SELECT {SmallRows - 100}");
         }
 
         private async Task<ExtendedResult> ExecuteExtendedAsync(string sql, int maxRows)

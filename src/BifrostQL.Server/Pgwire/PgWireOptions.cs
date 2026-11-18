@@ -89,6 +89,23 @@ namespace BifrostQL.Server.Pgwire
         public int MaxPortals { get; set; } = 200;
 
         /// <summary>
+        /// Total UTF-8 bytes of SQL text the NAMED prepared statements of one session may hold.
+        /// <see cref="MaxPreparedStatements"/> counts statements, not bytes, so on its own it let
+        /// one connection retain 200 frames of SQL (~200 MiB). A Parse that would cross the budget
+        /// is refused with <c>53400</c> and the session survives. The unnamed statement always
+        /// replaces and is exempt. Default 8 MiB.
+        /// </summary>
+        public long MaxSessionStatementBytes { get; set; } = 8L * 1024 * 1024;
+
+        /// <summary>
+        /// Total bytes of encoded result rows the suspended portals of one session may retain for
+        /// row-limited Execute resume. Portals close at Sync (end of the implicit transaction), so
+        /// this bounds what one Sync batch can pin; an Execute whose suspension would cross it is
+        /// refused with <c>53400</c> before any row is sent. Default 32 MiB.
+        /// </summary>
+        public long MaxSessionPortalBytes { get; set; } = 32L * 1024 * 1024;
+
+        /// <summary>
         /// Deadline for a connection to get from accept to an authenticated, ready session.
         /// Applied to every read of the PRE-AUTH phase (SSLRequest/TLS handshake, StartupMessage,
         /// the password/SCRAM exchange), so an unauthenticated peer that opens a socket and then

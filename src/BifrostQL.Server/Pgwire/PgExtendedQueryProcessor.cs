@@ -39,6 +39,14 @@ namespace BifrostQL.Server.Pgwire
         private readonly ILogger _logger;
         private readonly int _maxStatements;
         private readonly int _maxPortals;
+        private readonly long _maxStatementBytes;
+        private readonly long _maxPortalBytes;
+
+        /// <summary>UTF-8 bytes of SQL text held by NAMED prepared statements.</summary>
+        private long _statementBytes;
+
+        /// <summary>Encoded DataRow bytes retained by suspended portals for row-limited resume.</summary>
+        private long _portalBytes;
 
         private readonly Dictionary<string, PgPreparedStatement> _statements = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PgPortal> _portals = new(StringComparer.Ordinal);
@@ -60,10 +68,14 @@ namespace BifrostQL.Server.Pgwire
             CancellationToken connectionToken,
             ILogger logger,
             int maxStatements,
-            int maxPortals)
+            int maxPortals,
+            long maxStatementBytes,
+            long maxPortalBytes)
         {
             _maxStatements = maxStatements;
             _maxPortals = maxPortals;
+            _maxStatementBytes = maxStatementBytes;
+            _maxPortalBytes = maxPortalBytes;
             _stream = stream;
             _userContext = userContext;
             _executor = executor;
@@ -132,7 +144,21 @@ namespace BifrostQL.Server.Pgwire
                 return;
             }
 
-            _statements[statementName] = new PgPreparedStatement(sql, paramOids.ToArray());
+            // Per-session SQL-text budget. The count cap alone admitted 200 statements of up to a
+            // frame each (~200 MiB per connection); this bounds the bytes the named map retains.
+            // The unnamed statement replaces and stays exempt, bounded by the frame cap.
+            var sqlBytes = statementName.Length > 0 ? Encoding.UTF8.GetByteCount(sql) : 0;
+            var replacedBytes = statementName.Length > 0 && _statements.TryGetValue(statementName, out var replaced)
+                ? replaced.SqlBytes : 0;
+            if (_statementBytes - replacedBytes + sqlBytes > _maxStatementBytes)
+            {
+                await FailAsync(PgWireProtocol.SqlStateConfigurationLimitExceeded,
+                    $"prepared statements for this session would exceed {_maxStatementBytes} bytes of SQL text; close some with Close('S').", ct);
+                return;
+            }
+
+            _statementBytes += sqlBytes - replacedBytes;
+            _statements[statementName] = new PgPreparedStatement(sql, paramOids.ToArray(), sqlBytes);
             // A prepared statement replaces the destination name; any portal built from the
             // prior version is implicitly invalidated by a fresh Bind, so nothing else to do.
             await SendEmptyAsync(PgWireProtocol.ParseComplete, ct);
@@ -234,6 +260,7 @@ namespace BifrostQL.Server.Pgwire
                 }
             }
 
+            ClosePortal(portalName);
             _portals[portalName] = new PgPortal(statement, values.ToArray());
             await SendEmptyAsync(PgWireProtocol.BindComplete, ct);
         }
@@ -350,6 +377,12 @@ namespace BifrostQL.Server.Pgwire
                 return;
             }
 
+            if (portal.Retained is not null || portal.Completed)
+            {
+                await ResumePortalAsync(portal, maxRows, ct);
+                return;
+            }
+
             ResolvedPortal resolved;
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows;
             var queryToken = _cancellation.BeginQuery(_connectionToken);
@@ -382,32 +415,122 @@ namespace BifrostQL.Server.Pgwire
             PgPortal portal, ResolvedPortal resolved,
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, int maxRows, CancellationToken ct)
         {
-            var start = portal.Position;
-            var remaining = rows.Count - start;
-            var take = maxRows <= 0 ? remaining : Math.Min(maxRows, remaining);
+            var take = maxRows <= 0 ? rows.Count : Math.Min(maxRows, rows.Count);
+            var columns = resolved.Columns;
+
+            // A row limit that leaves rows behind suspends the portal, which must keep them for the
+            // next Execute. They are kept ENCODED (the DataRow bodies the resume writes verbatim)
+            // and charged to the session's portal budget BEFORE any row is written, so an
+            // over-budget suspension is refused cleanly instead of after a partial result.
+            List<byte[]>? retained = null;
+            long retainedBytes = 0;
+            if (take < rows.Count)
+            {
+                retained = new List<byte[]>(rows.Count - take);
+                for (var i = take; i < rows.Count; i++)
+                {
+                    var encoded = EncodeDataRow(rows[i], columns);
+                    retained.Add(encoded);
+                    retainedBytes += encoded.Length;
+                }
+                if (_portalBytes + retainedBytes > _maxPortalBytes)
+                {
+                    await FailAsync(PgWireProtocol.SqlStateConfigurationLimitExceeded,
+                        $"suspended portals for this session would retain more than {_maxPortalBytes} bytes of result rows; "
+                        + "fetch without a row limit or close portals with Close('P').", ct);
+                    return;
+                }
+            }
 
             // DataRows are buffered; the PortalSuspended / CommandComplete below flushes them.
-            var columns = resolved.Columns;
-            var textValues = new string?[columns.Count];
             for (var i = 0; i < take; i++)
-            {
-                var row = rows[start + i];
-                for (var c = 0; c < columns.Count; c++)
-                    textValues[c] = PgValueEncoder.ToText(row.TryGetValue(columns[c].Name, out var v) ? v : null);
-                await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.DataRow, PgBackend.DataRow(textValues), ct, flush: false);
-            }
-            portal.Position = start + take;
+                await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.DataRow, EncodeDataRow(rows[i], columns), ct, flush: false);
 
-            if (maxRows > 0 && portal.Position < rows.Count)
+            if (retained is not null)
             {
-                // The row-count limit was reached with rows still buffered: the portal stays
-                // open and the next Execute resumes from Position. No CommandComplete yet.
+                portal.Retained = retained;
+                portal.RetainedBytes = retainedBytes;
+                _portalBytes += retainedBytes;
                 await SendEmptyAsync(PgWireProtocol.PortalSuspended, ct);
                 return;
             }
 
+            portal.Completed = true;
             await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.CommandComplete,
                 PgBackend.CommandComplete($"SELECT {take}"), ct);
+        }
+
+        /// <summary>
+        /// Continues a suspended portal from its retained rows, releasing each row's bytes from the
+        /// session budget as it is written. A completed portal answers an empty result, as in pg.
+        /// </summary>
+        private async Task ResumePortalAsync(PgPortal portal, int maxRows, CancellationToken ct)
+        {
+            var retained = portal.Retained;
+            if (retained is null)
+            {
+                await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.CommandComplete,
+                    PgBackend.CommandComplete("SELECT 0"), ct);
+                return;
+            }
+
+            var start = portal.Position;
+            var remaining = retained.Count - start;
+            var take = maxRows <= 0 ? remaining : Math.Min(maxRows, remaining);
+            for (var i = 0; i < take; i++)
+            {
+                var body = retained[start + i];
+                retained[start + i] = Array.Empty<byte>();
+                portal.RetainedBytes -= body.Length;
+                _portalBytes -= body.Length;
+                await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.DataRow, body, ct, flush: false);
+            }
+            portal.Position = start + take;
+
+            if (portal.Position < retained.Count)
+            {
+                await SendEmptyAsync(PgWireProtocol.PortalSuspended, ct);
+                return;
+            }
+
+            ReleaseRetained(portal);
+            portal.Completed = true;
+            await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.CommandComplete,
+                PgBackend.CommandComplete($"SELECT {take}"), ct);
+        }
+
+        private static byte[] EncodeDataRow(IReadOnlyDictionary<string, object?> row, IReadOnlyList<PgResultColumn> columns)
+        {
+            var textValues = new string?[columns.Count];
+            for (var c = 0; c < columns.Count; c++)
+                textValues[c] = PgValueEncoder.ToText(row.TryGetValue(columns[c].Name, out var v) ? v : null);
+            return PgBackend.DataRow(textValues);
+        }
+
+        private void ReleaseRetained(PgPortal portal)
+        {
+            _portalBytes -= portal.RetainedBytes;
+            portal.RetainedBytes = 0;
+            portal.Retained = null;
+        }
+
+        /// <summary>Drops a portal and returns its retained bytes to the session budget.</summary>
+        private void ClosePortal(string name)
+        {
+            if (_portals.Remove(name, out var portal))
+                ReleaseRetained(portal);
+        }
+
+        /// <summary>
+        /// Ends the implicit autocommit transaction: every portal is destroyed, as pg does at the
+        /// end of a transaction. Called at Sync and by the simple-query path (a 'Q' message runs its
+        /// own implicit transaction). Portals used to survive Sync, so suspended results piled up
+        /// across a session's whole lifetime instead of one Sync batch.
+        /// </summary>
+        public void EndImplicitTransaction()
+        {
+            _portals.Clear();
+            _portalBytes = 0;
         }
 
         // ---- Sync (S) / Close (C) -------------------------------------------
@@ -415,6 +538,9 @@ namespace BifrostQL.Server.Pgwire
         private async Task HandleSyncAsync(CancellationToken ct)
         {
             IsSkipping = false;
+            // Sync commits the implicit transaction, which closes every portal (pg protocol: a
+            // named portal lasts until the end of the current transaction).
+            EndImplicitTransaction();
             await PgProtocolIO.WriteMessageAsync(_stream, PgWireProtocol.ReadyForQuery,
                 new[] { PgWireProtocol.TransactionStatusIdle }, ct);
         }
@@ -426,8 +552,15 @@ namespace BifrostQL.Server.Pgwire
             var name = reader.ReadCString();
 
             // Closing a nonexistent statement/portal is NOT an error in pg — it succeeds.
-            if (target == PgWireProtocol.DescribeStatement) _statements.Remove(name);
-            else if (target == PgWireProtocol.DescribePortal) _portals.Remove(name);
+            if (target == PgWireProtocol.DescribeStatement)
+            {
+                if (_statements.Remove(name, out var closed))
+                    _statementBytes -= closed.SqlBytes;
+            }
+            else if (target == PgWireProtocol.DescribePortal)
+            {
+                ClosePortal(name);
+            }
 
             await SendEmptyAsync(PgWireProtocol.CloseComplete, ct);
         }
@@ -472,8 +605,6 @@ namespace BifrostQL.Server.Pgwire
         private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ResolveRowsAsync(
             PgPortal portal, ResolvedPortal resolved, CancellationToken ct)
         {
-            if (portal.ExecutedRows is not null) return portal.ExecutedRows;
-
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows;
             if (resolved.CatalogRows is not null)
             {
@@ -488,7 +619,6 @@ namespace BifrostQL.Server.Pgwire
                 var result = await _executor.ExecuteAsync(plan.Intent, ct);
                 rows = plan.BoundRows(result.Rows);
             }
-            portal.ExecutedRows = rows;
             return rows;
         }
 
@@ -645,7 +775,7 @@ namespace BifrostQL.Server.Pgwire
     /// type OIDs (may be shorter than the actual <c>$N</c> count, in which case the extra
     /// placeholders are inferred). Immutable — re-Parse replaces the map entry.
     /// </summary>
-    internal sealed record PgPreparedStatement(PgSql Sql, int[] ParameterTypeOids);
+    internal sealed record PgPreparedStatement(PgSql Sql, int[] ParameterTypeOids, int SqlBytes = 0);
 
     /// <summary>
     /// A bound portal: the prepared statement plus this bind's parameter values, and the
@@ -666,10 +796,19 @@ namespace BifrostQL.Server.Pgwire
         /// <summary>Columns + row source, resolved once on first Describe/Execute.</summary>
         internal object? Resolved { get; set; }
 
-        /// <summary>Materialized result rows, cached on first Execute for row-limited resume.</summary>
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>>? ExecutedRows { get; set; }
+        /// <summary>
+        /// Encoded DataRow bodies a suspended portal still owes, kept for row-limited resume and
+        /// charged to the session's portal byte budget. Null when the portal is not suspended.
+        /// </summary>
+        public List<byte[]>? Retained { get; set; }
 
-        /// <summary>Next row index to emit; advanced by each row-limited Execute.</summary>
+        /// <summary>Bytes of <see cref="Retained"/> not yet written, as charged to the session budget.</summary>
+        public long RetainedBytes { get; set; }
+
+        /// <summary>Next index into <see cref="Retained"/>; advanced by each row-limited Execute.</summary>
         public int Position { get; set; }
+
+        /// <summary>True once every row was sent; a further Execute returns an empty result.</summary>
+        public bool Completed { get; set; }
     }
 }

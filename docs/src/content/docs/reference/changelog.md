@@ -25,6 +25,29 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Breaking — fourth review pass (LDAP, RESP)
+
+- **RESP write intents name the table schema-qualified** (`dbo.users`, was `users`), so a write lands on the table the key resolved to when two schemas share a name. Custom `IMutationIntentExecutor` implementations that match on the bare name must resolve the qualified one through `IDbModel.TryGetTableFromClientName`.
+- **RESP write errors no longer name the table or the stored column**: `-ERR unknown column '<name>'`, `-ERR column '<name>': ...`, `-ERR cannot set primary-key column '<name>'` echo only the name the client sent.
+- **LDAP refuses a connection over `MaxConnections` with `busy` (51)**, was `unavailableCriticalExtension` (12), which reports an unsupported critical control.
+- **The LDAP decoder refuses an undefined search `scope` or `derefAliases`** (`protocolError`). Out-of-range values were cast silently, so `2^32` read as `baseObject`.
+
+### Security — fourth review pass (LDAP, RESP)
+
+- LDAP and RESP writes are bounded. A peer that stops reading parked the response write forever, holding its admission slot: 100 such sockets filled the cap. Pre-auth writes now end with the pre-auth deadline, and every write after authentication ends at the new `WriteTimeout` (default 1 minute) on `LdapWireOptions` and `RespWireOptions`. The connection closes and its slot is released.
+- Pre-auth replies no longer echo large client strings. RESP's unknown-command reply caps the echoed name and arguments at 128 characters and replaces CR/LF so an argument cannot forge a second reply; LDAP's unsupported extended operation answers a fixed text instead of the request OID.
+- LDAP `member` / `memberOf` reads run under the model's row ceiling with a total ORDER BY. A membership leg cut by the ceiling ends the search with `adminLimitExceeded` instead of serving a short value list.
+- LDAP StartTLS sessions send close_notify and dispose the `SslStream` when the session ends. The stream was never disposed, so the peer saw a truncated TLS stream.
+- LDAP bind passwords are wiped from every buffer they pass through: the message body after decode, the array that body outgrew, the connection read buffer, and the decoded copy on every bind path, including a listener with bind authentication disabled.
+- LDAP: a malformed stored password hash fails the bind as invalid credentials, on the same decoy verification path as an unknown user, and logs a warning. It used to throw out of the bind.
+- RESP: peers with no known address share one rate-limit bucket instead of each getting a fresh one.
+
+### Fixed — fourth review pass (LDAP, RESP)
+
+- RESP `MGET` groups keys by the resolved table, not its name, so `MGET` across two same-named tables in different schemas reads each table its own keys.
+- RESP read lookups filter by read visibility before checking ambiguity: a name shared by two schemas resolves to the only readable one, and answers `unknown table` when neither is readable.
+- LDAP `sizeLimitExceeded` is reported with a cap+1 sentinel: a search returning exactly the size limit is complete, and only an entry past it marks the result partial.
+
 ### Breaking — third review pass
 
 - **S3 errors are mapped by condition code, not exception type.** Only a missing or unreadable address (`NOT_FOUND`, `ACCESS_DENIED`) answers `404`; a write conflict (`CONFLICT`, `EXCLUSION_VIOLATION`) answers `409 OperationAborted`; anything else (pool exhaustion, a disposed service, a database fault) answers `500 InternalError` and is logged at Error. Before, every `InvalidOperationException` and `BifrostExecutionError` became `404` and was logged at Debug. `DeleteObject` no longer answers `204` when the row is visible but nothing was deleted: a zero-row write is `404`, a conflict `409`, a fault `500`. `FileObjectSeam` tags its own not-found conditions with the new `BifrostExecutionError.NotFoundCode` (`NOT_FOUND`) instead of throwing `InvalidOperationException`.

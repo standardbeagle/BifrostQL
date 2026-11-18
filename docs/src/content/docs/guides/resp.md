@@ -53,7 +53,8 @@ builder.Services.AddSingleton<IRespCredentialStore, MyCredentialStore>();
 | `MaxConnections` | `100` | Concurrent connections admitted. The slot is reserved at ACCEPT — before the TLS handshake and before AUTH — so a peer that never completes a handshake cannot force work outside the cap. |
 | `AuthenticationTimeout` | `30s` | One cumulative budget for a connection to authenticate, never reset by traffic. Does not apply once authenticated, nor at all when `RequireAuthentication` is `false` (such a front door has no pre-auth phase; its connections live under `IdleTimeout`). |
 | `IdleTimeout` | `10m` | How long an authenticated connection may sit with no command. `Timeout.InfiniteTimeSpan` disables it. |
-| `MaxAuthAttemptsPerSource` | `100` | Authentication attempts admitted from one source per `AuthRateLimitWindow`. The source is the peer's address, or the connection itself when no address is known. |
+| `WriteTimeout` | `1m` | How long one reply write or flush may wait on a peer that is not reading before the connection is closed. While `AuthenticationTimeout` is armed, writes are also cut at that deadline, so a pipelined flood from a peer that never reads cannot hold its slot past it. Applies with `IdleTimeout` disabled too. Must be positive. |
+| `MaxAuthAttemptsPerSource` | `100` | Authentication attempts admitted from one source per `AuthRateLimitWindow`. The source is the peer's address. Peers with no known address share one bucket, so reconnecting never buys a fresh budget. |
 | `MaxAuthAttemptsPerAccount` | `10` | Authentication attempts admitted against one account name per `AuthRateLimitWindow`, whatever their source. Bounds a distributed guess at one login. |
 | `AuthRateLimitWindow` | `1m` | The fixed window both authentication-attempt caps count over. Over either cap the attempt is refused before the credential is resolved, with one fixed message that never varies by account. |
 | `ScanCursorSecret` | `null` | HMAC secret for SCAN cursors. Configure it to make cursors survive a restart and resolve across instances; absent one a per-instance random key is generated and the trade-off is logged at startup. |
@@ -136,6 +137,12 @@ the caller may not read answers `-ERR unknown table '<name>'`, byte for byte wha
 table that does not exist gets, whether or not the rest of the key is well formed. So
 a read never reveals that a denied table exists, and the segment-count and segment-type
 errors never describe its key.
+
+A name shared by tables in two schemas resolves over the tables the caller may read:
+none answers `unknown table`, exactly one is that table, and only two or more readable
+tables answer `-ERR table name '<name>' is ambiguous`. `MGET` reads each table for its
+own keys. Writes resolve against the full schema, address the table schema-qualified,
+and their error text names only the key and field names the caller sent.
 
 ### Reads
 
@@ -249,8 +256,10 @@ actionable guidance a real Redis sends:
 ERR unknown command 'LPUSH', with args beginning with: 'x', 'y'
 ```
 
-The command name is quoted verbatim and never dispatched, so an unsupported command
-can neither hang the connection loop nor leak internals — the connection stays usable
+The command name and arguments are echoed up to 128 characters in all; a longer
+echo is cut there, and CR or LF in a client string is replaced with a space so an
+argument cannot forge a second reply line. The command is never dispatched, so an
+unsupported command can neither hang the connection loop nor leak internals — the connection stays usable
 and you can issue a supported command on the same session.
 
 **Explicit non-goals** (each returns the clean unknown-command `-ERR`, never a partial

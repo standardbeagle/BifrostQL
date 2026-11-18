@@ -62,8 +62,9 @@ builder.Services.AddSingleton<ILdapBindObserver, MyBindAuditor>();
 | `AnonymousBindEnabled` | `false` | Whether an anonymous bind is admitted at all. Off by default; even when on, the session reaches only the RootDSE and the subschema. |
 | `Endpoint` | `null` | Registered BifrostQL endpoint whose directory model this front door serves; `null` selects the single registered endpoint. |
 | `MaxConnections` | `100` | Concurrent connections across **both** listeners, so opening LDAPS does not double the ceiling. Slots are taken at accept, before any TLS handshake. |
-| `AuthenticationTimeout` | `30 s` | Session deadline, fixed at accept. A connection that has not **credentialed** by then is closed, because failing binds keep a connection non-idle and would otherwise hold an admission slot for the whole idle window. An anonymous session lives only until this same deadline — re-binding anonymously never extends it. A failed re-bind on a credentialed session drops it to anonymous and re-arms one window. |
+| `AuthenticationTimeout` | `30 s` | Session deadline, fixed at accept. A connection that has not **credentialed** by then is closed, including one parked writing to a peer that does not read, because failing binds keep a connection non-idle and would otherwise hold an admission slot for the whole idle window. An anonymous session lives only until this same deadline — re-binding anonymously never extends it. A failed re-bind on a credentialed session drops it to anonymous and re-arms one window. |
 | `IdleTimeout` | `5 min` | How long a credentialed connection may sit idle before it is closed. |
+| `WriteTimeout` | `1 min` | How long one response write or flush may wait on a peer that is not reading before the connection is closed. Before a credentialed bind, writes are also cut at the `AuthenticationTimeout` deadline, so a peer that sends requests and never reads cannot hold its slot past it. Must be positive. |
 | `TlsHandshakeTimeout` | `30 s` | Deadline for a handshake on either surface; the admission slot is already held while it runs. |
 | `MaxMessageLength` | `1 MiB` | Cap on one LDAPMessage, applied on the unauthenticated path before the body buffer is allocated. |
 | `MaxNestingDepth` | `32` | How deeply a filter may nest. The decoder recurses per level, so an unbounded filter would overflow the stack — which is uncatchable and takes the whole host process down. |
@@ -426,16 +427,17 @@ scope them.
 | Success | `success` (0) |
 | Malformed request control | `protocolError` (2) on the operation; the session survives |
 | Fatal wire violation / unknown protocolOp | `protocolError` (2) as a Notice of Disconnection, then close |
-| Search hit the result ceiling | `sizeLimitExceeded` (4), with the entries found so far |
+| Search hit the result ceiling | `sizeLimitExceeded` (4), with the entries found so far. Only an entry past the ceiling triggers it: a result of exactly the ceiling is complete |
 | Search hit the time ceiling | `timeLimitExceeded` (3) |
-| Membership fan-out over `MaxMembersPerEntry` or `MaxMembershipValuesPerSearch` | `adminLimitExceeded` (11) |
+| Membership fan-out over `MaxMembersPerEntry` or `MaxMembershipValuesPerSearch`, or a membership read cut by the model row ceiling (`MaxQueryRows`) | `adminLimitExceeded` (11) |
+| Connection over `MaxConnections` | `busy` (51) as a Notice of Disconnection, then close |
 | Unsupported **critical** control, or a bad/forged/expired paging cookie | `unavailableCriticalExtension` (12) |
 | Credentialed bind on a cleartext transport | `confidentialityRequired` (13) |
 | Any bind failure whatsoever | `invalidCredentials` (49) |
 | Search before binding; anonymous session reaching for data; session with no projected identity; a tenant or policy denial raised by the pipeline (an explicitly named attribute is never the trigger — see below) | `insufficientAccessRights` (50) |
 | StartTLS with no certificate configured | `unavailable` (52) |
 | StartTLS out of order | `operationsError` (1) |
-| Unsupported extended operation; bind or search on a listener with no seam to serve it | `unwillingToPerform` (53) |
+| Unsupported extended operation (fixed text; the request OID is not echoed); bind or search on a listener with no seam to serve it | `unwillingToPerform` (53) |
 | Base names nothing published, is malformed, is outside the base DN, names a table this identity may not read, or names a row this identity cannot see | `noSuchObject` (32) |
 | Any internal fault | `operationsError` (1), diagnostic blanked |
 

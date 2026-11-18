@@ -4,6 +4,8 @@ using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
 using BifrostQL.Server.S3;
 using FluentAssertions;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -195,6 +197,67 @@ namespace BifrostQL.Server.Test.S3
             var (status, xml) = await RunError(ctx);
             status.Should().Be(411);
             xml.Element("Code")!.Value.Should().Be("MissingContentLength");
+        }
+
+        /// <summary>
+        /// Over real Kestrel: the server's own body limit (30 MB by default, 1 KiB here) is below
+        /// MaxBodyBytes (256 KiB here). Kestrel threw mid-read past its limit and the funnel
+        /// answered 500 for a body S3 had declared acceptable; the endpoint now raises the
+        /// request's limit to MaxBodyBytes. The 64 KiB body is sent in full with an honest
+        /// Content-Length.
+        /// </summary>
+        [Fact]
+        public async Task Put_over_the_server_body_limit_but_within_MaxBodyBytes_is_stored_over_kestrel()
+        {
+            var body = RandomNumberGenerator.GetBytes(64 * 1024);
+            var (status, _) = await PutOverKestrel(body, serverLimit: 1024, maxBodyBytes: 256 * 1024);
+
+            status.Should().Be(200);
+            (await RunGet(GetA("/assets/data/5"))).Body.Should().Equal(body);
+        }
+
+        [Fact]
+        public async Task Put_over_MaxBodyBytes_is_still_refused_over_kestrel()
+        {
+            // Raising the server limit must not lift the S3 cap: MaxBodyBytes still binds.
+            var body = RandomNumberGenerator.GetBytes(64 * 1024);
+            var (status, text) = await PutOverKestrel(body, serverLimit: 1024 * 1024, maxBodyBytes: 32 * 1024);
+
+            status.Should().Be(400);
+            XElement.Parse(text).Element("Code")!.Value.Should().Be("EntityTooLarge");
+            (await RunGet(GetA("/assets/data/5"))).Status.Should().Be(404);
+        }
+
+        private async Task<(int Status, string Body)> PutOverKestrel(byte[] body, long serverLimit, long maxBodyBytes)
+        {
+            var middleware = Build(tweak: o => o.MaxBodyBytes = maxBodyBytes);
+            var builder = WebApplication.CreateSlimBuilder();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(System.Net.IPAddress.Loopback, 0);
+                kestrel.Limits.MaxRequestBodySize = serverLimit;
+            });
+            await using var app = builder.Build();
+            app.Run(context => middleware.InvokeAsync(context));
+            await app.StartAsync();
+
+            var address = new Uri(app.Urls.Single());
+            var host = $"{address.Host}:{address.Port}";
+            var signed = S3TestSigner.BuildHeaderSigned(
+                method: "PUT", path: "/assets/data/5", host: host, signTime: SignTime,
+                secret: SecretA, accessKeyId: KeyA, payloadHash: S3SigV4.HashSha256Hex(body));
+
+            using var client = new HttpClient { BaseAddress = address };
+            using var request = new HttpRequestMessage(HttpMethod.Put, "/assets/data/5")
+            {
+                Content = new ByteArrayContent(body),
+            };
+            foreach (var name in new[] { "Authorization", "x-amz-date", "x-amz-content-sha256" })
+                request.Headers.TryAddWithoutValidation(name, signed.Request.Headers[name].ToString());
+            using var response = await client.SendAsync(request);
+            var text = await response.Content.ReadAsStringAsync();
+            await app.StopAsync();
+            return ((int)response.StatusCode, text);
         }
 
         [Fact]

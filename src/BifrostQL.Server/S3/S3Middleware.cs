@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Core.Storage;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.S3
@@ -69,6 +70,7 @@ namespace BifrostQL.Server.S3
             try
             {
                 EnforceLimits(context.Request);
+                RaiseServerBodyLimit(context);
 
                 // Cancellation is honored before any auth work so a client abort short-circuits
                 // the HMAC/PBKDF2 cost.
@@ -791,6 +793,22 @@ namespace BifrostQL.Server.S3
 
             if (request.ContentLength is { } length && length > _options.MaxBodyBytes)
                 throw S3ProtocolException.EntityTooLarge();
+        }
+
+        /// <summary>
+        /// Raises the server's own request-body limit to <see cref="S3Options.MaxBodyBytes"/> for
+        /// this request. Kestrel caps bodies at 30 MB by default and throws mid-read past it, so a
+        /// PutObject between 30 MB and the declared 64 MiB failed with 500. The S3 caps
+        /// (<see cref="EnforceLimits"/> from Content-Length, <see cref="ReadBoundedBodyAsync"/> on
+        /// received bytes) stay the bound. Only a write surface reads a body, so a read-only
+        /// endpoint keeps the server default. The feature is read-only once the body has started.
+        /// </summary>
+        private void RaiseServerBodyLimit(HttpContext context)
+        {
+            if (!_options.EnableWrites)
+                return;
+            if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
+                bodyLimit.MaxRequestBodySize = _options.MaxBodyBytes;
         }
 
         private static async Task WriteErrorAsync(HttpContext context, int status, string code, string message, string requestId)

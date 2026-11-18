@@ -5,13 +5,14 @@ namespace BifrostQL.Core.Model;
 
 /// <summary>
 /// The metadata store behind <see cref="DbTable.Metadata"/>, <see cref="ColumnDto.Metadata"/>
-/// and <see cref="DbModel.Metadata"/>. It wraps the dictionary it is given (by reference)
-/// and bumps one process-wide <see cref="Version"/> on every write, which is the change
-/// signal <see cref="MetadataMemo{TValue}"/> needs to serve a parsed config without
-/// re-parsing it on every call. Production writes metadata only while the model is built;
-/// hosts and tests that write after load bump the version and drop every memo.
-/// A write made through the original dictionary reference handed to an <c>init</c>
-/// setter bypasses the wrapper and so is not seen.
+/// and <see cref="DbModel.Metadata"/>. It owns its backing dictionary and bumps one
+/// process-wide <see cref="Version"/> on every write, which is the change signal
+/// <see cref="MetadataMemo{TValue}"/> needs to serve a parsed config without re-parsing it on
+/// every call. Production writes metadata only while the model is built; hosts and tests that
+/// write after load bump the version and drop every memo.
+/// A plain dictionary handed to an <c>init</c> setter is copied (<see cref="ShareOrCopy"/>), so
+/// a later write through the caller's original reference changes only that copy and never the
+/// table's metadata; only an existing <see cref="MetadataDictionary"/> is shared.
 /// </summary>
 public sealed class MetadataDictionary : IDictionary<string, object?>
 {

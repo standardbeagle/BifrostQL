@@ -70,7 +70,9 @@ public sealed class BinaryGrantResolverScopeTests
         context.User = new ClaimsPrincipal(new ClaimsIdentity(new[]
         {
             new Claim(ClaimTypes.NameIdentifier, "user-1"),
-            new Claim(BifrostQL.Server.Auth.LocalAuthClaims.Provider, "local"),
+            // Not "local": a local-auth principal is re-checked against its server-side session on
+            // every message, and this fixture has none.
+            new Claim(BifrostQL.Server.Auth.LocalAuthClaims.Provider, "test"),
         }, authenticationType: "Test"));
         context.Features.Set<IHttpWebSocketFeature>(new SocketFeature(socket));
 

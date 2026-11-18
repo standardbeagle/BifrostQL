@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -8,6 +9,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Chat;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Server.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
@@ -371,6 +373,10 @@ namespace BifrostQL.Server
                 return;
             }
 
+            // The stream is one long request: the cookie hook checked the local session once, at
+            // its start. The guard re-checks it before each tool call and before the assistant row
+            // is written, and ends the stream when the session ended meanwhile.
+            using var session = new LocalSessionStreamGuard(context);
             try
             {
                 object? userMessageId;
@@ -381,7 +387,7 @@ namespace BifrostQL.Server
                     // Connector tools, resolved per request from the cached model and
                     // bound to THIS caller's auth context — a tool call can never run
                     // under any other identity. No connector tables = no tools param.
-                    requestOptions = await BuildToolRequestOptionsAsync(userContext, conversationId);
+                    requestOptions = await BuildToolRequestOptionsAsync(userContext, conversationId, session);
 
                     userMessageId = await _store.AppendMessageAsync(
                         userContext, conversationId, ChatMessageRoles.User, body!.Content!, cancellation);
@@ -416,7 +422,7 @@ namespace BifrostQL.Server
                 }
 
                 await StreamCompletionAsync(
-                    context, userContext, conversationId, userMessageId, history, requestOptions, cancellation);
+                    context, userContext, conversationId, userMessageId, history, requestOptions, session);
             }
             finally
             {
@@ -613,7 +619,7 @@ namespace BifrostQL.Server
         /// tool.
         /// </summary>
         private async Task<ChatCompletionRequestOptions?> BuildToolRequestOptionsAsync(
-            IDictionary<string, object?> userContext, object conversationId)
+            IDictionary<string, object?> userContext, object conversationId, LocalSessionStreamGuard session)
         {
             var model = await _reads.GetModelAsync(_options.GraphQlEndpoint);
             var toolSet = _connectors.BuildToolSet(model);
@@ -631,7 +637,7 @@ namespace BifrostQL.Server
                 Tools = new ChatCompletionToolOptions
                 {
                     Tools = toolSet.Definitions,
-                    Executor = toolSet.CreateExecutor(toolContext),
+                    Executor = new SessionBoundToolExecutor(toolSet.CreateExecutor(toolContext), session),
                     MaxToolIterations = _options.MaxToolIterations,
                 },
             };
@@ -695,8 +701,9 @@ namespace BifrostQL.Server
             object? userMessageId,
             IReadOnlyList<ChatCompletionMessage> history,
             ChatCompletionRequestOptions? requestOptions,
-            CancellationToken cancellation)
+            LocalSessionStreamGuard session)
         {
+            var cancellation = session.Token;
             var response = context.Response;
             response.StatusCode = StatusCodes.Status200OK;
             response.ContentType = "text/event-stream; charset=utf-8";
@@ -794,6 +801,7 @@ namespace BifrostQL.Server
                         case ChatCompletionResult result:
                             // Complete and Truncated both persist the text as-is;
                             // the stop reason travels only in the done event.
+                            await session.EnsureLiveAsync(cancellation);
                             var assistantMessageId = await _store.AppendMessageAsync(
                                 userContext, conversationId, ChatMessageRoles.Assistant, result.FullText, cancellation);
                             await WriteEventAsync(context, "done", new
@@ -804,6 +812,13 @@ namespace BifrostQL.Server
                             return;
                     }
                 }
+            }
+            catch (OperationCanceledException) when (session.Ended)
+            {
+                // The local session ended mid-stream: no tool ran under it and no assistant row
+                // is written. Checked before the disconnect arm: both cancel the same token.
+                await TryWriteEventAsync(context, "error",
+                    new { code = "session-ended", message = "The session ended. Sign in again." });
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
@@ -996,5 +1011,71 @@ namespace BifrostQL.Server
         private sealed record PostMessageRequest(string? Content);
 
         private sealed record ResolveConfirmationRequest(bool? Approve, string? Reason);
+
+        /// <summary>
+        /// Re-checks a local-auth session for the length of one chat stream, through the same
+        /// <see cref="LocalAuthEndpoint.RevalidateSessionAsync"/> the cookie hook runs. A session that
+        /// ended cancels <see cref="Token"/> (the token the completion runs under) and throws, so the
+        /// completion service rethrows it as caller teardown rather than feeding it to the model.
+        /// Principals from other providers always pass.
+        /// </summary>
+        private sealed class LocalSessionStreamGuard : IDisposable
+        {
+            private readonly HttpContext _context;
+            private readonly CancellationTokenSource _ended;
+            // The stream's principal, taken at its start and replaced on refresh. Held here so a
+            // principal from another provider never reads the request context again.
+            private ClaimsPrincipal _principal;
+
+            public LocalSessionStreamGuard(HttpContext context)
+            {
+                _context = context;
+                _principal = context.User;
+                _ended = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            }
+
+            /// <summary>Cancelled on client disconnect or when the session is found ended.</summary>
+            public CancellationToken Token => _ended.Token;
+
+            /// <summary>True once a check found the session ended.</summary>
+            public bool Ended { get; private set; }
+
+            public async Task EnsureLiveAsync(CancellationToken cancellationToken)
+            {
+                var check = await LocalAuthEndpoint.RevalidateSessionAsync(_principal, _context, cancellationToken);
+                switch (check.Verdict)
+                {
+                    case LocalSessionVerdict.Rejected:
+                        Ended = true;
+                        _ended.Cancel();
+                        throw new OperationCanceledException("The local session ended.", _ended.Token);
+                    case LocalSessionVerdict.Refreshed:
+                        _principal = check.Principal!;
+                        _context.User = _principal;
+                        break;
+                }
+            }
+
+            public void Dispose() => _ended.Dispose();
+        }
+
+        /// <summary>Runs each tool call only after <see cref="LocalSessionStreamGuard.EnsureLiveAsync"/> passes.</summary>
+        private sealed class SessionBoundToolExecutor : IChatToolExecutor
+        {
+            private readonly IChatToolExecutor _inner;
+            private readonly LocalSessionStreamGuard _session;
+
+            public SessionBoundToolExecutor(IChatToolExecutor inner, LocalSessionStreamGuard session)
+            {
+                _inner = inner;
+                _session = session;
+            }
+
+            public async Task<ChatToolResult> ExecuteAsync(string toolName, string inputJson, CancellationToken cancellationToken)
+            {
+                await _session.EnsureLiveAsync(cancellationToken);
+                return await _inner.ExecuteAsync(toolName, inputJson, cancellationToken);
+            }
+        }
     }
 }

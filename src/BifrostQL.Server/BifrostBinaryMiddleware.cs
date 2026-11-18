@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Server.Auth;
 using GraphQL;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -779,6 +780,8 @@ namespace BifrostQL.Server
             {
                 try
                 {
+                    if (!await SessionStillLiveAsync(connection))
+                        return;
                     if (request.Type == BifrostMessageType.Resume)
                         await HandleResumeAsync(request, connection);
                     else
@@ -806,6 +809,31 @@ namespace BifrostQL.Server
                 await SendErrorResponseAsync(connection, request.RequestId,
                     $"Request id {request.RequestId} is already in flight on this connection.",
                     BinaryErrorCode.RequestIdInFlight);
+            }
+        }
+
+        /// <summary>
+        /// Re-runs the local-auth session check for each message. The upgrade request's cookie was
+        /// validated once, at the handshake, and the connection outlives it: a session ended since
+        /// (logout, administrator revoke, password or privilege change, idle or absolute expiry)
+        /// closes the connection with PolicyViolation instead of serving the message. A refreshed
+        /// principal replaces the connection's, so later messages project the current roles and
+        /// tenant. Principals from other providers are not governed by local sessions.
+        /// </summary>
+        private static async Task<bool> SessionStillLiveAsync(BinaryConnection connection)
+        {
+            var http = connection.HttpContext;
+            var check = await LocalAuthEndpoint.RevalidateSessionAsync(http.User, http, connection.Token);
+            switch (check.Verdict)
+            {
+                case LocalSessionVerdict.Rejected:
+                    await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Session ended");
+                    return false;
+                case LocalSessionVerdict.Refreshed:
+                    http.User = check.Principal!;
+                    return true;
+                default:
+                    return true;
             }
         }
 

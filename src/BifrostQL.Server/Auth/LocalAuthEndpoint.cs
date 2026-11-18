@@ -259,44 +259,68 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>
         /// Cookie <c>OnValidatePrincipal</c> for local-auth sessions, run on every authenticated
-        /// request. The cookie's session id must name a live server-side session: one that is
-        /// missing, revoked (logout, administrator, account change), past
-        /// <see cref="LocalAuthOptions.SessionLifetime"/> or idle for
-        /// <see cref="LocalAuthOptions.SessionIdleTimeout"/> rejects the principal and signs the
-        /// cookie out. A cookie without a session id (issued before sessions were server-side) is
-        /// rejected the same way. Once <see cref="LocalAuthOptions.SessionRevalidationInterval"/>
-        /// has passed since the last check, the user row is re-read: a missing or disabled row, a
-        /// changed password, or a changed tenant, role list or household revokes every session of
-        /// that user. Otherwise the claims are rebuilt from the row and the cookie re-issued with
-        /// its sign-in expiry kept. Principals from other providers (an OIDC re-issue) pass through
-        /// untouched.
+        /// request: <see cref="RevalidateSessionAsync"/> decides, this hook signs a rejected cookie out
+        /// or re-issues a refreshed one with its sign-in expiry kept. Principals from other providers
+        /// (an OIDC re-issue) pass through untouched.
         /// </summary>
         public static async Task ValidateSessionAsync(CookieValidatePrincipalContext context)
         {
-            var principal = context.Principal;
-            if (principal?.FindFirst(LocalAuthClaims.Provider)?.Value != LocalUserStore.ProviderName)
-                return;
+            var check = await RevalidateSessionAsync(context.Principal, context.HttpContext, context.HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+            switch (check.Verdict)
+            {
+                case LocalSessionVerdict.Rejected:
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false);
+                    return;
+                case LocalSessionVerdict.Refreshed:
+                    context.ReplacePrincipal(check.Principal!);
+                    // A renewal re-issues the cookie expiring at now + (ExpiresUtc - IssuedUtc). Moving
+                    // IssuedUtc to now makes that the ORIGINAL expiry, so carrying fresh claims never
+                    // extends the session past SessionLifetime from sign-in.
+                    context.Properties.IssuedUtc = check.CheckedAt;
+                    context.ShouldRenew = true;
+                    return;
+            }
+        }
 
-            var services = context.HttpContext.RequestServices;
+        /// <summary>
+        /// The one local-auth session check, shared by every surface that holds a principal past the
+        /// start of its request: the cookie hook per HTTP request, the binary WebSocket per message,
+        /// the chat stream per tool call. The principal's session id must name a live server-side
+        /// session: one that is missing, revoked (logout, administrator, account change), past
+        /// <see cref="LocalAuthOptions.SessionLifetime"/> or idle for
+        /// <see cref="LocalAuthOptions.SessionIdleTimeout"/> is <see cref="LocalSessionVerdict.Rejected"/>.
+        /// A principal without a session id (issued before sessions were server-side) is rejected the
+        /// same way. Once <see cref="LocalAuthOptions.SessionRevalidationInterval"/> has passed since
+        /// the principal's last check, the user row is re-read: a missing or disabled row, a changed
+        /// password, or a changed tenant, role list or household revokes every session of that user
+        /// (rejected); otherwise the verdict is <see cref="LocalSessionVerdict.Refreshed"/> with claims
+        /// rebuilt from the row, which the caller adopts as its principal. Principals from other
+        /// providers are <see cref="LocalSessionVerdict.NotLocal"/>.
+        /// </summary>
+        internal static async Task<LocalSessionCheck> RevalidateSessionAsync(
+            ClaimsPrincipal? principal, HttpContext httpContext, CancellationToken ct)
+        {
+            if (principal?.FindFirst(LocalAuthClaims.Provider)?.Value != LocalUserStore.ProviderName)
+                return new LocalSessionCheck(LocalSessionVerdict.NotLocal, null, default);
+
+            var services = httpContext.RequestServices;
             var options = services.GetRequiredService<LocalAuthOptions>();
-            var now = Now(context.HttpContext);
-            var sourceIp = SourceIp(context.HttpContext);
-            var ct = context.HttpContext.RequestAborted;
+            var now = Now(httpContext);
+            var sourceIp = SourceIp(httpContext);
             var sessions = services.GetRequiredService<LocalSessionManager>();
 
             var sessionId = principal.FindFirst(LocalAuthClaims.SessionId)?.Value;
             var session = sessionId is null ? null : await sessions.CheckAsync(sessionId, sourceIp, now, ct).ConfigureAwait(false);
             if (session is null)
-            {
-                await RejectAsync(context).ConfigureAwait(false);
-                return;
-            }
+                return new LocalSessionCheck(LocalSessionVerdict.Rejected, null, now);
 
             if (long.TryParse(principal.FindFirst(LocalAuthClaims.ValidatedAt)?.Value,
                     System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
                     out var validatedSeconds)
                 && now - DateTimeOffset.FromUnixTimeSeconds(validatedSeconds) < options.SessionRevalidationInterval)
-                return;
+                return new LocalSessionCheck(LocalSessionVerdict.Live, null, now);
 
             var account = await services.GetRequiredService<LocalUserStore>()
                 .FindAccountByIdAsync(session.UserId, ct).ConfigureAwait(false);
@@ -320,16 +344,10 @@ namespace BifrostQL.Server.Auth
                     await services.GetRequiredService<LocalAuthAudit>().RecordAsync(now, AuthAuditKind.PrivilegeChanged,
                         AuthAuditOutcome.Success, session.UserId, null, sourceIp, null, ct).ConfigureAwait(false);
                 await sessions.RevokeAllAsync(session.UserId, revokeReason, null, sourceIp, now, ct).ConfigureAwait(false);
-                await RejectAsync(context).ConfigureAwait(false);
-                return;
+                return new LocalSessionCheck(LocalSessionVerdict.Rejected, null, now);
             }
 
-            context.ReplacePrincipal(BuildPrincipal(account!.Identity, now, sessionId));
-            // A renewal re-issues the cookie expiring at now + (ExpiresUtc - IssuedUtc). Moving
-            // IssuedUtc to now makes that the ORIGINAL expiry, so carrying fresh claims never
-            // extends the session past SessionLifetime from sign-in.
-            context.Properties.IssuedUtc = now;
-            context.ShouldRenew = true;
+            return new LocalSessionCheck(LocalSessionVerdict.Refreshed, BuildPrincipal(account!.Identity, now, sessionId), now);
         }
 
         /// <summary>
@@ -373,12 +391,6 @@ namespace BifrostQL.Server.Auth
                 context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
                 return (null, true);
             }
-        }
-
-        private static async Task RejectAsync(CookieValidatePrincipalContext context)
-        {
-            context.RejectPrincipal();
-            await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false);
         }
 
         /// <summary>

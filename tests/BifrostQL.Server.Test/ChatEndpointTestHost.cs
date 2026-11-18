@@ -37,6 +37,12 @@ namespace BifrostQL.Server.Test
 
         public FakeChatCompletionService Fake { get; } = new();
 
+        /// <summary>The chat database, for a host service (local auth) that reads the same file.</summary>
+        public string ConnectionString => _connString;
+
+        /// <summary>The started host's services.</summary>
+        public IServiceProvider Services => _host!.Services;
+
         public async Task InitializeAsync()
         {
             _keepAlive = new SqliteConnection(_connString);
@@ -91,7 +97,8 @@ namespace BifrostQL.Server.Test
             int historyLimit = 50, string? systemPrompt = null, IQueryObserver[]? observers = null,
             IChatConnector[]? connectors = null, bool messagesAsExploreConnector = false,
             string[]? extraMetadata = null, Action<IServiceCollection>? configureServices = null,
-            Action<BifrostChatOptions>? configureChat = null)
+            Action<BifrostChatOptions>? configureChat = null, string? defaultAuthScheme = null,
+            Action<IApplicationBuilder>? configureApp = null)
         {
             DbConnFactoryResolver.Register(BifrostDbProvider.Sqlite, cs => new SqliteDbConnFactory(cs));
             var builder = new HostBuilder().ConfigureWebHost(web =>
@@ -105,7 +112,7 @@ namespace BifrostQL.Server.Test
                     services.AddSingleton<IChatCompletionService>(Fake);
                     foreach (var connector in connectors ?? Array.Empty<IChatConnector>())
                         services.AddSingleton(connector);
-                    services.AddAuthentication(HeaderAuthHandler.SchemeName)
+                    services.AddAuthentication(defaultAuthScheme ?? HeaderAuthHandler.SchemeName)
                         .AddScheme<AuthenticationSchemeOptions, HeaderAuthHandler>(HeaderAuthHandler.SchemeName, _ => { });
                     services.AddBifrostEndpoints(o =>
                     {
@@ -132,6 +139,7 @@ namespace BifrostQL.Server.Test
                 web.Configure(app =>
                 {
                     app.UseAuthentication();
+                    configureApp?.Invoke(app);
                     app.UseBifrostChat(o =>
                     {
                         o.HistoryLimit = historyLimit;

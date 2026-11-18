@@ -47,6 +47,27 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task SslRequest_AfterTlsIsEstablished_IsRefused_NotNegotiatedAgain()
+        {
+            var cert = CreateSelfSignedCert();
+            var store = new FakePgCredentialStore().Add("alice", "s3cret", TenantPrincipal("user-alice", "tenant-a"));
+            await using var fixture = await PgFixture.StartAsync(store, EmptyServices(),
+                new PgWireOptions { AuthMethod = PgAuthMethod.Cleartext, ServerCertificate = cert });
+
+            var client = new PgHandshakeClient(fixture.ClientStream);
+            // Control: the first SSLRequest on the raw socket is accepted ('S').
+            await client.NegotiateTlsAsync();
+
+            // A second SSLRequest inside the TLS session must not start TLS-in-TLS.
+            var first = await client.SendSslRequestAndReadFirstByteAsync().WaitAsync(Timeout);
+
+            ((char)first).Should().Be('E', "a repeat SSLRequest is refused with an ErrorResponse, never answered 'S'");
+            var body = await client.ReadBodyAfterTypeAsync().WaitAsync(Timeout);
+            PgHandshakeClient.ErrorSqlStateOf(PgWireProtocol.ErrorResponse, body)
+                .Should().Be(PgWireProtocol.SqlStateProtocolViolation);
+        }
+
+        [Fact]
         public async Task Scram_ValidIdentity_ReachesReadyForQuery()
         {
             // Arrange

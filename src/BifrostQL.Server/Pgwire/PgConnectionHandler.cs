@@ -291,6 +291,16 @@ namespace BifrostQL.Server.Pgwire
                     switch (code)
                     {
                         case PgWireProtocol.SslRequestCode:
+                            if (negotiatedTls)
+                            {
+                                // TLS is already up. A second SSLRequest would run a TLS handshake
+                                // INSIDE the first (TLS-in-TLS, each upgrade costing a fresh
+                                // handshake on the pre-auth budget), which no real client sends.
+                                // Refuse it on the established TLS stream, as PostgreSQL does.
+                                await RejectAsync(stream, PgWireProtocol.SqlStateProtocolViolation,
+                                    "SSLRequest received on a connection that already negotiated TLS.", ct);
+                                return (stream, null, negotiatedTls);
+                            }
                             if (_options.ServerCertificate is null)
                             {
                                 // No certificate: decline TLS. The client decides whether to

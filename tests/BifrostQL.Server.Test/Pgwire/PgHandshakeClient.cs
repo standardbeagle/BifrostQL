@@ -59,6 +59,34 @@ namespace BifrostQL.Server.Test.Pgwire
             _stream = ssl;
         }
 
+        /// <summary>
+        /// Sends a bare SSLRequest on the CURRENT stream (after TLS this is inside the TLS session)
+        /// and returns the single byte the server answers first: 'S'/'N' for a negotiation answer,
+        /// 'E' for the start of an ErrorResponse, whose rest <see cref="ReadBodyAfterTypeAsync"/> reads.
+        /// </summary>
+        public async Task<byte> SendSslRequestAndReadFirstByteAsync()
+        {
+            var packet = new byte[8];
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(0, 4), 8);
+            BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(4, 4), PgWireProtocol.SslRequestCode);
+            await _stream.WriteAsync(packet);
+            await _stream.FlushAsync();
+            var first = new byte[1];
+            await _stream.ReadExactlyAsync(first);
+            return first[0];
+        }
+
+        /// <summary>Reads a backend message's length and body once its type byte was consumed.</summary>
+        public async Task<byte[]> ReadBodyAfterTypeAsync()
+        {
+            var len = new byte[4];
+            await _stream.ReadExactlyAsync(len);
+            var body = new byte[BinaryPrimitives.ReadInt32BigEndian(len) - 4];
+            if (body.Length > 0)
+                await _stream.ReadExactlyAsync(body);
+            return body;
+        }
+
         public async Task SendStartupAsync(string user, string database = "bifrost")
         {
             using var body = new MemoryStream();

@@ -227,6 +227,83 @@ namespace BifrostQL.Server.Auth
         public const int MinPasswordHashIterations = DefaultPasswordHashIterations;
 
         /// <summary>
+        /// Every local sign-in needs a second factor (PCI DSS 4.0 8.4.2, HIPAA 164.312(d)). An enrolled
+        /// user's password answers <c>mfa-required</c> with a challenge ticket instead of a session; a
+        /// user who has not enrolled gets an enrollment-only session (<c>mfa-enrollment-required</c>)
+        /// that reaches nothing but <see cref="MfaPath"/><c>/enroll</c>, <c>/enroll/confirm</c> and
+        /// logout. Needs <see cref="MfaKeyRef"/>. Defaults to true: set false to let users who have not
+        /// enrolled sign in with a password alone (enrolled users still need their factor).
+        /// </summary>
+        public bool RequireMfa { get; set; } = true;
+
+        /// <summary>
+        /// Roles whose members need a second factor when <see cref="RequireMfa"/> is false (for example
+        /// only the administrators who reach the cardholder data environment). Needs
+        /// <see cref="MfaKeyRef"/> when not empty. Empty by default.
+        /// </summary>
+        public IList<string> RequireMfaForRoles { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Field-encryption key-ref (<c>provider:id</c>, e.g. <c>config:mfa</c>) whose data key encrypts
+        /// TOTP secrets at rest. The host registers an <c>IRootKeyProvider</c> and a durable
+        /// <c>IDataEncryptionKeyStore</c>; a missing one fails the host start. Null (the default) turns
+        /// MFA off: no MFA endpoint is mapped, and a user who enrolled earlier cannot sign in until it
+        /// is set again (403 <c>mfa_unavailable</c>), so removing it never skips a factor.
+        /// </summary>
+        public string? MfaKeyRef { get; set; }
+
+        /// <summary>Base path of the MFA endpoints. Defaults to <c>/auth/mfa</c>.</summary>
+        public string MfaPath { get; set; } = "/auth/mfa";
+
+        /// <summary>Issuer shown by authenticator apps (the <c>otpauth://</c> label and <c>issuer</c>). Defaults to <c>BifrostQL</c>.</summary>
+        public string MfaIssuer { get; set; } = "BifrostQL";
+
+        /// <summary>HMAC of new enrollments. Defaults to SHA-1, the only one every authenticator app reads.</summary>
+        public LocalTotpAlgorithm MfaTotpAlgorithm { get; set; } = LocalTotpAlgorithm.Sha1;
+
+        /// <summary>Code length of new enrollments, 6 to 8. Defaults to 6.</summary>
+        public int MfaTotpDigits { get; set; } = 6;
+
+        /// <summary>Time step of new enrollments in seconds, 15 to 300. Defaults to 30.</summary>
+        public int MfaTotpPeriodSeconds { get; set; } = 30;
+
+        /// <summary>How long a challenge ticket from a verified password stays usable. Defaults to 5 minutes; at most 15.</summary>
+        public TimeSpan MfaChallengeLifetime { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// How long an unconfirmed enrollment, and an enrollment-only session, lasts. Defaults to 10
+        /// minutes.
+        /// </summary>
+        public TimeSpan MfaEnrollmentTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
+        /// <summary>Wrong codes one challenge ticket accepts before it is spent. Defaults to 5; at least 1.</summary>
+        public int MaxMfaChallengeAttempts { get; set; } = 5;
+
+        /// <summary>
+        /// Second-factor attempts (login step two, enrollment confirm, disable, regenerate) one client
+        /// IP may make within <see cref="LoginAttemptWindow"/> before 429. Counted before the code is
+        /// checked. Defaults to 20; at least 1.
+        /// </summary>
+        public int MaxMfaAttemptsPerSource { get; set; } = 20;
+
+        /// <summary>
+        /// Second-factor attempts one account may receive within <see cref="LoginAttemptWindow"/>, from
+        /// every source combined, before 429. Wrong codes also count toward <see cref="LockoutThreshold"/>.
+        /// Defaults to 10; at least 1.
+        /// </summary>
+        public int MaxMfaAttemptsPerAccount { get; set; } = 10;
+
+        /// <summary>Recovery codes issued at enrollment and at each regeneration.</summary>
+        public const int RecoveryCodeCount = 10;
+
+        /// <summary>Whether MFA is configured at all (a key-ref to encrypt secrets under).</summary>
+        internal bool MfaEnabled => MfaKeyRef is not null;
+
+        /// <summary>Whether a user holding <paramref name="roles"/> must present a second factor.</summary>
+        internal bool MfaRequiredFor(IEnumerable<string> roles) =>
+            RequireMfa || (RequireMfaForRoles.Count > 0 && roles.Any(r => RequireMfaForRoles.Contains(r, StringComparer.Ordinal)));
+
+        /// <summary>
         /// Throws on a setting no login could honour. <c>AddBifrostLocalAuth</c> calls it at startup;
         /// the runtime reads the same properties, so there is no second parser to drift.
         /// </summary>
@@ -259,6 +336,25 @@ namespace BifrostQL.Server.Auth
             Require(MaxPasswordAge is null || MaxPasswordAge > TimeSpan.Zero, nameof(MaxPasswordAge), MaxPasswordAge,
                 "must be null or positive");
             _ = CreatePasswordHasher();
+
+            Require(MfaKeyRef is null || BifrostQL.Core.Crypto.KeyRef.TryParse(MfaKeyRef, out _), nameof(MfaKeyRef), MfaKeyRef,
+                "must be null or a key-ref of the form provider:id with provider kms or config");
+            Require(MfaTotpDigits is >= 6 and <= 8, nameof(MfaTotpDigits), MfaTotpDigits, "must be between 6 and 8");
+            Require(MfaTotpPeriodSeconds is >= 15 and <= 300, nameof(MfaTotpPeriodSeconds), MfaTotpPeriodSeconds,
+                "must be between 15 and 300");
+            Require(MfaChallengeLifetime > TimeSpan.Zero && MfaChallengeLifetime <= TimeSpan.FromMinutes(15),
+                nameof(MfaChallengeLifetime), MfaChallengeLifetime, "must be positive and at most 15 minutes");
+            Require(MfaEnrollmentTimeout > TimeSpan.Zero && MfaEnrollmentTimeout <= MaxDuration, nameof(MfaEnrollmentTimeout),
+                MfaEnrollmentTimeout, "must be positive and at most 3650 days");
+            Require(MaxMfaChallengeAttempts >= 1, nameof(MaxMfaChallengeAttempts), MaxMfaChallengeAttempts, "must be at least 1");
+            Require(!string.IsNullOrWhiteSpace(MfaIssuer) && !MfaIssuer.Contains(':'), nameof(MfaIssuer), MfaIssuer,
+                "must be a name without a colon");
+            if ((RequireMfa || RequireMfaForRoles.Count > 0) && MfaKeyRef is null)
+                throw new InvalidOperationException(
+                    "LocalAuthOptions requires a second factor (RequireMfa defaults to true) but MfaKeyRef is not set. " +
+                    "Set MfaKeyRef to a field-encryption key-ref such as \"config:mfa\" and register an IRootKeyProvider " +
+                    "and a durable IDataEncryptionKeyStore, or set RequireMfa = false to let users who have not " +
+                    "enrolled sign in with a password alone.");
         }
 
         /// <summary>How often a live session's activity stamp is written: min(1 minute, idle timeout / 15).</summary>

@@ -66,6 +66,10 @@ builder.Services.AddBifrostLocalAuth(connectionString!, auth =>
     auth.IdColumn = "user_id";
     auth.LoginColumn = "email";
     auth.RolesColumn = "roles";
+    // Local auth requires a TOTP second factor by default, which needs an MFA key
+    // (MfaKeyRef plus an IRootKeyProvider and a durable IDataEncryptionKeyStore). This
+    // demo runs password-only; a deployment that handles regulated data keeps the default.
+    auth.RequireMfa = false;
 });
 
 // Optional OIDC login (Google / Microsoft 365), added purely by configuration on top of

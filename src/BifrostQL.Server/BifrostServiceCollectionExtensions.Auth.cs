@@ -49,7 +49,16 @@ namespace BifrostQL.Server
                 new BifrostQL.Server.Auth.DbLocalAuthStateStore(sp.GetRequiredService<IDbConnFactory>()));
             services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(sp =>
                 new BifrostQL.Server.Auth.LocalAuthStateProvisioner(
-                    sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>()));
+                    sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>(),
+                    sp.GetRequiredService<BifrostQL.Server.Auth.LocalMfaService>()));
+            // TOTP secrets are sealed by the field-encryption seam: the host's IRootKeyProvider and
+            // IDataEncryptionKeyStore, under LocalAuthOptions.MfaKeyRef. Missing ones fail the start.
+            BifrostServiceRegistrar.AddEnvelopeKeyManager(services);
+            services.AddSingleton(BifrostQL.Server.Auth.LocalMfaRateLimiter.From(options));
+            services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalMfaService(
+                sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>(),
+                sp.GetRequiredService<BifrostQL.Server.Auth.LocalAuthOptions>(),
+                () => sp.GetService<BifrostQL.Core.Crypto.EnvelopeKeyManager>()));
             services.AddSingleton(sp => new BifrostQL.Server.Auth.LocalAuthAudit(
                 sp.GetRequiredService<BifrostQL.Server.Auth.ILocalAuthStateStore>(),
                 sp.GetServices<BifrostQL.Server.Auth.IAuthAuditSink>(),

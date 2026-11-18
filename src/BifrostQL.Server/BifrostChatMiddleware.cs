@@ -1016,7 +1016,8 @@ namespace BifrostQL.Server
         /// Re-checks a local-auth session for the length of one chat stream, through the same
         /// <see cref="LocalAuthEndpoint.RevalidateSessionAsync"/> the cookie hook runs. A session that
         /// ended cancels <see cref="Token"/> (the token the completion runs under) and throws, so the
-        /// completion service rethrows it as caller teardown rather than feeding it to the model.
+        /// completion service rethrows it as caller teardown rather than feeding it to the model. An
+        /// enrollment-only session ends the stream the same way: chat is not an enrollment endpoint.
         /// Principals from other providers always pass.
         /// </summary>
         private sealed class LocalSessionStreamGuard : IDisposable
@@ -1046,6 +1047,7 @@ namespace BifrostQL.Server
                 switch (check.Verdict)
                 {
                     case LocalSessionVerdict.Rejected:
+                    case LocalSessionVerdict.EnrollmentOnly:
                         Ended = true;
                         _ended.Cancel();
                         throw new OperationCanceledException("The local session ended.", _ended.Token);

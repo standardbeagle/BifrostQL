@@ -30,15 +30,24 @@ namespace BifrostQL.Server.Auth
             _options = options;
         }
 
-        /// <summary>Records a new session for a verified sign-in and returns the id its cookie carries.</summary>
-        public async Task<string> IssueAsync(LocalAccountState account, string? sourceIp, DateTimeOffset now, CancellationToken ct)
+        /// <summary>
+        /// Records a new session for a verified sign-in and returns the id its cookie carries.
+        /// <paramref name="amr"/> records how the sign-in was authenticated. An enrollment-only
+        /// session (<paramref name="mfaPending"/>) ends after <see cref="LocalAuthOptions.MfaEnrollmentTimeout"/>.
+        /// </summary>
+        public async Task<string> IssueAsync(
+            LocalAccountState account, string? sourceIp, DateTimeOffset now, CancellationToken ct,
+            string amr = LocalAuthMethods.Password, bool mfaPending = false)
         {
             await PurgeIfDueAsync(now, ct).ConfigureAwait(false);
 
+            var endsAt = mfaPending && _options.MfaEnrollmentTimeout < _options.SessionLifetime
+                ? now + _options.MfaEnrollmentTimeout
+                : _options.SessionEndsAt(now);
             var sessionId = LocalSessionId.New();
             await _state.CreateSessionAsync(new LocalSession(
-                LocalSessionId.Hash(sessionId), account.UserId, now, now, _options.SessionEndsAt(now),
-                RevokedAt: null, RevokeReason: null, sourceIp, account.CredentialStamp), ct).ConfigureAwait(false);
+                LocalSessionId.Hash(sessionId), account.UserId, now, now, endsAt,
+                RevokedAt: null, RevokeReason: null, sourceIp, account.CredentialStamp, amr, mfaPending), ct).ConfigureAwait(false);
 
             if (_options.MaxConcurrentSessions is { } cap)
             {
@@ -96,7 +105,8 @@ namespace BifrostQL.Server.Auth
             return revoked;
         }
 
-        private async Task RevokeAsync(
+        /// <summary>Revokes one session and audits it. A session already ended records nothing.</summary>
+        public async Task RevokeAsync(
             LocalSession session, string reason, string? actorId, string? sourceIp, DateTimeOffset now, CancellationToken ct)
         {
             if (await _state.RevokeSessionAsync(session.SessionHash, now, reason, ct).ConfigureAwait(false))
@@ -146,6 +156,22 @@ namespace BifrostQL.Server.Auth
             ArgumentException.ThrowIfNullOrWhiteSpace(userId);
             return _sessions.RevokeAllAsync(userId, LocalSessionRevokeReasons.Administrator, actorId, sourceIp: null,
                 _time.GetUtcNow(), cancellationToken);
+        }
+
+        /// <summary>
+        /// Removes the second factor of <paramref name="userId"/> (a lost authenticator and lost
+        /// recovery codes) and revokes every session of the user. Under
+        /// <see cref="LocalAuthOptions.RequireMfa"/> the user's next sign-in can reach only enrollment.
+        /// </summary>
+        public async Task ResetMfaAsync(string userId, string? actorId, CancellationToken cancellationToken = default)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+            var now = _time.GetUtcNow();
+            var removed = await _state.DeleteMfaAsync(userId, cancellationToken).ConfigureAwait(false);
+            await _audit.RecordAsync(now, AuthAuditKind.MfaReset, removed ? AuthAuditOutcome.Success : AuthAuditOutcome.Failure,
+                userId, actorId, null, AuthAuditReasons.Administrator, cancellationToken).ConfigureAwait(false);
+            await _sessions.RevokeAllAsync(userId, LocalSessionRevokeReasons.MfaReset, actorId, sourceIp: null, now, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>Ends a lockout and clears the failure count of <paramref name="userId"/>.</summary>

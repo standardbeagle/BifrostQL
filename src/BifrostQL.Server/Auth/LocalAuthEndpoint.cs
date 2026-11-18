@@ -35,10 +35,13 @@ namespace BifrostQL.Server.Auth
             app.Map(options.LogoutPath, branch => branch.Run(HandleLogoutAsync));
             app.Map(options.SessionPath, branch => branch.Run(HandleSessionAsync));
             app.Map(options.PasswordChangePath, branch => branch.Run(HandlePasswordChangeAsync));
+            if (options.MfaEnabled)
+                LocalMfaEndpoint.Map(app, options);
             if (options.AdminRole is not null)
             {
                 app.Map(options.AdminPath + "/revoke-sessions", branch => branch.Run(HandleRevokeSessionsAsync));
                 app.Map(options.AdminPath + "/unlock", branch => branch.Run(HandleUnlockAsync));
+                app.Map(options.AdminPath + "/reset-mfa", branch => branch.Run(HandleResetMfaAsync));
             }
             return app;
         }
@@ -50,9 +53,11 @@ namespace BifrostQL.Server.Auth
         /// stable id, email, display name, provider, tenant, roles, and the household
         /// provider claim (when the login resolved one).
         /// </summary>
-        public static ClaimsPrincipal BuildPrincipal(AppIdentity identity) => BuildPrincipal(identity, validatedAt: null, sessionId: null);
+        public static ClaimsPrincipal BuildPrincipal(AppIdentity identity) =>
+            BuildPrincipal(identity, validatedAt: null, sessionId: null, amr: null, mfaPending: false);
 
-        private static ClaimsPrincipal BuildPrincipal(AppIdentity identity, DateTimeOffset? validatedAt, string? sessionId)
+        private static ClaimsPrincipal BuildPrincipal(
+            AppIdentity identity, DateTimeOffset? validatedAt, string? sessionId, string? amr, bool mfaPending)
         {
             if (identity == null) throw new ArgumentNullException(nameof(identity));
 
@@ -66,6 +71,10 @@ namespace BifrostQL.Server.Auth
                     at.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture)));
             if (sessionId is not null)
                 claims.Add(new Claim(LocalAuthClaims.SessionId, sessionId));
+            foreach (var method in (amr ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                claims.Add(new Claim(LocalAuthClaims.Amr, method));
+            if (mfaPending)
+                claims.Add(new Claim(LocalAuthClaims.MfaPending, "true"));
 
             if (!string.IsNullOrWhiteSpace(identity.Email))
                 claims.Add(new Claim(ClaimTypes.Email, identity.Email));
@@ -145,13 +154,25 @@ namespace BifrostQL.Server.Auth
             }
 
             var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
-            if (await RefuseLockedSinceCheckAsync(context, result.Account.UserId, AuthAuditKind.LoginFailed, now, sourceIp)
+            var options = context.RequestServices.GetRequiredService<LocalAuthOptions>();
+            // The password is right; from here on, saying what the second factor needs reveals
+            // nothing a guesser lacks. A wrong password never reaches this point, so its answer
+            // (401, no body) and its work are the same whether or not the account has a second factor.
+            var mfa = await state.GetMfaAsync(result.Account.UserId, ct).ConfigureAwait(false);
+            var secondFactorOwed = mfa is { Status: LocalMfaStatus.Active };
+
+            // For an enrolled user the failure count is cleared only when the second factor passes
+            // (LocalMfaEndpoint): clearing it on the password alone would let someone holding only
+            // the password reset the lockout between rounds of code guesses.
+            if (!secondFactorOwed
+                && await RefuseLockedSinceCheckAsync(context, result.Account.UserId, AuthAuditKind.LoginFailed, now, sourceIp)
                     .ConfigureAwait(false))
                 return;
 
             // Past the lockout check, so a login never rewrites a locked account's row. A rehash keeps
             // the same password: the user's live sessions follow the new stamp instead of reading it
-            // as a password change at their next revalidation.
+            // as a password change at their next revalidation. It runs before any challenge is issued,
+            // so the challenge binds the stamp the user row will carry when the code arrives.
             var account = await store.UpgradePasswordHashAsync(result, request.Login, request.Password, ct).ConfigureAwait(false);
             if (account.CredentialStamp != result.Account.CredentialStamp)
                 await state.RebindSessionCredentialStampAsync(
@@ -166,15 +187,58 @@ namespace BifrostQL.Server.Auth
                 await context.Response.WriteAsJsonAsync(new { error = "password_expired" }, ct).ConfigureAwait(false);
                 return;
             }
-            var sessionId = await context.RequestServices.GetRequiredService<LocalSessionManager>()
-                .IssueAsync(account, sourceIp, now, context.RequestAborted).ConfigureAwait(false);
-            var principal = BuildPrincipal(result.Identity, now, sessionId);
-            await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
-                .ConfigureAwait(false);
+
+            if (secondFactorOwed)
+            {
+                if (!options.MfaEnabled)
+                {
+                    // MfaKeyRef was removed after this user enrolled. Fail closed rather than skip the factor.
+                    await audit.RecordAsync(now, AuthAuditKind.LoginFailed, AuthAuditOutcome.Failure,
+                        account.UserId, null, sourceIp, AuthAuditReasons.MfaUnavailable, ct).ConfigureAwait(false);
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(new { error = "mfa_unavailable" }, ct).ConfigureAwait(false);
+                    return;
+                }
+                var (ticket, expiresAt) = await context.RequestServices.GetRequiredService<LocalMfaService>()
+                    .IssueChallengeAsync(account, now, ct).ConfigureAwait(false);
+                await audit.RecordAsync(now, AuthAuditKind.MfaChallengeIssued, AuthAuditOutcome.Success,
+                    account.UserId, null, sourceIp, null, ct).ConfigureAwait(false);
+                await context.Response.WriteAsJsonAsync(
+                    new LocalLoginMfaResponse(LocalLoginMfaResponse.MfaRequired, ticket, expiresAt), ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (options.MfaEnabled && options.MfaRequiredFor(result.Identity.Roles))
+            {
+                await SignInSessionAsync(context, result.Identity, account, LocalAuthMethods.Password,
+                    mfaPending: true, now, sourceIp).ConfigureAwait(false);
+                await audit.RecordAsync(now, AuthAuditKind.LoginSucceeded, AuthAuditOutcome.Success,
+                    account.UserId, null, sourceIp, AuthAuditReasons.MfaEnrollmentRequired, ct).ConfigureAwait(false);
+                await context.Response.WriteAsJsonAsync(
+                    new LocalLoginMfaResponse(LocalLoginMfaResponse.MfaEnrollmentRequired, null, null), ct).ConfigureAwait(false);
+                return;
+            }
+
+            await SignInSessionAsync(context, result.Identity, account, LocalAuthMethods.Password,
+                mfaPending: false, now, sourceIp).ConfigureAwait(false);
             await audit.RecordAsync(now, AuthAuditKind.LoginSucceeded, AuthAuditOutcome.Success,
                 result.Account.UserId, null, sourceIp, null, context.RequestAborted).ConfigureAwait(false);
 
             context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>
+        /// Issues a server-side session recording <paramref name="amr"/> and signs its cookie in.
+        /// The one place a local-auth session cookie is created.
+        /// </summary>
+        internal static async Task SignInSessionAsync(
+            HttpContext context, AppIdentity identity, LocalAccountState account, string amr, bool mfaPending,
+            DateTimeOffset now, string? sourceIp)
+        {
+            var sessionId = await context.RequestServices.GetRequiredService<LocalSessionManager>()
+                .IssueAsync(account, sourceIp, now, context.RequestAborted, amr, mfaPending).ConfigureAwait(false);
+            var principal = BuildPrincipal(identity, now, sessionId, amr, mfaPending);
+            await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -184,7 +248,7 @@ namespace BifrostQL.Server.Auth
         /// own is cleared and its end audited, by the one request whose conditional delete removed it:
         /// a failure or lock recorded since the read survives. Returns true when the response is written.
         /// </summary>
-        private static async Task<bool> RefuseLockedAsync(
+        internal static async Task<bool> RefuseLockedAsync(
             HttpContext context, LocalAccountState? account, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
         {
             if (account is null)
@@ -214,7 +278,7 @@ namespace BifrostQL.Server.Auth
         /// lockout. Then the attempt is refused like any locked one (401, audited as
         /// <paramref name="kind"/>) and the lock stands. Returns true when the response is written.
         /// </summary>
-        private static async Task<bool> RefuseLockedSinceCheckAsync(
+        internal static async Task<bool> RefuseLockedSinceCheckAsync(
             HttpContext context, string userId, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
         {
             var ct = context.RequestAborted;
@@ -229,10 +293,13 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>
         /// Counts a failed credential check toward the lockout of the matched, enabled account, audits
-        /// the lock when this failure takes it, and audits the failure as <paramref name="kind"/>.
+        /// the lock when this failure takes it, and audits the failure as <paramref name="kind"/>. A
+        /// wrong second factor passes its own <paramref name="failureReason"/>; it counts toward the
+        /// same lockout as a wrong password.
         /// </summary>
-        private static async Task RecordFailedAttemptAsync(
-            HttpContext context, LocalAccountState? account, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
+        internal static async Task RecordFailedAttemptAsync(
+            HttpContext context, LocalAccountState? account, AuthAuditKind kind, DateTimeOffset now, string? sourceIp,
+            string? failureReason = null)
         {
             var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
             var ct = context.RequestAborted;
@@ -244,10 +311,10 @@ namespace BifrostQL.Server.Auth
                     .ConfigureAwait(false);
                 if (failed.LockedNow)
                     await audit.RecordAsync(now, AuthAuditKind.AccountLocked, AuthAuditOutcome.Success,
-                        account.UserId, null, sourceIp, AuthAuditReasons.BadCredentials, ct).ConfigureAwait(false);
+                        account.UserId, null, sourceIp, failureReason ?? AuthAuditReasons.BadCredentials, ct).ConfigureAwait(false);
             }
             await audit.RecordAsync(now, kind, AuthAuditOutcome.Failure,
-                account?.UserId, null, sourceIp, FailureReason(account), ct).ConfigureAwait(false);
+                account?.UserId, null, sourceIp, failureReason ?? FailureReason(account), ct).ConfigureAwait(false);
         }
 
         private static string FailureReason(LocalAccountState? account) => account switch
@@ -280,6 +347,23 @@ namespace BifrostQL.Server.Auth
                     // extends the session past SessionLifetime from sign-in.
                     context.Properties.IssuedUtc = check.CheckedAt;
                     context.ShouldRenew = true;
+                    return;
+                case LocalSessionVerdict.EnrollmentOnly:
+                    // An enrollment-only session counts as signed in on the enrollment and logout
+                    // endpoints alone. Everywhere else the request runs anonymous, whatever is mounted
+                    // and in whatever order; the cookie is kept so the user can still finish enrolling.
+                    if (!IsEnrollmentOnlyPath(context.HttpContext.RequestServices.GetRequiredService<LocalAuthOptions>(),
+                            context.HttpContext.Request.Path))
+                    {
+                        context.RejectPrincipal();
+                        return;
+                    }
+                    if (check.Principal is { } refreshed)
+                    {
+                        context.ReplacePrincipal(refreshed);
+                        context.Properties.IssuedUtc = check.CheckedAt;
+                        context.ShouldRenew = true;
+                    }
                     return;
             }
         }
@@ -316,11 +400,21 @@ namespace BifrostQL.Server.Auth
             if (session is null)
                 return new LocalSessionCheck(LocalSessionVerdict.Rejected, null, now);
 
+            if (!session.MfaPending && !session.HasSecondFactor && options.MfaEnabled
+                && options.MfaRequiredFor(principal.FindAll(ClaimTypes.Role).Select(c => c.Value)))
+            {
+                // A password-only session of a user who must present a second factor: issued before
+                // the requirement applied to them. It ends; the next sign-in asks for the factor.
+                await sessions.RevokeAsync(session, LocalSessionRevokeReasons.MfaRequired, actorId: null, sourceIp, now, ct)
+                    .ConfigureAwait(false);
+                return new LocalSessionCheck(LocalSessionVerdict.Rejected, null, now);
+            }
+
             if (long.TryParse(principal.FindFirst(LocalAuthClaims.ValidatedAt)?.Value,
                     System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
                     out var validatedSeconds)
                 && now - DateTimeOffset.FromUnixTimeSeconds(validatedSeconds) < options.SessionRevalidationInterval)
-                return new LocalSessionCheck(LocalSessionVerdict.Live, null, now);
+                return Admitted(session, refreshed: null, now);
 
             var account = await services.GetRequiredService<LocalUserStore>()
                 .FindAccountByIdAsync(session.UserId, ct).ConfigureAwait(false);
@@ -347,8 +441,24 @@ namespace BifrostQL.Server.Auth
                 return new LocalSessionCheck(LocalSessionVerdict.Rejected, null, now);
             }
 
-            return new LocalSessionCheck(LocalSessionVerdict.Refreshed, BuildPrincipal(account!.Identity, now, sessionId), now);
+            return Admitted(session, BuildPrincipal(account!.Identity, now, sessionId, session.Amr, session.MfaPending), now);
         }
+
+        /// <summary>
+        /// The verdict for a session that passed every check: <see cref="LocalSessionVerdict.EnrollmentOnly"/>
+        /// for an enrollment-only session, else <see cref="LocalSessionVerdict.Live"/> (no
+        /// <paramref name="refreshed"/> principal) or <see cref="LocalSessionVerdict.Refreshed"/>.
+        /// </summary>
+        private static LocalSessionCheck Admitted(LocalSession session, ClaimsPrincipal? refreshed, DateTimeOffset now) =>
+            session.MfaPending
+                ? new LocalSessionCheck(LocalSessionVerdict.EnrollmentOnly, refreshed, now)
+                : new LocalSessionCheck(refreshed is null ? LocalSessionVerdict.Live : LocalSessionVerdict.Refreshed, refreshed, now);
+
+        /// <summary>The paths an enrollment-only session may reach: enroll, confirm, logout. Exact match, any case.</summary>
+        private static bool IsEnrollmentOnlyPath(LocalAuthOptions options, PathString path) =>
+            path.Equals(options.MfaPath + LocalMfaEndpoint.EnrollSuffix, StringComparison.OrdinalIgnoreCase)
+            || path.Equals(options.MfaPath + LocalMfaEndpoint.EnrollConfirmSuffix, StringComparison.OrdinalIgnoreCase)
+            || path.Equals(options.LogoutPath, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Answers 429 for an attempt the rate limiter refused and audits it as a failed
@@ -410,12 +520,12 @@ namespace BifrostQL.Server.Auth
                 || !All(principal, LocalAuthClaims.Org).SequenceEqual(All(fresh, LocalAuthClaims.Org), StringComparer.Ordinal);
         }
 
-        private static DateTimeOffset Now(HttpContext context) =>
+        internal static DateTimeOffset Now(HttpContext context) =>
             (context.RequestServices.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow();
 
-        private static string? SourceIp(HttpContext context) => context.Connection.RemoteIpAddress?.ToString();
+        internal static string? SourceIp(HttpContext context) => context.Connection.RemoteIpAddress?.ToString();
 
-        private static System.Net.EndPoint? RemoteEndPoint(HttpContext context) =>
+        internal static System.Net.EndPoint? RemoteEndPoint(HttpContext context) =>
             context.Connection.RemoteIpAddress is { } ip ? new System.Net.IPEndPoint(ip, 0) : null;
 
         private static async Task HandleLogoutAsync(HttpContext context)
@@ -457,8 +567,9 @@ namespace BifrostQL.Server.Auth
         /// password must satisfy <see cref="LocalAuthOptions.MinPasswordLength"/>,
         /// <see cref="LocalAuthOptions.MaxPasswordLength"/>, <see cref="LocalAuthOptions.PasswordRequiresLetterAndDigit"/> and differ from the current password and the
         /// <see cref="LocalAuthOptions.PasswordHistoryCount"/> passwords before it, else 400 with the broken
-        /// rule. On success every session of the user is revoked and the caller's cookie cleared;
-        /// the user signs in again with the new password.
+        /// rule. An account with a second factor also sends <c>code</c> or <c>recoveryCode</c>, checked
+        /// before the failure count clears. On success every session of the user is revoked and the
+        /// caller's cookie cleared; the user signs in again with the new password.
         /// </summary>
         private static async Task HandlePasswordChangeAsync(HttpContext context)
         {
@@ -504,6 +615,11 @@ namespace BifrostQL.Server.Auth
             var options = context.RequestServices.GetRequiredService<LocalAuthOptions>();
             var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
             var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
+            // The failure count clears only once every factor the account has passed: the password
+            // alone must not reset the lockout an attacker is guessing codes against.
+            if (!await PasswordChangeFactorPassesAsync(context, request, result.Account, options, state, now, sourceIp)
+                    .ConfigureAwait(false))
+                return;
             if (await RefuseLockedSinceCheckAsync(context, userId, AuthAuditKind.PasswordChangeRejected, now, sourceIp)
                     .ConfigureAwait(false))
                 return;
@@ -530,6 +646,54 @@ namespace BifrostQL.Server.Auth
                 .RevokeAllAsync(userId, LocalSessionRevokeReasons.PasswordChanged, null, sourceIp, now, ct).ConfigureAwait(false);
             await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme).ConfigureAwait(false);
             context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>
+        /// For an account with a second factor, the password change also needs a current code or
+        /// recovery code (spent like any other); else someone holding only the password could replace
+        /// it and lock the owner out. Answers 401 for a missing, wrong or replayed factor (counted
+        /// toward the lockout) and 403 <c>mfa_unavailable</c> when MFA is no longer configured. True
+        /// when the change may go on.
+        /// </summary>
+        private static async Task<bool> PasswordChangeFactorPassesAsync(
+            HttpContext context, LocalPasswordChangeRequest request, LocalAccountState account, LocalAuthOptions options,
+            ILocalAuthStateStore state, DateTimeOffset now, string? sourceIp)
+        {
+            var ct = context.RequestAborted;
+            var mfa = await state.GetMfaAsync(account.UserId, ct).ConfigureAwait(false);
+            if (mfa is not { Status: LocalMfaStatus.Active })
+                return true;
+            if (!options.MfaEnabled)
+            {
+                await context.RequestServices.GetRequiredService<LocalAuthAudit>().RecordAsync(now,
+                    AuthAuditKind.PasswordChangeRejected, AuthAuditOutcome.Failure, account.UserId, null, sourceIp,
+                    AuthAuditReasons.MfaUnavailable, ct).ConfigureAwait(false);
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(new { error = "mfa_unavailable" }, ct).ConfigureAwait(false);
+                return false;
+            }
+            var code = string.IsNullOrEmpty(request.Code) ? null : request.Code;
+            var recoveryCode = string.IsNullOrEmpty(request.RecoveryCode) ? null : request.RecoveryCode;
+            var verification = (code is null) == (recoveryCode is null)
+                ? LocalMfaVerification.Rejected(LocalMfaVerdict.Invalid)
+                : await context.RequestServices.GetRequiredService<LocalMfaService>().VerifyAsync(
+                    account.UserId, LocalMfaStatus.Active, code, recoveryCode, now, onAccepted: null, ct).ConfigureAwait(false);
+            if (verification.Verdict != LocalMfaVerdict.Accepted)
+            {
+                await RecordFailedAttemptAsync(context, account, AuthAuditKind.MfaFailed, now, sourceIp,
+                    verification.Verdict == LocalMfaVerdict.Replayed ? AuthAuditReasons.MfaCodeReplayed : AuthAuditReasons.MfaCodeInvalid)
+                    .ConfigureAwait(false);
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return false;
+            }
+            var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
+            await audit.RecordAsync(now, AuthAuditKind.MfaSucceeded, AuthAuditOutcome.Success, account.UserId, null, sourceIp,
+                verification.Method == LocalAuthMethods.RecoveryCode ? AuthAuditReasons.RecoveryCode : AuthAuditReasons.Otp, ct)
+                .ConfigureAwait(false);
+            if (verification.Method == LocalAuthMethods.RecoveryCode)
+                await audit.RecordAsync(now, AuthAuditKind.MfaRecoveryCodeUsed, AuthAuditOutcome.Success, account.UserId, null,
+                    sourceIp, null, ct).ConfigureAwait(false);
+            return true;
         }
 
         /// <summary>The broken password rule (<c>min_length</c>, <c>max_length</c>, <c>letter_and_digit</c>, <c>reused</c>), or null.</summary>
@@ -585,6 +749,21 @@ namespace BifrostQL.Server.Auth
                 return;
             await context.RequestServices.GetRequiredService<LocalAuthAdministration>()
                 .UnlockAccountAsync(target.Value.UserId, target.Value.ActorId, context.RequestAborted).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+        }
+
+        /// <summary>
+        /// <c>POST {AdminPath}/reset-mfa</c> with <c>{"userId": "..."}</c>: removes the user's second
+        /// factor and revokes every session of the user, audited with the administrator as actor. Same
+        /// gate as <c>revoke-sessions</c>.
+        /// </summary>
+        private static async Task HandleResetMfaAsync(HttpContext context)
+        {
+            var target = await ReadAdminTargetAsync(context).ConfigureAwait(false);
+            if (target is null)
+                return;
+            await context.RequestServices.GetRequiredService<LocalAuthAdministration>()
+                .ResetMfaAsync(target.Value.UserId, target.Value.ActorId, context.RequestAborted).ConfigureAwait(false);
             context.Response.StatusCode = StatusCodes.Status204NoContent;
         }
 
@@ -699,6 +878,31 @@ namespace BifrostQL.Server.Auth
         /// The store keeps only its SHA-256.
         /// </summary>
         public const string SessionId = "bifrost:sid";
+
+        /// <summary>
+        /// RFC 8176 authentication-method reference, repeated per method (<c>pwd</c>, <c>otp</c>,
+        /// <c>recovery</c>). Mirrors the server-side session's <see cref="LocalSession.Amr"/>.
+        /// </summary>
+        public const string Amr = "amr";
+
+        /// <summary>
+        /// Present (value <c>true</c>) on an enrollment-only session: the user must enroll a second
+        /// factor and may reach only the enrollment and logout endpoints. The server-side session's
+        /// <see cref="LocalSession.MfaPending"/> is what is enforced; the claim tells the client.
+        /// </summary>
+        public const string MfaPending = "bifrost:mfa-pending";
+    }
+
+    /// <summary>
+    /// 200 body of <c>POST /auth/login</c> when the password verified but a second factor is still
+    /// owed. <c>mfa-required</c> carries the challenge ticket to send with the code to
+    /// <c>{MfaPath}/verify</c>; no session cookie is set. <c>mfa-enrollment-required</c> comes with an
+    /// enrollment-only session cookie.
+    /// </summary>
+    public sealed record LocalLoginMfaResponse(string Status, string? Challenge, DateTimeOffset? ExpiresAt)
+    {
+        public const string MfaRequired = "mfa-required";
+        public const string MfaEnrollmentRequired = "mfa-enrollment-required";
     }
 
     /// <summary>JSON body of the local-auth password-change endpoint.</summary>
@@ -712,6 +916,15 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>The password to set.</summary>
         public string? NewPassword { get; init; }
+
+        /// <summary>
+        /// The current authenticator code. Required, or <see cref="RecoveryCode"/>, when the account
+        /// has a second factor: the password alone cannot replace the password.
+        /// </summary>
+        public string? Code { get; init; }
+
+        /// <summary>A recovery code, instead of <see cref="Code"/>.</summary>
+        public string? RecoveryCode { get; init; }
     }
 
     /// <summary>JSON body of the local-auth administration endpoints.</summary>

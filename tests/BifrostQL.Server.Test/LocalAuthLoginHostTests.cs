@@ -74,7 +74,9 @@ namespace BifrostQL.Server.Test
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
             builder.Services.AddSingleton<TimeProvider>(_clock);
-            builder.Services.AddBifrostLocalAuth(ConnectionString, configure);
+            // These facts predate MFA and cover the password factor alone; LocalAuthMfaHostTests
+            // covers the second factor. A fact's configure runs after the opt-out, so it can undo it.
+            builder.Services.AddBifrostLocalAuth(ConnectionString, PasswordOnly(configure));
             // The production registrar, with only the hasher swapped through the store's constructor
             // seam. A fact's own services run after, so it can still replace the store.
             builder.Services.AddSingleton(sp => new LocalUserStore(
@@ -93,6 +95,12 @@ namespace BifrostQL.Server.Test
             await _app.StartAsync();
             return _app.GetTestClient();
         }
+
+        private static Action<LocalAuthOptions> PasswordOnly(Action<LocalAuthOptions> configure) => o =>
+        {
+            o.RequireMfa = false;
+            configure(o);
+        };
 
         private static async Task<HttpResponseMessage> PostLoginAsync(HttpClient client, string password, string ip)
         {
@@ -689,7 +697,7 @@ namespace BifrostQL.Server.Test
             foreach (var configure in cases)
             {
                 var services = new ServiceCollection();
-                var act = () => services.AddBifrostLocalAuth(ConnectionString, configure);
+                var act = () => services.AddBifrostLocalAuth(ConnectionString, PasswordOnly(configure));
                 act.Should().Throw<ArgumentOutOfRangeException>();
             }
         }
@@ -790,11 +798,11 @@ namespace BifrostQL.Server.Test
                 act.Should().Throw<ArgumentOutOfRangeException>().Which.ParamName.Should().Be(name);
             }
 
-            var atCeiling = () => new ServiceCollection().AddBifrostLocalAuth(ConnectionString, o =>
+            var atCeiling = () => new ServiceCollection().AddBifrostLocalAuth(ConnectionString, PasswordOnly(o =>
             {
                 o.SessionLifetime = ceiling;
                 o.LockoutDuration = ceiling;
-            });
+            }));
             atCeiling.Should().NotThrow("control: the ceiling itself is a valid setting");
         }
 
@@ -1101,7 +1109,7 @@ namespace BifrostQL.Server.Test
         {
             var services = new ServiceCollection();
 
-            var act = () => services.AddBifrostLocalAuth(ConnectionString, o => o.PasswordHashIterations = iterations);
+            var act = () => services.AddBifrostLocalAuth(ConnectionString, PasswordOnly(o => o.PasswordHashIterations = iterations));
 
             act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*PasswordHashIterations*at least 210000*");
         }
@@ -1111,7 +1119,7 @@ namespace BifrostQL.Server.Test
         {
             var services = new ServiceCollection();
 
-            var act = () => services.AddBifrostLocalAuth(ConnectionString, o => o.PasswordHashIterations = 210_000);
+            var act = () => services.AddBifrostLocalAuth(ConnectionString, PasswordOnly(o => o.PasswordHashIterations = 210_000));
 
             act.Should().NotThrow("control: the floor itself is a valid setting");
         }

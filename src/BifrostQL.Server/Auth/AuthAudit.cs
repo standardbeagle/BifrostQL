@@ -14,6 +14,33 @@ namespace BifrostQL.Server.Auth
         PasswordChangeRejected,
         SessionRevoked,
         PrivilegeChanged,
+
+        /// <summary>A user started a TOTP enrollment (a secret was issued, not yet confirmed).</summary>
+        MfaEnrollmentStarted,
+
+        /// <summary>A user confirmed an enrollment with a code; the second factor is in force.</summary>
+        MfaEnabled,
+
+        /// <summary>A user turned their second factor off, presenting it.</summary>
+        MfaDisabled,
+
+        /// <summary>A password verified for an enrolled user; a challenge ticket was issued.</summary>
+        MfaChallengeIssued,
+
+        /// <summary>A second factor verified (login step two, disable, regenerate, enrollment confirm).</summary>
+        MfaSucceeded,
+
+        /// <summary>A second factor was refused: wrong, replayed, or an unusable challenge ticket.</summary>
+        MfaFailed,
+
+        /// <summary>A recovery code was spent.</summary>
+        MfaRecoveryCodeUsed,
+
+        /// <summary>A user replaced their recovery codes.</summary>
+        MfaRecoveryCodesRegenerated,
+
+        /// <summary>An administrator removed a user's second factor.</summary>
+        MfaReset,
     }
 
     /// <summary>Whether the audited action took effect.</summary>
@@ -61,6 +88,14 @@ namespace BifrostQL.Server.Auth
         public const string Roles = "roles";
         public const string Tenant = "tenant";
         public const string RateLimited = "rate-limited";
+        public const string MfaCodeInvalid = "mfa-code-invalid";
+        public const string MfaCodeReplayed = "mfa-code-replayed";
+        public const string MfaChallengeInvalid = "mfa-challenge-invalid";
+        public const string MfaEnrollmentExpired = "mfa-enrollment-expired";
+        public const string MfaEnrollmentRequired = "mfa-enrollment-required";
+        public const string MfaUnavailable = "mfa-unavailable";
+        public const string Otp = "otp";
+        public const string RecoveryCode = "recovery-code";
     }
 
     /// <summary>

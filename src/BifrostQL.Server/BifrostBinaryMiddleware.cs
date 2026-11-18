@@ -1007,7 +1007,9 @@ namespace BifrostQL.Server
         /// (logout, administrator revoke, password or privilege change, idle or absolute expiry)
         /// closes the connection with PolicyViolation instead of serving the message. A refreshed
         /// principal replaces the connection's, so later messages project the current roles and
-        /// tenant. Principals from other providers are not governed by local sessions.
+        /// tenant. An enrollment-only session (a user who still owes a second factor) is refused the
+        /// same way: the socket is not an enrollment endpoint. Principals from other providers are not
+        /// governed by local sessions.
         /// </summary>
         private static async Task<bool> SessionStillLiveAsync(BinaryConnection connection)
         {
@@ -1018,11 +1020,17 @@ namespace BifrostQL.Server
                 case LocalSessionVerdict.Rejected:
                     await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Session ended");
                     return false;
+                case LocalSessionVerdict.EnrollmentOnly:
+                    await connection.FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Second factor required");
+                    return false;
                 case LocalSessionVerdict.Refreshed:
                     http.User = check.Principal!;
                     return true;
-                default:
+                case LocalSessionVerdict.NotLocal:
+                case LocalSessionVerdict.Live:
                     return true;
+                default:
+                    throw new InvalidOperationException($"Unhandled local session verdict {check.Verdict}.");
             }
         }
 

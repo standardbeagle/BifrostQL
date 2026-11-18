@@ -133,7 +133,7 @@ namespace BifrostQL.Server.OData
                     ? bool.Parse(literal.Text)
                     : throw Mismatch(column, "a boolean"),
                 "Edm.Int16" or "Edm.Int32" or "Edm.Int64" or "Edm.Byte"
-                    => ParseNumber(column, literal, context, "an integer", t => long.Parse(t, CultureInfo.InvariantCulture)),
+                    => ParseNumber(column, literal, context, "an integer", t => long.Parse(t, NumberStyles.Integer, CultureInfo.InvariantCulture)),
                 "Edm.Decimal"
                     => ParseNumber(column, literal, context, "a decimal", t => decimal.Parse(t, NumberStyles.Float, CultureInfo.InvariantCulture)),
                 "Edm.Double"

@@ -69,7 +69,8 @@ namespace BifrostQL.Server.Test.S3
             string secret = Secret,
             string accessKeyId = AccessKeyId,
             string region = Region,
-            IServiceProvider? services = null)
+            IServiceProvider? services = null,
+            string? expiresText = null)
         {
             var when = (signTime ?? DateTimeOffset.UtcNow).UtcDateTime;
             var amzDate = when.ToString("yyyyMMddTHHmmssZ");
@@ -82,7 +83,7 @@ namespace BifrostQL.Server.Test.S3
                 new("X-Amz-Algorithm", S3SigV4.Algorithm),
                 new("X-Amz-Credential", credential),
                 new("X-Amz-Date", amzDate),
-                new("X-Amz-Expires", expires.ToString()),
+                new("X-Amz-Expires", expiresText ?? expires.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                 new("X-Amz-SignedHeaders", signedHeaders),
             };
 

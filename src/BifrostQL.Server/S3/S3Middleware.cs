@@ -743,8 +743,10 @@ namespace BifrostQL.Server.S3
             if (string.IsNullOrEmpty(raw))
                 return null;
             // TryParse, never int.Parse: a malformed or out-of-range value maps to a
-            // clean protocol error, never an escaping exception (invariant 5).
-            if (!int.TryParse(raw, out var value))
+            // clean protocol error, never an escaping exception. Invariant 5: the style picks
+            // the grammar and the invariant culture the glyphs, so the thread culture cannot
+            // change what is accepted.
+            if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
                 throw S3ProtocolException.InvalidArgument("max-keys is not a valid integer.");
             return value;
         }

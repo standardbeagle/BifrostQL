@@ -116,6 +116,46 @@ namespace BifrostQL.Server.Test.S3
             xml.Element("Code")!.Value.Should().Be("NotImplemented");
         }
 
+        /// <summary>
+        /// Invariant 5: <c>max-keys</c> parses with the Integer style and the invariant culture.
+        /// Under a thread culture whose negative sign is "NEG", a culture-sensitive parse read
+        /// "NEG5" as -5 and answered "must not be negative"; the invariant parse refuses it as
+        /// not an integer.
+        /// </summary>
+        [Fact]
+        public async Task Max_keys_is_parsed_with_invariant_grammar_under_a_foreign_culture()
+        {
+            var culture = (System.Globalization.CultureInfo)System.Globalization.CultureInfo.InvariantCulture.Clone();
+            culture.NumberFormat.NegativeSign = "NEG";
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+            try
+            {
+                var ctx = S3TestSigner.BuildHeaderSigned(path: "/notes", query: "?list-type=2&max-keys=NEG5", signTime: SignTime);
+                var (status, xml) = await Run(Build(), ctx);
+
+                status.Should().Be(400);
+                xml.Element("Message")!.Value.Should().Be("max-keys is not a valid integer.");
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+            }
+        }
+
+        [Theory]
+        [InlineData("NEG5")]
+        [InlineData("1e3")]
+        [InlineData("%D9%A3")] // ARABIC-INDIC DIGIT THREE
+        public async Task Max_keys_outside_the_invariant_integer_grammar_is_refused(string raw)
+        {
+            var ctx = S3TestSigner.BuildHeaderSigned(path: "/notes", query: "?list-type=2&max-keys=" + raw, signTime: SignTime);
+            var (status, xml) = await Run(Build(), ctx);
+
+            status.Should().Be(400);
+            xml.Element("Message")!.Value.Should().Be("max-keys is not a valid integer.");
+        }
+
         private sealed class FixedClock(DateTimeOffset now) : TimeProvider
         {
             public override DateTimeOffset GetUtcNow() => now;

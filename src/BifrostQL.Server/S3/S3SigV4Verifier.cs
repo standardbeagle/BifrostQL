@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
@@ -210,8 +211,10 @@ namespace BifrostQL.Server.S3
                 throw S3ProtocolException.AuthorizationQueryParametersError();
 
             // TryParse, never int.Parse: a well-formed but out-of-range value must map to a
-            // clean protocol error, not an OverflowException escaping the wire (invariant 5).
-            if (!int.TryParse(expiresRaw, out var expires))
+            // clean protocol error, not an OverflowException escaping the wire. Invariant 5:
+            // explicit style and invariant culture, so the thread culture cannot change the
+            // grammar (a culture whose negative sign is "NEG" must not admit "NEG5").
+            if (!int.TryParse(expiresRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var expires))
                 throw S3ProtocolException.AuthorizationQueryParametersError("Invalid X-Amz-Expires.");
 
             var scope = SplitCredential(credential, malformed: () => S3ProtocolException.AuthorizationQueryParametersError());

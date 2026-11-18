@@ -188,6 +188,89 @@ namespace BifrostQL.Server.Test
                 "nobody@club.test", Arg.Any<string>(), "any password");
         }
 
+        /// <summary>
+        /// Verification work per login, counted in PBKDF2 iterations: every hash the hasher verifies
+        /// (its iteration count read from the hash) plus the store's padding. Lets the timing facts
+        /// compare work, not wall clock.
+        /// </summary>
+        private sealed class WorkCountingHasher : IPasswordHasher<string>
+        {
+            private readonly PasswordHasher<string> _inner;
+            public long Iterations;
+
+            public WorkCountingHasher(int iterations) => _inner = new PasswordHasher<string>(
+                Microsoft.Extensions.Options.Options.Create(new PasswordHasherOptions { IterationCount = iterations }));
+
+            public string HashPassword(string user, string password) => _inner.HashPassword(user, password);
+
+            public PasswordVerificationResult VerifyHashedPassword(string user, string hashedPassword, string providedPassword)
+            {
+                Iterations += IterationsOf(hashedPassword);
+                return _inner.VerifyHashedPassword(user, hashedPassword, providedPassword);
+            }
+
+            private static int IterationsOf(string hash)
+            {
+                var bytes = Convert.FromBase64String(hash);
+                return bytes[0] == 0x00
+                    ? 1_000 // Identity V2: PBKDF2-HMAC-SHA1, fixed 1,000 iterations.
+                    : System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(5, 4));
+            }
+        }
+
+        private void SetAliceHash(string hash)
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE app_users SET password_hash = @h WHERE id = 'user-1'";
+            AddParam(cmd, "@h", hash);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static IEnumerable<object[]> StoredHashShapes => new[]
+        {
+            new object[] { "current" },
+            new object[] { "v3-below-current" },
+            new object[] { "v2" },
+        };
+
+        [Theory]
+        [MemberData(nameof(StoredHashShapes))]
+        public async Task VerifyCredentials_SpendsTheSameWork_ForAnUnknownAccountAndAnyStoredHash(string shape)
+        {
+            const int current = 4_000;
+            var hasher = new WorkCountingHasher(current);
+            long padded = 0;
+            var store = new LocalUserStore(new SqliteDbConnFactory(_connectionString), _options, hasher,
+                padWork: iterations => padded += iterations);
+            SetAliceHash(shape switch
+            {
+                "current" => hasher.HashPassword("alice@club.test", "correct horse battery"),
+                "v3-below-current" => TestHasher.HashPassword("alice@club.test", "correct horse battery"),
+                _ => new PasswordHasher<string>(Microsoft.Extensions.Options.Options.Create(new PasswordHasherOptions
+                {
+                    CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV2,
+                })).HashPassword("alice@club.test", "correct horse battery"),
+            });
+
+            async Task<long> WorkOf(string login, string password)
+            {
+                hasher.Iterations = 0;
+                padded = 0;
+                await store.VerifyCredentialsAsync(login, password);
+                return hasher.Iterations + padded;
+            }
+
+            var unknown = await WorkOf("nobody@club.test", "correct horse battery");
+            var wrong = await WorkOf("alice@club.test", "wrong password");
+            var right = await WorkOf("alice@club.test", "correct horse battery");
+
+            unknown.Should().Be(current, "control: a miss verifies the decoy hashed at the current count");
+            wrong.Should().Be(unknown, $"a wrong password on a {shape} hash must cost what a miss costs");
+            right.Should().Be(unknown, $"a right password on a {shape} hash must cost what a miss costs");
+        }
+
         [Theory]
         [InlineData("", "password")]
         [InlineData("alice@club.test", "")]

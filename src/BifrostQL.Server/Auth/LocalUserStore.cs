@@ -353,6 +353,17 @@ namespace BifrostQL.Server.Auth
         private readonly string _dummyHash;
 
         /// <summary>
+        /// The PBKDF2 iteration count of <see cref="_dummyHash"/>: the work a user-miss spends. A real
+        /// verification against a weaker stored hash (an older Identity format or a lower count) is
+        /// topped up to it through <see cref="_padWork"/>, so a miss and a legacy account cost the same.
+        /// Null when the hasher's output is not an Identity hash and the count cannot be read.
+        /// </summary>
+        private readonly int? _decoyIterations;
+
+        /// <summary>Spends the given number of PBKDF2 iterations. Injected by tests to count work.</summary>
+        private readonly Action<int> _padWork;
+
+        /// <summary>
         /// Creates a store over the shared connection factory.
         /// </summary>
         /// <param name="connFactory">
@@ -368,13 +379,57 @@ namespace BifrostQL.Server.Auth
             IDbConnFactory connFactory,
             LocalAuthOptions options,
             IPasswordHasher<string>? passwordHasher = null)
+            : this(connFactory, options, passwordHasher, SpendPbkdf2Iterations)
         {
+        }
+
+        internal LocalUserStore(
+            IDbConnFactory connFactory,
+            LocalAuthOptions options,
+            IPasswordHasher<string>? passwordHasher,
+            Action<int> padWork)
+        {
+            _padWork = padWork ?? throw new ArgumentNullException(nameof(padWork));
             _connFactory = connFactory ?? throw new ArgumentNullException(nameof(connFactory));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _passwordHasher = passwordHasher ?? options.CreatePasswordHasher();
             // Compute the throwaway hash once so a user-miss can verify against it in
             // constant-ish time relative to a real verification (see _dummyHash).
             _dummyHash = _passwordHasher.HashPassword(DummyUser, DummyPassword);
+            _decoyIterations = IdentityHashIterations(_dummyHash);
+        }
+
+        /// <summary>
+        /// The PBKDF2 iteration count an ASP.NET Core Identity hash embeds: V3 (marker 0x01) stores it
+        /// big-endian at bytes 5-8, V2 (marker 0x00) is fixed at 1,000. Null for any other shape.
+        /// </summary>
+        internal static int? IdentityHashIterations(string? hash)
+        {
+            if (string.IsNullOrEmpty(hash)) return null;
+            var bytes = new byte[hash.Length];
+            if (!Convert.TryFromBase64String(hash, bytes, out var length) || length == 0) return null;
+            return bytes[0] switch
+            {
+                0x00 => 1_000,
+                0x01 when length >= 13 => System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(5, 4)),
+                _ => null,
+            };
+        }
+
+        private static readonly byte[] PadSalt = new byte[16];
+
+        private static void SpendPbkdf2Iterations(int iterations) =>
+            System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(
+                DummyPassword, PadSalt, iterations, System.Security.Cryptography.HashAlgorithmName.SHA512, 32);
+
+        /// <summary>
+        /// Tops a real verification up to the decoy's work, so an account whose stored hash is weaker
+        /// than the decoy (legacy format, lower count) answers in the time a missing account does.
+        /// </summary>
+        private void PadToDecoyWork(string storedHash)
+        {
+            if (_decoyIterations is not { } decoy || IdentityHashIterations(storedHash) is not { } stored) return;
+            if (stored < decoy) _padWork(decoy - stored);
         }
 
         /// <summary>The <see cref="AppIdentity.Provider"/> every local-auth identity carries.</summary>
@@ -421,6 +476,7 @@ namespace BifrostQL.Server.Auth
 
             var account = StateOf(row);
             var verification = _passwordHasher.VerifyHashedPassword(login, row.PasswordHash, password);
+            PadToDecoyWork(row.PasswordHash);
             if (verification == PasswordVerificationResult.Failed || account.Disabled)
                 return LocalLoginResult.Failure(account);
 

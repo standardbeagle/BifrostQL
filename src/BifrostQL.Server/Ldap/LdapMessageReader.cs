@@ -55,7 +55,17 @@ namespace BifrostQL.Server.Ldap
                 throw new LdapProtocolException($"LDAPMessage length {length} exceeds the {MaxMessageLength}-byte cap.");
 
             var body = await ReadExactAsync(stream, length, ct);
-            return Decode(body);
+            try
+            {
+                return Decode(body);
+            }
+            finally
+            {
+                // Decode copies out every value it keeps (BerCursor.Content), so the raw body is
+                // dead here. A BindRequest's body holds the cleartext password; wiping it means the
+                // only copy left is the one the bind path zeroes after verifying.
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(body);
+            }
         }
 
         // ---- decode (pure, over the in-memory body) ----

@@ -42,7 +42,15 @@ namespace BifrostQL.Server
         public Memory<byte> FreeSpace()
         {
             if (_received == _bytes.Length && _received < _length)
-                Array.Resize(ref _bytes, (int)Math.Min((long)_bytes.Length * 2, _length));
+            {
+                // Grown by hand rather than Array.Resize so the outgrown array is wiped: a frame
+                // body can hold a credential (an LDAP bind password, a pgwire password message),
+                // and a copy left behind in a dropped array outlives the zeroing of the final one.
+                var grown = new byte[(int)Math.Min((long)_bytes.Length * 2, _length)];
+                _bytes.AsSpan(0, _received).CopyTo(grown);
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(_bytes);
+                _bytes = grown;
+            }
             return _bytes.AsMemory(_received, _bytes.Length - _received);
         }
 

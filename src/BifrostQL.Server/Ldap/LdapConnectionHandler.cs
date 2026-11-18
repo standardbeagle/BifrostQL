@@ -461,6 +461,22 @@ namespace BifrostQL.Server.Ldap
         private async Task HandleBindAsync(
             Stream stream, int messageId, LdapBindRequest bind, LdapSessionState session, string source, CancellationToken ct)
         {
+            try
+            {
+                await AnswerBindAsync(stream, messageId, bind, session, source, ct);
+            }
+            finally
+            {
+                // Every path, the no-authenticator refusal included: the decoded password is wiped
+                // here whatever the branch did with it, so no early return can leave it in memory.
+                if (bind.SimplePassword is { Length: > 0 })
+                    CryptographicOperations.ZeroMemory(bind.SimplePassword);
+            }
+        }
+
+        private async Task AnswerBindAsync(
+            Stream stream, int messageId, LdapBindRequest bind, LdapSessionState session, string source, CancellationToken ct)
+        {
             // TRANSPORT GATE — deliberately the FIRST statement of the bind path, ahead of the
             // authenticator, the rate limiter, the credential store and the hasher. A credentialed
             // bind on a cleartext connection is refused without the presented credential being

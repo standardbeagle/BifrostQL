@@ -90,7 +90,12 @@ namespace BifrostQL.Server.Ldap
         private int TakeBuffered(Span<byte> destination)
         {
             var take = Math.Min(destination.Length, _end - _start);
-            _buffer.AsSpan(_start, take).CopyTo(destination);
+            var consumed = _buffer.AsSpan(_start, take);
+            consumed.CopyTo(destination);
+            // Consumed bytes are wiped as they leave: the buffer lives for the whole connection and
+            // a bind's password passed through it, so without this the cleartext stayed here until
+            // the next burst happened to overwrite it.
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(consumed);
             _start += take;
             if (_start == _end)
                 _start = _end = 0;

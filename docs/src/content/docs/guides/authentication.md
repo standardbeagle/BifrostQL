@@ -95,24 +95,24 @@ builder.Services.AddBifrostLocalAuth(
     });
 ```
 
-A successful login produces an `AppIdentity` with `Provider` set to `local`, the email as the login name, and roles parsed from the delimited roles column.
+A successful login produces an `AppIdentity` with `Provider` set to `local`, the email set to the login column's stored value (not the caller's spelling of it), and roles parsed from the delimited roles column.
 
 ### Login throttling and session lifetime
 
-Login attempts are counted per source IP and per account before the password is checked, so a flood of guesses never reaches the hash verifier. Over either cap the endpoint answers `429` with the same text whether or not the account exists:
+Login attempts are counted per source IP and per account before the password is checked, so a flood of guesses never reaches the hash verifier. Over either cap the endpoint answers `429` with the same text whether or not the account exists, and audits the refusal (reason `rate-limited`, no subject, never the login name typed):
 
 | Option | Default | Effect |
 |---|---|---|
 | `MaxLoginAttemptsPerSource` | `20` | Attempts one IP may make per window, across all accounts. |
 | `MaxLoginAttemptsPerAccount` | `10` | Attempts against one login per window, from any IP. |
 | `LoginAttemptWindow` | `5 min` | The window both caps count over. |
-| `SessionLifetime` | `8 h` | Absolute session lifetime from sign-in. Activity does not extend it. |
+| `SessionLifetime` | `8 h` | Absolute session lifetime from sign-in. Activity does not extend it. At most 3650 days. |
 
-A successful login whose stored hash uses outdated parameters is rehashed in place.
+A successful login whose stored hash uses outdated parameters is rehashed in place, unless the account is locked. The rehash only replaces the hash it just verified and keeps the user's other sessions.
 
 ### Sessions, lockout and password policy
 
-Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated request checks it. The cookie carries a random session id; the table keeps only its SHA-256. The state tables are created on first use in the app-user database and are never served by a GraphQL endpoint, except through `_rawQuery`, which runs caller SQL and is opt-in (`raw-sql: enabled`) and role-gated (`raw-sql-role`). Register your own `ILocalAuthStateStore` before `AddBifrostLocalAuth` to keep them elsewhere.
+Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated request checks it. Long-lived connections check it too: the binary WebSocket before every message (an ended session closes it with PolicyViolation), and a `/_chat` stream before each tool call (an ended session ends the stream with a `session-ended` error event). The cookie carries a random session id; the table keeps only its SHA-256. The state tables are created on first use in the app-user database and are never served by a GraphQL endpoint, except through `_rawQuery`, which runs caller SQL and is opt-in (`raw-sql: enabled`) and role-gated (`raw-sql-role`). Register your own `ILocalAuthStateStore` before `AddBifrostLocalAuth` to keep them elsewhere.
 
 | Option | Default | Effect |
 |---|---|---|
@@ -121,14 +121,14 @@ Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated re
 | `MaxConcurrentSessions` | none | A sign-in past the cap revokes the user's oldest sessions. |
 | `DisabledColumn` | none | Column on the user table; a true or non-zero value blocks sign-in and revokes sessions. |
 | `LockoutThreshold` | `10` | Consecutive failed logins (or password-change attempts) that lock the account. |
-| `LockoutDuration` | `30 min` | How long the lock lasts; `null` locks until an administrator unlocks. |
+| `LockoutDuration` | `30 min` | How long the lock lasts, at most 3650 days; `null` locks until an administrator unlocks. |
 | `MinPasswordLength` / `MaxPasswordLength` | `12` / `256` | Length bounds for a new password, in characters. |
 | `PasswordRequiresLetterAndDigit` | `true` | A new password needs a letter and a digit. |
 | `PasswordHistoryCount` | `4` | A new password may not match the current one or the N before it. |
 | `MaxPasswordAge` | none | A password older than this cannot sign in until changed. An account with no recorded change counts as expired. |
 | `AdminRole` / `AdminPath` | none / `/auth/admin` | Enables the administration endpoints. |
 
-Settings are validated at `AddBifrostLocalAuth`; an out-of-range value throws at startup.
+Settings are validated at `AddBifrostLocalAuth`; an out-of-range value throws at startup. The login, password-change and administration endpoints answer `415` to a body that is not JSON, and the administration endpoints answer `400` to a `userId` longer than 128 characters.
 
 Every login, logout, lock, unlock, password change, revocation and privilege change is written to `_bifrost_auth_audit`, logged under the `BifrostQL.Audit.Authentication` category, and passed to every registered `IAuthAuditSink`. See [Compliance controls](/BifrostQL/guides/compliance-controls/) for how these map to HIPAA, SOX and PCI DSS.
 

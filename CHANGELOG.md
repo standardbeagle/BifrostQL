@@ -68,6 +68,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **gRPC status changes:** an authorization denial on `List`/`Stream`/writes is UNIMPLEMENTED "Method is unimplemented." (was PERMISSION_DENIED), so it answers like a table the caller cannot see; a write conflict (unique-key collision) is ABORTED (was INTERNAL); an `Update` with no non-key column is INVALID_ARGUMENT (was INTERNAL); protobuf framing that does not parse is INVALID_ARGUMENT (was INTERNAL with an Error log).
 - **pgwire: portals close at `Sync` and on a simple query,** the end of the implicit transaction as in PostgreSQL. A row-limited `Execute` resumes only inside the same `Sync` batch; a later `Execute` of the portal answers 26000. Named prepared statements still live for the session.
 - **pgwire: `SELECT *` omits read-denied columns,** and naming one answers 42703 `column "<name>" does not exist`, like a missing column (was 42501).
+- **`ILocalAuthStateStore` has three new members** a custom store must implement: `RebindSessionCredentialStampAsync`, `ClearExpiredLockoutAsync` and `ClearFailuresUnlessLockedAsync`. The two clears are conditional: each deletes the lockout row only while it is still the one the caller checked, and says whether it did.
+- **`LocalUserStore.VerifyCredentialsAsync` no longer rehashes.** The login endpoint (`POST /auth/login`) upgrades the hash after its lockout check. Nothing public replaces the old side effect: a host that verified credentials directly and relied on the upgrade signs users in through the endpoint.
+- **`LocalAuthOptions.PasswordHistoryCount` counts the passwords before the current one.** N=4 refused the current password and only three before it; it now refuses the current one and the four before it (PCI DSS 8.3.7), so the history keeps N+1 hashes.
+- **`LocalAuthOptions.SessionLifetime` and `LockoutDuration` above 3650 days (`LocalAuthOptions.MaxDuration`) fail at startup.** A larger value overflowed `DateTimeOffset` at the first sign-in or lock.
 
 ### Security — third review pass
 
@@ -90,10 +94,15 @@ On `main` after v0.4.28; not yet on NuGet.
 - LDAP: new `MaxMembershipValuesPerSearch` (default 10,000) caps member/memberOf values across one search; over it the search ends with `adminLimitExceeded` instead of cutting values.
 - Local auth: logout, password change, disable, delete and admin action (`POST /auth/admin/revoke-sessions`) revoke sessions server-side; `MaxConcurrentSessions` caps them.
 - Local auth: an account locks after 10 consecutive failed logins for 30 minutes (`LockoutThreshold`, `LockoutDuration`; null waits for `/auth/admin/unlock`). This is separate from the rate limiter.
-- Local auth: `/auth/password` enforces at least 12 characters with a letter and a digit, refuses the last 4 passwords, and supports opt-in `MaxPasswordAge`.
+- Local auth: `/auth/password` enforces at least 12 characters with a letter and a digit, refuses the current password and the 4 before it, and supports opt-in `MaxPasswordAge`.
 - Local auth: sign-in, logout, lockout, password and session events go to an audit trail (`IAuthAuditSink`, log category `BifrostQL.Audit.Authentication`) with no secrets.
 - Blob and chat-media size caps are measured in the database (`DATALENGTH` / `LENGTH`) before the value is read.
 - New guide: [Compliance controls](/BifrostQL/guides/compliance-controls/) maps HIPAA, SOX and PCI DSS requirements to shipped controls and names each gap.
+- Local auth: a session ended by logout, an administrator, a password or privilege change, or expiry stops an open binary WebSocket (`/bifrost-ws`) at its next message, closing it with PolicyViolation, and stops a `/_chat` stream before its next tool call with a `session-ended` error. Both kept running on the identity checked when they opened. All three surfaces run the one check, `LocalAuthEndpoint.RevalidateSessionAsync`.
+- Local auth: the login rehash replaces only the hash it just verified (`AND password_hash = @verifiedHash`), runs after the lockout check, and keeps the user's other sessions. A rehash racing a password change could overwrite the new password, and a locked account's password was still upgraded.
+- Local auth: an unknown login and a stored hash below the configured iteration count spend the same PBKDF2 work as a current hash, so response time no longer tells an unknown account or a legacy hash apart.
+- Local auth: a lapsed lock is cleared only while it is still the lapsed one, and `AccountUnlocked` is audited only when a row was actually deleted. A correct password or password change no longer clears a lock taken a moment after its own lockout check.
+- Local auth: rate-limited login and password-change refusals (429) are audited as failed attempts with reason `rate-limited`, without the login name typed.
 
 ### Fixed — third review pass
 
@@ -114,6 +123,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - edit-db: a composite foreign key's header filter selects one parent row and filters on every FK column; the `cf` URL parameter adds a `_fk_tuple` form and still reads old links.
 - edit-db and `@bifrostql/react`: grouping, sort, aggregates and number/percent formats read `Decimal` strings exactly.
 - EAV `_meta` is capped per parent at `max-query-rows - 1` attributes, windowed in SQL. A parent with more returns the first ones in key order plus `"__truncated": true`; before, it returned every attribute row however many there were. An attribute keyed `__truncated` is now refused.
+- Local auth: a login, password-change or administration request whose body is not JSON (another content type, or an undecodable charset) answers 415 instead of 500.
+- Local auth: the administration endpoints refuse a `userId` longer than 128 characters with 400 before acting; it could not fit the audit column, so the action ran and the audit write failed after it.
+- Local auth: the email claim is the login column's stored value, not the caller's spelling of it under a case-insensitive collation.
 
 ### Changed — third review pass
 

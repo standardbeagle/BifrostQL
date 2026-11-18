@@ -45,32 +45,43 @@ For self-hosted deployments, BifrostQL can authenticate users against an app-use
 `AddBifrostLocalAuth` adds cookie authentication and the user store. The app-user table is reached through a server-side connection factory built from the connection string you pass — typically the same `bifrost` connection string the GraphQL endpoint uses.
 
 ```csharp
+using BifrostQL.Core.Crypto;
 using BifrostQL.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Local auth requires a TOTP second factor by default. Its secrets are sealed with field
+// encryption, so the host supplies a root key and a durable data-key store.
+builder.Services.AddSingleton<IRootKeyProvider>(
+    ConfigRootKeyProvider.FromBase64(builder.Configuration["Bifrost:RootKey"]!));
+builder.Services.AddSingleton<IDataEncryptionKeyStore>(
+    new FileDataEncryptionKeyStore("/var/lib/bifrost/keys"));
+
 builder.Services.AddBifrostLocalAuth(
-    builder.Configuration.GetConnectionString("bifrost")!);
+    builder.Configuration.GetConnectionString("bifrost")!,
+    options => options.MfaKeyRef = "config:mfa");
 
 builder.Services.AddBifrostQL(o => o.BindStandardConfig(builder.Configuration));
 
 var app = builder.Build();
 app.UseAuthentication();
-app.UseBifrostLocalAuth();   // maps /auth/login, /auth/logout, /auth/session, /auth/password
+app.UseBifrostLocalAuth();   // maps /auth/login, /auth/logout, /auth/session, /auth/password, /auth/mfa/*
 app.UseBifrostQL();
 await app.RunAsync();
 ```
 
 `UseBifrostLocalAuth()` maps the login and logout endpoints. Call it after `UseAuthentication()` so the issued cookie is honored on subsequent requests.
 
+Without `MfaKeyRef`, `AddBifrostLocalAuth` throws at startup while `RequireMfa` is on (the default). A deployment that does not need a second factor opts out explicitly with `options.RequireMfa = false`; see [Multi-factor authentication](#multi-factor-authentication).
+
 ### 2. Endpoints
 
 | Endpoint | Method | Behavior |
 |----------|--------|----------|
-| `/auth/login` | `POST` | Accepts `{ "login": "...", "password": "..." }`. On valid credentials, opens a server-side session, issues its cookie and returns `204`. A missing user, wrong password, disabled account and locked account all return the same `401` with the same body, so the response does not say which. A correct but expired password (`MaxPasswordAge`) returns `403` `{"error":"password_expired"}` and opens no session. |
+| `/auth/login` | `POST` | Accepts `{ "login": "...", "password": "..." }`. On valid credentials, opens a server-side session, issues its cookie and returns `204`. When a second factor is owed it returns `200` instead: `{"status":"mfa-required","challenge":"...","expiresAt":"..."}` with no cookie, or `{"status":"mfa-enrollment-required"}` with an enrollment-only cookie (see [Multi-factor authentication](#multi-factor-authentication)). A missing user, wrong password, disabled account and locked account all return the same `401` with the same body, so the response does not say which. A correct but expired password (`MaxPasswordAge`) returns `403` `{"error":"password_expired"}` and opens no session. |
 | `/auth/logout` | `POST` | Revokes the server-side session, clears the cookie and returns `204`. A copied cookie stops working too. |
-| `/auth/password` | `POST` | Accepts `{ "login", "currentPassword", "newPassword" }`. The current password is checked like a login (rate windows, lockout, audit); an expired one is accepted. A new password that breaks the policy returns `400` `{"error":"password_policy","rule":"..."}`, where the rule is `min_length`, `max_length`, `letter_and_digit` or `reused`. On success every session of the user is revoked and `204` is returned; the user signs in again. |
-| `/auth/admin/revoke-sessions`, `/auth/admin/unlock` | `POST` | Mapped only when `AdminRole` is set. JSON body `{ "userId": "..." }`; the caller must hold `AdminRole`. Revokes every session of the user, or ends a lockout. Host code can call the same actions on `LocalAuthAdministration`. |
+| `/auth/password` | `POST` | Accepts `{ "login", "currentPassword", "newPassword" }`, plus `"code"` or `"recoveryCode"` when the account has a second factor (else `401`). The current password is checked like a login (rate windows, lockout, audit); an expired one is accepted. A new password that breaks the policy returns `400` `{"error":"password_policy","rule":"..."}`, where the rule is `min_length`, `max_length`, `letter_and_digit` or `reused`. On success every session of the user is revoked and `204` is returned; the user signs in again. |
+| `/auth/admin/revoke-sessions`, `/auth/admin/unlock`, `/auth/admin/reset-mfa` | `POST` | Mapped only when `AdminRole` is set. JSON body `{ "userId": "..." }`; the caller must hold `AdminRole`. Revokes every session of the user, ends a lockout, or removes the user's second factor (and revokes their sessions). Host code can call the same actions on `LocalAuthAdministration`. |
 
 Passwords are verified with the vetted ASP.NET Core `PasswordHasher` (PBKDF2-HMAC-SHA512, `PasswordHashIterations`, default 210,000); no plaintext password is ever stored or compared.
 
@@ -92,6 +103,7 @@ builder.Services.AddBifrostLocalAuth(
         options.RolesColumn = "roles";            // default: roles (delimited list, e.g. admin,editor)
         options.LoginPath = "/auth/login";        // default: /auth/login
         options.LogoutPath = "/auth/logout";      // default: /auth/logout
+        options.MfaKeyRef = "config:mfa";         // required while RequireMfa is on (the default)
     });
 ```
 
@@ -108,7 +120,7 @@ Login attempts are counted per source IP and per account before the password is 
 | `LoginAttemptWindow` | `5 min` | The window both caps count over. |
 | `SessionLifetime` | `8 h` | Absolute session lifetime from sign-in. Activity does not extend it. At most 3650 days. |
 
-A successful login whose stored hash uses outdated parameters is rehashed in place, unless the account is locked. The rehash only replaces the hash it just verified and keeps the user's other sessions.
+A successful login whose stored hash uses outdated parameters is rehashed in place, unless the account is locked. The rehash only replaces the hash it just verified and keeps the user's other sessions. For a user with a second factor it happens at the password step, before the challenge ticket is issued, since the password is not available at step two; the ticket binds the upgraded hash's stamp.
 
 ### Sessions, lockout and password policy
 
@@ -130,7 +142,43 @@ Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated re
 
 Settings are validated at `AddBifrostLocalAuth`; an out-of-range value throws at startup. The login, password-change and administration endpoints answer `415` to a body that is not JSON, and the administration endpoints answer `400` to a `userId` longer than 128 characters.
 
-Every login, logout, lock, unlock, password change, revocation and privilege change is written to `_bifrost_auth_audit`, logged under the `BifrostQL.Audit.Authentication` category, and passed to every registered `IAuthAuditSink`. See [Compliance controls](/BifrostQL/guides/compliance-controls/) for how these map to HIPAA, SOX and PCI DSS.
+Every login, logout, lock, unlock, password change, revocation, privilege change and MFA event (enroll, enable, disable, verify success and failure, recovery-code use and regeneration, administrator reset) is written to `_bifrost_auth_audit`, logged under the `BifrostQL.Audit.Authentication` category, and passed to every registered `IAuthAuditSink`. See [Compliance controls](/BifrostQL/guides/compliance-controls/) for how these map to HIPAA, SOX and PCI DSS.
+
+### Multi-factor authentication
+
+Local auth has a TOTP second factor (RFC 6238: SHA-1, 30-second step, 6 digits by default), and requires it of every user unless you opt out.
+
+| Option | Default | Effect |
+|---|---|---|
+| `RequireMfa` | `true` | Every local user must present a second factor. A user not yet enrolled gets an enrollment-only session. |
+| `RequireMfaForRoles` | empty | With `RequireMfa = false`, require it only of users holding one of these roles. |
+| `MfaKeyRef` | none | Field-encryption key-ref (e.g. `config:mfa`) that seals TOTP secrets. Needs an `IRootKeyProvider` and a durable `IDataEncryptionKeyStore`. Null turns the MFA endpoints off; startup fails if `RequireMfa` or `RequireMfaForRoles` asks for MFA without it. |
+| `MfaPath` | `/auth/mfa` | Base path of the MFA endpoints. |
+| `MfaIssuer` | `BifrostQL` | Issuer shown in authenticator apps. |
+| `MfaTotpAlgorithm` / `MfaTotpDigits` / `MfaTotpPeriodSeconds` | `Sha1` / `6` / `30` | TOTP parameters for new enrollments. Most authenticator apps support only the defaults. |
+| `MfaChallengeLifetime` | `5 min` | How long a login challenge ticket can be answered. |
+| `MaxMfaChallengeAttempts` | `5` | Wrong codes that spend a challenge ticket. |
+| `MfaEnrollmentTimeout` | `10 min` | How long an unconfirmed enrollment, and an enrollment-only session, last. |
+| `MaxMfaAttemptsPerSource` / `MaxMfaAttemptsPerAccount` | `20` / `10` | Code attempts per `LoginAttemptWindow`, counted before the code is checked; over either cap answers `429`. |
+
+**Sign-in.** For an enrolled user, a correct password returns `mfa-required` and a challenge ticket. The client posts `{ "challenge": "...", "code": "123456" }` (or `"recoveryCode"`) to `/auth/mfa/verify`, which opens the session and returns `204`. A wrong password still returns the same bare `401`, so it does not reveal whether the account has MFA. A wrong or replayed code returns `401` and counts toward the lockout; an expired, spent or unknown ticket returns `401` `{"error":"mfa_challenge_invalid"}` (sign in again).
+
+**Enrollment.** All MFA endpoints are `POST` with a JSON body.
+
+| Endpoint | Session | Body | Result |
+|---|---|---|---|
+| `/auth/mfa/enroll` | any, including enrollment-only | `{}` | `{ "secret", "otpAuthUri", "expiresAt", "algorithm", "digits", "period" }`. Render `otpAuthUri` as a QR code, or let the user type `secret`. `409` if MFA is already on. |
+| `/auth/mfa/enroll/confirm` | any, including enrollment-only | `{ "code" }` | Turns MFA on and returns `{ "recoveryCodes": [10 codes] }`, shown this once. Revokes every session of the user and signs the caller in again with a full session. |
+| `/auth/mfa/recovery-codes` | full | `{ "code" }` or `{ "recoveryCode" }` | Replaces all recovery codes; returns the new ones. Revokes every other session. |
+| `/auth/mfa/disable` | full | `{ "code" }` or `{ "recoveryCode" }` | Removes the second factor, revokes every session including the caller's. |
+
+**Enforcement.** An enrollment-only session counts as signed in only on `/auth/mfa/enroll`, `/auth/mfa/enroll/confirm` and the logout path; every other request, GraphQL included, runs anonymous. The binary WebSocket (`/bifrost-ws`) closes with PolicyViolation at the next message, and a `/_chat` stream ends with `session-ended` before its next tool call. A password-only session of a user the requirement covers (for example, one issued before the role was added to `RequireMfaForRoles`) is revoked at its next check.
+
+**Wrong passwords.** The second-factor row is read only after the password verifies, so a wrong password answers the same bare `401`, with the same work, whether or not the account has a second factor. For an enrolled user the failed-attempt count clears only when the second factor passes.
+
+**Claims.** The cookie carries an `amr` claim per method (`pwd`, `otp`, `recovery`, RFC 8176), and `bifrost:mfa-pending` on an enrollment-only session. The session row records the same.
+
+**Replay and storage.** A code is accepted only for a time step later than the last one accepted, with ±1 step of drift. The secret is sealed with field encryption and bound to the user; recovery codes are 80-bit random values stored as salted SHA-256 and spent on use. If `MfaKeyRef` is later removed, an enrolled user's login answers `403` `{"error":"mfa_unavailable"}` rather than skipping the factor.
 
 ## OIDC providers (Microsoft 365 and Google)
 

@@ -49,12 +49,21 @@ The whole strategy is: **the client never sends a tenant ID, and the server neve
 Users log in with [local auth](/BifrostQL/guides/authentication/); the `app_users` table already has `tenant_id` and `roles` columns, which match `AddBifrostLocalAuth`'s defaults:
 
 ```csharp
+using BifrostQL.Core.Crypto;
 using BifrostQL.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Local auth requires a TOTP second factor by default; its secrets are sealed with
+// field encryption, so the host supplies a root key and a durable data-key store.
+builder.Services.AddSingleton<IRootKeyProvider>(
+    ConfigRootKeyProvider.FromBase64(builder.Configuration["Bifrost:RootKey"]!));
+builder.Services.AddSingleton<IDataEncryptionKeyStore>(
+    new FileDataEncryptionKeyStore("/var/lib/bifrost/keys"));
+
 builder.Services.AddBifrostLocalAuth(
-    builder.Configuration.GetConnectionString("bifrost")!);
+    builder.Configuration.GetConnectionString("bifrost")!,
+    options => options.MfaKeyRef = "config:mfa");
 
 builder.Services.AddBifrostQL(o => o.BindStandardConfig(builder.Configuration));
 

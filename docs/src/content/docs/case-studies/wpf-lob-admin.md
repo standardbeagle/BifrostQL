@@ -62,18 +62,27 @@ dotnet add package BifrostQL.SqlServer
 
 ```csharp
 // Program.cs
+using BifrostQL.Core.Crypto;
 using BifrostQL.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Local auth requires a TOTP second factor by default; its secrets are sealed with
+// field encryption, so the host supplies a root key and a durable data-key store.
+builder.Services.AddSingleton<IRootKeyProvider>(
+    ConfigRootKeyProvider.FromBase64(builder.Configuration["Bifrost:RootKey"]!));
+builder.Services.AddSingleton<IDataEncryptionKeyStore>(
+    new FileDataEncryptionKeyStore("/var/lib/bifrost/keys"));
+
 builder.Services.AddBifrostLocalAuth(
-    builder.Configuration.GetConnectionString("bifrost")!);
+    builder.Configuration.GetConnectionString("bifrost")!,
+    options => options.MfaKeyRef = "config:mfa");
 
 builder.Services.AddBifrostQL(o => o.BindStandardConfig(builder.Configuration));
 
 var app = builder.Build();
 app.UseAuthentication();
-app.UseBifrostLocalAuth();   // maps /auth/login and /auth/logout
+app.UseBifrostLocalAuth();   // maps /auth/login, /auth/logout and /auth/mfa/*
 app.UseBifrostQL();
 await app.RunAsync();
 ```
@@ -148,7 +157,7 @@ CREATE TABLE dbo.app_users (
 );
 ```
 
-This matches `AddBifrostLocalAuth`'s defaults exactly, so the registration in step 1 needs no options callback. Logins hit `POST /auth/login` with `{ "login": "...", "password": "..." }`, get a session cookie, and every subsequent GraphQL request carries the resulting identity — which is what feeds the `populate: updated-by` rule.
+This matches `AddBifrostLocalAuth`'s table and column defaults exactly, so the registration in step 1 sets only `MfaKeyRef` for the second factor. Logins hit `POST /auth/login` with `{ "login": "...", "password": "..." }`, answer the TOTP challenge at `POST /auth/mfa/verify`, get a session cookie, and every subsequent GraphQL request carries the resulting identity — which is what feeds the `populate: updated-by` rule.
 
 The WPF app never sees this table. It authenticates the way it always has.
 

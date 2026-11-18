@@ -103,17 +103,9 @@ namespace BifrostQL.Server.Auth
                 return;
             }
 
-            LocalLoginRequest? request;
-            try
-            {
-                request = await context.Request.ReadFromJsonAsync<LocalLoginRequest>(context.RequestAborted)
-                    .ConfigureAwait(false);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                request = null;
-            }
-
+            var (request, unreadable) = await ReadJsonBodyAsync<LocalLoginRequest>(context).ConfigureAwait(false);
+            if (unreadable)
+                return;
             if (request == null || string.IsNullOrWhiteSpace(request.Login) || string.IsNullOrEmpty(request.Password))
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -353,6 +345,35 @@ namespace BifrostQL.Server.Auth
             context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         }
 
+        /// <summary>
+        /// Reads a local-auth endpoint's JSON body. A body that is not JSON (another content type, or
+        /// a JSON type with a charset .NET cannot decode) answers 415 and reports
+        /// <c>Unreadable</c>, so the caller returns. Malformed JSON reads as a null body, which the
+        /// caller's own field check answers with 400.
+        /// </summary>
+        private static async Task<(T? Body, bool Unreadable)> ReadJsonBodyAsync<T>(HttpContext context) where T : class
+        {
+            if (!context.Request.HasJsonContentType())
+            {
+                context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
+                return (null, true);
+            }
+            try
+            {
+                return (await context.Request.ReadFromJsonAsync<T>(context.RequestAborted).ConfigureAwait(false), false);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return (null, false);
+            }
+            catch (InvalidOperationException)
+            {
+                // ReadFromJsonAsync's refusal of an undecodable charset.
+                context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
+                return (null, true);
+            }
+        }
+
         private static async Task RejectAsync(CookieValidatePrincipalContext context)
         {
             context.RejectPrincipal();
@@ -434,16 +455,9 @@ namespace BifrostQL.Server.Auth
                 return;
             }
             var store = context.RequestServices.GetRequiredService<LocalUserStore>();
-            LocalPasswordChangeRequest? request;
-            try
-            {
-                request = await context.Request.ReadFromJsonAsync<LocalPasswordChangeRequest>(context.RequestAborted)
-                    .ConfigureAwait(false);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                request = null;
-            }
+            var (request, unreadable) = await ReadJsonBodyAsync<LocalPasswordChangeRequest>(context).ConfigureAwait(false);
+            if (unreadable)
+                return;
             if (request == null || string.IsNullOrWhiteSpace(request.Login)
                 || string.IsNullOrEmpty(request.CurrentPassword) || string.IsNullOrEmpty(request.NewPassword))
             {
@@ -585,20 +599,9 @@ namespace BifrostQL.Server.Auth
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return null;
             }
-            if (!context.Request.HasJsonContentType())
-            {
-                context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
+            var (request, unreadable) = await ReadJsonBodyAsync<LocalAdminRequest>(context).ConfigureAwait(false);
+            if (unreadable)
                 return null;
-            }
-            LocalAdminRequest? request;
-            try
-            {
-                request = await context.Request.ReadFromJsonAsync<LocalAdminRequest>(context.RequestAborted).ConfigureAwait(false);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                request = null;
-            }
             if (string.IsNullOrWhiteSpace(request?.UserId))
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;

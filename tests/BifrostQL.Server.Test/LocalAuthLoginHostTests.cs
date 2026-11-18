@@ -720,6 +720,39 @@ namespace BifrostQL.Server.Test
                 "the audit never records the login name typed");
         }
 
+        [Theory]
+        [InlineData("/auth/login", "application/x-www-form-urlencoded")]
+        [InlineData("/auth/login", "application/json; charset=not-a-charset")]
+        [InlineData("/auth/password", "text/plain")]
+        [InlineData("/auth/password", "application/json; charset=not-a-charset")]
+        public async Task ABodyThatIsNotJson_Is415_NotAServerError(string path, string contentType)
+        {
+            var client = await StartForLockoutAsync();
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new StringContent($$"""{"login":"{{Login}}","password":"x","currentPassword":"x","newPassword":"y"}"""),
+            };
+            request.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(contentType);
+
+            (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.UnsupportedMediaType);
+        }
+
+        [Fact]
+        public async Task AdminEndpoint_UnknownCharset_Is415_NotAServerError()
+        {
+            var client = await StartForLockoutAsync();
+            var admin = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/admin/unlock")
+            {
+                Content = new StringContent("""{"userId":"user-1"}"""),
+            };
+            request.Content.Headers.ContentType =
+                System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json; charset=not-a-charset");
+            request.Headers.Add("Cookie", admin);
+
+            (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.UnsupportedMediaType);
+        }
+
         [Fact]
         public async Task LoginAudit_RecordsSuccessAndFailure_WithoutCredentials()
         {

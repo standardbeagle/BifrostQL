@@ -92,25 +92,25 @@ namespace BifrostQL.Server.Test.Grpc
         // reason. The read is still rejected with zero rows / zero writes — only the EXPECTED text is
         // relaxed, never the ASSERT (Lesson 1: adapt what you EXPECT, never what you ASSERT).
         protected override string ExpectedRejectionFragment(string canonicalServerFragment)
-            => "The request was denied by policy.";
+            => GrpcStatusMapper.UnimplementedMethodMessage;
 
         // Filtering a policy-denied column hits the read compiler's field validation FIRST: a hidden
         // column is rejected as an unknown/unreadable field — deliberately indistinguishable from a
         // nonexistent field (invariant 4 anti-oracle), a different sanitized signal than the
-        // table-level PERMISSION_DENIED that selecting the denied column's (invisible) table produces.
+        // table-level absent-method status that selecting the denied column's (invisible) table produces.
         protected override string ExpectedFilterRejectionFragment(string canonicalServerFragment)
             => "Unknown or unreadable field.";
 
         // RECONCILED (was a cross-op divergence): a missing-tenant fail-closed fault now surfaces the
-        // SAME sanitized denial status on the WRITE path as on the READ path — PERMISSION_DENIED with the
-        // generic "denied by policy" text. The write-side TenantMutationTransformer now tags its
+        // SAME sanitized denial status on the WRITE path as on the READ path: UNIMPLEMENTED with the
+        // host's own "Method is unimplemented." text, since deny equals absent (invariant 9). The write-side TenantMutationTransformer now tags its
         // fail-closed throw with AccessDeniedCode (matching the read-side TenantFilterTransformer), so the
-        // single GrpcStatusMapper funnel maps it to PERMISSION_DENIED instead of a generic INTERNAL. Both
+        // single GrpcStatusMapper funnel maps it to that status instead of a generic INTERNAL. Both
         // still fail closed (nothing is written); only the surfaced status/text is reconciled, and it
         // stays generic (invariant 3 — no tenant/column/SQL text on the wire). See the cross-op parity
         // fact MissingTenant_ReadAndWrite_SurfaceTheSameDeniedStatus.
         protected override string ExpectedWriteRejectionFragment(string canonicalServerFragment)
-            => "The request was denied by policy.";
+            => GrpcStatusMapper.UnimplementedMethodMessage;
 
         // Omit: a gRPC read names no columns, and the generated message type already leaves the
         // denied field out (GrpcSchemaVisibility), so Get/List/Stream select exactly the caller's
@@ -316,7 +316,7 @@ namespace BifrostQL.Server.Test.Grpc
         /// <summary>
         /// Cross-op-class denial parity (slice-7 conformance derivation gap): the IDENTICAL
         /// missing-tenant fail-closed condition must surface the SAME sanitized gRPC status on a READ
-        /// (List) and a WRITE (Insert) — not PERMISSION_DENIED on the read and a generic INTERNAL on the
+        /// (List) and a WRITE (Insert) — not one status on the read and a generic INTERNAL on the
         /// write. A differential status for one underlying condition is the anti-oracle/single-funnel
         /// class the S3 epic-close and OData single-funnel lessons warn against. Both still fail closed
         /// (the write lands nothing); this asserts only that the surfaced STATUS is reconciled, and that
@@ -335,7 +335,9 @@ namespace BifrostQL.Server.Test.Grpc
                 () => _client.InsertAsync("orders", new Dictionary<string, object?> { ["name"] = "no-identity" }, headers));
 
             // Parity: the read denial and the write denial map to the SAME status through the single funnel.
-            readFault.StatusCode.Should().Be(StatusCode.PermissionDenied);
+            // Deny equals absent (invariant 9): the status a table the caller may not see answers.
+            readFault.StatusCode.Should().Be(StatusCode.Unimplemented);
+            readFault.Status.Detail.Should().Be(GrpcStatusMapper.UnimplementedMethodMessage);
             writeFault.StatusCode.Should().Be(
                 readFault.StatusCode,
                 "the identical missing-tenant condition must surface the same status on a write as on a read");
@@ -349,10 +351,10 @@ namespace BifrostQL.Server.Test.Grpc
         /// Cross-op-class denial parity for a POLICY write-deny (the residual instance the gRPC
         /// epic-close security review flagged: TableMutationPipeline threw a CODELESS
         /// BifrostExecutionError on a policy-denied write, which fell to the GrpcStatusMapper funnel's
-        /// default → generic INTERNAL, while a read access denial surfaces PERMISSION_DENIED).
+        /// default → generic INTERNAL, while a read access denial surfaces the absent-method status).
         /// PolicyMutationTransformer now tags its denial with AccessDeniedCode (mirroring the
         /// read-side filters), so the single funnel maps the policy WRITE deny to the SAME
-        /// PERMISSION_DENIED status and text as a read access denial — mapping by CONDITION, not op
+        /// UNIMPLEMENTED status and text as a read access denial — mapping by CONDITION, not op
         /// class. (A read of the policy-denied column itself is no longer a denial: gRPC omits it.) Both fail closed (nothing is written); the reconciled write status stays sanitized
         /// (invariant 3 — the transformer's internal "authorization policy" text must not reach the wire).
         /// </summary>
@@ -376,7 +378,9 @@ namespace BifrostQL.Server.Test.Grpc
                     headers));
 
             // Parity: the read deny and the write deny map to the SAME status through the single funnel.
-            readFault.StatusCode.Should().Be(StatusCode.PermissionDenied);
+            // Deny equals absent (invariant 9): the status a table the caller may not see answers.
+            readFault.StatusCode.Should().Be(StatusCode.Unimplemented);
+            readFault.Status.Detail.Should().Be(GrpcStatusMapper.UnimplementedMethodMessage);
             writeFault.StatusCode.Should().Be(
                 readFault.StatusCode,
                 "a policy WRITE deny must surface the same status as a READ access denial: one condition, one code");

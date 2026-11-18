@@ -286,7 +286,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
 
         // Parity: the deferred-restore tenant-scope denial is an access-control condition, so it must
         // carry AccessDeniedCode — the SAME signal the read-side TenantFilterTransformer throws — so every
-        // transport funnel maps it to the denied class (gRPC PERMISSION_DENIED, chat 403), never a generic
+        // transport funnel maps it to the denied class (gRPC UNIMPLEMENTED, chat 403), never a generic
         // INTERNAL/500. Non-vacuous: with the tag stripped from TenantMutationTransformer the code is null.
         (await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*outside the caller's tenant scope*"))
             .Which.ErrorCode.Should().Be(BifrostExecutionError.AccessDeniedCode);
@@ -669,7 +669,7 @@ public sealed class MutationIntentExecutorTests : IAsyncLifetime
         // Parity with the single-row path and rule 10: a tenant-scope denial inside a
         // BATCH action must carry AccessDeniedCode — the SAME signal the single-row
         // pipeline throws — so every transport funnel maps it to the denied class
-        // (gRPC PERMISSION_DENIED, chat 403), never a generic INTERNAL/500. The batch
+        // (gRPC UNIMPLEMENTED, chat 403), never a generic INTERNAL/500. The batch
         // pipeline previously dropped the transformer's ErrorCode on abort.
         // Non-vacuous: without the ErrorCode propagation the code is null.
         var executor = BuildExecutor();

@@ -1,6 +1,10 @@
+using System.Globalization;
+using Grpc.AspNetCore.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.Grpc
 {
@@ -30,7 +34,12 @@ namespace BifrostQL.Server.Grpc
 
         /// <summary>
         /// Wraps <paramref name="builder"/>'s endpoints (methods and the host's unimplemented
-        /// catch-alls alike) so they answer only on the gRPC listener.
+        /// catch-alls alike) so they answer only on the gRPC listener. A catch-all (the endpoint
+        /// Grpc.AspNetCore maps for a method or service that is not registered, recognisable by its
+        /// missing <see cref="GrpcMethodMetadata"/>) also authenticates the caller first, through
+        /// the same <see cref="GrpcIdentityGate"/> every registered RPC runs. Without that an
+        /// anonymous <c>GetNope</c> answered UNIMPLEMENTED while an anonymous <c>GetOrders</c>
+        /// answered UNAUTHENTICATED, so the table inventory leaked to a caller with no credential.
         /// </summary>
         public static void GuardGrpcEndpoints(IEndpointConventionBuilder builder, GrpcWireOptions options)
         {
@@ -38,6 +47,7 @@ namespace BifrostQL.Server.Grpc
             {
                 var inner = endpoint.RequestDelegate
                     ?? throw new InvalidOperationException("gRPC endpoint has no request delegate to guard.");
+                var isCatchAll = !endpoint.Metadata.OfType<GrpcMethodMetadata>().Any();
                 endpoint.RequestDelegate = http =>
                 {
                     if (!ArrivedOnGrpcListener(http, options))
@@ -45,9 +55,40 @@ namespace BifrostQL.Server.Grpc
                         http.Response.StatusCode = StatusCodes.Status404NotFound;
                         return Task.CompletedTask;
                     }
+                    if (isCatchAll && !CallerAuthenticates(http))
+                        return WriteTrailersOnlyStatusAsync(http, GrpcRequestException.Unauthenticated());
                     return inner(http);
                 };
             });
+        }
+
+        private static bool CallerAuthenticates(HttpContext http)
+        {
+            var services = http.RequestServices;
+            var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(GrpcIdentityGate));
+            try
+            {
+                GrpcIdentityGate.ResolveIdentity(http, services.GetRequiredService<IBifrostAuthContextFactory>(), logger);
+                return true;
+            }
+            catch (GrpcRequestException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// A gRPC trailers-only response: HTTP 200 whose header block carries the status, the shape
+        /// Grpc.AspNetCore sends when a handler throws before writing a message, so the client sees
+        /// the same status and text a registered RPC's gate produces.
+        /// </summary>
+        private static Task WriteTrailersOnlyStatusAsync(HttpContext http, GrpcRequestException status)
+        {
+            http.Response.StatusCode = StatusCodes.Status200OK;
+            http.Response.ContentType = "application/grpc";
+            http.Response.Headers["grpc-status"] = ((int)status.StatusCode).ToString(CultureInfo.InvariantCulture);
+            http.Response.Headers["grpc-message"] = Uri.EscapeDataString(status.Message);
+            return Task.CompletedTask;
         }
 
         /// <summary>

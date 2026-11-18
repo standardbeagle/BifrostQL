@@ -509,9 +509,8 @@ namespace BifrostQL.AdapterConformance
         /// <summary>
         /// The expected rejection text for a fail-closed WRITE specifically. Defaults to
         /// <see cref="ExpectedRejectionFragment"/>. A write-capable adapter whose write path sanitizes
-        /// a fail-closed fault to a different generic status than its read path (e.g. gRPC maps a
-        /// missing-tenant write to a generic INTERNAL while a missing-tenant read maps to
-        /// PERMISSION_DENIED) overrides this. The ASSERT is unchanged (the write is rejected AND
+        /// a fail-closed fault to its own wire text rather than the server's reason (gRPC answers a
+        /// denied write with the host's "Method is unimplemented.") overrides this. The ASSERT is unchanged (the write is rejected AND
         /// nothing is written); only the EXPECTED text is adapter-relative.
         /// </summary>
         protected virtual string ExpectedWriteRejectionFragment(string canonicalServerFragment)

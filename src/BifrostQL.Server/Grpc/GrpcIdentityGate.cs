@@ -1,4 +1,5 @@
 using Grpc.Core;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.Grpc
@@ -31,8 +32,17 @@ namespace BifrostQL.Server.Grpc
 
         public static IDictionary<string, object?> ResolveIdentity(
             ServerCallContext context, IBifrostAuthContextFactory authFactory, ILogger logger)
+            => ResolveIdentity(context.GetHttpContext(), authFactory, logger);
+
+        /// <summary>
+        /// The same gate for a request that has no <see cref="ServerCallContext"/> yet: the host's
+        /// catch-all endpoint for a method or service that is not registered. Authenticating there
+        /// too keeps an anonymous caller from telling a registered table RPC (UNAUTHENTICATED) from
+        /// an unregistered one (UNIMPLEMENTED) — an existence oracle that needs no credential.
+        /// </summary>
+        public static IDictionary<string, object?> ResolveIdentity(
+            HttpContext http, IBifrostAuthContextFactory authFactory, ILogger logger)
         {
-            var http = context.GetHttpContext();
 
             var authorizationLength = 0;
             foreach (var value in http.Request.Headers.Authorization)

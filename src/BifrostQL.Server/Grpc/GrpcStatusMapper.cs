@@ -13,8 +13,8 @@ namespace BifrostQL.Server.Grpc
     /// another by its status.
     ///
     /// <para><b>Sanitization (invariant 3).</b> Only the adapter's own curated
-    /// <see cref="GrpcRequestException"/> surfaces its message verbatim. An authorization denial and
-    /// an operation-id refusal map by their <see cref="BifrostExecutionError.ErrorCode"/> to a named
+    /// <see cref="GrpcRequestException"/> surfaces its message verbatim. An authorization denial, a
+    /// conflict, an update with no SET column and an operation-id refusal map by their <see cref="BifrostExecutionError.ErrorCode"/> to a named
     /// status with fixed text. Any other <see cref="BifrostExecutionError"/> or exception maps to a generic INTERNAL status
     /// with a fixed message; the real detail is logged server-side only, never forwarded onto the
     /// wire (it can wrap raw driver/schema text). Cancellation/deadline maps to CANCELLED /
@@ -35,6 +35,9 @@ namespace BifrostQL.Server.Grpc
         /// exactly this, so it cannot be told from a table that does not exist.
         /// </summary>
         internal const string UnimplementedMethodMessage = "Method is unimplemented.";
+
+        /// <summary>Text for a <see cref="BifrostExecutionError.ConflictCode"/> write (ABORTED).</summary>
+        internal const string ConflictMessage = "The write conflicts with the current state of the row; reload and retry.";
 
         /// <summary>
         /// Maps <paramref name="ex"/> to the gRPC status to fault the call with. A caller
@@ -68,12 +71,26 @@ namespace BifrostQL.Server.Grpc
 
                 case BifrostExecutionError denied when denied.ErrorCode == BifrostExecutionError.AccessDeniedCode:
                     // A fail-closed authorization denial (missing tenant context, row/column policy).
-                    // On a Get this must be INDISTINGUISHABLE from a missing row; elsewhere it surfaces
-                    // as PERMISSION_DENIED. Either way the message is GENERIC — the exception text names
-                    // the table/tenant key and must not reach the wire (invariant 3).
+                    // Deny equals absent (invariant 9): on a Get it is INDISTINGUISHABLE from a
+                    // missing row; on every other RPC it is the status the host gives a method that
+                    // is not registered, which is also what a table the caller may not read answers
+                    // (ResolveReader). PERMISSION_DENIED here told a caller the table exists and is
+                    // merely closed to them. The text is fixed: the exception's names the table/tenant
+                    // key and must not reach the wire (invariant 3).
                     return denialIsNotFound
                         ? new Status(StatusCode.NotFound, RowNotFoundMessage)
-                        : new Status(StatusCode.PermissionDenied, "The request was denied by policy.");
+                        : new Status(StatusCode.Unimplemented, UnimplementedMethodMessage);
+
+                case BifrostExecutionError conflict when conflict.ErrorCode == BifrostExecutionError.ConflictCode:
+                    // A write that collides with a stored row (unique key) or an operation already in
+                    // flight: the caller should re-read and retry, which is ABORTED's contract.
+                    // Fixed text, since the exception's may name the table or constraint (invariant 3).
+                    return new Status(StatusCode.Aborted, ConflictMessage);
+
+                case BifrostExecutionError noSet when noSet.ErrorCode == MutationArgumentBinder.NoUpdateColumnsCode:
+                    // An update that sets no non-key column is the caller's request to fix, not a
+                    // server fault. The binder's constant text names no table or column.
+                    return new Status(StatusCode.InvalidArgument, MutationArgumentBinder.NoUpdateColumnsMessage);
 
                 case BifrostExecutionError refused when OperationIdWireRefusal.TextOf(refused) is { } refusalText:
                     // An operation-id refusal is the client's to fix, never a fault to retry: a

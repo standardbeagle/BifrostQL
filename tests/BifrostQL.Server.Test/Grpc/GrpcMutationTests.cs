@@ -229,7 +229,9 @@ namespace BifrostQL.Server.Test.Grpc
                 "widgets", new Dictionary<string, object?> { ["id"] = 1, ["name"] = "dup" }, User());
 
             var ex = (await act.Should().ThrowAsync<RpcException>()).Which;
-            ex.StatusCode.Should().Be(StatusCode.Internal);
+            // A key collision is tagged CONFLICT upstream, which the funnel answers ABORTED.
+            ex.StatusCode.Should().Be(StatusCode.Aborted);
+            ex.Status.Detail.Should().Be(GrpcStatusMapper.ConflictMessage);
             ex.Status.Detail.Should().NotContainEquivalentOf("unique")
                 .And.NotContainEquivalentOf("constraint")
                 .And.NotContainEquivalentOf("widgets")

@@ -103,12 +103,12 @@ namespace BifrostQL.Server.Grpc
 
             var input = new CodedInputStream(payload);
             uint tag;
-            while ((tag = input.ReadTag()) != 0)
+            while ((tag = ReadFraming(input.ReadTag)) != 0)
             {
                 var fieldNumber = (int)(tag >> 3);
                 if (!byNumber.TryGetValue(fieldNumber, out var field))
                 {
-                    input.SkipLastField();
+                    ReadFraming(() => { input.SkipLastField(); return 0u; });
                     continue;
                 }
 
@@ -126,6 +126,24 @@ namespace BifrostQL.Server.Grpc
             }
 
             return values;
+        }
+
+        /// <summary>
+        /// Runs one tag-level read of the request. A malformed tag, a truncated length or an
+        /// unskippable wire type is the caller's bad request, so it is INVALID_ARGUMENT; outside
+        /// this wrapper it reached the funnel as an unknown exception, answered INTERNAL and logged
+        /// an Error for every garbage frame a client chose to send.
+        /// </summary>
+        private static uint ReadFraming(Func<uint> read)
+        {
+            try
+            {
+                return read();
+            }
+            catch (InvalidProtocolBufferException)
+            {
+                throw GrpcRequestException.InvalidArgument("The request message is not a valid protobuf encoding.");
+            }
         }
 
         private static void WriteRowFields(

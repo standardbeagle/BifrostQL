@@ -63,6 +63,14 @@ namespace BifrostQL.Server.S3
         public static S3ProtocolException NoSuchKey()
             => new("NoSuchKey", 404, "The specified key does not exist.");
 
+        /// <summary>
+        /// A write the database refused because it conflicts with stored rows (a unique or
+        /// exclusion constraint, a lost update). 409, the status S3 uses for a conflicting
+        /// operation; the message names no row, column or constraint.
+        /// </summary>
+        public static S3ProtocolException Conflict()
+            => new("OperationAborted", 409, "The request conflicts with the current state of the resource.");
+
         public static S3ProtocolException PreconditionFailed()
             => new("PreconditionFailed", 412, "At least one of the preconditions you specified did not hold.");
 

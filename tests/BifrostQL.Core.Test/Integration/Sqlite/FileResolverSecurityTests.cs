@@ -673,7 +673,20 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
         // the seam must not turn it into a downloadable object.
         var act = async () => await seam.ResolveAsync("documents", "tenant_id/1", Tenant(1));
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        // Tagged by condition so a wire mapper answers "not found" by code, never by type.
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.NotFoundCode);
+    }
+
+    [Fact]
+    public async Task Seam_Resolve_UnknownBucket_IsTaggedNotFound()
+    {
+        var (seam, _) = await BuildSeamAsync(storageProvider: new ExplodingStorageProvider());
+
+        var act = async () => await seam.ResolveAsync("nosuchbucket", KeyFor(1), Tenant(1));
+
+        (await act.Should().ThrowAsync<BifrostExecutionError>())
+            .Which.ErrorCode.Should().Be(BifrostExecutionError.NotFoundCode);
     }
 
     // ---- writes: the gate ---------------------------------------------------

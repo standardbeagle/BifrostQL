@@ -31,8 +31,12 @@ namespace BifrostQL.Server.S3
     /// construction, rather than kept in sync by review: this seam drifted twice under the
     /// per-op-class scheme, most recently with ListObjectsV2 answering <c>500</c> where every
     /// sibling answered a non-enumerating <c>404</c> — a readable existence/authorization
-    /// oracle. DeleteObject is the sole local catch and is an op-class OUTCOME (idempotent 204),
-    /// not an error mapping.</para>
+    /// oracle. DeleteObject is the sole local catch and is an op-class OUTCOME (idempotent 204
+    /// for a target the caller cannot see), not an error mapping.</para>
+    ///
+    /// <para>The funnel maps by condition code: <c>NOT_FOUND</c> and <c>ACCESS_DENIED</c> answer
+    /// the non-enumerating 404, <c>CONFLICT</c> and <c>EXCLUSION_VIOLATION</c> answer 409, and
+    /// every other exception is a fault: 500 with the detail logged at Error.</para>
     /// </summary>
     public sealed class S3Middleware
     {
@@ -97,13 +101,19 @@ namespace BifrostQL.Server.S3
                 var residueError = S3ProtocolException.InternalError();
                 await WriteErrorAsync(context, residueError.HttpStatus, residueError.Code, residueError.Message, requestId);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
+            catch (BifrostExecutionError ex) when (IsNotFoundCondition(ex))
             {
                 // THE denial/addressing funnel — one catch for EVERY op class (invariant 10).
                 // An addressing fault (unknown bucket, wrong key arity, non-file column), a row or
                 // table the caller may not see (cross-tenant, scoped-away, table- or column-level
                 // policy read-deny), or an unparseable stored pointer all arrive here, from the
                 // read seam, the write seam, and the listing alike.
+                //
+                // It matches by CONDITION CODE, never by exception type. Matching on the type
+                // (InvalidOperationException or BifrostExecutionError) folded an exhausted
+                // connection pool, an ObjectDisposedException and a CONFLICT into the same 404,
+                // so a broken server read as a missing object and the operator heard nothing
+                // above Debug.
                 //
                 // Mapping them in ONE place is the point: the S3 epic previously kept N per-op-class
                 // catches in sync by review, and they drifted twice — first on the read paths
@@ -116,17 +126,31 @@ namespace BifrostQL.Server.S3
                 // for an object-level address, NoSuchBucket at bucket/service level — so the wire
                 // stays valid S3 while carrying no information about which condition occurred.
                 // Detail is logged server-side only (invariant 3).
-                _logger?.LogDebug(
+                _logger.LogDebug(
                     ex, "S3 {Method} {Path} unaddressable, corrupt, or denied (request {RequestId}).",
                     context.Request.Method, context.Request.Path.Value, requestId);
                 var notFound = NotFoundForRequest(context.Request);
                 await WriteErrorAsync(context, notFound.HttpStatus, notFound.Code, notFound.Message, requestId);
             }
+            catch (BifrostExecutionError ex) when (IsConflictCondition(ex))
+            {
+                // The database refused the write because it conflicts with stored rows. The caller
+                // can act on it, so it is a 409, not a fault and not a missing object. The wire
+                // carries a fixed message; the constraint name and values stay in the log.
+                _logger.LogInformation(
+                    ex, "S3 {Method} {Path} refused as a conflict (request {RequestId}).",
+                    context.Request.Method, context.Request.Path.Value, requestId);
+                var conflict = S3ProtocolException.Conflict();
+                await WriteErrorAsync(context, conflict.HttpStatus, conflict.Code, conflict.Message, requestId);
+            }
             catch (Exception ex)
             {
-                // Never forward an internal exception message onto the wire (invariant 3):
-                // log full detail server-side, return a generic sanitized envelope.
-                _logger.LogError(ex, "Unhandled error in S3 endpoint (request {RequestId}).", requestId);
+                // Every other failure is a fault: a driver error, a disposed connection, an
+                // exhausted pool, a storage outage. Never forward its message onto the wire
+                // (invariant 3): log full detail at Error, return a generic sanitized envelope.
+                _logger.LogError(
+                    ex, "S3 {Method} {Path} failed (request {RequestId}).",
+                    context.Request.Method, context.Request.Path.Value, requestId);
                 var internalError = S3ProtocolException.InternalError();
                 await WriteErrorAsync(context, internalError.HttpStatus, internalError.Code, internalError.Message, requestId);
             }
@@ -139,6 +163,20 @@ namespace BifrostQL.Server.S3
         /// reaching the funnel is indistinguishable within an op class, and the code an S3 client
         /// receives still matches the resource kind it asked for.
         /// </summary>
+        /// <summary>
+        /// The conditions that answer a non-enumerating "not found": an address naming nothing
+        /// the caller can see (<see cref="BifrostExecutionError.NotFoundCode"/>, raised by the
+        /// file-object seam) and a refusal from the authorization transformers
+        /// (<see cref="BifrostExecutionError.AccessDeniedCode"/>, raised by the read pipeline the
+        /// listing uses and by the write pipeline). Nothing else.
+        /// </summary>
+        private static bool IsNotFoundCondition(BifrostExecutionError ex)
+            => ex.ErrorCode is BifrostExecutionError.NotFoundCode or BifrostExecutionError.AccessDeniedCode;
+
+        /// <summary>A write refused because it conflicts with stored rows.</summary>
+        private static bool IsConflictCondition(BifrostExecutionError ex)
+            => ex.ErrorCode is BifrostExecutionError.ConflictCode or BifrostExecutionError.ExclusionViolationCode;
+
         private static S3ProtocolException NotFoundForRequest(HttpRequest request)
             => (request.Path.Value ?? string.Empty).Trim('/').Contains('/')
                 ? S3ProtocolException.NoSuchKey()
@@ -496,7 +534,9 @@ namespace BifrostQL.Server.S3
         /// idempotent, so a missing object, a cross-tenant/forged address (vetoed by the
         /// pipeline before the provider is touched), or a malformed key all answer the same
         /// 204 No Content — non-enumerating, and destroying nothing the caller was not
-        /// authorized to remove.
+        /// authorized to remove. 204 means the object is gone for this caller: a cleared pointer
+        /// (the write affected a row) or a target the caller cannot see. A visible object whose
+        /// pointer write was refused or affected zero rows answers 404, a conflict 409, a fault 500.
         /// </summary>
         private async Task DeleteObjectAsync(
             HttpContext context, IDictionary<string, object?> userContext, string requestId,
@@ -519,16 +559,22 @@ namespace BifrostQL.Server.S3
                     ex, "DeleteObject left orphaned storage residue at key '{StorageKey}' (request {RequestId}).",
                     ex.StorageKey, requestId);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or BifrostExecutionError)
+            catch (BifrostExecutionError ex) when (ex.ErrorCode == BifrostExecutionError.NotFoundCode)
             {
                 // The ONE op class that keeps a local catch, and deliberately: S3 delete is
-                // idempotent, so its answer to an unaddressable or scoped-away target is 204 —
-                // an op-class OUTCOME the protocol defines, not an error MAPPING. Letting this
-                // reach the funnel would turn it into a 404 and break that contract. It cannot
-                // reintroduce the divergence the funnel exists to prevent, because it produces no
-                // error envelope at all. Detail logged only. (The residue type was caught above;
-                // it derives from BifrostExecutionError, so its catch MUST precede this one.)
-                _logger?.LogDebug(ex, "DeleteObject unaddressable or denied (request {RequestId}).", requestId);
+                // idempotent, so its answer to a target the caller cannot see (unaddressable,
+                // missing, cross-tenant, read-denied) is 204 — the object is absent from where
+                // the caller stands, and a missing row answers the same, so this is no oracle.
+                // It is an op-class OUTCOME the protocol defines, not an error MAPPING, and it
+                // produces no error envelope, so it cannot drift from the funnel.
+                //
+                // It matches NotFoundCode only. A visible row whose pointer write was refused or
+                // matched zero rows (AccessDeniedCode) still holds its object, so it goes to the
+                // funnel and answers 404, never 204. So do a conflict (409) and any fault (500):
+                // a 204 there would report a delete that did not happen. (The residue type was
+                // caught above; it derives from BifrostExecutionError, so its catch MUST precede
+                // this one.)
+                _logger.LogDebug(ex, "DeleteObject target not visible to the caller (request {RequestId}).", requestId);
             }
 
             context.Response.StatusCode = 204;

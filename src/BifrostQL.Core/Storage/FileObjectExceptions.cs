@@ -11,8 +11,9 @@ namespace BifrostQL.Core.Storage;
 /// (DELETE post-clear).
 ///
 /// <para><b>Why a distinct type.</b> The seam otherwise surfaces denial, a corrupt
-/// pointer, and a scoped-away write all as a plain <see cref="BifrostExecutionError"/>,
-/// which the wire deliberately folds into the non-enumerating <c>NoSuchKey</c> — a
+/// pointer, and a scoped-away write as a <see cref="BifrostExecutionError"/> coded
+/// <c>NOT_FOUND</c> or <c>ACCESS_DENIED</c>, which the wire deliberately folds into the
+/// non-enumerating <c>NoSuchKey</c> — a
 /// wire mapper cannot tell those apart, nor should it, because responding
 /// differently to them WOULD weaken non-enumeration. Residue is the one case that
 /// both needs a different wire response AND leaks nothing by getting one: it only

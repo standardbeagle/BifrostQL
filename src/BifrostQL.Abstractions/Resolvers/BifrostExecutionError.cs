@@ -73,6 +73,14 @@ namespace BifrostQL.Core.Resolvers
         public const string AccessDeniedCode = "ACCESS_DENIED";
 
         /// <summary>
+        /// <see cref="ErrorCode"/> marking an address that names nothing the caller can see: an
+        /// unknown table or key, a malformed address, or a row scoped away by the read pipeline.
+        /// The file-object seam raises it so a wire mapper can answer "not found" by condition
+        /// rather than by exception type, and tell it apart from a fault that must answer 500.
+        /// </summary>
+        public const string NotFoundCode = "NOT_FOUND";
+
+        /// <summary>
         /// <see cref="ErrorCode"/> marking a value the database could not read as its column's
         /// type: a malformed uuid, a bad date, a number out of range. The caller can fix it, so
         /// it is not a <c>DATABASE_ERROR</c>. It is the code GraphQL.NET already answers with when

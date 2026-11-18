@@ -62,6 +62,17 @@ public sealed class FileObjectSeamOptions
 ///
 /// <para><b>Failure ordering is deliberate</b> — see <see cref="PutAsync"/> and
 /// <see cref="DeleteAsync"/>.</para>
+///
+/// <para><b>Failures carry their condition as a code, not a type.</b> An address that names
+/// nothing the caller can see (unknown bucket, malformed key, non-file column, a row the read
+/// pipeline scoped away or refused, a corrupt pointer) throws a
+/// <see cref="BifrostExecutionError"/> with <see cref="BifrostExecutionError.NotFoundCode"/>. A
+/// visible row whose pointer write the mutation pipeline refused or matched zero rows throws with
+/// <see cref="BifrostExecutionError.AccessDeniedCode"/> (or the pipeline's own code, such as
+/// <see cref="BifrostExecutionError.ConflictCode"/>). Anything else (a driver fault, a disposed
+/// connection, a storage outage) propagates with whatever code it had, so a wire mapper that
+/// answers "not found" only for those codes reports a broken server as broken
+/// (.claude/rules/protocol-adapter-security.md invariant 10).</para>
 /// </summary>
 public sealed class FileObjectSeam
 {
@@ -163,8 +174,9 @@ public sealed class FileObjectSeam
     /// Resolves an object address to the file object it names, under the caller's
     /// identity. Returns null when the row is not visible to the caller, does not
     /// exist, or holds no file — all indistinguishable by design, so the seam is
-    /// not a row-existence oracle. Throws only on addressing faults (unknown
-    /// bucket, malformed key, non-file column) and on a corrupt pointer.
+    /// not a row-existence oracle. Throws <see cref="BifrostExecutionError.NotFoundCode"/>
+    /// on addressing faults (unknown bucket, malformed key, non-file column), a read the
+    /// pipeline refused, and a corrupt pointer; any other exception is a fault.
     /// </summary>
     public async Task<ResolvedFileObject?> ResolveAsync(
         string bucket, string key, IDictionary<string, object?> userContext,
@@ -258,7 +270,7 @@ public sealed class FileObjectSeam
 
         var located = await LocateAsync(bucket, key, userContext, cancellationToken);
         if (!located.RowVisible)
-            throw new BifrostExecutionError($"Object '{bucket}/{key}' does not exist or is not accessible.");
+            throw NotFound($"Object '{bucket}/{key}' does not exist or is not accessible.");
 
         // The bytes go to a fresh random storage key, never to the caller-supplied
         // address: UploadFileAsync takes no storage-key parameter, so this is
@@ -326,7 +338,7 @@ public sealed class FileObjectSeam
 
         var located = await LocateAsync(bucket, key, userContext, cancellationToken);
         if (!located.RowVisible)
-            throw new BifrostExecutionError($"Object '{bucket}/{key}' does not exist or is not accessible.");
+            throw NotFound($"Object '{bucket}/{key}' does not exist or is not accessible.");
 
         if (located.Metadata is null)
             return false;
@@ -381,13 +393,26 @@ public sealed class FileObjectSeam
         string bucket, string key, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
     {
         var model = await _reads.GetModelAsync(_options.Endpoint);
-        var table = S3ObjectKeyMap.ResolveBucket(model, bucket);
-        var address = S3ObjectKeyMap.ParseKey(table, key);
+        IDbTable table;
+        FileObjectAddress address;
+        try
+        {
+            table = S3ObjectKeyMap.ResolveBucket(model, bucket);
+            address = S3ObjectKeyMap.ParseKey(table, key);
+        }
+        catch (InvalidOperationException addressingFault)
+        {
+            // The key map reports every addressing fault (unknown or ambiguous bucket, wrong
+            // arity, bad encoding, a value that is not the key column's type) with this type.
+            // The catch wraps only those two calls, so no other InvalidOperationException (a
+            // disposed connection, an exhausted pool) is ever relabelled "not found".
+            throw NotFound(addressingFault.Message, addressingFault);
+        }
 
         // Only columns configured for file storage are addressable as objects;
         // otherwise the seam would turn every column into a download endpoint.
         if (!_storage.IsFileStorageColumn(table, address.Column, model))
-            throw new InvalidOperationException(
+            throw NotFound(
                 $"Column '{address.Column.ColumnName}' of table '{table.DbName}' is not configured for file storage.");
 
         var query = new GqlObjectQuery
@@ -402,12 +427,24 @@ public sealed class FileObjectSeam
         };
         query.ScalarColumns.Add(new GqlObjectColumn(address.Column.DbName, address.Column.GraphQlName));
 
-        var result = await _reads.ExecuteAsync(new QueryIntent
+        QueryIntentResult result;
+        try
         {
-            Query = query,
-            UserContext = userContext,
-            Endpoint = _options.Endpoint,
-        }, cancellationToken);
+            result = await _reads.ExecuteAsync(new QueryIntent
+            {
+                Query = query,
+                UserContext = userContext,
+                Endpoint = _options.Endpoint,
+            }, cancellationToken);
+        }
+        catch (BifrostExecutionError denied) when (denied.ErrorCode == BifrostExecutionError.AccessDeniedCode)
+        {
+            // A read the pipeline refused (missing tenant claim, table or column read-deny) means
+            // the caller cannot see this object: the same condition as zero rows, so the same
+            // code. A write refused later, on a row the caller CAN see, keeps AccessDeniedCode.
+            throw NotFound(
+                $"The read of '{table.DbName}.{address.Column.ColumnName}' was refused by the read pipeline.", denied);
+        }
 
         if (result.Rows.Count == 0)
             return new LocatedObject(false, model, table, address.Column, address.PrimaryKey, null, userContext);
@@ -416,7 +453,7 @@ public sealed class FileObjectSeam
         if (string.IsNullOrWhiteSpace(pointer))
             return new LocatedObject(true, model, table, address.Column, address.PrimaryKey, null, userContext);
 
-        // An unparseable pointer stays a plain BifrostExecutionError → NoSuchKey.
+        // An unparseable pointer carries NotFoundCode → NoSuchKey.
         // Surfacing it differently (e.g. 500) would let a caller distinguish a
         // file-holding cell from a non-file cell on a database-default-bucket
         // deployment (every column is then addressable), i.e. an enumeration oracle.
@@ -424,7 +461,7 @@ public sealed class FileObjectSeam
         // residue (FileObjectResidueException), which leaks nothing because it only
         // arises on the caller's own already-authorized write.
         var metadata = FileMetadata.FromJson(pointer)
-            ?? throw new BifrostExecutionError(
+            ?? throw NotFound(
                 $"File metadata for '{table.DbName}.{address.Column.ColumnName}' is not parseable; " +
                 "the stored file reference is corrupt.");
 
@@ -480,10 +517,19 @@ public sealed class FileObjectSeam
         // compensating for it). See MutationIntentResult.AffectedRows.
         // `is not > 0` rather than `== 0`: AffectedRows is nullable, and a null must
         // never read as success or the fail-open has merely moved from Value to here.
+        //
+        // The code is AccessDeniedCode, not NotFoundCode: the caller SAW this row and the write
+        // did not land, so a DeleteObject must not report it as already gone.
         if (result.AffectedRows is not > 0)
             throw new BifrostExecutionError(
-                $"Row of '{located.Table.DbName}' is no longer accessible; the file pointer was not updated.");
+                $"Row of '{located.Table.DbName}' is no longer accessible; the file pointer was not updated.")
+            { ErrorCode = BifrostExecutionError.AccessDeniedCode };
     }
+
+    private static BifrostExecutionError NotFound(string detail, Exception? inner = null)
+        => inner is null
+            ? new BifrostExecutionError(detail) { ErrorCode = BifrostExecutionError.NotFoundCode }
+            : new BifrostExecutionError(detail, inner) { ErrorCode = BifrostExecutionError.NotFoundCode };
 
     /// <summary>
     /// Reclaims the blob a committed PUT superseded. Best-effort by design: the

@@ -255,7 +255,10 @@ built-ins. The defaults warn past **12** tools and hard-fail load past **24**
 
 ```csharp
 builder.Services.AddBifrostMcpTools("mcp-tools.json");        // from a file path
-// or from a stream / custom IDeclarativeToolDocumentSource
+builder.Services.AddBifrostMcpTools(                           // from a stream, opened at host start
+    ct => blobClient.OpenReadAsync(cancellationToken: ct),
+    description: "blob mcp-tools.json");
+// or a custom IDeclarativeToolDocumentSource
 ```
 
 `AddBifrostMcpTools` reads nothing itself. It registers a hosted service that,
@@ -263,6 +266,8 @@ at host start, reads the document with async I/O, shape-checks it, and validates
 every tool against the live model. A malformed document or a bad reference
 (unknown table, column, relation, or parameter) fails the host start with a
 precise message — it never ships a tool that would only fault on first use.
+The stream overload calls its factory once, when the document loads at host
+start, and disposes the stream it returns.
 `DeclarativeToolDocumentProvider.GetAsync` returns the loaded document. A custom
 `IDeclarativeToolDocumentSource` implements `OpenReadAsync` and must not block
 on I/O.

@@ -106,7 +106,7 @@ namespace BifrostQL.Mcp.Test
                 """;
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
             return await new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "composite validator test")).LoadAsync(CancellationToken.None);
+                new StreamDeclarativeToolDocumentSource(_ => Task.FromResult<Stream>(stream), "composite validator test")).LoadAsync(CancellationToken.None);
         }
 
         private static IDbModel CompositeModel()
@@ -170,8 +170,8 @@ namespace BifrostQL.Mcp.Test
                   }]
                 }
                 """;
-            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            return new DeclarativeToolDocumentLoader(new StreamDeclarativeToolDocumentSource(stream, "validator test"));
+            return new DeclarativeToolDocumentLoader(new StreamDeclarativeToolDocumentSource(
+                _ => Task.FromResult<Stream>(new MemoryStream(Encoding.UTF8.GetBytes(json))), "validator test"));
         }
 
         private static IDbModel Model()

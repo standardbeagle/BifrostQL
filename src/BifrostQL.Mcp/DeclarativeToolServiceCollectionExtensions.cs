@@ -10,11 +10,15 @@ namespace BifrostQL.Mcp
             string filePath)
             => services.AddBifrostMcpTools(new FileDeclarativeToolDocumentSource(filePath));
 
+        /// <summary>
+        /// Registers a document read from a stream <paramref name="openStream"/> opens at host start.
+        /// Nothing is read at registration; the loader disposes the stream.
+        /// </summary>
         public static IServiceCollection AddBifrostMcpTools(
             this IServiceCollection services,
-            Stream stream,
+            Func<CancellationToken, Task<Stream>> openStream,
             string description = "stream")
-            => services.AddBifrostMcpTools(new StreamDeclarativeToolDocumentSource(stream, description));
+            => services.AddBifrostMcpTools(new StreamDeclarativeToolDocumentSource(openStream, description));
 
         public static IServiceCollection AddBifrostMcpTools(
             this IServiceCollection services,

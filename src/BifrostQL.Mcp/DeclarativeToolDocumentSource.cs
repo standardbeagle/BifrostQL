@@ -26,22 +26,27 @@ namespace BifrostQL.Mcp
                 _path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, FileOptions.Asynchronous));
     }
 
+    /// <summary>
+    /// A document read from a stream the caller opens on demand. <c>openStream</c> runs when the
+    /// provider loads the document at host start, never at registration, so the caller opens its
+    /// backing store (an embedded resource, a blob, a socket) with async I/O. The loader disposes
+    /// the returned stream.
+    /// </summary>
     public sealed class StreamDeclarativeToolDocumentSource : IDeclarativeToolDocumentSource
     {
-        private readonly byte[] _content;
+        private readonly Func<CancellationToken, Task<Stream>> _openStream;
 
-        public StreamDeclarativeToolDocumentSource(Stream stream, string description = "stream")
+        public StreamDeclarativeToolDocumentSource(Func<CancellationToken, Task<Stream>> openStream, string description = "stream")
         {
-            ArgumentNullException.ThrowIfNull(stream);
+            ArgumentNullException.ThrowIfNull(openStream);
+            _openStream = openStream;
             Description = description;
-            using var buffer = new MemoryStream();
-            stream.CopyTo(buffer);
-            _content = buffer.ToArray();
         }
 
         public string Description { get; }
 
-        public ValueTask<Stream> OpenReadAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult<Stream>(new MemoryStream(_content, writable: false));
+        public async ValueTask<Stream> OpenReadAsync(CancellationToken cancellationToken) =>
+            await _openStream(cancellationToken)
+            ?? throw new InvalidOperationException($"The tool document stream factory for '{Description}' returned null.");
     }
 }

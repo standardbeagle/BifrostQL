@@ -16,7 +16,7 @@ namespace BifrostQL.Mcp.Test
     {
         private static Task<DeclarativeToolDocument> LoadAsync(string json) =>
             new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(new MemoryStream(Encoding.UTF8.GetBytes(json)), "test")).LoadAsync(CancellationToken.None);
+                new StreamDeclarativeToolDocumentSource(_ => Task.FromResult<Stream>(new MemoryStream(Encoding.UTF8.GetBytes(json))), "test")).LoadAsync(CancellationToken.None);
 
         [Fact]
         public async Task Loader_AcceptsValidInsertMutation()

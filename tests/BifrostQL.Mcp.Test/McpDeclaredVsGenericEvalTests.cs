@@ -227,7 +227,7 @@ namespace BifrostQL.Mcp.Test
         {
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(DeclaredDocument));
             var document = await new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(stream, "declared-eval")).LoadAsync(CancellationToken.None);
+                new StreamDeclarativeToolDocumentSource(_ => Task.FromResult<Stream>(stream), "declared-eval")).LoadAsync(CancellationToken.None);
             return BuildInvoker(document);
         }
 

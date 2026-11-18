@@ -89,7 +89,7 @@ public sealed class DeclarativeMcpToolDocumentLoadingTests
             }
             """;
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(badDocument));
-        using var host = BuildHost(services => services.AddBifrostMcpTools(stream, "bad-reference-document"));
+        using var host = BuildHost(services => services.AddBifrostMcpTools(_ => Task.FromResult<Stream>(stream), "bad-reference-document"));
 
         var start = async () => await host.StartAsync();
         (await start.Should().ThrowAsync<InvalidOperationException>())

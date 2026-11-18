@@ -120,7 +120,7 @@ namespace BifrostQL.Mcp.Test
             var warnings = new List<string>();
 
             _ = await new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(Stream(ValidDocument), "test document"),
+                new StreamDeclarativeToolDocumentSource(_ => Task.FromResult<Stream>(Stream(ValidDocument)), "test document"),
                 warnings.Add).LoadAsync(CancellationToken.None);
 
             warnings.Should().Contain(message => message.Contains("get_customer_context") && message.Contains("customerId"));
@@ -140,7 +140,7 @@ namespace BifrostQL.Mcp.Test
         public async Task Registration_ExposesTheDocumentThroughTheProvider_AsAnIndependentService()
         {
             var services = new ServiceCollection();
-            services.AddBifrostMcpTools(Stream(ValidDocument), "test document");
+            services.AddBifrostMcpTools(_ => Task.FromResult<Stream>(Stream(ValidDocument)), "test document");
 
             await using var provider = services.BuildServiceProvider();
             (await provider.GetRequiredService<DeclarativeToolDocumentProvider>().GetAsync(CancellationToken.None))
@@ -154,7 +154,7 @@ namespace BifrostQL.Mcp.Test
         {
             var services = new ServiceCollection();
             services.AddSingleton<BifrostQL.Core.Resolvers.IQueryIntentExecutor>(new ThrowingExecutor());
-            services.AddBifrostMcpTools(Stream("{ bad json"), "broken document");
+            services.AddBifrostMcpTools(_ => Task.FromResult<Stream>(Stream("{ bad json")), "broken document");
             await using var provider = services.BuildServiceProvider();
 
             var start = async () =>
@@ -190,6 +190,57 @@ namespace BifrostQL.Mcp.Test
             {
                 File.Delete(path);
             }
+        }
+
+        [Fact]
+        public async Task StreamRegistration_OpensNothingAtRegistration_AndOpensTheStreamAtHostStart()
+        {
+            var opens = 0;
+            using var startToken = new CancellationTokenSource();
+            var services = new ServiceCollection();
+            services.AddSingleton<BifrostQL.Core.Resolvers.IQueryIntentExecutor>(new ThrowingExecutor());
+            services.AddBifrostMcpTools(async _ =>
+            {
+                Interlocked.Increment(ref opens);
+                await Task.Yield();
+                return Stream(ValidDocument);
+            }, "factory document");
+
+            opens.Should().Be(0, "registration is synchronous and must not open the stream");
+
+            await using var provider = services.BuildServiceProvider();
+            var start = async () =>
+            {
+                foreach (var hosted in provider.GetServices<Microsoft.Extensions.Hosting.IHostedService>())
+                    await hosted.StartAsync(startToken.Token);
+            };
+
+            // ThrowingExecutor refuses the model read that follows a successful load: reaching it
+            // proves the document was opened and parsed at start.
+            await start.Should().ThrowAsync<InvalidOperationException>().WithMessage("control:*");
+            opens.Should().Be(1, "host start opens the stream once");
+            (await provider.GetRequiredService<DeclarativeToolDocumentProvider>().GetAsync(CancellationToken.None))
+                .Tools.Should().ContainSingle();
+            opens.Should().Be(1, "the loaded document is reused");
+        }
+
+        [Fact]
+        public void NoPublicRegistrationOrSourceTakesAnOpenStream()
+        {
+            // The removed shape copied the caller's Stream synchronously in the constructor.
+            typeof(DeclarativeToolServiceCollectionExtensions).GetMethods()
+                .Where(m => m.Name == nameof(DeclarativeToolServiceCollectionExtensions.AddBifrostMcpTools))
+                .SelectMany(m => m.GetParameters())
+                .Should().NotContain(p => typeof(Stream).IsAssignableFrom(p.ParameterType));
+            typeof(StreamDeclarativeToolDocumentSource).GetConstructors()
+                .SelectMany(c => c.GetParameters())
+                .Should().NotContain(p => typeof(Stream).IsAssignableFrom(p.ParameterType));
+
+            // Control: the scan sees the registration overloads that do exist.
+            typeof(DeclarativeToolServiceCollectionExtensions).GetMethods()
+                .Where(m => m.Name == nameof(DeclarativeToolServiceCollectionExtensions.AddBifrostMcpTools))
+                .SelectMany(m => m.GetParameters())
+                .Should().Contain(p => p.ParameterType == typeof(Func<CancellationToken, Task<Stream>>));
         }
 
         [Fact]
@@ -230,7 +281,7 @@ namespace BifrostQL.Mcp.Test
 
         private static Task<DeclarativeToolDocument> LoadAsync(string json) =>
             new DeclarativeToolDocumentLoader(
-                new StreamDeclarativeToolDocumentSource(Stream(json), "test document")).LoadAsync(CancellationToken.None);
+                new StreamDeclarativeToolDocumentSource(_ => Task.FromResult<Stream>(Stream(json)), "test document")).LoadAsync(CancellationToken.None);
 
         private static MemoryStream Stream(string value) => new(Encoding.UTF8.GetBytes(value));
     }

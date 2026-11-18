@@ -78,6 +78,25 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// Text: <c>HEX</c> of the utf8mb4 bytes, every byte pair prefixed with <c>%</c>
+    /// (<c>REGEXP_REPLACE</c>, MySQL 8.0+), then the unreserved bytes restored
+    /// (<see cref="SqlDialectBase.RestoreUnreservedKeyBytes"/>).
+    /// </remarks>
+    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    {
+        ObjectKeySegmentKind.Integer => $"CAST({columnExpression} AS CHAR)",
+        ObjectKeySegmentKind.Uuid => $"LOWER(CAST({columnExpression} AS CHAR))",
+        ObjectKeySegmentKind.Text => RestoreUnreservedKeyBytes(
+            $"REGEXP_REPLACE(HEX(CONVERT({columnExpression} USING utf8mb4)), '(..)', '%$1')"),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <inheritdoc />
+    /// <remarks>A binary string compares bytes, independent of the connection's collation.</remarks>
+    protected override string BinaryOrder(string textExpression) => $"CAST({textExpression} AS BINARY)";
+
+    /// <inheritdoc />
+    /// <remarks>
     /// MySQL's CAST accepts only its own target types: <c>CHAR</c> for text and <c>SIGNED</c>
     /// for integers (the ANSI <c>TEXT</c>/<c>INTEGER</c> the base emits are rejected by MySQL's
     /// CAST grammar).

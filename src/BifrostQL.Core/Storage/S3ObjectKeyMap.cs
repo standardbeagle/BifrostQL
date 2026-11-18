@@ -116,6 +116,41 @@ public static class S3ObjectKeyMap
     }
 
     /// <summary>
+    /// The leading <c>{column}/</c> of every key <see cref="KeyFor"/> builds for
+    /// <paramref name="column"/>; the rest of the key is the primary-key suffix
+    /// <see cref="QueryModel.ISqlDialect.ObjectKeyExpression"/> computes in SQL.
+    /// </summary>
+    public static string ColumnPrefix(ColumnDto column)
+    {
+        ArgumentNullException.ThrowIfNull(column);
+        return Escape(column.ColumnName) + "/";
+    }
+
+    /// <summary>
+    /// How <paramref name="keyColumn"/> renders inside a key, or null when its type has
+    /// no database text cast byte-identical to <see cref="Stringify"/>'s rendering of the
+    /// value the reader returns (dates, decimals, fixed-length padded text, binary, …).
+    /// Such a table cannot be listed by a database-ordered seek.
+    /// </summary>
+    public static QueryModel.ObjectKeySegmentKind? SegmentKindOf(ColumnDto keyColumn)
+    {
+        ArgumentNullException.ThrowIfNull(keyColumn);
+        var type = Utils.StringNormalizer.NormalizeType(keyColumn.DataType);
+        var paren = type.IndexOf('(');
+        if (paren >= 0)
+            type = type[..paren].TrimEnd();
+        return type switch
+        {
+            "int" or "integer" or "bigint" or "smallint" or "tinyint" or "mediumint"
+                => QueryModel.ObjectKeySegmentKind.Integer,
+            "uniqueidentifier" or "uuid" => QueryModel.ObjectKeySegmentKind.Uuid,
+            "text" or "varchar" or "nvarchar" or "character varying"
+                => QueryModel.ObjectKeySegmentKind.Text,
+            _ => null,
+        };
+    }
+
+    /// <summary>
     /// Parses an object key back into the column and typed primary-key values it
     /// addresses. Every failure mode — unknown column, wrong key arity, a
     /// component that is not the key column's type — throws; a key is never

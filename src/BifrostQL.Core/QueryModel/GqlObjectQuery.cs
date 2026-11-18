@@ -69,6 +69,18 @@ namespace BifrostQL.Core.QueryModel
         public bool IncludeResult { get; set; }
 
         /// <summary>
+        /// When set, the row window is a keyset seek over each row's S3 object-key suffix
+        /// (<see cref="ISqlDialect.ObjectKeyExpression"/>): rows are ordered by that text in
+        /// binary order and filtered to the range's bounds, all in SQL, so a listing page
+        /// returns at most its window instead of the whole bucket. It replaces
+        /// <see cref="Sort"/> and the primary-key tie-break (the key text is unique per row,
+        /// so it is a total order). Only a flat root read may carry it: no sort, offset,
+        /// joins, aggregates, totals, or grouped aggregate. Every key column must have an
+        /// object-key rendering (<see cref="Storage.S3ObjectKeyMap.SegmentKindOf"/>).
+        /// </summary>
+        public ObjectKeyRange? ObjectKeyRange { get; set; }
+
+        /// <summary>
         /// Module query-argument values (keyed by module context key, e.g.
         /// <c>include_deleted</c>) captured off this node's GraphQL field
         /// arguments. Threaded into the user context under table-scoped keys by
@@ -253,7 +265,9 @@ namespace BifrostQL.Core.QueryModel
         internal ParameterizedSql PagedRowWindowSql(IDbModel dbModel, ISqlDialect dialect, string projection, ParameterizedSql filter)
         {
             var tableRef = dialect.TableReference(SchemaName, TableName);
-            var sortCols = RenderPagedSortColumns(dialect, DbTable, Sort);
+            var sortCols = ObjectKeyRange != null
+                ? new[] { $"{ObjectKeySql(dialect)} asc" }
+                : RenderPagedSortColumns(dialect, DbTable, Sort);
             var pagination = dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
             return new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
                 .Append(filter)
@@ -343,11 +357,14 @@ namespace BifrostQL.Core.QueryModel
             }
 
             ValidateAggregateKeying();
+            ValidateObjectKeyRange();
 
             var fullColumns = AppendAggregateKeyColumns(FullColumnNames.ToList());
             var tableRef = dialect.TableReference(SchemaName, TableName);
 
-            var filter = GetFilterSqlParameterized(dbModel, dialect, parameters);
+            var filter = ObjectKeyRange == null
+                ? GetFilterSqlParameterized(dbModel, dialect, parameters)
+                : RenderFilterSql(dbModel, dialect, parameters, null, ObjectKeyPredicate(dialect, parameters));
             var sqlKeyName = queryLink == null ? KeyName : queryLink.Join.JoinName;
 
             if (fullColumns.Count > 0)
@@ -776,8 +793,21 @@ namespace BifrostQL.Core.QueryModel
         }
 
         public ParameterizedSql GetFilterSqlParameterized(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters, string? alias = null)
+            => RenderFilterSql(model, dialect, parameters, alias, extraPredicate: null);
+
+        /// <summary>
+        /// The node's FROM-clause joins and WHERE: <see cref="Filter"/>, ANDed with
+        /// <paramref name="extraPredicate"/> when one is given (each side parenthesized,
+        /// so neither can rebind the other's OR).
+        /// </summary>
+        private ParameterizedSql RenderFilterSql(IDbModel model, ISqlDialect dialect, SqlParameterCollection parameters,
+            string? alias, ParameterizedSql? extraPredicate)
         {
-            if (Filter == null) return ParameterizedSql.Empty;
+            var hasExtra = extraPredicate != null && !string.IsNullOrWhiteSpace(extraPredicate.Sql);
+            if (Filter == null)
+                return hasExtra
+                    ? new ParameterizedSql(" WHERE " + extraPredicate!.Sql, extraPredicate.Parameters)
+                    : ParameterizedSql.Empty;
 
             // Assemble join fragments and the WHERE predicate in clause order:
             // "{joins} WHERE {where}". A relationship filter contributes an INNER
@@ -788,12 +818,74 @@ namespace BifrostQL.Core.QueryModel
             var parts = Filter.RenderParts(model, dialect, parameters, alias);
             var hasWhere = !string.IsNullOrWhiteSpace(parts.Where);
             var joins = parts.Joins ?? "";
-            if (string.IsNullOrWhiteSpace(joins) && !hasWhere) return ParameterizedSql.Empty;
+            if (string.IsNullOrWhiteSpace(joins) && !hasWhere && !hasExtra) return ParameterizedSql.Empty;
 
+            var where = (hasWhere, hasExtra) switch
+            {
+                (true, true) => $"({parts.Where}) AND ({extraPredicate!.Sql})",
+                (true, false) => parts.Where,
+                (false, true) => extraPredicate!.Sql,
+                _ => null,
+            };
             var sql = joins;
-            if (hasWhere) sql += " WHERE " + parts.Where;
+            if (where != null) sql += " WHERE " + where;
             if (!sql.StartsWith(" ")) sql = " " + sql;
-            return new ParameterizedSql(sql, parts.Parameters);
+            var allParameters = hasExtra ? parts.Parameters.Concat(extraPredicate!.Parameters).ToList() : parts.Parameters;
+            return new ParameterizedSql(sql, allParameters);
+        }
+
+        /// <summary>
+        /// This node's object-key suffix as SQL text (<see cref="ISqlDialect.ObjectKeyExpression"/>),
+        /// over the key columns in declared order, each qualified with the table reference.
+        /// </summary>
+        private string ObjectKeySql(ISqlDialect dialect)
+        {
+            var tableRef = dialect.TableReference(SchemaName, TableName);
+            var segments = DbTable.KeyColumns
+                .Select(c => new ObjectKeySegmentColumn(
+                    $"{tableRef}.{dialect.EscapeIdentifier(c.DbName)}",
+                    Storage.S3ObjectKeyMap.SegmentKindOf(c)
+                        ?? throw new InvalidOperationException(
+                            $"Key column '{c.DbName}' of '{TableName}' ({c.DataType}) has no object-key rendering.")))
+                .ToList();
+            return dialect.ObjectKeyExpression(segments);
+        }
+
+        /// <summary>
+        /// <see cref="ObjectKeyRange"/>'s bounds as a predicate on the key text, every bound a
+        /// parameter. Null when the range has no bounds.
+        /// </summary>
+        private ParameterizedSql? ObjectKeyPredicate(ISqlDialect dialect, SqlParameterCollection parameters)
+        {
+            var range = ObjectKeyRange!;
+            var bounds = new List<(string Op, string Value)>();
+            if (range.After != null) bounds.Add((">", range.After));
+            if (range.From != null) bounds.Add((">=", range.From));
+            if (range.Before != null) bounds.Add(("<", range.Before));
+            if (bounds.Count == 0)
+                return null;
+
+            var key = ObjectKeySql(dialect);
+            var bound = bounds.Select(b => (b.Op, Parameter: parameters.AddParameter(b.Value))).ToList();
+            return new ParameterizedSql(
+                string.Join(" AND ", bound.Select(b => $"{key} {b.Op} {b.Parameter.Name}")),
+                bound.Select(b => b.Parameter).ToList());
+        }
+
+        /// <summary>
+        /// Fails fast when <see cref="ObjectKeyRange"/> is combined with a shape whose own
+        /// window or order it would silently replace.
+        /// </summary>
+        private void ValidateObjectKeyRange()
+        {
+            if (ObjectKeyRange == null)
+                return;
+            if (Sort.Count > 0 || Offset != null || Joins.Count > 0 || AggregateColumns.Count > 0 || IncludeResult)
+                throw new InvalidOperationException(
+                    $"An object-key window on '{TableName}' cannot be combined with sort, offset, joins, aggregates, or totals.");
+            if (!DbTable.KeyColumns.Any())
+                throw new InvalidOperationException(
+                    $"An object-key window needs a primary key; '{TableName}' has none.");
         }
 
         public TableJoin? GetJoin(string? alias, string name)

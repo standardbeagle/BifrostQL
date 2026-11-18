@@ -397,6 +397,74 @@ public abstract class SqlDialectBase : ISqlDialect
     protected virtual string LowerConcat(IReadOnlyList<string> loweredParts)
         => string.Join($" {_stringConcatOperator} ", loweredParts);
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Template method: each segment comes from <see cref="ObjectKeySegment"/>, the
+    /// separator is the constant <c>'/'</c> joined by <see cref="LowerConcat"/>, and the
+    /// whole is wrapped by <see cref="BinaryOrder"/>.
+    /// </remarks>
+    public virtual string ObjectKeyExpression(IReadOnlyList<ObjectKeySegmentColumn> segments)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        if (segments.Count == 0)
+            throw new ArgumentException("An object key needs at least one primary-key segment.", nameof(segments));
+
+        var parts = new List<string>(segments.Count * 2 - 1);
+        foreach (var segment in segments)
+        {
+            if (parts.Count > 0)
+                parts.Add("'/'");
+            parts.Add(ObjectKeySegment(segment.ColumnExpression, segment.Kind));
+        }
+
+        return BinaryOrder(parts.Count == 1 ? parts[0] : LowerConcat(parts));
+    }
+
+    /// <summary>
+    /// One primary-key column as object-key text, byte-identical to
+    /// <see cref="Storage.S3ObjectKeyMap"/>'s escaped rendering of the value the reader
+    /// returns. <paramref name="columnExpression"/> is an escaped, table-qualified column
+    /// reference (qualified because a <see cref="ObjectKeySegmentKind.Text"/> segment may
+    /// be a subquery whose own column names would otherwise capture it).
+    /// </summary>
+    protected abstract string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind);
+
+    /// <summary>Wraps a text expression so comparisons and ORDER BY on it use binary order.</summary>
+    protected abstract string BinaryOrder(string textExpression);
+
+    /// <summary>
+    /// The bytes <see cref="Storage.S3ObjectKeyMap"/> leaves unescaped: <c>[A-Za-z0-9_-]</c>.
+    /// </summary>
+    private static readonly byte[] UnreservedKeyBytes =
+        new[] { (byte)'-', (byte)'_' }
+            .Concat(Enumerable.Range('0', 10).Select(b => (byte)b))
+            .Concat(Enumerable.Range('A', 26).Select(b => (byte)b))
+            .Concat(Enumerable.Range('a', 26).Select(b => (byte)b))
+            .ToArray();
+
+    /// <summary>
+    /// Turns <paramref name="percentEncodedBytes"/>, a text expression holding every byte
+    /// as an uppercase <c>%XX</c> token, into the key escaping by replacing the token of
+    /// each unreserved byte with the byte itself (nested <c>REPLACE</c>, one per unreserved
+    /// byte). Exact: a <c>%</c> occurs only at a token start, so a match can never span two
+    /// tokens, and a replacement never produces a <c>%</c>.
+    /// </summary>
+    protected static string RestoreUnreservedKeyBytes(string percentEncodedBytes)
+    {
+        var sql = percentEncodedBytes;
+        foreach (var b in UnreservedKeyBytes)
+            sql = $"REPLACE({sql}, '%{b:X2}', '{(char)b}')";
+        return sql;
+    }
+
+    /// <summary>
+    /// SQL predicate text true when the integer expression <paramref name="byteExpression"/>
+    /// is an unreserved key byte (<c>[A-Za-z0-9_-]</c>).
+    /// </summary>
+    protected static string IsUnreservedKeyByte(string byteExpression) =>
+        $"({byteExpression} IN (45, 95) OR {byteExpression} BETWEEN 48 AND 57 " +
+        $"OR {byteExpression} BETWEEN 65 AND 90 OR {byteExpression} BETWEEN 97 AND 122)";
+
     /// <summary>
     /// Maps a canonical allow-listed function name to this dialect's spelling. The allow-list
     /// (UPPER/LOWER/LEN/BYTE_LEN/COALESCE/ABS/ROUND) is closed: an unrecognized name throws a

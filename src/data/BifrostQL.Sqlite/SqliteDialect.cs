@@ -82,6 +82,32 @@ public sealed class SqliteDialect : StandardConcatDialectBase
 
     /// <inheritdoc />
     /// <remarks>
+    /// Text: SQLite has neither a byte loop nor a regex, so a recursive CTE walks
+    /// <c>hex()</c> of the UTF-8 text two digits at a time, appending each byte as itself
+    /// or as <c>%XX</c>, and keeps the last (complete) row.
+    /// </remarks>
+    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    {
+        ObjectKeySegmentKind.Integer => $"CAST({columnExpression} AS TEXT)",
+        ObjectKeySegmentKind.Uuid => $"lower(CAST({columnExpression} AS TEXT))",
+        ObjectKeySegmentKind.Text =>
+            "(WITH RECURSIVE okw(i, o) AS (SELECT 1, '' UNION ALL SELECT i + 2, o || CASE WHEN "
+            + "substr(okh.h, i, 2) IN ('2D', '5F') OR substr(okh.h, i, 2) BETWEEN '30' AND '39' "
+            + "OR substr(okh.h, i, 2) BETWEEN '41' AND '5A' OR substr(okh.h, i, 2) BETWEEN '61' AND '7A' "
+            + "THEN char((instr('0123456789ABCDEF', substr(okh.h, i, 1)) - 1) * 16 "
+            + "+ instr('0123456789ABCDEF', substr(okh.h, i + 1, 1)) - 1) "
+            + "ELSE '%' || substr(okh.h, i, 2) END "
+            + $"FROM okw, (SELECT hex({columnExpression}) AS h) AS okh WHERE i <= length(okh.h)) "
+            + "SELECT o FROM okw ORDER BY i DESC LIMIT 1)",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <inheritdoc />
+    /// <remarks>SQLite's <c>BINARY</c> collation is memcmp over the UTF-8 text.</remarks>
+    protected override string BinaryOrder(string textExpression) => $"({textExpression}) COLLATE BINARY";
+
+    /// <inheritdoc />
+    /// <remarks>
     /// <c>datetime(&lt;source&gt;, &lt;amount&gt; || ' days')</c>. SQLite's <c>datetime()</c> takes a
     /// text modifier like <c>'3 days'</c>; concatenating the bound amount with the fixed unit word
     /// builds that modifier while keeping the amount a parameter (never interpolated).

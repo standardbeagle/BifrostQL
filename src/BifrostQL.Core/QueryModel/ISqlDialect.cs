@@ -460,4 +460,17 @@ public interface ISqlDialect
     /// <returns>The parameterized SQL fragment (e.g. <c>CASE UPPER("Name") WHEN @p0 THEN ... END</c>).</returns>
     string LowerExpression(SqlExpr expr, IDbTable table, SqlParameterCollection parameters, string? tableAlias = null)
         => throw new NotSupportedException("This dialect does not support SqlExpr lowering.");
+
+    /// <summary>
+    /// The SQL text of a row's S3 object-key suffix: each primary-key segment rendered as
+    /// <see cref="Storage.S3ObjectKeyMap"/> renders it in C# (byte for byte), joined with
+    /// <c>/</c> by this dialect's own concatenation, and collated so comparisons and
+    /// ORDER BY run in binary order. The text is percent-encoded ASCII, so binary order is
+    /// S3's UTF-8 key order on every engine, including SQL Server's UTF-16 <c>_BIN2</c>.
+    /// The expression carries no parameters and no client text: its only inputs are the
+    /// escaped column references in <paramref name="segments"/>.
+    /// </summary>
+    /// <param name="segments">The key columns in declared key order, already escaped and table-qualified.</param>
+    string ObjectKeyExpression(IReadOnlyList<ObjectKeySegmentColumn> segments)
+        => throw new NotSupportedException("This dialect does not compute object keys in SQL.");
 }

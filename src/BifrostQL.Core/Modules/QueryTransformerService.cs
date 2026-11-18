@@ -444,6 +444,12 @@ public sealed class QueryTransformerService : IQueryTransformerService
         foreach (var s in query.Sort)
             AddFiltered(query.DbTable, ResolveColumnDbName(query.DbTable, StripSortSuffix(s)));
 
+        // An object-key window orders and filters on text computed from every key
+        // column: the same position as a sort on those columns.
+        if (query.ObjectKeyRange != null)
+            foreach (var keyColumn in query.DbTable.KeyColumns)
+                AddFiltered(query.DbTable, keyColumn.DbName);
+
         // Aggregate (`_agg`) value columns resolve against the final linked
         // table in the aggregate's join chain, mirroring the destination-table
         // resolution used for aggregate link filters above.

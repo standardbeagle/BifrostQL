@@ -234,6 +234,46 @@ public sealed class SqlServerDialect : SqlDialectBase
     public override string EscapeLikeValue(string value) =>
         base.EscapeLikeValue(value).Replace("[", "\\[");
 
+    /// <summary>
+    /// Sixteen rows, cross-joined four times for up to 65,536 byte positions: more than the
+    /// UTF-8 length of any value SQL Server can index as a key (1,700 key bytes, at most
+    /// three UTF-8 bytes per stored byte). <c>TOP</c> stops the join at the value's length.
+    /// </summary>
+    private const string SixteenRows =
+        "(VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15))";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Text: the value is converted to UTF-8 bytes through a <c>_UTF8</c> collation
+    /// (SQL Server 2019+), walked byte by byte, and each byte emitted as itself or as
+    /// <c>%XX</c>, aggregated in order with <c>STRING_AGG</c>.
+    /// </remarks>
+    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    {
+        ObjectKeySegmentKind.Integer => $"CONVERT(varchar(20), {columnExpression})",
+        ObjectKeySegmentKind.Uuid => $"LOWER(CONVERT(char(36), {columnExpression}))",
+        ObjectKeySegmentKind.Text =>
+            "(SELECT STRING_AGG(CONVERT(varchar(max), CASE WHEN " + IsUnreservedKeyByte("ob.v") +
+            " THEN CHAR(ob.v) ELSE '%' + CONVERT(char(2), CONVERT(binary(1), ob.v), 2) END), '')" +
+            " WITHIN GROUP (ORDER BY op.i)" +
+            $" FROM (SELECT CONVERT(varbinary(max), CONVERT(varchar(max), CONVERT(nvarchar(max), {columnExpression})" +
+            " COLLATE Latin1_General_100_BIN2_UTF8)) AS bytes) AS ou" +
+            " CROSS APPLY (SELECT TOP (DATALENGTH(ou.bytes)) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS i" +
+            $" FROM {SixteenRows} AS d1(x) CROSS JOIN {SixteenRows} AS d2(x)" +
+            $" CROSS JOIN {SixteenRows} AS d3(x) CROSS JOIN {SixteenRows} AS d4(x)) AS op" +
+            " CROSS APPLY (SELECT CONVERT(int, SUBSTRING(ou.bytes, op.i, 1)) AS v) AS ob)",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>_BIN2</c> compares UTF-16 code units, which differs from UTF-8 byte order only
+    /// between supplementary characters and U+E000–U+FFFF. Object-key text is ASCII, so
+    /// the two orders agree on every key.
+    /// </remarks>
+    protected override string BinaryOrder(string textExpression)
+        => $"({textExpression}) COLLATE Latin1_General_100_BIN2";
+
     /// <summary>SQL Server's <c>DATEADD</c>/<c>DATEDIFF</c>/<c>DATEPART</c> datepart keyword.</summary>
     private static string DatePartKeyword(DateUnit unit) => unit switch
     {

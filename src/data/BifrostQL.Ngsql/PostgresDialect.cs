@@ -176,6 +176,24 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     public override string TextCast(string columnExpression) => $"format('%s', {columnExpression})";
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Text: the UTF-8 bytes as uppercase hex, every byte pair prefixed with <c>%</c>, then
+    /// the unreserved bytes restored (<see cref="SqlDialectBase.RestoreUnreservedKeyBytes"/>).
+    /// </remarks>
+    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    {
+        ObjectKeySegmentKind.Integer => $"CAST({columnExpression} AS text)",
+        ObjectKeySegmentKind.Uuid => $"lower(CAST({columnExpression} AS text))",
+        ObjectKeySegmentKind.Text => RestoreUnreservedKeyBytes(
+            $"regexp_replace(upper(encode(convert_to(CAST({columnExpression} AS text), 'UTF8'), 'hex')), '(..)', '%\\1', 'g')"),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    /// <inheritdoc />
+    /// <remarks>The <c>"C"</c> collation compares bytes, which is UTF-8 order.</remarks>
+    protected override string BinaryOrder(string textExpression) => $"({textExpression}) COLLATE \"C\"";
+
+    /// <inheritdoc />
     public override string TextCast(string columnExpression, string dataType)
     {
         var t = StringNormalizer.NormalizeType(dataType);

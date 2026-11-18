@@ -56,7 +56,7 @@ namespace BifrostQL.Server.Pgwire
             // known single-link relationship is rejected — never guessed.
             var joinLink = stmt.Join is null ? null : ResolveJoin(model, fromTable, stmt, userContext);
 
-            var scope = new QualifierScope(stmt.From, fromTable, stmt.Join, joinLink?.ConnectedTable);
+            var scope = new QualifierScope(stmt.From, fromTable, stmt.Join, joinLink?.ConnectedTable, userContext);
 
             var query = new GqlObjectQuery
             {
@@ -131,7 +131,12 @@ namespace BifrostQL.Server.Pgwire
         {
             if (stmt.IsSelectStar)
             {
-                foreach (var c in scope.FromTable.Columns.OrderBy(c => c.OrdinalPosition))
+                // '*' expands to the READABLE columns only — the same projection the catalog
+                // lists. Expanding the raw column list put read-denied columns in the request,
+                // so the pipeline refused the whole statement with 42501 and '*' became an
+                // oracle for "this table has a column you may not see" (invariant 9: naming a
+                // column and reaching it by wildcard resolve through one projection).
+                foreach (var c in scope.FromColumns.OrderBy(c => c.OrdinalPosition))
                 {
                     query.ScalarColumns.Add(new GqlObjectColumn(c.DbName));
                     output.Add(new PgResultColumn(c.DbName, c.DataType));
@@ -139,7 +144,7 @@ namespace BifrostQL.Server.Pgwire
                 // A join's columns are only surfaced for '*' when the join was written,
                 // qualified so they never collide with the base columns.
                 if (joinNode is not null && joinLink is not null)
-                    foreach (var c in joinLink.ConnectedTable.Columns.OrderBy(c => c.OrdinalPosition))
+                    foreach (var c in scope.JoinColumns.OrderBy(c => c.OrdinalPosition))
                         AddJoinColumn(joinNode, joinLink, c, output);
                 return;
             }
@@ -405,15 +410,31 @@ namespace BifrostQL.Server.Pgwire
             private readonly PgTableRef _fromRef;
             private readonly PgTableRef? _joinRef;
             private readonly IDbTable? _joinTable;
+            private readonly VisibleTable _fromVisible;
+            private readonly VisibleTable? _joinVisible;
 
             public IDbTable FromTable { get; }
 
-            public QualifierScope(PgTableRef fromRef, IDbTable fromTable, PgJoinClause? join, IDbTable? joinTable)
+            /// <summary>The FROM table's columns this caller may read.</summary>
+            public IReadOnlyList<ColumnDto> FromColumns => _fromVisible.Columns;
+
+            /// <summary>The joined table's columns this caller may read (empty without a join).</summary>
+            public IReadOnlyList<ColumnDto> JoinColumns => _joinVisible?.Columns ?? Array.Empty<ColumnDto>();
+
+            public QualifierScope(
+                PgTableRef fromRef, IDbTable fromTable, PgJoinClause? join, IDbTable? joinTable,
+                IDictionary<string, object?> userContext)
             {
                 _fromRef = fromRef;
                 FromTable = fromTable;
                 _joinRef = join?.Table;
                 _joinTable = joinTable;
+                // Both tables only resolve when readable (ResolveTable), so both projections exist.
+                // Every column reference resolves through them: a read-denied column answers
+                // exactly like one that is not there — 42703, never the 42501 the pipeline's
+                // denial would give, which confirmed the hidden column exists (invariant 9).
+                _fromVisible = SchemaReadVisibility.ProjectTable(fromTable, userContext)!;
+                _joinVisible = joinTable is null ? null : SchemaReadVisibility.ProjectTable(joinTable, userContext)!;
             }
 
             public (IDbTable Table, ColumnDto Column, bool IsJoin) Resolve(PgColumnRef reference, string clause)
@@ -421,17 +442,17 @@ namespace BifrostQL.Server.Pgwire
                 var q = reference.Qualifier;
                 if (q is null)
                 {
-                    if (TryColumn(FromTable, reference.Name, out var fromCol))
+                    if (TryColumn(_fromVisible, reference.Name, out var fromCol))
                         return (FromTable, fromCol, false);
-                    if (_joinTable is not null && TryColumn(_joinTable, reference.Name, out var joinCol))
+                    if (_joinTable is not null && TryColumn(_joinVisible!, reference.Name, out var joinCol))
                         return (_joinTable, joinCol, true);
-                    throw Reject($"column \"{reference.Name}\" does not exist ({clause}).");
+                    throw RejectColumn($"column \"{reference.Name}\" does not exist ({clause}).");
                 }
 
                 if (Matches(q, _fromRef, FromTable))
-                    return (FromTable, RequireColumn(FromTable, reference.Name, clause), false);
+                    return (FromTable, RequireColumn(_fromVisible, reference.Name, clause), false);
                 if (_joinTable is not null && _joinRef is not null && Matches(q, _joinRef, _joinTable))
-                    return (_joinTable, RequireColumn(_joinTable, reference.Name, clause), true);
+                    return (_joinTable, RequireColumn(_joinVisible!, reference.Name, clause), true);
 
                 throw Reject($"unknown table qualifier \"{q}\" ({clause}).");
             }
@@ -441,19 +462,22 @@ namespace BifrostQL.Server.Pgwire
                 || string.Equals(qualifier, table.DbName, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(qualifier, table.GraphQlName, StringComparison.OrdinalIgnoreCase);
 
-            private static ColumnDto RequireColumn(IDbTable table, string name, string clause)
+            private static ColumnDto RequireColumn(VisibleTable table, string name, string clause)
             {
                 if (TryColumn(table, name, out var col)) return col;
-                throw Reject($"column \"{name}\" does not exist on relation \"{table.DbName}\" ({clause}).");
+                throw RejectColumn($"column \"{name}\" does not exist on relation \"{table.Table.DbName}\" ({clause}).");
             }
 
-            private static bool TryColumn(IDbTable table, string name, out ColumnDto column)
+            private static bool TryColumn(VisibleTable table, string name, out ColumnDto column)
             {
                 column = table.Columns.FirstOrDefault(c =>
                     string.Equals(c.DbName, name, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(c.GraphQlName, name, StringComparison.OrdinalIgnoreCase))!;
                 return column is not null;
             }
+
+            private static PgQueryTranslationException RejectColumn(string detail) =>
+                new($"pgwire: {detail}", PgWireProtocol.SqlStateUndefinedColumn);
         }
     }
 }

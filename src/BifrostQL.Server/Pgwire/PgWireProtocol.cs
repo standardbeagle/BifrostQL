@@ -123,6 +123,7 @@ namespace BifrostQL.Server.Pgwire
         // is non-fatal: it surfaces as a "ERROR"-severity ErrorResponse and the session
         // stays usable (autocommit), unlike the "FATAL" handshake rejections above.
         public const string SqlStateSyntaxError = "42601";    // syntax_error (unrecognized SQL)
+        public const string SqlStateUndefinedColumn = "42703"; // undefined_column (absent OR read-denied column)
         public const string SqlStateInternalError = "XX000";  // internal_error (execution fault)
         public const string SqlStateInsufficientPrivilege = "42501"; // insufficient_privilege (authorization denial)
 

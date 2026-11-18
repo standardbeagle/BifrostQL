@@ -244,6 +244,49 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task SelectStar_OmitsReadDeniedColumns()
+        {
+            // orders.total is read-denied (with an explicit read grant, so the table stays
+            // readable). '*' used to expand the raw column list, so the request named total and
+            // the pipeline refused the whole statement with 42501 — an oracle for the hidden column.
+            var plan = await Translate("SELECT * FROM orders", OrdersAndUsersModel(ordersReadDeny: "total"));
+
+            plan.Columns.Select(c => c.Name).Should().Equal("id", "user_id");
+            plan.Intent.Query.ScalarColumns.Select(c => c.GraphQlDbName).Should().NotContain("total");
+        }
+
+        [Fact]
+        public async Task SelectStar_WithoutDeny_StillListsEveryColumn()
+        {
+            // Control for the fact above: the omission comes from the deny, not from '*'.
+            var plan = await Translate("SELECT * FROM orders", OrdersAndUsersModel());
+
+            plan.Columns.Select(c => c.Name).Should().Equal("id", "user_id", "total");
+        }
+
+        [Theory]
+        [InlineData("SELECT {0} FROM orders")]
+        [InlineData("SELECT o.{0} FROM orders o")]
+        [InlineData("SELECT id FROM orders WHERE {0} = 1")]
+        [InlineData("SELECT id FROM orders ORDER BY {0}")]
+        public async Task NamedReadDeniedColumn_AnswersLikeAnAbsentColumn(string shape)
+        {
+            // Same-length names, so the two answers can be compared byte for byte (invariant 9).
+            var model = OrdersAndUsersModel(ordersReadDeny: "total");
+
+            var denied = await Rejected(string.Format(shape, "total"), model);
+            var absent = await Rejected(string.Format(shape, "nopex"), model);
+
+            denied.Should().BeOfType<PgQueryTranslationException>(
+                "a read-denied column must be refused at translation, not reach the pipeline's 42501");
+            var deniedError = (PgQueryTranslationException)denied!;
+            var absentError = absent.Should().BeOfType<PgQueryTranslationException>().Subject;
+            deniedError.SqlState.Should().Be(PgWireProtocol.SqlStateUndefinedColumn);
+            absentError.SqlState.Should().Be(PgWireProtocol.SqlStateUndefinedColumn);
+            deniedError.Message.Replace("total", "nopex").Should().Be(absentError.Message);
+        }
+
+        [Fact]
         public async Task SchemaQualifiedFrom_BindsTheNamedSchema_NotTheFirstNameMatch()
         {
             var model = DuplicateNameModel();

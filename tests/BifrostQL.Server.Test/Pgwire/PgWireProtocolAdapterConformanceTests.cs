@@ -58,9 +58,16 @@ namespace BifrostQL.Server.Test.Pgwire
             => PgWireProtocol.AccessDeniedErrorMessage;
 
         // Reject: the wire speaks SQL (SELECT id, body FROM documents), so the selection is
-        // explicit and the read pipeline's column guard refuses it; the funnel sanitizes the
-        // reason to 42501 (ExpectedRejectionFragment above).
+        // explicit and refused. The translator resolves column names against the caller's read
+        // projection, so a denied column answers exactly like a nonexistent one (42703, invariant
+        // 9) before the pipeline's column guard is reached; selecting and filtering it alike.
         protected override DeniedColumnSelectionExpectation DeniedColumnSelection => DeniedColumnSelectionExpectation.Reject;
+
+        protected override string ExpectedSelectRejectionFragment(string canonicalServerFragment)
+            => "column \"body\" does not exist";
+
+        protected override string ExpectedFilterRejectionFragment(string canonicalServerFragment)
+            => "column \"body\" does not exist";
 
         // ---- (a2) malformed pre-auth wire input ------------------------------
         //

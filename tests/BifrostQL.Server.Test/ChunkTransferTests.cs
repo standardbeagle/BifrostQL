@@ -234,18 +234,6 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public async Task NackForASequenceTheTransferDoesNotHave_IsIgnored()
-        {
-            var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 2);
-            var client = new ScriptedClient();
-            client.ExtraBefore[0] = new() { Nack(12, 9999) };
-
-            await RunAsync(sender, Result(12, 600), client);
-
-            client.Sent.Should().OnlyHaveUniqueItems(m => m.ChunkSequence);
-        }
-
-        [Fact]
         public async Task ClientNeverAcks_ThrowsTimeoutInsteadOfBlockingForever()
         {
             var sender = new ChunkSender(
@@ -357,6 +345,25 @@ namespace BifrostQL.Server.Test
             parked.SetResult();
             await running.Awaiting(t => t.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Should().ThrowAsync<OperationCanceledException>();
+        }
+
+        [Fact]
+        public void NackPastTheLastSequence_IsRefused()
+        {
+            // The transfer counts retransmits per NACKed sequence. A NACK for a sequence it does
+            // not have used to get its own count entry, so a client NACKing 0, 1, 2, ... past the
+            // end grew the dictionary without bound while every count stayed under the cap.
+            var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 2);
+            var chunks = sender.SplitIntoChunks(Result(32, 300));
+            var transfer = sender.StartTransfer(chunks, (_, _) => Task.CompletedTask);
+            var last = (uint)chunks.Count - 1;
+
+            transfer.Invoking(t => t.Acknowledge(Nack(32, last)))
+                .Should().NotThrow("control: a NACK of the last real chunk is honoured");
+            transfer.Invoking(t => t.Acknowledge(Nack(32, last + 1)))
+                .Should().Throw<InvalidOperationException>("a NACK past the last chunk is a protocol fault");
+            transfer.Invoking(t => t.Acknowledge(Nack(32, uint.MaxValue)))
+                .Should().Throw<InvalidOperationException>();
         }
 
         [Fact]

@@ -76,12 +76,17 @@ namespace BifrostQL.Server
         /// </summary>
         /// <exception cref="InvalidOperationException">
         /// The client sent more acks than the transfer could have asked for (the channel is full).
-        /// The reader treats it as a protocol fault and closes the connection.
+        /// The reader treats it as a protocol fault and closes the connection. Also thrown for a
+        /// NACK of a sequence this transfer does not have: the per-sequence retransmit counts
+        /// are keyed by the NACKed sequence, so only real sequences may reach them.
         /// </exception>
         public void Acknowledge(BifrostMessage frame)
         {
             if (frame.Type is not (BifrostMessageType.ChunkAck or BifrostMessageType.ChunkNack))
                 return;
+            if (frame.Type == BifrostMessageType.ChunkNack && frame.ChunkSequence >= _chunks.Count)
+                throw new InvalidOperationException(
+                    $"ChunkNack for sequence {frame.ChunkSequence} of request {RequestId}, which has {_chunks.Count} chunks");
             if (frame.Type == BifrostMessageType.ChunkAck && frame.ChunkSequence < _chunks.Count)
                 _ackedByClient.Add(frame.ChunkSequence);
             if (_signals.Writer.TryWrite(new AckSignal(frame.Type == BifrostMessageType.ChunkNack, frame.ChunkSequence)))
@@ -145,13 +150,14 @@ namespace BifrostQL.Server
             if (!signal.IsNack)
                 return signal.Sequence < _chunks.Count && acked.Add(signal.Sequence) ? -1 : 0;
 
+            // Acknowledge refuses a NACK past the last sequence, so the counts hold at most one
+            // entry per chunk.
             var count = retransmitCounts.TryGetValue(signal.Sequence, out var prior) ? prior + 1 : 1;
             retransmitCounts[signal.Sequence] = count;
             if (count > _maxRetransmitsPerSequence)
                 throw new ChunkRetransmitLimitExceededException(RequestId, signal.Sequence, _maxRetransmitsPerSequence);
 
-            if (signal.Sequence < _chunks.Count)
-                await _send(_chunks[(int)signal.Sequence], cancellationToken);
+            await _send(_chunks[(int)signal.Sequence], cancellationToken);
             return 0;
         }
 

@@ -93,30 +93,37 @@ namespace BifrostQL.Server
             services.AddSingleton<InTransactionMutationHooks>(sp => new InTransactionMutationHooks(
                 sp.GetServices<IInTransactionMutationHook>().ToArray()));
 
-            // Field-level encryption: compose the envelope key manager from the host's
-            // root-key provider + wrapped-DEK store. Resolution is LAZY — the factory
-            // reads the dependencies when the manager is first requested, not at
-            // AddBifrostQL time — so a host that registers them AFTER AddBifrostQL still
-            // gets a working manager. When either is absent the factory returns null, and
-            // EncryptOnWriteMutationTransformer fails closed (refuses to write plaintext).
-            // We never fabricate a root key or an in-memory store here, since an in-memory
-            // store would silently lose DEKs (and make data unrecoverable) on restart.
-            services.TryAddSingleton<BifrostQL.Core.Crypto.EnvelopeKeyManager>(sp =>
-            {
-                var root = sp.GetService<BifrostQL.Core.Crypto.IRootKeyProvider>();
-                var store = sp.GetService<BifrostQL.Core.Crypto.IDataEncryptionKeyStore>();
-                // Null factory result ⇒ GetService returns null ⇒ the transformer fails
-                // closed. (No dependencies configured = encryption not available.)
-                return root is not null && store is not null
-                    ? new BifrostQL.Core.Crypto.EnvelopeKeyManager(root, store)
-                    : null!;
-            });
+            AddEnvelopeKeyManager(services);
             services.AddSingleton<StateTransitionObservers>(sp => new StateTransitionObservers(
                 new IStateTransitionObserver[]
                 {
                     new StateTransitionAuditObserver(sp.GetRequiredService<IBifrostWorkflowExecutor>()),
                     sp.GetRequiredService<WorkflowTriggerHost>(),
                 }));
+        }
+
+        /// <summary>
+        /// Field-level encryption: compose the envelope key manager from the host's root-key
+        /// provider + wrapped-DEK store. Resolution is LAZY — the factory reads the dependencies
+        /// when the manager is first requested, not at registration — so a host that registers
+        /// them later still gets a working manager. When either is absent the factory returns
+        /// null and every consumer fails closed (EncryptOnWriteMutationTransformer refuses to write
+        /// plaintext; local-auth MFA refuses to start). We never fabricate a root key or an
+        /// in-memory store here, since an in-memory store would silently lose DEKs (and make data
+        /// unrecoverable) on restart. <c>TryAdd</c>, so <c>AddBifrostQL</c> and
+        /// <c>AddBifrostLocalAuth</c> share one manager whichever registers first.
+        /// </summary>
+        public static void AddEnvelopeKeyManager(IServiceCollection services)
+        {
+            services.TryAddSingleton<BifrostQL.Core.Crypto.EnvelopeKeyManager>(sp =>
+            {
+                var root = sp.GetService<BifrostQL.Core.Crypto.IRootKeyProvider>();
+                var store = sp.GetService<BifrostQL.Core.Crypto.IDataEncryptionKeyStore>();
+                // Null factory result ⇒ GetService returns null ⇒ the consumer fails closed.
+                return root is not null && store is not null
+                    ? new BifrostQL.Core.Crypto.EnvelopeKeyManager(root, store)
+                    : null!;
+            });
         }
 
         /// <summary>

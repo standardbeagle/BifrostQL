@@ -81,6 +81,14 @@ public sealed class ExactNumberInputsJsonConverter : JsonConverter<Inputs>
 
     internal static object ReadNumber(ref Utf8JsonReader reader)
     {
+        // Refused before any parse or copy: BigInteger.Parse below and the decimal/double/
+        // normalize comparisons each walk or copy the token, so their cost must be bounded by
+        // a cap, not by the request body size. A number token is ASCII, so bytes are chars.
+        var length = reader.HasValueSequence ? reader.ValueSequence.Length : reader.ValueSpan.Length;
+        if (length > ExactNumericScalars.MaxNumberTextLength)
+            throw new JsonException(
+                $"A number in the request variables is longer than {ExactNumericScalars.MaxNumberTextLength} characters.");
+
         if (reader.TryGetInt32(out var i))
             return i;
         if (reader.TryGetInt64(out var l))

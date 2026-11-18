@@ -119,6 +119,47 @@ public sealed class JsonColumnNumberInputWireTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A number token longer than <c>ExactNumericScalars.MaxNumberTextLength</c> is refused as
+    /// a malformed body before the reader parses it: the integer form went straight into
+    /// <c>BigInteger.Parse</c>, whose cost grows faster than the token, and the fraction form
+    /// was copied and normalized several times. Nothing is written.
+    /// </summary>
+    [Theory]
+    [InlineData("integer")]
+    [InlineData("fraction")]
+    public async Task NumberTokenOverTheLengthCap_IsRefusedAndNothingIsStored(string form)
+    {
+        var digits = new string('7', BifrostQL.Core.Schema.ExactNumericScalars.MaxNumberTextLength + 1);
+        var token = form == "integer" ? digits : "0." + digits;
+        var body = "{\"query\":\"mutation W($v: JSON!) { docs(update: {id: 1, payload: $v}) }\"," +
+                   $"\"variables\":{{\"v\":{{\"big\":{token}}}}}}}";
+
+        var response = await _client.PostAsync("/graphql", new StringContent(body, Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest, await response.Content.ReadAsStringAsync());
+        await using var conn = new SqliteConnection($"Data Source={_dbPath}");
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT payload FROM docs WHERE id = 1";
+        (await cmd.ExecuteScalarAsync()).Should().Be(DBNull.Value);
+    }
+
+    /// <summary>Control for the cap: a 40-digit integer, past long but far inside the cap, is stored exactly.</summary>
+    [Fact]
+    public async Task FortyDigitInteger_InAJsonColumn_IsStoredExactly()
+    {
+        const string fortyDigitInteger = "1234567890123456789012345678901234567891";
+        using (await PostRawAsync(
+                   "{\"query\":\"mutation W($v: JSON!) { docs(update: {id: 1, payload: $v}) }\"," +
+                   $"\"variables\":{{\"v\":{{\"big\":{fortyDigitInteger}}}}}}}"))
+        {
+        }
+
+        using var storedDoc = JsonDocument.Parse(await StoredPayloadAsync());
+        storedDoc.RootElement.GetProperty("big").GetRawText().Should().Be(fortyDigitInteger);
+    }
+
+    /// <summary>
     /// The same 40-digit token bound to a <c>Float</c> or <c>Decimal</c> field still
     /// parses (to the nearest double / decimal), as it did when the stock reader handed
     /// it over as a rounded decimal.

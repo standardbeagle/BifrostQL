@@ -31,6 +31,20 @@ namespace BifrostQL.Core.Schema;
 public static class ExactNumericScalars
 {
     /// <summary>
+    /// The longest number text, in characters, the exact readers parse: a JSON number token in
+    /// request variables (<see cref="ExactNumberInputsJsonConverter"/>) and a <c>BigInt</c>
+    /// text (<see cref="ExactBigIntGraphType"/>). <see cref="BigInteger"/> parsing grows
+    /// faster than linearly with the digit count, and the exact readers also copy and
+    /// normalize the token text, so an unbounded token lets one request body burn CPU. The
+    /// values these readers serve are far shorter: a <c>BigInt</c> column stores 19 digits,
+    /// a <c>Decimal</c> scalar carries 28–29, and MySQL's widest DECIMAL is 65. 1024 leaves
+    /// room for any of them, and for a JSON column number with many more digits and a long
+    /// exponent, while keeping the worst-case parse cheap. A longer token is refused, not
+    /// truncated.
+    /// </summary>
+    public const int MaxNumberTextLength = 1024;
+
+    /// <summary>
     /// Registers the exact scalars. MUST be called from a schema builder's
     /// PreConfigure: registering later loses the name to the built-in scalar.
     /// </summary>
@@ -113,13 +127,21 @@ public sealed class ExactBigIntGraphType : ScalarGraphType
         _ => false,
     };
 
-    private static bool CanParseText(string text)
-        => BigInteger.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
+    private static bool CanParseText(string text) => TryParseText(text, out _);
 
     private object ParseText(string text)
-        => BigInteger.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+        => TryParseText(text, out var parsed)
             ? Narrow(parsed)
             : ThrowValueConversionError(text)!;
+
+    // Length first: BigInteger parsing is superlinear in the digit count
+    // (ExactNumericScalars.MaxNumberTextLength).
+    private static bool TryParseText(string text, out BigInteger parsed)
+    {
+        parsed = default;
+        return text.Length <= ExactNumericScalars.MaxNumberTextLength
+            && BigInteger.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed);
+    }
 
     // Both branches cast to object deliberately: `long` converts IMPLICITLY to
     // BigInteger, so a bare ternary types itself as BigInteger and boxes the

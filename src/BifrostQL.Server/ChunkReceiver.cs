@@ -6,6 +6,12 @@ namespace BifrostQL.Server
     /// Reassembles chunked BifrostMessages into a complete message. Validates CRC32
     /// checksums on each chunk and tracks reassembly progress per request_id.
     /// Not thread-safe; intended for single-connection use within a WebSocket handler loop.
+    /// The one exception is <see cref="ReleaseAssembled"/>, which any thread may call.
+    ///
+    /// An assembled payload stays charged to the per-connection aggregate cap after
+    /// <see cref="AddChunk"/> returns it, until the caller hands the bytes back through
+    /// <see cref="ReleaseAssembled"/>: the server holds a reassembled request for as long as
+    /// it runs, so the cap must cover that memory too, not only the fragments still arriving.
     ///
     /// Chunking works at two levels:
     /// - Server-to-client: chunks carry fragments of the data Payload field. The assembled
@@ -152,8 +158,27 @@ namespace BifrostQL.Server
                 return null;
 
             _pending.Remove(chunk.RequestId);
-            _currentAllocatedBytes -= state.ReceivedBytes;
-            return state.GetAssembledPayload();
+            try
+            {
+                // The payload's bytes stay charged until ReleaseAssembled.
+                return state.GetAssembledPayload();
+            }
+            catch
+            {
+                Interlocked.Add(ref _currentAllocatedBytes, -state.ReceivedBytes);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Hands back the charge of a payload <see cref="AddChunk"/> assembled, once the caller
+        /// no longer holds it (the request it carried has finished). Safe from any thread.
+        /// </summary>
+        /// <param name="byteCount">The assembled payload's length.</param>
+        public void ReleaseAssembled(int byteCount)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(byteCount);
+            Interlocked.Add(ref _currentAllocatedBytes, -byteCount);
         }
 
         /// <summary>Adds a chunk to a session and charges the bytes it retained to the aggregate.</summary>
@@ -166,7 +191,7 @@ namespace BifrostQL.Server
             }
             finally
             {
-                _currentAllocatedBytes += state.ReceivedBytes - before;
+                Interlocked.Add(ref _currentAllocatedBytes, state.ReceivedBytes - before);
             }
         }
 
@@ -177,7 +202,8 @@ namespace BifrostQL.Server
         /// </summary>
         private void EnsureAggregateRoom(BifrostMessage chunk)
         {
-            if (_currentAllocatedBytes + chunk.Payload.Length > _maxTotalReassemblyBytes)
+            // Releases only lower the count, so a stale read can refuse early, never admit past the cap.
+            if (Interlocked.Read(ref _currentAllocatedBytes) + chunk.Payload.Length > _maxTotalReassemblyBytes)
             {
                 throw new InvalidOperationException(
                     $"Aggregate in-flight reassembly memory would exceed the {_maxTotalReassemblyBytes}-byte per-connection limit");
@@ -190,12 +216,13 @@ namespace BifrostQL.Server
         public int PendingCount => _pending.Count;
 
         /// <summary>
-        /// Bytes this receiver currently holds for pending transfers. Reassembly memory grows
+        /// Bytes this receiver currently charges: pending transfers plus assembled payloads not
+        /// yet handed back through <see cref="ReleaseAssembled"/>. Reassembly memory grows
         /// from the fragments that actually ARRIVED, never from the client-declared TotalBytes,
         /// so a peer cannot make the server commit memory it never sends: two 20-byte frames
         /// declaring 64 MB hold 40 bytes.
         /// </summary>
-        public long AllocatedBytes => _currentAllocatedBytes;
+        public long AllocatedBytes => Interlocked.Read(ref _currentAllocatedBytes);
 
         /// <summary>
         /// Evicts pending reassembly sessions that have received no chunks within the TTL.
@@ -217,7 +244,7 @@ namespace BifrostQL.Server
             foreach (var requestId in stale)
             {
                 if (_pending.TryGetValue(requestId, out var evicted))
-                    _currentAllocatedBytes -= evicted.ReceivedBytes;
+                    Interlocked.Add(ref _currentAllocatedBytes, -evicted.ReceivedBytes);
                 _pending.Remove(requestId);
             }
         }

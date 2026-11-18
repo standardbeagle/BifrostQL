@@ -227,21 +227,29 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public void AggregateInFlightBytes_FreedOnCompletion_AllowsNewTransfers()
+        public void AssembledPayload_StaysCharged_UntilReleased()
         {
+            // The assembled payload used to leave the aggregate the moment AddChunk returned it,
+            // though the server holds the request it carries until the request ends. Sixteen
+            // 64 MiB requests in flight then held about 1 GiB under a 128 MiB cap.
             var receiver = new ChunkReceiver(
                 maxReassemblyBytes: 1000,
                 maxPendingReassemblies: 8,
                 reassemblyTtl: TimeSpan.FromMinutes(5),
                 maxTotalReassemblyBytes: 1500);
 
-            // Complete a 800-byte transfer (frees its aggregate reservation)...
-            receiver.AddChunk(Chunk(1, new byte[] { 1, 2, 3, 4 }, 0, 2, 0, 8)).Should().BeNull();
-            receiver.AddChunk(Chunk(1, new byte[] { 5, 6, 7, 8 }, 1, 2, 4, 8)).Should().NotBeNull();
+            receiver.AddChunk(Chunk(1, new byte[500], 0, 2, 0, 1000)).Should().BeNull();
+            var assembled = receiver.AddChunk(Chunk(1, new byte[500], 1, 2, 500, 1000));
+            assembled.Should().HaveCount(1000);
+            receiver.AllocatedBytes.Should().Be(1000, "the assembled payload is still held by its caller");
 
-            // ...then two large sessions both fit because the first was released.
-            receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 0, 800)).Should().BeNull();
-            receiver.AddChunk(Chunk(3, new byte[] { 1 }, 0, 2, 0, 700)).Should().BeNull();
+            var overCap = () => receiver.AddChunk(Chunk(2, new byte[600], 0, 2, 0, 900));
+            overCap.Should().Throw<InvalidOperationException>().WithMessage("*Aggregate*");
+
+            receiver.ReleaseAssembled(assembled!.Length);
+            receiver.AllocatedBytes.Should().Be(0);
+            receiver.AddChunk(Chunk(2, new byte[600], 0, 2, 0, 900)).Should().BeNull(
+                "control: once released, the same chunk fits");
         }
 
         [Fact]

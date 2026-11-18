@@ -126,6 +126,11 @@ namespace BifrostQL.Server
         /// <summary>Admitted connections on this mount (diagnostics/tests).</summary>
         internal int ActiveConnections => _limiter.Count;
 
+        /// <summary>
+        /// Builds each connection's upload reassembler (tests set smaller caps through it).
+        /// </summary>
+        internal Func<ChunkReceiver> CreateChunkReceiver { get; init; } = static () => new ChunkReceiver();
+
         public BifrostBinaryMiddleware(
             RequestDelegate next,
             IBifrostEngine engine,
@@ -359,12 +364,14 @@ namespace BifrostQL.Server
             public BinaryConnection(
                 WebSocket webSocket,
                 HttpContext httpContext,
+                ChunkReceiver chunkReceiver,
                 ChunkSender chunkSender,
                 ChunkBuffer chunkBuffer,
                 TimeSpan writeTimeout,
                 TimeProvider timeProvider,
                 ILogger logger)
             {
+                ChunkReceiver = chunkReceiver;
                 _writeTimeout = writeTimeout;
                 _timeProvider = timeProvider;
                 _logger = logger;
@@ -379,7 +386,7 @@ namespace BifrostQL.Server
 
             public WebSocket WebSocket { get; }
             public HttpContext HttpContext { get; }
-            public ChunkReceiver ChunkReceiver { get; } = new();
+            public ChunkReceiver ChunkReceiver { get; }
             public ChunkSender ChunkSender { get; }
             public ChunkBuffer ChunkBuffer { get; }
 
@@ -643,7 +650,7 @@ namespace BifrostQL.Server
             var chunkSender = new ChunkSender(
                 _chunkThreshold, _ackWindow, chunkBuffer, _ackTimeout, timeProvider: _timeProvider);
             using var connection = new BinaryConnection(
-                webSocket, httpContext, chunkSender, chunkBuffer, _writeTimeout, _timeProvider, _logger);
+                webSocket, httpContext, CreateChunkReceiver(), chunkSender, chunkBuffer, _writeTimeout, _timeProvider, _logger);
 
             try
             {
@@ -816,31 +823,44 @@ namespace BifrostQL.Server
             }
 
             // Client chunks carry fragments of a full serialized BifrostMessage; the
-            // assembled bytes are deserialized to recover the original Query/Mutation.
+            // assembled bytes are deserialized to recover the original Query/Mutation. The
+            // assembled bytes stay charged to the connection's reassembly cap until the request
+            // they carried ends: whoever ends up holding the request releases them.
+            var heldReassemblyBytes = 0;
             if (frame.Type == BifrostMessageType.Chunk)
             {
                 var reassembled = await HandleChunkAsync(frame, connection);
-                if (reassembled == null)
+                if (reassembled is not { } upload)
                     return; // More chunks expected, or reassembly failed.
-                frame = reassembled;
+                (frame, heldReassemblyBytes) = upload;
             }
 
-            switch (frame.Type)
+            try
             {
-                case BifrostMessageType.ChunkAck:
-                    // An ack for no running transfer (late, or for a finished one) is noise.
-                    if (connection.TransferFor(frame.RequestId) is { } acked)
-                        acked.Acknowledge(frame);
-                    return;
-                case BifrostMessageType.ChunkNack:
-                    if (connection.TransferFor(frame.RequestId) is { } transfer)
-                        transfer.Acknowledge(frame);
-                    else
-                        await HandleNackAsync(frame, connection);
-                    return;
-                default:
-                    await StartRequestAsync(frame, connection);
-                    return;
+                switch (frame.Type)
+                {
+                    case BifrostMessageType.ChunkAck:
+                        // An ack for no running transfer (late, or for a finished one) is noise.
+                        if (connection.TransferFor(frame.RequestId) is { } acked)
+                            acked.Acknowledge(frame);
+                        return;
+                    case BifrostMessageType.ChunkNack:
+                        if (connection.TransferFor(frame.RequestId) is { } transfer)
+                            transfer.Acknowledge(frame);
+                        else
+                            await HandleNackAsync(frame, connection);
+                        return;
+                    default:
+                        var held = heldReassemblyBytes;
+                        heldReassemblyBytes = 0; // StartRequestAsync owns the release from here.
+                        await StartRequestAsync(frame, connection, held);
+                        return;
+                }
+            }
+            finally
+            {
+                if (heldReassemblyBytes > 0)
+                    connection.ChunkReceiver.ReleaseAssembled(heldReassemblyBytes);
             }
         }
 
@@ -848,19 +868,54 @@ namespace BifrostQL.Server
         /// Starts a Query, Mutation or Resume on its own task, or refuses it with an Error
         /// frame when its request id is already in flight (acks could not be routed) or the
         /// connection is at <see cref="MaxConcurrentRequestsPerConnection"/>.
+        /// <paramref name="heldReassemblyBytes"/> is the reassembly charge of a request that
+        /// arrived chunked; it is released when the request's task ends, or at once when the
+        /// request is refused.
         /// </summary>
-        private async Task StartRequestAsync(BifrostMessage request, BinaryConnection connection)
+        private async Task StartRequestAsync(BifrostMessage request, BinaryConnection connection, int heldReassemblyBytes)
         {
-            if (connection.InFlightCount >= MaxConcurrentRequestsPerConnection)
+            var releaseHere = heldReassemblyBytes;
+            try
             {
-                await SendErrorResponseAsync(connection, request.RequestId,
-                    $"Too many concurrent requests: a connection runs at most {MaxConcurrentRequestsPerConnection} at once. " +
-                    "Resend this request when one completes.",
-                    BinaryErrorCode.TooManyConcurrentRequests);
-                return;
+                await StartOrRefuseAsync();
+            }
+            finally
+            {
+                if (releaseHere > 0)
+                    connection.ChunkReceiver.ReleaseAssembled(releaseHere);
             }
 
-            var started = connection.TryStart(request.RequestId, async () =>
+            async Task StartOrRefuseAsync()
+            {
+                if (connection.InFlightCount >= MaxConcurrentRequestsPerConnection)
+                {
+                    await SendErrorResponseAsync(connection, request.RequestId,
+                        $"Too many concurrent requests: a connection runs at most {MaxConcurrentRequestsPerConnection} at once. " +
+                        "Resend this request when one completes.",
+                        BinaryErrorCode.TooManyConcurrentRequests);
+                    return;
+                }
+
+                var started = connection.TryStart(request.RequestId, () => RunRequestAsync(request, connection, heldReassemblyBytes));
+                if (started)
+                {
+                    releaseHere = 0; // The request's task releases it.
+                    return;
+                }
+
+                await SendErrorResponseAsync(connection, request.RequestId,
+                    $"Request id {request.RequestId} is already in flight on this connection.",
+                    BinaryErrorCode.RequestIdInFlight);
+            }
+        }
+
+        /// <summary>
+        /// One request's task: runs it, maps its faults, and releases its reassembly charge
+        /// (if it arrived chunked) as its last step.
+        /// </summary>
+        private async Task RunRequestAsync(BifrostMessage request, BinaryConnection connection, int heldReassemblyBytes)
+        {
+            try
             {
                 try
                 {
@@ -886,13 +941,11 @@ namespace BifrostQL.Server
                     await TrySendErrorFrameAsync(connection, MalformedFrameMessage, request.RequestId);
                     await connection.FailFromRequestAsync(WebSocketCloseStatus.ProtocolError, "Malformed frame");
                 }
-            });
-
-            if (!started)
+            }
+            finally
             {
-                await SendErrorResponseAsync(connection, request.RequestId,
-                    $"Request id {request.RequestId} is already in flight on this connection.",
-                    BinaryErrorCode.RequestIdInFlight);
+                if (heldReassemblyBytes > 0)
+                    connection.ChunkReceiver.ReleaseAssembled(heldReassemblyBytes);
             }
         }
 
@@ -926,9 +979,11 @@ namespace BifrostQL.Server
         /// accepted. Returns the reconstructed original request once the final chunk arrives, or
         /// null when more chunks are still expected or reassembly failed (an Error frame and no
         /// ack are sent in that case, so a client driving its send window off acks never
-        /// advances past a chunk the server rejected).
+        /// advances past a chunk the server rejected). The reassembled request comes with its
+        /// payload's length, which stays charged to the connection's reassembly cap until the
+        /// caller releases it.
         /// </summary>
-        private async Task<BifrostMessage?> HandleChunkAsync(BifrostMessage request, BinaryConnection connection)
+        private async Task<(BifrostMessage Request, int HeldBytes)?> HandleChunkAsync(BifrostMessage request, BinaryConnection connection)
         {
             byte[]? assembledBytes;
             try
@@ -942,12 +997,22 @@ namespace BifrostQL.Server
                 return null;
             }
 
-            await connection.SendAsync(ChunkReceiver.CreateAck(request.RequestId, request.ChunkSequence), connection.Token);
+            try
+            {
+                await connection.SendAsync(ChunkReceiver.CreateAck(request.RequestId, request.ChunkSequence), connection.Token);
 
-            if (assembledBytes == null)
-                return null; // More chunks expected
+                if (assembledBytes == null)
+                    return null; // More chunks expected
 
-            return BifrostMessage.FromBytes(assembledBytes);
+                return (BifrostMessage.FromBytes(assembledBytes), assembledBytes.Length);
+            }
+            catch
+            {
+                // Nobody will hold this request: hand its charge back before the fault unwinds.
+                if (assembledBytes != null)
+                    connection.ChunkReceiver.ReleaseAssembled(assembledBytes.Length);
+                throw;
+            }
         }
 
         /// <summary>

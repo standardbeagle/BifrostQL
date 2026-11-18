@@ -1,5 +1,6 @@
 using Grpc.AspNetCore.Server.Model;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -56,6 +57,13 @@ namespace BifrostQL.Server.Grpc
                 IServiceMethodProvider<BifrostDynamicGrpcService>, BifrostGrpcServiceMethodProvider>());
             services.AddScoped<BifrostDynamicGrpcService>();
             services.AddScoped<GrpcReflectionService>();
+
+            // The gRPC port serves only the gRPC services: the host pipeline (GraphQL, OData, S3, …)
+            // must not answer on a listener whose posture was declared for gRPC alone.
+            services.AddTransient<IStartupFilter, GrpcListenerIsolation.StartupFilter>();
+            // The code-declared gRPC listener below makes Kestrel drop the hosting URLs; carry them
+            // over so adding the adapter never unbinds the host's own HTTP port.
+            services.AddTransient<IStartupFilter, GrpcHostUrlCarryOver>();
 
             // Adapter lifecycle via the shared adapter/hosted-service pattern.
             services.TryAddSingleton<GrpcWireAdapter>();
@@ -143,8 +151,12 @@ namespace BifrostQL.Server.Grpc
         public static void MapBifrostGrpc(this IEndpointRouteBuilder endpoints)
         {
             ArgumentNullException.ThrowIfNull(endpoints);
-            endpoints.MapGrpcService<BifrostDynamicGrpcService>();
-            endpoints.MapGrpcService<GrpcReflectionService>();
+            // Both services answer ONLY on the dedicated gRPC listener: Kestrel shares one pipeline
+            // across listeners, so an unguarded route answered on any host listener that spoke
+            // HTTP/2, bypassing this port's bind address, TLS requirement and admission cap.
+            var options = endpoints.ServiceProvider.GetRequiredService<GrpcWireOptions>();
+            GrpcListenerIsolation.GuardGrpcEndpoints(endpoints.MapGrpcService<BifrostDynamicGrpcService>(), options);
+            GrpcListenerIsolation.GuardGrpcEndpoints(endpoints.MapGrpcService<GrpcReflectionService>(), options);
         }
     }
 }

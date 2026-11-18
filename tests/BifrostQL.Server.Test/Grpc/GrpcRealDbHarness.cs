@@ -91,6 +91,8 @@ namespace BifrostQL.Server.Test.Grpc
                     // Test identity projection (stands in for slice-4 bearer). Registered before
                     // AddBifrostGrpc so it wins the TryAdd of the default factory.
                     services.AddSingleton<IBifrostAuthContextFactory, HeaderTestAuthContextFactory>();
+                    // TestServer has no listener port; stamp the gRPC one (see the shim).
+                    services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, GrpcTestServerListenerShim>();
                     services.AddBifrostGrpc(o =>
                     {
                         o.Endpoint = _grpcOptions.Endpoint;

@@ -84,6 +84,9 @@ namespace BifrostQL.Integration.Test.Grpc
                     // Test identity projection: a user|tenant|roles header → the same user-context keys
                     // the pipeline reads. No header → EMPTY context, the real fail-closed path.
                     services.AddSingleton<IBifrostAuthContextFactory, HeaderIdentityFactory>();
+                    // TestServer has no listener port, and the gRPC routes answer only on the gRPC
+                    // listener's port; stamp it on every request ahead of the production guards.
+                    services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, TestServerGrpcPortShim>();
                     services.AddBifrostGrpc(o =>
                     {
                         o.Endpoint = EndpointPath;
@@ -331,5 +334,21 @@ namespace BifrostQL.Integration.Test.Grpc
                 default: output.WriteRawTag(raw[0], raw[1], raw[2], raw[3], raw[4]); break;
             }
         }
+    }
+
+    /// <summary>Stamps the configured gRPC port as the request's local port (TestServer reports 0).</summary>
+    internal sealed class TestServerGrpcPortShim : Microsoft.AspNetCore.Hosting.IStartupFilter
+    {
+        public Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> Configure(
+            Action<Microsoft.AspNetCore.Builder.IApplicationBuilder> next) => app =>
+        {
+            var port = app.ApplicationServices.GetRequiredService<GrpcWireOptions>().Port;
+            app.Use((http, nextMiddleware) =>
+            {
+                http.Connection.LocalPort = port;
+                return nextMiddleware(http);
+            });
+            next(app);
+        };
     }
 }

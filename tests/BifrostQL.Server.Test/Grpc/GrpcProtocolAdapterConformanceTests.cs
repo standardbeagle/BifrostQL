@@ -152,6 +152,8 @@ namespace BifrostQL.Server.Test.Grpc
                     services.AddSingleton(baseReads);
                     services.AddSingleton(baseWrites);
                     services.AddSingleton<IBifrostAuthContextFactory, HeaderTestAuthContextFactory>();
+                    // TestServer has no listener port; stamp the gRPC one (see the shim).
+                    services.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, GrpcTestServerListenerShim>();
                     services.AddBifrostGrpc(o =>
                     {
                         o.Endpoint = EndpointPath;

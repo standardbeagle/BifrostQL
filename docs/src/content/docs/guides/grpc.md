@@ -79,7 +79,14 @@ app.Run();
 ## HTTP/2 and TLS
 
 gRPC requires HTTP/2 for its framing and trailers, so the adapter binds its own
-listener speaking HTTP/2 only — it does not share your GraphQL/HTTP port.
+listener speaking HTTP/2 only — it does not share your GraphQL/HTTP port. The
+split holds in both directions: the gRPC routes answer only on `Port` (a request
+for them on any other listener gets HTTP 404, so a public HTTPS port that speaks
+HTTP/2 cannot bypass this listener's bind address, TLS and connection cap), and
+`Port` serves only the gRPC and reflection services (`/graphql`, OData, S3 and
+the rest of your pipeline get 404 there). The listener is identified by the local
+port of the socket that accepted the request, never by the `Host` header. Your
+hosting URLs (`UseUrls`, `ASPNETCORE_URLS`, `--urls`) still bind alongside it.
 Cleartext HTTP/2 (**h2c**) is the default and is appropriate when a reverse proxy
 or service mesh terminates TLS in front of BifrostQL. Because bearer credentials
 travel in request metadata, a cleartext port with nothing in front of it exposes
@@ -402,11 +409,13 @@ cannot tell one op class from another by its status.
 
 | Condition | gRPC status | Detail |
 |-----------|-------------|--------|
-| Missing / anonymous / unmapped / oversized credential | `UNAUTHENTICATED` | One fixed message for all — no issuer/user enumeration. |
-| Malformed request, bad operator, over-cap filter/sort/page token, bad key value | `INVALID_ARGUMENT` | Messages describe the request fault without internal diagnostics. Faults carrying field violations also include a `google.rpc.BadRequest` in the `grpc-status-details-bin` trailer; other request faults have no such trailer. An over-cap `page_size` is clamped rather than rejected. |
+| Missing / anonymous / unmapped / oversized credential | `UNAUTHENTICATED` | One fixed message for all — no issuer/user enumeration. Checked before the method is resolved, so an anonymous call to a method that does not exist answers the same as one to a real table. |
+| Malformed request (including protobuf framing that does not parse), bad operator, over-cap filter/sort/page token, bad key value | `INVALID_ARGUMENT` | Messages describe the request fault without internal diagnostics. Faults carrying field violations also include a `google.rpc.BadRequest` in the `grpc-status-details-bin` trailer; other request faults have no such trailer. An over-cap `page_size` is clamped rather than rejected. |
 | `Get`/`List`/`Stream` on a table the caller may not read at all | `UNIMPLEMENTED` | `Method is unimplemented.`, byte for byte what the host answers for a table that has no method, so a denied table cannot be told from a missing one. Refused before the request is decoded. |
 | `Get` on a missing **or** authorization-denied row | `NOT_FOUND` | Byte-identical for both — no existence oracle. |
-| Authorization denial on `List`/`Stream`/writes | `PERMISSION_DENIED` | Generic message; the exception's table/tenant detail never reaches the wire. |
+| Authorization denial on `List`/`Stream`/writes (missing tenant context, policy write deny) | `UNIMPLEMENTED` | `Method is unimplemented.`: deny equals absent, the same answer as a table the caller cannot see. The exception's table/tenant detail never reaches the wire. |
+| Write conflict (unique-key collision with a stored row, or the same operation already in flight) | `ABORTED` | `The write conflicts with the current state of the row; reload and retry.` Re-read, then retry. |
+| `Update` that sets no non-key column | `INVALID_ARGUMENT` | `An update must set at least one non-key column.` |
 | Write to an `operation-id: required` table (a gRPC write cannot carry an [operation id](/BifrostQL/guides/mutations/#operation-ids)) | `FAILED_PRECONDITION` | `OPERATION_ID_REQUIRED: this write requires an operation id.` Retrying the same write cannot succeed. `OPERATION_ID_UNSUPPORTED` and `OPERATION_ID_ANONYMOUS` map the same way and `OPERATION_ID_REUSED` maps to `ALREADY_EXISTS`, each with a fixed `<code>: ...` message. |
 | Client cancel | `CANCELLED` | |
 | Deadline elapsed | `DEADLINE_EXCEEDED` | |

@@ -51,6 +51,10 @@ builder.Services.AddSingleton<IPgCredentialStore, MyCredentialStore>();
 | `MaxConnections` | `100` | Concurrent admitted connections; the next is refused cleanly with `53300 too_many_connections`. |
 | `ServerCertificate` | *(none — required)* | Cert presented on `SSLRequest`. The port refuses to start without it. |
 | `HandshakeTimeout` | `30s` | Pre-auth deadline from accept to `ReadyForQuery`; a silent or slow peer is cut off. |
+| `WriteTimeout` | `60s` | Deadline for each write once the session is authenticated. Reads may wait forever (an idle pooled connection is normal), but a client that stops reading its results is disconnected when a write stalls this long, and its connection slot is released. Must be positive. |
+| `MaxPreparedStatements` / `MaxPortals` | `200` / `200` | Named prepared statements and named portals one session may hold. Over the cap, `53400 configuration_limit_exceeded`; the session survives. |
+| `MaxSessionStatementBytes` | `8 MiB` | Total UTF-8 bytes of SQL text across a session's named prepared statements. A `Parse` that would cross it gets `53400`. The unnamed statement is exempt. |
+| `MaxSessionPortalBytes` | `32 MiB` | Total bytes of result rows that suspended portals (row-limited `Execute`) may keep for resume. An `Execute` whose suspension would cross it gets `53400` before any row is sent. |
 | `MaxAuthAttemptsPerSource` | `100` | Authentication attempts (SCRAM or cleartext) admitted from one client IP per `AuthRateLimitWindow`. Over the cap, the refusal is issued before any credential lookup or PBKDF2 work, with the same `28P01 invalid_password` shape as a wrong password. |
 | `MaxAuthAttemptsPerAccount` | `100` | Authentication attempts admitted against one login name per `AuthRateLimitWindow`, whatever their source. Same refusal as the per-source cap. Every connection counts, so set it above the rate a connection pool for one login reconnects. |
 | `AuthRateLimitWindow` | `1m` | Fixed window for both authentication caps. |
@@ -214,6 +218,15 @@ Everything above rolls up to a short list a security reviewer can check:
 - **Identity-filtered catalog.** Introspection exposes only what you may read, fail-closed.
 - **Sanitized errors.** Out-of-subset → clean pg error, connection survives; internal
   fault → generic `XX000`, no DB internals on the wire.
+- **Bounded sessions.** Portals close at `Sync` and on a simple query (the end of the
+  implicit transaction, as in PostgreSQL), so a row-limited `Execute` can only be resumed
+  inside one `Sync` batch. Retained SQL text and suspended rows are capped by bytes per
+  session, and a stalled post-auth write ends the session after `WriteTimeout`.
+- **Hidden columns are absent.** `SELECT *` omits columns your read policy denies, and naming
+  one answers `42703 undefined_column`, exactly as for a column that does not exist.
+- **Strict framing.** A length field that runs past its message, a repeat `SSLRequest` after
+  TLS is up, or a SCRAM exchange whose GS2 header or channel-binding echo (`c=`) is not the
+  plain `n,,` / `y,,` form is refused as `08P01 protocol_violation`.
 
 The narrow subset is itself a guarantee: a small allowlist is far easier to keep safe
 than a large surface you must remember to lock down.

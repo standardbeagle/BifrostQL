@@ -62,10 +62,10 @@ Undeclared means `loopback`. Widening (loopback → lan → public) is the opera
 
 | Listener | Port | Posture | Max connections | Pre-auth deadline | Idle | Max message |
 |---|---|---|---|---|---|---|
-| pgwire | 5432 | loopback (`PgWireOptions.BindAddress`) | `MaxConnections` 100 | `HandshakeTimeout` 30 s; auth `MaxAuthAttemptsPerSource` / `MaxAuthAttemptsPerAccount` 100 each / 1 min | none | 1 MiB |
+| pgwire | 5432 | loopback (`PgWireOptions.BindAddress`) | `MaxConnections` 100 | `HandshakeTimeout` 30 s; auth `MaxAuthAttemptsPerSource` / `MaxAuthAttemptsPerAccount` 100 each / 1 min | reads none; post-auth writes `WriteTimeout` 60 s | 1 MiB; per session `MaxSessionStatementBytes` 8 MiB of SQL, `MaxSessionPortalBytes` 32 MiB of suspended rows (portals close at Sync) |
 | RESP | 6379 | loopback (`RespWireOptions.BindAddress`) | 100, taken before TLS | `AuthenticationTimeout` 30 s | `IdleTimeout` 10 min | `MaxBulkLength` / `MaxFrameLength` 1 MiB |
 | LDAP / LDAPS | 389 / `LdapsPort` (null = off) | loopback (`LdapWireOptions.BindAddress`) | 100 shared across both | `AuthenticationTimeout` 30 s, `TlsHandshakeTimeout` 30 s | `IdleTimeout` 5 min (credentialed only) | 1 MiB |
-| gRPC | 5090 | loopback (`GrpcWireOptions.BindAddress`) | `MaxConcurrentConnections` 100 | Kestrel HTTP/2 | Kestrel | Kestrel |
+| gRPC | 5090 | loopback (`GrpcWireOptions.BindAddress`); gRPC routes answer only on this port, and this port serves nothing else (`GrpcListenerIsolation`, keyed on the accepting socket's local port) | `MaxConcurrentConnections` 100 | Kestrel HTTP/2 | Kestrel | Kestrel |
 | HTTP (GraphQL, S3, OData, MCP-HTTP, Prometheus) | host Kestrel | host's | host | host | host | host |
 | HTTP/3 `UseBifrostHttp3` (HTTPS + plaintext HTTP) | 5001 / `HttpPort` 5000 (null = off) | loopback (`BifrostHttp3Options.ListenAddress`, Host key `BifrostQL:Http3:ListenAddress`) | host Kestrel | host | host | host |
 | Binary WS `/bifrost-ws` | host Kestrel | host's | `UseBifrostBinary(maxConnections:)` 100 per mount; 16 concurrent requests per connection (`MaxConcurrentRequestsPerConnection`) | `firstFrameTimeout` 30 s | `idleTimeout` 10 min | frame 4 MiB; reassembly 64 MiB/session, 128 MiB/connection (received bytes) |

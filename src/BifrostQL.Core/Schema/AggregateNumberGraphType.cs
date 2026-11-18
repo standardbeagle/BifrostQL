@@ -58,15 +58,53 @@ public sealed class AggregateNumberGraphType : ScalarGraphType
         };
     }
 
-    private static decimal ToDecimal(object value) => value switch
+    /// <summary>
+    /// A <c>Decimal</c> result no <see cref="decimal"/> holds: text that is not a number
+    /// (SQLite keeps <c>'N/A'</c> in a DECIMAL column, and MAX returns it) or a double past
+    /// decimal's range (SQLite SUM/AVG over such a column). The grouped surface's
+    /// <c>Decimal</c> field refuses both, so this refuses them too, through
+    /// <see cref="Serialize"/>; a double fallback would type the field by its data.
+    /// </summary>
+    private static object ToDecimal(object value)
     {
-        decimal d => d,
-        BigInteger big => (decimal)big,
-        string text => decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture),
-        _ => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
-    };
+        switch (value)
+        {
+            case decimal d:
+                return d;
+            case BigInteger big:
+                return big >= (BigInteger)decimal.MinValue && big <= (BigInteger)decimal.MaxValue
+                    ? (decimal)big
+                    : NotADecimal.Instance;
+            case string text:
+                return decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                    ? parsed
+                    : NotADecimal.Instance;
+            case double or float:
+                var asDouble = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+                return double.IsFinite(asDouble) && Math.Abs(asDouble) < (double)decimal.MaxValue
+                    ? (decimal)asDouble
+                    : NotADecimal.Instance;
+            default:
+                return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+        }
+    }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Stands in for a <c>Decimal</c> aggregate value <see cref="Coerce"/> could not convert.
+    /// It carries no part of the cell, so the serialization error names no data.
+    /// </summary>
+    private sealed class NotADecimal
+    {
+        public static readonly NotADecimal Instance = new();
+        private NotADecimal() { }
+        public override string ToString() => "a value outside decimal's range or not a number";
+    }
+
+    /// <summary>
+    /// Refuses anything else through <see cref="ScalarGraphType.ThrowSerializationError"/>
+    /// with the value's type only: the stock message embeds the value, and an aggregate's
+    /// value is cell data (MIN of a text column, a DECIMAL cell holding text).
+    /// </summary>
     public override object? Serialize(object? value) => value switch
     {
         null => null,
@@ -74,7 +112,8 @@ public sealed class AggregateNumberGraphType : ScalarGraphType
         decimal d => d.ToString(CultureInfo.InvariantCulture),
         double d when double.IsFinite(d) => d,
         float f when float.IsFinite(f) => (double)f,
-        _ => ThrowSerializationError(value),
+        NotADecimal => ThrowSerializationError(value),
+        _ => ThrowSerializationError($"a {value.GetType().Name} value"),
     };
 
     /// <summary>Output-only: an aggregate result is never an argument.</summary>

@@ -32,6 +32,28 @@ public sealed class AggregateRowResultFormTests : IAsyncLifetime
 
         await Exec("DROP TABLE IF EXISTS ledger_lines");
         await Exec("DROP TABLE IF EXISTS ledgers");
+        await Exec("DROP TABLE IF EXISTS quote_lines");
+        await Exec("DROP TABLE IF EXISTS quotes");
+        await Exec("CREATE TABLE quotes (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+        await Exec(
+            """
+            CREATE TABLE quote_lines (
+                id INTEGER PRIMARY KEY,
+                quote_id INTEGER NOT NULL,
+                price DECIMAL(10,2) NULL,
+                FOREIGN KEY (quote_id) REFERENCES quotes(id)
+            )
+            """);
+        // Quote 1: SQLite keeps 'N/A' as text in a DECIMAL column, and MAX ranks text above
+        // every number. Quote 2: 1e300 is stored as REAL, past decimal's range.
+        await Exec("INSERT INTO quotes(id, name) VALUES (1, 'text'), (2, 'huge'), (3, 'plain')");
+        await Exec(
+            """
+            INSERT INTO quote_lines(id, quote_id, price) VALUES
+                (1, 1, 'N/A'), (2, 1, 5),
+                (3, 2, 1e300),
+                (4, 3, 12.5)
+            """);
         await Exec("CREATE TABLE ledgers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
         await Exec(
             """
@@ -149,6 +171,59 @@ public sealed class AggregateRowResultFormTests : IAsyncLifetime
         sum.GetProperty("amount").ValueKind.Should().Be(JsonValueKind.String);
         sum.GetProperty("amount").GetString().Should().Be("9007199254740995");
         sum.GetProperty("ratio").ValueKind.Should().Be(JsonValueKind.Number);
+    }
+
+    private async Task<ExecutionResult> RunQuoteAsync(int quoteId, string aggSelection)
+    {
+        var schema = DbSchema.FromModel(_model);
+        return await new DocumentExecuter().ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = $"{{ quotes(filter: {{ id: {{ _eq: {quoteId} }} }}) {{ data {{ id {aggSelection} }} }} }}";
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = new SqliteDbConnFactory(ConnString),
+                ["model"] = _model,
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
+            });
+        });
+    }
+
+    /// <summary>
+    /// A Decimal aggregate no decimal holds is a field error that names no cell data, never
+    /// a raw parse or overflow exception: <c>decimal.Parse("N/A")</c> threw a FormatException
+    /// whose text carries the cell, and <c>Convert.ToDecimal(1e300)</c> an OverflowException.
+    /// The grouped surface's Decimal field refuses the same values, so this refuses too.
+    /// </summary>
+    [Theory]
+    [InlineData(1, "Max", "N/A")]
+    [InlineData(2, "Sum", "1E+300")]
+    [InlineData(2, "Avg", "1E+300")]
+    public async Task DecimalAggregateNoDecimalHolds_IsAFieldErrorWithoutTheValue(int quoteId, string operation, string cellText)
+    {
+        var execution = await RunQuoteAsync(quoteId, $"top: _agg(value: {{ quote_lines: {{ column: price }} }} operation: {operation})");
+
+        execution.Errors.Should().NotBeNullOrEmpty();
+        var error = execution.Errors!.Should().ContainSingle().Subject;
+        var chain = new List<Exception>();
+        for (Exception? e = error; e != null; e = e.InnerException) chain.Add(e);
+        chain.Should().NotContain(e => e is FormatException || e is OverflowException);
+        chain.Select(e => e.Message).Should().NotContain(m => m.Contains(cellText, StringComparison.OrdinalIgnoreCase)
+                                                               || m.Contains("1e300", StringComparison.OrdinalIgnoreCase));
+        chain.Should().Contain(e => e.Message.Contains(AggregateNumberGraphType.TypeName));
+    }
+
+    /// <summary>Control: a numeric DECIMAL cell on the same column is a decimal string.</summary>
+    [Fact]
+    public async Task DecimalAggregateOfANumber_IsADecimalString()
+    {
+        var execution = await RunQuoteAsync(3, "top: _agg(value: { quote_lines: { column: price } } operation: Max)");
+
+        execution.Errors.Should().BeNullOrEmpty();
+        using var doc = JsonDocument.Parse(new GraphQLSerializer().Serialize(execution));
+        var top = doc.RootElement.GetProperty("data").GetProperty("quotes").GetProperty("data")[0].GetProperty("top");
+        top.ValueKind.Should().Be(JsonValueKind.String);
+        top.GetString().Should().Be("12.5");
     }
 
     [Fact]

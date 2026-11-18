@@ -830,11 +830,11 @@ namespace BifrostQL.Server
                 case BifrostMessageType.ChunkAck:
                     // An ack for no running transfer (late, or for a finished one) is noise.
                     if (connection.TransferFor(frame.RequestId) is { } acked)
-                        await acked.AcknowledgeAsync(frame, connection.Token);
+                        acked.Acknowledge(frame);
                     return;
                 case BifrostMessageType.ChunkNack:
                     if (connection.TransferFor(frame.RequestId) is { } transfer)
-                        await transfer.AcknowledgeAsync(frame, connection.Token);
+                        transfer.Acknowledge(frame);
                     else
                         await HandleNackAsync(frame, connection);
                     return;

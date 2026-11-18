@@ -6,7 +6,7 @@ namespace BifrostQL.Server
     /// One chunked response in flight on a binary connection. It sends its chunks through the
     /// connection's serialized send, keeps at most the ack window unacknowledged, and waits for
     /// acks on its own channel, which the connection's single reader fills through
-    /// <see cref="AcknowledgeAsync"/>. Because the transfer never reads the socket, other requests
+    /// <see cref="Acknowledge"/>. Because the transfer never reads the socket, other requests
     /// on the connection execute and answer while it waits; their frames interleave with its
     /// chunks, and the client routes both by request id.
     /// </summary>
@@ -22,9 +22,14 @@ namespace BifrostQL.Server
         private readonly Func<BifrostMessage, CancellationToken, Task> _send;
 
         // Acks the reader has routed here and the transfer has not consumed yet. A client acks
-        // each chunk it receives once, so a valid client stays well under the bound; a client
-        // that floods acks fills it and its reader waits, which slows only that connection.
+        // each chunk it receives once, so a valid client stays well under the bound. A client
+        // that floods acks fills it and is refused: the reader never waits on this channel,
+        // because a waiting reader stops reading the socket and with it every deadline.
         private readonly Channel<AckSignal> _signals;
+
+        // Set once RunAsync stops consuming, before the channel is completed: an ack after that
+        // is late, not a flood.
+        private volatile bool _ended;
 
         internal ChunkTransfer(
             IReadOnlyList<BifrostMessage> chunks,
@@ -47,6 +52,7 @@ namespace BifrostQL.Server
             {
                 SingleReader = true,
                 SingleWriter = true,
+                // Never waited on: Acknowledge uses TryWrite and refuses a full channel.
                 FullMode = BoundedChannelFullMode.Wait,
             });
         }
@@ -64,25 +70,26 @@ namespace BifrostQL.Server
         public bool AckedByClient => _ackedByClient.Count == _chunks.Count;
 
         /// <summary>
-        /// Hands this transfer a ChunkAck or ChunkNack the client sent for it. Waits only while
-        /// the client has flooded more acks than the transfer has consumed; an ack that arrives
-        /// after the transfer ended is dropped.
+        /// Hands this transfer a ChunkAck or ChunkNack the client sent for it. Never waits: the
+        /// caller is the connection's single reader. An ack that arrives after the transfer ended
+        /// is dropped.
         /// </summary>
-        public async ValueTask AcknowledgeAsync(BifrostMessage frame, CancellationToken cancellationToken)
+        /// <exception cref="InvalidOperationException">
+        /// The client sent more acks than the transfer could have asked for (the channel is full).
+        /// The reader treats it as a protocol fault and closes the connection.
+        /// </exception>
+        public void Acknowledge(BifrostMessage frame)
         {
             if (frame.Type is not (BifrostMessageType.ChunkAck or BifrostMessageType.ChunkNack))
                 return;
             if (frame.Type == BifrostMessageType.ChunkAck && frame.ChunkSequence < _chunks.Count)
                 _ackedByClient.Add(frame.ChunkSequence);
-            try
-            {
-                await _signals.Writer.WriteAsync(
-                    new AckSignal(frame.Type == BifrostMessageType.ChunkNack, frame.ChunkSequence), cancellationToken);
-            }
-            catch (ChannelClosedException)
-            {
-                // The transfer finished or failed; nothing waits for this ack.
-            }
+            if (_signals.Writer.TryWrite(new AckSignal(frame.Type == BifrostMessageType.ChunkNack, frame.ChunkSequence)))
+                return;
+            if (_ended)
+                return; // The transfer finished or failed; nothing waits for this ack.
+            throw new InvalidOperationException(
+                $"Chunk ack flood for request {RequestId}: more unconsumed acks than the transfer can have asked for");
         }
 
         /// <summary>
@@ -117,7 +124,8 @@ namespace BifrostQL.Server
             }
             finally
             {
-                // Releases a reader waiting on a full channel, and refuses late acks.
+                // Late acks are dropped from here on.
+                _ended = true;
                 _signals.Writer.TryComplete();
             }
         }

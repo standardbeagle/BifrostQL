@@ -156,7 +156,7 @@ namespace BifrostQL.Server
         /// <summary>
         /// Starts one chunked transfer of <paramref name="chunks"/>. The transfer never reads
         /// the socket: the connection's single reader routes this request's ChunkAck/ChunkNack
-        /// frames to <see cref="ChunkTransfer.AcknowledgeAsync"/>, so other requests on the same
+        /// frames to <see cref="ChunkTransfer.Acknowledge"/>, so other requests on the same
         /// connection run and answer while the transfer waits for its acks.
         /// </summary>
         /// <param name="chunks">The chunks to send, from <see cref="SplitIntoChunks"/> or the buffer.</param>

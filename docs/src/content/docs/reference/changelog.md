@@ -246,7 +246,7 @@ A SQLite column declared `BOOLEAN` or `BIT` stores 0/1 and the driver returns it
   A client `Close` lets requests still executing send their answers before the server closes.
 - Breaking: `ChunkSender.SendChunkedAsync` is removed. `ChunkSender.StartTransfer` returns a
   `ChunkTransfer`, whose `RunAsync` sends the chunks and waits for the acks handed to it through
-  `AcknowledgeAsync`; it never reads the socket.
+  `Acknowledge`; it never reads the socket.
 
 ### Fixed — unique violations recognized by driver code
 

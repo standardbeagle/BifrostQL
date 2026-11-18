@@ -9,7 +9,7 @@ namespace BifrostQL.Server.Test
     /// Exercises <see cref="ChunkTransfer"/>: the ack window, the tail drain, NACK
     /// retransmission, buffer population, the ack timeout and the per-sequence retransmit cap.
     /// A scripted client task reads the frames the transfer sends and answers through
-    /// <see cref="ChunkTransfer.AcknowledgeAsync"/>, in order, the way the connection's reader does.
+    /// <see cref="ChunkTransfer.Acknowledge"/>, in order, the way the connection's reader does.
     /// </summary>
     public class ChunkTransferTests
     {
@@ -68,7 +68,7 @@ namespace BifrostQL.Server.Test
                         await BeforeEachReply();
                     if (ExtraBefore.TryGetValue(received, out var extras))
                         foreach (var extra in extras)
-                            await transfer.AcknowledgeAsync(extra, cancellationToken);
+                            transfer.Acknowledge(extra);
 
                     var reply = NackOnly
                         ? new BifrostMessage { RequestId = chunk.RequestId, Type = BifrostMessageType.ChunkNack, ChunkSequence = 0 }
@@ -76,7 +76,7 @@ namespace BifrostQL.Server.Test
                             ? new BifrostMessage { RequestId = chunk.RequestId, Type = BifrostMessageType.ChunkNack, ChunkSequence = chunk.ChunkSequence }
                             : ChunkReceiver.CreateAck(chunk.RequestId, chunk.ChunkSequence);
                     lock (Sent) _acked++;
-                    await transfer.AcknowledgeAsync(reply, cancellationToken);
+                    transfer.Acknowledge(reply);
                 }
             }
 
@@ -315,13 +315,48 @@ namespace BifrostQL.Server.Test
             await answering;
 
             // Far more late acks than the channel holds: none may block the reader.
-            var late = Task.Run(async () =>
+            var late = Task.Run(() =>
             {
                 for (var i = 0; i < 1000; i++)
-                    await transfer.AcknowledgeAsync(ChunkReceiver.CreateAck(30, 0), CancellationToken.None);
+                    transfer.Acknowledge(ChunkReceiver.CreateAck(30, 0));
             });
 
             (await Task.WhenAny(late, Task.Delay(TimeSpan.FromSeconds(5)))).Should().BeSameAs(late);
+        }
+
+        [Fact]
+        public async Task AckFlood_IsRefused_WithoutBlockingTheReader()
+        {
+            // The reader routes acks into a bounded channel (4 x the ack window). It used to wait
+            // when the channel was full; a reader waiting there reads nothing more, so neither the
+            // idle deadline nor a close ever reaches it. A transfer parked in its first send
+            // consumes nothing, so the ninth ack overflows a window-2 channel.
+            var sender = new ChunkSender(chunkThreshold: 100, ackWindow: 2);
+            var parked = new TaskCompletionSource();
+            var transfer = sender.StartTransfer(
+                sender.SplitIntoChunks(Result(31, 300)), (_, _) => parked.Task);
+            using var stop = new CancellationTokenSource();
+            var running = transfer.RunAsync(stop.Token);
+
+            var accepted = 0;
+            var flood = Task.Run(() =>
+            {
+                for (var i = 0; i < 9; i++)
+                {
+                    transfer.Acknowledge(ChunkReceiver.CreateAck(31, 0));
+                    accepted++;
+                }
+            });
+
+            await flood.Awaiting(t => t.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Should().ThrowAsync<InvalidOperationException>();
+            accepted.Should().Be(8, "control: acks up to the channel bound are taken");
+
+            // The connection ending stops the transfer; it never got the acks it needs.
+            stop.Cancel();
+            parked.SetResult();
+            await running.Awaiting(t => t.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Should().ThrowAsync<OperationCanceledException>();
         }
 
         [Fact]

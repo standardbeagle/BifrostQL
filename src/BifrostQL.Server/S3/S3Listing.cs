@@ -27,8 +27,8 @@ namespace BifrostQL.Server.S3
     /// <para><b>Objects resolve through the authorized read seam.</b> Rows come from
     /// <see cref="IQueryIntentExecutor"/>, so tenant isolation, soft-delete, row-scope
     /// policy, and column read guards all apply unconditionally — the lister builds no
-    /// tenant/policy predicate of its own; the only predicate it constructs is ordering
-    /// and it reads only the file-column pointer and primary key.</para>
+    /// tenant/policy predicate of its own; the only predicate it constructs is the
+    /// object-key window, and it reads only the file-column pointer and primary key.</para>
     ///
     /// <para><b>Only readable columns are projected.</b> The column set comes from
     /// <see cref="SchemaReadVisibility.ProjectTable(IDbTable, IDictionary{string, object?})"/>,
@@ -39,29 +39,36 @@ namespace BifrostQL.Server.S3
     /// <c>NoSuchBucket</c> on <c>ListObjectsV2</c>, the same as a bucket that does not exist.
     /// The same holds when every file column is denied.</para>
     ///
-    /// <para><b>Pagination is stable and bounded.</b> Objects are ordered by object key
-    /// (S3's ascending UTF-8 order; our keys are percent-encoded ASCII, so ordinal
-    /// string order is that byte order), prefix/delimiter grouping matches S3, and the
-    /// page is capped by <c>max-keys</c>. The resume position travels in an opaque,
-    /// integrity-protected <see cref="S3ContinuationToken"/> bound to the bucket,
-    /// prefix, delimiter, page size, and caller identity, so a tampered or cross-bucket
-    /// token fails closed. It expires <see cref="S3Options.ContinuationTokenTtl"/> after it
-    /// was issued.</para>
+    /// <para><b>Pagination is a keyset seek in S3 key order.</b> S3 lists in ascending
+    /// UTF-8 key order and clients (<c>aws s3 sync</c>, rclone) merge listings on that
+    /// assumption. Object keys are <c>column/pk</c> strings whose order is not the
+    /// database's PK order (integer keys sort "10" before "9"), so the database orders by
+    /// the key text itself: <see cref="ISqlDialect.ObjectKeyExpression"/> computes each
+    /// row's key suffix in SQL, byte for byte as <see cref="S3ObjectKeyMap"/> renders it,
+    /// under a binary collation. Keys are percent-encoded ASCII, so binary order is UTF-8
+    /// order on every engine (SQL Server's UTF-16 <c>_BIN2</c> included). A seek reads the
+    /// <c>max-keys + 1</c> rows after the resume position (<c>key &gt; @after</c>, the
+    /// prefix as <c>key &gt;= @prefix AND key &lt; @successor</c>, all parameters); the extra
+    /// row is the IsTruncated sentinel. Each file column is its own key range, visited in
+    /// key order. Every returned key is checked in C# against the seek's order and bounds,
+    /// and a disagreement fails the request rather than paging out of order.</para>
     ///
-    /// <para><b>Bound:</b> a page is computed by materializing the bucket's scoped,
-    /// prefix-filtered candidate set and slicing it — bounded by
-    /// <see cref="S3Options.MaxListMaterialize"/>. A bucket with more addressable
-    /// objects than that cap fails fast with a curated error rather than silently
-    /// truncating a listing (which would lie about completeness). Each page re-reads that
-    /// candidate set, so a full walk reads about N * ceil(N / max-keys) rows.</para>
+    /// <para><b>Delimiter roll-up runs in C#</b> over the ordered rows: once a
+    /// CommonPrefix is emitted, the next seek starts past every key under it, so a
+    /// rolled-up group costs one row, not its size. A page runs at most
+    /// <see cref="MaxSeeksPerPage"/> seeks; a page that needs more (long runs of rows
+    /// with no pointer, or many jumps) ends early as truncated with a token at the scan
+    /// position, which S3 permits. The resume position travels in an opaque,
+    /// integrity-protected <see cref="S3ContinuationToken"/> bound to the bucket, prefix,
+    /// delimiter, page size, and caller identity, so a tampered or cross-bucket token
+    /// fails closed. It expires <see cref="S3Options.ContinuationTokenTtl"/> after it was
+    /// issued.</para>
     ///
-    /// <para><b>Why not a primary-key seek.</b> S3 lists in UTF-8 key order and clients
-    /// (<c>aws s3 sync</c>, rclone) merge listings on that assumption. Object keys are
-    /// <c>column/pk</c> strings, whose order is not the database's PK order: integer keys
-    /// sort "10" before "9", and GUID and collation order differ too. A seek on the PK
-    /// would return pages out of key order, which a sync with <c>--delete</c> can act on
-    /// wrongly. A seek needs either a listing-order contract change (column, then PK
-    /// order) or an ORDER BY on a dialect-computed key expression; both are open.</para>
+    /// <para><b>Listable keys.</b> A key column must be an integer, UUID, or
+    /// variable-length text type (<see cref="S3ObjectKeyMap.SegmentKindOf"/>): those are
+    /// the types whose database text cast matches the C# key rendering. Listing a bucket
+    /// keyed by any other type (dates, decimals, fixed-length text) fails with a curated
+    /// error.</para>
     /// </summary>
     public sealed class S3Listing
     {
@@ -203,38 +210,233 @@ namespace BifrostQL.Server.S3
             else
                 resumeAfter = string.IsNullOrEmpty(startAfter) ? null : startAfter;
 
-            var allObjects = await MaterializeAsync(model, table, fileColumns, effectivePrefix, userContext, cancellationToken);
-
-            return BuildPage(
-                bucket, allObjects, effectivePrefix, delimiter, effectiveMaxKeys,
+            var request = new PageRequest(
+                bucket, effectivePrefix, string.IsNullOrEmpty(delimiter) ? null : delimiter, effectiveMaxKeys,
                 resumeAfter, continuationToken, startAfter, binding);
+            return await ListPageAsync(model, table, fileColumns, request, userContext, cancellationToken);
         }
 
-        // ---- materialization ------------------------------------------------------
+        // ---- keyset page --------------------------------------------------------------
+
+        /// <summary>The most database seeks one page may run before it ends early as truncated.</summary>
+        internal const int MaxSeeksPerPage = 32;
+
+        private sealed record PageRequest(
+            string Bucket, string Prefix, string? Delimiter, int MaxKeys, string? ResumeAfter,
+            string? EchoContinuationToken, string? EchoStartAfter, S3ListBinding Binding);
 
         /// <summary>
-        /// Reads every addressable object in the bucket through the authorized read
-        /// seam: the primary key plus each file-storage column, ordered by primary key
-        /// for a deterministic scan. Rows whose file column is null hold no object and
-        /// are skipped. Bounded by <see cref="S3Options.MaxListMaterialize"/>, narrowed by
-        /// the model's <c>max-query-rows</c> ceiling through <see cref="RowProbeWindow"/>.
+        /// Builds one S3 page by seeking through the bucket in object-key order. Each file
+        /// column is a key range of its own (<c>{column}/…</c>), visited in key order; within
+        /// one, every seek reads the next <c>max-keys + 1</c> rows after the scan position,
+        /// ordered and bounded in SQL on the dialect-computed key text. Delimiter roll-up
+        /// runs here: once a CommonPrefix is emitted (or lies at or before the resume
+        /// position), the scan jumps past every key under it.
         /// </summary>
-        private async Task<List<S3ObjectInfo>> MaterializeAsync(
-            IDbModel model, IDbTable table, IReadOnlyList<ColumnDto> fileColumns, string prefix,
+        private async Task<S3ListObjectsPage> ListPageAsync(
+            IDbModel model, IDbTable table, IReadOnlyList<ColumnDto> fileColumns, PageRequest request,
             IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         {
+            var contents = new List<S3ObjectInfo>();
+            var commonPrefixes = new List<string>();
             var keyColumns = table.KeyColumns.ToList();
-            if (keyColumns.Count == 0)
-                // A keyless table has no addressable rows; treat it as an empty bucket
-                // rather than throwing (it survived the file-column check by config).
-                return new List<S3ObjectInfo>();
 
-            // One past the cap, so we can detect (and fail fast on) a bucket that exceeds
-            // what this slice can page in memory. The window comes from the same clamp SQL
-            // generation applies: a hand-rolled MaxListMaterialize + 1 is cut to
-            // max-query-rows, the count never exceeds the cap, and a partial bucket lists
-            // as complete.
-            var window = RowProbeWindow.For(model, _options.MaxListMaterialize);
+            // A keyless table has no addressable rows: an empty bucket. A prefix outside
+            // ASCII matches nothing, because every key is percent-encoded ASCII.
+            if (keyColumns.Count == 0 || request.Prefix.Any(c => c > '\u007F'))
+                return Page(request, contents, commonPrefixes, nextToken: null);
+
+            if (keyColumns.Any(c => S3ObjectKeyMap.SegmentKindOf(c) == null))
+                throw S3ProtocolException.InvalidArgument(
+                    "This bucket's primary key type cannot be listed in object-key order.");
+
+            // Full-key bounds. The prefix is a fixed range; the scan position moves.
+            var prefixFrom = request.Prefix.Length > 0 ? request.Prefix : null;
+            var prefixBefore = request.Prefix.Length > 0 ? Successor(request.Prefix) : null;
+            var scan = new ScanPosition(request.ResumeAfter, null);
+
+            var window = RowProbeWindow.For(model, request.MaxKeys);
+            var seeks = 0;
+            var emitted = 0;
+            string? lastEmitted = null;
+
+            foreach (var column in fileColumns.OrderBy(S3ObjectKeyMap.ColumnPrefix, StringComparer.Ordinal))
+            {
+                var columnPrefix = S3ObjectKeyMap.ColumnPrefix(column);
+                while (true)
+                {
+                    var range = SuffixRange(columnPrefix, scan, prefixFrom, prefixBefore);
+                    if (range == null)
+                        break; // the scan has nothing left in this column's key range
+
+                    if (seeks == MaxSeeksPerPage)
+                    {
+                        // Bounded work per request: hand back what this page found, resuming
+                        // where the scan stopped. S3 allows a short (even empty) truncated page.
+                        var position = scan.Through ?? request.ResumeAfter ?? string.Empty;
+                        return Page(request, contents, commonPrefixes, Issue(position, request));
+                    }
+                    seeks++;
+
+                    var rows = await SeekAsync(table, keyColumns, column, range, window.Fetch, userContext, cancellationToken);
+                    string? previousKey = null;
+                    foreach (var row in rows)
+                    {
+                        var primaryKey = new object?[keyColumns.Count];
+                        for (var i = 0; i < keyColumns.Count; i++)
+                            row.TryGetValue(keyColumns[i].GraphQlName, out primaryKey[i]);
+                        var key = S3ObjectKeyMap.KeyFor(column, primaryKey);
+                        AssertKeyOrder(key, previousKey, columnPrefix, range);
+                        previousKey = key;
+
+                        // Rows the scan already jumped past (keys under an emitted
+                        // CommonPrefix) are skipped without moving it.
+                        if (!scan.Admits(key))
+                            continue;
+
+                        row.TryGetValue(column.GraphQlName, out var pointerValue);
+                        var pointer = pointerValue?.ToString();
+                        var metadata = string.IsNullOrWhiteSpace(pointer) ? null : FileMetadata.FromJson(pointer);
+                        if (metadata is null)
+                        {
+                            // A null or corrupt pointer is no object; the scan
+                            // still moves past it.
+                            scan = new ScanPosition(key, null);
+                            continue;
+                        }
+
+                        var commonPrefix = CommonPrefixOf(key, request.Prefix, request.Delimiter);
+                        var sortKey = commonPrefix ?? key;
+
+                        // Resume strictly after the cursor, on the representative key (a
+                        // CommonPrefix for a rolled-up key), so a page boundary on a
+                        // CommonPrefix skips that whole group instead of re-emitting it.
+                        var alreadyListed = request.ResumeAfter != null
+                            && string.CompareOrdinal(sortKey, request.ResumeAfter) <= 0;
+                        if (!alreadyListed)
+                        {
+                            if (emitted == request.MaxKeys)
+                            {
+                                // An item beyond a full page: the max-keys + 1 sentinel.
+                                var position = lastEmitted ?? request.ResumeAfter ?? string.Empty;
+                                return Page(request, contents, commonPrefixes, Issue(position, request));
+                            }
+
+                            if (commonPrefix == null)
+                                contents.Add(new S3ObjectInfo(key, metadata.UploadedAt, metadata.ETag, metadata.Size));
+                            else
+                                commonPrefixes.Add(commonPrefix);
+                            emitted++;
+                            lastEmitted = sortKey;
+                        }
+
+                        scan = commonPrefix == null
+                            ? new ScanPosition(key, null)
+                            : new ScanPosition(commonPrefix, Successor(commonPrefix));
+                    }
+
+                    if (rows.Count < window.Fetch)
+                        break; // the column's key range holds nothing past the last row read
+                }
+            }
+
+            return Page(request, contents, commonPrefixes, nextToken: null);
+        }
+
+        /// <summary>
+        /// Where the scan stands, on full object keys: everything at or before
+        /// <see cref="Through"/> has been scanned, and when <see cref="From"/> is set (a
+        /// jump past a CommonPrefix) every key below it has too.
+        /// </summary>
+        private readonly record struct ScanPosition(string? Through, string? From)
+        {
+            public bool Admits(string key) =>
+                (Through == null || string.CompareOrdinal(key, Through) > 0)
+                && (From == null || string.CompareOrdinal(key, From) >= 0);
+        }
+
+        /// <summary>
+        /// The scan's bounds in <paramref name="columnPrefix"/>'s suffix space (keys there
+        /// are <c>columnPrefix + suffix</c>), or null when none of that column's keys lie
+        /// inside them. A full-key bound B relates to the column's keys one of three ways:
+        /// B starts with the prefix (it becomes a bound on the suffix), B sorts below the
+        /// prefix (every key is above it), or B sorts above it (every key is below it).
+        /// </summary>
+        private static ObjectKeyRange? SuffixRange(string columnPrefix, ScanPosition scan, string? prefixFrom, string? prefixBefore)
+        {
+            string? after = null, from = null, before = null;
+
+            if (!LowerBound(columnPrefix, scan.Through, ref after)
+                || !LowerBound(columnPrefix, scan.From, ref from)
+                || !LowerBound(columnPrefix, prefixFrom, ref from))
+                return null;
+
+            if (prefixBefore != null)
+            {
+                if (prefixBefore.StartsWith(columnPrefix, StringComparison.Ordinal))
+                {
+                    before = prefixBefore[columnPrefix.Length..];
+                    if (before.Length == 0)
+                        return null;
+                }
+                else if (string.CompareOrdinal(prefixBefore, columnPrefix) < 0)
+                {
+                    return null;
+                }
+            }
+
+            return new ObjectKeyRange(after, from, before);
+        }
+
+        /// <summary>
+        /// Folds the full-key lower bound <paramref name="bound"/> into the suffix bound
+        /// <paramref name="suffixBound"/> (keeping the larger). False when the bound lies
+        /// above every key of the column.
+        /// </summary>
+        private static bool LowerBound(string columnPrefix, string? bound, ref string? suffixBound)
+        {
+            if (bound == null)
+                return true;
+            if (bound.StartsWith(columnPrefix, StringComparison.Ordinal))
+            {
+                var suffix = bound[columnPrefix.Length..];
+                if (suffixBound == null || string.CompareOrdinal(suffix, suffixBound) > 0)
+                    suffixBound = suffix;
+                return true;
+            }
+            return string.CompareOrdinal(bound, columnPrefix) < 0;
+        }
+
+        /// <summary>
+        /// The database's key order must be the C# key order, row for row: strictly
+        /// ascending, inside the seek's bounds, under the column prefix. A disagreement
+        /// (a dialect expression that drifted from <see cref="S3ObjectKeyMap"/>) would page
+        /// out of order or skip keys, so it fails the request instead.
+        /// </summary>
+        private static void AssertKeyOrder(string key, string? previousKey, string columnPrefix, ObjectKeyRange range)
+        {
+            var suffix = key.StartsWith(columnPrefix, StringComparison.Ordinal) ? key[columnPrefix.Length..] : null;
+            var inOrder = suffix != null
+                && (previousKey == null || string.CompareOrdinal(key, previousKey) > 0)
+                && (range.After == null || string.CompareOrdinal(suffix, range.After) > 0)
+                && (range.From == null || string.CompareOrdinal(suffix, range.From) >= 0)
+                && (range.Before == null || string.CompareOrdinal(suffix, range.Before) < 0);
+            if (!inOrder)
+                throw new InvalidOperationException(
+                    "The database returned object keys out of S3 key order; the dialect's object-key expression " +
+                    "does not match S3ObjectKeyMap.");
+        }
+
+        /// <summary>
+        /// One seek: the next <paramref name="fetch"/> rows of <paramref name="column"/>'s key
+        /// range inside <paramref name="range"/>, through the authorized read seam (tenant,
+        /// soft-delete, row policy, and column guards all apply), reading only the primary
+        /// key and the file-column pointer.
+        /// </summary>
+        private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> SeekAsync(
+            IDbTable table, IReadOnlyList<ColumnDto> keyColumns, ColumnDto column, ObjectKeyRange range, int fetch,
+            IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        {
             var query = new GqlObjectQuery
             {
                 DbTable = table,
@@ -242,13 +444,13 @@ namespace BifrostQL.Server.S3
                 TableName = table.DbName,
                 GraphQlName = table.GraphQlName,
                 Path = table.GraphQlName,
-                Sort = keyColumns.Select(c => $"{c.GraphQlName}_asc").ToList(),
-                Limit = window.Fetch,
+                Limit = fetch,
+                ObjectKeyRange = range,
             };
             foreach (var keyColumn in keyColumns)
                 query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.DbName, keyColumn.GraphQlName));
-            foreach (var fileColumn in fileColumns)
-                query.ScalarColumns.Add(new GqlObjectColumn(fileColumn.DbName, fileColumn.GraphQlName));
+            if (!keyColumns.Any(k => string.Equals(k.DbName, column.DbName, StringComparison.Ordinal)))
+                query.ScalarColumns.Add(new GqlObjectColumn(column.DbName, column.GraphQlName));
 
             var result = await _reads.ExecuteAsync(new QueryIntent
             {
@@ -256,144 +458,44 @@ namespace BifrostQL.Server.S3
                 UserContext = userContext,
                 Endpoint = _options.Endpoint,
             }, cancellationToken);
-
-            if (window.HasMore(result.Rows.Count))
-                throw S3ProtocolException.InvalidArgument(
-                    "This bucket has more objects than the endpoint is configured to list in a single scan.");
-
-            var objects = new List<S3ObjectInfo>();
-            foreach (var row in result.Rows)
-            {
-                var primaryKey = new object?[keyColumns.Count];
-                for (var i = 0; i < keyColumns.Count; i++)
-                    row.TryGetValue(keyColumns[i].GraphQlName, out primaryKey[i]);
-
-                foreach (var fileColumn in fileColumns)
-                {
-                    if (!row.TryGetValue(fileColumn.GraphQlName, out var pointerValue))
-                        continue;
-                    var pointer = pointerValue?.ToString();
-                    if (string.IsNullOrWhiteSpace(pointer))
-                        continue;
-
-                    var metadata = FileMetadata.FromJson(pointer);
-                    if (metadata is null)
-                        continue; // corrupt/unparseable pointer: not a listable object
-
-                    var key = S3ObjectKeyMap.KeyFor(fileColumn, primaryKey);
-                    if (!key.StartsWith(prefix, StringComparison.Ordinal))
-                        continue; // prefix filter applied before sort to bound the set
-
-                    objects.Add(new S3ObjectInfo(key, metadata.UploadedAt, metadata.ETag, metadata.Size));
-                }
-            }
-
-            objects.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
-            return objects;
+            return result.Rows;
         }
-
-        // ---- prefix/delimiter/page assembly ---------------------------------------
 
         /// <summary>
-        /// Slices the sorted candidate set into one S3 page: applies delimiter roll-up
-        /// into CommonPrefixes, resumes strictly after <paramref name="resumeAfter"/>,
-        /// and caps the page at <paramref name="maxKeys"/> (keys and common prefixes
-        /// counted together, as S3 does). The resume comparison uses each item's
-        /// REPRESENTATIVE sort key — the common-prefix string for a rolled-up key —
-        /// so a page boundary that lands on a CommonPrefix skips that whole group on
-        /// resume instead of re-emitting it.
+        /// The CommonPrefix <paramref name="key"/> rolls up into: the prefix plus the
+        /// remainder up to and including the first delimiter, or null when there is no
+        /// delimiter or the remainder holds none.
         /// </summary>
-        private S3ListObjectsPage BuildPage(
-            string bucket, List<S3ObjectInfo> allObjects, string prefix, string? delimiter,
-            int maxKeys, string? resumeAfter, string? echoContinuationToken, string? echoStartAfter,
-            S3ListBinding binding)
+        private static string? CommonPrefixOf(string key, string prefix, string? delimiter)
         {
-            var hasDelimiter = !string.IsNullOrEmpty(delimiter);
-            var contents = new List<S3ObjectInfo>();
-            var commonPrefixes = new List<string>();
-            var seenPrefixes = new HashSet<string>(StringComparer.Ordinal);
-            var truncated = false;
-            string? lastSortKey = null;
-            var emitted = 0;
+            if (delimiter == null)
+                return null;
+            var idx = key.IndexOf(delimiter, prefix.Length, StringComparison.Ordinal);
+            return idx < 0 ? null : key[..(idx + delimiter.Length)];
+        }
 
-            foreach (var obj in allObjects)
-            {
-                // allObjects is already prefix-filtered in MaterializeAsync.
-                string sortKey;
-                var isPrefix = false;
-                string? commonPrefix = null;
+        /// <summary>
+        /// The least string above every string that starts with <paramref name="value"/>:
+        /// its last character incremented. Exact for object keys, which are ASCII.
+        /// </summary>
+        private static string Successor(string value) => value[..^1] + (char)(value[^1] + 1);
 
-                if (hasDelimiter)
-                {
-                    var remainder = obj.Key[prefix.Length..];
-                    var idx = remainder.IndexOf(delimiter!, StringComparison.Ordinal);
-                    if (idx >= 0)
-                    {
-                        commonPrefix = prefix + remainder[..(idx + delimiter!.Length)];
-                        sortKey = commonPrefix;
-                        isPrefix = true;
-                    }
-                    else
-                    {
-                        sortKey = obj.Key;
-                    }
-                }
-                else
-                {
-                    sortKey = obj.Key;
-                }
+        private string Issue(string position, PageRequest request)
+            => S3ContinuationToken.Issue(position, _clock.GetUtcNow(), request.Binding, _tokenSecret);
 
-                // Resume strictly after the cursor position, on the representative key.
-                if (resumeAfter != null && string.CompareOrdinal(sortKey, resumeAfter) <= 0)
-                    continue;
-
-                // A key rolling into a prefix already emitted in THIS page is not a new
-                // item — skip it before it can count toward the page or trip truncation.
-                if (isPrefix && seenPrefixes.Contains(commonPrefix!))
-                    continue;
-
-                if (emitted == maxKeys)
-                {
-                    // There is at least one more item beyond this full page.
-                    truncated = true;
-                    break;
-                }
-
-                if (isPrefix)
-                {
-                    seenPrefixes.Add(commonPrefix!);
-                    commonPrefixes.Add(commonPrefix!);
-                }
-                else
-                {
-                    contents.Add(obj);
-                }
-
-                emitted++;
-                lastSortKey = sortKey;
-            }
-
-            string? nextToken = null;
-            if (truncated)
-            {
-                // lastSortKey is null only for the degenerate max-keys=0 poll; resume
-                // from the same position so the client makes no phantom progress.
-                var position = lastSortKey ?? resumeAfter ?? string.Empty;
-                nextToken = S3ContinuationToken.Issue(position, _clock.GetUtcNow(), binding, _tokenSecret);
-            }
-
-            return new S3ListObjectsPage(
-                Bucket: bucket,
-                Prefix: prefix,
-                Delimiter: string.IsNullOrEmpty(delimiter) ? null : delimiter,
-                MaxKeys: maxKeys,
-                IsTruncated: truncated,
+        private static S3ListObjectsPage Page(
+            PageRequest request, List<S3ObjectInfo> contents, List<string> commonPrefixes, string? nextToken)
+            => new(
+                Bucket: request.Bucket,
+                Prefix: request.Prefix,
+                Delimiter: request.Delimiter,
+                MaxKeys: request.MaxKeys,
+                IsTruncated: nextToken != null,
                 Objects: contents,
                 CommonPrefixes: commonPrefixes,
-                ContinuationToken: string.IsNullOrEmpty(echoContinuationToken) ? null : echoContinuationToken,
+                ContinuationToken: string.IsNullOrEmpty(request.EchoContinuationToken) ? null : request.EchoContinuationToken,
                 NextContinuationToken: nextToken,
-                StartAfter: string.IsNullOrEmpty(echoStartAfter) ? null : echoStartAfter);
-        }
+                StartAfter: string.IsNullOrEmpty(request.EchoStartAfter) ? null : request.EchoStartAfter);
 
         // ---- policy / configuration helpers ---------------------------------------
 

@@ -85,16 +85,15 @@ namespace BifrostQL.Server.Test.S3
 
         public async Task DisposeAsync() => await _harness.DisposeAsync();
 
-        private S3Options Options(int maxListMaterialize = 10_000, int maxKeysLimit = 1000) => new()
+        private S3Options Options(int maxKeysLimit = 1000) => new()
         {
             Endpoint = Endpoint,
             ContinuationTokenSecret = TokenSecret,
-            MaxListMaterialize = maxListMaterialize,
             MaxKeysLimit = maxKeysLimit,
         };
 
-        private S3Listing Lister(int maxListMaterialize = 10_000, int maxKeysLimit = 1000)
-            => _harness.Listing(Options(maxListMaterialize, maxKeysLimit));
+        private S3Listing Lister(int maxKeysLimit = 1000)
+            => _harness.Listing(Options(maxKeysLimit));
 
         private static Dictionary<string, object?> Ctx(string userId, string? tenant = null, params string[] roles)
         {
@@ -348,41 +347,36 @@ namespace BifrostQL.Server.Test.S3
             await act.Should().ThrowAsync<S3ProtocolException>();
         }
 
-        // ---- materialization bound ------------------------------------------------
+        // ---- row ceiling ----------------------------------------------------------
 
         [Fact]
-        public async Task ListObjectsV2_fails_fast_when_the_bucket_exceeds_the_scan_cap()
+        public async Task ListObjectsV2_under_a_max_query_rows_ceiling_below_max_keys_still_walks_every_key()
         {
-            // tenant-b has more than one object; a cap of 1 must fail fast rather than
-            // silently truncate (which would lie about completeness).
-            var act = async () => await Lister(maxListMaterialize: 1).ListObjectsV2Async(
-                "documents", null, null, null, null, null, Ctx("user-b", "tenant-b"));
-
-            (await act.Should().ThrowAsync<S3ProtocolException>()).Which.Code.Should().Be("InvalidArgument");
-        }
-
-        [Fact]
-        public async Task ListObjectsV2_fails_fast_when_max_query_rows_cuts_the_scan_below_the_cap()
-        {
-            // max-query-rows (3) sits below MaxListMaterialize (10). A scan LIMIT of
-            // MaxListMaterialize + 1 is clamped to 3 inside SQL generation, so a row count
-            // compared against 10 never trips and tenant-b's 11 visible rows list as 3
-            // objects with IsTruncated=false. The probe must come from the clamped window.
+            // max-query-rows 3 sits below the requested 1000 keys. Every seek is clamped to
+            // 3 rows inside SQL generation, so a page that trusted one seek to hold a whole
+            // page would end after 3 rows. The walk must reach all 11 of tenant-b's visible
+            // objects, in key order, each once, and say IsTruncated=false only at the end.
             var rules = MetadataRules.Append(":root { max-query-rows: 3 }").ToArray();
             await using var harness = await S3ListingRealDbHarness.StartAsync(
-                nameof(ListObjectsV2_fails_fast_when_max_query_rows_cuts_the_scan_below_the_cap), rules, SeedSql());
-            var lister = harness.Listing(Options(maxListMaterialize: 10));
+                nameof(ListObjectsV2_under_a_max_query_rows_ceiling_below_max_keys_still_walks_every_key), rules, SeedSql());
+            var lister = harness.Listing(Options());
+            var ctx = Ctx("user-b", "tenant-b");
 
-            var act = async () => await lister.ListObjectsV2Async(
-                "documents", null, null, null, null, null, Ctx("user-b", "tenant-b"));
-            (await act.Should().ThrowAsync<S3ProtocolException>()).Which.Code.Should().Be("InvalidArgument");
+            var seen = new List<string>();
+            var truncation = new List<bool>();
+            string? token = null;
+            do
+            {
+                var page = await lister.ListObjectsV2Async("documents", null, null, 1000, token, null, ctx);
+                seen.AddRange(page.Objects.Select(o => o.Key));
+                truncation.Add(page.IsTruncated);
+                token = page.NextContinuationToken;
+                truncation.Count.Should().BeLessThan(20, "pagination must terminate");
+            } while (token is not null);
 
-            // Control: tenant-a's 2 rows fit under the clamped page (3 - 1 sentinel), so
-            // the same lister still answers with every object.
-            var page = await lister.ListObjectsV2Async(
-                "documents", null, null, null, null, null, Ctx("user-a", "tenant-a"));
-            page.Objects.Select(o => o.Key).Should().BeEquivalentTo("body/1", "body/2", "thumbnail/1");
-            page.IsTruncated.Should().BeFalse();
+            seen.Should().Equal(new[] { 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14 }
+                .Select(i => $"body/{i}").OrderBy(k => k, StringComparer.Ordinal));
+            truncation.Should().ContainSingle(t => !t).And.EndWith(false);
         }
     }
 }

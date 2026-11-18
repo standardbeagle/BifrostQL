@@ -74,13 +74,6 @@ namespace BifrostQL.Server.S3
         public int MaxKeysLimit { get; set; } = 1000;
 
         /// <summary>
-        /// Maximum number of candidate rows a single ListObjectsV2 scan may materialize.
-        /// A bucket with more addressable objects than this fails fast rather than
-        /// returning a silently truncated (and therefore lying) listing.
-        /// </summary>
-        public int MaxListMaterialize { get; set; } = 10_000;
-
-        /// <summary>
         /// Optional HMAC secret binding and integrity-protecting continuation tokens.
         /// When set, tokens survive restarts and resolve across a scaled fleet; when
         /// unset, a per-instance random key is generated (tokens then live only for the

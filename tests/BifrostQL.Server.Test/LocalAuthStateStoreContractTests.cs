@@ -263,6 +263,28 @@ namespace BifrostQL.Server.Test
         }
 
         [Theory, MemberData(nameof(Backends))]
+        public async Task ClearFailuresUnlessLocked_ClearsAnUnlockedCount_AndRefusesALiveLock(string backend)
+        {
+            var store = Make(backend);
+            await store.RecordFailedLoginAsync("alice", T0, 3, T0.AddMinutes(30), None);
+            await store.RecordFailedLoginAsync("alice", T0, 3, T0.AddMinutes(30), None);
+            await store.RecordFailedLoginAsync("bob", T0, 1, T0.AddMinutes(30), None);
+            await store.RecordFailedLoginAsync("carol", T0, 1, T0.AddMinutes(30), None);
+
+            (await store.ClearFailuresUnlessLockedAsync("alice", T0.AddMinutes(1), None)).Should().BeTrue();
+            (await store.GetLockoutAsync("alice", None)).Should().Be(LocalLockoutState.None, "control: a count is cleared");
+
+            (await store.ClearFailuresUnlessLockedAsync("bob", T0.AddMinutes(1), None)).Should().BeFalse(
+                "a lock taken a moment before the success must not be undone by it");
+            (await store.GetLockoutAsync("bob", None)).Should().Be(new LocalLockoutState(0, T0.AddMinutes(30)));
+
+            (await store.ClearFailuresUnlessLockedAsync("carol", T0.AddMinutes(30), None)).Should().BeTrue();
+            (await store.GetLockoutAsync("carol", None)).Should().Be(LocalLockoutState.None, "a lapsed lock is cleared");
+
+            (await store.ClearFailuresUnlessLockedAsync("dave", T0, None)).Should().BeTrue("no row is not a lock");
+        }
+
+        [Theory, MemberData(nameof(Backends))]
         public async Task AnIndefiniteLock_RoundTrips(string backend)
         {
             var store = Make(backend);

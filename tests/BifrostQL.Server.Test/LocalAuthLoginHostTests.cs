@@ -447,6 +447,27 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public async Task RightPassword_DoesNotUndoALockTakenAfterTheLockoutCheck()
+        {
+            // A concurrent wrong guess locks the account between this login's lockout read and its
+            // success path. The success must not wipe that lock.
+            var racing = new LockoutRacingStateStore();
+            var client = await StartForLockoutAsync(o => o.LockoutThreshold = 1,
+                s => s.AddSingleton<ILocalAuthStateStore>(racing));
+            racing.AfterFirstLockoutRead = (inner, userId) =>
+                inner.RecordFailedLoginAsync(userId, _clock.GetUtcNow(), 1, _clock.GetUtcNow().AddMinutes(30), CancellationToken.None);
+
+            var login = await PostLoginAsync(client, Password, "10.0.0.1");
+
+            login.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "the account was locked before this success could clear its failures");
+            (await racing.GetLockoutAsync("user-1", CancellationToken.None)).IsLockedAt(_clock.GetUtcNow())
+                .Should().BeTrue("a success must not undo a lock taken a moment before it");
+            (await racing.ReadAuditAsync(DateTimeOffset.MinValue, 100, CancellationToken.None)).Should()
+                .Contain(e => e.Kind == AuthAuditKind.LoginFailed && e.Reason == AuthAuditReasons.AccountLocked);
+        }
+
+        [Fact]
         public async Task LapsedLock_ClearedOnce_KeepsAFailureCountedInBetween_AndAuditsOneUnlock()
         {
             // Two requests read the same lapsed lock. The other one clears it and counts its own wrong
@@ -854,6 +875,8 @@ namespace BifrostQL.Server.Test
             public Task ClearLockoutAsync(string userId, CancellationToken ct) => _inner.ClearLockoutAsync(userId, ct);
             public Task<bool> ClearExpiredLockoutAsync(string userId, DateTimeOffset now, CancellationToken ct) =>
                 _inner.ClearExpiredLockoutAsync(userId, now, ct);
+            public Task<bool> ClearFailuresUnlessLockedAsync(string userId, DateTimeOffset now, CancellationToken ct) =>
+                _inner.ClearFailuresUnlessLockedAsync(userId, now, ct);
             public Task<IReadOnlyList<LocalPasswordHistoryEntry>> GetPasswordHistoryAsync(string userId, int maxEntries, CancellationToken ct) =>
                 _inner.GetPasswordHistoryAsync(userId, maxEntries, ct);
             public Task AppendPasswordHistoryAsync(string userId, string passwordHash, DateTimeOffset changedAt, int keep, CancellationToken ct) =>

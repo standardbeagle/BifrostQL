@@ -152,7 +152,9 @@ namespace BifrostQL.Server.Auth
             }
 
             var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
-            await state.ClearLockoutAsync(result.Account.UserId, ct).ConfigureAwait(false);
+            if (await RefuseLockedSinceCheckAsync(context, result.Account.UserId, AuthAuditKind.LoginFailed, now, sourceIp)
+                    .ConfigureAwait(false))
+                return;
 
             // Past the lockout check, so a login never rewrites a locked account's row. A rehash keeps
             // the same password: the user's live sessions follow the new stamp instead of reading it
@@ -211,6 +213,25 @@ namespace BifrostQL.Server.Auth
                     account.UserId, null, sourceIp, AuthAuditReasons.LockoutExpired, ct).ConfigureAwait(false);
             }
             return false;
+        }
+
+        /// <summary>
+        /// The success half of the lockout: clears the failure count of an account whose password just
+        /// verified, unless a concurrent failure locked it after <see cref="RefuseLockedAsync"/> read the
+        /// lockout. Then the attempt is refused like any locked one (401, audited as
+        /// <paramref name="kind"/>) and the lock stands. Returns true when the response is written.
+        /// </summary>
+        private static async Task<bool> RefuseLockedSinceCheckAsync(
+            HttpContext context, string userId, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
+        {
+            var ct = context.RequestAborted;
+            if (await context.RequestServices.GetRequiredService<ILocalAuthStateStore>()
+                    .ClearFailuresUnlessLockedAsync(userId, now, ct).ConfigureAwait(false))
+                return false;
+            await context.RequestServices.GetRequiredService<LocalAuthAudit>().RecordAsync(now, kind,
+                AuthAuditOutcome.Failure, userId, null, sourceIp, AuthAuditReasons.AccountLocked, ct).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return true;
         }
 
         /// <summary>
@@ -442,7 +463,9 @@ namespace BifrostQL.Server.Auth
             var options = context.RequestServices.GetRequiredService<LocalAuthOptions>();
             var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
             var audit = context.RequestServices.GetRequiredService<LocalAuthAudit>();
-            await state.ClearLockoutAsync(userId, ct).ConfigureAwait(false);
+            if (await RefuseLockedSinceCheckAsync(context, userId, AuthAuditKind.PasswordChangeRejected, now, sourceIp)
+                    .ConfigureAwait(false))
+                return;
 
             var violation = await PasswordPolicyViolationAsync(
                 options, state, store, request.Login, userId, request.CurrentPassword, request.NewPassword, ct).ConfigureAwait(false);

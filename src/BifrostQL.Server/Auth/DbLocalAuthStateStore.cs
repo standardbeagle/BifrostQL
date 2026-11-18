@@ -325,6 +325,30 @@ namespace BifrostQL.Server.Auth
                 new Dictionary<string, object?> { ["user"] = userId }, 0, cancellationToken).ConfigureAwait(false);
         }
 
+        public async Task<bool> ClearFailuresUnlessLockedAsync(string userId, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            for (var attempt = 0; attempt < MaxOptimisticAttempts; attempt++)
+            {
+                var deleted = await RunAsync(
+                    $"DELETE FROM {Table(LockoutsTable)} WHERE {Col("user_id")} = @user " +
+                    $"AND ({Col("locked_until")} IS NULL OR {Col("locked_until")} <= @now)",
+                    new Dictionary<string, object?> { ["user"] = userId, ["now"] = Stamp(now) }, 0, cancellationToken)
+                    .ConfigureAwait(false);
+                if (deleted.RowsAffected > 0)
+                    return true;
+                // Nothing deleted: no row, or a lock in force. A row that appeared unlocked since the
+                // delete is a concurrent failure; go round and clear it.
+                var current = await ReadLockoutRowAsync(userId, cancellationToken).ConfigureAwait(false);
+                if (current is null)
+                    return true;
+                if (current.State.IsLockedAt(now))
+                    return false;
+            }
+
+            throw new InvalidOperationException(
+                $"The lockout counter could not be cleared after {MaxOptimisticAttempts} concurrent attempts.");
+        }
+
         public async Task<bool> ClearExpiredLockoutAsync(string userId, DateTimeOffset now, CancellationToken cancellationToken)
         {
             // Stamps are fixed-width UTC round-trip text, so the comparison orders like the instants.

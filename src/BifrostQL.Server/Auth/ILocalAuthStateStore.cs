@@ -71,8 +71,15 @@ namespace BifrostQL.Server.Auth
         Task<LocalFailedLoginResult> RecordFailedLoginAsync(
             string userId, DateTimeOffset at, int threshold, DateTimeOffset lockedUntil, CancellationToken cancellationToken);
 
-        /// <summary>Clears the user's failure count and any lock (successful login, administrator unlock).</summary>
+        /// <summary>Clears the user's failure count and any lock (administrator unlock).</summary>
         Task ClearLockoutAsync(string userId, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// After a verified password: clears the user's failure count and any lapsed lock, unless a lock
+        /// is in force at <paramref name="now"/>. Returns false, changing nothing, when one is, so a lock
+        /// a concurrent failure took after the caller's lockout check is not undone by the success.
+        /// </summary>
+        Task<bool> ClearFailuresUnlessLockedAsync(string userId, DateTimeOffset now, CancellationToken cancellationToken);
 
         /// <summary>
         /// Deletes the user's lockout row only while it holds a lock that lapsed at or before

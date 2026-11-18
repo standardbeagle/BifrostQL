@@ -51,64 +51,70 @@ namespace BifrostQL.Server.Resp
         /// one key, and a linear scan over <see cref="IDbModel.Tables"/> per key is the single
         /// hottest lookup on the command path. Keyed by model identity so a reloaded model's
         /// fresh instance builds a fresh index and the old one falls away with the old model.
-        /// A name that matches MORE THAN ONE table (same bare name in two schemas, or one
-        /// table's DbName colliding with another's GraphQL name) is recorded as ambiguous and
-        /// FAILS the lookup — silently binding the first model-order table would mis-target
-        /// columns, policy metadata and the write target (same fail-fast contract as
-        /// <c>DbModel.GetTableFromDbName</c>).
+        /// Each name maps to EVERY distinct table it matches (DB or GraphQL name, same bare name
+        /// in two schemas). Whether the name is ambiguous is decided by the caller over the set
+        /// it may consider: the full schema for a write, the caller's readable tables for a read.
         /// </summary>
-        private sealed record RespTableIndex(
-            IReadOnlyDictionary<string, IDbTable> ByName,
-            IReadOnlySet<string> Ambiguous);
+        private sealed record RespTableIndex(IReadOnlyDictionary<string, IDbTable[]> ByName);
 
         private static readonly ConditionalWeakTable<IDbModel, RespTableIndex> TableIndexCache = new();
 
         /// <summary>
         /// The one rule that turns a RESP table token (a key's first segment, a SCAN MATCH prefix)
-        /// into an <see cref="IDbTable"/>: DB or GraphQL name, case-insensitive. A token naming
-        /// more than one table (same name in two schemas) resolves to nothing, never to whichever
-        /// enumerates first.
+        /// into an <see cref="IDbTable"/> over the FULL schema: DB or GraphQL name,
+        /// case-insensitive. A token naming more than one table (same name in two schemas)
+        /// resolves to nothing, never to whichever enumerates first. Writes use this (invariant 7).
         /// </summary>
         public static bool TryResolveTable(
             IDbModel model, string token, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table,
             [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
-        {
-            var index = GetTableIndex(model);
-            if (index.Ambiguous.Contains(token))
-            {
-                table = null;
-                error = $"{RespProtocol.ErrPrefix}table name '{token}' is ambiguous: more than one table matches; " +
-                        "give the tables distinct names to address them over RESP";
-                return false;
-            }
-            if (!index.ByName.TryGetValue(token, out table))
-            {
-                error = UnknownTableError(token);
-                return false;
-            }
-            error = null;
-            return true;
-        }
+            => TryPickOne(token, Candidates(model, token), out table, out error);
 
         /// <summary>
-        /// <see cref="TryResolveTable"/> for a READ: a table the caller may not read
-        /// (<see cref="SchemaReadVisibility.ProjectTable"/>) answers the unknown-table error, byte for
-        /// byte, so a read cannot tell a denied table from a missing one (invariant 9). Writes resolve
-        /// against the full schema through <see cref="TryResolveTable"/> and let the pipeline decide
-        /// (invariant 7).
+        /// <see cref="TryResolveTable"/> for a READ, decided over the tables the caller may read
+        /// (<see cref="SchemaReadVisibility.ProjectTable"/>), as
+        /// <see cref="SchemaReadVisibility.FindByClientName"/> decides. Visibility filters FIRST:
+        /// a name whose every match is hidden answers the unknown-table error byte for byte, so a
+        /// read cannot tell a denied table from a missing one, nor learn that two hidden tables
+        /// share a name (invariant 9). A name with one readable match resolves to it, whatever
+        /// hidden tables share the name. Writes resolve against the full schema through
+        /// <see cref="TryResolveTable"/> and let the pipeline decide (invariant 7).
         /// </summary>
         public static bool TryResolveReadableTable(
             IDbModel model, string token, IDictionary<string, object?> readerContext,
             [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table,
             [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
         {
-            if (!TryResolveTable(model, token, out table, out error))
-                return false;
-            if (SchemaReadVisibility.ProjectTable(table, readerContext) is not null)
-                return true;
-            table = null;
-            error = UnknownTableError(token);
-            return false;
+            var readable = Candidates(model, token)
+                .Where(t => SchemaReadVisibility.ProjectTable(t, readerContext) is not null)
+                .ToArray();
+            return TryPickOne(token, readable, out table, out error);
+        }
+
+        private static IDbTable[] Candidates(IDbModel model, string token) =>
+            GetTableIndex(model).ByName.TryGetValue(token, out var tables) ? tables : Array.Empty<IDbTable>();
+
+        private static bool TryPickOne(
+            string token, IDbTable[] candidates,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDbTable? table,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] out string? error)
+        {
+            switch (candidates.Length)
+            {
+                case 1:
+                    table = candidates[0];
+                    error = null;
+                    return true;
+                case 0:
+                    table = null;
+                    error = UnknownTableError(token);
+                    return false;
+                default:
+                    table = null;
+                    error = $"{RespProtocol.ErrPrefix}table name '{token}' is ambiguous: more than one table matches; " +
+                            "give the tables distinct names to address them over RESP";
+                    return false;
+            }
         }
 
         private static string UnknownTableError(string token) => $"{RespProtocol.ErrPrefix}unknown table '{token}'";
@@ -116,26 +122,22 @@ namespace BifrostQL.Server.Resp
         private static RespTableIndex GetTableIndex(IDbModel model) =>
             TableIndexCache.GetValue(model, static m =>
             {
-                var byName = new Dictionary<string, IDbTable>(StringComparer.OrdinalIgnoreCase);
-                var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var byName = new Dictionary<string, List<IDbTable>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var table in m.Tables)
                 {
                     Register(table.DbName, table);
                     Register(table.GraphQlName, table);
                 }
-                return new RespTableIndex(byName, ambiguous);
+                return new RespTableIndex(byName.ToDictionary(
+                    kv => kv.Key, kv => kv.Value.ToArray(), StringComparer.OrdinalIgnoreCase));
 
                 void Register(string name, IDbTable table)
                 {
-                    if (byName.TryGetValue(name, out var existing))
-                    {
-                        if (!ReferenceEquals(existing, table))
-                            ambiguous.Add(name);
-                    }
-                    else
-                    {
-                        byName.Add(name, table);
-                    }
+                    if (!byName.TryGetValue(name, out var tables))
+                        byName[name] = tables = new List<IDbTable>(1);
+                    // A table whose DbName equals its GraphQL name registers twice under one key.
+                    if (!tables.Any(t => ReferenceEquals(t, table)))
+                        tables.Add(table);
                 }
             });
 
@@ -223,11 +225,13 @@ namespace BifrostQL.Server.Resp
         {
             var results = new IReadOnlyDictionary<string, object?>?[keys.Count];
 
-            var groups = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            // Grouped by table IDENTITY, never by DbName: two schemas can each hold a table of that
+            // name, and a name-keyed group read every key from its first key's table.
+            var groups = new Dictionary<IDbTable, List<int>>(ReferenceEqualityComparer.Instance);
             for (var i = 0; i < keys.Count; i++)
             {
-                if (!groups.TryGetValue(keys[i].Table.DbName, out var indices))
-                    groups[keys[i].Table.DbName] = indices = new List<int>();
+                if (!groups.TryGetValue(keys[i].Table, out var indices))
+                    groups[keys[i].Table] = indices = new List<int>();
                 indices.Add(i);
             }
 

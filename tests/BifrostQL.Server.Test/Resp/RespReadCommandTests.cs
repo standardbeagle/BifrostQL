@@ -269,6 +269,70 @@ namespace BifrostQL.Server.Test.Resp
             reply.Should().BeOfType<RespError>().Which.Message.Should().StartWith("NOAUTH");
         }
 
+        [Fact]
+        public async Task MGet_SameDbNameInTwoSchemas_ReadsEachTableItsOwnKeys()
+        {
+            // Two tables named users in different schemas, addressed by their distinct GraphQL
+            // names. Grouping the batch by the bare DbName folded both keys into one group and
+            // read them all from the first key's table, so the audit key was answered from sales.
+            var sales = FakeTable("users", "sales", "sales_users", Col("id", "int", 1, pk: true));
+            var audit = FakeTable("users", "audit", "audit_users", Col("id", "int", 1, pk: true));
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { sales, audit });
+            var (executor, ctx) = Arrange(Tenant1, model);
+
+            var reply = await new RespMGetCommandHandler().HandleAsync(
+                Ctx(ctx, "MGET", "sales_users:1", "audit_users:2"), CancellationToken.None);
+
+            reply.Should().BeOfType<RespArray>().Which.Items!.Should().HaveCount(2);
+            executor.Intents.Select(i => i.Query.DbTable)
+                .Should().HaveCount(2).And.Contain(sales).And.Contain(audit,
+                    "each table's key is read from that table, never from a same-named sibling");
+        }
+
+        [Fact]
+        public async Task Get_SharedNameWhereNeitherTableIsReadable_AnswersUnknownTable()
+        {
+            // Invariant 9: the ambiguity check ran before visibility, so a caller who can read
+            // neither table learned that two tables carry the name.
+            var hiddenA = Denied(FakeTable("users", "sales", Col("id", "int", 1, pk: true)));
+            var hiddenB = Denied(FakeTable("users", "audit", Col("id", "int", 1, pk: true)));
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { hiddenA, hiddenB });
+            var (executor, ctx) = Arrange(Tenant1, model);
+
+            var shared = await new RespGetCommandHandler().HandleAsync(Ctx(ctx, "GET", "users:1"), CancellationToken.None);
+            var missing = await new RespGetCommandHandler().HandleAsync(Ctx(ctx, "GET", "ghosts:1"), CancellationToken.None);
+
+            shared.Should().BeOfType<RespError>().Which.Message
+                .Should().Be(missing.Should().BeOfType<RespError>().Which.Message.Replace("ghosts", "users"));
+            executor.Intents.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task Get_SharedNameWhereOnlyOneTableIsReadable_ResolvesTheReadableOne()
+        {
+            // A hidden same-named table must not change the answer: the readable one resolves,
+            // exactly as SchemaReadVisibility.FindByClientName decides over the visible set.
+            var readable = FakeTable("users", "sales", Col("id", "int", 1, pk: true), Col("name", "varchar", 2));
+            var hidden = Denied(FakeTable("users", "audit", Col("id", "int", 1, pk: true)));
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { hidden, readable });
+            var (executor, ctx) = Arrange(Tenant1, model);
+
+            var reply = await new RespGetCommandHandler().HandleAsync(Ctx(ctx, "GET", "users:1"), CancellationToken.None);
+
+            BulkText(reply).Should().Contain("\"name\":\"alice\"");
+            executor.Intents.Should().ContainSingle().Which.Query.DbTable.Should().BeSameAs(readable);
+        }
+
+        // A table no non-admin identity may read: deny-by-default with no granted action.
+        private static IDbTable Denied(IDbTable table)
+        {
+            table.GetMetadataValue(MetadataKeys.Policy.Default).Returns("deny");
+            return table;
+        }
+
         // ---- fixtures -------------------------------------------------------
 
         private static readonly IDictionary<string, object?> Tenant1 =
@@ -322,11 +386,14 @@ namespace BifrostQL.Server.Test.Resp
         private static IDbTable FakeTable(string name, params ColumnDto[] columns) =>
             FakeTable(name, "dbo", columns);
 
-        private static IDbTable FakeTable(string name, string schema, params ColumnDto[] columns)
+        private static IDbTable FakeTable(string name, string schema, params ColumnDto[] columns) =>
+            FakeTable(name, schema, name, columns);
+
+        private static IDbTable FakeTable(string name, string schema, string graphQlName, params ColumnDto[] columns)
         {
             var t = Substitute.For<IDbTable>();
             t.DbName.Returns(name);
-            t.GraphQlName.Returns(name);
+            t.GraphQlName.Returns(graphQlName);
             t.TableSchema.Returns(schema);
             t.Columns.Returns(columns);
             t.KeyColumns.Returns(columns.Where(c => c.IsPrimaryKey));

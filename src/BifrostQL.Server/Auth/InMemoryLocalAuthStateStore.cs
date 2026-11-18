@@ -6,8 +6,8 @@ namespace BifrostQL.Server.Auth
     /// <summary>
     /// <see cref="ILocalAuthStateStore"/> held in process memory. <b>For tests and single-process
     /// development only.</b> Sessions, lockouts, password history and the audit trail are lost on
-    /// restart and are not shared between nodes, so a restart silently ends every lockout and
-    /// erases the audit trail: no compliance control holds on this store. Production deployments
+    /// restart and are not shared between nodes, so a restart silently ends every lockout, erases
+    /// the audit trail and forgets every enrolled second factor: no compliance control holds on this store. Production deployments
     /// use <see cref="DbLocalAuthStateStore"/> (the default <c>AddBifrostLocalAuth</c> registers).
     ///
     /// <para>The audit trail is capped at <see cref="MaxAuditEvents"/>; past it every append throws,
@@ -21,6 +21,8 @@ namespace BifrostQL.Server.Auth
         private readonly ConcurrentDictionary<string, LocalSession> _sessions = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, LockoutRow> _lockouts = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, ImmutableList<LocalPasswordHistoryEntry>> _history = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, LocalMfaState> _mfa = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, LocalMfaChallenge> _challenges = new(StringComparer.Ordinal);
         private ImmutableList<AuthAuditEvent> _audit = ImmutableList<AuthAuditEvent>.Empty;
 
         private sealed record LockoutRow(LocalLockoutState State, int Version);
@@ -180,6 +182,52 @@ namespace BifrostQL.Server.Auth
                 .Take(maxRows)
                 .ToList();
             return Task.FromResult(events);
+        }
+
+        public Task<LocalMfaState?> GetMfaAsync(string userId, CancellationToken cancellationToken)
+            => Task.FromResult(_mfa.TryGetValue(userId, out var state) ? state : null);
+
+        public Task<bool> InsertMfaAsync(LocalMfaState state, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+            return Task.FromResult(_mfa.TryAdd(state.UserId, state with { Version = 1 }));
+        }
+
+        public Task<bool> UpdateMfaAsync(LocalMfaState next, int expectedVersion, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(next);
+            return Task.FromResult(_mfa.TryGetValue(next.UserId, out var current)
+                && current.Version == expectedVersion
+                && _mfa.TryUpdate(next.UserId, next with { Version = expectedVersion + 1 }, current));
+        }
+
+        public Task<bool> DeleteMfaAsync(string userId, CancellationToken cancellationToken)
+            => Task.FromResult(_mfa.TryRemove(userId, out _));
+
+        public Task CreateMfaChallengeAsync(LocalMfaChallenge challenge, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(challenge);
+            if (!_challenges.TryAdd(challenge.ChallengeHash, challenge with { Version = 1 }))
+                throw new InvalidOperationException("A challenge with this ticket already exists.");
+            return Task.CompletedTask;
+        }
+
+        public Task<LocalMfaChallenge?> GetMfaChallengeAsync(string challengeHash, CancellationToken cancellationToken)
+            => Task.FromResult(_challenges.TryGetValue(challengeHash, out var c) ? c : null);
+
+        public Task<bool> UpdateMfaChallengeAsync(LocalMfaChallenge next, int expectedVersion, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(next);
+            return Task.FromResult(_challenges.TryGetValue(next.ChallengeHash, out var current)
+                && current.Version == expectedVersion
+                && _challenges.TryUpdate(next.ChallengeHash, next with { Version = expectedVersion + 1 }, current));
+        }
+
+        public Task PurgeMfaChallengesExpiredBeforeAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+        {
+            foreach (var c in _challenges.Values.Where(c => c.ExpiresAt < cutoff))
+                _challenges.TryRemove(new KeyValuePair<string, LocalMfaChallenge>(c.ChallengeHash, c));
+            return Task.CompletedTask;
         }
 
         /// <summary>Applies <paramref name="change"/> with compare-and-swap; null from it means "no change".</summary>

@@ -2,7 +2,8 @@ namespace BifrostQL.Server.Auth
 {
     /// <summary>
     /// The server-side state local auth keeps beside the app-user table: login sessions, account
-    /// lockouts, password history and the authentication audit trail. The app-user table stays the
+    /// lockouts, password history, second factors and their login challenges, and the
+    /// authentication audit trail. The app-user table stays the
     /// deployment's own; everything here is Bifrost bookkeeping.
     ///
     /// <para>Production deployments use <see cref="DbLocalAuthStateStore"/>, which provisions its
@@ -11,7 +12,8 @@ namespace BifrostQL.Server.Auth
     /// development only: its sessions, lockouts and audit trail vanish on restart and are not
     /// shared between nodes.</para>
     ///
-    /// <para>No method stores a password, a session id or a cookie. Sessions are addressed by the
+    /// <para>No method stores a password, a session id, a cookie, a plaintext TOTP secret or a
+    /// recovery code. Sessions are addressed by the
     /// SHA-256 of their id (<see cref="LocalSessionId.Hash"/>), password history holds hashes, and
     /// audit events carry only identifiers and a fixed reason vocabulary.</para>
     /// </summary>
@@ -103,7 +105,106 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>Audit events at or after <paramref name="since"/>, oldest first, at most <paramref name="maxRows"/>.</summary>
         Task<IReadOnlyList<AuthAuditEvent>> ReadAuditAsync(DateTimeOffset since, int maxRows, CancellationToken cancellationToken);
+
+        /// <summary>The user's second-factor row, pending or active; null when the user has none.</summary>
+        Task<LocalMfaState?> GetMfaAsync(string userId, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Inserts the user's second-factor row at <see cref="LocalMfaState.Version"/> 1. False when the
+        /// user already has one (a concurrent enrollment won); the caller re-reads and updates instead.
+        /// </summary>
+        Task<bool> InsertMfaAsync(LocalMfaState state, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Replaces the user's second-factor row with <paramref name="next"/> only when the stored
+        /// version is still <paramref name="expectedVersion"/>, writing version
+        /// <paramref name="expectedVersion"/> + 1. False when another write got there first. Every
+        /// change to the row (accepted time step, spent recovery code, activation) goes through this
+        /// compare-and-swap, so two requests presenting the same code cannot both succeed.
+        /// </summary>
+        Task<bool> UpdateMfaAsync(LocalMfaState next, int expectedVersion, CancellationToken cancellationToken);
+
+        /// <summary>Deletes the user's second-factor row and its recovery codes; false when there was none.</summary>
+        Task<bool> DeleteMfaAsync(string userId, CancellationToken cancellationToken);
+
+        /// <summary>Records a newly issued second-factor login challenge.</summary>
+        Task CreateMfaChallengeAsync(LocalMfaChallenge challenge, CancellationToken cancellationToken);
+
+        /// <summary>The challenge with this ticket hash, spent or not; null when none was issued (or it was purged).</summary>
+        Task<LocalMfaChallenge?> GetMfaChallengeAsync(string challengeHash, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Replaces a challenge with <paramref name="next"/> only when its stored version is still
+        /// <paramref name="expectedVersion"/>, writing version <paramref name="expectedVersion"/> + 1.
+        /// False when another write got there first.
+        /// </summary>
+        Task<bool> UpdateMfaChallengeAsync(LocalMfaChallenge next, int expectedVersion, CancellationToken cancellationToken);
+
+        /// <summary>Deletes challenges whose expiry is before <paramref name="cutoff"/>.</summary>
+        Task PurgeMfaChallengesExpiredBeforeAsync(DateTimeOffset cutoff, CancellationToken cancellationToken);
     }
+
+    /// <summary>Whether a user's second factor is awaiting its first code or in force.</summary>
+    public enum LocalMfaStatus
+    {
+        /// <summary>A secret was issued; the user has not yet proved they hold it.</summary>
+        Pending,
+
+        /// <summary>Confirmed with a code; every sign-in needs a code or a recovery code.</summary>
+        Active,
+    }
+
+    /// <summary>
+    /// One user's TOTP second factor. The secret is stored only as a field-encryption envelope
+    /// bound to the user id; recovery codes only as salted SHA-256 hashes.
+    /// </summary>
+    /// <param name="UserId">The app-user id.</param>
+    /// <param name="SecretEnvelope">The TOTP secret, encrypted (<c>FieldCipher</c> envelope).</param>
+    /// <param name="Algorithm">HMAC algorithm the authenticator was set up with.</param>
+    /// <param name="Digits">Code length the authenticator was set up with.</param>
+    /// <param name="PeriodSeconds">Time step the authenticator was set up with.</param>
+    /// <param name="Status">Pending or active.</param>
+    /// <param name="CreatedAt">When the secret was issued.</param>
+    /// <param name="PendingExpiresAt">When an unconfirmed enrollment lapses; null once active.</param>
+    /// <param name="EnabledAt">When the enrollment was confirmed; null while pending.</param>
+    /// <param name="LastUsedStep">The newest time step a code was accepted for; a code for this step or an earlier one is a replay.</param>
+    /// <param name="RecoveryCodeHashes">Unspent recovery codes as <c>salt.hash</c> hex pairs.</param>
+    /// <param name="Version">Optimistic concurrency version.</param>
+    public sealed record LocalMfaState(
+        string UserId,
+        string SecretEnvelope,
+        LocalTotpAlgorithm Algorithm,
+        int Digits,
+        int PeriodSeconds,
+        LocalMfaStatus Status,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset? PendingExpiresAt,
+        DateTimeOffset? EnabledAt,
+        long? LastUsedStep,
+        IReadOnlyList<string> RecoveryCodeHashes,
+        int Version);
+
+    /// <summary>
+    /// A login whose password verified and whose second factor is still owed. The ticket the
+    /// client holds is a random 256-bit value; the store keeps only its SHA-256.
+    /// </summary>
+    /// <param name="ChallengeHash">SHA-256 (lowercase hex) of the ticket.</param>
+    /// <param name="UserId">The account whose password verified.</param>
+    /// <param name="CredentialStamp">The password fingerprint at that moment; a password change voids the ticket.</param>
+    /// <param name="CreatedAt">When the password verified.</param>
+    /// <param name="ExpiresAt">When the ticket lapses.</param>
+    /// <param name="FailedAttempts">Wrong codes presented with this ticket.</param>
+    /// <param name="ConsumedAt">When the ticket was spent (success or too many failures); null while usable.</param>
+    /// <param name="Version">Optimistic concurrency version.</param>
+    public sealed record LocalMfaChallenge(
+        string ChallengeHash,
+        string UserId,
+        string CredentialStamp,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset ExpiresAt,
+        int FailedAttempts,
+        DateTimeOffset? ConsumedAt,
+        int Version);
 
     /// <summary>One server-side login session.</summary>
     /// <param name="SessionHash">SHA-256 (lowercase hex) of the session id the cookie carries.</param>
@@ -115,6 +216,14 @@ namespace BifrostQL.Server.Auth
     /// <param name="RevokeReason">One of <see cref="LocalSessionRevokeReasons"/>, or null while live.</param>
     /// <param name="SourceIp">The client IP at sign-in, or null when unknown.</param>
     /// <param name="CredentialStamp">Fingerprint of the password hash at sign-in; a change revokes the session.</param>
+    /// <param name="Amr">
+    /// How the sign-in was authenticated: space-separated <see cref="LocalAuthMethods"/> values
+    /// (<c>pwd</c>, <c>pwd otp</c>, <c>pwd recovery</c>).
+    /// </param>
+    /// <param name="MfaPending">
+    /// True for a session issued to a user who must enroll a second factor and has not: it may reach
+    /// only the enrollment and logout endpoints.
+    /// </param>
     public sealed record LocalSession(
         string SessionHash,
         string UserId,
@@ -124,7 +233,33 @@ namespace BifrostQL.Server.Auth
         DateTimeOffset? RevokedAt,
         string? RevokeReason,
         string? SourceIp,
-        string CredentialStamp);
+        string CredentialStamp,
+        string Amr = LocalAuthMethods.Password,
+        bool MfaPending = false)
+    {
+        /// <summary>Whether the sign-in presented a second factor.</summary>
+        public bool HasSecondFactor => LocalAuthMethods.HasSecondFactor(Amr);
+    }
+
+    /// <summary>
+    /// Authentication-method references (RFC 8176 <c>amr</c> values) a local session records and
+    /// its cookie carries as repeated <c>amr</c> claims.
+    /// </summary>
+    public static class LocalAuthMethods
+    {
+        /// <summary>Password.</summary>
+        public const string Password = "pwd";
+
+        /// <summary>Time-based one-time password.</summary>
+        public const string Otp = "otp";
+
+        /// <summary>A single-use recovery code (not an RFC 8176 value; Bifrost's own).</summary>
+        public const string RecoveryCode = "recovery";
+
+        /// <summary>Whether a space-separated amr list includes a second factor.</summary>
+        public static bool HasSecondFactor(string amr) =>
+            amr.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(m => m is Otp or RecoveryCode);
+    }
 
     /// <summary>The fixed vocabulary a session revocation records.</summary>
     public static class LocalSessionRevokeReasons
@@ -138,6 +273,9 @@ namespace BifrostQL.Server.Auth
         public const string AccountRemoved = "account-removed";
         public const string ConcurrentSessionLimit = "concurrent-session-limit";
         public const string Administrator = "administrator";
+        public const string MfaChanged = "mfa-changed";
+        public const string MfaReset = "mfa-reset";
+        public const string MfaRequired = "mfa-required";
     }
 
     /// <summary>A user's lockout state.</summary>

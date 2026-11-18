@@ -162,6 +162,7 @@ namespace BifrostQL.Server.Test
             names.Should().Equal(new[]
             {
                 DbLocalAuthStateStore.AuditTable, DbLocalAuthStateStore.LockoutsTable,
+                DbLocalAuthStateStore.MfaTable, DbLocalAuthStateStore.MfaChallengesTable,
                 DbLocalAuthStateStore.PasswordHistoryTable, DbLocalAuthStateStore.SessionsTable,
             }, "the host creates the tables on start, so no request races their creation and missing DDL rights fail the start");
         }
@@ -1010,6 +1011,19 @@ namespace BifrostQL.Server.Test
             public Task AppendAuditAsync(AuthAuditEvent auditEvent, CancellationToken ct) => _inner.AppendAuditAsync(auditEvent, ct);
             public Task<IReadOnlyList<AuthAuditEvent>> ReadAuditAsync(DateTimeOffset since, int maxRows, CancellationToken ct) =>
                 _inner.ReadAuditAsync(since, maxRows, ct);
+            public Task<LocalMfaState?> GetMfaAsync(string userId, CancellationToken ct) => _inner.GetMfaAsync(userId, ct);
+            public Task<bool> InsertMfaAsync(LocalMfaState state, CancellationToken ct) => _inner.InsertMfaAsync(state, ct);
+            public Task<bool> UpdateMfaAsync(LocalMfaState next, int expectedVersion, CancellationToken ct) =>
+                _inner.UpdateMfaAsync(next, expectedVersion, ct);
+            public Task<bool> DeleteMfaAsync(string userId, CancellationToken ct) => _inner.DeleteMfaAsync(userId, ct);
+            public Task CreateMfaChallengeAsync(LocalMfaChallenge challenge, CancellationToken ct) =>
+                _inner.CreateMfaChallengeAsync(challenge, ct);
+            public Task<LocalMfaChallenge?> GetMfaChallengeAsync(string challengeHash, CancellationToken ct) =>
+                _inner.GetMfaChallengeAsync(challengeHash, ct);
+            public Task<bool> UpdateMfaChallengeAsync(LocalMfaChallenge next, int expectedVersion, CancellationToken ct) =>
+                _inner.UpdateMfaChallengeAsync(next, expectedVersion, ct);
+            public Task PurgeMfaChallengesExpiredBeforeAsync(DateTimeOffset cutoff, CancellationToken ct) =>
+                _inner.PurgeMfaChallengesExpiredBeforeAsync(cutoff, ct);
         }
 
         /// <summary>

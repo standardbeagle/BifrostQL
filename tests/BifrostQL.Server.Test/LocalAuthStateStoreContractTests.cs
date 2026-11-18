@@ -341,5 +341,123 @@ namespace BifrostQL.Server.Test
             (await store.ReadAuditAsync(T0.AddMinutes(1), 10, None)).Should().Equal(early, late);
             (await store.ReadAuditAsync(T0, 1, None)).Should().Equal(before);
         }
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task Session_RoundTripsItsAuthenticationMethods_AndThePendingFlag(string backend)
+        {
+            var store = Make(backend);
+            var full = Session("full", "alice", T0) with { Amr = "pwd otp" };
+            var pending = Session("pending", "alice", T0) with { MfaPending = true };
+
+            await store.CreateSessionAsync(full, None);
+            await store.CreateSessionAsync(pending, None);
+
+            var readFull = await store.GetSessionAsync("full", None);
+            readFull.Should().Be(full);
+            readFull!.HasSecondFactor.Should().BeTrue();
+            (await store.GetSessionAsync("pending", None)).Should().Be(pending);
+            (await store.ListLiveSessionsAsync("alice", T0, 10, None)).Should().Contain(new[] { full, pending });
+        }
+
+        private static LocalMfaState Mfa(string user, LocalMfaStatus status = LocalMfaStatus.Pending) => new(
+            user, $"envelope-{user}", LocalTotpAlgorithm.Sha1, 6, 30, status, T0,
+            status == LocalMfaStatus.Pending ? T0.AddMinutes(10) : null,
+            status == LocalMfaStatus.Active ? T0.AddMinutes(1) : null,
+            status == LocalMfaStatus.Active ? 59_000_000L : null,
+            status == LocalMfaStatus.Active ? new[] { "aa.bb", "cc.dd" } : Array.Empty<string>(),
+            Version: 1);
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task Mfa_RoundTrips_PerUser_AndInsertIsOneShot(string backend)
+        {
+            var store = Make(backend);
+            var alice = Mfa("alice", LocalMfaStatus.Active);
+
+            (await store.InsertMfaAsync(alice, None)).Should().BeTrue();
+            (await store.InsertMfaAsync(Mfa("bob"), None)).Should().BeTrue();
+            (await store.InsertMfaAsync(Mfa("alice"), None)).Should().BeFalse("a user holds one second-factor row");
+
+            (await store.GetMfaAsync("alice", None)).Should().BeEquivalentTo(alice);
+            (await store.GetMfaAsync("bob", None))!.Status.Should().Be(LocalMfaStatus.Pending);
+            (await store.GetMfaAsync("carol", None)).Should().BeNull();
+        }
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task UpdateMfa_IsACompareAndSwapOnTheVersion(string backend)
+        {
+            var store = Make(backend);
+            await store.InsertMfaAsync(Mfa("alice", LocalMfaStatus.Active), None);
+            var read = (await store.GetMfaAsync("alice", None))!;
+
+            (await store.UpdateMfaAsync(read with { LastUsedStep = 59_000_001L, RecoveryCodeHashes = new[] { "cc.dd" } },
+                read.Version, None)).Should().BeTrue();
+            (await store.UpdateMfaAsync(read with { LastUsedStep = 59_000_001L }, read.Version, None))
+                .Should().BeFalse("a second request presenting the same code read the same version and must lose");
+
+            var after = (await store.GetMfaAsync("alice", None))!;
+            after.Version.Should().Be(read.Version + 1);
+            after.LastUsedStep.Should().Be(59_000_001L);
+            after.RecoveryCodeHashes.Should().Equal("cc.dd");
+            (await store.UpdateMfaAsync(Mfa("carol"), 1, None)).Should().BeFalse("no row to update");
+        }
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task ConcurrentMfaUpdates_FromOneVersion_LetExactlyOneWin(string backend)
+        {
+            var store = Make(backend);
+            await store.InsertMfaAsync(Mfa("alice", LocalMfaStatus.Active), None);
+            var read = (await store.GetMfaAsync("alice", None))!;
+
+            var wins = await Task.WhenAll(Enumerable.Range(0, 8).Select(i =>
+                store.UpdateMfaAsync(read with { LastUsedStep = 59_000_001L + i }, read.Version, None)));
+
+            wins.Count(w => w).Should().Be(1);
+        }
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task DeleteMfa_RemovesOnlyThatUsersRow(string backend)
+        {
+            var store = Make(backend);
+            await store.InsertMfaAsync(Mfa("alice"), None);
+            await store.InsertMfaAsync(Mfa("bob"), None);
+
+            (await store.DeleteMfaAsync("alice", None)).Should().BeTrue();
+            (await store.DeleteMfaAsync("alice", None)).Should().BeFalse();
+
+            (await store.GetMfaAsync("alice", None)).Should().BeNull();
+            (await store.GetMfaAsync("bob", None)).Should().NotBeNull();
+        }
+
+        private static LocalMfaChallenge Challenge(string hash, string user, TimeSpan? life = null) =>
+            new(hash, user, "stamp-1", T0, T0 + (life ?? TimeSpan.FromMinutes(5)), 0, null, Version: 1);
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task MfaChallenge_RoundTrips_AndUpdatesByCompareAndSwap(string backend)
+        {
+            var store = Make(backend);
+            var challenge = Challenge("c1", "alice");
+            await store.CreateMfaChallengeAsync(challenge, None);
+
+            (await store.GetMfaChallengeAsync("c1", None)).Should().Be(challenge);
+            (await store.GetMfaChallengeAsync("missing", None)).Should().BeNull();
+
+            (await store.UpdateMfaChallengeAsync(challenge with { FailedAttempts = 1 }, 1, None)).Should().BeTrue();
+            (await store.UpdateMfaChallengeAsync(challenge with { ConsumedAt = T0.AddMinutes(1) }, 1, None))
+                .Should().BeFalse("a stale version loses");
+            (await store.GetMfaChallengeAsync("c1", None)).Should().Be(challenge with { FailedAttempts = 1, Version = 2 });
+        }
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task MfaChallengePurge_RemovesOnlyExpiredTickets(string backend)
+        {
+            var store = Make(backend);
+            await store.CreateMfaChallengeAsync(Challenge("short", "alice", TimeSpan.FromMinutes(1)), None);
+            await store.CreateMfaChallengeAsync(Challenge("long", "alice"), None);
+
+            await store.PurgeMfaChallengesExpiredBeforeAsync(T0.AddMinutes(2), None);
+
+            (await store.GetMfaChallengeAsync("short", None)).Should().BeNull();
+            (await store.GetMfaChallengeAsync("long", None)).Should().NotBeNull();
+        }
     }
 }

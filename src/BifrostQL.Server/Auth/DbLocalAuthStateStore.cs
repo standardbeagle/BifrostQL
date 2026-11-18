@@ -6,7 +6,7 @@ using BifrostQL.Core.Resolvers;
 namespace BifrostQL.Server.Auth
 {
     /// <summary>
-    /// <see cref="ILocalAuthStateStore"/> over four Bifrost-owned tables in the app-user database,
+    /// <see cref="ILocalAuthStateStore"/> over six Bifrost-owned tables in the app-user database,
     /// provisioned on first use with the dialect's portable <c>CREATE TABLE IF NOT EXISTS</c>
     /// (SQL Server guards with <c>OBJECT_ID</c>), the same way <c>DbSavedObjectStore</c> provisions
     /// its table. Works on every dialect Bifrost ships: SQL Server, PostgreSQL, MySQL, SQLite.
@@ -17,13 +17,18 @@ namespace BifrostQL.Server.Auth
     /// <item><c>_bifrost_auth_password_history</c>: password hashes users set through local auth.</item>
     /// <item><c>_bifrost_auth_audit</c>: the authentication audit trail. Append-only from Bifrost's
     /// side; retention and archiving are the deployment's.</item>
+    /// <item><c>_bifrost_auth_mfa</c>: one row per user with a TOTP second factor (secret encrypted,
+    /// recovery codes hashed).</item>
+    /// <item><c>_bifrost_auth_mfa_challenges</c>: second-factor login challenges, keyed by the SHA-256
+    /// of their ticket.</item>
     /// </list>
     ///
     /// <para>Timestamps are stored as fixed-width ISO-8601 UTC text (<c>O</c> format), so they compare
     /// and sort correctly as strings on every engine without a dialect-specific date type. Every value
     /// is a parameter and every identifier is dialect-escaped. The lockout counter is updated with a
     /// version-conditioned UPDATE in a retry loop, so two concurrent failures cannot both read the
-    /// same count and lose one.</para>
+    /// same count and lose one. Second-factor and challenge rows change only through the same
+    /// version-conditioned UPDATE, so one code or recovery code cannot be accepted twice.</para>
     ///
     /// <para>No secondary indexes are created. Revoking all of a user's sessions scans the sessions
     /// table; a deployment with many sessions should add an index on <c>user_id</c>.</para>
@@ -37,6 +42,8 @@ namespace BifrostQL.Server.Auth
         public const string LockoutsTable = BifrostSystemTables.AuthStatePrefix + "lockouts";
         public const string PasswordHistoryTable = BifrostSystemTables.AuthStatePrefix + "password_history";
         public const string AuditTable = BifrostSystemTables.AuthStatePrefix + "audit";
+        public const string MfaTable = BifrostSystemTables.AuthStatePrefix + "mfa";
+        public const string MfaChallengesTable = BifrostSystemTables.AuthStatePrefix + "mfa_challenges";
 
         private const int TimeoutSeconds = 30;
         private const int MaxOptimisticAttempts = 16;
@@ -52,6 +59,37 @@ namespace BifrostQL.Server.Auth
             new SqlColumnDefinition("revoke_reason", SqlColumnKind.KeyText, Nullable: true),
             new SqlColumnDefinition("source_ip", SqlColumnKind.KeyText, Nullable: true),
             new SqlColumnDefinition("credential_stamp", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("amr", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("mfa_pending", SqlColumnKind.Int, Nullable: false),
+        };
+
+        private static readonly IReadOnlyList<SqlColumnDefinition> MfaColumns = new[]
+        {
+            new SqlColumnDefinition("user_id", SqlColumnKind.KeyText, Nullable: false, PrimaryKey: true),
+            new SqlColumnDefinition("secret_envelope", SqlColumnKind.Text, Nullable: false),
+            new SqlColumnDefinition("algorithm", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("digits", SqlColumnKind.Int, Nullable: false),
+            new SqlColumnDefinition("period_seconds", SqlColumnKind.Int, Nullable: false),
+            new SqlColumnDefinition("status", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("created_at", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("pending_expires_at", SqlColumnKind.KeyText, Nullable: true),
+            new SqlColumnDefinition("enabled_at", SqlColumnKind.KeyText, Nullable: true),
+            // A 32-bit step counter at the shortest allowed period (15 s) lasts past the year 2990.
+            new SqlColumnDefinition("last_used_step", SqlColumnKind.Int, Nullable: true),
+            new SqlColumnDefinition("recovery_code_hashes", SqlColumnKind.Text, Nullable: false),
+            new SqlColumnDefinition("version", SqlColumnKind.Int, Nullable: false),
+        };
+
+        private static readonly IReadOnlyList<SqlColumnDefinition> MfaChallengeColumns = new[]
+        {
+            new SqlColumnDefinition("challenge_hash", SqlColumnKind.KeyText, Nullable: false, PrimaryKey: true),
+            new SqlColumnDefinition("user_id", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("credential_stamp", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("created_at", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("expires_at", SqlColumnKind.KeyText, Nullable: false),
+            new SqlColumnDefinition("failed_attempts", SqlColumnKind.Int, Nullable: false),
+            new SqlColumnDefinition("consumed_at", SqlColumnKind.KeyText, Nullable: true),
+            new SqlColumnDefinition("version", SqlColumnKind.Int, Nullable: false),
         };
 
         private static readonly IReadOnlyList<SqlColumnDefinition> LockoutColumns = new[]
@@ -115,6 +153,7 @@ namespace BifrostQL.Server.Auth
                          {
                              (SessionsTable, SessionColumns), (LockoutsTable, LockoutColumns),
                              (PasswordHistoryTable, PasswordHistoryColumns), (AuditTable, AuditColumns),
+                             (MfaTable, MfaColumns), (MfaChallengesTable, MfaChallengeColumns),
                          })
                 {
                     await ExecuteAsync(_dialect.CreateTableIfNotExistsSql(Table(name), columns), null, 0, cancellationToken)
@@ -142,7 +181,7 @@ namespace BifrostQL.Server.Auth
         private string SessionSelect =>
             $"SELECT {Col("session_hash")}, {Col("user_id")}, {Col("created_at")}, {Col("last_seen_at")}, " +
             $"{Col("expires_at")}, {Col("revoked_at")}, {Col("revoke_reason")}, {Col("source_ip")}, " +
-            $"{Col("credential_stamp")} FROM {Table(SessionsTable)}";
+            $"{Col("credential_stamp")}, {Col("amr")}, {Col("mfa_pending")} FROM {Table(SessionsTable)}";
 
         public async Task CreateSessionAsync(LocalSession session, CancellationToken cancellationToken)
         {
@@ -150,8 +189,8 @@ namespace BifrostQL.Server.Auth
             var sql =
                 $"INSERT INTO {Table(SessionsTable)} ({Col("session_hash")}, {Col("user_id")}, {Col("created_at")}, " +
                 $"{Col("last_seen_at")}, {Col("expires_at")}, {Col("revoked_at")}, {Col("revoke_reason")}, " +
-                $"{Col("source_ip")}, {Col("credential_stamp")}) VALUES (@hash, @user, @created, @seen, @expires, " +
-                "@revoked, @reason, @ip, @stamp)";
+                $"{Col("source_ip")}, {Col("credential_stamp")}, {Col("amr")}, {Col("mfa_pending")}) VALUES (@hash, " +
+                "@user, @created, @seen, @expires, @revoked, @reason, @ip, @stamp, @amr, @pending)";
             await RunAsync(sql, new Dictionary<string, object?>
             {
                 ["hash"] = session.SessionHash,
@@ -163,6 +202,8 @@ namespace BifrostQL.Server.Auth
                 ["reason"] = session.RevokeReason,
                 ["ip"] = session.SourceIp,
                 ["stamp"] = session.CredentialStamp,
+                ["amr"] = session.Amr,
+                ["pending"] = session.MfaPending ? 1 : 0,
             }, 0, cancellationToken).ConfigureAwait(false);
         }
 
@@ -449,6 +490,165 @@ namespace BifrostQL.Server.Auth
                 r[4] as string, r[5] as string, r[6] as string, r[7] as string)).ToList();
         }
 
+        private string MfaSelect =>
+            $"SELECT {Col("user_id")}, {Col("secret_envelope")}, {Col("algorithm")}, {Col("digits")}, " +
+            $"{Col("period_seconds")}, {Col("status")}, {Col("created_at")}, {Col("pending_expires_at")}, " +
+            $"{Col("enabled_at")}, {Col("last_used_step")}, {Col("recovery_code_hashes")}, {Col("version")} " +
+            $"FROM {Table(MfaTable)}";
+
+        public async Task<LocalMfaState?> GetMfaAsync(string userId, CancellationToken cancellationToken)
+        {
+            var result = await RunAsync($"{MfaSelect} WHERE {Col("user_id")} = @user",
+                new Dictionary<string, object?> { ["user"] = userId }, 1, cancellationToken).ConfigureAwait(false);
+            if (result.Rows.Count == 0)
+                return null;
+            var r = result.Rows[0];
+            return new LocalMfaState(
+                Convert.ToString(r[0], CultureInfo.InvariantCulture)!,
+                Convert.ToString(r[1], CultureInfo.InvariantCulture)!,
+                Enum.Parse<LocalTotpAlgorithm>(Convert.ToString(r[2], CultureInfo.InvariantCulture)!),
+                Convert.ToInt32(r[3], CultureInfo.InvariantCulture),
+                Convert.ToInt32(r[4], CultureInfo.InvariantCulture),
+                Enum.Parse<LocalMfaStatus>(Convert.ToString(r[5], CultureInfo.InvariantCulture)!),
+                Parse(r[6]),
+                ParseNullable(r[7]),
+                ParseNullable(r[8]),
+                r[9] is null ? null : Convert.ToInt64(r[9], CultureInfo.InvariantCulture),
+                Convert.ToString(r[10], CultureInfo.InvariantCulture)!.Split(' ', StringSplitOptions.RemoveEmptyEntries),
+                Convert.ToInt32(r[11], CultureInfo.InvariantCulture));
+        }
+
+        private static Dictionary<string, object?> MfaParameters(LocalMfaState state) => new()
+        {
+            ["user"] = state.UserId,
+            ["secret"] = state.SecretEnvelope,
+            ["algorithm"] = state.Algorithm.ToString(),
+            ["digits"] = state.Digits,
+            ["period"] = state.PeriodSeconds,
+            ["status"] = state.Status.ToString(),
+            ["created"] = Stamp(state.CreatedAt),
+            ["pendingUntil"] = state.PendingExpiresAt is { } p ? Stamp(p) : null,
+            ["enabled"] = state.EnabledAt is { } e ? Stamp(e) : null,
+            ["step"] = state.LastUsedStep is { } step ? checked((int)step) : null,
+            ["codes"] = string.Join(' ', state.RecoveryCodeHashes),
+        };
+
+        public async Task<bool> InsertMfaAsync(LocalMfaState state, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(state);
+            var parameters = MfaParameters(state);
+            parameters["version"] = 1;
+            try
+            {
+                await RunAsync(
+                    $"INSERT INTO {Table(MfaTable)} ({Col("user_id")}, {Col("secret_envelope")}, {Col("algorithm")}, " +
+                    $"{Col("digits")}, {Col("period_seconds")}, {Col("status")}, {Col("created_at")}, " +
+                    $"{Col("pending_expires_at")}, {Col("enabled_at")}, {Col("last_used_step")}, " +
+                    $"{Col("recovery_code_hashes")}, {Col("version")}) VALUES (@user, @secret, @algorithm, @digits, " +
+                    "@period, @status, @created, @pendingUntil, @enabled, @step, @codes, @version)",
+                    parameters, 0, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A concurrent enrollment inserted the row first (primary-key violation). A failure
+                // that is not that race surfaces.
+                if (await GetMfaAsync(state.UserId, cancellationToken).ConfigureAwait(false) is null)
+                    throw;
+                return false;
+            }
+        }
+
+        public async Task<bool> UpdateMfaAsync(LocalMfaState next, int expectedVersion, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(next);
+            var parameters = MfaParameters(next);
+            parameters["version"] = expectedVersion;
+            parameters["nextVersion"] = expectedVersion + 1;
+            var result = await RunAsync(
+                $"UPDATE {Table(MfaTable)} SET {Col("secret_envelope")} = @secret, {Col("algorithm")} = @algorithm, " +
+                $"{Col("digits")} = @digits, {Col("period_seconds")} = @period, {Col("status")} = @status, " +
+                $"{Col("created_at")} = @created, {Col("pending_expires_at")} = @pendingUntil, " +
+                $"{Col("enabled_at")} = @enabled, {Col("last_used_step")} = @step, " +
+                $"{Col("recovery_code_hashes")} = @codes, {Col("version")} = @nextVersion " +
+                $"WHERE {Col("user_id")} = @user AND {Col("version")} = @version",
+                parameters, 0, cancellationToken).ConfigureAwait(false);
+            return result.RowsAffected > 0;
+        }
+
+        public async Task<bool> DeleteMfaAsync(string userId, CancellationToken cancellationToken)
+        {
+            var result = await RunAsync($"DELETE FROM {Table(MfaTable)} WHERE {Col("user_id")} = @user",
+                new Dictionary<string, object?> { ["user"] = userId }, 0, cancellationToken).ConfigureAwait(false);
+            return result.RowsAffected > 0;
+        }
+
+        private static Dictionary<string, object?> ChallengeParameters(LocalMfaChallenge challenge) => new()
+        {
+            ["hash"] = challenge.ChallengeHash,
+            ["user"] = challenge.UserId,
+            ["stamp"] = challenge.CredentialStamp,
+            ["created"] = Stamp(challenge.CreatedAt),
+            ["expires"] = Stamp(challenge.ExpiresAt),
+            ["failed"] = challenge.FailedAttempts,
+            ["consumed"] = challenge.ConsumedAt is { } c ? Stamp(c) : null,
+        };
+
+        public async Task CreateMfaChallengeAsync(LocalMfaChallenge challenge, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(challenge);
+            var parameters = ChallengeParameters(challenge);
+            parameters["version"] = 1;
+            await RunAsync(
+                $"INSERT INTO {Table(MfaChallengesTable)} ({Col("challenge_hash")}, {Col("user_id")}, " +
+                $"{Col("credential_stamp")}, {Col("created_at")}, {Col("expires_at")}, {Col("failed_attempts")}, " +
+                $"{Col("consumed_at")}, {Col("version")}) VALUES (@hash, @user, @stamp, @created, @expires, @failed, " +
+                "@consumed, @version)",
+                parameters, 0, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<LocalMfaChallenge?> GetMfaChallengeAsync(string challengeHash, CancellationToken cancellationToken)
+        {
+            var result = await RunAsync(
+                $"SELECT {Col("challenge_hash")}, {Col("user_id")}, {Col("credential_stamp")}, {Col("created_at")}, " +
+                $"{Col("expires_at")}, {Col("failed_attempts")}, {Col("consumed_at")}, {Col("version")} " +
+                $"FROM {Table(MfaChallengesTable)} WHERE {Col("challenge_hash")} = @hash",
+                new Dictionary<string, object?> { ["hash"] = challengeHash }, 1, cancellationToken).ConfigureAwait(false);
+            if (result.Rows.Count == 0)
+                return null;
+            var r = result.Rows[0];
+            return new LocalMfaChallenge(
+                Convert.ToString(r[0], CultureInfo.InvariantCulture)!,
+                Convert.ToString(r[1], CultureInfo.InvariantCulture)!,
+                Convert.ToString(r[2], CultureInfo.InvariantCulture)!,
+                Parse(r[3]),
+                Parse(r[4]),
+                Convert.ToInt32(r[5], CultureInfo.InvariantCulture),
+                ParseNullable(r[6]),
+                Convert.ToInt32(r[7], CultureInfo.InvariantCulture));
+        }
+
+        public async Task<bool> UpdateMfaChallengeAsync(LocalMfaChallenge next, int expectedVersion, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(next);
+            var parameters = ChallengeParameters(next);
+            parameters["version"] = expectedVersion;
+            parameters["nextVersion"] = expectedVersion + 1;
+            // Only the mutable columns: the ticket's owner, binding and lifetime are fixed at issue.
+            var result = await RunAsync(
+                $"UPDATE {Table(MfaChallengesTable)} SET {Col("failed_attempts")} = @failed, " +
+                $"{Col("consumed_at")} = @consumed, {Col("version")} = @nextVersion " +
+                $"WHERE {Col("challenge_hash")} = @hash AND {Col("version")} = @version",
+                parameters, 0, cancellationToken).ConfigureAwait(false);
+            return result.RowsAffected > 0;
+        }
+
+        public async Task PurgeMfaChallengesExpiredBeforeAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+        {
+            await RunAsync($"DELETE FROM {Table(MfaChallengesTable)} WHERE {Col("expires_at")} < @cutoff",
+                new Dictionary<string, object?> { ["cutoff"] = Stamp(cutoff) }, 0, cancellationToken).ConfigureAwait(false);
+        }
+
         private static LocalSession MapSession(object?[] row) => new(
             Convert.ToString(row[0], CultureInfo.InvariantCulture)!,
             Convert.ToString(row[1], CultureInfo.InvariantCulture)!,
@@ -458,7 +658,9 @@ namespace BifrostQL.Server.Auth
             ParseNullable(row[5]),
             row[6] as string,
             row[7] as string,
-            Convert.ToString(row[8], CultureInfo.InvariantCulture)!);
+            Convert.ToString(row[8], CultureInfo.InvariantCulture)!,
+            Convert.ToString(row[9], CultureInfo.InvariantCulture)!,
+            Convert.ToInt32(row[10], CultureInfo.InvariantCulture) != 0);
 
         /// <summary>Fixed-width, string-sortable UTC text: <c>2026-11-17T10:00:00.0000000+00:00</c>.</summary>
         internal static string Stamp(DateTimeOffset value) =>

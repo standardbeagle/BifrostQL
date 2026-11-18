@@ -325,6 +325,17 @@ namespace BifrostQL.Server.Auth
                 new Dictionary<string, object?> { ["user"] = userId }, 0, cancellationToken).ConfigureAwait(false);
         }
 
+        public async Task<bool> ClearExpiredLockoutAsync(string userId, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            // Stamps are fixed-width UTC round-trip text, so the comparison orders like the instants.
+            var deleted = await RunAsync(
+                $"DELETE FROM {Table(LockoutsTable)} WHERE {Col("user_id")} = @user " +
+                $"AND {Col("locked_until")} IS NOT NULL AND {Col("locked_until")} <= @now",
+                new Dictionary<string, object?> { ["user"] = userId, ["now"] = Stamp(now) }, 0, cancellationToken)
+                .ConfigureAwait(false);
+            return deleted.RowsAffected > 0;
+        }
+
         public async Task<IReadOnlyList<LocalPasswordHistoryEntry>> GetPasswordHistoryAsync(
             string userId, int maxEntries, CancellationToken cancellationToken)
         {

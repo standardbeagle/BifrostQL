@@ -226,6 +226,43 @@ namespace BifrostQL.Server.Test
         }
 
         [Theory, MemberData(nameof(Backends))]
+        public async Task ClearExpiredLockout_DeletesOnlyALapsedLock_AndSaysWhetherItDid(string backend)
+        {
+            var store = Make(backend);
+            var until = T0.AddMinutes(30);
+            await store.RecordFailedLoginAsync("alice", T0, 1, until, None);
+
+            (await store.ClearExpiredLockoutAsync("alice", T0.AddMinutes(10), None)).Should().BeFalse(
+                "a lock still in force is not cleared");
+            (await store.GetLockoutAsync("alice", None)).Should().Be(new LocalLockoutState(0, until));
+
+            (await store.ClearExpiredLockoutAsync("alice", until, None)).Should().BeTrue("control: the lapsed lock goes");
+            (await store.GetLockoutAsync("alice", None)).Should().Be(LocalLockoutState.None);
+            (await store.ClearExpiredLockoutAsync("alice", until, None)).Should().BeFalse(
+                "a second request that read the same lapsed lock deletes nothing, so it audits no unlock");
+        }
+
+        [Theory, MemberData(nameof(Backends))]
+        public async Task ClearExpiredLockout_KeepsAFailureOrLockRecordedAfterTheLapse(string backend)
+        {
+            var store = Make(backend);
+            await store.RecordFailedLoginAsync("alice", T0, 1, T0.AddMinutes(30), None);
+            await store.RecordFailedLoginAsync("bob", T0, 1, T0.AddMinutes(30), None);
+            // Both locks lapse; a concurrent request then records a failure for alice and a new lock
+            // for bob before the late clear runs.
+            await store.RecordFailedLoginAsync("alice", T0.AddMinutes(31), 3, T0.AddMinutes(61), None);
+            await store.RecordFailedLoginAsync("bob", T0.AddMinutes(31), 1, T0.AddMinutes(61), None);
+
+            (await store.ClearExpiredLockoutAsync("alice", T0.AddMinutes(32), None)).Should().BeFalse();
+            (await store.ClearExpiredLockoutAsync("bob", T0.AddMinutes(32), None)).Should().BeFalse();
+
+            (await store.GetLockoutAsync("alice", None)).Should().Be(new LocalLockoutState(1, null),
+                "the failure counted after the lapse must survive a clear that read the old lock");
+            (await store.GetLockoutAsync("bob", None)).Should().Be(new LocalLockoutState(0, T0.AddMinutes(61)),
+                "a lock taken after the lapse must survive a clear that read the old lock");
+        }
+
+        [Theory, MemberData(nameof(Backends))]
         public async Task AnIndefiniteLock_RoundTrips(string backend)
         {
             var store = Make(backend);

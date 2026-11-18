@@ -74,6 +74,14 @@ namespace BifrostQL.Server.Auth
         /// <summary>Clears the user's failure count and any lock (successful login, administrator unlock).</summary>
         Task ClearLockoutAsync(string userId, CancellationToken cancellationToken);
 
+        /// <summary>
+        /// Deletes the user's lockout row only while it holds a lock that lapsed at or before
+        /// <paramref name="now"/>, and returns whether it deleted one. A failure or a new lock recorded
+        /// since the caller read the lapsed lock survives, and of two requests that read the same lapsed
+        /// lock only one gets true, so the unlock is audited once.
+        /// </summary>
+        Task<bool> ClearExpiredLockoutAsync(string userId, DateTimeOffset now, CancellationToken cancellationToken);
+
         /// <summary>The user's most recent password-history entries, newest first, at most <paramref name="maxEntries"/>.</summary>
         Task<IReadOnlyList<LocalPasswordHistoryEntry>> GetPasswordHistoryAsync(string userId, int maxEntries, CancellationToken cancellationToken);
 

@@ -186,7 +186,8 @@ namespace BifrostQL.Server.Auth
         /// Refuses a verified attempt against a locked account with the wrong-password answer (401),
         /// right password or not, and audits it as <paramref name="kind"/>. Lockout is checked after
         /// verification because only a matched account has an id to look up. A lock that lapsed on its
-        /// own is cleared and its end audited. Returns true when the response is written.
+        /// own is cleared and its end audited, by the one request whose conditional delete removed it:
+        /// a failure or lock recorded since the read survives. Returns true when the response is written.
         /// </summary>
         private static async Task<bool> RefuseLockedAsync(
             HttpContext context, LocalAccountState? account, AuthAuditKind kind, DateTimeOffset now, string? sourceIp)
@@ -204,9 +205,8 @@ namespace BifrostQL.Server.Auth
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return true;
             }
-            if (lockout.LockedUntil is not null)
+            if (lockout.LockedUntil is not null && await state.ClearExpiredLockoutAsync(account.UserId, now, ct).ConfigureAwait(false))
             {
-                await state.ClearLockoutAsync(account.UserId, ct).ConfigureAwait(false);
                 await audit.RecordAsync(now, AuthAuditKind.AccountUnlocked, AuthAuditOutcome.Success,
                     account.UserId, null, sourceIp, AuthAuditReasons.LockoutExpired, ct).ConfigureAwait(false);
             }

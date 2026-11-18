@@ -402,7 +402,8 @@ namespace BifrostQL.Server.Test
                 && e.SubjectId == "user-2" && e.ActorId == "user-1" && e.Reason == LocalSessionRevokeReasons.Administrator);
         }
 
-        private Task<HttpClient> StartForLockoutAsync(Action<LocalAuthOptions>? configure = null) =>
+        private Task<HttpClient> StartForLockoutAsync(
+            Action<LocalAuthOptions>? configure = null, Action<IServiceCollection>? services = null) =>
             StartAsync(o =>
             {
                 // Lift the rate windows so only the lockout counter can refuse.
@@ -410,7 +411,7 @@ namespace BifrostQL.Server.Test
                 o.MaxLoginAttemptsPerAccount = 1_000;
                 o.AdminRole = "admin";
                 configure?.Invoke(o);
-            });
+            }, services);
 
         private static async Task FailLoginsAsync(HttpClient client, int count)
         {
@@ -443,6 +444,31 @@ namespace BifrostQL.Server.Test
                 "nine failures, a success, then ten failures: only the second run reaches the threshold");
             audit.Should().Contain(e => e.Kind == AuthAuditKind.LoginFailed && e.Reason == AuthAuditReasons.AccountLocked);
             audit.Should().Contain(e => e.Kind == AuthAuditKind.AccountUnlocked && e.Reason == AuthAuditReasons.LockoutExpired);
+        }
+
+        [Fact]
+        public async Task LapsedLock_ClearedOnce_KeepsAFailureCountedInBetween_AndAuditsOneUnlock()
+        {
+            // Two requests read the same lapsed lock. The other one clears it and counts its own wrong
+            // guess first; this request's clear must not wipe that count or audit a second unlock.
+            var racing = new LockoutRacingStateStore();
+            var client = await StartForLockoutAsync(o => o.LockoutThreshold = 5,
+                s => s.AddSingleton<ILocalAuthStateStore>(racing));
+            var now = _clock.GetUtcNow();
+            await racing.RecordFailedLoginAsync("user-1", now.AddHours(-2), 1, now.AddHours(-1), CancellationToken.None);
+            racing.AfterFirstLockoutRead = async (inner, userId) =>
+            {
+                await inner.ClearLockoutAsync(userId, CancellationToken.None);
+                await inner.RecordFailedLoginAsync(userId, now, 5, now.AddMinutes(30), CancellationToken.None);
+            };
+
+            (await PostLoginAsync(client, "wrong", "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+            (await racing.GetLockoutAsync("user-1", CancellationToken.None)).FailedCount.Should().Be(2,
+                "the failure the other request counted after the lapse must survive this request's clear");
+            (await racing.ReadAuditAsync(DateTimeOffset.MinValue, 100, CancellationToken.None))
+                .Count(e => e.Kind == AuthAuditKind.AccountUnlocked).Should().Be(0,
+                    "this request deleted no lock, so it records no unlock (the racing request owns that event)");
         }
 
         [Fact]
@@ -785,6 +811,56 @@ namespace BifrostQL.Server.Test
 
             StoredHash().Should().Be(before, "a login refused by the lockout must not rewrite the account's row");
             hasher.UpgradesComputed.Should().Be(0);
+        }
+
+        /// <summary>
+        /// The in-memory state store with one seam: a callback that runs once, right after the first
+        /// lockout read, so a fact can land a concurrent request's write between an endpoint's read
+        /// of the lockout and its own write.
+        /// </summary>
+        private sealed class LockoutRacingStateStore : ILocalAuthStateStore
+        {
+            private readonly InMemoryLocalAuthStateStore _inner = new();
+            private int _fired;
+
+            public Func<ILocalAuthStateStore, string, Task>? AfterFirstLockoutRead { get; set; }
+
+            public async Task<LocalLockoutState> GetLockoutAsync(string userId, CancellationToken cancellationToken)
+            {
+                var state = await _inner.GetLockoutAsync(userId, cancellationToken);
+                if (AfterFirstLockoutRead is { } race && Interlocked.Exchange(ref _fired, 1) == 0)
+                    await race(_inner, userId);
+                return state;
+            }
+
+            public Task EnsureProvisionedAsync(CancellationToken ct) => _inner.EnsureProvisionedAsync(ct);
+            public Task CreateSessionAsync(LocalSession session, CancellationToken ct) => _inner.CreateSessionAsync(session, ct);
+            public Task<LocalSession?> GetSessionAsync(string sessionHash, CancellationToken ct) => _inner.GetSessionAsync(sessionHash, ct);
+            public Task TouchSessionAsync(string sessionHash, DateTimeOffset lastSeenAt, CancellationToken ct) =>
+                _inner.TouchSessionAsync(sessionHash, lastSeenAt, ct);
+            public Task<bool> RevokeSessionAsync(string sessionHash, DateTimeOffset revokedAt, string reason, CancellationToken ct) =>
+                _inner.RevokeSessionAsync(sessionHash, revokedAt, reason, ct);
+            public Task<int> RevokeUserSessionsAsync(string userId, DateTimeOffset revokedAt, string reason, CancellationToken ct) =>
+                _inner.RevokeUserSessionsAsync(userId, revokedAt, reason, ct);
+            public Task<int> RebindSessionCredentialStampAsync(string userId, string fromStamp, string toStamp, CancellationToken ct) =>
+                _inner.RebindSessionCredentialStampAsync(userId, fromStamp, toStamp, ct);
+            public Task<IReadOnlyList<LocalSession>> ListLiveSessionsAsync(string userId, DateTimeOffset now, int maxRows, CancellationToken ct) =>
+                _inner.ListLiveSessionsAsync(userId, now, maxRows, ct);
+            public Task PurgeSessionsExpiredBeforeAsync(DateTimeOffset cutoff, CancellationToken ct) =>
+                _inner.PurgeSessionsExpiredBeforeAsync(cutoff, ct);
+            public Task<LocalFailedLoginResult> RecordFailedLoginAsync(
+                string userId, DateTimeOffset at, int threshold, DateTimeOffset lockedUntil, CancellationToken ct) =>
+                _inner.RecordFailedLoginAsync(userId, at, threshold, lockedUntil, ct);
+            public Task ClearLockoutAsync(string userId, CancellationToken ct) => _inner.ClearLockoutAsync(userId, ct);
+            public Task<bool> ClearExpiredLockoutAsync(string userId, DateTimeOffset now, CancellationToken ct) =>
+                _inner.ClearExpiredLockoutAsync(userId, now, ct);
+            public Task<IReadOnlyList<LocalPasswordHistoryEntry>> GetPasswordHistoryAsync(string userId, int maxEntries, CancellationToken ct) =>
+                _inner.GetPasswordHistoryAsync(userId, maxEntries, ct);
+            public Task AppendPasswordHistoryAsync(string userId, string passwordHash, DateTimeOffset changedAt, int keep, CancellationToken ct) =>
+                _inner.AppendPasswordHistoryAsync(userId, passwordHash, changedAt, keep, ct);
+            public Task AppendAuditAsync(AuthAuditEvent auditEvent, CancellationToken ct) => _inner.AppendAuditAsync(auditEvent, ct);
+            public Task<IReadOnlyList<AuthAuditEvent>> ReadAuditAsync(DateTimeOffset since, int maxRows, CancellationToken ct) =>
+                _inner.ReadAuditAsync(since, maxRows, ct);
         }
 
         /// <summary>

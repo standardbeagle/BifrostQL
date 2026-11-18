@@ -117,6 +117,18 @@ namespace BifrostQL.Server.Auth
             return Task.CompletedTask;
         }
 
+        public Task<bool> ClearExpiredLockoutAsync(string userId, DateTimeOffset now, CancellationToken cancellationToken)
+        {
+            while (_lockouts.TryGetValue(userId, out var row))
+            {
+                if (row.State.LockedUntil is not { } until || until > now)
+                    return Task.FromResult(false);
+                if (_lockouts.TryRemove(new KeyValuePair<string, LockoutRow>(userId, row)))
+                    return Task.FromResult(true);
+            }
+            return Task.FromResult(false);
+        }
+
         public Task<IReadOnlyList<LocalPasswordHistoryEntry>> GetPasswordHistoryAsync(string userId, int maxEntries, CancellationToken cancellationToken)
         {
             IReadOnlyList<LocalPasswordHistoryEntry> entries = maxEntries < 1 || !_history.TryGetValue(userId, out var list)

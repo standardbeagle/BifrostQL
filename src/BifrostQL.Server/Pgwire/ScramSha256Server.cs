@@ -25,6 +25,7 @@ namespace BifrostQL.Server.Pgwire
     {
         private readonly PgScramVerifier _verifier;
 
+        private string? _gs2Header;
         private string? _clientFirstBare;
         private string? _serverFirstMessage;
         private string? _combinedNonce;
@@ -50,6 +51,17 @@ namespace BifrostQL.Server.Pgwire
             if (gs2End < 0)
                 throw new PgScramProtocolException("SCRAM client-first-message missing GS2 header.");
 
+            // Only "n" (no channel binding) and "y" (client could bind, believes the server can't)
+            // are acceptable: the server advertises SCRAM-SHA-256 without -PLUS, so a "p=" header
+            // asks for binding nobody offered. An authorization identity is unsupported too. The
+            // header is kept so the client-final's c= can be checked against it.
+            var cbindFlag = clientFirstMessage[..clientFirstMessage.IndexOf(',')];
+            if (cbindFlag is not ("n" or "y"))
+                throw new PgScramProtocolException("SCRAM channel binding is not supported.");
+            if (gs2End != cbindFlag.Length + 1)
+                throw new PgScramProtocolException("SCRAM authorization identity is not supported.");
+            _gs2Header = clientFirstMessage[..(gs2End + 1)];
+
             _clientFirstBare = clientFirstMessage[(gs2End + 1)..];
             var clientNonce = FieldValue(_clientFirstBare, 'r')
                 ?? throw new PgScramProtocolException("SCRAM client-first-message missing nonce (r=).");
@@ -72,8 +84,16 @@ namespace BifrostQL.Server.Pgwire
         /// </summary>
         public string HandleClientFinal(string clientFinalMessage)
         {
-            if (_clientFirstBare is null || _serverFirstMessage is null || _combinedNonce is null)
+            if (_clientFirstBare is null || _serverFirstMessage is null || _combinedNonce is null || _gs2Header is null)
                 throw new InvalidOperationException("HandleClientFirst must run before HandleClientFinal.");
+
+            // c= must be base64(gs2-header) exactly (no binding data, since none is supported). The
+            // proof covers the client's own c=, so without this check the two rounds could
+            // disagree about channel binding and still verify (RFC 5802 section 7).
+            var channelBinding = FieldValue(clientFinalMessage, 'c')
+                ?? throw new PgScramProtocolException("SCRAM client-final-message missing channel binding (c=).");
+            if (!string.Equals(channelBinding, Convert.ToBase64String(Encoding.ASCII.GetBytes(_gs2Header)), StringComparison.Ordinal))
+                throw new PgScramProtocolException("SCRAM channel binding does not match the GS2 header.");
 
             var proofField = FieldValue(clientFinalMessage, 'p')
                 ?? throw new PgScramProtocolException("SCRAM client-final-message missing proof (p=).");

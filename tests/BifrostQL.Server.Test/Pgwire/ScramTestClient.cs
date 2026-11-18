@@ -12,12 +12,24 @@ namespace BifrostQL.Server.Test.Pgwire
     internal sealed class ScramTestClient
     {
         private readonly string _clientNonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18));
+        private readonly string _gs2Header;
+        private readonly string _channelBinding;
         private string _clientFirstBare = "";
+
+        /// <param name="gs2Header">The GS2 header the client-first carries (a real driver without
+        /// channel binding sends <c>n,,</c>).</param>
+        /// <param name="channelBinding">The <c>c=</c> value of the client-final; defaults to the
+        /// base64 of <paramref name="gs2Header"/>, as RFC 5802 requires.</param>
+        public ScramTestClient(string gs2Header = "n,,", string? channelBinding = null)
+        {
+            _gs2Header = gs2Header;
+            _channelBinding = channelBinding ?? Convert.ToBase64String(Encoding.ASCII.GetBytes(gs2Header));
+        }
 
         public string ClientFirstMessage()
         {
             _clientFirstBare = $"n=,r={_clientNonce}";
-            return "n,," + _clientFirstBare;
+            return _gs2Header + _clientFirstBare;
         }
 
         /// <summary>
@@ -37,7 +49,7 @@ namespace BifrostQL.Server.Test.Pgwire
             var clientKey = Hmac(saltedPassword, "Client Key");
             var storedKey = SHA256.HashData(clientKey);
 
-            var clientFinalWithoutProof = $"c=biws,r={combinedNonce}";
+            var clientFinalWithoutProof = $"c={_channelBinding},r={combinedNonce}";
             var authMessage = $"{_clientFirstBare},{serverFirst},{clientFinalWithoutProof}";
             var authBytes = Encoding.UTF8.GetBytes(authMessage);
             var clientSignature = Hmac(storedKey, authMessage);

@@ -230,10 +230,10 @@ namespace BifrostQL.Server.Resp
             // therefore atomic within each table but not across them — stated plainly rather than
             // implied, because the RESP key space lets a client mix tables freely.
             var deleted = 0;
-            foreach (var group in keys.GroupBy(k => k.Table.DbName, StringComparer.Ordinal))
+            foreach (var group in keys.GroupBy(k => k.Table, ReferenceEqualityComparer.Instance))
             {
                 var result = await executor.ExecuteBatchAsync(
-                    RespWriteEngine.DeleteBatchIntent(group.Key, group, context.Session.UserContext, context.Endpoint),
+                    RespWriteEngine.DeleteBatchIntent(group.First().Table, group, context.Session.UserContext, context.Endpoint),
                     cancellationToken);
                 deleted += result.TotalAffected;
             }
@@ -307,10 +307,10 @@ namespace BifrostQL.Server.Resp
             // MULTI-KEY: one batch per table (see DEL for why looping single intents is wrong —
             // partial application on a mid-batch veto, plus a round trip per key).
             var updated = 0;
-            foreach (var group in pairs.GroupBy(p => p.Key.Table.DbName, StringComparer.Ordinal))
+            foreach (var group in pairs.GroupBy(p => p.Key.Table, ReferenceEqualityComparer.Instance))
             {
                 var result = await executor.ExecuteBatchAsync(
-                    RespWriteEngine.UpdateBatchIntent(group.Key, group, context.Session.UserContext, context.Endpoint),
+                    RespWriteEngine.UpdateBatchIntent(group.First().Key.Table, group, context.Session.UserContext, context.Endpoint),
                     cancellationToken);
                 updated += result.TotalAffected;
             }
@@ -333,12 +333,22 @@ namespace BifrostQL.Server.Resp
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+        /// <summary>
+        /// The name a write intent addresses its table by: schema-qualified, which
+        /// <see cref="IDbModel.TryGetTableFromClientName"/> resolves exactly. The bare DbName the
+        /// intents carried resolves only when unique, so once a second schema held a table of the
+        /// same name every RESP write to either one missed, though the key had already named the
+        /// table unambiguously.
+        /// </summary>
+        internal static string IntentTableName(IDbTable table) =>
+            string.IsNullOrEmpty(table.TableSchema) ? table.DbName : $"{table.TableSchema}.{table.DbName}";
+
         /// <summary>Builds the UPDATE intent: SET columns in <paramref name="data"/>, PK from the key, identity carried.</summary>
         public static MutationIntent UpdateIntent(
             RespKey key, IReadOnlyDictionary<string, object?> data, IDictionary<string, object?> userContext, string? endpoint) =>
             new()
             {
-                Table = key.Table.DbName,
+                Table = IntentTableName(key.Table),
                 Action = MutationIntentAction.Update,
                 Data = data,
                 PrimaryKey = key.KeyValues,
@@ -351,7 +361,7 @@ namespace BifrostQL.Server.Resp
             RespKey key, IDictionary<string, object?> userContext, string? endpoint) =>
             new()
             {
-                Table = key.Table.DbName,
+                Table = IntentTableName(key.Table),
                 Action = MutationIntentAction.Delete,
                 Data = new Dictionary<string, object?>(),
                 PrimaryKey = key.KeyValues,
@@ -369,16 +379,16 @@ namespace BifrostQL.Server.Resp
         /// out-of-scope key matches zero rows structurally (invariant 7).
         /// </summary>
         public static MutationBatchIntent DeleteBatchIntent(
-            string table, IEnumerable<RespKey> keys, IDictionary<string, object?> userContext, string? endpoint) =>
+            IDbTable table, IEnumerable<RespKey> keys, IDictionary<string, object?> userContext, string? endpoint) =>
             new()
             {
-                Table = table,
+                Table = IntentTableName(table),
                 Actions = keys
                     .Select(key => new MutationBatchAction(
                         MutationIntentAction.Delete,
                         MutationArgumentBinder.ResolvePrimaryKey(key.Table, key.KeyValues)
                             ?? throw new BifrostExecutionError(
-                                $"RESP DEL key for '{table}' resolved no primary key values.")))
+                                $"RESP DEL key for '{IntentTableName(table)}' resolved no primary key values.")))
                     .ToList(),
                 UserContext = new Dictionary<string, object?>(userContext),
                 Endpoint = endpoint,
@@ -394,19 +404,19 @@ namespace BifrostQL.Server.Resp
         /// matches zero rows structurally.
         /// </summary>
         public static MutationBatchIntent UpdateBatchIntent(
-            string table,
+            IDbTable table,
             IEnumerable<(RespKey Key, Dictionary<string, object?> Data)> pairs,
             IDictionary<string, object?> userContext,
             string? endpoint) =>
             new()
             {
-                Table = table,
+                Table = IntentTableName(table),
                 Actions = pairs
                     .Select(pair =>
                     {
                         var data = MutationArgumentBinder.ResolvePrimaryKey(pair.Key.Table, pair.Key.KeyValues)
                             ?? throw new BifrostExecutionError(
-                                $"RESP MSET key for '{table}' resolved no primary key values.");
+                                $"RESP MSET key for '{IntentTableName(table)}' resolved no primary key values.");
                         foreach (var (column, value) in pair.Data)
                             data[column] = value;
                         return new MutationBatchAction(MutationIntentAction.Update, data);
@@ -471,12 +481,12 @@ namespace BifrostQL.Server.Resp
                 var column = FindColumn(key.Table, name);
                 if (column is null)
                 {
-                    error = $"{RespProtocol.ErrPrefix}unknown column '{name}' on table '{key.Table.DbName}'";
+                    error = $"{RespProtocol.ErrPrefix}unknown column '{name}'";
                     return data;
                 }
                 if (!TryConvertScalar(element, out var value, out var valueError))
                 {
-                    error = $"{RespProtocol.ErrPrefix}column '{column.ColumnName}': {valueError}";
+                    error = $"{RespProtocol.ErrPrefix}column '{name}': {valueError}";
                     return data;
                 }
 
@@ -488,7 +498,7 @@ namespace BifrostQL.Server.Resp
                     // a SET column (the WHERE key is authoritative), so a SET can't move a row's identity.
                     if (!ScalarEquals(value, key.KeyValues[keyIndex]))
                     {
-                        error = $"{RespProtocol.ErrPrefix}primary-key column '{column.ColumnName}' in the body " +
+                        error = $"{RespProtocol.ErrPrefix}primary-key column '{name}' in the body " +
                                 $"does not match the key";
                         return data;
                     }
@@ -510,12 +520,12 @@ namespace BifrostQL.Server.Resp
             var column = FindColumn(table, fieldName);
             if (column is null)
             {
-                error = $"{RespProtocol.ErrPrefix}unknown column '{fieldName}' on table '{table.DbName}'";
+                error = $"{RespProtocol.ErrPrefix}unknown column '{fieldName}'";
                 return null;
             }
             if (table.KeyColumns.Any(c => string.Equals(c.ColumnName, column.ColumnName, StringComparison.OrdinalIgnoreCase)))
             {
-                error = $"{RespProtocol.ErrPrefix}cannot set primary-key column '{column.ColumnName}' via HSET; " +
+                error = $"{RespProtocol.ErrPrefix}cannot set primary-key column '{fieldName}' via HSET; " +
                         $"it is addressed by the key";
                 return null;
             }

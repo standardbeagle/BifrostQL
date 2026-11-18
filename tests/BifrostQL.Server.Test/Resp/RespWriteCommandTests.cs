@@ -70,7 +70,7 @@ namespace BifrostQL.Server.Test.Resp
 
             executor.Intents.Should().HaveCount(1);
             var intent = executor.Intents[0];
-            intent.Table.Should().Be("users");
+            intent.Table.Should().Be("dbo.users");
             intent.Action.Should().Be(MutationIntentAction.Update);
             intent.Data.Should().Contain(new KeyValuePair<string, object?>("name", "alice2"));
             intent.Data.Should().NotContainKey("id", "the PK comes from the key, never the SET data");
@@ -295,7 +295,7 @@ namespace BifrostQL.Server.Test.Resp
             // round-trips, with no way to roll the earlier keys back. One batch = one transaction.
             executor.Intents.Should().BeEmpty("a multi-key DEL must not issue per-key single intents");
             var batch = executor.BatchIntents.Should().ContainSingle().Which;
-            batch.Table.Should().Be("users");
+            batch.Table.Should().Be("dbo.users");
             batch.Actions.Should().HaveCount(2);
             batch.Actions.Should().OnlyContain(a => a.Action == MutationIntentAction.Delete);
             // Identity travels with the batch, so the pipeline narrows scope from the caller.
@@ -346,8 +346,8 @@ namespace BifrostQL.Server.Test.Resp
             // distinct table. Keys are grouped, not interleaved into per-key intents.
             executor.Intents.Should().BeEmpty();
             executor.BatchIntents.Should().HaveCount(2);
-            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(new[] { "users", "order_items" });
-            executor.BatchIntents.Single(b => b.Table == "users").Actions.Should().HaveCount(2);
+            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(new[] { "dbo.users", "dbo.order_items" });
+            executor.BatchIntents.Single(b => b.Table == "dbo.users").Actions.Should().HaveCount(2);
         }
 
         [Fact]
@@ -458,7 +458,7 @@ namespace BifrostQL.Server.Test.Resp
             reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(2);
             executor.Intents.Should().BeEmpty("multi-key MSET must not loop single-row intents");
             var batch = executor.BatchIntents.Should().ContainSingle().Which;
-            batch.Table.Should().Be("users");
+            batch.Table.Should().Be("dbo.users");
             batch.Actions.Should().HaveCount(2);
             batch.Actions.Should().OnlyContain(a => a.Action == MutationIntentAction.Update);
             // Each action carries the PK (schema-resolved, never [0]) plus the SET columns as data.
@@ -548,7 +548,7 @@ namespace BifrostQL.Server.Test.Resp
 
             reply.Should().BeOfType<RespInteger>().Which.Value.Should().Be(3);
             executor.BatchIntents.Should().HaveCount(2);
-            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(new[] { "users", "order_items" });
+            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(new[] { "dbo.users", "dbo.order_items" });
             executor.CompositeRow("order_items", 10, 2)!["sku"].Should().Be("gadget");
         }
 
@@ -588,15 +588,72 @@ namespace BifrostQL.Server.Test.Resp
             mutation.Intents.Should().BeEmpty("an unauthenticated write must never reach the pipeline");
         }
 
+
+        // ---- table identity and error text ------------------------------------
+
+        [Fact]
+        public async Task Writes_ToSameNamedTablesInTwoSchemas_AddressEachTableBySchema()
+        {
+            // The key names its table unambiguously (sales_users / audit_users), but the intents
+            // carried the bare DbName "users", which the pipeline cannot resolve once two schemas
+            // hold a table of that name. And DEL grouped its keys by that bare name, folding both
+            // tables' keys into one batch against one of them.
+            var sales = FakeTable("users", "sales", "sales_users", Col("id", "int", 1, pk: true), Col("name", "varchar", 2));
+            var audit = FakeTable("users", "audit", "audit_users", Col("id", "int", 1, pk: true), Col("name", "varchar", 2));
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { sales, audit });
+            var (executor, services, session) = Arrange(Tenant1, enableWrites: true, model);
+
+            var set = await new RespSetCommandHandler().HandleAsync(
+                Ctx(services, session, "SET", "audit_users:1", "{\"name\":\"x\"}"), CancellationToken.None);
+            var del = await new RespDelCommandHandler().HandleAsync(
+                Ctx(services, session, "DEL", "sales_users:1", "audit_users:2"), CancellationToken.None);
+
+            set.Should().BeOfType<RespSimpleString>();
+            executor.Intents.Should().ContainSingle().Which.Table.Should().Be("audit.users");
+            del.Should().BeOfType<RespInteger>();
+            executor.BatchIntents.Select(b => b.Table).Should().BeEquivalentTo(
+                new[] { "sales.users", "audit.users" }, "each table's keys go in that table's own batch");
+        }
+
+        [Fact]
+        public async Task WriteErrors_EchoOnlyTheCallersOwnNames()
+        {
+            // The table is addressed by its GraphQL name and the column by its GraphQL name. The
+            // errors named the table's DbName and the column's database name instead: internal
+            // identifiers the caller never sent (invariant 3).
+            var table = FakeTable("tbl_people", "dbo", "people",
+                Col("id", "int", 1, pk: true),
+                new ColumnDto { ColumnName = "col_nick", GraphQlName = "nick", DataType = "varchar", OrdinalPosition = 2 });
+            var model = Substitute.For<IDbModel>();
+            model.Tables.Returns(new[] { table });
+            var (_, services, session) = Arrange(Tenant1, enableWrites: true, model);
+
+            var unknownSet = await new RespSetCommandHandler().HandleAsync(
+                Ctx(services, session, "SET", "people:1", "{\"nope\":\"x\"}"), CancellationToken.None);
+            var badValue = await new RespSetCommandHandler().HandleAsync(
+                Ctx(services, session, "SET", "people:1", "{\"nick\":{\"a\":1}}"), CancellationToken.None);
+            var unknownHSet = await new RespHSetCommandHandler().HandleAsync(
+                Ctx(services, session, "HSET", "people:1", "nope", "x"), CancellationToken.None);
+
+            var messages = new[] { unknownSet, badValue, unknownHSet }
+                .Select(r => r.Should().BeOfType<RespError>().Which.Message).ToList();
+            messages[0].Should().Contain("unknown column 'nope'");
+            messages[1].Should().Contain("column 'nick'");
+            messages[2].Should().Contain("unknown column 'nope'");
+            messages.Should().OnlyContain(m => !m.Contains("tbl_people") && !m.Contains("col_nick"),
+                "the wire carries only names the caller sent");
+        }
+
         // ---- fixtures -------------------------------------------------------
 
         private static readonly IDictionary<string, object?> Tenant1 =
             new Dictionary<string, object?> { ["tenantId"] = 1 };
 
         private static (FakeMutationIntentExecutor executor, IServiceProvider services, RespSession session) Arrange(
-            IDictionary<string, object?> tenant, bool enableWrites)
+            IDictionary<string, object?> tenant, bool enableWrites, IDbModel? customModel = null)
         {
-            var model = BuildModel();
+            var model = customModel ?? BuildModel();
             var executor = new FakeMutationIntentExecutor(model);
             var services = new ServiceCollection()
                 .AddSingleton<IQueryIntentExecutor>(new FakeIntentExecutor(model))
@@ -651,12 +708,15 @@ namespace BifrostQL.Server.Test.Resp
         private static ColumnDto Col(string name, string type, int ordinal, bool pk = false) =>
             new() { ColumnName = name, GraphQlName = name, DataType = type, OrdinalPosition = ordinal, IsPrimaryKey = pk };
 
-        private static IDbTable FakeTable(string name, params ColumnDto[] columns)
+        private static IDbTable FakeTable(string name, params ColumnDto[] columns) =>
+            FakeTable(name, "dbo", name, columns);
+
+        private static IDbTable FakeTable(string name, string schema, string graphQlName, params ColumnDto[] columns)
         {
             var t = Substitute.For<IDbTable>();
             t.DbName.Returns(name);
-            t.GraphQlName.Returns(name);
-            t.TableSchema.Returns("dbo");
+            t.GraphQlName.Returns(graphQlName);
+            t.TableSchema.Returns(schema);
             t.Columns.Returns(columns);
             t.KeyColumns.Returns(columns.Where(c => c.IsPrimaryKey));
             return t;
@@ -698,6 +758,25 @@ namespace BifrostQL.Server.Test.Resp
             };
         }
 
+        // IDbModel.TryGetTableFromClientName's rule: "schema.name" resolves exactly; a bare name
+        // resolves only when exactly one table carries it, else the write misses.
+        private IDbTable ResolveClientName(string clientName)
+        {
+            var dot = clientName.IndexOf('.');
+            if (dot > 0)
+            {
+                var qualified = _model.Tables.SingleOrDefault(t =>
+                    string.Equals(t.TableSchema, clientName[..dot], StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(t.DbName, clientName[(dot + 1)..], StringComparison.OrdinalIgnoreCase));
+                if (qualified is not null)
+                    return qualified;
+            }
+            var bare = _model.Tables.Where(t => string.Equals(t.DbName, clientName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (bare.Count != 1)
+                throw new BifrostExecutionError($"table '{clientName}' does not resolve to exactly one table.");
+            return bare[0];
+        }
+
         public IReadOnlyDictionary<string, object?>? Row(string table, object pk) =>
             _store[table].FirstOrDefault(r => Token(r["id"]) == Token(pk));
 
@@ -707,9 +786,9 @@ namespace BifrostQL.Server.Test.Resp
         public Task<MutationIntentResult> ExecuteAsync(MutationIntent intent, CancellationToken cancellationToken = default)
         {
             Intents.Add(intent);
-            var table = _model.Tables.First(t => string.Equals(t.DbName, intent.Table, StringComparison.OrdinalIgnoreCase));
+            var table = ResolveClientName(intent.Table);
             var keyColumns = table.KeyColumns.ToList();
-            var rows = _store[intent.Table];
+            var rows = _store[table.DbName];
 
             var match = rows.FirstOrDefault(r =>
                 keyColumns.Select((c, i) => Token(r[c.ColumnName]) == Token(intent.PrimaryKey![i])).All(x => x)
@@ -756,9 +835,9 @@ namespace BifrostQL.Server.Test.Resp
             MutationBatchIntent intent, CancellationToken cancellationToken = default)
         {
             BatchIntents.Add(intent);
-            var table = _model.Tables.First(t => string.Equals(t.DbName, intent.Table, StringComparison.OrdinalIgnoreCase));
+            var table = ResolveClientName(intent.Table);
             var keyColumns = table.KeyColumns.ToList();
-            var rows = _store[intent.Table];
+            var rows = _store[table.DbName];
 
             // Snapshot for rollback: the batch commits as a unit or not at all.
             var snapshot = rows.Select(r => new Dictionary<string, object?>(r, StringComparer.Ordinal)).ToList();
@@ -768,7 +847,7 @@ namespace BifrostQL.Server.Test.Resp
             {
                 if (FailBatchActionAtIndex == i)
                 {
-                    _store[intent.Table] = snapshot; // roll back
+                    _store[table.DbName] = snapshot; // roll back
                     throw new BifrostExecutionError("batch action vetoed");
                 }
 

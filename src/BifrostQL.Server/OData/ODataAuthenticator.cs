@@ -137,7 +137,7 @@ namespace BifrostQL.Server.OData
             var source = ProtocolSourceKey.Of(context.Connection.RemoteIpAddress is { } ip
                 ? new System.Net.IPEndPoint(ip, context.Connection.RemotePort)
                 : null);
-            if (!_basicAttempts.TryAttempt(source, username))
+            if (!_basicAttempts.TryAttempt(source, username, out var admission))
                 throw ODataProtocolException.TooManyAuthenticationAttempts();
 
             var credential = await _basicStore.FindAsync(username, ct);
@@ -153,6 +153,12 @@ namespace BifrostQL.Server.OData
 
             if (!(passwordMatches && usable))
                 throw ODataProtocolException.Unauthorized("Invalid credentials.");
+
+            // The credential verified, so this attempt was not a guess: give its slots back on
+            // both axes. The window then counts only failures, so a client that sends Basic on
+            // every page request is never refused for its own good logins. Only a verified
+            // attempt is refunded; the refusal above already ran before any lookup or hashing.
+            _basicAttempts.RefundVerified(admission);
 
             return ProjectIdentity(context, credential!.Principal);
         }

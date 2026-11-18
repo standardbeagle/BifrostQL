@@ -235,6 +235,70 @@ namespace BifrostQL.Server.Test.OData
                 .Should().NotBeEmpty();
         }
 
+        /// <summary>
+        /// Basic carries the password on every request, so a client paging through a feed (Power
+        /// BI, Excel) authenticates once per page. A verified attempt gives its slots back, so a
+        /// client's own good logins never reach either cap. Before the refund the third page here
+        /// was refused with 429.
+        /// </summary>
+        [Fact]
+        public async Task Verified_basic_logins_are_refunded_and_never_reach_either_cap()
+        {
+            var store = new FakeODataBasicCredentialStore().Add(
+                ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
+            var options = new ODataOptions { MaxBasicAuthAttemptsPerSource = 2, MaxBasicAuthAttemptsPerAccount = 3 };
+            var auth = new ODataAuthenticator(BifrostAuthContextFactory.Instance, store, options: options);
+
+            for (var page = 0; page < 10; page++)
+                (await auth.AuthenticateAsync(BasicFrom("10.0.0.1", ODataTestAuth.Username, ODataTestAuth.Password), CancellationToken.None))
+                    .Should().NotBeEmpty($"page {page} carries a correct password");
+        }
+
+        /// <summary>
+        /// The refund covers verified attempts only: failures keep counting between good logins,
+        /// so the cap still bounds guessing. Each axis gets its own binding cap.
+        /// </summary>
+        [Theory]
+        [InlineData(2, 1000)]
+        [InlineData(1000, 2)]
+        public async Task Failed_basic_attempts_still_count_between_verified_logins(int perSource, int perAccount)
+        {
+            var store = new FakeODataBasicCredentialStore().Add(
+                ODataTestAuth.Username, ODataTestAuth.Password, ODataTestAuth.Principal());
+            var options = new ODataOptions { MaxBasicAuthAttemptsPerSource = perSource, MaxBasicAuthAttemptsPerAccount = perAccount };
+            var auth = new ODataAuthenticator(BifrostAuthContextFactory.Instance, store, options: options);
+
+            (await auth.AuthenticateAsync(BasicFrom("10.0.0.1", ODataTestAuth.Username, ODataTestAuth.Password), CancellationToken.None))
+                .Should().NotBeEmpty();
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", ODataTestAuth.Username, "wrong"))).HttpStatus.Should().Be(401);
+            (await auth.AuthenticateAsync(BasicFrom("10.0.0.1", ODataTestAuth.Username, ODataTestAuth.Password), CancellationToken.None))
+                .Should().NotBeEmpty();
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", ODataTestAuth.Username, "wrong"))).HttpStatus.Should().Be(401);
+
+            (await AuthShouldThrow(auth, BasicFrom("10.0.0.1", ODataTestAuth.Username, ODataTestAuth.Password)))
+                .HttpStatus.Should().Be(429, "two failures fill a cap of two; good logins in between do not reset it");
+        }
+
+        /// <summary>
+        /// A refund only credits the window its slot was taken in. An admission held across a
+        /// window rollover must not free a slot in the new window.
+        /// </summary>
+        [Fact]
+        public void A_refund_never_credits_a_later_window()
+        {
+            var now = DateTimeOffset.UnixEpoch;
+            var limiter = new ODataBasicAuthRateLimiter(1, 1000, TimeSpan.FromMinutes(1), () => now);
+
+            limiter.TryAttempt("10.0.0.1", "alice", out var stale).Should().BeTrue();
+            now += TimeSpan.FromMinutes(2);
+            limiter.TryAttempt("10.0.0.1", "alice", out _).Should().BeTrue("a new window opened");
+
+            limiter.RefundVerified(stale);
+
+            limiter.TryAttempt("10.0.0.1", "alice", out _).Should().BeFalse(
+                "the stale refund belongs to the expired window and must not free the new one");
+        }
+
         private static DefaultHttpContext BasicFrom(string ip, string username, string password)
         {
             var ctx = new DefaultHttpContext();

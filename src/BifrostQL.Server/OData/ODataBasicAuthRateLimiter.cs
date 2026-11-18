@@ -16,7 +16,19 @@ namespace BifrostQL.Server.OData
         {
         }
 
-        /// <summary>Counts one Basic attempt; false when either window is already at its cap.</summary>
-        public bool TryAttempt(string source, string account) => TryAdmit(source, account);
+        /// <summary>
+        /// Counts one Basic attempt; false when either window is already at its cap. The
+        /// returned <paramref name="admission"/> is handed to <see cref="RefundVerified"/> when
+        /// the password verifies.
+        /// </summary>
+        public bool TryAttempt(string source, string account, out Admission admission)
+            => TryAdmit(source, account, out admission);
+
+        /// <summary>
+        /// Gives a verified attempt's slots back on both axes. Basic carries the password on
+        /// every request, so a client paging through a feed (Power BI, Excel) authenticates once
+        /// per page; without this its own good logins fill the window and it is refused at the cap.
+        /// </summary>
+        public void RefundVerified(in Admission admission) => Refund(admission);
     }
 }

@@ -83,8 +83,19 @@ namespace BifrostQL.Server
         /// counters; a refused attempt increments none, so a refusal on one axis cannot be
         /// leveraged to inflate the other.
         /// </summary>
-        protected bool TryAdmit(string source, string? account)
+        protected bool TryAdmit(string source, string? account) => TryAdmit(source, account, out _);
+
+        /// <summary>
+        /// <see cref="TryAdmit(string, string?)"/>, also returning the slots the admitted attempt
+        /// took so a caller can give them back with <see cref="Refund"/> once the credential
+        /// verifies. Without the refund, a client that authenticates on every request (HTTP Basic,
+        /// where each request carries the password) spends the window on its own good logins and
+        /// is refused at the cap, and anyone who knows the username can top the account window
+        /// up to that cap from the victim's own traffic.
+        /// </summary>
+        protected bool TryAdmit(string source, string? account, out Admission admission)
         {
+            admission = default;
             var accountKey = account is null ? null : $"a:{HashAccountKey(CanonicalAccountName(account))}";
             var sourceKey = $"s:{source}";
             var now = _clock();
@@ -94,13 +105,52 @@ namespace BifrostQL.Server
             // concurrent attempts against a window at cap-1 admit exactly one, not N. A separate
             // read then increment let every in-flight attempt pass the read before any counted.
             if (!TryReserve(sourceWindow, _maxPerSource, now, out var sourceStart)) return false;
-            if (accountKey is not null && !TryReserve(accountWindow, _maxPerAccount, now, out _))
+            var accountStart = default(DateTimeOffset);
+            if (accountKey is not null && !TryReserve(accountWindow, _maxPerAccount, now, out accountStart))
             {
                 // A refusal on the account axis must not consume the source axis.
                 Release(sourceWindow, sourceStart);
                 return false;
             }
+            admission = new Admission(
+                new Slot(sourceWindow.Map, sourceWindow.Key, sourceStart),
+                accountKey is null ? null : new Slot(accountWindow.Map, accountWindow.Key, accountStart));
             return true;
+        }
+
+        /// <summary>
+        /// Gives back the slots <paramref name="admission"/> took, on both axes, after the
+        /// credential verified. Each slot is released only while its window is still the one it
+        /// was taken in (the same compare-and-swap <see cref="TryAdmit(string, string?)"/> uses), so
+        /// a refund never credits a later window. A default <see cref="Admission"/> refunds nothing.
+        /// Failed attempts are never refunded: they are what the window counts.
+        /// </summary>
+        protected void Refund(in Admission admission)
+        {
+            if (admission.Source is { } source)
+                Release((source.Map, source.Key), source.Start);
+            if (admission.Account is { } account)
+                Release((account.Map, account.Key), account.Start);
+        }
+
+        /// <summary>The window slot one admitted attempt took on one axis.</summary>
+        internal readonly record struct Slot(ConcurrentDictionary<string, Window> Map, string Key, DateTimeOffset Start);
+
+        /// <summary>
+        /// The slots an admitted attempt took, handed back to the caller of
+        /// <see cref="TryAdmit(string, string?, out Admission)"/> so it can <see cref="Refund"/>
+        /// them on success. Opaque outside the limiter.
+        /// </summary>
+        internal readonly struct Admission
+        {
+            internal Admission(Slot source, Slot? account)
+            {
+                Source = source;
+                Account = account;
+            }
+
+            internal Slot? Source { get; }
+            internal Slot? Account { get; }
         }
 
         /// <summary>
@@ -203,6 +253,6 @@ namespace BifrostQL.Server
             }
         }
 
-        private readonly record struct Window(DateTimeOffset Start, int Count);
+        internal readonly record struct Window(DateTimeOffset Start, int Count);
     }
 }

@@ -18,9 +18,11 @@ namespace BifrostQL.Server.Ldap
     ///
     /// <para>Only the READ side is buffered: responses are written whole and flushed explicitly, so
     /// writes pass straight through and no response can be stranded in a write buffer at close.
-    /// The wrapper never owns the inner stream — the connection handler that created the transport
-    /// disposes it — so an upgraded session can hand the same socket to
-    /// <see cref="System.Net.Security.SslStream"/> without a double-dispose race.</para>
+    /// The wrapper over the raw transport does not own it — the connection handler that created
+    /// the transport disposes it — so an upgraded session can hand the same socket to
+    /// <see cref="System.Net.Security.SslStream"/> without a double-dispose race. The wrapper over
+    /// a StartTLS <see cref="System.Net.Security.SslStream"/> does own it: nothing else holds that
+    /// stream, so disposing it here is what sends close_notify and frees the TLS session.</para>
     /// </summary>
     internal sealed class LdapBufferedStream : Stream
     {
@@ -28,16 +30,18 @@ namespace BifrostQL.Server.Ldap
         public const int DefaultBufferSize = 8192;
 
         private readonly Stream _inner;
+        private readonly bool _ownsInner;
         private readonly byte[] _buffer;
         private int _start;
         private int _end;
 
-        public LdapBufferedStream(Stream inner, int bufferSize = DefaultBufferSize)
+        public LdapBufferedStream(Stream inner, int bufferSize = DefaultBufferSize, bool ownsInner = false)
         {
             ArgumentNullException.ThrowIfNull(inner);
             if (bufferSize < 1)
                 throw new ArgumentOutOfRangeException(nameof(bufferSize), bufferSize, "buffer size must be positive.");
             _inner = inner;
+            _ownsInner = ownsInner;
             _buffer = new byte[bufferSize];
         }
 
@@ -91,6 +95,34 @@ namespace BifrostQL.Server.Ldap
             if (_start == _end)
                 _start = _end = 0;
             return take;
+        }
+
+        /// <summary>
+        /// Closes an owned inner stream. An owned <see cref="System.Net.Security.SslStream"/> is shut
+        /// down first, which writes close_notify, so the peer sees an orderly TLS close instead of a
+        /// truncation. The shutdown writes through the bounded transport underneath, so a peer that
+        /// does not read cannot hold it past the write timeout. A peer already gone is not an
+        /// error at close.
+        /// </summary>
+        public override async ValueTask DisposeAsync()
+        {
+            if (_ownsInner)
+            {
+                if (_inner is System.Net.Security.SslStream ssl)
+                {
+                    try
+                    {
+                        await ssl.ShutdownAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is IOException or ObjectDisposedException
+                                                  or InvalidOperationException or OperationCanceledException)
+                    {
+                        // The transport is gone or cut by its deadline; dispose still frees the session.
+                    }
+                }
+                await _inner.DisposeAsync().ConfigureAwait(false);
+            }
+            await base.DisposeAsync().ConfigureAwait(false);
         }
 
         // ---- write side: straight through ----

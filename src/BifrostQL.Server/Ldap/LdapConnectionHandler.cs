@@ -221,6 +221,13 @@ namespace BifrostQL.Server.Ldap
             {
                 _logger.LogDebug(ex, "ldap connection ended: {Reason}", ex.Message);
             }
+            finally
+            {
+                // The StartTLS wire owns its SslStream; the cleartext wire owns nothing, so this is
+                // a no-op unless the session upgraded. Without it the SslStream was never disposed:
+                // no close_notify reached the peer and the TLS session's buffers lived until GC.
+                await wire.DisposeAsync();
+            }
         }
 
         /// <summary>
@@ -439,7 +446,7 @@ namespace BifrostQL.Server.Ldap
             }
 
             session.TlsEstablished = true;
-            return LdapDispatch.Upgrade(new LdapBufferedStream(ssl));
+            return LdapDispatch.Upgrade(new LdapBufferedStream(ssl, ownsInner: true));
         }
 
         /// <summary>

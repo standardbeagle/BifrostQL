@@ -120,6 +120,27 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task Session_ending_after_StartTls_sends_close_notify()
+        {
+            // The StartTLS SslStream was never disposed, so the session ended without close_notify:
+            // the peer saw a truncated TLS stream (or, with the socket left open, nothing at all) and
+            // the TLS session's buffers lived until GC. The server socket stays open here, so an
+            // orderly end-of-stream on the client can only come from the server's close_notify.
+            var options = WithCertificate();
+            await using var fixture = await LdapFixture.StartAsync(options, closeServerSocketOnExit: false);
+
+            await fixture.Client.SendAsync(StartTls(1));
+            (await ReadAsync(fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+            await fixture.Client.UpgradeToTlsAsync();
+
+            await fixture.Client.SendAsync(LdapWire.Message(2, LdapWire.UnbindRequest()));
+            await fixture.ServerTask.WaitAsync(Timeout);
+
+            (await fixture.Client.ReadResponseAsync().WaitAsync(Timeout))
+                .Should().BeNull("close_notify ends the TLS stream cleanly while the socket is still open");
+        }
+
+        [Fact]
         public async Task StartTls_ASecondTime_IsRefused_AndTheEstablishedTlsKeepsWorking()
         {
             var options = WithCertificate();

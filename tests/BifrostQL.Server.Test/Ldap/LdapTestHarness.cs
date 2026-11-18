@@ -446,7 +446,8 @@ namespace BifrostQL.Server.Test.Ldap
             LdapConnectionHandler? handler = null,
             bool tls = false,
             LdapSearchExecutor? search = null,
-            TimeProvider? timeProvider = null)
+            TimeProvider? timeProvider = null,
+            bool closeServerSocketOnExit = true)
         {
             options ??= new LdapWireOptions();
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -490,7 +491,9 @@ namespace BifrostQL.Server.Test.Ldap
                     await connectionHandler.HandleConnectionAsync(
                         serverStream, cancellation.Token, source: "test-client:1", tlsEstablished: tls);
                 }
-                finally { serverSocket.Close(); }
+                // Off: whatever the client reads after the session ends is what the HANDLER wrote,
+                // not the FIN this close would add (a close_notify fact needs that distinction).
+                finally { if (closeServerSocketOnExit) serverSocket.Close(); }
             });
             return new LdapFixture(listener, clientSocket, serverSocket, serverTask, client, cancellation);
         }

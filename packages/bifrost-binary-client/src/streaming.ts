@@ -32,9 +32,9 @@
  *
  * When the stream stops early (consumer `break`, error, timeout) every held
  * chunk is acked at once and the client ack-drops the rest, so the server can
- * finish. A full window is backpressure, not a deadline: the server waits for
- * the next ack as long as the consumer takes (unless the mount states an
- * `ackTimeout`, which abandons just that response with CHUNK_ACK_TIMEOUT). The
+ * finish. A full window is backpressure with a deadline: the server waits for
+ * the next ack up to the mount's `ackTimeout` (60 s by default), then abandons
+ * just that response with CHUNK_ACK_TIMEOUT (`NoAckTimeout` lifts it). The
  * server's connection idle deadline (10 min by default) still counts the acks,
  * and an iterator the consumer abandons must be ended with `break` /
  * `return()` rather than left suspended. The client's own idle timeout

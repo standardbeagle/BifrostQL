@@ -103,9 +103,9 @@ export const BinaryErrorCode = {
   /** The request_id names a request still in flight on the connection. */
   RequestIdInFlight: "REQUEST_ID_IN_FLIGHT",
   /**
-   * The mount states an ack timeout and this client did not ack the next
-   * chunk of the response within it. Only that response was abandoned; the
-   * request ran, so resending re-runs it.
+   * This client did not ack the next chunk of the response within the
+   * mount's ack timeout (60 s by default). Only that response was abandoned;
+   * the request ran, so resending re-runs it.
    */
   ChunkAckTimeout: "CHUNK_ACK_TIMEOUT",
 } as const;

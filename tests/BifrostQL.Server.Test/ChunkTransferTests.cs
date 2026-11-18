@@ -399,11 +399,12 @@ namespace BifrostQL.Server.Test
         public async Task SlowConsumer_TakingMinutesPerChunk_ReceivesTheWholeTransfer()
         {
             // The client's consumer holds every chunk for 61 s of injected time before acking,
-            // twice the 30 s ack timeout that used to close the connection. With no stated ack
-            // timeout a full window is backpressure: the transfer waits and then completes.
+            // past the 60 s default ack timeout. Under the explicit NoAckTimeout opt-out a full
+            // window is pure backpressure: the transfer waits and then completes.
             var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
             var sender = new ChunkSender(
-                chunkThreshold: 100, ackWindow: 2, chunkBuffer: new ChunkBuffer(), timeProvider: clock);
+                chunkThreshold: 100, ackWindow: 2, chunkBuffer: new ChunkBuffer(),
+                ackTimeout: ChunkSender.NoAckTimeout, timeProvider: clock);
             var client = new ScriptedClient { BeforeEachReply = () => AdvanceAsync(clock, TimeSpan.FromSeconds(61)) };
             var response = Result(40, 600);
             var chunkCount = sender.SplitIntoChunks(response).Count;

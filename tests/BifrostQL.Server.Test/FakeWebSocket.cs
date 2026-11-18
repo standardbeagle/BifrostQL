@@ -138,6 +138,20 @@ namespace BifrostQL.Server.Test
             }
         }
 
+        /// <summary>
+        /// Delivers a message while the connection runs (safe against the server's reader),
+        /// even to a <see cref="HangWhenDrained"/> fake: a client sending a new request while
+        /// it still owes acks on another.
+        /// </summary>
+        public void DeliverMessage(BifrostMessage message)
+        {
+            lock (_gate)
+            {
+                _incoming.Enqueue((WebSocketMessageType.Binary, message.ToBytes()));
+                _changed.Release();
+            }
+        }
+
         public void ForceState(WebSocketState state) => _state = state;
 
         /// <summary>Re-deserializes the recorded frames into messages for assertions.</summary>

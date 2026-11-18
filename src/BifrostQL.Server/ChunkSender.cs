@@ -10,8 +10,8 @@ namespace BifrostQL.Server
     /// fragments and deserializes to recover the original message.
     ///
     /// A transfer pauses when unacknowledged chunks reach the configured window and resumes
-    /// as ChunkAck messages arrive (see <see cref="ChunkTransfer"/>). By default the pause has
-    /// no time limit (<see cref="NoAckTimeout"/>).
+    /// as ChunkAck messages arrive (see <see cref="ChunkTransfer"/>). By default the pause lasts
+    /// at most <see cref="DefaultAckTimeout"/>; <see cref="NoAckTimeout"/> lifts the limit.
     /// </summary>
     public sealed class ChunkSender
     {
@@ -26,12 +26,22 @@ namespace BifrostQL.Server
         public const int DefaultAckWindow = 8;
 
         /// <summary>
-        /// The ack timeout that means "no stall cap" (<see cref="Timeout.InfiniteTimeSpan"/>), and
-        /// the default. A full ack window is backpressure: the transfer pauses until the client
-        /// acks, however long its consumer takes. A slow consumer is not a dead peer, and a
-        /// per-ack timer never bounded how long a client holds a transfer anyway (one ack just
-        /// under the timer keeps it alive). A peer that goes silent is cut off by the
-        /// connection's idle deadline, which ends every transfer on it.
+        /// The default for how long a transfer with a full ack window waits for the next ack
+        /// (60 s). Twice the 30 s first-frame deadline, and far below the 10 min connection idle
+        /// deadline that would otherwise be the only bound. When it expires only that transfer is
+        /// abandoned (the binary mount sends <c>CHUNK_ACK_TIMEOUT</c> for it); the connection and
+        /// its other requests carry on. An unbounded wait is the explicit opt-out
+        /// <see cref="NoAckTimeout"/>, never the default.
+        /// </summary>
+        public static readonly TimeSpan DefaultAckTimeout = TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// The ack timeout that means "no stall cap" (<see cref="Timeout.InfiniteTimeSpan"/>): an
+        /// explicit opt-out of <see cref="DefaultAckTimeout"/>. A full ack window then pauses the
+        /// transfer until the client acks, however long its consumer takes. Only the connection's
+        /// idle deadline still ends a transfer whose peer goes silent. A per-ack timer never
+        /// bounded how long a client holds a transfer anyway (one ack just under the timer keeps
+        /// it alive); it bounds how long one stalled response pins its buffered chunks.
         /// </summary>
         public static readonly TimeSpan NoAckTimeout = Timeout.InfiniteTimeSpan;
 
@@ -59,8 +69,8 @@ namespace BifrostQL.Server
 
         /// <param name="ackTimeout">
         /// How long a transfer waits for the next ack once its window is full before it gives up
-        /// with a <see cref="TimeoutException"/>. Null or <see cref="NoAckTimeout"/> (the default)
-        /// waits as long as the client takes.
+        /// with a <see cref="TimeoutException"/>. Null takes <see cref="DefaultAckTimeout"/>;
+        /// <see cref="NoAckTimeout"/> waits as long as the client takes.
         /// </param>
         /// <param name="timeProvider">The clock the ack timeout runs on; the system clock when null.</param>
         public ChunkSender(
@@ -80,7 +90,7 @@ namespace BifrostQL.Server
             _chunkThreshold = chunkThreshold;
             _ackWindow = ackWindow;
             _chunkBuffer = chunkBuffer;
-            _ackTimeout = ackTimeout ?? NoAckTimeout;
+            _ackTimeout = ackTimeout ?? DefaultAckTimeout;
             _maxRetransmitsPerSequence = maxRetransmitsPerSequence;
             _logger = logger;
             _timeProvider = timeProvider ?? TimeProvider.System;

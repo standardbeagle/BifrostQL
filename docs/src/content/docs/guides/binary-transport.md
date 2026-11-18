@@ -52,7 +52,7 @@ app.UseBifrostBinary(
     maxConnections: 100,       // concurrent sockets on this mount
     firstFrameTimeout: TimeSpan.FromSeconds(30),
     idleTimeout: TimeSpan.FromMinutes(10),
-    ackTimeout: null,          // wait for the next chunk ack as long as the consumer takes (default)
+    ackTimeout: TimeSpan.FromSeconds(60), // drop a response whose client stops acking (default 60 s)
     writeTimeout: TimeSpan.FromSeconds(30)); // deadline for each frame the server sends
 ```
 
@@ -119,7 +119,7 @@ field (protobuf field 13, a string). Branch on the code, never on the frame's te
 |---|---|
 | `TOO_MANY_CONCURRENT_REQUESTS` | The connection already runs 16 requests. The request never ran; resend it when one completes. |
 | `REQUEST_ID_IN_FLIGHT` | The `request_id` names a request still in flight. The request never ran; resend it under a fresh id. |
-| `CHUNK_ACK_TIMEOUT` | The mount states an `ackTimeout` and the client did not ack the next chunk of this response within it. Only this response was abandoned; the request ran, so resending re-runs it. |
+| `CHUNK_ACK_TIMEOUT` | The client did not ack the next chunk of this response within the mount's `ackTimeout` (60 s by default). Only this response was abandoned; the request ran, so resending re-runs it. |
 
 The codes are public as `BinaryErrorCode` in both `BifrostQL.Server` and `@bifrostql/binary-client`.
 GraphQL execution errors carry no frame code; they arrive in `errors` as on the HTTP endpoint.
@@ -239,12 +239,13 @@ Each `StreamChunk` carries:
 
 Chunks arrive in sequence even if the wire delivered them out of order — the client buffers and reorders internally. Concatenating `bytes` across all chunks gives the same payload whether or not the server chunked the response: a chunk frame carries a slice of the whole serialized protobuf message, and the client strips that message's envelope, so the first chunk is a few bytes shorter than the rest. If the envelope carries errors, the iterator throws with their text before yielding any payload, as it does for an unchunked `Result` with errors. Mutations have a streaming counterpart, `client.streamMutation()`, with the same shape.
 
-The client acks a chunk only when your loop takes it, so the server's ack window paces the transfer to your consumer and the client buffers about one window (8 chunks, 512 KB by default). A full window is backpressure, not a deadline: by default the server waits for the next ack as long as your consumer takes, so a slow consumer receives the whole response. Two limits remain:
+The client acks a chunk only when your loop takes it, so the server's ack window paces the transfer to your consumer and the client buffers about one window (8 chunks, 512 KB by default). A full window is backpressure with a deadline: the server waits up to the mount's `ackTimeout` (60 s by default) for the next ack. Three limits apply:
 
-- The connection's `idleTimeout` (10 min by default) counts every frame the client sends, acks included. A consumer that holds one chunk that long, with nothing else running on the connection, is closed by it.
+- A consumer that holds one chunk longer than `ackTimeout` loses that response. The server abandons it and sends an `Error` frame coded `CHUNK_ACK_TIMEOUT`; the connection and its other requests carry on. The query already ran, so resending re-runs it.
+- The connection's `idleTimeout` (10 min by default) counts every frame the client sends, acks included. A connection that sends nothing that long is closed by it.
 - End an iterator you stop reading with `break` (or `iterator.return()`), never by leaving it suspended. Ending it acks every chunk it still holds, and the client ack-drops the rest of the response. A suspended iterator holds its share of the server's buffered response until the connection ends.
 
-A mount can state `ackTimeout` to bound how long one response waits on a full window. When it expires the server abandons only that response and sends an `Error` frame coded `CHUNK_ACK_TIMEOUT`; the connection and its other requests carry on. The query already ran, so resending re-runs it.
+A mount sets `ackTimeout` to change how long one response waits on a full window. Pass `ChunkSender.NoAckTimeout` to opt out and wait as long as the consumer takes; only `idleTimeout` then bounds a stalled response, and its buffered chunks stay pinned until the connection ends.
 
 The client's own idle timeout (`requestTimeoutMs`) restarts on every chunk received or acked, and does not fire while the consumer still holds chunks it has not taken: that silence is the consumer's, not the server's.
 

@@ -97,10 +97,11 @@ namespace BifrostQL.Server
         /// </param>
         /// <param name="idleTimeout">Deadline between frames of an established connection (default 10 min).</param>
         /// <param name="ackTimeout">
-        /// How long a chunked response waits for the next ack once its window is full. Null (the
-        /// default) waits as long as the client's consumer takes; a silent peer still meets
-        /// <paramref name="idleTimeout"/>. When set and it expires, only that response is
-        /// abandoned, with an Error frame coded <see cref="BinaryErrorCode.ChunkAckTimeout"/>.
+        /// How long a chunked response waits for the next ack once its window is full. Null takes
+        /// <see cref="ChunkSender.DefaultAckTimeout"/> (60 s). When it expires, only that response
+        /// is abandoned, with an Error frame coded <see cref="BinaryErrorCode.ChunkAckTimeout"/>;
+        /// the connection carries on. Pass <see cref="ChunkSender.NoAckTimeout"/> to wait as long
+        /// as the client's consumer takes (a silent peer still meets <paramref name="idleTimeout"/>).
         /// Runs on the registered <see cref="TimeProvider"/>.
         /// </param>
         /// <param name="writeTimeout">
@@ -140,9 +141,9 @@ namespace BifrostQL.Server
                     schemaPath,
                     chunkThreshold,
                     ackWindow,
-                    // No stated ack timeout: a full ack window pauses the transfer for as long as
-                    // the client's consumer takes (see ChunkSender.NoAckTimeout).
-                    ackTimeout ?? ChunkSender.NoAckTimeout,
+                    // No stated ack timeout takes the bounded default; an unbounded wait is the
+                    // explicit ChunkSender.NoAckTimeout opt-out.
+                    ackTimeout ?? ChunkSender.DefaultAckTimeout,
                     requiresAuth,
                     origins,
                     maxConnections,

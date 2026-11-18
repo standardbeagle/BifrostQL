@@ -46,9 +46,10 @@ namespace BifrostQL.Server
 
         /// <summary>
         /// How long a chunked response waits for the next ack once its window is full.
-        /// <see cref="ChunkSender.NoAckTimeout"/> (the mount default) waits as long as the client's
-        /// consumer takes: the window is backpressure, and a silent peer is cut off by
-        /// <see cref="_idleTimeout"/>. A stated timeout abandons only the stalled response.
+        /// <see cref="ChunkSender.DefaultAckTimeout"/> (60 s) unless the mount states otherwise.
+        /// Expiry abandons only the stalled response, with a <c>CHUNK_ACK_TIMEOUT</c> Error frame.
+        /// <see cref="ChunkSender.NoAckTimeout"/> is the explicit opt-out: the window is then pure
+        /// backpressure and only <see cref="_idleTimeout"/> cuts off a silent peer.
         /// </summary>
         private readonly TimeSpan _ackTimeout;
 
@@ -149,7 +150,7 @@ namespace BifrostQL.Server
             ILogger<BifrostBinaryMiddleware> logger,
             int chunkThreshold,
             int ackWindow)
-            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.NoAckTimeout,
+            : this(next, engine, endpointPath, logger, chunkThreshold, ackWindow, ChunkSender.DefaultAckTimeout,
                    // Fail closed: a host constructing the middleware without stating a posture
                    // gets the safe one, never anonymous access.
                    requireAuthenticatedIdentity: true)

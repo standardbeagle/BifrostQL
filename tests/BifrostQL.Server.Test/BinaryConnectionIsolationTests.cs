@@ -189,13 +189,117 @@ namespace BifrostQL.Server.Test
             socket.ClosedWith.Should().Be(WebSocketCloseStatus.NormalClosure);
         }
 
-        [Fact]
-        public async Task NoStatedAckTimeout_AClientThatStopsAcking_IsNotDisconnected()
+        /// <summary>
+        /// Large result for <c>{ blob }</c> (chunked at threshold 100), a small one for anything
+        /// else, so a second request on a connection that owes acks answers unchunked.
+        /// </summary>
+        private sealed class MixedResultEngine : IBifrostEngine
         {
-            // The default mount has no ack timer: a full window pauses the transfer for as long as
-            // the consumer takes, however far the clock moves.
+            public Task<BifrostResult> ExecuteAsync(BifrostRequest request, string endpointPath)
+                => Task.FromResult(new BifrostResult
+                {
+                    Data = request.Query.Contains("blob", StringComparison.Ordinal)
+                        ? new Dictionary<string, object?> { ["blob"] = new string('x', 2000) }
+                        : new Dictionary<string, object?> { ["ping"] = "pong" },
+                });
+        }
+
+        /// <summary>
+        /// Builds the pipeline the production mount builds: <c>UseBifrostBinary</c> over a
+        /// container that registers <paramref name="clock"/> as the host's
+        /// <see cref="TimeProvider"/>. Only the ack timeout argument varies between callers;
+        /// null leaves it unstated, as a host that never mentions it does.
+        /// </summary>
+        private static (RequestDelegate Pipeline, IServiceProvider Services) MountBinary(
+            TimeProvider clock, TimeSpan? ackTimeout)
+        {
+            var services = new ServiceCollection()
+                .AddLogging()
+                .AddSingleton<IBifrostEngine>(new MixedResultEngine())
+                .AddSingleton(clock)
+                .BuildServiceProvider();
+            var app = new Microsoft.AspNetCore.Builder.ApplicationBuilder(services);
+            if (ackTimeout is { } stated)
+                app.UseBifrostBinary(chunkThreshold: 100, ackWindow: 2, requireAuthentication: false, ackTimeout: stated);
+            else
+                app.UseBifrostBinary(chunkThreshold: 100, ackWindow: 2, requireAuthentication: false);
+            return (app.Build(), services);
+        }
+
+        private static Task RunMountedAsync(RequestDelegate pipeline, IServiceProvider services, FakeWebSocket socket)
+        {
+            var context = new DefaultHttpContext { RequestServices = services };
+            context.Request.Path = "/bifrost-ws";
+            context.Features.Set<IHttpWebSocketFeature>(new FakeWebSocketFeature(socket));
+            return pipeline(context);
+        }
+
+        [Fact]
+        public async Task DefaultMount_AClientThatStopsAcking_GetsChunkAckTimeoutAfterSixtySeconds_AndTheConnectionServesOn()
+        {
+            // UseBifrostBinary with no ackTimeout: the stalled response is bounded by
+            // ChunkSender.DefaultAckTimeout (60 s) on the host's clock. It must not fire one
+            // second early, must fire once 60 s pass, and must leave the connection serving.
+            // The real wait budget (5 s per await) is far below 60 s, so a mount that ran the
+            // timer on TimeProvider.System instead of the injected clock never answers here.
             var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
-            var middleware = CreateMiddleware(ackWindow: 2, timeProvider: clock);
+            var (pipeline, services) = MountBinary(clock, ackTimeout: null);
+            var windowFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var abandoned = new TaskCompletionSource<BifrostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pong = new TaskCompletionSource<BifrostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var socket = new FakeWebSocket { HangWhenDrained = true };
+            var chunksSent = 0;
+            socket.Sent += m =>
+            {
+                if (m.Type == BifrostMessageType.Chunk && Interlocked.Increment(ref chunksSent) == 2)
+                    windowFull.TrySetResult();
+                if (m.Type == BifrostMessageType.Error)
+                    abandoned.TrySetResult(m);
+                if (m.Type == BifrostMessageType.Result && m.RequestId == 12)
+                    pong.TrySetResult(m);
+            };
+            socket.EnqueueMessage(Query(11));
+
+            var run = RunMountedAsync(pipeline, services, socket);
+            await windowFull.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // 59 s, one second at a time: still waiting.
+            for (var i = 0; i < 59; i++)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(1);
+            }
+            abandoned.Task.IsCompleted.Should().BeFalse("the default ack timeout is 60 s, not less");
+
+            // Past 60 s: the stalled response is abandoned with the coded error.
+            for (var i = 0; i < 5 && !abandoned.Task.IsCompleted; i++)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(1);
+            }
+            var error = await abandoned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            error.RequestId.Should().Be(11u);
+            error.ErrorCode.Should().Be(BinaryErrorCode.ChunkAckTimeout);
+            socket.State.Should().Be(WebSocketState.Open, "only the stalled response is abandoned");
+            socket.ClosedWith.Should().BeNull();
+
+            // The same connection still answers a new request.
+            socket.DeliverMessage(new BifrostMessage { RequestId = 12, Type = BifrostMessageType.Query, Query = "{ ping }" });
+            var answer = await pong.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            answer.Errors.Should().BeEmpty();
+
+            socket.DeliverClose();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+            socket.ClosedWith.Should().Be(WebSocketCloseStatus.NormalClosure);
+        }
+
+        [Fact]
+        public async Task ExplicitNoAckTimeout_Mount_AClientThatStopsAcking_IsNeverTimedOut()
+        {
+            // Control for the default: the same mount with the explicit opt-out waits as long as
+            // the consumer takes, however far the clock moves (here twice the default).
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+            var (pipeline, services) = MountBinary(clock, ChunkSender.NoAckTimeout);
             var windowFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var socket = new FakeWebSocket { HangWhenDrained = true };
             var chunksSent = 0;
@@ -206,7 +310,7 @@ namespace BifrostQL.Server.Test
             };
             socket.EnqueueMessage(Query(6));
 
-            var run = RunConnectionAsync(middleware, socket);
+            var run = RunMountedAsync(pipeline, services, socket);
             await windowFull.Task.WaitAsync(TimeSpan.FromSeconds(5));
             for (var i = 0; i < 120; i++)
             {

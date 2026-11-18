@@ -417,11 +417,15 @@ namespace BifrostQL.Server.Auth
 
             // A hash in an older format or below the current work factor verified, so the
             // plaintext is in hand: upgrade the stored hash now, or it stays weak forever.
+            // The write is conditioned on the hash just verified: a password change that landed
+            // between the read and this write wins, and the upgrade is dropped (it is retried at the
+            // next login against whatever hash is stored then).
             if (verification == PasswordVerificationResult.SuccessRehashNeeded)
             {
                 var upgraded = _passwordHasher.HashPassword(login, password);
-                await StorePasswordHashAsync(conn, dialect, row.Id, upgraded, cancellationToken).ConfigureAwait(false);
-                account = account with { CredentialStamp = LocalSessionId.CredentialStamp(upgraded) };
+                if (await StorePasswordHashAsync(conn, dialect, row.Id, upgraded, row.PasswordHash, cancellationToken)
+                        .ConfigureAwait(false))
+                    account = account with { CredentialStamp = LocalSessionId.CredentialStamp(upgraded) };
             }
 
             return LocalLoginResult.Success(
@@ -530,7 +534,7 @@ namespace BifrostQL.Server.Auth
             var dialect = _connFactory.Dialect;
             await using var conn = _connFactory.GetConnection();
             await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await StorePasswordHashAsync(conn, dialect, userId, hash, cancellationToken).ConfigureAwait(false);
+            await StorePasswordHashAsync(conn, dialect, userId, hash, expectedHash: null, cancellationToken).ConfigureAwait(false);
             return hash;
         }
 
@@ -538,14 +542,20 @@ namespace BifrostQL.Server.Auth
         internal bool PasswordMatchesHash(string login, string hash, string password) =>
             _passwordHasher.VerifyHashedPassword(login, hash, password) != PasswordVerificationResult.Failed;
 
-        private async Task StorePasswordHashAsync(
-            DbConnection conn, ISqlDialect dialect, string id, string hash, CancellationToken cancellationToken)
+        /// <summary>
+        /// Writes <paramref name="hash"/> to the user row. With <paramref name="expectedHash"/> the write
+        /// lands only while the row still holds that hash (compare-and-set); returns whether a row changed.
+        /// </summary>
+        private async Task<bool> StorePasswordHashAsync(
+            DbConnection conn, ISqlDialect dialect, string id, string hash, string? expectedHash,
+            CancellationToken cancellationToken)
         {
             await using var command = conn.CreateCommand();
             command.CommandText =
                 $"UPDATE {dialect.EscapeIdentifier(_options.UserTable)} " +
                 $"SET {dialect.EscapeIdentifier(_options.PasswordHashColumn)} = @hash " +
-                $"WHERE {dialect.EscapeIdentifier(_options.IdColumn)} = @id";
+                $"WHERE {dialect.EscapeIdentifier(_options.IdColumn)} = @id" +
+                (expectedHash is null ? "" : $" AND {dialect.EscapeIdentifier(_options.PasswordHashColumn)} = @expectedHash");
 
             var hashParam = command.CreateParameter();
             hashParam.ParameterName = "@hash";
@@ -559,7 +569,16 @@ namespace BifrostQL.Server.Auth
             idParam.Value = id;
             command.Parameters.Add(idParam);
 
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (expectedHash is not null)
+            {
+                var expectedParam = command.CreateParameter();
+                expectedParam.ParameterName = "@expectedHash";
+                expectedParam.DbType = DbType.String;
+                expectedParam.Value = expectedHash;
+                command.Parameters.Add(expectedParam);
+            }
+
+            return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
         }
 
         private async Task<AppIdentity> BuildIdentityAsync(

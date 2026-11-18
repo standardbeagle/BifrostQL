@@ -711,6 +711,64 @@ namespace BifrostQL.Server.Test
                 "the replacement hash is at the current work factor and still matches the password");
         }
 
+        [Fact]
+        public async Task RehashOnLogin_DoesNotOverwriteAPasswordChangedBetweenVerifyAndUpgrade()
+        {
+            const string changed = "a changed passphrase 7";
+            var racing = new RehashRacingHasher();
+            var client = await StartAsync(_ => { }, services => services.AddSingleton(sp => new LocalUserStore(
+                sp.GetRequiredService<IDbConnFactory>(), sp.GetRequiredService<LocalAuthOptions>(), racing)));
+            // The concurrent change lands after the old password verified and before the upgrade
+            // writes: the moment the upgrade hash is computed.
+            racing.BeforeUpgradeHash = () =>
+                Execute($"UPDATE app_users SET password_hash = '{CheapHasher.HashPassword(Login, changed)}' WHERE id = 'user-1'");
+
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "control: the old password verified before the change landed");
+            racing.UpgradesComputed.Should().Be(1, "control: the login took the rehash branch");
+
+            var stored = StoredHash();
+            CheapHasher.VerifyHashedPassword(Login, stored, changed).Should().NotBe(PasswordVerificationResult.Failed,
+                "the concurrent change wins; an unconditional upgrade put the old password back");
+            CheapHasher.VerifyHashedPassword(Login, stored, Password).Should().Be(PasswordVerificationResult.Failed);
+        }
+
+        private string StoredHash()
+        {
+            using var conn = new SqliteConnection(ConnectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT password_hash FROM app_users WHERE id = 'user-1'";
+            return (string)cmd.ExecuteScalar()!;
+        }
+
+        /// <summary>
+        /// The cheap hasher, reporting every successful verify as needing a rehash, with a hook run
+        /// when the upgrade hash is computed (after verification, before the store writes it).
+        /// </summary>
+        private sealed class RehashRacingHasher : IPasswordHasher<string>
+        {
+            private int _armed;
+            public Action? BeforeUpgradeHash { get; set; }
+            public int UpgradesComputed { get; private set; }
+
+            public string HashPassword(string user, string password)
+            {
+                // The store's constructor hashes its timing decoy; only later calls are upgrades.
+                if (Interlocked.Exchange(ref _armed, 1) == 1)
+                {
+                    UpgradesComputed++;
+                    BeforeUpgradeHash?.Invoke();
+                }
+                return CheapHasher.HashPassword(user, password);
+            }
+
+            public PasswordVerificationResult VerifyHashedPassword(string user, string hashedPassword, string providedPassword) =>
+                CheapHasher.VerifyHashedPassword(user, hashedPassword, providedPassword) == PasswordVerificationResult.Failed
+                    ? PasswordVerificationResult.Failed
+                    : PasswordVerificationResult.SuccessRehashNeeded;
+        }
+
         /// <summary>The PBKDF2 iteration count stored in an ASP.NET Core Identity V3 hash (bytes 5-8, big-endian).</summary>
         private static int V3Iterations(string hash)
         {

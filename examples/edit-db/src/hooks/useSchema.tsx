@@ -56,6 +56,7 @@ interface DbSchemaItem {
 
 interface DbSchemaResponse {
     _dbSchema: DbSchemaItem[];
+    _maxQueryRows: number;
 }
 
 const SchemaContext = createContext<SchemaContextValue>({loading: true, error: null, data: [], findTable: () => undefined});
@@ -141,7 +142,7 @@ function useSchemaLoader(): SchemaContextValue {
         const findTable = (tableName: string): Table | undefined =>
             tables.find((t: Table) => t.graphQlName === tableName);
 
-        return { loading: false, error: null, data: tables, findTable };
+        return { loading: false, error: null, data: tables, findTable, maxQueryRows: dbData._maxQueryRows };
     }, [isLoading, error, dbData, allowedTables]);
 }
 

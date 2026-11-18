@@ -99,7 +99,9 @@ otherwise read the whole table through the aggregate surface:
   [`max-query-rows`](/BifrostQL/reference/configuration/) ceiling (default
   10000). A caller may **narrow** the window; a `limit` above the ceiling, and
   the no-limit sentinel `limit: -1`, clamp back to it. A ceiling lower than 100
-  also lowers the default.
+  also lowers the default. The root field `_maxQueryRows: Int!` reports the
+  ceiling, so a client can ask for one group more than it shows (at most
+  `_maxQueryRows`) and read the extra group as "more groups match".
 - An aggregate with no `groupBy` returns one whole-table row and takes no
   window.
 

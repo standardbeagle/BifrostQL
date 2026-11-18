@@ -225,4 +225,9 @@ export interface SchemaContextValue {
   data: Table[];
   /** Find a table by its GraphQL name */
   findTable: (tableName: string) => Table | undefined;
+  /**
+   * The server's row ceiling (`_maxQueryRows`, its `max-query-rows`). Set once the
+   * schema loads; grouping sizes its window from it and refuses to run without it.
+   */
+  maxQueryRows?: number;
 }

@@ -43,7 +43,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    schema = { loading: false, error: null, data: [customers, orders], findTable: (n) => [customers, orders].find((t) => t.name === n) };
+    schema = { loading: false, error: null, data: [customers, orders], findTable: (n) => [customers, orders].find((t) => t.name === n), maxQueryRows: 10_000 };
     query.mockResolvedValue({ orders: { total: 0, data: [] } });
 });
 

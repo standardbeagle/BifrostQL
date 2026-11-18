@@ -127,22 +127,43 @@ public sealed class GroupedAggregateGroupCapTests : IAsyncLifetime
 
     /// <summary>
     /// The contract edit-db's grouped grid reads truncation from
-    /// (<c>examples/edit-db/src/lib/grid-grouping.ts</c>, <c>GROUPING_PROBE_FIELD</c>):
-    /// the client cannot read <c>max-query-rows</c>, so beside the displayed
-    /// aggregate it sends an aliased copy shifted by <c>offset: 1</c>. A cut answer
-    /// leaves the probe as long as the main field; a complete one leaves it one short.
+    /// (<c>examples/edit-db/src/lib/grid-grouping.ts</c>, <c>groupingPage</c>): the root
+    /// <c>_maxQueryRows</c> field reports the ceiling, the client asks for
+    /// <c>min(cap, ceiling - 1) + 1</c> groups, and the extra group is the cut sentinel.
+    /// Before the field, the client could not read the ceiling and sent a second aliased
+    /// GROUP BY shifted by <c>offset: 1</c> to infer it.
     /// </summary>
     [Fact]
-    public async Task AliasedOffsetProbe_TellsACeilingCutFromACompleteAnswer()
+    public async Task MaxQueryRows_ReportsTheCeiling_SoAOnePastPageRequestTellsACutFromACompleteAnswer()
     {
-        const string probe = "groupsAfterFirst: eventsAggregate(groupBy: [id], limit: 1001, offset: 1) { id }";
-        using var cut = await RunAsync($"{{ eventsAggregate(groupBy: [id], limit: 1001) {{ id _count }} {probe} }}");
-        Ids(cut).Should().HaveCount(Ceiling, "the ceiling, not the 1001 the client asked for, ends the answer");
-        cut.RootElement.GetProperty("data").GetProperty("groupsAfterFirst").GetArrayLength().Should().Be(Ceiling);
+        using var ceiling = await RunAsync("{ _maxQueryRows }");
+        var reported = ceiling.RootElement.GetProperty("data").GetProperty("_maxQueryRows").GetInt32();
+        reported.Should().Be(Ceiling);
 
-        const string narrowProbe = "groupsAfterFirst: eventsAggregate(filter: {id: {_lte: 4}}, groupBy: [id], limit: 1001, offset: 1) { id }";
-        using var complete = await RunAsync($"{{ eventsAggregate(filter: {{id: {{_lte: 4}}}}, groupBy: [id], limit: 1001) {{ id _count }} {narrowProbe} }}");
-        Ids(complete).Should().Equal(1, 2, 3, 4);
-        complete.RootElement.GetProperty("data").GetProperty("groupsAfterFirst").GetArrayLength().Should().Be(3);
+        var page = reported - 1;
+        using var cut = await RunAsync($"{{ eventsAggregate(groupBy: [id], limit: {page + 1}) {{ id _count }} }}");
+        Ids(cut).Should().HaveCount(page + 1, "the sentinel group fits under the ceiling and says more groups exist");
+
+        using var complete = await RunAsync($"{{ eventsAggregate(filter: {{id: {{_lte: {page}}}}}, groupBy: [id], limit: {page + 1}) {{ id _count }} }}");
+        Ids(complete).Should().HaveCount(page, "exactly a page of groups returns no sentinel");
+    }
+
+    [Fact]
+    public async Task MaxQueryRows_ReportsTheDefaultCeiling_WhenTheModelSetsNone()
+    {
+        var unconfigured = await new DbModelLoader(new SqliteDbConnFactory(ConnString), new MetadataLoader(Array.Empty<string>())).LoadAsync();
+        var original = _model;
+        _model = unconfigured;
+        try
+        {
+            using var doc = await RunAsync("{ _maxQueryRows }");
+            doc.RootElement.GetProperty("data").GetProperty("_maxQueryRows").GetInt32()
+                .Should().Be(BifrostQL.Core.QueryModel.GqlObjectQuery.MaxQueryRows(unconfigured))
+                .And.Be(10_000);
+        }
+        finally
+        {
+            _model = original;
+        }
     }
 }

@@ -47,6 +47,7 @@ namespace BifrostQL.Core.Schema
                 builder.AppendLine($"{schemaFieldName}: {schemaTypeName}");
             }
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
+            builder.AppendLine($"{SchemaGenerator.MaxQueryRowsFieldName}: Int!");
             if (SchemaGenerator.IsRawSqlEnabled(model))
             {
                 builder.AppendLine("_rawQuery(sql: String!, params: JSON, timeout: Int): [JSON]!");

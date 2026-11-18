@@ -22,10 +22,12 @@ rows currently on the page. This keeps totals correct on large tables.
   count, and an optional sum over one numeric column (any numeric scalar,
   `BigInt` and `Decimal` included). It reads at most 1,000 groups, taken in key
   order, or fewer when the operator's
-  [`max-query-rows`](/BifrostQL/reference/configuration/) is lower. The same
-  request carries an `offset: 1` probe of that window, so a cut is detected
-  under any ceiling: when more groups match than came back, the summary says
-  how many are shown and notes that a count sort ranks only those.
+  [`max-query-rows`](/BifrostQL/reference/configuration/) is lower: the grid
+  reads the ceiling from the root `_maxQueryRows` field when it loads the
+  schema, shows at most one group fewer than the ceiling, and asks for one group
+  more than it shows. A cut is detected under any ceiling: when that extra group
+  comes back, the summary says how many are shown and notes that a count sort
+  ranks only those.
 - **Expanding a group** fetches only that group's member rows, with the group
   key merged into the active filter through the query-builder helpers. A `NULL`
   group key is its own labeled group, fetched with a `_null` filter (not

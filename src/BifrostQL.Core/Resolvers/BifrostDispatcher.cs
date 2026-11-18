@@ -185,6 +185,7 @@ namespace BifrostQL.Core.Resolvers
             query.FieldFor("_dbSchema").Resolver = this;
             query.FieldFor("_grants").Resolver = this;
             query.FieldFor("_policyGrants").Resolver = this;
+            query.FieldFor(Schema.SchemaGenerator.MaxQueryRowsFieldName).Resolver = this;
 
             if (SchemaGenerator.IsRawSqlEnabled(_model))
                 query.FieldFor("_rawQuery").Resolver = this;
@@ -379,6 +380,7 @@ namespace BifrostQL.Core.Resolvers
             map[(queryType, "_dbSchema")] = new MetaSchemaResolver(model);
             map[(queryType, "_grants")] = new CallerGrantsResolver();
             map[(queryType, "_policyGrants")] = new PolicyGrantCatalogueResolver(model);
+            map[(queryType, Schema.SchemaGenerator.MaxQueryRowsFieldName)] = new MaxQueryRowsResolver(model);
 
             if (SchemaGenerator.IsRawSqlEnabled(model))
                 map[(queryType, "_rawQuery")] = new RawSqlQueryResolver(model);

@@ -321,6 +321,29 @@ namespace BifrostQL.Core.Resolvers
     }
 
     /// <summary>
+    /// <c>_maxQueryRows: Int!</c> — the model's row ceiling (<c>max-query-rows</c>, or the
+    /// default), the most rows any read returns. A client that pages or groups sizes its
+    /// window from it: asking for <c>min(want, ceiling - 1) + 1</c> rows keeps a cap+1
+    /// sentinel under the ceiling, so a cut answer is told from a complete one. It is a
+    /// server-wide setting, the same for every caller.
+    /// </summary>
+    public sealed class MaxQueryRowsResolver : IBifrostResolver, IFieldResolver
+    {
+        private readonly IDbModel _model;
+
+        public MaxQueryRowsResolver(IDbModel model)
+        {
+            _model = model ?? throw new ArgumentNullException(nameof(model));
+        }
+
+        public ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
+            => ValueTask.FromResult<object?>(QueryModel.GqlObjectQuery.MaxQueryRows(_model));
+
+        ValueTask<object?> IFieldResolver.ResolveAsync(IResolveFieldContext context)
+            => ResolveAsync(new BifrostFieldContextAdapter(context));
+    }
+
+    /// <summary>
     /// <c>_policyGrants: [String!]!</c> — the catalogue of every grant name the model's
     /// policy metadata references (E18), sorted and de-duplicated. This is what an app's
     /// profile editor lists; it names grants, never which caller holds them.

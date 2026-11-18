@@ -158,6 +158,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - Nested collections two or more levels deep restrict to the parent page's rows instead of every child of the root page (about 8–13× faster on a 3-level fixture).
 - Parsed table policy and computed-column config are memoized per table and invalidated on any metadata write (about 48 µs → 0.5 µs per lookup).
 - `DbTable`, `ColumnDto` and `DbModel` copy a plain dictionary handed to `Metadata` in an initializer instead of wrapping it, so a later write through the caller's reference no longer reaches the object (it used to, without invalidating the memo above). Write through `.Metadata` instead.
+- GraphQL gains a root field `_maxQueryRows: Int!`, the model's row ceiling (`max-query-rows`, default 10000). edit-db grouping reads it with the schema and sizes its window from it (`min(1000, ceiling - 1)` groups, plus one sentinel group) instead of sending a second aliased GROUP BY shifted by `offset: 1` to infer the ceiling, so a grouped read is one statement again.
 - edit-db: nullable text fields have an explicit "Set NULL" control in the form and grid cell, so clearing a field saves `''`.
 
 ### Breaking — second review pass

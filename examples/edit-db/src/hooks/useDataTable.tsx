@@ -759,9 +759,9 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
         // No grouping while a filter can't be applied: the grid shows that
         // error instead of rows, and the builder refuses the same filters.
         () => table && groupingColumn && !filterError
-            ? buildGridGroupingRequest(table, groupingColumn, effectiveColumnFilters, filterString, groupingSumColumn, groupingSort)
+            ? buildGridGroupingRequest(table, groupingColumn, effectiveColumnFilters, filterString, schema.maxQueryRows, groupingSumColumn, groupingSort)
             : null,
-        [table, groupingColumn, groupingSumColumn, effectiveColumnFilters, filterString, groupingSort, filterError],
+        [table, groupingColumn, groupingSumColumn, effectiveColumnFilters, filterString, groupingSort, filterError, schema.maxQueryRows],
     );
     const groupingQuery = useQuery({
         queryKey: ['tableGrouping', table?.name, groupingRequest?.query, groupingRequest?.variables],
@@ -922,7 +922,7 @@ export function useDataTable(table: Table | null, id?: string, filterTable?: str
             ? {
                 column: groupingRequest.groupBy,
                 sumColumn: groupingRequest.sumBy,
-                ...readGroupingResult(groupingData, table, groupingRequest.groupBy, groupingRequest.sumBy, groupingRequest.sort),
+                ...readGroupingResult(groupingData, table, groupingRequest),
                 loading: groupingLoading,
                 error: groupingError,
                 sort: groupingRequest.sort,

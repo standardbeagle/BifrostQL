@@ -10,6 +10,9 @@ namespace BifrostQL.Core.Schema
 {
     internal static class SchemaGenerator
     {
+        /// <summary>Root query field reporting the model's row ceiling (<see cref="Resolvers.MaxQueryRowsResolver"/>).</summary>
+        public const string MaxQueryRowsFieldName = "_maxQueryRows";
+
         public static string SchemaTextFromModel(IDbModel model)
             => SchemaTextWithOperations(model, Array.Empty<Operations.ExposedOperation>());
 
@@ -50,6 +53,7 @@ namespace BifrostQL.Core.Schema
             builder.AppendLine("_dbSchema(graphQlName: String): [dbTableSchema!]!");
             builder.AppendLine("_grants: [String!]!");
             builder.AppendLine("_policyGrants: [String!]!");
+            builder.AppendLine($"{MaxQueryRowsFieldName}: Int!");
             if (IsRawSqlEnabled(model))
             {
                 builder.AppendLine("_rawQuery(sql: String!, params: JSON, timeout: Int): [JSON]!");

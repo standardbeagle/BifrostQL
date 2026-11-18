@@ -1,5 +1,6 @@
 export const GET_DB_SCHEMA = `
 query dbSchema {
+  _maxQueryRows
   _dbSchema {
     schema
     dbName

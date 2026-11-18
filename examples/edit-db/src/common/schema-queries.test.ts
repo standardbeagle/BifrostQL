@@ -16,4 +16,8 @@ describe('GET_DB_SCHEMA', () => {
     it('requests the owning schema of each table, so a bare dbName two schemas share stays tellable apart', () => {
         expect(GET_DB_SCHEMA).toMatch(/_dbSchema\s*{\s*schema\s/);
     });
+
+    it('requests the server row ceiling beside the tables, so grouping can size its window', () => {
+        expect(GET_DB_SCHEMA).toMatch(/query dbSchema\s*{\s*_maxQueryRows\s/);
+    });
 });

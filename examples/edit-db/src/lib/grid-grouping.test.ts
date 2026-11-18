@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, GROUPING_BUCKET_CAP, GROUPING_PROBE_FIELD, isSummableColumn, readGroupingResult, withGroupingUrlParam, withoutGroupingUrlParams } from './grid-grouping';
-import type { Table } from '../types/schema';
+import { buildGridGroupMemberRequest, buildGridGroupingRequest, groupingColumnFromUrl, groupingPage, groupingSumColumnFromUrl, GRID_GROUP_BY_PARAM, GRID_GROUP_SUM_PARAM, GROUPING_BUCKET_CAP, isSummableColumn, readGroupingResult, withGroupingUrlParam, withoutGroupingUrlParams, type GroupingSort } from './grid-grouping';
+import type { Column, Table } from '../types/schema';
+
+/** The server default `max-query-rows` (GqlObjectQuery.DefaultMaxQueryRows). */
+const DEFAULT_CEILING = 10_000;
 
 /**
- * The grouping response a server with `max-query-rows: ceiling` sends for
- * these buckets: both fields ask for GROUPING_BUCKET_CAP + 1 and are clamped
- * to the ceiling the way ResolveRowWindow clamps them; the probe starts one
- * bucket in (`offset: 1`).
+ * Builds the grouping request against a server with `max-query-rows: ceiling`,
+ * answers it the way that server does (the requested `limit` clamped to the
+ * ceiling, as ResolveRowWindow clamps it, over these buckets in key order) and
+ * reads the answer back.
  */
-function serverGrouping(buckets: readonly Record<string, unknown>[], ceiling = 10_000) {
-    const window = Math.min(GROUPING_BUCKET_CAP + 1, ceiling);
-    return {
-        ordersAggregate: buckets.slice(0, window),
-        [GROUPING_PROBE_FIELD]: buckets.slice(1, 1 + window),
-    };
+function grouped(
+    buckets: readonly Record<string, unknown>[],
+    { ceiling = DEFAULT_CEILING, table = orders, groupBy = orders.columns[0], sumBy = null, sort }: { ceiling?: number; table?: Table; groupBy?: Column; sumBy?: Column | null; sort?: GroupingSort } = {},
+) {
+    const request = buildGridGroupingRequest(table, groupBy, [], '', ceiling, sumBy, sort);
+    const requested = Number(/limit: (\d+)\)/.exec(request.query)?.[1]);
+    const data = { [`${table.name}Aggregate`]: buckets.slice(0, Math.min(requested, ceiling)) };
+    return readGroupingResult(data, table, request);
 }
 
 const orders = {
@@ -53,53 +58,54 @@ describe('grid grouping request', () => {
     it('uses the server aggregate and preserves null filters as boolean predicates', () => {
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'status', value: { operator: '_null', value: true } },
-        ], '');
+        ], '', DEFAULT_CEILING);
         expect(request.query).toContain('ordersAggregate(filter: {status: {_null: true}}, groupBy: [status], limit: 1001)');
         expect(request.query).toContain('_count');
         expect(request.variables).toEqual({});
     });
 
     it('defines deterministic aggregate ordering by group key or server count direction', () => {
-        const fixture = serverGrouping([
+        const fixture = [
             { status: 'paid', _count: 2 },
             { status: 'cancelled', _count: 4 },
             { status: null, _count: 2 },
-        ]);
-        expect(readGroupingResult(fixture, orders, orders.columns[0], null, { field: 'key', desc: true }).rows)
+        ];
+        expect(grouped(fixture, { sort: { field: 'key', desc: true } }).rows)
             .toEqual([{ value: 'paid', count: 2, sum: undefined }, { value: 'cancelled', count: 4, sum: undefined }, { value: null, count: 2, sum: undefined }]);
         // Equal counts have a key-ascending tie-breaker, so pagination cannot
         // shuffle aggregate buckets between requests.
-        expect(readGroupingResult(fixture, orders, orders.columns[0], null, { field: 'count', desc: true }).rows)
+        expect(grouped(fixture, { sort: { field: 'count', desc: true } }).rows)
             .toEqual([{ value: 'cancelled', count: 4, sum: undefined }, { value: null, count: 2, sum: undefined }, { value: 'paid', count: 2, sum: undefined }]);
-        expect(buildGridGroupingRequest(orders, orders.columns[0], [], '', null, { field: 'count', desc: false }).sort)
+        expect(buildGridGroupingRequest(orders, orders.columns[0], [], '', DEFAULT_CEILING, null, { field: 'count', desc: false }).sort)
             .toEqual({ field: 'count', desc: false });
     });
 
     it('uses the identical filter object for server count and sum aggregates, never a page-row total', () => {
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'amount', value: { operator: '_gte', value: 10 } },
-        ], JSON.stringify(['status', '_neq', 'cancelled', 'String']), groupingSumColumnFromUrl('amount', orders));
+        ], JSON.stringify(['status', '_neq', 'cancelled', 'String']), DEFAULT_CEILING, groupingSumColumnFromUrl('amount', orders));
         expect(request.query).toContain('filter: {and: [{status: {_neq: $filter} }, {amount: {_gte: $cf_amount_0}}]}');
         expect(request.variables).toMatchObject({ filter: 'cancelled', cf_amount_0: '10' });
         expect(request.query).toContain('_count _sum { amount }');
-        // The displayed aggregate is not paged; only the probe is shifted.
         expect(request.query).toContain('ordersAggregate(filter: {and: [{status: {_neq: $filter} }, {amount: {_gte: $cf_amount_0}}]}, groupBy: [status], limit: 1001) {');
-        expect(request.query).toContain(`${GROUPING_PROBE_FIELD}: ordersAggregate(filter: {and: [{status: {_neq: $filter} }, {amount: {_gte: $cf_amount_0}}]}, groupBy: [status], limit: 1001, offset: 1) { status }`);
+        // One aggregate field: no second GROUP BY probes the server's window.
+        expect(request.query.match(/Aggregate\(/g)).toHaveLength(1);
+        expect(request.query).not.toContain('offset');
     });
 
     it('matches fixture-backed SQL GROUP BY counts and configured sums without page-row arithmetic', () => {
         const sum = groupingSumColumnFromUrl('amount', orders);
-        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '', sum);
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '', DEFAULT_CEILING, sum);
         expect(request.query).toContain('_sum { amount }');
         // Equivalent SQL fixture:
         // SELECT status, COUNT(*), SUM(amount) FROM orders GROUP BY status ORDER BY status.
         // These values represent the SQL-backed aggregate response, not a page.
-        const aggregateFixture = serverGrouping([
+        const aggregateFixture = [
             { status: null, _count: 1, _sum: { amount: '3.50' } },
             { status: 'cancelled', _count: 1, _sum: { amount: '2.00' } },
             { status: 'paid', _count: 2, _sum: { amount: '19.25' } },
-        ]);
-        expect(readGroupingResult(aggregateFixture, orders, orders.columns[0], sum)).toEqual({ rows: [
+        ];
+        expect(grouped(aggregateFixture, { sumBy: sum })).toEqual({ rows: [
             { value: null, count: 1, sum: '3.50' },
             { value: 'cancelled', count: 1, sum: '2.00' },
             { value: 'paid', count: 2, sum: '19.25' },
@@ -120,51 +126,66 @@ describe('grid grouping request', () => {
     });
 
     it('maps aggregate result rows rather than summing page rows and defines key-ascending group order', () => {
-        expect(readGroupingResult(serverGrouping([{ status: 'paid', _count: 42 }, { status: null, _count: 3 }]), orders, orders.columns[0], null).rows)
+        expect(grouped([{ status: 'paid', _count: 42 }, { status: null, _count: 3 }]).rows)
             .toEqual([{ value: null, count: 3 }, { value: 'paid', count: 42 }]);
     });
 
     it('asks for one bucket past the cap and reports the cut instead of showing a partial set as whole', () => {
-        const buckets = (n: number) => serverGrouping(Array.from({ length: n }, (_, i) => ({ status: `s${String(i).padStart(5, '0')}`, _count: 1 })));
-        const atCap = readGroupingResult(buckets(GROUPING_BUCKET_CAP), orders, orders.columns[0], null);
+        const buckets = (n: number) => Array.from({ length: n }, (_, i) => ({ status: `s${String(i).padStart(5, '0')}`, _count: 1 }));
+        const atCap = grouped(buckets(GROUPING_BUCKET_CAP));
         expect(atCap.truncated).toBe(false);
         expect(atCap.rows).toHaveLength(GROUPING_BUCKET_CAP);
-        const over = readGroupingResult(buckets(GROUPING_BUCKET_CAP + 1), orders, orders.columns[0], null);
+        const over = grouped(buckets(GROUPING_BUCKET_CAP + 1));
         expect(over.truncated).toBe(true);
         expect(over.rows).toHaveLength(GROUPING_BUCKET_CAP);
         expect(over.rows.map((row) => row.value)).not.toContain(`s${String(GROUPING_BUCKET_CAP).padStart(5, '0')}`);
-        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '');
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '', DEFAULT_CEILING);
         expect(request.query).toContain(`groupBy: [status], limit: ${GROUPING_BUCKET_CAP + 1})`);
     });
 
     describe('under an operator max-query-rows below the cap', () => {
         const groups = (n: number) => Array.from({ length: n }, (_, i) => ({ status: `s${String(i).padStart(5, '0')}`, _count: 1 }));
 
+        it('sizes the request from the server ceiling so the sentinel fits under it', () => {
+            expect(groupingPage(500)).toBe(499);
+            expect(buildGridGroupingRequest(orders, orders.columns[0], [], '', 500).query).toContain('limit: 500)');
+            expect(groupingPage(2)).toBe(1);
+            expect(groupingPage(DEFAULT_CEILING)).toBe(GROUPING_BUCKET_CAP);
+        });
+
         it('reports the cut when the server ceiling, not the cap, ended the answer', () => {
-            // max-query-rows 500, 700 groups: the server returns 500 for a
-            // 1001 request, so the cap+1 sentinel alone never fires.
-            const result = readGroupingResult(serverGrouping(groups(700), 500), orders, orders.columns[0], null);
+            // max-query-rows 500, 700 groups: the page is 499 and the 500th bucket is the sentinel.
+            const result = grouped(groups(700), { ceiling: 500 });
             expect(result.truncated).toBe(true);
-            expect(result.rows).toHaveLength(500);
+            expect(result.rows).toHaveLength(499);
         });
 
         it('reports a complete answer that fits under the ceiling as complete', () => {
-            expect(readGroupingResult(serverGrouping(groups(300), 500), orders, orders.columns[0], null).truncated).toBe(false);
-            // Exactly as many groups as the ceiling: every bucket was returned.
-            expect(readGroupingResult(serverGrouping(groups(500), 500), orders, orders.columns[0], null).truncated).toBe(false);
-            expect(readGroupingResult(serverGrouping(groups(1), 2), orders, orders.columns[0], null).truncated).toBe(false);
-            expect(readGroupingResult(serverGrouping([], 500), orders, orders.columns[0], null)).toEqual({ rows: [], truncated: false });
+            expect(grouped(groups(300), { ceiling: 500 }).truncated).toBe(false);
+            // Exactly the page: every bucket was returned and no sentinel came back.
+            expect(grouped(groups(499), { ceiling: 500 })).toMatchObject({ truncated: false });
+            expect(grouped(groups(499), { ceiling: 500 }).rows).toHaveLength(499);
+            expect(grouped(groups(1), { ceiling: 2 }).truncated).toBe(false);
+            expect(grouped([], { ceiling: 500 })).toEqual({ rows: [], truncated: false });
+        });
+
+        it('reports the cut one bucket past the page', () => {
+            const result = grouped(groups(500), { ceiling: 500 });
+            expect(result.truncated).toBe(true);
+            expect(result.rows).toHaveLength(499);
         });
 
         it('reports the cut at the smallest ceiling the server accepts', () => {
-            // RowProbeWindow.MinimumCeiling is 2.
-            const result = readGroupingResult(serverGrouping(groups(3), 2), orders, orders.columns[0], null);
+            // RowProbeWindow.MinimumCeiling is 2: a page of one bucket plus the sentinel.
+            const result = grouped(groups(2), { ceiling: 2 });
             expect(result.truncated).toBe(true);
-            expect(result.rows).toHaveLength(2);
+            expect(result.rows).toHaveLength(1);
         });
 
-        it('refuses a response without the probe instead of guessing completeness', () => {
-            expect(() => readGroupingResult({ ordersAggregate: groups(3) }, orders, orders.columns[0], null)).toThrow(/truncation probe/);
+        it('refuses to build a request without a usable server ceiling instead of guessing completeness', () => {
+            expect(() => buildGridGroupingRequest(orders, orders.columns[0], [], '', undefined)).toThrow(/_maxQueryRows/);
+            expect(() => groupingPage(1)).toThrow(/_maxQueryRows/);
+            expect(() => groupingPage(2.5)).toThrow(/_maxQueryRows/);
         });
     });
 });
@@ -181,7 +202,7 @@ describe('grid grouping filters match the grid query', () => {
     it('widens a date-only "on" filter to the same day range the grid uses', () => {
         const request = buildGridGroupingRequest(events, events.columns[0], [
             { id: 'at', value: { operator: '_eq', value: '2024-03-01' } },
-        ], '');
+        ], '', DEFAULT_CEILING);
         expect(request.query).toContain('{at: {_between: [$cf_at_0_lo, $cf_at_0_hi]}}');
         expect(request.variables).toEqual({ cf_at_0_lo: '2024-03-01T00:00:00.000', cf_at_0_hi: '2024-03-01T23:59:59.999' });
     });
@@ -189,16 +210,16 @@ describe('grid grouping filters match the grid query', () => {
     it('sends a drill value that arrived as text as the column scalar', () => {
         const request = buildGridGroupingRequest(events, events.columns[0], [
             { id: 'level', value: { operator: '_eq', value: '5' } },
-        ], '');
+        ], '', DEFAULT_CEILING);
         expect(request.variables).toEqual({ cf_level_0: 5 });
         expect(buildGridGroupMemberRequest(events, events.columns[2], '5', [], '').variables.member).toBe(5);
     });
 
     it('refuses a filter the grid would refuse instead of counting a wider row set', () => {
-        expect(() => buildGridGroupingRequest(events, events.columns[0], [], '["kind", "_eq", "x"]')).toThrow(/can't be applied/);
+        expect(() => buildGridGroupingRequest(events, events.columns[0], [], '["kind", "_eq", "x"]', DEFAULT_CEILING)).toThrow(/can't be applied/);
         expect(() => buildGridGroupingRequest(events, events.columns[0], [
             { id: 'level', value: { operator: '_contains', value: '5' } },
-        ], '')).toThrow(/can't be applied/);
+        ], '', DEFAULT_CEILING)).toThrow(/can't be applied/);
     });
 });
 
@@ -248,7 +269,7 @@ describe('grid grouping documents validate against the generated schema', () => 
         const request = buildGridGroupingRequest(orders, orders.columns[0], [
             { id: 'status', value: { operator: '_eq', value: 'paid' } },
             { id: 'amount', value: { operator: '_gte', value: '10' } },
-        ], '');
+        ], '', DEFAULT_CEILING);
 
         expect(unknownTypeErrors(request.query, ORDERS_SDL)).toEqual([]);
         expect(declaredVariableTypes(request.query)).toEqual([
@@ -258,7 +279,7 @@ describe('grid grouping documents validate against the generated schema', () => 
     });
 
     it('declares no variables at all when the aggregate carries no filter', () => {
-        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '');
+        const request = buildGridGroupingRequest(orders, orders.columns[0], [], '', DEFAULT_CEILING);
 
         expect(declaredVariableTypes(request.query)).toEqual([]);
         expect(unknownTypeErrors(request.query, ORDERS_SDL)).toEqual([]);
@@ -315,8 +336,7 @@ describe('grouping keys sent as BigInt strings', () => {
             { account: '9007199254740993', _count: 1 },
             { account: '9007199254740992', _count: 1 },
         ];
-        const data = { ledgerAggregate: buckets, [GROUPING_PROBE_FIELD]: buckets.slice(1) };
-        expect(readGroupingResult(data, ledger, ledger.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
+        expect(grouped(buckets, { table: ledger, groupBy: ledger.columns[0], sort: { field: 'key', desc: false } }).rows.map((r) => r.value))
             .toEqual(['-3', '9', '10', '9007199254740992', '9007199254740993']);
     });
 
@@ -331,14 +351,12 @@ describe('grouping keys sent as BigInt strings', () => {
             { price: '123456789012345678.0123456789', _count: 1 },
             { price: '123456789012345678.0123456788', _count: 1 },
         ];
-        const data = { pricesAggregate: buckets, [GROUPING_PROBE_FIELD]: buckets.slice(1) };
-        expect(readGroupingResult(data, prices, prices.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
+        expect(grouped(buckets, { table: prices, groupBy: prices.columns[0], sort: { field: 'key', desc: false } }).rows.map((r) => r.value))
             .toEqual(['-3.75', '9.25', '10.5', '123456789012345678.0123456788', '123456789012345678.0123456789']);
     });
 
     it('keeps text order for a text column of digit strings', () => {
-        const data = serverGrouping([{ status: '10', _count: 1 }, { status: '9', _count: 1 }]);
-        expect(readGroupingResult(data, orders, orders.columns[0], null, { field: 'key', desc: false }).rows.map((r) => r.value))
+        expect(grouped([{ status: '10', _count: 1 }, { status: '9', _count: 1 }], { sort: { field: 'key', desc: false } }).rows.map((r) => r.value))
             .toEqual(['10', '9']);
     });
 });

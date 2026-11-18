@@ -65,6 +65,24 @@ namespace BifrostQL.Server.Test
         /// <summary>Completes when a send parks under <see cref="StallAfterSends"/>.</summary>
         public Task SendStalled => _sendStalled.Task;
 
+        /// <summary>
+        /// When true, cancelling a parked receive aborts the socket, as a real WebSocket does
+        /// (so no close frame can follow). Off by default for the facts written before it.
+        /// </summary>
+        public bool AbortOnCancelledReceive { get; init; }
+
+        /// <summary>When true, the fake never echoes a close frame the server sends.</summary>
+        public bool IgnoresClose { get; init; }
+
+        private readonly TaskCompletionSource _receiveParked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _closeFrameSent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes once a receive parks waiting for the server.</summary>
+        public Task ReceiveParked => _receiveParked.Task;
+
+        /// <summary>Completes once the server sends a close frame (CloseOutputAsync).</summary>
+        public Task CloseFrameSent => _closeFrameSent.Task;
+
         /// <summary>Queues a ChunkAck to be returned by the next ReceiveAsync.</summary>
         public void EnqueueAck(uint requestId = 0, uint sequence = 0)
         {
@@ -233,7 +251,17 @@ namespace BifrostQL.Server.Test
                 }
 
                 // Nothing to answer yet: wait for the server to send something.
-                await _changed.WaitAsync(cancellationToken);
+                _receiveParked.TrySetResult();
+                try
+                {
+                    await _changed.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (AbortOnCancelledReceive)
+                {
+                    // A real WebSocket aborts itself when a pending receive is cancelled.
+                    Abort();
+                    throw;
+                }
             }
         }
 
@@ -315,9 +343,10 @@ namespace BifrostQL.Server.Test
                 ClosedReason = statusDescription;
                 _state = _state == WebSocketState.CloseReceived ? WebSocketState.Closed : WebSocketState.CloseSent;
                 // A peer answers a close frame with its own.
-                _closeEchoPending = _state == WebSocketState.CloseSent;
+                _closeEchoPending = _state == WebSocketState.CloseSent && !IgnoresClose;
                 _changed.Release();
             }
+            _closeFrameSent.TrySetResult();
             return Task.CompletedTask;
         }
     }

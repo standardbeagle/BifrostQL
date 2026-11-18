@@ -101,5 +101,57 @@ namespace BifrostQL.Server.Test
             socket.State.Should().Be(WebSocketState.Aborted,
                 "a peer that takes no frame cannot take a close frame either, so the socket is aborted");
         }
+
+        [Fact]
+        public async Task SilentPeer_GetsThePolicyViolationCloseFrame_OnTheInjectedReadDeadline()
+        {
+            // The read deadline used to cancel the pending receive, which aborts a real
+            // WebSocket (AbortOnCancelledReceive) before the PolicyViolation close frame could go
+            // out, and it ran on the system clock rather than the injected one.
+            var clock = new FakeTimeProvider();
+            var socket = new FakeWebSocket { HangWhenDrained = true, AbortOnCancelledReceive = true };
+            var middleware = Middleware(clock, firstFrameTimeout: FarTimeout);
+
+            var connection = middleware.InvokeAsync(ContextFor(socket));
+            await socket.ReceiveParked.WaitAsync(WaitBudget);
+            middleware.ActiveConnections.Should().Be(1);
+
+            clock.Advance(FarTimeout);
+            await connection.WaitAsync(WaitBudget);
+
+            socket.ClosedWith.Should().Be(WebSocketCloseStatus.PolicyViolation,
+                "the peer is told why it was closed, not cut off");
+            socket.ClosedReason.Should().Be("Read deadline exceeded");
+            socket.State.Should().Be(WebSocketState.Closed, "the close handshake completed; nothing aborted the socket");
+            middleware.ActiveConnections.Should().Be(0);
+        }
+
+        [Fact]
+        public async Task PeerThatNeverEchoesTheDeadlineClose_IsDroppedAfterTheHandshakeTimeout_OnTheInjectedClock()
+        {
+            var clock = new FakeTimeProvider();
+            var socket = new FakeWebSocket { HangWhenDrained = true, AbortOnCancelledReceive = true, IgnoresClose = true };
+            var middleware = Middleware(clock, firstFrameTimeout: FarTimeout);
+
+            var connection = middleware.InvokeAsync(ContextFor(socket));
+            await socket.ReceiveParked.WaitAsync(WaitBudget);
+            clock.Advance(FarTimeout);
+            await socket.CloseFrameSent.WaitAsync(WaitBudget);
+            socket.ClosedWith.Should().Be(WebSocketCloseStatus.PolicyViolation);
+
+            // The handshake wait runs on the fake clock, so real time alone never ends it; a
+            // short real budget (under the 5 s CloseHandshakeTimeout) catches a system-clock wait.
+            var budget = System.Diagnostics.Stopwatch.StartNew();
+            while (!connection.IsCompleted && budget.Elapsed < TimeSpan.FromSeconds(3))
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.WhenAny(connection, Task.Delay(20));
+            }
+
+            connection.IsCompleted.Should().BeTrue("the close-echo wait ends on the injected clock");
+            await connection;
+            socket.State.Should().Be(WebSocketState.Aborted, "a peer that never echoes is dropped");
+            middleware.ActiveConnections.Should().Be(0, "and its slot is released");
+        }
     }
 }

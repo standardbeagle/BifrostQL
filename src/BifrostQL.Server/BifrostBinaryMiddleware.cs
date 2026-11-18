@@ -404,11 +404,42 @@ namespace BifrostQL.Server
             public CancellationTokenSource InputEnded { get; }
 
             /// <summary>
-            /// Ends the reader's wait for the peer's close echo after a request-side failure
-            /// sent the close frame. Never cancelled otherwise: cancelling a pending receive
-            /// aborts a real WebSocket without the close frame.
+            /// Ends the reader's wait for the peer's close echo after the server sent the close
+            /// frame (a request-side failure or the read deadline). Never cancelled otherwise:
+            /// cancelling a pending receive aborts a real WebSocket without the close frame.
             /// </summary>
             public CancellationTokenSource ReaderStop { get; }
+
+            // Arms ReaderStop CloseHandshakeTimeout after the close frame, on the injected clock.
+            private ITimer? _readerStopTimer;
+
+            private int _readDeadlinePassed;
+            private Task _readDeadlineClose = Task.CompletedTask;
+
+            /// <summary>
+            /// The close the read deadline started (<see cref="ReadDeadlinePassed"/>), or a
+            /// completed task. Awaited before the connection is disposed.
+            /// </summary>
+            public Task ReadDeadlineClose => Volatile.Read(ref _readDeadlineClose);
+
+            /// <summary>True once <see cref="ReadDeadlinePassed"/> has started the close.</summary>
+            public bool ReadDeadlineHasPassed => Volatile.Read(ref _readDeadlinePassed) != 0;
+
+            /// <summary>
+            /// The peer sent nothing within the read deadline. The pending receive is left
+            /// running, because cancelling it would abort a real WebSocket before the close frame
+            /// goes out: the PolicyViolation close is sent instead, the requests stop, and the
+            /// reader ends on the peer's echo or <see cref="CloseHandshakeTimeout"/> later.
+            /// Called from the deadline's timer, at most once per connection.
+            /// </summary>
+            public void ReadDeadlinePassed()
+            {
+                if (Interlocked.Exchange(ref _readDeadlinePassed, 1) != 0)
+                    return;
+                _logger.LogDebug("Binary connection exceeded its read deadline; closing");
+                Volatile.Write(ref _readDeadlineClose,
+                    FailFromRequestAsync(WebSocketCloseStatus.PolicyViolation, "Read deadline exceeded"));
+            }
 
             /// <summary>The status the connection ends with: a fault's, else a normal closure.</summary>
             public (WebSocketCloseStatus Status, string Reason) CloseWith { get; private set; }
@@ -610,15 +641,35 @@ namespace BifrostQL.Server
                 catch (OperationCanceledException) { }
                 catch (ObjectDisposedException) { }
                 Closing.Cancel();
-                try
+                StopReaderAfterCloseHandshake();
+            }
+
+            /// <summary>
+            /// Cancels <see cref="ReaderStop"/> once <see cref="CloseHandshakeTimeout"/> passes on
+            /// the injected clock. The first close frame starts the wait; a later one does not
+            /// extend it.
+            /// </summary>
+            private void StopReaderAfterCloseHandshake()
+            {
+                var timer = _timeProvider.CreateTimer(static state =>
                 {
-                    ReaderStop.CancelAfter(CloseHandshakeTimeout);
+                    try
+                    {
+                        ((CancellationTokenSource)state!).Cancel();
+                    }
+                    catch (ObjectDisposedException) { }
+                }, ReaderStop, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                if (Interlocked.CompareExchange(ref _readerStopTimer, timer, null) != null)
+                {
+                    timer.Dispose();
+                    return;
                 }
-                catch (ObjectDisposedException) { }
+                timer.Change(CloseHandshakeTimeout, Timeout.InfiniteTimeSpan);
             }
 
             public void Dispose()
             {
+                Interlocked.Exchange(ref _readerStopTimer, null)?.Dispose();
                 ReaderStop.Dispose();
                 InputEnded.Dispose();
                 Closing.Dispose();
@@ -665,25 +716,23 @@ namespace BifrostQL.Server
                     // is already held at that point, so a peer that connects and never speaks
                     // would otherwise pin a slot and a receive buffer for nothing. Later reads get
                     // the idle deadline — an established session is a pooled client that may
-                    // legitimately sit quiet between queries.
-                    using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(connection.ReaderStop.Token);
-                    readTimeout.CancelAfter(isFirstFrame ? _firstFrameTimeout : _idleTimeout);
+                    // legitimately sit quiet between queries. The deadline runs on the injected
+                    // clock and never cancels the receive (that would abort a real socket before
+                    // the close frame): it sends the close, and the receive ends on the echo.
+                    using var readDeadline = new CancellationTokenSource(
+                        isFirstFrame ? _firstFrameTimeout : _idleTimeout, _timeProvider);
+                    using var onReadDeadline = readDeadline.Token.Register(connection.ReadDeadlinePassed);
                     isFirstFrame = false;
 
                     try
                     {
-                        (messageBytes, messageType, fragments) = await ReadFullMessageAsync(webSocket, buffer, readTimeout.Token);
+                        (messageBytes, messageType, fragments) = await ReadFullMessageAsync(webSocket, buffer, connection.ReaderStop.Token);
                     }
                     catch (OperationCanceledException) when (connection.ReaderStop.IsCancellationRequested
                         && !httpContext.RequestAborted.IsCancellationRequested)
                     {
                         _logger.LogDebug("Binary peer did not echo the close frame; dropping the connection");
-                        break;
-                    }
-                    catch (OperationCanceledException) when (!httpContext.RequestAborted.IsCancellationRequested)
-                    {
-                        _logger.LogDebug("Binary connection exceeded its read deadline; closing");
-                        connection.FailFromReader(WebSocketCloseStatus.PolicyViolation, "Read deadline exceeded");
+                        webSocket.Abort();
                         break;
                     }
                     catch (InvalidOperationException ex)
@@ -698,7 +747,10 @@ namespace BifrostQL.Server
 
                     using var ownedFragments = fragments;
 
-                    if (messageType == WebSocketMessageType.Close)
+                    // The deadline covers the wait for a frame, not its handling.
+                    onReadDeadline.Dispose();
+                    // A frame that raced the deadline is not served: the close is already out.
+                    if (messageType == WebSocketMessageType.Close || connection.ReadDeadlineHasPassed)
                         break;
 
                     if (messageType != WebSocketMessageType.Binary)
@@ -739,6 +791,8 @@ namespace BifrostQL.Server
                 // abort has already cancelled Closing, which stops the requests too.
                 connection.InputEnded.Cancel();
                 await connection.DrainAsync();
+                // The read deadline's close runs off the deadline timer; it ends before disposal.
+                await connection.ReadDeadlineClose;
                 // Every request has ended, so nothing else writes: the full close handshake
                 // is safe here.
                 await connection.CloseAsync();

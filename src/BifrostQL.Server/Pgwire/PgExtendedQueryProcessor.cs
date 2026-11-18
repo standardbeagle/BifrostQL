@@ -629,9 +629,12 @@ namespace BifrostQL.Server.Pgwire
                 return text;
             }
 
+            // "count > remaining", never "_offset + count > length": a Bind value length near
+            // int.MaxValue wraps that sum negative, slips past the check, and AsSpan then throws
+            // ArgumentOutOfRangeException outside the handler's catch filter (invariant 1).
             private readonly void Require(int count)
             {
-                if (_offset + count > _body.Length)
+                if (count > _body.Length - _offset)
                     throw new PgProtocolException("extended-protocol message body is truncated.");
             }
         }

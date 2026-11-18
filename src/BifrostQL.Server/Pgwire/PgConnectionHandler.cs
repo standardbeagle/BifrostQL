@@ -231,6 +231,16 @@ namespace BifrostQL.Server.Pgwire
                 // autocommit session usable. An in-flight query is cancelable via CancelRequest.
                 await RunQueryLoopAsync(stream, _userContext, cancellation, ct);
             }
+            catch (PgProtocolException ex) when (sessionStream is not null)
+            {
+                // A framing violation once negotiation has settled the stream (malformed SASL or
+                // extended-protocol body, bad length): answer FATAL protocol_violation, as a real
+                // server does, then close. PgProtocolException text is built only from the
+                // adapter's own wording and the caller's own bytes (invariant 3). During
+                // negotiation the stream may be a half-built SslStream, so that phase stays silent.
+                _logger.LogDebug(ex, "pgwire connection ended on a protocol violation: {Reason}", ex.Message);
+                await TrySendFatalAsync(sessionStream, PgWireProtocol.SqlStateProtocolViolation, ex.Message, ct);
+            }
             catch (Exception ex) when (ex is IOException or OperationCanceledException or PgProtocolException or AuthenticationException)
             {
                 // Expected connection-lifecycle faults: peer disconnect, cancellation,
@@ -618,6 +628,24 @@ namespace BifrostQL.Server.Pgwire
                 PgBackend.CommandComplete($"SELECT {rows.Count}"), ct);
         }
 
+        /// <summary>
+        /// Best-effort FATAL ErrorResponse on a connection that is already being torn down. The
+        /// peer may be gone or not reading, so a transport fault here ends the attempt quietly —
+        /// the session is closing either way.
+        /// </summary>
+        private async Task TrySendFatalAsync(Stream stream, string sqlState, string message, CancellationToken ct)
+        {
+            try
+            {
+                await PgProtocolIO.WriteMessageAsync(stream, PgWireProtocol.ErrorResponse,
+                    PgBackend.ErrorResponse(sqlState, message), ct);
+            }
+            catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
+            {
+                _logger.LogDebug(ex, "pgwire could not deliver the closing ErrorResponse.");
+            }
+        }
+
         private async Task RejectAsync(Stream stream, string sqlState, string message, CancellationToken ct)
         {
             _logger.LogWarning("pgwire handshake rejected ({SqlState}): {Message}", sqlState, message);
@@ -654,17 +682,22 @@ namespace BifrostQL.Server.Pgwire
         {
             var nul = Array.IndexOf(body, (byte)0);
             if (nul < 0)
-                throw new PgProtocolException("SASLInitialResponse missing mechanism terminator.");
+                throw new PgScramProtocolException("SASLInitialResponse missing mechanism terminator.");
             var mechanism = Encoding.UTF8.GetString(body, 0, nul);
 
+            // Bounds compare against the REMAINING bytes, never offset + length: a declared length
+            // near int.MaxValue wraps that sum negative, passes the check, and the decode below then
+            // throws ArgumentOutOfRangeException — a type the connection handler does not catch, so
+            // a pre-auth peer could fault the session task (invariant 1). Malformed SASL framing is a
+            // SCRAM protocol fault, answered with protocol_violation by the caller.
             var offset = nul + 1;
-            if (offset + 4 > body.Length)
-                throw new PgProtocolException("SASLInitialResponse missing client-first length.");
+            if (body.Length - offset < 4)
+                throw new PgScramProtocolException("SASLInitialResponse missing client-first length.");
             var length = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(offset, 4));
             offset += 4;
             // -1 means "no data"; a real SCRAM client-first is always present.
-            if (length < 0 || offset + length > body.Length)
-                throw new PgProtocolException("SASLInitialResponse client-first length out of range.");
+            if (length < 0 || length > body.Length - offset)
+                throw new PgScramProtocolException("SASLInitialResponse client-first length out of range.");
             var clientFirst = Encoding.UTF8.GetString(body, offset, length);
             return (mechanism, clientFirst);
         }

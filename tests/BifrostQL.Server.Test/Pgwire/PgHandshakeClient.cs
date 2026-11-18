@@ -319,6 +319,27 @@ namespace BifrostQL.Server.Test.Pgwire
             return (header[0], body);
         }
 
+        /// <summary>Sends one typed frontend frame with an arbitrary (possibly malformed) body.</summary>
+        public Task SendRawFrontendAsync(byte type, byte[] body) => WriteFrontendAsync(type, body);
+
+        /// <summary>
+        /// Answers the SASL challenge with a SASLInitialResponse whose client-first length field
+        /// declares <paramref name="declaredLength"/> while carrying <paramref name="payload"/>.
+        /// </summary>
+        public async Task SendSaslInitialWithDeclaredLengthAsync(int declaredLength, byte[] payload)
+        {
+            var (type, body) = await ReadBackendAsync();
+            RequireAuth(type, body, PgWireProtocol.AuthSasl);
+
+            using var initial = new MemoryStream();
+            WriteCString(initial, PgWireProtocol.ScramSha256);
+            var len = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(len, declaredLength);
+            initial.Write(len);
+            initial.Write(payload);
+            await WriteFrontendAsync(PgWireProtocol.PasswordMessage, initial.ToArray());
+        }
+
         private async Task WriteFrontendAsync(byte type, byte[] body)
         {
             var frame = new byte[5 + body.Length];

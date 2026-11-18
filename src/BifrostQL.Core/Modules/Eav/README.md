@@ -45,7 +45,8 @@ parent table **exactly** — there is no name-based detection or inference.
 - Read-only. Single-PK parents only (composite PK → `null`).
 - One meta-table query per result page, not per parent row. Each parent is windowed in SQL
   (`ROW_NUMBER` per FK, ordered by key) to `max-query-rows - 1` attributes plus a sentinel
-  row; a cut parent carries `"__truncated": true` (`EavMetaProvider.TruncatedKey`). An
-  attribute keyed `__truncated` is refused.
+  row. `_meta` reserves no key; the sibling `_metaTruncated: Boolean` field
+  (`EavMetaTruncatedProvider`, `GROUP BY fk HAVING COUNT(*) > page` under the same guards)
+  is true for a parent the window cut.
 - No SQL-level filter/sort **by** an attribute — `_meta` is an opaque object. Richer
   attribute querying is intentionally out of scope.

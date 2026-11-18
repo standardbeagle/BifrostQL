@@ -84,7 +84,7 @@ public static class ComputedColumnConfigCollector
     }
 
     /// <summary>
-    /// Emits the read-only <c>_meta</c> provider column on tables that are EAV
+    /// Emits the read-only <c>_meta</c> and <c>_metaTruncated</c> provider columns on tables that are EAV
     /// parents (an <see cref="Model.AppSchema.EavConfig"/> names them as parent).
     /// Requires model context — skipped when <paramref name="model"/> is null.
     /// The single PK column (DB name) is declared as the dependency so it is
@@ -110,6 +110,12 @@ public static class ComputedColumnConfigCollector
             EavMetaProvider.FieldType,
             ComputedColumnKind.Provider,
             EavMetaProvider.ProviderName,
+            new[] { keyColumns[0].DbName }));
+        result.Add(new ComputedColumnDefinition(
+            EavMetaTruncatedProvider.FieldName,
+            EavMetaTruncatedProvider.FieldType,
+            ComputedColumnKind.Provider,
+            EavMetaTruncatedProvider.ProviderName,
             new[] { keyColumns[0].DbName }));
     }
 

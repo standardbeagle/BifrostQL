@@ -197,6 +197,7 @@ namespace BifrostQL.Server
             services.AddSingleton<IComputedColumnProvider>(_ => new StateMachineTransitionsProvider());
             services.AddSingleton<IComputedColumnProvider>(_ => new RowCapabilityProvider());
             services.AddSingleton<IComputedColumnProvider, EavMetaProvider>();
+            services.AddSingleton<IComputedColumnProvider, EavMetaTruncatedProvider>();
             services.AddSingleton<IComputedColumnProviders>(sp => new ComputedColumnProviders(sp.GetServices<IComputedColumnProvider>()));
         }
 

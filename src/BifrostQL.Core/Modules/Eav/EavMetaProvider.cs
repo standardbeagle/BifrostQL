@@ -1,10 +1,7 @@
 using System.Text.Json;
-using BifrostQL.Core.Model;
-using BifrostQL.Core.Model.AppSchema;
 using BifrostQL.Core.Modules.ComputedColumns;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.Core.Modules.Eav;
 
@@ -38,138 +35,33 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
     /// </summary>
     public const string FieldType = "JSON";
 
-    /// <summary>
-    /// Reserved <c>_meta</c> key, present (value <c>true</c>) only when the parent has more
-    /// attribute rows than the row ceiling lets one parent return: the object then holds the
-    /// first <c>max-query-rows - 1</c> attributes in key order, and the rest were not read.
-    /// The <c>__</c> prefix is GraphQL's reserved-name prefix; an attribute row that uses
-    /// this key exactly is refused rather than confused with the marker.
-    /// </summary>
-    public const string TruncatedKey = "__truncated";
-
     public string Name => ProviderName;
 
-    public async ValueTask<object?> ComputeAsync(ComputedColumnContext context, CancellationToken cancellationToken = default)
-    {
-        if (context is null) throw new ArgumentNullException(nameof(context));
-        var values = await ComputeBatchAsync(new ComputedColumnBatchContext
-        {
-            Model = context.Model,
-            Table = context.Table,
-            Column = context.Column,
-            Rows = new[] { context.Row },
-            UserContext = context.UserContext,
-            Services = context.Services,
-            ConnFactory = context.ConnFactory,
-        }, cancellationToken);
-        return values[0];
-    }
+    public ValueTask<object?> ComputeAsync(ComputedColumnContext context, CancellationToken cancellationToken = default)
+        => EavMetaRead.ComputeOneAsync(this, context, cancellationToken);
 
     /// <summary>
     /// <c>_meta</c> for every row of the page in one read: the attribute rows of all the
     /// page's parents come back from <c>WHERE fk IN (...)</c> (chunked at
     /// <see cref="ParentKey.MaxKeysPerQuery"/> keys), windowed per parent to the row ceiling
     /// (<see cref="RowProbeWindow"/>), and grouped by parent key. A parent cut by the window
-    /// carries <see cref="TruncatedKey"/>. A row without a key, or on a table with no parent
+    /// holds only its first <c>max-query-rows - 1</c> attributes; the sibling
+    /// <c>_metaTruncated</c> field (<see cref="EavMetaTruncatedProvider"/>) reports the cut.
+    /// <c>_meta</c> itself reserves no key. A row without a key, or on a table with no parent
     /// configuration, gets null; a keyed row with no attribute rows gets <c>"{}"</c>.
     /// </summary>
     public async ValueTask<IReadOnlyList<object?>> ComputeBatchAsync(ComputedColumnBatchContext context, CancellationToken cancellationToken = default)
     {
         if (context is null) throw new ArgumentNullException(nameof(context));
         var values = new object?[context.Rows.Count];
-
-        // Metadata-driven: locate the EAV config whose parent table is the table
-        // currently being projected. Match on schema too — a same-named parent in a
-        // different schema (app.settings vs dbo.settings) must not bind here. The
-        // parent shares the meta table's schema (see EavConfigCollector), which the
-        // config carries as TableSchema. No name-prefix detection.
-        var config = context.Model.EavConfigs.FirstOrDefault(e =>
-            string.Equals(e.ParentTableDbName, context.Table.DbName, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(e.TableSchema, context.Table.TableSchema, StringComparison.OrdinalIgnoreCase));
-        if (config is null)
+        var read = await EavMetaRead.PrepareAsync(context);
+        if (read is null)
             return values;
 
-        // Composite-PK limitation: the meta table references the parent via a
-        // single foreign-key column, so a parent must have exactly one PK column
-        // for the _meta lookup to be unambiguous. Tables with composite keys are
-        // not supported by this provider (documented limitation).
-        var keyColumns = context.Table.KeyColumns.ToArray();
-        if (keyColumns.Length != 1 || context.ConnFactory is null)
-            return values;
-
-        var rowKeys = new object?[values.Length];
-        var distinctKeys = new List<object>();
-        var seen = new HashSet<ParentKey>();
-        for (var i = 0; i < rowKeys.Length; i++)
-        {
-            var pk = ReadKeyValue(context.Rows[i], keyColumns[0]);
-            rowKeys[i] = pk;
-            if (pk is not null && seen.Add(ParentKey.Of(pk)))
-                distinctKeys.Add(pk);
-        }
-        if (distinctKeys.Count == 0)
-            return values;
-
-        // Resolve the meta table by BOTH schema and DbName via the schema-qualified lookup:
-        // a bare-name lookup can return a same-named meta table in a different schema and
-        // apply the wrong table's security filter. Without the meta table in the model there
-        // is no policy to consult and no column metadata to drive the crypto projection, so
-        // its rows cannot be shown safely — refuse rather than emit unguarded values.
-        IDbTable metaTable;
-        try
-        {
-            metaTable = context.Model.GetTableFromDbName(config.TableSchema, config.MetaTableDbName);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            throw new BifrostExecutionError(
-                $"The EAV meta table for '{context.Table.GraphQlName}' is not present in the model.");
-        }
-
-        // The FULL read chain for the meta table, not just its row filter. `_meta`
-        // previously applied only IFilterTransformers.GetCombinedFilter, so:
-        //   - the key/value columns never met IColumnReadGuard — a policy-denied
-        //     value column was serialized into _meta in full, while the same
-        //     caller's ordinary query of the meta table is rejected;
-        //   - the FK column never met IColumnFilterGuard though it is the WHERE
-        //     predicate of this read;
-        //   - there was no CryptoReadProjector, so an envelope-encrypted value
-        //     column went out as RAW CIPHERTEXT inside the _meta JSON.
-        // TableReadChain is the single seam that applies all of it; guard decisions
-        // stay with the guards (protocol-adapter-security invariant 4). One chain
-        // serves the whole page.
-        var readChain = await TableReadChain.ForAsync(
-            context.Services, context.Model, metaTable, context.UserContext,
-            ReadProjection.Client, QueryType.Standard, metaTable.GraphQlName, isNestedQuery: true);
-
-        // `_meta` IS a client selection (the caller asked for the field), so a denied
-        // column aborts rather than being silently dropped — the same reject semantics
-        // the ordinary query path uses. The FK is the read's WHERE predicate and so
-        // must clear the filter guard too.
-        readChain.AssertReadable(new[] { config.KeyColumn, config.ValueColumn });
-        readChain.AssertPredicateColumns(new[] { config.ForeignKeyColumn });
-
-        var dialect = context.ConnFactory.Dialect;
-        var securityParams = new SqlParameterCollection();
-        var securityWhere = "";
-        var rowFilter = readChain.RowFilter;
-        if (rowFilter != null)
-        {
-            // Spliced into an existing WHERE, so a relationship-shaped filter (one
-            // that needs an INNER JOIN) cannot be honoured; refuse it rather than
-            // emit "AND (INNER JOIN ...)" and let the database reject it.
-            var parts = rowFilter.RenderParts(context.Model, dialect, securityParams, alias: metaTable.DbName);
-            if (!string.IsNullOrWhiteSpace(parts.Joins))
-                throw new BifrostExecutionError(
-                    "EAV _meta cannot apply a row-scope filter that requires a relationship join.");
-            securityWhere = parts.Where;
-        }
-
-        var metaTableRef = dialect.TableReference(config.TableSchema, config.MetaTableDbName);
-        var fkCol = dialect.EscapeIdentifier(config.ForeignKeyColumn);
+        var config = read.Config;
+        var dialect = read.Dialect;
         var keyCol = dialect.EscapeIdentifier(config.KeyColumn);
-        var selectList = $"{fkCol},{keyCol},{dialect.EscapeIdentifier(config.ValueColumn)}";
-        var fkDataType = metaTable.ColumnLookup[config.ForeignKeyColumn].DataType;
+        var selectList = $"{read.FkCol},{keyCol},{dialect.EscapeIdentifier(config.ValueColumn)}";
 
         // Each parent's attributes are windowed IN THE QUERY (ROW_NUMBER per parent key) to
         // the row ceiling, plus one sentinel row that tells a complete set from a cut one.
@@ -178,43 +70,22 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
         // primary key) makes the kept window deterministic.
         var window = RowProbeWindow.For(context.Model, -1);
         var windowOrder = new[] { keyCol }
-            .Concat(metaTable.KeyColumns.Select(c => dialect.EscapeIdentifier(c.DbName)))
+            .Concat(read.MetaTable.KeyColumns.Select(c => dialect.EscapeIdentifier(c.DbName)))
             .ToArray();
-        var truncatedParents = new Dictionary<ParentKey, bool>();
 
-        var attributesByParent = new Dictionary<ParentKey, List<KeyValuePair<string, object?>>>();
-        await using var conn = context.ConnFactory.GetConnection();
+        // Keyed by the window's row number: a windowed result's outer row order is unspecified
+        // (MySQL returns it scrambled), so the kept attributes are put back in window order here.
+        var attributesByParent = new Dictionary<ParentKey, SortedList<long, KeyValuePair<string, object?>>>();
+        await using var conn = context.ConnFactory!.GetConnection();
         await conn.OpenAsync(cancellationToken);
-        for (var offset = 0; offset < distinctKeys.Count; offset += ParentKey.MaxKeysPerQuery)
+        foreach (var chunk in read.KeyChunks())
         {
-            var chunk = distinctKeys.Skip(offset).Take(ParentKey.MaxKeysPerQuery).ToList();
             await using var command = conn.CreateCommand();
-            var placeholders = new string[chunk.Count];
-            for (var i = 0; i < chunk.Count; i++)
-            {
-                var name = $"{dialect.ParameterPrefix}pk{i}";
-                placeholders[i] = DbParameterBinder.ComparisonPlaceholder(dialect, name, fkDataType, chunk[i]);
-                var parameter = command.CreateParameter();
-                parameter.ParameterName = name;
-                DbParameterBinder.SetValue(parameter, chunk[i]);
-                command.Parameters.Add(parameter);
-            }
-            foreach (var securityParameter in securityParams.Parameters)
-            {
-                var p = command.CreateParameter();
-                p.ParameterName = securityParameter.Name;
-                DbParameterBinder.SetValue(p, securityParameter.Value);
-                command.Parameters.Add(p);
-            }
-
-            var keyPredicate = $"{fkCol} IN ({string.Join(",", placeholders)})";
-            var whereClause = string.IsNullOrEmpty(securityWhere)
-                ? keyPredicate
-                : $"{keyPredicate} AND ({securityWhere})";
+            var whereClause = read.BindChunk(command, chunk);
             command.CommandText = dialect.ConnectedPaging(
                 selectList,
-                $"FROM {metaTableRef} WHERE {whereClause}",
-                new[] { fkCol },
+                $"FROM {read.MetaTableRef} WHERE {whereClause}",
+                new[] { read.FkCol },
                 windowOrder,
                 PagedKeys.RowNumber,
                 PagedKeys.Total,
@@ -225,59 +96,40 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
             var rowNumberOrdinal = reader.GetOrdinal(PagedKeys.RowNumber);
             while (await reader.ReadAsync(cancellationToken))
             {
+                // The sentinel row past the window only marks the cut, which _metaTruncated reports.
                 if (reader.IsDBNull(0))
                     continue;
-                if (Convert.ToInt64(reader.GetValue(rowNumberOrdinal)) > window.Page)
-                {
-                    truncatedParents[ParentKey.Of(reader.GetValue(0))] = true;
+                var rowNumber = Convert.ToInt64(reader.GetValue(rowNumberOrdinal));
+                if (rowNumber > window.Page)
                     continue;
-                }
                 // Both cells are raw meta-table column values, so both go through the
                 // read chain's crypto projection before they reach the _meta JSON.
                 var rawKey = reader.IsDBNull(1) ? null : reader.GetValue(1);
-                var key = readChain.ProjectValue(config.KeyColumn, rawKey)?.ToString();
+                var key = read.ReadChain.ProjectValue(config.KeyColumn, rawKey)?.ToString();
                 if (string.IsNullOrEmpty(key))
                     continue;
-                if (key == TruncatedKey)
-                    throw new BifrostExecutionError(
-                        $"An EAV attribute of '{context.Table.GraphQlName}' uses the reserved _meta key '{TruncatedKey}'.");
                 var rawValue = reader.IsDBNull(2) ? null : reader.GetValue(2);
                 var parentKey = ParentKey.Of(reader.GetValue(0));
                 if (!attributesByParent.TryGetValue(parentKey, out var attributes))
-                    attributesByParent[parentKey] = attributes = new List<KeyValuePair<string, object?>>();
-                attributes.Add(new KeyValuePair<string, object?>(
-                    key, readChain.ProjectValue(config.ValueColumn, rawValue)));
+                    attributesByParent[parentKey] = attributes = new SortedList<long, KeyValuePair<string, object?>>();
+                attributes.Add(rowNumber, new KeyValuePair<string, object?>(
+                    key, read.ReadChain.ProjectValue(config.ValueColumn, rawValue)));
             }
         }
 
         for (var i = 0; i < values.Length; i++)
         {
-            if (rowKeys[i] is not { } pk)
+            if (read.RowKeys[i] is not { } pk)
                 continue;
             values[i] = SerializeAttributes(
                 ParentKey.TryGetGroup(attributesByParent, pk, out var attributes)
-                    ? attributes
-                    : Array.Empty<KeyValuePair<string, object?>>(),
-                truncated: ParentKey.TryGetGroup(truncatedParents, pk, out _));
+                    ? attributes.Values
+                    : Array.Empty<KeyValuePair<string, object?>>());
         }
         return values;
     }
 
-    private static object? ReadKeyValue(IReadOnlyDictionary<string, object?> row, ColumnDto keyColumn)
-    {
-        // The synthesized definition declares the PK (DB name) as its only
-        // dependency, so the projected row is keyed by that name. Fall back to
-        // the GraphQL name defensively (mirrors StateMachineTransitionsProvider).
-        if (row.TryGetValue(keyColumn.DbName, out var byDb) && byDb is not null)
-            return byDb;
-
-        if (row.TryGetValue(keyColumn.GraphQlName, out var byGraphQl) && byGraphQl is not null)
-            return byGraphQl;
-
-        return null;
-    }
-
-    private static string SerializeAttributes(IReadOnlyList<KeyValuePair<string, object?>> attributes, bool truncated)
+    private static string SerializeAttributes(IEnumerable<KeyValuePair<string, object?>> attributes)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -288,8 +140,6 @@ public sealed class EavMetaProvider : IBatchComputedColumnProvider
                 writer.WritePropertyName(key);
                 WriteValue(writer, value);
             }
-            if (truncated)
-                writer.WriteBoolean(TruncatedKey, true);
             writer.WriteEndObject();
         }
         return System.Text.Encoding.UTF8.GetString(stream.ToArray());

@@ -407,8 +407,8 @@ namespace BifrostQL.Server.Auth
         /// The current password is checked like a login (rate windows, lockout, audit), so the
         /// endpoint is no side door for guessing; an expired password is accepted here. The new
         /// password must satisfy <see cref="LocalAuthOptions.MinPasswordLength"/>,
-        /// <see cref="LocalAuthOptions.MaxPasswordLength"/>, <see cref="LocalAuthOptions.PasswordRequiresLetterAndDigit"/> and differ from the current and the last
-        /// <see cref="LocalAuthOptions.PasswordHistoryCount"/> passwords, else 400 with the broken
+        /// <see cref="LocalAuthOptions.MaxPasswordLength"/>, <see cref="LocalAuthOptions.PasswordRequiresLetterAndDigit"/> and differ from the current password and the
+        /// <see cref="LocalAuthOptions.PasswordHistoryCount"/> passwords before it, else 400 with the broken
         /// rule. On success every session of the user is revoked and the caller's cookie cleared;
         /// the user signs in again with the new password.
         /// </summary>
@@ -479,8 +479,9 @@ namespace BifrostQL.Server.Auth
             }
 
             var hash = await store.SetPasswordAsync(userId, request.Login, request.NewPassword, ct).ConfigureAwait(false);
-            // Keep at least one entry so MaxPasswordAge has a change date even with no reuse check.
-            await state.AppendPasswordHistoryAsync(userId, hash, now, Math.Max(options.PasswordHistoryCount, 1), ct)
+            // The newest entry is the password just set. It also gives MaxPasswordAge a change date
+            // when PasswordHistoryCount is 0.
+            await state.AppendPasswordHistoryAsync(userId, hash, now, options.PasswordHistoryEntriesKept, ct)
                 .ConfigureAwait(false);
             await audit.RecordAsync(now, AuthAuditKind.PasswordChanged, AuthAuditOutcome.Success,
                 userId, null, sourceIp, null, ct).ConfigureAwait(false);
@@ -507,7 +508,8 @@ namespace BifrostQL.Server.Auth
                 return "reused";
             if (options.PasswordHistoryCount == 0)
                 return null;
-            foreach (var entry in await state.GetPasswordHistoryAsync(userId, options.PasswordHistoryCount, ct).ConfigureAwait(false))
+            // The history's newest entry is the current password, so the previous N are the next N.
+            foreach (var entry in await state.GetPasswordHistoryAsync(userId, options.PasswordHistoryEntriesKept, ct).ConfigureAwait(false))
             {
                 if (store.PasswordMatchesHash(login, entry.PasswordHash, newPassword))
                     return "reused";

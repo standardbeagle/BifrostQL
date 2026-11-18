@@ -124,7 +124,7 @@ Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated re
 | `LockoutDuration` | `30 min` | How long the lock lasts; `null` locks until an administrator unlocks. |
 | `MinPasswordLength` / `MaxPasswordLength` | `12` / `256` | Length bounds for a new password, in characters. |
 | `PasswordRequiresLetterAndDigit` | `true` | A new password needs a letter and a digit. |
-| `PasswordHistoryCount` | `4` | A new password may not match the current one or the last N. |
+| `PasswordHistoryCount` | `4` | A new password may not match the current one or the N before it. |
 | `MaxPasswordAge` | none | A password older than this cannot sign in until changed. An account with no recorded change counts as expired. |
 | `AdminRole` / `AdminPath` | none / `/auth/admin` | Enables the administration endpoints. |
 

@@ -576,16 +576,37 @@ namespace BifrostQL.Server.Test
                 current = next;
             }
 
-            // used[4] is current; used[1..4] are the last four. used[0] is five back.
-            foreach (var recent in used.Skip(1))
+            // used[4] is current; used[0..3] are the four passwords before it (PCI DSS 8.3.7: the
+            // current one plus the previous four).
+            foreach (var recent in used.Take(4))
                 (await RuleOf(await ChangePasswordAsync(client, current, recent))).Should().Be("reused",
-                    $"'{recent}' is one of the last four passwords");
-            (await ChangePasswordAsync(client, current, used[0])).StatusCode.Should().Be(HttpStatusCode.NoContent,
-                "the first new password is now five changes back");
+                    $"'{recent}' is one of the four passwords before the current one");
+            (await ChangePasswordAsync(client, current, "new passphrase no 6")).StatusCode.Should().Be(HttpStatusCode.NoContent);
+            (await ChangePasswordAsync(client, "new passphrase no 6", used[0])).StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "control: one more change puts the first new password five back, outside the window");
 
             var audit = await AuditAsync();
-            audit.Count(e => e.Kind == AuthAuditKind.PasswordChanged).Should().Be(6);
+            audit.Count(e => e.Kind == AuthAuditKind.PasswordChanged).Should().Be(7);
             audit.Should().Contain(e => e.Kind == AuthAuditKind.PasswordChangeRejected && e.Reason == AuthAuditReasons.PasswordPolicy);
+        }
+
+        [Fact]
+        public async Task PasswordHistoryCountOne_RefusesThePasswordBeforeTheCurrentOne()
+        {
+            var client = await StartForLockoutAsync(o => o.PasswordHistoryCount = 1);
+            var used = new[] { "new passphrase no 1", "new passphrase no 2", "new passphrase no 3",
+                "new passphrase no 4", "new passphrase no 5" };
+            var current = Password;
+            foreach (var next in used)
+            {
+                (await ChangePasswordAsync(client, current, next)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+                current = next;
+            }
+
+            (await RuleOf(await ChangePasswordAsync(client, current, used[3]))).Should().Be("reused",
+                "a history of one covers the password before the current one");
+            (await ChangePasswordAsync(client, current, used[2])).StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "control: two changes back is outside a history of one");
         }
 
         [Fact]

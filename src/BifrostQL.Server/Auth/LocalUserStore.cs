@@ -177,11 +177,14 @@ namespace BifrostQL.Server.Auth
         public int MaxPasswordLength { get; set; } = 256;
 
         /// <summary>
-        /// A new password may not equal the current one or any of this many most recent passwords
-        /// (PCI DSS 8.3.7 asks for 4). The store keeps that many hashes per user. 0 checks only the
-        /// current password. Defaults to 4; at most 24.
+        /// A new password may not equal the current one or any of this many passwords before it
+        /// (PCI DSS 8.3.7 asks for 4). The store keeps the current hash plus that many per user. 0
+        /// checks only the current password. Defaults to 4; at most 24.
         /// </summary>
         public int PasswordHistoryCount { get; set; } = 4;
+
+        /// <summary>History entries kept and checked per user: the current password plus <see cref="PasswordHistoryCount"/> before it.</summary>
+        internal int PasswordHistoryEntriesKept => PasswordHistoryCount + 1;
 
         /// <summary>
         /// Longest a password stays valid after it was set through <see cref="PasswordChangePath"/>

@@ -366,6 +366,52 @@ namespace BifrostQL.Server.Test.Ldap
             pipeline.Intents[0].Query.Sort.Should().NotBeEmpty();
         }
 
+        // One family, one level: the entry count is the people count, nothing synthesized beside it.
+        private static LdapSearchRequest PeopleOnly() =>
+            Search(baseObject: "ou=people,dc=example,dc=com", scope: LdapSearchScope.SingleLevel,
+                attributes: new[] { "uid" });
+
+        [Fact]
+        public async Task Search_ReturningExactlyTheCeiling_IsComplete()
+        {
+            // Five entries under a ceiling of five is the whole answer. The page filling up was
+            // read as "more exist", so a complete result was reported as sizeLimitExceeded.
+            var (executor, pipeline) = Build(configure: o => o.MaxSearchResults = 5);
+            pipeline.WithPeople(5);
+
+            var outcome = await RunAsync(executor, PeopleOnly());
+
+            outcome.Entries.Should().HaveCount(5);
+            outcome.ResultCode.Should().Be(LdapResultCode.Success,
+                "sizeLimitExceeded means an entry was left out, and none was");
+        }
+
+        [Fact]
+        public async Task Search_OneEntryPastTheCeiling_IsReportedPartial()
+        {
+            // Control for the fact above: the sixth entry is the sentinel that makes it partial.
+            var (executor, pipeline) = Build(configure: o => o.MaxSearchResults = 5);
+            pipeline.WithPeople(6);
+
+            var outcome = await RunAsync(executor, PeopleOnly());
+
+            outcome.Entries.Should().HaveCount(5);
+            outcome.ResultCode.Should().Be(LdapResultCode.SizeLimitExceeded);
+        }
+
+        [Fact]
+        public async Task Search_PageFilledByTheLastEntry_HandsBackTheFinalEmptyCookie()
+        {
+            // With paging, the same misreading issued a cookie for a page that would be empty.
+            var (executor, pipeline) = Build();
+            pipeline.WithPeople(5);
+
+            var outcome = await RunAsync(executor, PeopleOnly(), Session(), PagingControl(5));
+
+            outcome.Entries.Should().HaveCount(5);
+            ResponseCookie(outcome).Should().BeEmpty("no entry remains, so this is the last page");
+        }
+
         // ---- paging ----
 
         [Fact]

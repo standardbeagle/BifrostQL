@@ -288,6 +288,12 @@ namespace BifrostQL.Server.Ldap
             var entries = new List<LdapSearchResultEntry>();
             var truncated = false;
             var position = start;
+            // Where the next page starts, set when this page fills. A full page is not "more
+            // exist": the scan goes on past it for ONE further row that would emit an entry (the
+            // cap+1 sentinel), and only that row makes the result partial. Without it a result of
+            // exactly pageSize entries was reported sizeLimitExceeded, or handed a cookie for an
+            // empty page.
+            LdapPagePosition? resumeAt = null;
 
             for (var targetIndex = start.TargetIndex; targetIndex < resolution.Targets.Count; targetIndex++)
             {
@@ -358,15 +364,22 @@ namespace BifrostQL.Server.Ldap
                     var consumed = 0;
                     foreach (var row in batch)
                     {
-                        if (entries.Count >= pageSize)
-                        {
-                            truncated = true;
-                            break;
-                        }
                         consumed++;
 
                         if (!matchedSet.Contains(row))
                             continue;
+
+                        if (resumeAt is not null)
+                        {
+                            // Probing for the sentinel. Membership does not decide whether a row
+                            // projects to an entry (only its naming value does), so no join runs.
+                            if (LdapEntryProjector.Project(target, row, selection, request.TypesOnly) is not null)
+                            {
+                                truncated = true;
+                                break;
+                            }
+                            continue;
+                        }
 
                         if (matchedSeen == resolvedThrough)
                         {
@@ -383,14 +396,17 @@ namespace BifrostQL.Server.Ldap
                             target, row, selection, request.TypesOnly,
                             MemberDns(members, target, row), MemberDns(memberOf, target, row));
                         if (entry is not null)
+                        {
                             entries.Add(entry);
+                            if (entries.Count >= pageSize)
+                                resumeAt = new LdapPagePosition(targetIndex, offset + consumed);
+                        }
                     }
                     offset += consumed;
 
-                    if (truncated || entries.Count >= pageSize)
+                    if (truncated)
                     {
-                        truncated = true;
-                        position = new LdapPagePosition(targetIndex, offset);
+                        position = resumeAt!.Value;
                         break;
                     }
 

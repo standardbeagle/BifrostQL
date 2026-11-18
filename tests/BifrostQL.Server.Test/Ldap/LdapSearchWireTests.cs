@@ -514,6 +514,48 @@ namespace BifrostQL.Server.Test.Ldap
             data.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights);
         }
 
+        [Theory]
+        [InlineData(LdapSearchScope.BaseObject)]
+        [InlineData(LdapSearchScope.SingleLevel)]
+        [InlineData(LdapSearchScope.WholeSubtree)]
+        public async Task Search_AnAnonymousSession_GetsTheSameAnswerForARealAndAMissingContainer(int scope)
+        {
+            // An anonymous caller must not learn which families exist: the refusal has to come
+            // before any lookup, so a real container and an absent one answer identically.
+            const string real = "ou=people,dc=example,dc=com";
+            const string missing = "ou=ghosts,dc=example,dc=com";
+            await using var directory = await Directory.StartAsync(
+                configure: o => o.AnonymousBindEnabled = true,
+                seed: p => p.WithPeople(3, tenant: "acme"));
+            await directory.Fixture.Client.SendAsync(LdapWire.Message(1, LdapWire.BindRequest(name: "", password: "")));
+            (await ReadAsync(directory.Fixture)).ResultCode.Should().Be(LdapResultCode.Success);
+
+            var realAnswer = await directory.SearchAsync(LdapWire.SearchRequest(real, scope), 2);
+            var missingAnswer = await directory.SearchAsync(LdapWire.SearchRequest(missing, scope), 3);
+
+            realAnswer.Entries.Should().BeEmpty();
+            missingAnswer.Entries.Should().BeEmpty();
+            realAnswer.ResultCode.Should().Be(LdapResultCode.InsufficientAccessRights);
+            missingAnswer.ResultCode.Should().Be(realAnswer.ResultCode);
+            (missingAnswer.Done with { MessageId = 0 }).Should().BeEquivalentTo(realAnswer.Done with { MessageId = 0 });
+        }
+
+        [Fact]
+        public async Task Search_ACredentialedSession_TellsARealContainerFromAMissingOne()
+        {
+            // Control for the anonymous parity fact: the fixture's two bases really do differ.
+            await using var directory = await Directory.StartAsync(seed: p => p.WithPeople(3, tenant: "acme"));
+            await directory.BindAsync("alice");
+
+            var realAnswer = await directory.SearchAsync(
+                LdapWire.SearchRequest("ou=people,dc=example,dc=com", LdapSearchScope.SingleLevel), 2);
+            var missingAnswer = await directory.SearchAsync(
+                LdapWire.SearchRequest("ou=ghosts,dc=example,dc=com", LdapSearchScope.SingleLevel), 3);
+
+            realAnswer.ResultCode.Should().Be(LdapResultCode.Success);
+            missingAnswer.ResultCode.Should().Be(LdapResultCode.NoSuchObject);
+        }
+
         // ---- lifecycle over a live session ----
 
         [Fact]

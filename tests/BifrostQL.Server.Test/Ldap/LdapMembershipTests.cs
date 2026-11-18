@@ -370,6 +370,180 @@ namespace BifrostQL.Server.Test.Ldap
             outcome.Entries.Should().OnlyContain(e => MemberValues(e, "memberOf").Count == 1);
         }
 
+        // ---- the model's row ceiling below the membership bound ----
+
+        // A directory whose max-query-rows (5) sits far below the per-entry bound (1000) and the
+        // per-search total (10,000), so only the ceiling can cut a membership read.
+        private static (LdapSearchExecutor Executor, LdapFakeIntentExecutor Pipeline) BuildCeilingDirectory()
+        {
+            var builder = LdapModelBuilder.Create()
+                .WithPeople()
+                .WithGroups(memberRelationship: "members")
+                .WithMembershipBridge()
+                .WithModelMetadata(MetadataKeys.Model.MaxQueryRows, 5);
+            var pipeline = new LdapFakeIntentExecutor(builder.Build());
+            var options = new LdapWireOptions { PagedResultsCookieSecret = "test-cookie-secret", MemberOfEnabled = true };
+            return (new LdapSearchExecutor(pipeline, options, clock: () => Now), pipeline);
+        }
+
+        private static void SeedOneGroupOf(LdapFakeIntentExecutor pipeline, int members)
+        {
+            pipeline.WithRows("groups", Row(("id", 1), ("name", "everyone")));
+            for (var i = 0; i < members; i++)
+            {
+                pipeline.WithRows("users", Row(("id", 100 + i), ("username", $"user{i}")));
+                pipeline.WithRows("user_groups", Row(("id", i + 1), ("group_id", 1), ("user_id", 100 + i)));
+            }
+        }
+
+        [Fact]
+        public async Task Member_CutByTheModelRowCeiling_IsRefusedRatherThanTruncated()
+        {
+            // The junction read asked for LIMIT 1001 and the ceiling clamped it to 5. Its sentinel
+            // row was the one clamped away, so "rows > bound" never fired and the group came back
+            // with 5 of its 7 members under Success.
+            var (executor, pipeline) = BuildCeilingDirectory();
+            SeedOneGroupOf(pipeline, 7);
+
+            var outcome = await executor.ExecuteAsync(
+                Search(), Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+            outcome.Entries.Should().BeEmpty("the search is refused, never answered with a truncated member list");
+        }
+
+        [Fact]
+        public async Task MemberOf_CutByTheModelRowCeiling_IsRefusedRatherThanTruncated()
+        {
+            // The reverse leg reads the same junction through the same window.
+            var (executor, pipeline) = BuildCeilingDirectory();
+            pipeline.WithRows("users", Row(("id", 10), ("username", "alice")));
+            for (var g = 1; g <= 7; g++)
+            {
+                pipeline.WithRows("groups", Row(("id", g), ("name", $"group{g}")));
+                pipeline.WithRows("user_groups", Row(("id", g), ("group_id", g), ("user_id", 10)));
+            }
+            var people = Search(baseObject: "ou=people,dc=example,dc=com", attributes: new[] { "uid", "memberOf" });
+
+            var outcome = await executor.ExecuteAsync(
+                people, Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+        }
+
+        [Fact]
+        public async Task Member_JunctionCutByTheCeiling_WithRepeatedMemberships_IsRefused()
+        {
+            // The facts above are also caught later, by the naming read: their 5 junction rows name
+            // 5 distinct users, one more than that read's page. Here the 5 rows the ceiling lets
+            // through all name the same user, so the naming read sees ONE key and is complete. Only
+            // the junction leg's own ceiling check can tell that rows 6 and 7 (two more members)
+            // were cut; without it the group was served with one member under Success.
+            var (executor, pipeline) = BuildCeilingDirectory();
+            pipeline.WithRows("groups", Row(("id", 1), ("name", "everyone")));
+            foreach (var userId in new[] { 100, 101, 102 })
+                pipeline.WithRows("users", Row(("id", userId), ("username", $"user{userId}")));
+            var memberships = new[] { 100, 100, 100, 100, 100, 101, 102 };
+            for (var i = 0; i < memberships.Length; i++)
+                pipeline.WithRows("user_groups", Row(("id", i + 1), ("group_id", 1), ("user_id", memberships[i])));
+
+            var outcome = await executor.ExecuteAsync(
+                Search(), Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+            outcome.Entries.Should().BeEmpty("the search is refused, never answered with a truncated member list");
+        }
+
+        // A group whose members are its direct children (users.group_id), under the same
+        // max-query-rows of 5 as BuildCeilingDirectory.
+        private static (LdapSearchExecutor Executor, LdapSearchRequest Search) BuildDirectGroupOf(int members)
+        {
+            var builder = LdapModelBuilder.Create()
+                .WithTable("users", t => t
+                    .WithColumn("id", "int", isPrimaryKey: true)
+                    .WithColumn("username", "nvarchar")
+                    .WithColumn("group_id", "int")
+                    .WithMetadata(MetadataKeys.Ldap.ObjectClass, "inetOrgPerson")
+                    .WithMetadata(MetadataKeys.Ldap.DnTemplate, "uid={username},ou=people")
+                    .WithMetadata(MetadataKeys.Ldap.Attributes, "uid=username"))
+                .WithGroups(memberRelationship: "staff")
+                .WithModelMetadata(MetadataKeys.Model.MaxQueryRows, 5);
+            var groups = builder.Table("groups");
+            var users = builder.Table("users");
+            groups.MultiLinks["staff"] = new TableLinkDto
+            {
+                Name = "staff",
+                ParentTable = groups,
+                ChildTable = users,
+                ParentId = groups.ColumnLookup["id"],
+                ChildId = users.ColumnLookup["group_id"],
+            };
+            var pipeline = new LdapFakeIntentExecutor(builder.Build());
+            var executor = new LdapSearchExecutor(
+                pipeline, new LdapWireOptions { PagedResultsCookieSecret = "test-cookie-secret" }, clock: () => Now);
+            pipeline.WithRows("groups", Row(("id", 1), ("name", "everyone")));
+            for (var i = 0; i < members; i++)
+                pipeline.WithRows("users", Row(("id", 100 + i), ("username", $"user{i}"), ("group_id", 1)));
+            return (executor, Search(baseObject: "ou=groups,dc=example,dc=com", attributes: new[] { "cn", "member" }));
+        }
+
+        [Fact]
+        public async Task Member_DirectOneToManyCutByTheCeiling_IsRefused()
+        {
+            // A direct one-to-many reads members and naming values in ONE query, so no later read
+            // can notice the cut: the leg's own ceiling check is the only guard.
+            var (executor, groupsOnly) = BuildDirectGroupOf(7);
+
+            var outcome = await executor.ExecuteAsync(
+                groupsOnly, Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.AdminLimitExceeded);
+        }
+
+        [Fact]
+        public async Task Member_DirectOneToManyUnderTheCeiling_IsServedInFull()
+        {
+            // Control for the fact above: the same direct link with four members fits the page.
+            var (executor, groupsOnly) = BuildDirectGroupOf(4);
+
+            var outcome = await executor.ExecuteAsync(
+                groupsOnly, Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.Success);
+            MemberValues(outcome.Entries.Should().ContainSingle().Subject).Should().HaveCount(4);
+        }
+
+        [Fact]
+        public async Task Member_UnderTheModelRowCeiling_IsServedInFull()
+        {
+            // Control: four members fit the ceiling's page (5 less the sentinel), so the refusal
+            // above comes from the ceiling cut and not from the fixture.
+            var (executor, pipeline) = BuildCeilingDirectory();
+            SeedOneGroupOf(pipeline, 4);
+
+            var outcome = await executor.ExecuteAsync(
+                Search(), Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            outcome.ResultCode.Should().Be(LdapResultCode.Success);
+            MemberValues(outcome.Entries.Should().ContainSingle().Subject).Should().HaveCount(4);
+        }
+
+        [Fact]
+        public async Task Membership_legs_carry_a_total_order()
+        {
+            // A cap only means something over an ordered read: without ORDER BY the database may
+            // hand back any 5 of 7 rows, and which ones it picks can change between calls.
+            var (executor, pipeline) = BuildDirectory();
+            SeedThreeGroupsOfTwo(pipeline);
+
+            await executor.ExecuteAsync(
+                Search(), Array.Empty<LdapControl>(), Session("acme"), CancellationToken.None);
+
+            pipeline.Intents.Where(i => i.Query.TableName is "user_groups" or "users")
+                .Should().NotBeEmpty()
+                .And.OnlyContain(i => i.Query.Sort.Count > 0);
+        }
+
         [Fact]
         public void Adapter_refuses_a_per_search_total_below_one()
         {

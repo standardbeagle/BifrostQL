@@ -284,7 +284,7 @@ namespace BifrostQL.Server.Ldap
                 return LdapSearchOutcome.Refused(LdapResultCode.AdminLimitExceeded);
             }
 
-            var membership = new LdapMembershipResolver(_reads, index, _options);
+            var membership = new LdapMembershipResolver(_reads, index, _options, model);
             var entries = new List<LdapSearchResultEntry>();
             var truncated = false;
             var position = start;

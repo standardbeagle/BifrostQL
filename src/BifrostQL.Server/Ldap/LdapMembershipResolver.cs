@@ -39,6 +39,7 @@ namespace BifrostQL.Server.Ldap
         private readonly IQueryIntentExecutor _reads;
         private readonly LdapDirectoryIndex _index;
         private readonly LdapWireOptions _options;
+        private readonly IDbModel _model;
 
         // What is left of MaxMembershipValuesPerSearch. The search executor builds one resolver per
         // search request, so this counts every membership read the request makes: member and
@@ -46,21 +47,53 @@ namespace BifrostQL.Server.Ldap
         private int _membershipValuesLeft;
 
         public LdapMembershipResolver(
-            IQueryIntentExecutor reads, LdapDirectoryIndex index, LdapWireOptions options)
+            IQueryIntentExecutor reads, LdapDirectoryIndex index, LdapWireOptions options, IDbModel model)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _index = index ?? throw new ArgumentNullException(nameof(index));
             _options = options ?? throw new ArgumentNullException(nameof(options));
+            _model = model ?? throw new ArgumentNullException(nameof(model));
             _membershipValuesLeft = options.MaxMembershipValuesPerSearch;
         }
 
         private LdapMembershipLimitException PerEntryLimitExceeded() =>
             new($"membership fan-out exceeded the {_options.MaxMembersPerEntry}-member per-entry bound.");
 
+        private static LdapMembershipLimitException RowCeilingExceeded() =>
+            new("membership read exceeded the model's max-query-rows ceiling.");
+
         // The row limit for one leg-1 read: the per-entry ceiling for these keys, narrowed to what is
-        // left of the per-search total. The +1 probe row is added by the caller.
+        // left of the per-search total.
         private int LegCeiling(int keyCount) =>
             Math.Min(checked(keyCount * _options.MaxMembersPerEntry), _membershipValuesLeft);
+
+        // The read window for one leg-1 read. Its sentinel row is what tells "over the bound" from
+        // "exactly at it", and it comes from RowProbeWindow so the model's max-query-rows clamp is
+        // applied here too. A hand-set LIMIT of bound+1 was clamped by SQL generation instead: at
+        // the defaults (bound 10,000, ceiling 10,000) the sentinel was the row cut away, so an
+        // over-bound member list came back short under Success.
+        private RowProbeWindow LegWindow(int keyCount) => RowProbeWindow.For(_model, LegCeiling(keyCount));
+
+        // A cap means something only over an ordered read: without ORDER BY the database may return
+        // any subset at the window edge, and a different one on the next call. The table's key
+        // gives a total order; a keyless table falls back to the columns the leg reads.
+        private static void OrderTotally(GqlObjectQuery query, IDbTable table, params ColumnDto[] fallback)
+        {
+            foreach (var key in table.KeyColumns)
+                query.Sort.Add($"{key.GraphQlName}_asc");
+            if (query.Sort.Count > 0)
+                return;
+            foreach (var column in fallback)
+                query.Sort.Add($"{column.GraphQlName}_asc");
+        }
+
+        // Refuses a leg-1 read the row ceiling cut short. The per-entry and per-search checks the
+        // caller runs next cannot see this cut: the ceiling's page may sit below both bounds.
+        private static void RefuseIfCutByCeiling(RowProbeWindow window, int rows)
+        {
+            if (window.IsCutByCeiling(rows))
+                throw RowCeilingExceeded();
+        }
 
         // Charges a leg-1 read against the per-search total. Over it, the search is refused
         // (adminLimitExceeded), never answered with a truncated member list.
@@ -132,6 +165,7 @@ namespace BifrostQL.Server.Ldap
                 return result;
 
             var ceiling = checked(sourceKeys.Count * _options.MaxMembersPerEntry);
+            var window = LegWindow(sourceKeys.Count);
             var query = new GqlObjectQuery
             {
                 DbTable = link.TargetTable,
@@ -140,14 +174,16 @@ namespace BifrostQL.Server.Ldap
                 GraphQlName = link.TargetTable.GraphQlName,
                 Path = link.TargetTable.GraphQlName,
                 Filter = InFilter(link.TargetTable, link.JunctionSourceColumn, sourceKeys),
-                Limit = LegCeiling(sourceKeys.Count) + 1,
+                Limit = window.Fetch,
             };
             query.ScalarColumns.Add(new GqlObjectColumn(link.JunctionSourceColumn.ColumnName));
             query.ScalarColumns.Add(new GqlObjectColumn(namingColumn.ColumnName));
+            OrderTotally(query, link.TargetTable, link.JunctionSourceColumn, namingColumn);
 
             var rows = await _reads.ExecuteAsync(
                 new QueryIntent { Query = query, UserContext = userContext, Endpoint = _options.Endpoint }, ct);
 
+            RefuseIfCutByCeiling(window, rows.Rows.Count);
             if (rows.Rows.Count > ceiling)
                 throw PerEntryLimitExceeded();
             SpendMembershipValues(rows.Rows.Count);
@@ -321,6 +357,7 @@ namespace BifrostQL.Server.Ldap
             var resultColumn = reverse ? link.JunctionSourceColumn : link.JunctionTargetColumn;
 
             var ceiling = checked(keys.Count * _options.MaxMembersPerEntry);
+            var window = LegWindow(keys.Count);
             var query = new GqlObjectQuery
             {
                 DbTable = link.JunctionTable,
@@ -329,14 +366,16 @@ namespace BifrostQL.Server.Ldap
                 GraphQlName = link.JunctionTable.GraphQlName,
                 Path = link.JunctionTable.GraphQlName,
                 Filter = InFilter(link.JunctionTable, lookupColumn, keys),
-                Limit = LegCeiling(keys.Count) + 1,
+                Limit = window.Fetch,
             };
             query.ScalarColumns.Add(new GqlObjectColumn(lookupColumn.ColumnName));
             query.ScalarColumns.Add(new GqlObjectColumn(resultColumn.ColumnName));
+            OrderTotally(query, link.JunctionTable, lookupColumn, resultColumn);
 
             var result = await _reads.ExecuteAsync(
                 new QueryIntent { Query = query, UserContext = userContext, Endpoint = _options.Endpoint }, ct);
 
+            RefuseIfCutByCeiling(window, result.Rows.Count);
             if (result.Rows.Count > ceiling)
                 throw PerEntryLimitExceeded();
             SpendMembershipValues(result.Rows.Count);
@@ -379,6 +418,10 @@ namespace BifrostQL.Server.Ldap
             if (!target.Table.ColumnLookup.TryGetValue(target.NamingColumn, out var namingColumn))
                 return names;
 
+            // One row per key at most, so the page is the key count. A row past it (a key the
+            // ceiling cut, or a target key that is not unique) means this read cannot name every
+            // member, and an unnamed member reads as one the caller cannot see. Refused instead.
+            var window = RowProbeWindow.For(_model, distinct.Count);
             var query = new GqlObjectQuery
             {
                 DbTable = target.Table,
@@ -387,13 +430,16 @@ namespace BifrostQL.Server.Ldap
                 GraphQlName = target.Table.GraphQlName,
                 Path = target.Table.GraphQlName,
                 Filter = InFilter(target.Table, keyColumn, distinct),
-                Limit = distinct.Count,
+                Limit = window.Fetch,
             };
             query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.ColumnName));
             query.ScalarColumns.Add(new GqlObjectColumn(namingColumn.ColumnName));
+            OrderTotally(query, target.Table, keyColumn);
 
             var result = await _reads.ExecuteAsync(
                 new QueryIntent { Query = query, UserContext = userContext, Endpoint = _options.Endpoint }, ct);
+            if (window.HasMore(result.Rows.Count))
+                throw RowCeilingExceeded();
 
             foreach (var row in result.Rows)
             {

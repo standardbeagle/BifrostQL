@@ -137,6 +137,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - Local auth: a login, password-change or administration request whose body is not JSON (another content type, or an undecodable charset) answers 415 instead of 500.
 - Local auth: the administration endpoints refuse a `userId` longer than 128 characters with 400 before acting; it could not fit the audit column, so the action ran and the audit write failed after it.
 - Local auth: the email claim is the login column's stored value, not the caller's spelling of it under a case-insensitive collation.
+- SQL Server: a tree sync's child read takes `WITH (UPDLOCK, HOLDLOCK)` instead of `WITH (UPDLOCK)`. The update lock covered only the children it read, and a concurrent child INSERT's foreign-key check takes a shared lock on the parent, which an update lock does not block, so a new child could land between the sync's diff and its commit. The key-range lock now holds it until the sync commits. The lock covers the range the read's plan scanned: an index seek on the foreign key locks that parent's key range, and a scan (no such index, or a small table) locks the whole child table, so every child insert on that table waits for the sync. PostgreSQL and MySQL are unchanged. A sync chosen as a deadlock victim (SQL Server 1205, PostgreSQL 40P01, MySQL 40001) reruns its whole transaction, up to three runs, then fails with the last deadlock.
 
 ### Changed — third review pass
 

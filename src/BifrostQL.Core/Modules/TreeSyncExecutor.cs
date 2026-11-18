@@ -84,7 +84,9 @@ public sealed class TreeSyncExecutor
     /// lock on every row it reads, so no other writer can change or delete a loaded row
     /// between the diff and the writes; on Postgres the root's lock also holds back a
     /// concurrent child INSERT (its FK check needs a key-share lock on the parent) until the
-    /// sync commits. Isolation stays READ COMMITTED.
+    /// sync commits; on SQL Server the child read's key-range lock does the same. Isolation
+    /// stays READ COMMITTED. A deadlock victim reruns the whole transaction, up to
+    /// <see cref="MaxDeadlockVictimAttempts"/> runs.
     /// </summary>
     public async Task<object?> SyncAsync(
         IDbTable table,
@@ -98,7 +100,7 @@ public sealed class TreeSyncExecutor
         IServiceProvider? services,
         CancellationToken cancellationToken = default)
     {
-        return await RunInTreeTransactionAsync(connFactory, async conn =>
+        return await RetryDeadlockVictimAsync(() => RunInTreeTransactionAsync(connFactory, async conn =>
         {
             var existing = await loader.LoadAsync(table, tree, conn, cancellationToken);
             var operations = engine.ComputeOperations(table, tree, existing);
@@ -108,7 +110,36 @@ public sealed class TreeSyncExecutor
             return await RunOperationsAsync(
                 operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
                 connFactory, transformers, model, userContext, services, recordsOperationId: false, cancellationToken);
-        }, cancellationToken);
+        }, cancellationToken), cancellationToken);
+    }
+
+    /// <summary>
+    /// How many times <see cref="SyncAsync"/> runs its whole transaction when the database
+    /// picks it as a deadlock victim, the first run included. The sync's locks (SQL Server
+    /// <c>UPDLOCK, HOLDLOCK</c> key ranges) can deadlock against a concurrent writer; the
+    /// victim's transaction is already rolled back, so a rerun loads, diffs and writes from
+    /// scratch.
+    /// </summary>
+    internal const int MaxDeadlockVictimAttempts = 3;
+
+    // Reruns attempt while it fails as a deadlock victim (OperationIdExecution.IsDeadlock reads
+    // the driver code: SQL Server 1205, PostgreSQL 40P01, MySQL 40001), at most
+    // MaxDeadlockVictimAttempts runs in all. The last failure is rethrown as thrown.
+    private static async Task<object?> RetryDeadlockVictimAsync(
+        Func<Task<object?>> attempt, CancellationToken cancellationToken)
+    {
+        for (var run = 1; ; run++)
+        {
+            try
+            {
+                return await attempt();
+            }
+            catch (Exception ex) when (run < MaxDeadlockVictimAttempts
+                                       && !cancellationToken.IsCancellationRequested
+                                       && OperationId.OperationIdExecution.IsDeadlock(ex))
+            {
+            }
+        }
     }
 
     // Opens a connection and runs body inside the tree's SQL-level transaction: commit on

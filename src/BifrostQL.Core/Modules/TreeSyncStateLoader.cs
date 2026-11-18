@@ -63,7 +63,9 @@ public sealed class TreeSyncStateLoader
     /// <see cref="TreeSyncExecutor.SyncAsync"/> loads inside the transaction that applies
     /// the diff. Every read takes the dialect's update lock (SQL Server <c>UPDLOCK</c>,
     /// Postgres/MySQL <c>FOR UPDATE</c>), so the loaded rows stay as loaded until the
-    /// transaction ends. Outside a transaction the lock is released when the statement ends.
+    /// transaction ends; a child-collection read takes <see cref="ISqlDialect.ChildSetLockTableHint"/>
+    /// (SQL Server <c>UPDLOCK, HOLDLOCK</c>), so no new child joins a loaded set either.
+    /// Outside a transaction the lock is released when the statement ends.
     /// </summary>
     public async Task<Dictionary<string, object?>?> LoadAsync(
         IDbTable table,
@@ -183,7 +185,8 @@ public sealed class TreeSyncStateLoader
                 parameters["@disc"] = predicate.Value;
             }
 
-            var (rows, fkReadable) = await QueryAsync(childTable, where, parameters, conn, cancellationToken, groupColumn: fkColumn);
+            var (rows, fkReadable) = await QueryAsync(childTable, where, parameters, conn, cancellationToken,
+                groupColumn: fkColumn, tableHint: _dialect.ChildSetLockTableHint);
             foreach (var row in rows)
             {
                 // The FK is read to group the rows. A caller who may not read it never sees
@@ -205,13 +208,14 @@ public sealed class TreeSyncStateLoader
     private async Task<List<Dictionary<string, object?>>> QueryAsync(
         IDbTable table, string whereClause, Dictionary<string, object?> parameters, DbConnection conn,
         CancellationToken cancellationToken)
-        => (await QueryAsync(table, whereClause, parameters, conn, cancellationToken, groupColumn: null)).Rows;
+        => (await QueryAsync(table, whereClause, parameters, conn, cancellationToken,
+            groupColumn: null, tableHint: _dialect.UpdateLockTableHint)).Rows;
 
     // groupColumn is selected even when the caller may not read it (Readable reports which), so
     // the loader can place each child under its parent.
     private async Task<(List<Dictionary<string, object?>> Rows, bool GroupColumnReadable)> QueryAsync(
         IDbTable table, string whereClause, Dictionary<string, object?> parameters, DbConnection conn,
-        CancellationToken cancellationToken, string? groupColumn)
+        CancellationToken cancellationToken, string? groupColumn, string tableHint)
     {
         // The whole read chain for this table, in one place. InternalDiff because the
         // loaded rows are consumed ONLY by TreeSyncEngine's diff and never returned to
@@ -248,7 +252,9 @@ public sealed class TreeSyncStateLoader
 
         // The update lock holds every loaded row until the sync's transaction ends, so a
         // concurrent writer cannot change or delete a row between this diff and its writes.
-        var sql = $"SELECT {columnSql} FROM {tableRef}{_dialect.UpdateLockTableHint} WHERE {combinedWhere}{_dialect.UpdateLockClause}";
+        // A child read's hint (ChildSetLockTableHint) also holds back a new child of a synced
+        // parent, so the set the diff saw is the set its writes commit against.
+        var sql = $"SELECT {columnSql} FROM {tableRef}{tableHint} WHERE {combinedWhere}{_dialect.UpdateLockClause}";
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;

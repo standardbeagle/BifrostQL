@@ -71,6 +71,9 @@ public sealed class SqlServerDialect : SqlDialectBase
     public override string UpdateLockTableHint => " WITH (UPDLOCK)";
 
     /// <inheritdoc />
+    public override string ChildSetLockTableHint => " WITH (UPDLOCK, HOLDLOCK)";
+
+    /// <inheritdoc />
     public override bool ComparesAsUuid(string? dataType) => StringNormalizer.NormalizeType(dataType) is "uniqueidentifier";
 
     /// <inheritdoc />

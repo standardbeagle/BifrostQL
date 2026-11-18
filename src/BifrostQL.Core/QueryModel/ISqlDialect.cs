@@ -361,6 +361,28 @@ public interface ISqlDialect
     string UpdateLockTableHint => "";
 
     /// <summary>
+    /// Table hint for a locked read of a whole child SET (tree sync's child-collection
+    /// read: every row whose foreign key is one of the synced parents), which must also
+    /// keep a NEW child out of that set until the transaction ends. Defaults to
+    /// <see cref="UpdateLockTableHint"/>.
+    /// <list type="bullet">
+    ///   <item>SQL Server: <c>" WITH (UPDLOCK, HOLDLOCK)"</c>. UPDLOCK alone locks only the
+    ///     rows read, and a concurrent child INSERT's foreign-key check takes a shared lock
+    ///     on the parent, which an update lock does not block, so the insert lands inside
+    ///     the sync. HOLDLOCK adds key-range locks over the range the read scanned, which the
+    ///     insert's range-insert lock waits on. That range is the plan's: an index seek on the
+    ///     foreign key locks that parent's key range; a scan (no such index, or a table small
+    ///     enough that the optimizer prefers one) locks the whole child table, and every child
+    ///     insert on that table waits for the sync.</item>
+    ///   <item>PostgreSQL / MySQL: unchanged (empty; <see cref="UpdateLockClause"/>). On
+    ///     PostgreSQL the parent's FOR UPDATE already blocks the insert's key-share
+    ///     foreign-key check.</item>
+    /// </list>
+    /// Includes its leading space, like <see cref="UpdateLockTableHint"/>.
+    /// </summary>
+    string ChildSetLockTableHint => UpdateLockTableHint;
+
+    /// <summary>
     /// Locking clause appended after the WHERE clause when the read must take an update
     /// lock — the counterpart of <see cref="UpdateLockTableHint"/> for dialects that lock
     /// via a statement suffix. PostgreSQL and MySQL emit <c>" FOR UPDATE"</c>; SQL Server

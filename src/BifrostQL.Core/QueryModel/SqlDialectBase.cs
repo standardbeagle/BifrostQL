@@ -250,6 +250,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string UpdateLockTableHint => "";
 
     /// <inheritdoc />
+    public virtual string ChildSetLockTableHint => UpdateLockTableHint;
+
+    /// <inheritdoc />
     public virtual string UpdateLockClause => "";
 
     /// <inheritdoc />

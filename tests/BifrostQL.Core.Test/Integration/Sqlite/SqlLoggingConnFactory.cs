@@ -25,6 +25,7 @@ internal sealed class SqlLoggingConnFactory : IDbConnFactory
     private readonly IDbConnFactory _inner;
     private readonly List<string> _log;
     private readonly List<CapturedSql>? _captured;
+    private readonly Action<string>? _beforeExecute;
 
     public SqlLoggingConnFactory(IDbConnFactory inner, List<string> log)
         : this(inner, log, null)
@@ -36,13 +37,24 @@ internal sealed class SqlLoggingConnFactory : IDbConnFactory
     /// assert the parameter namespace and not only the SQL text.
     /// </summary>
     public SqlLoggingConnFactory(IDbConnFactory inner, List<string> log, List<CapturedSql>? captured)
+        : this(inner, log, captured, null)
+    {
+    }
+
+    /// <summary>
+    /// Also runs <paramref name="beforeExecute"/> with each statement's text just before it
+    /// executes, so a fact can fail a chosen statement the way the database would (throw a
+    /// driver error from it).
+    /// </summary>
+    public SqlLoggingConnFactory(IDbConnFactory inner, List<string> log, List<CapturedSql>? captured, Action<string>? beforeExecute)
     {
         _inner = inner;
         _log = log;
         _captured = captured;
+        _beforeExecute = beforeExecute;
     }
 
-    public DbConnection GetConnection() => new LoggingConnection(_inner.GetConnection(), _log, _captured);
+    public DbConnection GetConnection() => new LoggingConnection(_inner.GetConnection(), _log, _captured, _beforeExecute);
     public ISqlDialect Dialect => _inner.Dialect;
     public ISchemaReader SchemaReader => _inner.SchemaReader;
     public ITypeMapper TypeMapper => _inner.TypeMapper;
@@ -52,12 +64,14 @@ internal sealed class SqlLoggingConnFactory : IDbConnFactory
         private readonly DbConnection _inner;
         private readonly List<string> _log;
         private readonly List<CapturedSql>? _captured;
+        private readonly Action<string>? _beforeExecute;
 
-        public LoggingConnection(DbConnection inner, List<string> log, List<CapturedSql>? captured)
+        public LoggingConnection(DbConnection inner, List<string> log, List<CapturedSql>? captured, Action<string>? beforeExecute)
         {
             _inner = inner;
             _log = log;
             _captured = captured;
+            _beforeExecute = beforeExecute;
         }
 
         [System.Diagnostics.CodeAnalysis.AllowNull]
@@ -71,7 +85,7 @@ internal sealed class SqlLoggingConnFactory : IDbConnFactory
         public override void Open() => _inner.Open();
         public override Task OpenAsync(CancellationToken cancellationToken) => _inner.OpenAsync(cancellationToken);
         protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) => _inner.BeginTransaction(isolationLevel);
-        protected override DbCommand CreateDbCommand() => new LoggingCommand(_inner.CreateCommand(), _log, _captured);
+        protected override DbCommand CreateDbCommand() => new LoggingCommand(_inner.CreateCommand(), _log, _captured, _beforeExecute);
         protected override void Dispose(bool disposing)
         {
             if (disposing) _inner.Dispose();
@@ -84,17 +98,19 @@ internal sealed class SqlLoggingConnFactory : IDbConnFactory
         private readonly DbCommand _inner;
         private readonly List<string> _log;
         private readonly List<CapturedSql>? _captured;
+        private readonly Action<string>? _beforeExecute;
 
-        public LoggingCommand(DbCommand inner, List<string> log, List<CapturedSql>? captured)
+        public LoggingCommand(DbCommand inner, List<string> log, List<CapturedSql>? captured, Action<string>? beforeExecute)
         {
             _inner = inner;
             _log = log;
             _captured = captured;
+            _beforeExecute = beforeExecute;
         }
 
         // Called at EXECUTE time, never at CommandText assignment: parameters are
         // bound after the text is set, so only here is the pair complete.
-        private void Record()
+        private void RecordText()
         {
             _log.Add(_inner.CommandText);
             if (_captured is null) return;
@@ -102,6 +118,12 @@ internal sealed class SqlLoggingConnFactory : IDbConnFactory
             foreach (DbParameter parameter in _inner.Parameters)
                 names.Add(parameter.ParameterName);
             _captured.Add(new CapturedSql(_inner.CommandText, names));
+        }
+
+        private void Record()
+        {
+            RecordText();
+            _beforeExecute?.Invoke(_inner.CommandText);
         }
 
         [System.Diagnostics.CodeAnalysis.AllowNull]

@@ -98,6 +98,16 @@ namespace BifrostQL.Server.Pgwire
         public TimeSpan HandshakeTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
         /// <summary>
+        /// Deadline for each write of an AUTHENTICATED session to drain to the peer. Reads after
+        /// ReadyForQuery have no deadline (an idle pooled connection is normal), but a peer that
+        /// sends a query and then stops reading leaves the server's write blocked on a full
+        /// receive window; without this bound it held its connection slot and result buffers
+        /// forever. A write that does not complete in time closes the session and releases the
+        /// slot. Must be positive. Default 60 seconds.
+        /// </summary>
+        public TimeSpan WriteTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+        /// <summary>
         /// Maximum authentication attempts (SCRAM or cleartext) admitted per connection source
         /// (client IP) within <see cref="AuthRateLimitWindow"/> before further attempts from
         /// that source are refused. Both methods verify through PBKDF2(4096), so an unbounded

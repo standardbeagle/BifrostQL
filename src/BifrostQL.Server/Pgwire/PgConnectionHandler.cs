@@ -121,6 +121,7 @@ namespace BifrostQL.Server.Pgwire
         {
             PgCancellationRegistration? cancellation = null;
             Stream? sessionStream = null;
+            PgWriteDeadlineStream? writeDeadline = null;
             try
             {
                 var handshakeToken = deadline.Token;
@@ -222,6 +223,13 @@ namespace BifrostQL.Server.Pgwire
                 // The loop below runs on the connection token.
                 deadline.RetireOnCredentialedAction();
 
+                // Reads may now wait forever, but a WRITE must not: a peer that sends a query and
+                // never drains its receive window would otherwise hold its slot and the result
+                // buffers for good. Every post-auth write is bounded by WriteTimeout; expiry ends
+                // the session as an IOException, releasing the slot.
+                writeDeadline = new PgWriteDeadlineStream(stream, _options.WriteTimeout, _timeProvider, ct);
+                stream = writeDeadline;
+
                 // ---- QUERY LOOP ----
                 // The session is authenticated and ReadyForQuery has been sent. The loop drives
                 // both the simple query ('Q') path and the extended query protocol
@@ -250,6 +258,8 @@ namespace BifrostQL.Server.Pgwire
             finally
             {
                 if (cancellation is not null) _cancelRegistry.Unregister(cancellation);
+                // Owns only its timers; the session stream underneath is disposed below.
+                writeDeadline?.Dispose();
                 // Dispose the TLS-upgraded stream when negotiation wrapped the raw socket: an
                 // undisposed SslStream never sends close_notify and leaks the inner socket past
                 // the session. The raw stream itself is owned by the caller and left alone.

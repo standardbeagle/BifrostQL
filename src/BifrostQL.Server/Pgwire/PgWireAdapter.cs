@@ -38,6 +38,10 @@ namespace BifrostQL.Server.Pgwire
                     "PgWireOptions.ServerCertificate is required: the pgwire front door refuses to " +
                     "start without TLS, so credentials are never invited across the wire in the clear.");
 
+            if (_options.WriteTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(_options.WriteTimeout), _options.WriteTimeout,
+                    "pgwire WriteTimeout must be positive: an unbounded write lets a peer that stops reading hold its slot forever.");
+
             if (_options.AuthMethod == PgAuthMethod.Cleartext && _options.AllowCleartextPasswordWithoutTls)
                 _logger.LogWarning(
                     "pgwire: AllowCleartextPasswordWithoutTls is ON — passwords may cross the wire in the " +

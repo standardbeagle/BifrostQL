@@ -487,7 +487,7 @@ namespace BifrostQL.Server.Auth
             // rewritten here: the caller upgrades it (UpgradePasswordHashAsync) only after its
             // lockout check, so a login never rewrites a locked account's row.
             return LocalLoginResult.Success(
-                await BuildIdentityAsync(conn, dialect, row, login, cancellationToken).ConfigureAwait(false), account,
+                await BuildIdentityAsync(conn, dialect, row, cancellationToken).ConfigureAwait(false), account,
                 verification == PasswordVerificationResult.SuccessRehashNeeded ? row.PasswordHash : null);
         }
 
@@ -534,7 +534,7 @@ namespace BifrostQL.Server.Auth
                 || string.IsNullOrEmpty(row.PasswordHash))
                 return null;
 
-            var identity = await BuildIdentityAsync(conn, dialect, row, row.Login, cancellationToken).ConfigureAwait(false);
+            var identity = await BuildIdentityAsync(conn, dialect, row, cancellationToken).ConfigureAwait(false);
             return new LocalAccount(identity, StateOf(row));
         }
 
@@ -664,7 +664,7 @@ namespace BifrostQL.Server.Auth
         }
 
         private async Task<AppIdentity> BuildIdentityAsync(
-            DbConnection conn, ISqlDialect dialect, UserRow row, string login, CancellationToken cancellationToken)
+            DbConnection conn, ISqlDialect dialect, UserRow row, CancellationToken cancellationToken)
         {
             var claims = await ResolveMemberClaimsAsync(conn, dialect, row.Id!, cancellationToken)
                 .ConfigureAwait(false);
@@ -672,7 +672,9 @@ namespace BifrostQL.Server.Auth
             return new AppIdentity(
                 id: row.Id!,
                 provider: ProviderName,
-                email: login,
+                // The row's own spelling: a case- or accent-insensitive login column matches any
+                // spelling the caller typed, and the claim must not carry that one.
+                email: row.Login,
                 displayName: string.IsNullOrWhiteSpace(row.DisplayName) ? null : row.DisplayName,
                 tenantId: string.IsNullOrWhiteSpace(row.TenantId) ? null : row.TenantId,
                 roles: ParseRoles(row.Roles),

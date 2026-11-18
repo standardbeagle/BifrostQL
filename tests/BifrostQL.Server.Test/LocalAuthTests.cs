@@ -122,6 +122,34 @@ namespace BifrostQL.Server.Test
             => new(new SqliteDbConnFactory(_connectionString), _options, TestHasher);
 
         [Fact]
+        public async Task VerifyCredentials_CaseInsensitiveLoginColumn_EmailClaimIsTheStoredLogin()
+        {
+            // A case-insensitive login column (SQL Server's default collation, SQLite NOCASE) matches
+            // any spelling the caller types. The identity carries the row's own login, not that spelling.
+            using (var conn = new SqliteConnection(_connectionString))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText =
+                    "DROP TABLE app_users;" +
+                    "CREATE TABLE app_users (id TEXT PRIMARY KEY, email TEXT COLLATE NOCASE, password_hash TEXT, " +
+                    "display_name TEXT, tenant_id TEXT, roles TEXT);" +
+                    "INSERT INTO app_users (id, email, password_hash) VALUES ('user-1', 'alice@club.test', @hash)";
+                AddParam(cmd, "@hash", AliceHash);
+                cmd.ExecuteNonQuery();
+            }
+            var store = CreateStore();
+
+            var exact = await store.VerifyCredentialsAsync("alice@club.test", "correct horse battery");
+            var shouted = await store.VerifyCredentialsAsync("ALICE@Club.Test", "correct horse battery");
+
+            exact.Identity!.Email.Should().Be("alice@club.test", "control");
+            shouted.Succeeded.Should().BeTrue("control: the column matches case-insensitively");
+            shouted.Identity!.Email.Should().Be("alice@club.test",
+                "the email claim is the account's stored login, never the caller's spelling of it");
+        }
+
+        [Fact]
         public async Task VerifyCredentials_ValidPassword_SucceedsWithAppIdentity()
         {
             // Arrange

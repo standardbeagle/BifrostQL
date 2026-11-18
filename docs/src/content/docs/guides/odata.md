@@ -66,8 +66,8 @@ enabling OData touches no GraphQL or binary service.
 | `ContinuationTokenTtl` | `15 min` | How long a minted continuation token stays valid. An expired token fails closed as a clean `400`, exactly like a tampered one, so a stale `nextLink` can never silently serve a wrong page. |
 | `PublicServiceRoot` | `null` | Absolute service root used to build `@odata.context` pointers and paging `nextLink`s (e.g. `https://api.example.com/odata`). When unset they are derived from the request's own scheme/Host/PathBase — the Host header is client-supplied, so behind a reverse proxy (or any host without host filtering) set this explicitly to keep a forged `Host` out of the emitted links. |
 | `MaxExpandFanout` | `1000` | Upper bound on the number of related rows a single `$expand` navigation may return across the whole page. Exceeding it fails closed as a clean `400` rather than materializing an unbounded fan-out. |
-| `MaxBasicAuthAttemptsPerSource` | `100` | Basic credential attempts one client IP may make per `BasicAuthAttemptWindow`, across all usernames. |
-| `MaxBasicAuthAttemptsPerAccount` | `100` | Basic credential attempts one username may receive per `BasicAuthAttemptWindow`, across all clients. |
+| `MaxBasicAuthAttemptsPerSource` | `100` | Failed Basic credential attempts one client IP may make per `BasicAuthAttemptWindow`, across all usernames. A verified login is refunded and does not count. |
+| `MaxBasicAuthAttemptsPerAccount` | `100` | Failed Basic credential attempts one username may receive per `BasicAuthAttemptWindow`, across all clients. A verified login is refunded and does not count. |
 | `BasicAuthAttemptWindow` | `1 min` | The window both Basic attempt caps count over. |
 | `AllowCleartextBasicAuth` | `false` | Development-only. Accept Basic credentials on a non-HTTPS request. Off: such a request gets `403 HttpsRequired` before the credential is read. On: a startup warning is logged. Behind a TLS-terminating proxy, configure forwarded headers instead (see [Basic over HTTPS only](#basic-over-https-only)). |
 
@@ -103,7 +103,12 @@ from "wrong password" by timing or response (anti-enumeration). Basic attempts
 are capped per client IP and per username (`MaxBasicAuthAttemptsPerSource`,
 `MaxBasicAuthAttemptsPerAccount`). An attempt over either cap is refused with
 `429` before the credential store is asked or any hashing runs, with the same
-answer whether or not the account exists. Basic on plain HTTP is refused (see
+answer whether or not the account exists. Every attempt takes a slot, and a login
+whose password verifies gives its slot back on both axes, so the caps count only
+failures. Basic sends the password on every request, so a client paging through a
+feed (Power BI, Excel) is never refused for its own good logins. Failures are still
+counted between good logins, so an attacker's guesses can still fill one account's
+window; that is the cost of a per-account cap. Basic on plain HTTP is refused (see
 below). A subject-less
 principal, an unmapped OIDC issuer, or a projection that yields an empty user
 context all fail closed with `403` — never a degraded or anonymous context. No

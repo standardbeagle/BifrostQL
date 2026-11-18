@@ -37,7 +37,7 @@ namespace BifrostQL.Server.Auth
 
             var sessionId = LocalSessionId.New();
             await _state.CreateSessionAsync(new LocalSession(
-                LocalSessionId.Hash(sessionId), account.UserId, now, now, now + _options.SessionLifetime,
+                LocalSessionId.Hash(sessionId), account.UserId, now, now, _options.SessionEndsAt(now),
                 RevokedAt: null, RevokeReason: null, sourceIp, account.CredentialStamp), ct).ConfigureAwait(false);
 
             if (_options.MaxConcurrentSessions is { } cap)

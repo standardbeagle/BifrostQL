@@ -100,6 +100,17 @@ namespace BifrostQL.Server.Auth
         /// </summary>
         public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
 
+        /// <summary>When a session issued at <paramref name="now"/> expires.</summary>
+        internal DateTimeOffset SessionEndsAt(DateTimeOffset now) => now + SessionLifetime;
+
+        /// <summary>
+        /// Longest accepted <see cref="SessionLifetime"/> and <see cref="LockoutDuration"/>: 3650 days.
+        /// The runtime adds both to the current time (<see cref="SessionEndsAt"/>,
+        /// <see cref="LockoutEndsAt"/>, the cookie's expiry), and a larger value would overflow
+        /// <see cref="DateTimeOffset"/> at the first sign-in or lock instead of failing at startup.
+        /// </summary>
+        public static readonly TimeSpan MaxDuration = TimeSpan.FromDays(3650);
+
         /// <summary>
         /// A session with no request for this long is revoked (PCI DSS 8.2.8 asks for 15 minutes
         /// or less). Activity is recorded at most once per <c>min(1 minute, SessionIdleTimeout / 15)</c>,
@@ -227,7 +238,8 @@ namespace BifrostQL.Server.Auth
                     throw new ArgumentOutOfRangeException(name, value, $"LocalAuthOptions.{name} {rule}.");
             }
 
-            Require(SessionLifetime > TimeSpan.Zero, nameof(SessionLifetime), SessionLifetime, "must be positive");
+            Require(SessionLifetime > TimeSpan.Zero && SessionLifetime <= MaxDuration, nameof(SessionLifetime),
+                SessionLifetime, "must be positive and at most 3650 days");
             Require(SessionIdleTimeout > TimeSpan.Zero && SessionIdleTimeout <= SessionLifetime,
                 nameof(SessionIdleTimeout), SessionIdleTimeout, "must be positive and no longer than SessionLifetime");
             Require(SessionRevalidationInterval >= TimeSpan.Zero, nameof(SessionRevalidationInterval),
@@ -237,8 +249,8 @@ namespace BifrostQL.Server.Auth
             Require(AdminRole is null || !string.IsNullOrWhiteSpace(AdminRole), nameof(AdminRole), AdminRole,
                 "must be null or a role name");
             Require(LockoutThreshold >= 1, nameof(LockoutThreshold), LockoutThreshold, "must be at least 1");
-            Require(LockoutDuration is null || LockoutDuration > TimeSpan.Zero, nameof(LockoutDuration), LockoutDuration,
-                "must be null or positive");
+            Require(LockoutDuration is null || (LockoutDuration > TimeSpan.Zero && LockoutDuration <= MaxDuration),
+                nameof(LockoutDuration), LockoutDuration, "must be null, or positive and at most 3650 days");
             Require(MinPasswordLength >= 1, nameof(MinPasswordLength), MinPasswordLength, "must be at least 1");
             Require(MaxPasswordLength >= MinPasswordLength, nameof(MaxPasswordLength), MaxPasswordLength,
                 "must be at least MinPasswordLength");

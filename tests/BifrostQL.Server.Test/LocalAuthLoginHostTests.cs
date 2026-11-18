@@ -771,6 +771,33 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void DurationOptions_PastTheCeiling_FailAtStartup_NotAtTheFirstLogin()
+        {
+            // now + SessionLifetime and now + LockoutDuration overflow DateTimeOffset for a huge value;
+            // unchecked, that surfaced as a 500 on the first sign-in or the first lock.
+            var ceiling = TimeSpan.FromDays(3650); // LocalAuthOptions.MaxDuration
+            var cases = new (string Name, Action<LocalAuthOptions> Configure)[]
+            {
+                (nameof(LocalAuthOptions.SessionLifetime), o => o.SessionLifetime = TimeSpan.MaxValue),
+                (nameof(LocalAuthOptions.SessionLifetime), o => o.SessionLifetime = ceiling + TimeSpan.FromTicks(1)),
+                (nameof(LocalAuthOptions.LockoutDuration), o => o.LockoutDuration = TimeSpan.MaxValue),
+                (nameof(LocalAuthOptions.LockoutDuration), o => o.LockoutDuration = ceiling + TimeSpan.FromTicks(1)),
+            };
+            foreach (var (name, configure) in cases)
+            {
+                var act = () => new ServiceCollection().AddBifrostLocalAuth(ConnectionString, configure);
+                act.Should().Throw<ArgumentOutOfRangeException>().Which.ParamName.Should().Be(name);
+            }
+
+            var atCeiling = () => new ServiceCollection().AddBifrostLocalAuth(ConnectionString, o =>
+            {
+                o.SessionLifetime = ceiling;
+                o.LockoutDuration = ceiling;
+            });
+            atCeiling.Should().NotThrow("control: the ceiling itself is a valid setting");
+        }
+
+        [Fact]
         public async Task LoginAudit_RecordsSuccessAndFailure_WithoutCredentials()
         {
             var client = await StartAsync(_ => { });

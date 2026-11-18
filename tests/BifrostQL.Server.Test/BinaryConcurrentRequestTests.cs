@@ -91,7 +91,9 @@ namespace BifrostQL.Server.Test
         public async Task SlowRequest_DoesNotBlockTheRequestPipelinedBehindIt()
         {
             // The slow request only finishes once the fast one has run, so a connection that
-            // serves one request at a time never answers either.
+            // serves one request at a time never answers either (RunAsync times out). Which
+            // Result goes out first is a race: the fast request releases the slow one before
+            // it sends its own answer, so the frame order proves nothing and is not asserted.
             var engine = new GatedEngine();
             var socket = new FakeWebSocket { Pipelined = true };
             socket.EnqueueMessage(Query(1, "{ slow }"));
@@ -101,10 +103,9 @@ namespace BifrostQL.Server.Test
 
             var sent = socket.SentMessages();
             sent.Should().NotContain(m => m.Type == BifrostMessageType.Error);
-            var fast = sent.FindIndex(m => m.RequestId == 2 && m.Type == BifrostMessageType.Result);
-            var slow = sent.FindIndex(m => m.RequestId == 1 && m.Type == BifrostMessageType.Result);
-            fast.Should().BeGreaterThanOrEqualTo(0);
-            slow.Should().BeGreaterThan(fast, "the slow request answers after the one it waited on");
+            sent.Should().ContainSingle(m => m.RequestId == 2 && m.Type == BifrostMessageType.Result);
+            sent.Should().ContainSingle(m => m.RequestId == 1 && m.Type == BifrostMessageType.Result,
+                "the slow request answers once the request pipelined behind it has run");
         }
 
         [Fact]

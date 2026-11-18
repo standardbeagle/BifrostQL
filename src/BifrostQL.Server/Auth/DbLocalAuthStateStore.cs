@@ -209,6 +209,19 @@ namespace BifrostQL.Server.Auth
             return result.RowsAffected;
         }
 
+        public async Task<int> RebindSessionCredentialStampAsync(
+            string userId, string fromStamp, string toStamp, CancellationToken cancellationToken)
+        {
+            var sql =
+                $"UPDATE {Table(SessionsTable)} SET {Col("credential_stamp")} = @to " +
+                $"WHERE {Col("user_id")} = @user AND {Col("credential_stamp")} = @from AND {Col("revoked_at")} IS NULL";
+            var result = await RunAsync(sql, new Dictionary<string, object?>
+            {
+                ["user"] = userId, ["from"] = fromStamp, ["to"] = toStamp,
+            }, 0, cancellationToken).ConfigureAwait(false);
+            return result.RowsAffected;
+        }
+
         public async Task<IReadOnlyList<LocalSession>> ListLiveSessionsAsync(
             string userId, DateTimeOffset now, int maxRows, CancellationToken cancellationToken)
         {

@@ -151,8 +151,17 @@ namespace BifrostQL.Server.Auth
                 return;
             }
 
-            await context.RequestServices.GetRequiredService<ILocalAuthStateStore>()
-                .ClearLockoutAsync(result.Account.UserId, ct).ConfigureAwait(false);
+            var state = context.RequestServices.GetRequiredService<ILocalAuthStateStore>();
+            await state.ClearLockoutAsync(result.Account.UserId, ct).ConfigureAwait(false);
+
+            // Past the lockout check, so a login never rewrites a locked account's row. A rehash keeps
+            // the same password: the user's live sessions follow the new stamp instead of reading it
+            // as a password change at their next revalidation.
+            var account = await store.UpgradePasswordHashAsync(result, request.Login, request.Password, ct).ConfigureAwait(false);
+            if (account.CredentialStamp != result.Account.CredentialStamp)
+                await state.RebindSessionCredentialStampAsync(
+                    account.UserId, result.Account.CredentialStamp, account.CredentialStamp, ct).ConfigureAwait(false);
+
             if (await PasswordExpiredAsync(context, result.Account.UserId, now).ConfigureAwait(false))
             {
                 await audit.RecordAsync(now, AuthAuditKind.LoginFailed, AuthAuditOutcome.Failure,
@@ -163,7 +172,7 @@ namespace BifrostQL.Server.Auth
                 return;
             }
             var sessionId = await context.RequestServices.GetRequiredService<LocalSessionManager>()
-                .IssueAsync(result.Account, sourceIp, now, context.RequestAborted).ConfigureAwait(false);
+                .IssueAsync(account, sourceIp, now, context.RequestAborted).ConfigureAwait(false);
             var principal = BuildPrincipal(result.Identity, now, sessionId);
             await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
                 .ConfigureAwait(false);
@@ -277,6 +286,12 @@ namespace BifrostQL.Server.Auth
 
             var account = await services.GetRequiredService<LocalUserStore>()
                 .FindAccountByIdAsync(session.UserId, ct).ConfigureAwait(false);
+            // A login that rehashes the password moves the user's sessions to the new stamp right
+            // after writing the hash. Re-read the session once so that window does not read as a
+            // password change.
+            if (account is not null && account.State.CredentialStamp != session.CredentialStamp)
+                session = await services.GetRequiredService<ILocalAuthStateStore>()
+                    .GetSessionAsync(session.SessionHash, ct).ConfigureAwait(false) ?? session;
             var revokeReason = account switch
             {
                 null => LocalSessionRevokeReasons.AccountRemoved,

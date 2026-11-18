@@ -55,6 +55,17 @@ namespace BifrostQL.Server.Auth
             return Task.FromResult(revoked);
         }
 
+        public Task<int> RebindSessionCredentialStampAsync(
+            string userId, string fromStamp, string toStamp, CancellationToken cancellationToken)
+        {
+            var moved = _sessions.Values
+                .Where(s => s.UserId == userId)
+                .Count(s => Update(s.SessionHash, c => c.RevokedAt is null && c.CredentialStamp == fromStamp
+                    ? c with { CredentialStamp = toStamp }
+                    : null));
+            return Task.FromResult(moved);
+        }
+
         public Task<IReadOnlyList<LocalSession>> ListLiveSessionsAsync(string userId, DateTimeOffset now, int maxRows, CancellationToken cancellationToken)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxRows, 1);

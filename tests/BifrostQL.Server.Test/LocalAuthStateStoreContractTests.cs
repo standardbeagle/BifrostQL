@@ -122,6 +122,24 @@ namespace BifrostQL.Server.Test
         }
 
         [Theory, MemberData(nameof(Backends))]
+        public async Task RebindStamp_MovesOnlyThatUsersLiveSessionsOnTheOldStamp(string backend)
+        {
+            var store = Make(backend);
+            await store.CreateSessionAsync(Session("a1", "alice", T0), None);
+            await store.CreateSessionAsync(Session("a2", "alice", T0) with { CredentialStamp = "stamp-other" }, None);
+            await store.CreateSessionAsync(Session("a3", "alice", T0), None);
+            await store.RevokeSessionAsync("a3", T0.AddMinutes(1), LocalSessionRevokeReasons.Logout, None);
+            await store.CreateSessionAsync(Session("b1", "bob", T0), None);
+
+            (await store.RebindSessionCredentialStampAsync("alice", "stamp-1", "stamp-2", None)).Should().Be(1);
+
+            (await store.GetSessionAsync("a1", None))!.CredentialStamp.Should().Be("stamp-2");
+            (await store.GetSessionAsync("a2", None))!.CredentialStamp.Should().Be("stamp-other");
+            (await store.GetSessionAsync("a3", None))!.CredentialStamp.Should().Be("stamp-1", "a revoked session stays as it ended");
+            (await store.GetSessionAsync("b1", None))!.CredentialStamp.Should().Be("stamp-1");
+        }
+
+        [Theory, MemberData(nameof(Backends))]
         public async Task ListLive_IsOldestFirst_SkipsExpiredAndRevoked_AndHonoursTheRowCap(string backend)
         {
             var store = Make(backend);

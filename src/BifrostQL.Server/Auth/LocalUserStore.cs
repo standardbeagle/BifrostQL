@@ -275,11 +275,12 @@ namespace BifrostQL.Server.Auth
     /// </summary>
     public sealed record LocalLoginResult
     {
-        private LocalLoginResult(bool succeeded, AppIdentity? identity, LocalAccountState? account)
+        private LocalLoginResult(bool succeeded, AppIdentity? identity, LocalAccountState? account, string? rehashFrom = null)
         {
             Succeeded = succeeded;
             Identity = identity;
             Account = account;
+            RehashFrom = rehashFrom;
         }
 
         /// <summary>Whether the credentials were valid and the account may sign in.</summary>
@@ -295,10 +296,18 @@ namespace BifrostQL.Server.Auth
         /// </summary>
         public LocalAccountState? Account { get; }
 
+        /// <summary>
+        /// The stored hash that verified, when it is in an older format or below the current work
+        /// factor; null otherwise. Server-side only: <see cref="LocalUserStore.UpgradePasswordHashAsync"/>
+        /// replaces it once the caller has passed its lockout check.
+        /// </summary>
+        internal string? RehashFrom { get; }
+
         /// <summary>A successful result carrying the resolved identity.</summary>
         public static LocalLoginResult Success(AppIdentity identity) => new(true, identity, null);
 
-        internal static LocalLoginResult Success(AppIdentity identity, LocalAccountState account) => new(true, identity, account);
+        internal static LocalLoginResult Success(AppIdentity identity, LocalAccountState account, string? rehashFrom) =>
+            new(true, identity, account, rehashFrom);
 
         /// <summary>
         /// A failed result. Used for both "no such user" and "wrong password" so the
@@ -415,21 +424,35 @@ namespace BifrostQL.Server.Auth
             if (verification == PasswordVerificationResult.Failed || account.Disabled)
                 return LocalLoginResult.Failure(account);
 
-            // A hash in an older format or below the current work factor verified, so the
-            // plaintext is in hand: upgrade the stored hash now, or it stays weak forever.
-            // The write is conditioned on the hash just verified: a password change that landed
-            // between the read and this write wins, and the upgrade is dropped (it is retried at the
-            // next login against whatever hash is stored then).
-            if (verification == PasswordVerificationResult.SuccessRehashNeeded)
-            {
-                var upgraded = _passwordHasher.HashPassword(login, password);
-                if (await StorePasswordHashAsync(conn, dialect, row.Id, upgraded, row.PasswordHash, cancellationToken)
-                        .ConfigureAwait(false))
-                    account = account with { CredentialStamp = LocalSessionId.CredentialStamp(upgraded) };
-            }
-
+            // A hash in an older format or below the current work factor verified. It is not
+            // rewritten here: the caller upgrades it (UpgradePasswordHashAsync) only after its
+            // lockout check, so a login never rewrites a locked account's row.
             return LocalLoginResult.Success(
-                await BuildIdentityAsync(conn, dialect, row, login, cancellationToken).ConfigureAwait(false), account);
+                await BuildIdentityAsync(conn, dialect, row, login, cancellationToken).ConfigureAwait(false), account,
+                verification == PasswordVerificationResult.SuccessRehashNeeded ? row.PasswordHash : null);
+        }
+
+        /// <summary>
+        /// Rehashes a weak stored hash at the configured work factor once <paramref name="result"/>
+        /// verified it (<see cref="LocalLoginResult.RehashFrom"/>), and returns the account facts a new
+        /// session binds to. The write is conditioned on the hash that verified: a password change that
+        /// landed in between wins and the upgrade is dropped (retried at the next login). Returns the
+        /// account unchanged when no rehash is due or the write lost that race.
+        /// </summary>
+        internal async Task<LocalAccountState> UpgradePasswordHashAsync(
+            LocalLoginResult result, string login, string password, CancellationToken cancellationToken)
+        {
+            var account = result.Account ?? throw new ArgumentException("Only a verified result can be upgraded.", nameof(result));
+            if (!result.Succeeded || result.RehashFrom is not { } verifiedHash)
+                return account;
+
+            var upgraded = _passwordHasher.HashPassword(login, password);
+            await using var conn = _connFactory.GetConnection();
+            await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+            return await StorePasswordHashAsync(conn, _connFactory.Dialect, account.UserId, upgraded, verifiedHash, cancellationToken)
+                    .ConfigureAwait(false)
+                ? account with { CredentialStamp = LocalSessionId.CredentialStamp(upgraded) }
+                : account;
         }
 
         /// <summary>

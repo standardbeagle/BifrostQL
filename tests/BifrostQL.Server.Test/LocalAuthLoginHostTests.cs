@@ -696,7 +696,9 @@ namespace BifrostQL.Server.Test
             var current = Hasher(2_000);
             var store = new LocalUserStore(new SqliteDbConnFactory(ConnectionString), new LocalAuthOptions(), current);
 
-            (await store.VerifyCredentialsAsync(Login, Password)).Succeeded.Should().BeTrue();
+            var verified = await store.VerifyCredentialsAsync(Login, Password);
+            verified.Succeeded.Should().BeTrue();
+            await store.UpgradePasswordHashAsync(verified, Login, Password, CancellationToken.None);
 
             string stored;
             using (var conn = new SqliteConnection(ConnectionString))
@@ -742,15 +744,60 @@ namespace BifrostQL.Server.Test
             return (string)cmd.ExecuteScalar()!;
         }
 
+        [Fact]
+        public async Task RehashOnLogin_KeepsTheUsersOtherSessions_AndAuditsNoPasswordChange()
+        {
+            var hasher = new RehashRacingHasher { RehashDue = false };
+            var client = await StartAsync(o => o.SessionRevalidationInterval = TimeSpan.Zero,
+                services => services.AddSingleton(sp => new LocalUserStore(
+                    sp.GetRequiredService<IDbConnFactory>(), sp.GetRequiredService<LocalAuthOptions>(), hasher)));
+            var earlier = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            var before = StoredHash();
+
+            hasher.RehashDue = true;
+            SessionCookie(await PostLoginAsync(client, Password, "10.0.0.2"));
+            StoredHash().Should().NotBe(before, "control: the second login rehashed the stored password");
+
+            (await GetSessionAsync(client, earlier)).StatusCode.Should().Be(HttpStatusCode.OK,
+                "a rehash keeps the same password, so it must not end the sessions signed in with it");
+            var audit = await AuditAsync();
+            audit.Should().NotContain(e => e.Reason == LocalSessionRevokeReasons.PasswordChanged);
+            audit.Should().NotContain(e => e.Kind == AuthAuditKind.PasswordChanged);
+        }
+
+        [Fact]
+        public async Task LockedAccount_RightPassword_DoesNotRehashTheStoredHash()
+        {
+            var hasher = new RehashRacingHasher();
+            var client = await StartAsync(o =>
+                {
+                    o.MaxLoginAttemptsPerSource = 1_000;
+                    o.MaxLoginAttemptsPerAccount = 1_000;
+                    o.LockoutThreshold = 1;
+                },
+                services => services.AddSingleton(sp => new LocalUserStore(
+                    sp.GetRequiredService<IDbConnFactory>(), sp.GetRequiredService<LocalAuthOptions>(), hasher)));
+            (await PostLoginAsync(client, "wrong", "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            var before = StoredHash();
+
+            (await PostLoginAsync(client, Password, "10.0.0.1")).StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+                "control: the account is locked");
+
+            StoredHash().Should().Be(before, "a login refused by the lockout must not rewrite the account's row");
+            hasher.UpgradesComputed.Should().Be(0);
+        }
+
         /// <summary>
-        /// The cheap hasher, reporting every successful verify as needing a rehash, with a hook run
-        /// when the upgrade hash is computed (after verification, before the store writes it).
+        /// The cheap hasher, reporting a successful verify as needing a rehash while
+        /// <see cref="RehashDue"/> is set, with a hook run when the upgrade hash is computed (after
+        /// verification, before the store writes it).
         /// </summary>
         private sealed class RehashRacingHasher : IPasswordHasher<string>
         {
             private int _armed;
             public Action? BeforeUpgradeHash { get; set; }
             public int UpgradesComputed { get; private set; }
+            public bool RehashDue { get; set; } = true;
 
             public string HashPassword(string user, string password)
             {
@@ -766,7 +813,7 @@ namespace BifrostQL.Server.Test
             public PasswordVerificationResult VerifyHashedPassword(string user, string hashedPassword, string providedPassword) =>
                 CheapHasher.VerifyHashedPassword(user, hashedPassword, providedPassword) == PasswordVerificationResult.Failed
                     ? PasswordVerificationResult.Failed
-                    : PasswordVerificationResult.SuccessRehashNeeded;
+                    : RehashDue ? PasswordVerificationResult.SuccessRehashNeeded : PasswordVerificationResult.Success;
         }
 
         /// <summary>The PBKDF2 iteration count stored in an ASP.NET Core Identity V3 hash (bytes 5-8, big-endian).</summary>
@@ -794,7 +841,9 @@ namespace BifrostQL.Server.Test
             }
             var store = new LocalUserStore(new SqliteDbConnFactory(ConnectionString), new LocalAuthOptions());
 
-            (await store.VerifyCredentialsAsync(Login, Password)).Succeeded.Should().BeTrue();
+            var verified = await store.VerifyCredentialsAsync(Login, Password);
+            verified.Succeeded.Should().BeTrue();
+            await store.UpgradePasswordHashAsync(verified, Login, Password, CancellationToken.None);
 
             using (var conn = new SqliteConnection(ConnectionString))
             {

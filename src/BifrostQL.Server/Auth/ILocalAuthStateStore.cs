@@ -42,6 +42,15 @@ namespace BifrostQL.Server.Auth
         Task<int> RevokeUserSessionsAsync(string userId, DateTimeOffset revokedAt, string reason, CancellationToken cancellationToken);
 
         /// <summary>
+        /// Moves the user's unrevoked sessions bound to credential stamp <paramref name="fromStamp"/>
+        /// onto <paramref name="toStamp"/>; returns how many moved. Called after a login rehashed the
+        /// same password at a stronger work factor, so the rehash does not read as a password change
+        /// and end the user's other sessions. Sessions bound to any other stamp are left alone.
+        /// </summary>
+        Task<int> RebindSessionCredentialStampAsync(
+            string userId, string fromStamp, string toStamp, CancellationToken cancellationToken);
+
+        /// <summary>
         /// The user's unrevoked sessions whose absolute expiry is after <paramref name="now"/>, oldest
         /// first, at most <paramref name="maxRows"/>.
         /// </summary>

@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Net;
 using System.Net.Security;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
@@ -114,8 +113,8 @@ namespace BifrostQL.Server.Resp
                 stream, connection.ConnectionClosed, confidential,
                 alreadyAdmitted: connection.Items.ContainsKey(AdmittedItemKey),
                 // The ADDRESS only: including the ephemeral port would give every reconnect a fresh
-                // budget and make the per-source cap inert.
-                source: (connection.RemoteEndPoint as IPEndPoint)?.Address.ToString());
+                // budget and make the per-source cap inert. The shared key rule, as LDAP uses it.
+                source: ProtocolSourceKey.Of(connection.RemoteEndPoint));
         }
 
         /// <summary>
@@ -168,10 +167,10 @@ namespace BifrostQL.Server.Resp
             stream = bounded;
             var session = new RespSession(id)
             {
-                // Absent a known peer address the connection itself is the bucket, so an unknown
-                // source still bounds one socket's guessing instead of pooling every peer into one
-                // budget a single attacker could spend on everyone's behalf.
-                Source = string.IsNullOrEmpty(source) ? $"conn:{id}" : source,
+                // Peers with no known address share ONE bucket. A per-connection bucket gave every
+                // reconnect a fresh per-source budget, so the cap bound nothing for such a peer;
+                // the per-account cap still bounds guessing at any one login.
+                Source = string.IsNullOrEmpty(source) ? ProtocolSourceKey.Of(null) : source,
                 TransportConfidential = transportConfidential,
             };
             var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth, _options.MaxFrameLength);

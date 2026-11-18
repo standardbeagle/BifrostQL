@@ -116,6 +116,48 @@ namespace BifrostQL.Server.Test.Resp
                 "an account key is stored as a fixed-size digest, never the raw wire string");
         }
 
+        [Fact]
+        public async Task Connections_with_no_known_address_share_one_source_budget()
+        {
+            // With no peer address each connection was its own bucket ("conn:{id}"), so a peer
+            // spent its per-source budget, reconnected, and had a fresh one. Two connections on one
+            // handler, the per-source cap at 1 and the per-account cap far above it: the second
+            // connection's first attempt is refused, which only a shared bucket can do.
+            var clock = new FakeTimeProvider();
+            var options = new RespWireOptions
+            {
+                AllowCleartextAuth = true,
+                AuthenticationTimeout = TimeSpan.FromHours(1),
+                MaxAuthAttemptsPerSource = 1,
+                MaxAuthAttemptsPerAccount = 100,
+                AuthRateLimitWindow = Window,
+            };
+            var store = new FakeRespCredentialStore().Add(
+                "alice", "s3cret",
+                new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(ClaimTypes.NameIdentifier, "user-alice") }, "resp")));
+            var handler = new RespConnectionHandler(
+                store, BifrostAuthContextFactory.Instance, RespFixture.EmptyServices(), options,
+                dataHandlers: null, logger: null, timeProvider: clock);
+            var first = new StalledReaderTransport();
+            var second = new StalledReaderTransport();
+            var auth = System.Text.Encoding.ASCII.GetBytes("*3\r\n$4\r\nAUTH\r\n$5\r\nalice\r\n$5\r\nwrong\r\n");
+
+            using var stop = new CancellationTokenSource();
+            var firstSession = handler.HandleConnectionAsync(first.ServerStream, stop.Token, source: null);
+            await first.SendAsync(auth);
+            var firstReply = System.Text.Encoding.ASCII.GetString(await first.ReadAvailableAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            var secondSession = handler.HandleConnectionAsync(second.ServerStream, stop.Token, source: null);
+            await second.SendAsync(auth);
+            var secondReply = System.Text.Encoding.ASCII.GetString(await second.ReadAvailableAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            stop.Cancel();
+            await Task.WhenAll(firstSession, secondSession).WaitAsync(TimeSpan.FromSeconds(10));
+
+            firstReply.Should().Be($"-{RespProtocol.WrongPassError}\r\n");
+            secondReply.Should().Be($"-{RespProtocol.AuthRateLimitedError}\r\n",
+                "a reconnect from an unknown address draws on the same per-source budget");
+        }
+
         // ---- fixtures --------------------------------------------------------
 
         private static Task<RespFixture> StartAsync(TimeProvider clock, int attemptsPerSource)

@@ -467,6 +467,48 @@ A `visibility: hidden` table's `retain` or `ttl` is now checked at model load li
 table's. Before, an invalid one loaded and the purge skipped the table with an error on every
 pass. A model with such a table now fails to load: fix the duration or anchor column.
 
+### Fixed — retention, deferred review, empty inserts and auth limiters
+
+- A retention erasure of a history-tracked row failed on PostgreSQL when the trail used the
+  documented `JSONB` `entity_id` column: the trail purge compared it to a text parameter and
+  PostgreSQL has no `jsonb = text` operator, so the purge rolled back and no tracked row could
+  expire. The purge now compares each trail column in its own type.
+
+- Retention deleted a row that changed between the expiry read and the delete: a session
+  refreshed in that window was still expired, and a soft-deleted row restored in it was still
+  hard-purged. Each delete now matches only while the anchor holds the value the read saw.
+
+- A server operation whose writes touched two or more `undo-window` tables opened one deferred
+  change set per write, so a reviewer could approve or undo half of an all-or-nothing operation.
+  Every write in an operation now shares one change set.
+
+- An insert that supplies no columns (`insert: {}`, valid since default-aware inserts made every
+  column of such a table optional) rendered `INSERT INTO t() VALUES()` and failed with
+  `DATABASE_ERROR` on SQL Server, PostgreSQL and SQLite; a `_batch` insert of `{}` was silently
+  skipped. Both now insert a row from the columns' defaults (`DEFAULT VALUES`, or `() VALUES()` on
+  MySQL). A batch holding such an insert uses the per-row path. `ISqlDialect` gains
+  `EmptyInsertValues`, with a default implementation.
+
+- A table whose `history-writer` names no registered writer refused each write with a message that
+  held the schema-qualified table and every registered writer name. The client now gets a constant
+  message ("The table's history writer is not registered, so the change was refused."), and the
+  detail goes to the server log at Debug level through `BifrostErrorSink`.
+
+- On a host with more than one endpoint, `approve`, `undo` and the deferred review queue's reject
+  failed with "Multiple BifrostQL endpoints are registered", because their replay intent named no
+  endpoint; the change stayed pending. The replay also named its table by bare `DbName`, which is
+  ambiguous when another schema holds the same name. Each endpoint's inputs now carry its own path,
+  and the replay names that endpoint and the schema-qualified table. `ApprovalDecisionService`,
+  `DeferredUndoEngine` and `DeferredReviewQueue` gain an optional `endpoint` constructor argument
+  (source-compatible; recompile callers), and `IBifrostContext` gains `Endpoint`, which defaults to
+  `null`.
+
+- The pgwire, RESP and LDAP auth-attempt limiters stopped counting new keys once their tracking map
+  held 20,000 live counters, so a peer that first filled the map from many addresses could then
+  guess a fresh account's password without limit. A source or account the full map cannot track now
+  counts against one shared window for its axis, under the same cap. During such a flood, new
+  callers share that budget and may be refused; already-tracked sources and accounts are unaffected.
+
 ## 0.4.28 — 2026-11-09
 
 Tag `v0.4.28` · NuGet `0.4.740` · npm `@bifrostql/react` and `@bifrostql/types` `0.4.0`

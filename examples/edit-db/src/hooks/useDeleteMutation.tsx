@@ -31,7 +31,7 @@ function coerceKeyValue(value: unknown, paramType: string | undefined, column: s
     try {
         return coerceForGql(value, paramType);
     } catch (e) {
-        throw new Error(`Cannot delete row: primary-key column '${column}': ${(e as Error).message}`);
+        throw new Error(`Cannot delete row: primary-key column '${column}': ${(e as Error).message}`, { cause: e });
     }
 }
 

@@ -32,10 +32,13 @@ namespace BifrostQL.Server.Test.Ldap
             public readonly List<string> VerifiedHashes = new();
             public string DecoyHash => "hash:$decoy$";
             public static string HashOf(string password) => "hash:" + password;
+            // A stored hash this hasher cannot parse, as a real one throws on a corrupt row.
+            public const string MalformedHash = "hash:$not-a-hash";
 
             public bool Verify(ReadOnlySpan<byte> password, string passwordHash)
             {
                 VerifiedHashes.Add(passwordHash);
+                if (passwordHash == MalformedHash) throw new FormatException("unrecognised hash format");
                 if (passwordHash == DecoyHash) return false;
                 return passwordHash == HashOf(Encoding.UTF8.GetString(password));
             }
@@ -49,6 +52,12 @@ namespace BifrostQL.Server.Test.Ldap
             public FakeStore Add(string dn, string password, ClaimsPrincipal principal, bool enabled = true)
             {
                 _byDn[dn] = new LdapCredentialRecord(RecordingHasher.HashOf(password), principal, enabled);
+                return this;
+            }
+
+            public FakeStore AddStoredHash(string dn, string passwordHash, ClaimsPrincipal principal)
+            {
+                _byDn[dn] = new LdapCredentialRecord(passwordHash, principal, Enabled: true);
                 return this;
             }
 
@@ -214,6 +223,25 @@ namespace BifrostQL.Server.Test.Ldap
             result.ResultCode.Should().Be(LdapResultCode.InvalidCredentials);
             hasher.VerifiedHashes.Should().ContainSingle().Which.Should().Be(hasher.DecoyHash,
                 "a store fault must be indistinguishable from an unknown DN, decoy verify and all");
+        }
+
+        [Fact]
+        public async Task MalformedStoredHash_FailsClosed_AsInvalidCredentials_OnTheDecoyTimingPath()
+        {
+            // The hasher threw on the corrupt row and the throw escaped the bind, dropping the
+            // connection with no response: an answer no other DN draws.
+            var store = new FakeStore().AddStoredHash("uid=alice", RecordingHasher.MalformedHash, Principal("alice"));
+            var auth = Build(store, out var hasher, out _);
+            var password = Pw("s3cret");
+
+            var result = await auth.AuthenticateAsync(SimpleBind("uid=alice", password), "10.0.0.1", default);
+
+            result.Succeeded.Should().BeFalse();
+            result.ResultCode.Should().Be(LdapResultCode.InvalidCredentials,
+                "a hash that cannot be verified answers exactly like a wrong password");
+            hasher.VerifiedHashes.Should().Equal(new[] { RecordingHasher.MalformedHash, hasher.DecoyHash },
+                "the decoy verify pays the hash cost the throw skipped");
+            password.Should().OnlyContain(b => b == 0, "the password is still wiped on this path");
         }
 
         // ---- criterion 3: bounded password (hash-DoS guard) ----

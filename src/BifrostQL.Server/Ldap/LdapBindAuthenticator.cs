@@ -107,7 +107,7 @@ namespace BifrostQL.Server.Ldap
                 // Existence + enabled are AND-ed AFTER the compare, never short-circuited before it —
                 // reordering these into `record is not null && Verify(...)` would skip the hash work for
                 // an unknown DN and reintroduce the timing/branch enumeration oracle this prevents.
-                var matches = _hasher.Verify(password, record?.PasswordHash ?? _hasher.DecoyHash);
+                var matches = VerifyFailingClosed(password, record?.PasswordHash ?? _hasher.DecoyHash);
                 var credentialOk = record is not null && record.Enabled && matches;
                 if (!credentialOk)
                     return Fail(LdapBindOutcome.InvalidCredentials, account, source);
@@ -128,6 +128,37 @@ namespace BifrostQL.Server.Ldap
                 // Secret hygiene: wipe the presented password on every path (success or failure).
                 if (password is { Length: > 0 })
                     CryptographicOperations.ZeroMemory(password);
+            }
+        }
+
+        // A stored hash the hasher cannot parse (corrupt row, unknown format) made Verify throw, and
+        // the throw escaped the bind: the connection dropped with no response, an answer no other
+        // DN draws, so a malformed row became an enumeration signal and a way to kill the session.
+        // It is a failed verification instead, answered with the same invalidCredentials. The
+        // decoy verify then pays the adaptive-hash cost the throw skipped, so the timing stays on
+        // the ordinary path too (invariant 2).
+        private bool VerifyFailingClosed(byte[] password, string passwordHash)
+        {
+            try
+            {
+                return _hasher.Verify(password, passwordHash);
+            }
+            catch (Exception ex) when (ex is FormatException or ArgumentException or InvalidOperationException
+                                          or CryptographicException or OverflowException or IndexOutOfRangeException)
+            {
+                _logger.LogWarning("ldap stored password hash could not be verified ({Kind}); failing the bind closed.",
+                    ex.GetType().Name);
+                try
+                {
+                    _hasher.Verify(password, _hasher.DecoyHash);
+                }
+                catch (Exception decoyEx) when (decoyEx is FormatException or ArgumentException or InvalidOperationException
+                                                     or CryptographicException or OverflowException or IndexOutOfRangeException)
+                {
+                    // The decoy is the hasher's own; if it cannot verify, the timing match is lost
+                    // but the answer is still the uniform failure.
+                }
+                return false;
             }
         }
 

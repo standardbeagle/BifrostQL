@@ -6,7 +6,10 @@ namespace BifrostQL.Core.Model
     /// saved-object table and the SQL Server metadata tables (schema metadata and app metadata) are
     /// never part of a served model, whatever the metadata says:
     /// <c>DbModel</c> files them under <see cref="IDbModel.HiddenTables"/>, so no GraphQL field or
-    /// protocol adapter can reach them. Each family owns a name prefix, and a configurable table name
+    /// protocol adapter can reach them, except <c>_rawQuery</c>, which runs caller SQL and is opt-in
+    /// (<c>raw-sql: enabled</c>) and role-gated (<c>raw-sql-role</c>): its lexical gate
+    /// (<c>RawSqlValidator</c>) does not resolve table references, so a permitted caller can SELECT
+    /// these tables by name. Each family owns a name prefix, and a configurable table name
     /// must keep it, so hiding by name needs no wiring from the store to the model.
     /// </summary>
     public static class BifrostSystemTables

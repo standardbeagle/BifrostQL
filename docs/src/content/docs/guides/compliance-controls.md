@@ -36,7 +36,10 @@ Session ids are 256-bit random values. The cookie carries the id; the database k
 only its SHA-256. The state tables (`_bifrost_auth_sessions`, `_bifrost_auth_lockouts`,
 `_bifrost_auth_password_history`, `_bifrost_auth_audit`) live beside the app-user table.
 They are created on first use and are never part of a served schema, whatever their
-metadata says (`BifrostSystemTables.IsAlwaysHidden`).
+metadata says (`BifrostSystemTables.IsAlwaysHidden`). The gap is `_rawQuery`: it runs the
+caller's own SQL, so with `raw-sql: enabled` a caller holding the `raw-sql-role` (default
+`bifrost-raw-sql`) can `SELECT` these tables by name. Leave `raw-sql` disabled on a model whose
+database holds them, or grant the role only to operators who may read session and audit rows.
 
 ## Audit trail
 

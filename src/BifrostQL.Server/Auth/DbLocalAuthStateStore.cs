@@ -31,7 +31,8 @@ namespace BifrostQL.Server.Auth
     public sealed class DbLocalAuthStateStore : ILocalAuthStateStore
     {
         // Every name carries BifrostSystemTables.AuthStatePrefix, so a GraphQL endpoint serving the
-        // same database files these tables as hidden and never exposes them.
+        // same database files these tables as hidden and never exposes them, except through
+        // _rawQuery, which runs caller SQL and is opt-in and role-gated (see BifrostSystemTables).
         public const string SessionsTable = BifrostSystemTables.AuthStatePrefix + "sessions";
         public const string LockoutsTable = BifrostSystemTables.AuthStatePrefix + "lockouts";
         public const string PasswordHistoryTable = BifrostSystemTables.AuthStatePrefix + "password_history";

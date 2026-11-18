@@ -112,7 +112,7 @@ A successful login whose stored hash uses outdated parameters is rehashed in pla
 
 ### Sessions, lockout and password policy
 
-Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated request checks it. The cookie carries a random session id; the table keeps only its SHA-256. The state tables are created on first use in the app-user database and are never served by a GraphQL endpoint. Register your own `ILocalAuthStateStore` before `AddBifrostLocalAuth` to keep them elsewhere.
+Each sign-in opens a row in `_bifrost_auth_sessions`, and every authenticated request checks it. The cookie carries a random session id; the table keeps only its SHA-256. The state tables are created on first use in the app-user database and are never served by a GraphQL endpoint, except through `_rawQuery`, which runs caller SQL and is opt-in (`raw-sql: enabled`) and role-gated (`raw-sql-role`). Register your own `ILocalAuthStateStore` before `AddBifrostLocalAuth` to keep them elsewhere.
 
 | Option | Default | Effect |
 |---|---|---|

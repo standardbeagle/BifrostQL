@@ -172,6 +172,14 @@ consistently.
 | `operations` | `name[grant,list]`, comma list | model | [Server operations](/BifrostQL/guides/server-operations/) this endpoint exposes, each with an optional grant list |
 | `operations-tenant` | `required`/`optional` | model | Refuse operation callers with no tenant claim (default: `required` when any table has `tenant-filter`) |
 | `auto-detect-app` | `disabled`, `wordpress`, etc. | model | Control app-schema detection |
+
+:::caution[`_rawQuery` reaches every table the connection can read]
+`_rawQuery` runs the caller's SQL as written. The table-level controls of the served model do not
+apply to it: tenant filters, soft delete, policies and the always-hidden Bifrost tables
+(`_bifrost_auth_*` sessions, lockouts and audit trail, `_bifrost_saved_objects`, `_bifrost_config`,
+`_bifrost_app_metadata`) are all readable with a plain `SELECT`. Enable `raw-sql` only on a model whose
+database user may read everything it can see, and grant `raw-sql-role` only to operators.
+:::
 | `app-schema` | detector name | model | Force a specific app-schema detector |
 | `detected-app` | detector name | model | Read-only detection result metadata |
 

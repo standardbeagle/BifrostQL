@@ -127,8 +127,10 @@ namespace BifrostQL.Server.Ldap
         private LdapOperation DecodeSearch(BerCursor search)
         {
             var baseObject = search.String(search.ReadElement(LdapProtocol.OctetString));
-            var scope = (int)search.Integer(search.ReadElement(LdapProtocol.Enumerated));
-            var derefAliases = (int)search.Integer(search.ReadElement(LdapProtocol.Enumerated));
+            // Both are closed enumerations (RFC 4511 §4.5.1). A value outside one is a wire
+            // violation: an (int) cast wrapped 2^32 to 0, so an undefined scope read as baseObject.
+            var scope = EnumeratedInRange(search.Integer(search.ReadElement(LdapProtocol.Enumerated)), 2, "scope");
+            var derefAliases = EnumeratedInRange(search.Integer(search.ReadElement(LdapProtocol.Enumerated)), 3, "derefAliases");
             // The client's own sizeLimit / timeLimit. Both are non-negative by the protocol, and a
             // negative value is a wire violation rather than something to clamp silently: these
             // bound the server's work, so a value it cannot interpret must not be guessed at.
@@ -156,6 +158,11 @@ namespace BifrostQL.Server.Ldap
             return new LdapSearchRequest(
                 baseObject, scope, derefAliases, sizeLimit, timeLimit, typesOnly, filter, attributes);
         }
+
+        private static int EnumeratedInRange(long value, int max, string field) =>
+            value is >= 0 && value <= max
+                ? (int)value
+                : throw new LdapProtocolException($"SearchRequest {field} is not a defined value.");
 
         private static int NonNegative(int value, string field) =>
             value >= 0

@@ -108,6 +108,35 @@ namespace BifrostQL.Server.Test.Ldap
             await act.Should().ThrowAsync<LdapProtocolException>();
         }
 
+        [Theory]
+        [InlineData(4294967296L, 0L)]   // wrapped to 0 (baseObject) by an (int) cast
+        [InlineData(4294967298L, 0L)]   // wrapped to 2 (wholeSubtree)
+        [InlineData(3L, 0L)]            // one past the last defined scope
+        [InlineData(-1L, 0L)]
+        [InlineData(0L, 4294967296L)]   // derefAliases wrapped to 0
+        [InlineData(0L, 4L)]            // one past the last defined derefAliases
+        public async Task SearchRequest_UndefinedScopeOrDeref_IsProtocolError(long scope, long derefAliases)
+        {
+            var message = LdapWire.Message(1, LdapWire.SearchRequest(scope: scope, derefAliases: derefAliases));
+
+            var act = async () => await DecodeAsync(message);
+
+            await act.Should().ThrowAsync<LdapProtocolException>();
+        }
+
+        [Theory]
+        [InlineData(0L, 0L)]
+        [InlineData(2L, 3L)]
+        public async Task SearchRequest_DefinedScopeAndDeref_Decode(long scope, long derefAliases)
+        {
+            // Control: the range check refuses only undefined values.
+            var request = await DecodeAsync(LdapWire.Message(1, LdapWire.SearchRequest(scope: scope, derefAliases: derefAliases)));
+
+            var search = request.Operation.Should().BeOfType<LdapSearchRequest>().Which;
+            search.Scope.Should().Be((int)scope);
+            search.DerefAliases.Should().Be((int)derefAliases);
+        }
+
         [Fact]
         public async Task SubstringFilter_Decodes_InitialAnyFinalInOrder()
         {

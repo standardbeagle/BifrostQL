@@ -64,8 +64,8 @@ namespace BifrostQL.Server.Test.Ldap
 
         /// <summary>A SearchRequest whose filter is supplied as pre-encoded BER (default: <c>(objectClass=*)</c>).</summary>
         public static byte[] SearchRequest(
-            string baseObject = "", int scope = 0, byte[]? filter = null, string[]? attributes = null,
-            int sizeLimit = 0, int timeLimit = 0, bool typesOnly = false, int derefAliases = 0)
+            string baseObject = "", long scope = 0, byte[]? filter = null, string[]? attributes = null,
+            int sizeLimit = 0, int timeLimit = 0, bool typesOnly = false, long derefAliases = 0)
         {
             filter ??= FilterPresent("objectClass");
             var attrElements = (attributes ?? Array.Empty<string>())

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Numerics;
 using GraphQL.Types;
 using GraphQLParser.AST;
 
@@ -50,54 +49,14 @@ public sealed class AggregateNumberGraphType : ScalarGraphType
         return resultScalar switch
         {
             "Int" => Convert.ToInt64(value, CultureInfo.InvariantCulture),
-            "Decimal" => ToDecimal(value),
+            // A Decimal result no decimal holds becomes DecimalCell's marker, which
+            // Serialize refuses naming no data, as the grouped surface's Decimal field does.
+            "Decimal" => DecimalCell.ToDecimal(value),
             "Float" => value is sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal
                 ? Convert.ToDouble(value, CultureInfo.InvariantCulture)
                 : value,
             _ => throw new ArgumentOutOfRangeException(nameof(resultScalar), resultScalar, "Unknown aggregate result scalar."),
         };
-    }
-
-    /// <summary>
-    /// A <c>Decimal</c> result no <see cref="decimal"/> holds: text that is not a number
-    /// (SQLite keeps <c>'N/A'</c> in a DECIMAL column, and MAX returns it) or a double past
-    /// decimal's range (SQLite SUM/AVG over such a column). The grouped surface's
-    /// <c>Decimal</c> field refuses both, so this refuses them too, through
-    /// <see cref="Serialize"/>; a double fallback would type the field by its data.
-    /// </summary>
-    private static object ToDecimal(object value)
-    {
-        switch (value)
-        {
-            case decimal d:
-                return d;
-            case BigInteger big:
-                return big >= (BigInteger)decimal.MinValue && big <= (BigInteger)decimal.MaxValue
-                    ? (decimal)big
-                    : NotADecimal.Instance;
-            case string text:
-                return decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-                    ? parsed
-                    : NotADecimal.Instance;
-            case double or float:
-                var asDouble = Convert.ToDouble(value, CultureInfo.InvariantCulture);
-                return double.IsFinite(asDouble) && Math.Abs(asDouble) < (double)decimal.MaxValue
-                    ? (decimal)asDouble
-                    : NotADecimal.Instance;
-            default:
-                return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
-        }
-    }
-
-    /// <summary>
-    /// Stands in for a <c>Decimal</c> aggregate value <see cref="Coerce"/> could not convert.
-    /// It carries no part of the cell, so the serialization error names no data.
-    /// </summary>
-    private sealed class NotADecimal
-    {
-        public static readonly NotADecimal Instance = new();
-        private NotADecimal() { }
-        public override string ToString() => "a value outside decimal's range or not a number";
     }
 
     /// <summary>
@@ -112,7 +71,7 @@ public sealed class AggregateNumberGraphType : ScalarGraphType
         decimal d => d.ToString(CultureInfo.InvariantCulture),
         double d when double.IsFinite(d) => d,
         float f when float.IsFinite(f) => (double)f,
-        NotADecimal => ThrowSerializationError(value),
+        DecimalCell.NotADecimal => ThrowSerializationError(value),
         _ => ThrowSerializationError($"a {value.GetType().Name} value"),
     };
 

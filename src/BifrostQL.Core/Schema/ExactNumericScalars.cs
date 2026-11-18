@@ -170,12 +170,22 @@ public sealed class ExactDecimalGraphType : ScalarGraphType
     /// decimal past 15–17 significant digits reaches JSON.parse rounded. As with
     /// BigInt, one representation for every value keeps the column's client type
     /// independent of its data.
+    ///
+    /// A cell no decimal holds (DecimalCell.NotADecimal: text that is not a number, a double
+    /// past decimal's range) and a value of any other type are refused naming no data: the
+    /// value is a database cell, and the stock conversion error embeds it.
     /// </summary>
-    public override object? Serialize(object? value) => ParseValue(value) switch
+    public override object? Serialize(object? value) => value switch
     {
         null => null,
-        decimal d => d.ToString(CultureInfo.InvariantCulture),
-        var other => ThrowSerializationError(other),
+        decimal or BigInteger or string or sbyte or byte or short or ushort or int or uint or long or ulong or float or double
+            => DecimalCell.ToDecimal(value) switch
+            {
+                decimal d => d.ToString(CultureInfo.InvariantCulture),
+                var notADecimal => ThrowSerializationError(notADecimal),
+            },
+        JsonElement { ValueKind: JsonValueKind.Number } element => Serialize(element.GetRawText()),
+        _ => ThrowSerializationError($"a {value.GetType().Name} value"),
     };
 
     /// <inheritdoc />

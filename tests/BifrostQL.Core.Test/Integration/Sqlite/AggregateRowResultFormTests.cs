@@ -226,6 +226,49 @@ public sealed class AggregateRowResultFormTests : IAsyncLifetime
         top.GetString().Should().Be("12.5");
     }
 
+    /// <summary>
+    /// The grouped surface's <c>Decimal</c> field (<c>ExactDecimalGraphType</c>) refuses the
+    /// same cells as <c>_agg</c>, the same way: a field error naming no cell data, never the
+    /// stock conversion message that embeds the text ('N/A' under MAX) nor a raw
+    /// OverflowException (1e300 under MAX and SUM). Quote 3's group is the control: the same
+    /// field, in the same response, still serializes a numeric cell.
+    /// </summary>
+    [Theory]
+    [InlineData("_max", 2)]
+    [InlineData("_sum", 1)]
+    public async Task GroupedDecimalAggregateNoDecimalHolds_IsAFieldErrorWithoutTheValue(string operation, int refusedGroups)
+    {
+        var schema = DbSchema.FromModel(_model);
+        var execution = await new DocumentExecuter().ExecuteAsync(options =>
+        {
+            options.Schema = schema;
+            options.Query = $"{{ quote_linesAggregate(groupBy: [quote_id]) {{ quote_id {operation} {{ price }} }} }}";
+            options.Extensions = new Inputs(new Dictionary<string, object?>
+            {
+                ["connFactory"] = new SqliteDbConnFactory(ConnString),
+                ["model"] = _model,
+                ["tableReaderFactory"] = new SqlExecutionManager(_model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance),
+            });
+        });
+
+        execution.Errors.Should().HaveCount(refusedGroups);
+        foreach (var error in execution.Errors!)
+        {
+            var chain = new List<Exception>();
+            for (Exception? e = error; e != null; e = e.InnerException) chain.Add(e);
+            chain.Should().NotContain(e => e is FormatException || e is OverflowException);
+            chain.Select(e => e.Message).Should().NotContain(m => m.Contains("N/A", StringComparison.OrdinalIgnoreCase)
+                                                                   || m.Contains("E+300", StringComparison.OrdinalIgnoreCase)
+                                                                   || m.Contains("1e300", StringComparison.OrdinalIgnoreCase));
+            chain.Should().Contain(e => e.Message.Contains("'Decimal'"));
+        }
+
+        using var doc = JsonDocument.Parse(new GraphQLSerializer().Serialize(execution));
+        var plain = doc.RootElement.GetProperty("data").GetProperty("quote_linesAggregate").EnumerateArray()
+            .Single(g => g.GetProperty("quote_id").GetInt64() == 3);
+        plain.GetProperty(operation).GetProperty("price").GetString().Should().Be("12.5");
+    }
+
     [Fact]
     public async Task Schema_TypesAggAsAggregateNumber()
     {

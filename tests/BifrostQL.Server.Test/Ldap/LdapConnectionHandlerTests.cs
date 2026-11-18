@@ -173,6 +173,9 @@ namespace BifrostQL.Server.Test.Ldap
             // The refused connection draws a Notice of Disconnection then closes immediately.
             var response = await ReadAsync(fixture);
             response.OpTag.Should().Be(LdapProtocol.ExtendedResponse);
+            // busy (51) says "try again later"; unavailableCriticalExtension (12) told the client a
+            // control it sent was unsupported, which no client retries.
+            response.ResultCode.Should().Be(LdapResultCode.Busy);
             (await fixture.Client.ReadResponseAsync().WaitAsync(Timeout))
                 .Should().BeNull("a connection refused at the cap is closed after the notice");
         }

@@ -105,7 +105,7 @@ namespace BifrostQL.Server.Ldap
                 {
                     _logger.LogWarning("ldap connection refused: at the {Max}-connection cap.", _sessions.MaxConnections);
                     await TrySendAsync(stream, LdapMessageWriter.NoticeOfDisconnection(
-                        LdapResultCode.UnavailableCriticalExtension, "server connection limit reached"), ct);
+                        LdapResultCode.Busy, "server connection limit reached"), ct);
                 });
         }
 

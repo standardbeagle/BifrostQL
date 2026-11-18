@@ -118,6 +118,9 @@ namespace BifrostQL.Server.Ldap
         InvalidCredentials = 49,
         InsufficientAccessRights = 50,
 
+        /// <summary>The server is too busy to serve the request (RFC 4511 §A.2) — a connection refused at the cap.</summary>
+        Busy = 51,
+
         /// <summary>The server cannot provide the requested extension — a StartTLS with no configured certificate.</summary>
         Unavailable = 52,
         UnwillingToPerform = 53,

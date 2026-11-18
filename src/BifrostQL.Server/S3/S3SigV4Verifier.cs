@@ -77,6 +77,7 @@ namespace BifrostQL.Server.S3
             var parsed = isPresigned ? ParsePresigned(request) : ParseHeaderAuth(request);
 
             ValidateScope(parsed, isPresigned);
+            RequireAmzHeadersSigned(request, parsed);
             var signTime = ValidateClock(parsed, isPresigned);
 
             var canonicalHeaders = BuildSignedHeaders(request, parsed, isPresigned);
@@ -244,6 +245,29 @@ namespace BifrostQL.Server.S3
                 foreach (var required in RequiredHeaderAuthSignedHeaders)
                     if (!signed.Contains(required))
                         throw S3ProtocolException.AuthorizationHeaderMalformed($"'{required}' must be a signed header.");
+            }
+        }
+
+        /// <summary>
+        /// Refuses a request carrying any <c>x-amz-*</c> header that is not in SignedHeaders,
+        /// on both the header and presigned paths, as the AWS SigV4 spec requires. Unsigned,
+        /// such a header could be added to a captured request without breaking its signature:
+        /// a signed empty-body PutObject replayed with <c>x-amz-copy-source</c> became a
+        /// CopyObject the signer never asked for. Checked before the signature so the refusal
+        /// costs no HMAC work and does not depend on the access key.
+        /// </summary>
+        private static void RequireAmzHeadersSigned(HttpRequest request, ParsedAuth parsed)
+        {
+            var signed = parsed.SignedHeaders.Split(';', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var header in request.Headers)
+            {
+                if (!header.Key.StartsWith("x-amz-", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                // SignedHeaders is normalized to lowercase; compare the same way.
+                var name = header.Key.ToLowerInvariant();
+                if (Array.IndexOf(signed, name) < 0)
+                    throw S3ProtocolException.AccessDenied(
+                        "There were headers present in the request which were not signed.");
             }
         }
 

@@ -145,8 +145,7 @@ namespace BifrostQL.Server.Test.S3
         public async Task Put_persists_user_metadata_that_round_trips_on_get()
         {
             var body = "with metadata"u8.ToArray();
-            var ctx = PutA("/assets/data/5", body, "text/plain");
-            ctx.Request.Headers["x-amz-meta-purpose"] = "demo";
+            var ctx = PutA("/assets/data/5", body, "text/plain", amzHeaders: Meta("x-amz-meta-purpose", "demo"));
 
             var (status, _) = await Run(ctx);
             status.Should().Be(200);
@@ -278,8 +277,7 @@ namespace BifrostQL.Server.Test.S3
         public async Task Put_with_oversized_metadata_is_rejected()
         {
             var body = "small"u8.ToArray();
-            var ctx = PutA("/assets/data/5", body, "text/plain");
-            ctx.Request.Headers["x-amz-meta-bulk"] = new string('x', 4096);
+            var ctx = PutA("/assets/data/5", body, "text/plain", amzHeaders: Meta("x-amz-meta-bulk", new string('x', 4096)));
 
             var (status, xml) = await RunError(ctx);
             status.Should().Be(400);
@@ -291,8 +289,7 @@ namespace BifrostQL.Server.Test.S3
         public async Task Put_with_non_ascii_metadata_is_rejected()
         {
             var body = "small"u8.ToArray();
-            var ctx = PutA("/assets/data/5", body, "text/plain");
-            ctx.Request.Headers["x-amz-meta-label"] = "café";  // non-ASCII
+            var ctx = PutA("/assets/data/5", body, "text/plain", amzHeaders: Meta("x-amz-meta-label", "café"));  // non-ASCII
 
             var (status, xml) = await RunError(ctx);
             status.Should().Be(400);
@@ -526,8 +523,7 @@ namespace BifrostQL.Server.Test.S3
         public async Task Copy_default_directive_inherits_source_content_type_and_metadata()
         {
             // Source carries a content type and user metadata; a default (COPY) copy inherits both.
-            var src = PutA("/assets/data/5", "payload"u8.ToArray(), "application/json");
-            src.Request.Headers["x-amz-meta-purpose"] = "demo";
+            var src = PutA("/assets/data/5", "payload"u8.ToArray(), "application/json", amzHeaders: Meta("x-amz-meta-purpose", "demo"));
             (await Run(src)).Status.Should().Be(200);
 
             var (status, _) = await RunCopy(CopyA("/assets/data/0", "/assets/data/5"));
@@ -541,12 +537,11 @@ namespace BifrostQL.Server.Test.S3
         [Fact]
         public async Task Copy_replace_directive_uses_request_content_type_and_metadata()
         {
-            var src = PutA("/assets/data/5", "payload"u8.ToArray(), "application/json");
-            src.Request.Headers["x-amz-meta-purpose"] = "demo";
+            var src = PutA("/assets/data/5", "payload"u8.ToArray(), "application/json", amzHeaders: Meta("x-amz-meta-purpose", "demo"));
             (await Run(src)).Status.Should().Be(200);
 
-            var copy = CopyA("/assets/data/0", "/assets/data/5", directive: "REPLACE", contentType: "text/csv");
-            copy.Request.Headers["x-amz-meta-stage"] = "final";
+            var copy = CopyA("/assets/data/0", "/assets/data/5", directive: "REPLACE", contentType: "text/csv",
+                amzHeaders: Meta("x-amz-meta-stage", "final"));
             var (status, _) = await RunCopy(copy);
             status.Should().Be(200);
 
@@ -580,8 +575,7 @@ namespace BifrostQL.Server.Test.S3
         [Fact]
         public async Task Self_copy_with_replace_rewrites_metadata()
         {
-            var src = PutA("/assets/data/5", "keep bytes"u8.ToArray(), "application/json");
-            src.Request.Headers["x-amz-meta-old"] = "1";
+            var src = PutA("/assets/data/5", "keep bytes"u8.ToArray(), "application/json", amzHeaders: Meta("x-amz-meta-old", "1"));
             (await Run(src)).Status.Should().Be(200);
 
             var (status, _) = await RunCopy(
@@ -592,6 +586,36 @@ namespace BifrostQL.Server.Test.S3
             body.Should().Equal("keep bytes"u8.ToArray());
             getCtx.Response.ContentType.Should().Be("text/plain");
             getCtx.Response.Headers.ContainsKey("x-amz-meta-old").Should().BeFalse();
+        }
+
+        // ---- signed headers: replaying a captured put as a copy -------------------
+
+        /// <summary>
+        /// A captured, validly signed empty-body PutObject replayed with an added
+        /// <c>x-amz-copy-source</c>. The header was not in SignedHeaders, so the signature still
+        /// matched and the request ran as a CopyObject the signer never asked for: the
+        /// destination took the source's bytes. Every x-amz-* header must now be signed.
+        /// </summary>
+        [Fact]
+        public async Task A_captured_put_replayed_with_an_unsigned_copy_source_is_refused_and_copies_nothing()
+        {
+            var captured = PutA("/assets/data/5", Array.Empty<byte>(), contentType: null);
+            captured.Request.Headers["x-amz-copy-source"] = "/assets/data/1";
+
+            var (status, xml) = await RunError(captured);
+
+            status.Should().Be(403);
+            xml.Element("Code")!.Value.Should().Be("AccessDenied");
+            (await RunGet(GetA("/assets/data/5"))).Status.Should().Be(404, "no copy ran");
+        }
+
+        [Fact]
+        public async Task Control_the_same_copy_signed_runs()
+        {
+            var (status, _) = await RunCopy(CopyA("/assets/data/5", "/assets/data/1"));
+
+            status.Should().Be(200);
+            (await RunGet(GetA("/assets/data/5"))).Body.Should().Equal(Existing);
         }
 
         // ---- copy: authorization / addressing -------------------------------------
@@ -753,26 +777,31 @@ namespace BifrostQL.Server.Test.S3
                 new FileObjectSeamOptions { Endpoint = Endpoint, EnableWrites = true });
         }
 
-        private DefaultHttpContext PutA(string path, byte[] body, string? contentType, string? declaredHash = null, string? query = null)
-            => SignedPut(path, body, contentType, SecretA, KeyA, declaredHash, query);
+        private DefaultHttpContext PutA(
+            string path, byte[] body, string? contentType, string? declaredHash = null, string? query = null,
+            IReadOnlyDictionary<string, string>? amzHeaders = null)
+            => SignedPut(path, body, contentType, SecretA, KeyA, declaredHash, query, amzHeaders);
 
         private DefaultHttpContext PutB(string path, byte[] body, string? contentType)
-            => SignedPut(path, body, contentType, SecretB, KeyB, declaredHash: null, query: null);
+            => SignedPut(path, body, contentType, SecretB, KeyB, declaredHash: null, query: null, amzHeaders: null);
 
         private static DefaultHttpContext SignedPut(
             string path, byte[] body, string? contentType, string secret, string accessKeyId,
-            string? declaredHash, string? query)
+            string? declaredHash, string? query, IReadOnlyDictionary<string, string>? amzHeaders)
         {
             var hash = declaredHash ?? S3SigV4.HashSha256Hex(body);
             var ctx = S3TestSigner.BuildHeaderSigned(
                 method: "PUT", path: path, query: query, signTime: SignTime,
-                secret: secret, accessKeyId: accessKeyId, payloadHash: hash);
+                secret: secret, accessKeyId: accessKeyId, payloadHash: hash,
+                extraSignedHeaders: amzHeaders);
             ctx.Request.Body = new MemoryStream(body);
             ctx.Request.ContentLength = body.Length;
             if (contentType is not null)
                 ctx.Request.Headers.ContentType = contentType;
             return ctx;
         }
+
+        private static Dictionary<string, string> Meta(string name, string value) => new() { [name] = value };
 
         private DefaultHttpContext DeleteA(string path)
             => S3TestSigner.BuildHeaderSigned(method: "DELETE", path: path, signTime: SignTime, secret: SecretA, accessKeyId: KeyA);
@@ -786,29 +815,35 @@ namespace BifrostQL.Server.Test.S3
         private DefaultHttpContext GetB(string path)
             => S3TestSigner.BuildHeaderSigned(method: "GET", path: path, signTime: SignTime, secret: SecretB, accessKeyId: KeyB);
 
-        private DefaultHttpContext CopyA(string destPath, string copySource, string? directive = null, string? contentType = null)
-            => SignedCopy(destPath, copySource, directive, contentType, SecretA, KeyA);
+        private DefaultHttpContext CopyA(
+            string destPath, string copySource, string? directive = null, string? contentType = null,
+            IReadOnlyDictionary<string, string>? amzHeaders = null)
+            => SignedCopy(destPath, copySource, directive, contentType, SecretA, KeyA, amzHeaders);
 
         private DefaultHttpContext CopyBTo(string destPath, string copySource)
-            => SignedCopy(destPath, copySource, directive: null, contentType: null, SecretB, KeyB);
+            => SignedCopy(destPath, copySource, directive: null, contentType: null, SecretB, KeyB, amzHeaders: null);
 
         /// <summary>
         /// A copy is a PUT to the destination carrying x-amz-copy-source and an empty body (the
-        /// bytes come from the source). The copy-source and directive headers ride unsigned —
-        /// the signed subset still authenticates the request, exactly as the metadata headers do
-        /// on a normal put.
+        /// bytes come from the source). The copy-source, directive and metadata headers are all
+        /// signed: the verifier refuses any unsigned x-amz-* header.
         /// </summary>
         private static DefaultHttpContext SignedCopy(
-            string destPath, string copySource, string? directive, string? contentType, string secret, string accessKeyId)
+            string destPath, string copySource, string? directive, string? contentType, string secret, string accessKeyId,
+            IReadOnlyDictionary<string, string>? amzHeaders)
         {
+            var signed = new Dictionary<string, string>(amzHeaders ?? new Dictionary<string, string>())
+            {
+                ["x-amz-copy-source"] = copySource,
+            };
+            if (directive is not null)
+                signed["x-amz-metadata-directive"] = directive;
             var ctx = S3TestSigner.BuildHeaderSigned(
                 method: "PUT", path: destPath, signTime: SignTime,
-                secret: secret, accessKeyId: accessKeyId, payloadHash: S3TestSigner.EmptyPayloadHash);
+                secret: secret, accessKeyId: accessKeyId, payloadHash: S3TestSigner.EmptyPayloadHash,
+                extraSignedHeaders: signed);
             ctx.Request.Body = new MemoryStream(Array.Empty<byte>());
             ctx.Request.ContentLength = 0;
-            ctx.Request.Headers["x-amz-copy-source"] = copySource;
-            if (directive is not null)
-                ctx.Request.Headers["x-amz-metadata-directive"] = directive;
             if (contentType is not null)
                 ctx.Request.Headers.ContentType = contentType;
             return ctx;

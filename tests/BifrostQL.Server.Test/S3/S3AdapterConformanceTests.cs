@@ -124,9 +124,13 @@ namespace BifrostQL.Server.Test.S3
             // A validly-signed request, then its signature is corrupted: the request is now
             // unauthenticated. The shared SigV4 identity gate must reject it BEFORE the lister
             // or object seam is touched.
-            var ctx = S3TestSigner.BuildHeaderSigned(method: method, path: path, query: query, signTime: SignTime);
-            if (operationClass == "copy-object")
-                ctx.Request.Headers["x-amz-copy-source"] = "/notes/content/alpha";
+            // The copy-source header is signed like every x-amz-* header, so the corrupted
+            // signature below is the only thing wrong with the request.
+            var copySource = operationClass == "copy-object"
+                ? new Dictionary<string, string> { ["x-amz-copy-source"] = "/notes/content/alpha" }
+                : null;
+            var ctx = S3TestSigner.BuildHeaderSigned(
+                method: method, path: path, query: query, signTime: SignTime, extraSignedHeaders: copySource);
             var auth = ctx.Request.Headers["Authorization"].ToString();
             ctx.Request.Headers["Authorization"] = auth[..^8] + "deadbeef";
 

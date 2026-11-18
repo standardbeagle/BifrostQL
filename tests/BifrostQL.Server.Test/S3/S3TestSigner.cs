@@ -32,7 +32,8 @@ namespace BifrostQL.Server.Test.S3
             string accessKeyId = AccessKeyId,
             string region = Region,
             string payloadHash = EmptyPayloadHash,
-            IServiceProvider? services = null)
+            IServiceProvider? services = null,
+            IReadOnlyDictionary<string, string>? extraSignedHeaders = null)
         {
             var when = (signTime ?? DateTimeOffset.UtcNow).UtcDateTime;
             var amzDate = when.ToString("yyyyMMddTHHmmssZ");
@@ -43,13 +44,21 @@ namespace BifrostQL.Server.Test.S3
             ctx.Request.Headers["x-amz-date"] = amzDate;
             ctx.Request.Headers["x-amz-content-sha256"] = payloadHash;
 
-            const string signedHeaders = "host;x-amz-content-sha256;x-amz-date";
-            var canonicalHeaders = new List<(string, string)>
+            // Every x-amz-* header a request carries must be signed (the verifier refuses an
+            // unsigned one), so extra headers are set AND signed here, never added afterwards.
+            var canonicalHeaders = new List<(string Name, string Value)>
             {
                 ("host", host),
                 ("x-amz-content-sha256", payloadHash),
                 ("x-amz-date", amzDate),
             };
+            foreach (var (name, value) in extraSignedHeaders ?? new Dictionary<string, string>())
+            {
+                ctx.Request.Headers[name] = value;
+                canonicalHeaders.Add((name.ToLowerInvariant(), value));
+            }
+            canonicalHeaders.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+            var signedHeaders = string.Join(";", canonicalHeaders.Select(h => h.Name));
             var canonicalQuery = S3SigV4.CanonicalQueryString(QueryPairs(ctx.Request));
             var signature = Sign(method, path, canonicalQuery, canonicalHeaders, signedHeaders,
                 payloadHash, amzDate, dateStamp, region, secret);

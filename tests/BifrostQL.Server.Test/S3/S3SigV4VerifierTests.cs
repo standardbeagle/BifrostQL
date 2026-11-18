@@ -261,6 +261,69 @@ namespace BifrostQL.Server.Test.S3
             userContext.Should().NotBeEmpty();
         }
 
+        // ---- every x-amz-* header must be signed (AWS SigV4) ----------------------------------
+
+        /// <summary>
+        /// A validly signed request with an x-amz-* header added after signing. The signature
+        /// still matches, because the header is not in SignedHeaders, so before the fix the
+        /// request authenticated and the added header took effect.
+        /// </summary>
+        [Theory]
+        [InlineData("x-amz-copy-source", "/assets/data/1")]
+        [InlineData("x-amz-metadata-directive", "REPLACE")]
+        [InlineData("x-amz-meta-purpose", "forged")]
+        [InlineData("X-Amz-Copy-Source", "/assets/data/1")]
+        public async Task Header_auth_refuses_an_unsigned_amz_header(string name, string value)
+        {
+            var ctx = S3TestSigner.BuildHeaderSigned(method: "PUT", path: "/assets/data/5", signTime: SignTime);
+            ctx.Request.Headers[name] = value;
+
+            var ex = await Assert.ThrowsAsync<S3ProtocolException>(Verify(ctx));
+
+            ex.Code.Should().Be("AccessDenied");
+            ex.HttpStatus.Should().Be(403);
+            ex.Message.Should().Be("There were headers present in the request which were not signed.");
+        }
+
+        [Fact]
+        public async Task Header_auth_refuses_an_unsigned_content_sha256()
+        {
+            // AWS requires x-amz-content-sha256 to be signed on S3 header auth. A client that
+            // leaves it out of SignedHeaders lets the payload hash be swapped.
+            var ctx = S3TestSigner.BuildHeaderSigned(signTime: SignTime);
+            var auth = ctx.Request.Headers["Authorization"].ToString();
+            ctx.Request.Headers["Authorization"] = auth.Replace(
+                "SignedHeaders=host;x-amz-content-sha256;x-amz-date", "SignedHeaders=host;x-amz-date");
+
+            var ex = await Assert.ThrowsAsync<S3ProtocolException>(Verify(ctx));
+
+            ex.Code.Should().Be("AccessDenied");
+            ex.Message.Should().Be("There were headers present in the request which were not signed.");
+        }
+
+        [Fact]
+        public async Task Presigned_refuses_an_unsigned_amz_header()
+        {
+            var ctx = S3TestSigner.BuildPresigned(signTime: SignTime, expires: 3600);
+            ctx.Request.Headers["x-amz-meta-purpose"] = "forged";
+
+            var ex = await Assert.ThrowsAsync<S3ProtocolException>(Verify(ctx));
+
+            ex.Code.Should().Be("AccessDenied");
+            ex.Message.Should().Be("There were headers present in the request which were not signed.");
+        }
+
+        [Fact]
+        public async Task A_signed_amz_header_is_accepted()
+        {
+            // Control: the same header, signed, authenticates.
+            var ctx = S3TestSigner.BuildHeaderSigned(
+                method: "PUT", path: "/assets/data/5", signTime: SignTime,
+                extraSignedHeaders: new Dictionary<string, string> { ["x-amz-copy-source"] = "/assets/data/1" });
+
+            (await Verifier(StoreWith()).VerifyAsync(ctx.Request, CancellationToken.None)).Should().NotBeEmpty();
+        }
+
         // ---- invariant 5: X-Amz-Expires grammar ------------------------------------------------
 
         /// <summary>

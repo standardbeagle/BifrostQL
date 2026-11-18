@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Builder;
@@ -602,7 +603,9 @@ namespace BifrostQL.Server.Auth
             var (request, unreadable) = await ReadJsonBodyAsync<LocalAdminRequest>(context).ConfigureAwait(false);
             if (unreadable)
                 return null;
-            if (string.IsNullOrWhiteSpace(request?.UserId))
+            // The id lands in the audit row's subject column; one longer than that column is refused
+            // here, before the action runs, not by the audit write after it.
+            if (string.IsNullOrWhiteSpace(request?.UserId) || request.UserId.Length > SqlColumnDefinition.KeyTextMaxLength)
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
                 return null;

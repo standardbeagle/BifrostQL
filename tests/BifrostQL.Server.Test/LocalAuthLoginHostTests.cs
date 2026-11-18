@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BifrostQL.Core.Model;
+using BifrostQL.Core.QueryModel;
 using BifrostQL.Server.Auth;
 using BifrostQL.Sqlite;
 using FluentAssertions;
@@ -751,6 +752,22 @@ namespace BifrostQL.Server.Test
             request.Headers.Add("Cookie", admin);
 
             (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.UnsupportedMediaType);
+        }
+
+        [Theory]
+        [InlineData("/auth/admin/revoke-sessions")]
+        [InlineData("/auth/admin/unlock")]
+        public async Task AdminEndpoint_RefusesAUserIdLongerThanTheAuditColumn_BeforeActing(string path)
+        {
+            var client = await StartForLockoutAsync();
+            var admin = SessionCookie(await PostLoginAsync(client, Password, "10.0.0.1"));
+            var longest = new string('u', SqlColumnDefinition.KeyTextMaxLength);
+
+            (await PostAsync(client, path, admin, new { userId = longest })).StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "control: an id that fits the audit column is served");
+            (await PostAsync(client, path, admin, new { userId = longest + "u" })).StatusCode.Should().Be(HttpStatusCode.BadRequest,
+                "an id the audit row cannot hold is refused before the action runs, not after it");
+            (await AuditAsync()).Should().NotContain(e => e.SubjectId != null && e.SubjectId.Length > longest.Length);
         }
 
         [Fact]

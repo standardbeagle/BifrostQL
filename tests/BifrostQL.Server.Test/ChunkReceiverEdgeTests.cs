@@ -168,6 +168,27 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
+        public void RefusedFirstChunk_DoesNotTakeAPendingSlot()
+        {
+            // The session used to enter the pending table before its first chunk was checked,
+            // so a refused first chunk left an empty session holding a slot until the TTL.
+            // Two refused first chunks filled a two-slot table and the next real upload was
+            // refused as "too many pending".
+            var receiver = new ChunkReceiver(
+                maxReassemblyBytes: 1024, maxPendingReassemblies: 2, reassemblyTtl: TimeSpan.FromMinutes(5));
+
+            var sequencePastTotal = () => receiver.AddChunk(Chunk(1, new byte[] { 1 }, 5, 2, 0, 2));
+            var offsetPastDeclared = () => receiver.AddChunk(Chunk(2, new byte[] { 1 }, 0, 2, 9, 2));
+            sequencePastTotal.Should().Throw<InvalidOperationException>().WithMessage("*exceeds total*");
+            offsetPastDeclared.Should().Throw<InvalidOperationException>().WithMessage("*exceeds payload size*");
+
+            receiver.PendingCount.Should().Be(0, "a refused first chunk opens no session");
+            receiver.AddChunk(Chunk(3, new byte[] { 1 }, 0, 2, 0, 2)).Should().BeNull(
+                "a real upload still gets a slot");
+            receiver.PendingCount.Should().Be(1);
+        }
+
+        [Fact]
         public void AggregateInFlightBytes_OverConfiguredTotal_IsRejected()
         {
             // Finding 8: many concurrent sessions must not sum past the aggregate cap even

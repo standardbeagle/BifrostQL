@@ -135,13 +135,30 @@ namespace BifrostQL.Server
 
                 EnsureAggregateRoom(chunk);
                 state = new ReassemblyState(chunk.ChunkTotal, chunk.TotalBytes);
+                // The session enters the table only once its first chunk is accepted: a first
+                // chunk that fails validation (sequence past the total, offset outside the
+                // declared size) must not leave an empty session holding a pending slot until
+                // the TTL evicts it.
+                AddToSession(state, chunk);
                 _pending[chunk.RequestId] = state;
             }
             else
             {
                 EnsureAggregateRoom(chunk);
+                AddToSession(state, chunk);
             }
 
+            if (!state.IsComplete)
+                return null;
+
+            _pending.Remove(chunk.RequestId);
+            _currentAllocatedBytes -= state.ReceivedBytes;
+            return state.GetAssembledPayload();
+        }
+
+        /// <summary>Adds a chunk to a session and charges the bytes it retained to the aggregate.</summary>
+        private void AddToSession(ReassemblyState state, BifrostMessage chunk)
+        {
             var before = state.ReceivedBytes;
             try
             {
@@ -151,13 +168,6 @@ namespace BifrostQL.Server
             {
                 _currentAllocatedBytes += state.ReceivedBytes - before;
             }
-
-            if (!state.IsComplete)
-                return null;
-
-            _pending.Remove(chunk.RequestId);
-            _currentAllocatedBytes -= state.ReceivedBytes;
-            return state.GetAssembledPayload();
         }
 
         /// <summary>

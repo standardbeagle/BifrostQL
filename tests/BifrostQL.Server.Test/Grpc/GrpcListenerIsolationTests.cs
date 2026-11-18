@@ -7,6 +7,8 @@ using BifrostQL.Server.Grpc;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -69,8 +71,20 @@ namespace BifrostQL.Server.Test.Grpc
             // The gRPC listener is declared in code (KestrelServerOptions.Listen). Kestrel treats
             // code-declared endpoints as replacing the hosting URLs (UseUrls, ASPNETCORE_URLS,
             // --urls), so registering the adapter silently unbound the host's own HTTP port.
-            var (hostPort, grpcPort) = (FreePort(), FreePort());
-            using var host = await StartAsync(hostPort, grpcPort, hostListenerViaUrls: true);
+            // The hosting URL asks for port 0, so Kestrel picks the port at bind time and no other
+            // test can take it between a probe and the bind. The gRPC port must be known up front
+            // (the isolation keys on it), so only that one is probed.
+            var grpcPort = FreePort();
+            using var host = await StartAsync(hostPort: 0, grpcPort, hostListenerViaUrls: true);
+
+            // Kestrel publishes every endpoint it actually bound. Without the carry-over only the
+            // gRPC listener is there: the hosting URL was dropped.
+            var bound = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses
+                .Select(a => BindingAddress.Parse(a).Port)
+                .ToList();
+            bound.Should().Contain(grpcPort);
+            var hostPort = bound.Where(p => p != grpcPort).Should().ContainSingle(
+                "the hosting URL must still bind beside the code-declared gRPC listener").Which;
 
             using var http1 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             var response = await http1.GetAsync($"http://127.0.0.1:{hostPort}/graphql");

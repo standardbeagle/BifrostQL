@@ -57,6 +57,7 @@ public sealed class SavedObjectTableHidingTests : IDisposable
     }
 
     [Theory]
+    [InlineData("_bifrost_saved_objectsx")]
     [InlineData("saved_objects")]
     [InlineData("app_saved")]
     [InlineData("_bifrost_auth_saved")]

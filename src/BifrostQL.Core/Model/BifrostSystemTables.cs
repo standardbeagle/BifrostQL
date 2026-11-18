@@ -37,7 +37,7 @@ namespace BifrostQL.Core.Model
         {
             foreach (var prefix in Prefixes)
             {
-                if (dbName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (IsInFamily(dbName, prefix))
                     return true;
             }
             return false;
@@ -49,9 +49,27 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static void RequirePrefix(string tableName, string prefix, string paramName)
         {
-            if (!tableName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            if (!IsInFamily(tableName, prefix))
+            {
+                var rule = prefix.EndsWith('_') ? $"start with '{prefix}'" : $"be '{prefix}' or start with '{prefix}_'";
                 throw new ArgumentException(
-                    $"The table name must start with '{prefix}' so it stays hidden from every served model.", paramName);
+                    $"The table name must {rule} so it stays hidden from every served model.", paramName);
+            }
+        }
+
+        /// <summary>
+        /// The one family rule, shared by hiding and by configured-name validation: the name equals the
+        /// family name or continues it after an underscore. A bare <c>StartsWith</c> would also claim
+        /// user tables that merely share the letters (<c>_bifrost_configuration</c>) and hide them
+        /// silently. A prefix that already ends in <c>_</c> (<see cref="AuthStatePrefix"/>) keeps its
+        /// plain prefix meaning.
+        /// </summary>
+        private static bool IsInFamily(string name, string prefix)
+        {
+            if (prefix.EndsWith('_'))
+                return name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+            return name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                && (name.Length == prefix.Length || name[prefix.Length] == '_');
         }
     }
 }

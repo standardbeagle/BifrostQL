@@ -50,7 +50,31 @@ public sealed class MetadataTableHidingTests : IDisposable
         model.HiddenTables.Select(t => t.DbName).Should().Contain(metadataTables);
     }
 
+    [Fact]
+    public async Task UserTablesThatOnlyShareTheFamilyLetters_AreServed()
+    {
+        var conn = $"Data Source=bifrost_meta_near_{Guid.NewGuid():N};Mode=Memory;Cache=Shared";
+        var keepAlive = new SqliteConnection(conn);
+        await keepAlive.OpenAsync();
+        _keepAlive.Add(keepAlive);
+        // Each name continues a family name without the separating underscore, so it is a user
+        // table, not a Bifrost one. The underscore-continued sibling is the control.
+        string[] userTables = { "_bifrost_configuration", "_bifrost_saved_objectsx", "_bifrost_app_metadatas" };
+        string[] systemTables = { "_bifrost_config_staging", "_bifrost_saved_objects_archive" };
+        foreach (var t in userTables.Concat(systemTables))
+        {
+            await using var cmd = new SqliteCommand($"CREATE TABLE {t} (id INTEGER PRIMARY KEY, name TEXT)", keepAlive);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var model = await new DbModelLoader(new SqliteDbConnFactory(conn), new MetadataLoader(Array.Empty<string>())).LoadAsync();
+
+        model.Tables.Select(t => t.DbName).Should().Contain(userTables).And.NotContain(systemTables);
+        model.HiddenTables.Select(t => t.DbName).Should().Contain(systemTables).And.NotContain(userTables);
+    }
+
     [Theory]
+    [InlineData("_bifrost_configuration")]
     [InlineData("bifrost_config")]
     [InlineData("dbo.app_config")]
     [InlineData("_bifrost_auth_config")]
@@ -71,6 +95,7 @@ public sealed class MetadataTableHidingTests : IDisposable
 
     [Theory]
     [InlineData("app_metadata")]
+    [InlineData("_bifrost_app_metadatas")]
     [InlineData("_bifrost_config")]
     public void AppMetadataSource_RefusesATableOutsideTheReservedPrefix(string name)
     {

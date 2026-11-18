@@ -132,6 +132,16 @@ namespace BifrostQL.Server.Resp
         public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
         /// <summary>
+        /// Longest a single reply write or flush may stall on a peer that is not reading. Without it a
+        /// client could pipeline commands and never read the answers: the server's flush waits on a
+        /// full transport window and holds the admission slot as long as the peer likes, past both
+        /// <see cref="AuthenticationTimeout"/> and <see cref="IdleTimeout"/>. Before authentication the
+        /// write is ALSO cut at the remaining pre-auth budget. A stall bound, not a reply budget: a
+        /// reply that keeps draining keeps going. Must be positive and finite. Default 1 minute.
+        /// </summary>
+        public TimeSpan WriteTimeout { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
         /// Secret the opaque SCAN cursor is MAC'd with. Configure it to make cursors survive a
         /// restart and resolve across instances; absent one a per-instance random key is generated
         /// and the trade-off is logged at startup. The cursor carries only a primary-key position —

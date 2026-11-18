@@ -132,7 +132,13 @@ namespace BifrostQL.Server.Ldap
             // Read through a buffer so the framing reader costs one socket read per burst instead of
             // one per byte — and so anything the peer PIPELINED behind the current message is visible
             // to this process rather than sitting unseen in the kernel (see LdapBufferedStream).
-            var wire = new LdapBufferedStream(stream);
+            // Every response write is bounded: by the pre-auth deadline until a credentialed bind
+            // retires it, and by WriteTimeout always. The read budget below does nothing for a peer
+            // that sends requests and never reads the answers — the flush parks on a full window
+            // and would otherwise hold the slot past AuthenticationTimeout and IdleTimeout alike.
+            // It sits UNDER the read buffer, so a StartTLS upgrade's SslStream writes through it too.
+            await using var bounded = new ProtocolWriteDeadlineStream(stream, deadline, _options.WriteTimeout, _timeProvider);
+            var wire = new LdapBufferedStream(bounded);
             var reader = NewReader();
             // Session state for THIS connection: whether a bind has authenticated it, and whether that
             // bind was anonymous (an anonymous session is limited to the RootDSE/subschema — criterion 4).

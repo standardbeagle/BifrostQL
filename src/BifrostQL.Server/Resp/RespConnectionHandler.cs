@@ -155,15 +155,24 @@ namespace BifrostQL.Server.Resp
             bool confidentialTransport, string? source = null)
         {
             var id = Interlocked.Increment(ref _connectionCounter);
+            // A direct SslStream (tests, non-Kestrel hosts) is confidential too — detected on the
+            // transport BEFORE it is wrapped below.
+            var transportConfidential = confidentialTransport || stream is SslStream;
+            // Every reply write is bounded: by the pre-auth deadline while one is armed, and by
+            // WriteTimeout always. Without it a peer that pipelines commands and never reads parks
+            // the flush on a full window and holds the slot past AuthenticationTimeout (unauth) or
+            // IdleTimeout (auth). A door that requires no authentication has no pre-auth phase, so
+            // only the write timeout applies there (H11).
+            await using var bounded = new ProtocolWriteDeadlineStream(
+                stream, _options.RequireAuthentication ? deadline : null, _options.WriteTimeout, _timeProvider);
+            stream = bounded;
             var session = new RespSession(id)
             {
                 // Absent a known peer address the connection itself is the bucket, so an unknown
                 // source still bounds one socket's guessing instead of pooling every peer into one
                 // budget a single attacker could spend on everyone's behalf.
                 Source = string.IsNullOrEmpty(source) ? $"conn:{id}" : source,
-                // A direct SslStream (tests, non-Kestrel hosts) is confidential too; both
-                // detections feed the same gate.
-                TransportConfidential = confidentialTransport || stream is SslStream,
+                TransportConfidential = transportConfidential,
             };
             var reader = new RespReader(stream, _options.MaxBulkLength, _options.MaxAggregateElements, _options.MaxNestingDepth, _options.MaxFrameLength);
             // The pre-auth phase gets ONE cumulative deadline from connection start — not a fresh

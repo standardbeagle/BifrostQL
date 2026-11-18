@@ -37,6 +37,12 @@ namespace BifrostQL.Server.Resp
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
+            // A reply write that may stall forever holds its admission slot forever; an infinite
+            // (or non-positive) write timeout would switch that bound off, so it refuses to start.
+            if (_options.WriteTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(RespWireOptions.WriteTimeout), _options.WriteTimeout,
+                    "RespWireOptions.WriteTimeout must be positive and finite.");
+
             if (!_options.RequireAuthentication)
                 _logger.LogWarning(
                     "resp front door on port {Port} started with authentication DISABLED — commands run " +

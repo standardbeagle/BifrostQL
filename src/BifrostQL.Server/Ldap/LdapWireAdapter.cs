@@ -89,6 +89,9 @@ namespace BifrostQL.Server.Ldap
             if (options.IdleTimeout <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(nameof(options.IdleTimeout), options.IdleTimeout,
                     "ldap IdleTimeout must be positive.");
+            if (options.WriteTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.WriteTimeout), options.WriteTimeout,
+                    "ldap WriteTimeout must be positive.");
             // Search bounds. Each of these is a DoS guard on an authenticated but untrusted peer, so
             // a value that would disable one aborts startup rather than quietly serving unbounded
             // reads — the same rule the pre-auth limits above follow.

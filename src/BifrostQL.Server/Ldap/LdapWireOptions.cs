@@ -71,6 +71,16 @@ namespace BifrostQL.Server.Ldap
         public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
         /// <summary>
+        /// Longest a single response write or flush may stall on a peer that is not reading. Without
+        /// it a client could send searches and never read the entries: the server's flush waits on a
+        /// full transport window and holds the connection slot past both
+        /// <see cref="AuthenticationTimeout"/> and <see cref="IdleTimeout"/>. Before a credentialed
+        /// bind the write is ALSO cut at the remaining pre-auth budget. A stall bound, not a response
+        /// budget: a search result that keeps draining keeps going. Must be positive. Default 1 minute.
+        /// </summary>
+        public TimeSpan WriteTimeout { get; set; } = TimeSpan.FromMinutes(1);
+
+        /// <summary>
         /// Registered BifrostQL endpoint path whose directory model this front door serves.
         /// Null selects the single registered endpoint.
         /// </summary>

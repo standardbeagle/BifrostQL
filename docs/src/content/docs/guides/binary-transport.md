@@ -52,7 +52,8 @@ app.UseBifrostBinary(
     maxConnections: 100,       // concurrent sockets on this mount
     firstFrameTimeout: TimeSpan.FromSeconds(30),
     idleTimeout: TimeSpan.FromMinutes(10),
-    ackTimeout: null);         // wait for the next chunk ack as long as the consumer takes (default)
+    ackTimeout: null,          // wait for the next chunk ack as long as the consumer takes (default)
+    writeTimeout: TimeSpan.FromSeconds(30)); // deadline for each frame the server sends
 ```
 
 ### Authentication
@@ -81,7 +82,17 @@ before the authentication check, because an accepted socket already costs a rece
 Every read has a deadline. The first frame gets `firstFrameTimeout`, so a peer that
 connects and then says nothing cannot hold an admission slot; later frames get
 `idleTimeout`, which is generous because an established session is a pooled client that may
-sit quiet between queries. A connection past its deadline is closed with `PolicyViolation`.
+sit quiet between queries. A connection past its read deadline is sent a `PolicyViolation`
+close frame; a peer that does not echo it within 5 seconds is dropped.
+
+Every write has a deadline too. Each frame the server sends (results, chunks, upload acks,
+error and close frames) must leave within `writeTimeout` (30 seconds by default). A peer that
+stops reading, so its TCP window closes, cannot take a close frame either: the server aborts
+the socket and frees its slot. A client that sends acks or NACKs a transfer cannot have asked
+for (more than four ack windows unconsumed, or a NACK past the last chunk) is closed with
+`ProtocolError`. The read, write, close-handshake and ack deadlines run on the host's
+registered `TimeProvider`; the upload-reassembly and retransmit-buffer expiry still use the
+system tick count.
 
 ### Concurrent requests
 
@@ -120,7 +131,9 @@ Chunked uploads grow from the bytes that actually arrive. The `total_bytes` a cl
 declares bounds the transfer and feeds the admission caps (64 MB per transfer, 128 MB
 across one connection), but the server never allocates from it: a transfer that declares
 64 MB and delivers 40 bytes holds 40 bytes and is rejected when its last chunk arrives
-short.
+short. A reassembled request keeps counting against the 128 MB connection cap until it
+finishes running, so two 64 MB requests in flight use up the cap and the next upload chunk
+is refused until one of them ends. A first chunk the server refuses opens no transfer.
 
 `@bifrostql/binary-client` uses this for large requests. A request frame over the
 server's 4 MiB frame limit is split into 1 MiB `Chunk` frames, sent back to back, and

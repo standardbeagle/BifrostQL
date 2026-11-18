@@ -268,6 +268,42 @@ namespace BifrostQL.Server.Test.S3
             page.IsTruncated.Should().BeTrue();
         }
 
+        // ---- token expiry ---------------------------------------------------------
+
+        /// <summary>
+        /// The listing stamps and ages tokens with its injected clock. A token resumes within
+        /// <see cref="S3Options.ContinuationTokenTtl"/> and is refused after it. With the system
+        /// clock in place of the injected one, the stale token would still resume.
+        /// </summary>
+        [Theory]
+        [InlineData(14, true)]
+        [InlineData(16, false)]
+        public async Task Continuation_token_expires_after_the_configured_ttl(int minutesLater, bool resumes)
+        {
+            var clock = new SteppedClock(new DateTimeOffset(2030, 01, 01, 0, 0, 0, TimeSpan.Zero));
+            var options = Options();
+            options.ContinuationTokenTtl = TimeSpan.FromMinutes(15);
+            var lister = _harness.Listing(options, clock);
+            var ctx = Ctx("user-b", "tenant-b");
+
+            var first = await lister.ListObjectsV2Async("documents", null, null, 2, null, null, ctx);
+            clock.Advance(TimeSpan.FromMinutes(minutesLater));
+            var resume = async () => await lister.ListObjectsV2Async(
+                "documents", null, null, 2, first.NextContinuationToken, null, ctx);
+
+            if (resumes)
+                (await resume()).Objects.Should().NotBeEmpty();
+            else
+                (await resume.Should().ThrowAsync<S3ProtocolException>()).Which.Code.Should().Be("InvalidArgument");
+        }
+
+        private sealed class SteppedClock(DateTimeOffset start) : TimeProvider
+        {
+            private DateTimeOffset _now = start;
+            public void Advance(TimeSpan by) => _now += by;
+            public override DateTimeOffset GetUtcNow() => _now;
+        }
+
         // ---- token binding --------------------------------------------------------
 
         [Fact]

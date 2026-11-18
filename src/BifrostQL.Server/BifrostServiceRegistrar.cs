@@ -441,7 +441,8 @@ namespace BifrostQL.Server
                 sp.GetRequiredService<IQueryIntentExecutor>(),
                 sp.GetRequiredService<BifrostQL.Server.S3.S3Options>(),
                 sp.GetService<BifrostQL.Core.Storage.FileStorageService>(),
-                sp.GetService<ILogger<BifrostQL.Server.S3.S3Listing>>()));
+                sp.GetService<ILogger<BifrostQL.Server.S3.S3Listing>>(),
+                sp.GetService<TimeProvider>()));
 
             // GetObject/HeadObject resolve the row through the same authorized read seam
             // (the FileObjectSeam) before touching storage, so visibility is decided by

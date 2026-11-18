@@ -88,5 +88,12 @@ namespace BifrostQL.Server.S3
         /// client could learn: it is the only thing preventing a forged resume position.
         /// </summary>
         public string? ContinuationTokenSecret { get; set; }
+
+        /// <summary>
+        /// How long a <c>ListObjectsV2</c> continuation token stays valid after it was issued.
+        /// The issue time is inside the token's MAC, so a client cannot extend it; an expired
+        /// token is refused like a forged one. Must be positive.
+        /// </summary>
+        public TimeSpan ContinuationTokenTtl { get; set; } = TimeSpan.FromMinutes(15);
     }
 }

@@ -45,7 +45,8 @@ namespace BifrostQL.Server.S3
     /// page is capped by <c>max-keys</c>. The resume position travels in an opaque,
     /// integrity-protected <see cref="S3ContinuationToken"/> bound to the bucket,
     /// prefix, delimiter, page size, and caller identity, so a tampered or cross-bucket
-    /// token fails closed.</para>
+    /// token fails closed. It expires <see cref="S3Options.ContinuationTokenTtl"/> after it
+    /// was issued.</para>
     ///
     /// <para><b>Bound:</b> a page is computed by materializing the bucket's scoped,
     /// prefix-filtered candidate set and slicing it — bounded by
@@ -74,17 +75,24 @@ namespace BifrostQL.Server.S3
         private readonly S3Options _options;
         private readonly ILogger? _logger;
         private readonly byte[] _tokenSecret;
+        private readonly TimeProvider _clock;
 
+        /// <param name="clock">Stamps and ages continuation tokens; null uses <see cref="TimeProvider.System"/>.</param>
         public S3Listing(
             IQueryIntentExecutor reads,
             S3Options options,
             FileStorageService? storage = null,
-            ILogger<S3Listing>? logger = null)
+            ILogger<S3Listing>? logger = null,
+            TimeProvider? clock = null)
         {
             _reads = reads ?? throw new ArgumentNullException(nameof(reads));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _storage = storage ?? new FileStorageService();
             _logger = logger;
+            _clock = clock ?? TimeProvider.System;
+            if (options.ContinuationTokenTtl <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options), options.ContinuationTokenTtl, "S3Options.ContinuationTokenTtl must be positive.");
 
             // A configured secret keeps continuation tokens valid across restarts and
             // across a horizontally-scaled fleet; without one we generate a per-instance
@@ -190,7 +198,8 @@ namespace BifrostQL.Server.S3
             // rejected before any query runs.
             string? resumeAfter;
             if (!string.IsNullOrEmpty(continuationToken))
-                resumeAfter = S3ContinuationToken.Decode(continuationToken, binding, _tokenSecret);
+                resumeAfter = S3ContinuationToken.Decode(
+                    continuationToken, binding, _tokenSecret, _clock.GetUtcNow(), _options.ContinuationTokenTtl);
             else
                 resumeAfter = string.IsNullOrEmpty(startAfter) ? null : startAfter;
 
@@ -370,7 +379,7 @@ namespace BifrostQL.Server.S3
                 // lastSortKey is null only for the degenerate max-keys=0 poll; resume
                 // from the same position so the client makes no phantom progress.
                 var position = lastSortKey ?? resumeAfter ?? string.Empty;
-                nextToken = S3ContinuationToken.Issue(position, binding, _tokenSecret);
+                nextToken = S3ContinuationToken.Issue(position, _clock.GetUtcNow(), binding, _tokenSecret);
             }
 
             return new S3ListObjectsPage(

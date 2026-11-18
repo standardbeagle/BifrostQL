@@ -115,8 +115,8 @@ namespace BifrostQL.Server.Auth
         }
 
         /// <summary>
-        /// Deletes session rows that ended more than a day ago, at most once an hour per process. The
-        /// audit trail, not the sessions table, is the record of who signed in when.
+        /// Deletes session rows and MFA challenge tickets that ended more than a day ago, at most once
+        /// an hour per process. The audit trail, not these tables, is the record of who signed in when.
         /// </summary>
         private async Task PurgeIfDueAsync(DateTimeOffset now, CancellationToken ct)
         {
@@ -126,6 +126,7 @@ namespace BifrostQL.Server.Auth
             if (Interlocked.CompareExchange(ref _nextPurgeTicks, (now + PurgeEvery).UtcTicks, due) != due)
                 return;
             await _state.PurgeSessionsExpiredBeforeAsync(now - PurgeGrace, ct).ConfigureAwait(false);
+            await _state.PurgeMfaChallengesExpiredBeforeAsync(now - PurgeGrace, ct).ConfigureAwait(false);
         }
     }
 

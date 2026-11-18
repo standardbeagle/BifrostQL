@@ -53,13 +53,10 @@ namespace BifrostQL.Server.Auth
         private const int RecoveryCodeBytes = 10; // 80 bits = 16 base32 characters
         private const int RecoverySaltBytes = 16;
         private const int MaxOptimisticAttempts = 16;
-        private static readonly TimeSpan PurgeEvery = TimeSpan.FromHours(1);
-        private static readonly TimeSpan PurgeGrace = TimeSpan.FromDays(1);
 
         private readonly ILocalAuthStateStore _state;
         private readonly LocalAuthOptions _options;
         private readonly Func<EnvelopeKeyManager?> _keys;
-        private long _nextPurgeTicks;
 
         public LocalMfaService(ILocalAuthStateStore state, LocalAuthOptions options, Func<EnvelopeKeyManager?> keys)
         {
@@ -251,12 +248,12 @@ namespace BifrostQL.Server.Auth
 
         /// <summary>
         /// Issues a login challenge for an account whose password just verified; returns the ticket the
-        /// client presents with its code. The store keeps only the ticket's SHA-256.
+        /// client presents with its code. The store keeps only the ticket's SHA-256. Spent and
+        /// expired tickets are purged with expired sessions (<see cref="LocalSessionManager"/>).
         /// </summary>
         public async Task<(string Ticket, DateTimeOffset ExpiresAt)> IssueChallengeAsync(
             LocalAccountState account, DateTimeOffset now, CancellationToken ct)
         {
-            await PurgeIfDueAsync(now, ct).ConfigureAwait(false);
             var ticket = LocalSessionId.New();
             var expiresAt = now + _options.MfaChallengeLifetime;
             await _state.CreateMfaChallengeAsync(new LocalMfaChallenge(
@@ -298,16 +295,6 @@ namespace BifrostQL.Server.Auth
             }
             throw new InvalidOperationException(
                 $"The challenge failure could not be recorded after {MaxOptimisticAttempts} concurrent attempts.");
-        }
-
-        private async Task PurgeIfDueAsync(DateTimeOffset now, CancellationToken ct)
-        {
-            var due = Interlocked.Read(ref _nextPurgeTicks);
-            if (now.UtcTicks < due)
-                return;
-            if (Interlocked.CompareExchange(ref _nextPurgeTicks, (now + PurgeEvery).UtcTicks, due) != due)
-                return;
-            await _state.PurgeMfaChallengesExpiredBeforeAsync(now - PurgeGrace, ct).ConfigureAwait(false);
         }
     }
 }

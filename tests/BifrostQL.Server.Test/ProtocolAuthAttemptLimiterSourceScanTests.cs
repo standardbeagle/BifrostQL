@@ -76,8 +76,9 @@ public class ProtocolAuthAttemptLimiterSourceScanTests
                 Path.Combine(serverRoot!, "Pgwire", "PgAuthRateLimiter.cs"),
                 Path.Combine(serverRoot!, "OData", "ODataBasicAuthRateLimiter.cs"),
                 Path.Combine(serverRoot!, "Auth", "LocalLoginRateLimiter.cs"),
+                Path.Combine(serverRoot!, "Auth", "LocalMfaRateLimiter.cs"),
             },
-            "LDAP, RESP, pgwire, OData Basic and local-auth login each keep a per-adapter subtype with its own budget — " +
+            "LDAP, RESP, pgwire, OData Basic, local-auth login and local-auth MFA codes each keep a per-adapter subtype with its own budget — " +
             "registering the shared base directly would let two front doors consume one budget");
     }
 

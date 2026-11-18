@@ -16,10 +16,10 @@ namespace BifrostQL.Server.S3
     ///
     /// <para><b>Buckets are configured mappings, never inferred.</b> A bucket is a
     /// table that (a) declares at least one file-storage column, (b) has a legal S3
-    /// bucket name, and (c) is READABLE by the caller under the SAME
-    /// <see cref="PolicyEvaluator"/> gate the query path enforces — reconstructed
-    /// through the shared <see cref="PolicyIdentity"/> projection, fail-closed on any
-    /// evaluation fault (see .claude/rules/protocol-adapter-security.md invariant 4 and
+    /// bucket name, and (c) is READABLE by the caller, with every key column and at least
+    /// one file column readable, under the SAME <see cref="PolicyEvaluator"/> gate the query
+    /// path enforces, projected through <see cref="SchemaReadVisibility"/>, fail-closed on
+    /// any evaluation fault (see .claude/rules/protocol-adapter-security.md invariant 4 and
     /// the pgwire catalog precedent <c>PgCatalogVisibility</c>). A table with no file
     /// column, a filesystem root, or a table the caller cannot read is never listed —
     /// so bucket enumeration is not an information-disclosure side channel.</para>
@@ -28,8 +28,16 @@ namespace BifrostQL.Server.S3
     /// <see cref="IQueryIntentExecutor"/>, so tenant isolation, soft-delete, row-scope
     /// policy, and column read guards all apply unconditionally — the lister builds no
     /// tenant/policy predicate of its own; the only predicate it constructs is ordering
-    /// and it reads only the file-column pointer and primary key. A read-denied file
-    /// column comes back null and simply yields no object.</para>
+    /// and it reads only the file-column pointer and primary key.</para>
+    ///
+    /// <para><b>Only readable columns are projected.</b> The column set comes from
+    /// <see cref="SchemaReadVisibility.ProjectTable(IDbTable, IDictionary{string, object?})"/>,
+    /// the evaluator the read pipeline enforces (invariant 4). A read-denied file column is
+    /// left out of the scan, so its objects are simply not listed; projecting it would make the
+    /// policy transformer refuse the whole read. A bucket whose key column is read-denied cannot
+    /// address any object, so it is hidden from <c>ListBuckets</c> and answers
+    /// <c>NoSuchBucket</c> on <c>ListObjectsV2</c>, the same as a bucket that does not exist.
+    /// The same holds when every file column is denied.</para>
     ///
     /// <para><b>Pagination is stable and bounded.</b> Objects are ordered by object key
     /// (S3's ascending UTF-8 order; our keys are percent-encoded ASCII, so ordinal
@@ -56,7 +64,6 @@ namespace BifrostQL.Server.S3
     /// </summary>
     public sealed class S3Listing
     {
-        private static readonly PolicyEvaluator Evaluator = new();
         // A stable creation date for synthesized buckets: a table has none, and S3
         // clients do not rely on this value for correctness. Fixed rather than
         // "now" so the listing is deterministic.
@@ -107,14 +114,10 @@ namespace BifrostQL.Server.S3
             ArgumentNullException.ThrowIfNull(userContext);
 
             var model = await _reads.GetModelAsync(_options.Endpoint);
-            var identity = PolicyIdentity.FromUserContext(userContext);
 
             var buckets = new List<S3BucketInfo>();
             foreach (var table in model.Tables)
             {
-                if (!HasFileColumn(table, model))
-                    continue;
-
                 string bucketName;
                 try
                 {
@@ -127,7 +130,7 @@ namespace BifrostQL.Server.S3
                     continue;
                 }
 
-                if (!CanRead(table, identity))
+                if (ReadableFileColumns(table, model, userContext) is null)
                     continue;
 
                 buckets.Add(new S3BucketInfo(bucketName, BucketCreationDate));
@@ -157,7 +160,6 @@ namespace BifrostQL.Server.S3
             ArgumentNullException.ThrowIfNull(userContext);
 
             var model = await _reads.GetModelAsync(_options.Endpoint);
-            var identity = PolicyIdentity.FromUserContext(userContext);
 
             IDbTable table;
             try
@@ -171,11 +173,10 @@ namespace BifrostQL.Server.S3
 
             // Fail-closed authorization on the bucket itself, identical to the object
             // read path's gate. A table the caller cannot read, or that is not a
-            // file-configured bucket, is reported as absent — never AccessDenied, which
-            // would confirm it exists.
-            var fileColumns = FileColumns(table, model);
-            if (fileColumns.Count == 0 || !CanRead(table, identity))
-                throw S3ProtocolException.NoSuchBucket();
+            // file-configured bucket, or whose key or every file column is read-denied, is
+            // reported as absent — never AccessDenied, which would confirm it exists.
+            var fileColumns = ReadableFileColumns(table, model, userContext)
+                ?? throw S3ProtocolException.NoSuchBucket();
 
             var effectivePrefix = prefix ?? string.Empty;
             var effectiveMaxKeys = ClampMaxKeys(maxKeys);
@@ -395,35 +396,25 @@ namespace BifrostQL.Server.S3
             return Math.Min(value, _options.MaxKeysLimit);
         }
 
-        private bool HasFileColumn(IDbTable table, IDbModel model)
+        /// <summary>
+        /// The file columns of <paramref name="table"/> the caller may read, or null when the
+        /// table is not a bucket for this caller: the table is unreadable, a key column is
+        /// read-denied (no object key can be built), or no readable file column remains. The
+        /// projection is <see cref="SchemaReadVisibility"/>'s, fail-closed on any evaluation
+        /// fault, so the listing never asks the read pipeline for a column it would refuse.
+        /// </summary>
+        private IReadOnlyList<ColumnDto>? ReadableFileColumns(
+            IDbTable table, IDbModel model, IDictionary<string, object?> userContext)
         {
-            foreach (var column in table.Columns)
-                if (_storage.IsFileStorageColumn(table, column, model))
-                    return true;
-            return false;
-        }
+            var visible = SchemaReadVisibility.ProjectTable(table, userContext);
+            if (visible is null || !visible.HasColumns(table.KeyColumns))
+                return null;
 
-        private IReadOnlyList<ColumnDto> FileColumns(IDbTable table, IDbModel model)
-        {
             var result = new List<ColumnDto>();
-            foreach (var column in table.Columns)
+            foreach (var column in visible.Columns)
                 if (_storage.IsFileStorageColumn(table, column, model))
                     result.Add(column);
-            return result;
-        }
-
-        private static bool CanRead(IDbTable table, AppIdentity identity)
-        {
-            try
-            {
-                var policy = PolicyConfigCollector.FromTable(table);
-                return Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed;
-            }
-            catch
-            {
-                // Fail closed: a table whose policy cannot be parsed/evaluated is hidden.
-                return false;
-            }
+            return result.Count == 0 ? null : result;
         }
 
         /// <summary>

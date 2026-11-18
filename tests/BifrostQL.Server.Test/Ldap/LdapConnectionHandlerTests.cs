@@ -86,6 +86,24 @@ namespace BifrostQL.Server.Test.Ldap
         }
 
         [Fact]
+        public async Task ExtendedRequest_UnsupportedOid_ReplyDoesNotEchoTheRequestName()
+        {
+            // The refusal echoed the request name into its diagnostic, so an unauthenticated peer
+            // could make the server write back any string up to the message cap, once per request.
+            // That multiplies the bytes a peer that never reads can park in the server's window.
+            await using var fixture = await LdapFixture.StartAsync();
+            var marker = new string('7', 2000);
+
+            await fixture.Client.SendAsync(LdapWire.Message(4, LdapWire.ExtendedRequest("1.2.3." + marker)));
+            var raw = await fixture.Client.ReadRawResponseAsync().WaitAsync(Timeout);
+
+            raw.Should().NotBeNull();
+            raw!.Value.Response.ResultCode.Should().Be(LdapResultCode.UnwillingToPerform);
+            System.Text.Encoding.ASCII.GetString(raw.Value.Envelope).Should().NotContain("7777777777",
+                "the refusal text is fixed; the caller's request name is never written back");
+        }
+
+        [Fact]
         public async Task UnbindRequest_ClosesConnection_WithNoResponse()
         {
             await using var fixture = await LdapFixture.StartAsync();

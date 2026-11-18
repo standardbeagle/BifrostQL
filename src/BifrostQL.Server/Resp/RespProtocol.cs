@@ -216,15 +216,28 @@ namespace BifrostQL.Server.Resp
         /// The Redis-compatible unknown-command error: names the command and echoes the arguments that
         /// followed, so a client (redis-cli, StackExchange.Redis) gets the same actionable guidance a real
         /// Redis sends — <c>ERR unknown command 'FOO', with args beginning with: 'a', 'b'</c>. The command
-        /// name is quoted verbatim (never dispatched), so this can neither hang the loop nor leak internals.
+        /// name is quoted (never dispatched), so this can neither hang the loop nor leak internals.
+        /// The echo is capped at <see cref="MaxEchoedChars"/> characters for the name and as many for
+        /// the arguments, as Redis caps it: the reply is written before authentication, and an
+        /// uncapped echo let one frame of up to MaxFrameLength bytes draw a reply as large.
         /// </summary>
         public static string UnknownCommand(IReadOnlyList<string> arguments)
         {
-            var args = arguments.Count > 1
-                ? string.Join(", ", arguments.Skip(1).Select(a => $"'{a}'"))
-                : string.Empty;
-            return $"ERR unknown command '{arguments[0]}', with args beginning with: {args}";
+            var args = new System.Text.StringBuilder();
+            for (var i = 1; i < arguments.Count && args.Length < MaxEchoedChars; i++)
+            {
+                if (i > 1)
+                    args.Append(", ");
+                args.Append('\'').Append(Clip(arguments[i], MaxEchoedChars - args.Length)).Append('\'');
+            }
+            return $"ERR unknown command '{Clip(arguments[0], MaxEchoedChars)}', with args beginning with: {args}";
         }
+
+        /// <summary>How much of a caller's command name, and of its arguments, an error echoes.</summary>
+        public const int MaxEchoedChars = 128;
+
+        private static string Clip(string value, int max) =>
+            value.Length <= max ? value : value[..Math.Max(max, 0)];
 
         /// <summary>The Redis wrong-argument-count error for <paramref name="command"/> (lower-cased, quoted).</summary>
         public static string WrongArgCount(string command) =>

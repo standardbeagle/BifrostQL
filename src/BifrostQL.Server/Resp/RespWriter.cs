@@ -120,9 +120,16 @@ namespace BifrostQL.Server.Resp
         private static void WriteLine(MemoryStream buffer, byte marker, string payload)
         {
             buffer.WriteByte(marker);
-            buffer.Write(Encoding.UTF8.GetBytes(payload));
+            buffer.Write(Encoding.UTF8.GetBytes(LineSafe(payload)));
             WriteCrlf(buffer);
         }
+
+        // A line reply (simple string, error, …) ends at its first CR LF, so a CR or LF inside one
+        // ends it early and the rest reads as a further reply. Errors echo caller tokens (a bulk
+        // string may carry CR LF), so without this a peer chose the next reply on its own
+        // connection. Redis applies the same rule: such bytes become spaces.
+        private static string LineSafe(string payload) =>
+            payload.AsSpan().IndexOfAny('\r', '\n') < 0 ? payload : payload.Replace('\r', ' ').Replace('\n', ' ');
 
         private static void WriteCrlf(MemoryStream buffer)
         {

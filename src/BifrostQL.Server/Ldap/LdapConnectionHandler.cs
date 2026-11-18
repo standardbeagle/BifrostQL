@@ -257,12 +257,14 @@ namespace BifrostQL.Server.Ldap
                 case LdapExtendedRequest { RequestName: LdapProtocol.StartTlsOid }:
                     return await HandleStartTlsAsync(stream, request.MessageId, session, ct);
 
-                case LdapExtendedRequest extended:
-                    // Every other extended op is refused (SASL and the rest are non-goals). The name is
-                    // echoed from the caller's own request, so nothing internal reaches the wire.
+                case LdapExtendedRequest:
+                    // Every other extended op is refused (SASL and the rest are non-goals). The text
+                    // is fixed: echoing the request name let an unauthenticated peer have the server
+                    // write back up to MaxMessageLength bytes per request, which is what a peer that
+                    // never reads uses to fill the server's window.
                     await SendAsync(stream, LdapMessageWriter.ExtendedResponse(
                         request.MessageId, LdapResultCode.UnwillingToPerform,
-                        $"extended operation '{extended.RequestName}' is not supported"), ct);
+                        "extended operation is not supported"), ct);
                     return LdapDispatch.Continue;
 
                 default:

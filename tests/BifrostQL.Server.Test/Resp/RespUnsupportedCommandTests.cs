@@ -76,5 +76,40 @@ namespace BifrostQL.Server.Test.Resp
             System.Text.Encoding.UTF8.GetString(
                 echoed.Should().BeOfType<RespBulkString>().Which.Value!).Should().Be("still-alive");
         }
+
+        [Fact]
+        public async Task UnknownCommand_WithALargeArgument_EchoesOnlyABoundedPrefix()
+        {
+            // The guidance echoed every argument whole, so one unauthenticated frame of up to
+            // MaxFrameLength bytes drew a reply of the same size, and a peer that never reads could
+            // park that much in the server's window per command. Redis bounds the echo to 128 bytes.
+            await using var fixture = await RespFixture.StartAsync(
+                new FakeRespCredentialStore(), RespFixture.EmptyServices(), Options(), RespDataHandlers.All());
+
+            await fixture.Client.SendCommandAsync("ZORKMID", new string('a', 100_000));
+            var reply = await fixture.Client.ReadReplyAsync().WaitAsync(ReplyTimeout);
+
+            var error = reply.Should().BeOfType<RespError>().Which.Message;
+            error.Should().StartWith("ERR unknown command 'ZORKMID', with args beginning with: 'aaaa");
+            error.Length.Should().BeLessThan(300, "the echoed arguments are capped, whatever the peer sent");
+        }
+
+        [Fact]
+        public async Task UnknownCommand_WithCrlfInAnArgument_CannotForgeASecondReply()
+        {
+            // A bulk string may carry CR LF. Echoed raw into a line reply, it ended the error early
+            // and the rest read as a reply of the peer's choosing: here a +OK, queued ahead of PONG.
+            await using var fixture = await RespFixture.StartAsync(
+                new FakeRespCredentialStore(), RespFixture.EmptyServices(), Options(), RespDataHandlers.All());
+
+            await fixture.Client.SendCommandAsync("ZORKMID", "x\r\n+OK");
+            var reply = await fixture.Client.ReadReplyAsync().WaitAsync(ReplyTimeout);
+            await fixture.Client.SendCommandAsync("PING");
+            var next = await fixture.Client.ReadReplyAsync().WaitAsync(ReplyTimeout);
+
+            reply.Should().BeOfType<RespError>().Which.Message.Should().NotContainAny("\r", "\n");
+            next.Should().BeOfType<RespSimpleString>().Which.Value.Should().Be(RespProtocol.Pong,
+                "the reply after the error is PING's own, not one smuggled inside the error");
+        }
     }
 }

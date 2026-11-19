@@ -1,30 +1,29 @@
+using BifrostQL.Core.Model;
+
 namespace BifrostQL.Core.QueryModel;
 
 /// <summary>
-/// How one primary-key column renders as text inside an S3 object key. Each kind names a
-/// family whose database text cast is byte-identical to
-/// <see cref="Storage.S3ObjectKeyMap"/>'s C# rendering of the value the reader returns, so
-/// <see cref="ISqlDialect.ObjectKeyExpression"/> can compute the key in SQL. A key column
-/// outside these families has no such expression (<see cref="Storage.S3ObjectKeyMap.SegmentKindOf"/>
-/// returns null).
+/// One primary-key column handed to <see cref="ISqlDialect.ObjectKeyExpression"/>. The dialect
+/// renders it as the text <see cref="Storage.S3ObjectKeyMap"/> builds in C# from the value the
+/// read pipeline returns for this column, so it needs both how the column is stored
+/// (<see cref="Column"/>) and how it is read (<see cref="ReadExpression"/>, <see cref="ReadClrType"/>).
 /// </summary>
-public enum ObjectKeySegmentKind
-{
-    /// <summary>Integer types: invariant decimal text, which escaping leaves unchanged.</summary>
-    Integer,
-
-    /// <summary>UUID types: lowercase 8-4-4-4-12 hex, which escaping leaves unchanged.</summary>
-    Uuid,
-
-    /// <summary>Variable-length text: the UTF-8 bytes percent-encoded outside <c>[A-Za-z0-9_-]</c>.</summary>
-    Text,
-}
-
-/// <summary>
-/// One primary-key column handed to <see cref="ISqlDialect.ObjectKeyExpression"/>: its
-/// already-escaped, table-qualified column reference and how it renders as key text.
-/// </summary>
-public readonly record struct ObjectKeySegmentColumn(string ColumnExpression, ObjectKeySegmentKind Kind);
+/// <param name="ColumnExpression">The escaped, table-qualified column reference.</param>
+/// <param name="ReadExpression">
+/// What the SELECT projects for this column: <paramref name="ColumnExpression"/>, or the
+/// dialect's <see cref="ISqlDialect.TextCast(string, string)"/> of it when
+/// <paramref name="ReadsAsText"/>. A text-cast column reaches C# as exactly this text.
+/// </param>
+/// <param name="ReadsAsText">True when the read projection casts the column to text.</param>
+/// <param name="Column">The key column: data type, length, precision and scale.</param>
+/// <param name="ReadClrType">
+/// The CLR type the read pipeline produced for this column (after
+/// <see cref="Resolvers.ReaderEnum.DbConvert"/>), when the caller observed one. It settles what
+/// the declared type alone cannot, such as MySQL's <c>TINYINT(1)</c> read as <see cref="bool"/>
+/// and <c>CHAR(36)</c> read as <see cref="Guid"/>. Null when unknown.
+/// </param>
+public sealed record ObjectKeySegmentColumn(
+    string ColumnExpression, string ReadExpression, bool ReadsAsText, ColumnDto Column, Type? ReadClrType);
 
 /// <summary>
 /// A keyset window over a row's object-key text: the primary-key segments joined by
@@ -36,4 +35,9 @@ public readonly record struct ObjectKeySegmentColumn(string ColumnExpression, Ob
 /// <param name="After">Exclusive lower bound (a resume position), or null.</param>
 /// <param name="From">Inclusive lower bound (a prefix start), or null.</param>
 /// <param name="Before">Exclusive upper bound (a prefix's successor), or null.</param>
-public sealed record ObjectKeyRange(string? After, string? From, string? Before);
+/// <param name="KeyReadClrTypes">
+/// Per key column in declared order, the CLR type the read pipeline returns for it, or null
+/// when not observed (see <see cref="ObjectKeySegmentColumn.ReadClrType"/>).
+/// </param>
+public sealed record ObjectKeyRange(
+    string? After, string? From, string? Before, IReadOnlyList<Type?>? KeyReadClrTypes = null);

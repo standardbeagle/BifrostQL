@@ -1,6 +1,7 @@
 using System.Text;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Utils;
 
 namespace BifrostQL.Core.QueryModel;
 
@@ -399,9 +400,10 @@ public abstract class SqlDialectBase : ISqlDialect
 
     /// <inheritdoc />
     /// <remarks>
-    /// Template method: each segment comes from <see cref="ObjectKeySegment"/>, the
-    /// separator is the constant <c>'/'</c> joined by <see cref="LowerConcat"/>, and the
-    /// whole is wrapped by <see cref="BinaryOrder"/>.
+    /// Template method: each segment is rendered by <see cref="RenderKeySegment"/> (the text
+    /// <see cref="Storage.S3ObjectKeyMap"/> builds from the value the reader returns) and
+    /// escaped by <see cref="EscapeKeySegment"/>; the separator is the constant <c>'/'</c>
+    /// joined by <see cref="LowerConcat"/>, and the whole is wrapped by <see cref="BinaryOrder"/>.
     /// </remarks>
     public virtual string ObjectKeyExpression(IReadOnlyList<ObjectKeySegmentColumn> segments)
     {
@@ -414,28 +416,77 @@ public abstract class SqlDialectBase : ISqlDialect
         {
             if (parts.Count > 0)
                 parts.Add("'/'");
-            parts.Add(ObjectKeySegment(segment.ColumnExpression, segment.Kind));
+            parts.Add(EscapeKeySegment(RenderKeySegment(segment)));
         }
 
         return BinaryOrder(parts.Count == 1 ? parts[0] : LowerConcat(parts));
     }
 
     /// <summary>
-    /// One primary-key column as object-key text, byte-identical to
-    /// <see cref="Storage.S3ObjectKeyMap"/>'s escaped rendering of the value the reader
-    /// returns. <paramref name="columnExpression"/> is an escaped, table-qualified column
-    /// reference (qualified because a <see cref="ObjectKeySegmentKind.Text"/> segment may
-    /// be a subquery whose own column names would otherwise capture it).
+    /// One primary-key column as SQL text equal to <see cref="Storage.S3ObjectKeyMap"/>'s
+    /// unescaped rendering (<c>Stringify</c>) of the value the reader returns for it, with
+    /// the set of characters that text can contain. Throws
+    /// <see cref="NotSupportedException"/> (<see cref="UnsupportedKeyType"/>) for a column
+    /// type this engine cannot render byte-identically.
     /// </summary>
-    protected abstract string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind);
+    protected abstract KeySegmentText RenderKeySegment(ObjectKeySegmentColumn segment);
+
+    /// <summary>
+    /// Percent-encodes the UTF-8 bytes of the text expression <paramref name="textExpression"/>
+    /// the way <see cref="Storage.S3ObjectKeyMap"/> escapes a segment: every byte outside
+    /// <c>[A-Za-z0-9_-]</c> becomes uppercase <c>%XX</c>.
+    /// </summary>
+    protected abstract string PercentEncodeUtf8(string textExpression);
 
     /// <summary>Wraps a text expression so comparisons and ORDER BY on it use binary order.</summary>
     protected abstract string BinaryOrder(string textExpression);
 
     /// <summary>
-    /// The bytes <see cref="Storage.S3ObjectKeyMap"/> leaves unescaped: <c>[A-Za-z0-9_-]</c>.
+    /// A rendered key segment. <see cref="ReservedChars"/> null means the text may hold any
+    /// character (escaped by <see cref="PercentEncodeUtf8"/>); otherwise the text holds only
+    /// unreserved bytes and these ASCII characters, escaped by one <c>REPLACE</c> each.
     /// </summary>
-    private static readonly byte[] UnreservedKeyBytes =
+    protected readonly record struct KeySegmentText(string Sql, string? ReservedChars)
+    {
+        /// <summary>Text of any characters.</summary>
+        public static KeySegmentText AnyText(string sql) => new(sql, null);
+
+        /// <summary>Text of unreserved bytes plus <paramref name="reservedChars"/> (ASCII, no <c>%</c>).</summary>
+        public static KeySegmentText Ascii(string sql, string reservedChars = "") => new(sql, reservedChars);
+
+        /// <summary>Text already in escaped form.</summary>
+        public static KeySegmentText Escaped(string sql) => new(sql, "");
+    }
+
+    /// <summary>Applies the escaping <paramref name="text"/> declares it needs.</summary>
+    protected string EscapeKeySegment(KeySegmentText text) => text.ReservedChars switch
+    {
+        null => PercentEncodeUtf8(text.Sql),
+        var chars => ReplaceReservedChars(text.Sql, chars),
+    };
+
+    /// <summary>
+    /// Escapes ASCII text whose only reserved characters are <paramref name="reservedChars"/>,
+    /// one nested <c>REPLACE</c> per character. Exact: no replacement output contains a
+    /// character another <c>REPLACE</c> matches (<c>%</c> and hex digits are never in the set).
+    /// </summary>
+    protected static string ReplaceReservedChars(string textExpression, string reservedChars)
+    {
+        var sql = textExpression;
+        foreach (var c in reservedChars)
+        {
+            if (c > '\u007F' || c is '%' or '\'' || IsUnreservedKeyChar(c))
+                throw new ArgumentException($"'{c}' is not a reserved ASCII key character.", nameof(reservedChars));
+            sql = $"REPLACE({sql}, '{c}', '%{(int)c:X2}')";
+        }
+        return sql;
+    }
+
+    private static bool IsUnreservedKeyChar(char c) =>
+        c is '-' or '_' or (>= '0' and <= '9') or (>= 'A' and <= 'Z') or (>= 'a' and <= 'z');
+
+    /// <summary>The bytes <see cref="Storage.S3ObjectKeyMap"/> leaves unescaped: <c>[A-Za-z0-9_-]</c>.</summary>
+    protected static readonly byte[] UnreservedKeyBytes =
         new[] { (byte)'-', (byte)'_' }
             .Concat(Enumerable.Range('0', 10).Select(b => (byte)b))
             .Concat(Enumerable.Range('A', 26).Select(b => (byte)b))
@@ -464,6 +515,172 @@ public abstract class SqlDialectBase : ISqlDialect
     protected static string IsUnreservedKeyByte(string byteExpression) =>
         $"({byteExpression} IN (45, 95) OR {byteExpression} BETWEEN 48 AND 57 " +
         $"OR {byteExpression} BETWEEN 65 AND 90 OR {byteExpression} BETWEEN 97 AND 122)";
+
+    /// <summary>
+    /// The key column's base type name: lower-case, without a length/precision suffix or
+    /// MySQL's <c>unsigned</c>/<c>zerofill</c> attributes (<c>DECIMAL(10,2) UNSIGNED</c> → <c>decimal</c>).
+    /// </summary>
+    protected static string KeyTypeName(ObjectKeySegmentColumn segment)
+    {
+        var t = StringNormalizer.NormalizeType(segment.Column.DataType);
+        var paren = t.IndexOf('(');
+        if (paren >= 0)
+        {
+            var close = t.IndexOf(')', paren);
+            t = close < 0 ? t[..paren] : t[..paren] + t[(close + 1)..];
+        }
+        return t.Replace(" unsigned", "", StringComparison.Ordinal)
+            .Replace(" zerofill", "", StringComparison.Ordinal)
+            .Trim();
+    }
+
+    /// <summary>
+    /// The refusal for a key column type this engine cannot render byte-identically to the
+    /// C# key. The message names the type only, never a value.
+    /// </summary>
+    protected static NotSupportedException UnsupportedKeyType(ObjectKeySegmentColumn segment, string? reason = null) =>
+        new($"Primary-key type '{segment.Column.DataType}' cannot be rendered as an S3 object key in SQL on this engine"
+            + (reason == null ? "." : $": {reason}."));
+
+    /// <summary>
+    /// The largest decimal scale the CLR <see cref="decimal"/> keeps. A column with a larger
+    /// declared scale is read rounded, so the engine's own text of it is not the key.
+    /// </summary>
+    protected const int MaxClrDecimalScale = 28;
+
+    /// <summary>Refuses a decimal column whose declared scale the CLR value cannot hold.</summary>
+    protected static void RequireClrDecimalScale(ObjectKeySegmentColumn segment)
+    {
+        if (segment.Column.NumericScale is > MaxClrDecimalScale)
+            throw UnsupportedKeyType(segment, $"scale above {MaxClrDecimalScale} is rounded when read");
+    }
+
+    // ---- .NET float text -------------------------------------------------------------
+
+    /// <summary>Length of a text expression, in characters (all key arithmetic text is ASCII).</summary>
+    protected abstract string KeyTextLength(string text);
+
+    /// <summary>1-based position of the single-character literal <paramref name="needle"/> in <paramref name="text"/>, 0 when absent.</summary>
+    protected abstract string KeyTextPosition(char needle, string text);
+
+    /// <summary>The substring of <paramref name="text"/> from 1-based <paramref name="start"/>, <paramref name="length"/> characters.</summary>
+    protected abstract string KeyTextSubstring(string text, string start, string length);
+
+    /// <summary>An integer expression as decimal text.</summary>
+    protected abstract string KeyIntText(string integer);
+
+    /// <summary>Decimal text (optionally signed with <c>+</c>/<c>-</c>) as an integer.</summary>
+    protected abstract string KeyTextInt(string text);
+
+    /// <summary><paramref name="text"/> without leading <c>0</c> characters.</summary>
+    protected abstract string KeyTrimLeadingZeros(string text);
+
+    /// <summary><paramref name="text"/> without trailing <c>0</c> characters.</summary>
+    protected abstract string KeyTrimTrailingZeros(string text);
+
+    /// <summary>A long run of zeros to cut padding from (a double's exponent is at most 324).</summary>
+    private static readonly string Zeros = "'" + new string('0', 340) + "'";
+
+    /// <summary>Upper bound for a "rest of the string" substring length.</summary>
+    private const string RestLength = "400";
+
+    /// <summary>
+    /// The text <c>double.ToString(null, InvariantCulture)</c> (or <c>float</c>'s, when
+    /// <paramref name="single"/>) produces for the value whose shortest round-trip digits
+    /// <paramref name="shortestText"/> holds. <paramref name="shortestText"/> is any decimal
+    /// notation of those digits: <c>[-]int[.frac][e±exp]</c> in either case, trailing zeros
+    /// allowed, or <c>nan</c>/<c>infinity</c>/<c>-infinity</c>.
+    /// </summary>
+    /// <remarks>
+    /// .NET Core 3.0+ round-trip formatting: scientific when the exponent of the leading
+    /// digit is at least 17 (double) or 9 (float), or below -4; the exponent has at least
+    /// two digits. The expression is a chain of correlated derived tables, each naming the
+    /// previous stage's values, which keeps the SQL text linear in the stage count.
+    /// </remarks>
+    protected string DotNetFloatText(string shortestText, bool single)
+    {
+        string Sub(string t, string start, string len) => KeyTextSubstring(t, start, len);
+        string Cat(params string[] parts) => LowerConcat(parts);
+
+        var s1 = $"(SELECT LOWER({shortestText}) AS t) AS k1";
+        var s2 = "(SELECT k1.t, CASE WHEN " + Sub("k1.t", "1", "1") + " = '-' THEN 1 ELSE 0 END AS neg, "
+            + "CASE WHEN " + Sub("k1.t", "1", "1") + " = '-' THEN " + Sub("k1.t", "2", RestLength) + " ELSE k1.t END AS a"
+            + $" FROM {s1}) AS k2";
+        var s3 = $"(SELECT k2.t, k2.neg, k2.a, {KeyTextPosition('e', "k2.a")} AS pe FROM {s2}) AS k3";
+        var s4 = "(SELECT k3.t, k3.neg, "
+            + "CASE WHEN k3.pe > 0 THEN " + Sub("k3.a", "1", "k3.pe - 1") + " ELSE k3.a END AS m, "
+            + "CASE WHEN k3.pe > 0 THEN " + KeyTextInt(Sub("k3.a", "k3.pe + 1", RestLength)) + " ELSE 0 END AS x"
+            + $" FROM {s3}) AS k4";
+        var s5 = $"(SELECT k4.t, k4.neg, k4.m, k4.x, {KeyTextPosition('.', "k4.m")} AS pd FROM {s4}) AS k5";
+        var s6 = "(SELECT k5.t, k5.neg, k5.x, "
+            + "CASE WHEN k5.pd > 0 THEN " + Sub("k5.m", "1", "k5.pd - 1") + " ELSE k5.m END AS i, "
+            + "CASE WHEN k5.pd > 0 THEN " + Sub("k5.m", "k5.pd + 1", RestLength) + " ELSE '' END AS f"
+            + $" FROM {s5}) AS k6";
+        var s7 = "(SELECT k6.t, k6.neg, k6.x, " + KeyTextLength("k6.i") + " AS li, " + Cat("k6.i", "k6.f") + " AS raw"
+            + $" FROM {s6}) AS k7";
+        var s8 = "(SELECT k7.t, k7.neg, k7.x, k7.li, " + KeyTextLength("k7.raw") + " AS lraw, "
+            + KeyTrimLeadingZeros("k7.raw") + " AS nz FROM " + s7 + ") AS k8";
+        var s9 = "(SELECT k8.t, k8.neg, " + KeyTrimTrailingZeros("k8.nz") + " AS d, "
+            + "k8.li - 1 - (k8.lraw - " + KeyTextLength("k8.nz") + ") + k8.x AS e FROM " + s8 + ") AS k9";
+        return DotNetFloatLayout(s9, single);
+    }
+
+    /// <summary>
+    /// The .NET layout of parsed float digits. <paramref name="parsed"/> is a derived table
+    /// aliased <c>k9</c> with columns <c>t</c> (the lower-case source text, matched against
+    /// <c>nan</c>/<c>infinity</c>), <c>neg</c> (1 when negative), <c>d</c> (the significant
+    /// digits, no leading or trailing zero; empty for zero) and <c>e</c> (the decimal
+    /// exponent of the first digit).
+    /// </summary>
+    protected string DotNetFloatLayout(string parsed, bool single)
+    {
+        var sciFrom = single ? 9 : 17;
+        string Sub(string t, string start, string len) => KeyTextSubstring(t, start, len);
+        string Cat(params string[] parts) => LowerConcat(parts);
+        var s10 = $"(SELECT k9.t, k9.neg, k9.d, k9.e, {KeyTextLength("k9.d")} AS ld FROM {parsed}) AS k10";
+
+        const string d = "k10.d", e = "k10.e", ld = "k10.ld";
+        var sci = Cat(
+            Sub(d, "1", "1"),
+            $"CASE WHEN {ld} > 1 THEN " + Cat("'.'", Sub(d, "2", RestLength)) + " ELSE '' END",
+            "'E'",
+            $"CASE WHEN {e} < 0 THEN '-' ELSE '+' END",
+            $"CASE WHEN {e} > -10 AND {e} < 10 THEN '0' ELSE '' END",
+            KeyIntText($"ABS({e})"));
+        var fix = $"CASE WHEN {e} >= {ld} - 1 THEN " + Cat(d, Sub(Zeros, "1", $"{e} - {ld} + 1"))
+            + $" WHEN {e} >= 0 THEN " + Cat(Sub(d, "1", $"{e} + 1"), "'.'", Sub(d, $"{e} + 2", RestLength))
+            + " ELSE " + Cat("'0.'", Sub(Zeros, "1", $"-{e} - 1"), d) + " END";
+        var signed = $"CASE WHEN {e} >= {sciFrom} OR {e} < -4 THEN {sci} ELSE {fix} END";
+
+        return "(SELECT CASE"
+            + " WHEN k10.t = 'nan' THEN 'NaN' WHEN k10.t = 'infinity' OR k10.t = 'inf' THEN 'Infinity'"
+            + " WHEN k10.t = '-infinity' OR k10.t = '-inf' THEN '-Infinity'"
+            + $" WHEN {d} = '' THEN CASE WHEN k10.neg = 1 THEN '-0' ELSE '0' END"
+            + " ELSE " + Cat("CASE WHEN k10.neg = 1 THEN '-' ELSE '' END", signed)
+            + $" END FROM {s10})";
+    }
+
+    /// <summary>
+    /// The shortest round-trip digits of the float expression <paramref name="value"/>, for an
+    /// engine whose formatter rounds correctly to a requested precision but does not pick the
+    /// shortest: the first of <paramref name="fractionDigits"/> (ascending scientific
+    /// precisions) whose text reads back as the same value, else the last. A double's
+    /// shortest digits fit 15, 16 or 17 significant digits whenever 15 do not suffice (15
+    /// digits always round-trip a decimal of 15 or fewer), so <c>14, 15, 16</c> fraction
+    /// digits cover it; a float's are <c>5, 6, 7, 8</c>.
+    /// </summary>
+    protected static string ShortestFloatCascade(
+        string value, IReadOnlyList<int> fractionDigits, Func<string, int, string> scientific, Func<string, string, string> readsBackEqual)
+    {
+        var sb = new StringBuilder("CASE");
+        for (var i = 0; i < fractionDigits.Count - 1; i++)
+        {
+            var candidate = scientific(value, fractionDigits[i]);
+            sb.Append(" WHEN ").Append(readsBackEqual(candidate, value)).Append(" THEN ").Append(candidate);
+        }
+        sb.Append(" ELSE ").Append(scientific(value, fractionDigits[^1])).Append(" END");
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Maps a canonical allow-listed function name to this dialect's spelling. The allow-list

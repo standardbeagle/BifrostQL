@@ -235,35 +235,120 @@ public sealed class SqlServerDialect : SqlDialectBase
         base.EscapeLikeValue(value).Replace("[", "\\[");
 
     /// <summary>
-    /// Sixteen rows, cross-joined four times for up to 65,536 byte positions: more than the
-    /// UTF-8 length of any value SQL Server can index as a key (1,700 key bytes, at most
-    /// three UTF-8 bytes per stored byte). <c>TOP</c> stops the join at the value's length.
+    /// Sixteen rows, cross-joined four times for up to 65,536 character positions: more
+    /// than the length of any value SQL Server can index as a key (1,700 key bytes).
+    /// <c>TOP</c> stops the join at the value's length.
     /// </summary>
     private const string SixteenRows =
         "(VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15))";
 
     /// <inheritdoc />
     /// <remarks>
-    /// Text: the value is converted to UTF-8 bytes through a <c>_UTF8</c> collation
-    /// (SQL Server 2019+), walked byte by byte, and each byte emitted as itself or as
-    /// <c>%XX</c>, aggregated in order with <c>STRING_AGG</c>.
+    /// By declared type, as SqlClient returns the value: integers and decimals by their
+    /// text (decimal keeps its scale, money its four places), bit as
+    /// <c>True</c>/<c>False</c>, date/time types as <c>DateTime</c>'s and
+    /// <c>DateTimeOffset</c>'s round-trip form, <c>time</c> as <c>TimeSpan</c>'s constant
+    /// form, uniqueidentifier in lower case, binary as base64 (<c>FOR XML</c>'s
+    /// encoding). <c>float</c> and <c>real</c> are refused: .NET writes the shortest
+    /// round-trip digits, and neither <c>FORMAT</c> nor <c>CONVERT</c> rounds correctly
+    /// past 15 digits (and text-to-<c>real</c> rounds twice), so no SQL text matches it on
+    /// every value.
     /// </remarks>
-    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    protected override KeySegmentText RenderKeySegment(ObjectKeySegmentColumn segment)
     {
-        ObjectKeySegmentKind.Integer => $"CONVERT(varchar(20), {columnExpression})",
-        ObjectKeySegmentKind.Uuid => $"LOWER(CONVERT(char(36), {columnExpression}))",
-        ObjectKeySegmentKind.Text =>
-            "(SELECT STRING_AGG(CONVERT(varchar(max), CASE WHEN " + IsUnreservedKeyByte("ob.v") +
-            " THEN CHAR(ob.v) ELSE '%' + CONVERT(char(2), CONVERT(binary(1), ob.v), 2) END), '')" +
-            " WITHIN GROUP (ORDER BY op.i)" +
-            $" FROM (SELECT CONVERT(varbinary(max), CONVERT(varchar(max), CONVERT(nvarchar(max), {columnExpression})" +
-            " COLLATE Latin1_General_100_BIN2_UTF8)) AS bytes) AS ou" +
-            " CROSS APPLY (SELECT TOP (DATALENGTH(ou.bytes)) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS i" +
-            $" FROM {SixteenRows} AS d1(x) CROSS JOIN {SixteenRows} AS d2(x)" +
-            $" CROSS JOIN {SixteenRows} AS d3(x) CROSS JOIN {SixteenRows} AS d4(x)) AS op" +
-            " CROSS APPLY (SELECT CONVERT(int, SUBSTRING(ou.bytes, op.i, 1)) AS v) AS ob)",
-        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
-    };
+        var x = segment.ColumnExpression;
+        switch (KeyTypeName(segment))
+        {
+            case "tinyint" or "smallint" or "int" or "bigint":
+                return KeySegmentText.Ascii($"CONVERT(varchar(20), {x})");
+            case "bit":
+                return KeySegmentText.Ascii($"CASE WHEN {x} = 1 THEN 'True' ELSE 'False' END");
+            case "decimal" or "numeric":
+                RequireClrDecimalScale(segment);
+                return KeySegmentText.Ascii($"CONVERT(varchar(50), {x})", ".");
+            case "money" or "smallmoney":
+                return KeySegmentText.Ascii($"CONVERT(varchar(30), {x}, 2)", ".");
+            case "float" or "real":
+                throw UnsupportedKeyType(segment, "SQL Server has no correctly rounded shortest float text");
+            case "date" or "datetime" or "datetime2" or "smalldatetime":
+                return KeySegmentText.Ascii(DateTimeText($"CONVERT(datetime2(7), {x})"), ":.");
+            case "datetimeoffset":
+                return KeySegmentText.Ascii(DateTimeText($"CONVERT(datetime2(7), {x})") + $" + DATENAME(tz, {x})", ":.+");
+            case "time":
+                return KeySegmentText.Ascii(
+                    $"CONVERT(char(8), {x}, 108) + CASE WHEN DATEPART(nanosecond, {x}) = 0 THEN '' ELSE '.' + "
+                    + Fraction7(x) + " END", ":.");
+            case "uniqueidentifier":
+                return KeySegmentText.Ascii($"LOWER(CONVERT(char(36), {x}))");
+            case "char" or "nchar" or "varchar" or "nvarchar" or "sysname":
+                return KeySegmentText.AnyText(x);
+            case "binary" or "varbinary" or "timestamp" or "rowversion":
+                return KeySegmentText.Ascii($"ISNULL((SELECT {x} FOR XML PATH('')), '')", "+/=");
+            default:
+                throw UnsupportedKeyType(segment);
+        }
+    }
+
+    /// <summary>A <c>datetime2(7)</c> as <c>DateTime.ToString("O")</c> of an unspecified-kind value.</summary>
+    private static string DateTimeText(string datetime2) =>
+        $"CONVERT(char(19), {datetime2}, 126) + '.' + {Fraction7(datetime2)}";
+
+    /// <summary>The seven-digit fraction of a second (100 ns ticks), zero-padded.</summary>
+    private static string Fraction7(string x) =>
+        $"RIGHT('000000' + CONVERT(varchar(7), DATEPART(nanosecond, {x}) / 100), 7)";
+
+    private static string Hex2(string byteValue) => $"CONVERT(char(2), CONVERT(binary(1), {byteValue}), 2)";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Walks the value's UTF-16 code units (a non-supplementary binary collation, so a
+    /// surrogate is one position) and writes each code point's UTF-8 bytes from
+    /// <c>UNICODE()</c> arithmetic, concatenated in order with <c>FOR XML PATH('')</c>.
+    /// No <c>_UTF8</c> collation (2019) or <c>STRING_AGG</c> (2017): it runs on 2008+.
+    /// The output is <c>[A-Za-z0-9_%-]</c>, which XML leaves as is.
+    /// </remarks>
+    protected override string PercentEncodeUtf8(string textExpression)
+    {
+        const string u = "oc.u", cp = "oq.cp";
+        var piece = "CASE"
+            + $" WHEN {u} < 128 THEN CASE WHEN {IsUnreservedKeyByte(u)} THEN CHAR({u}) ELSE '%' + {Hex2(u)} END"
+            + $" WHEN {u} < 2048 THEN '%' + {Hex2($"192 + {u} / 64")} + '%' + {Hex2($"128 + {u} % 64")}"
+            + $" WHEN {u} BETWEEN 55296 AND 56319 THEN '%' + {Hex2($"240 + {cp} / 262144")} + '%' + {Hex2($"128 + {cp} / 4096 % 64")}"
+            + $" + '%' + {Hex2($"128 + {cp} / 64 % 64")} + '%' + {Hex2($"128 + {cp} % 64")}"
+            + $" WHEN {u} BETWEEN 56320 AND 57343 THEN ''"
+            + $" ELSE '%' + {Hex2($"224 + {u} / 4096")} + '%' + {Hex2($"128 + {u} / 64 % 64")} + '%' + {Hex2($"128 + {u} % 64")} END";
+        return "ISNULL(CONVERT(varchar(max), (SELECT " + piece
+            + $" FROM (SELECT CONVERT(nvarchar(max), {textExpression}) COLLATE Latin1_General_100_BIN2 AS s) AS ou"
+            + " CROSS APPLY (SELECT TOP (DATALENGTH(ou.s) / 2) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS i"
+            + $" FROM {SixteenRows} AS d1(x) CROSS JOIN {SixteenRows} AS d2(x)"
+            + $" CROSS JOIN {SixteenRows} AS d3(x) CROSS JOIN {SixteenRows} AS d4(x)) AS op"
+            + " CROSS APPLY (SELECT UNICODE(SUBSTRING(ou.s, op.i, 1)) AS u, UNICODE(SUBSTRING(ou.s, op.i + 1, 1)) AS w) AS oc"
+            + " CROSS APPLY (SELECT 65536 + (oc.u - 55296) * 1024 + (ISNULL(oc.w, 56320) - 56320) AS cp) AS oq"
+            + " ORDER BY op.i FOR XML PATH(''))), '')";
+    }
+
+    /// <inheritdoc />
+    protected override string KeyTextLength(string text) => $"LEN({text})";
+
+    /// <inheritdoc />
+    protected override string KeyTextPosition(char needle, string text) => $"CHARINDEX('{needle}', {text})";
+
+    /// <inheritdoc />
+    protected override string KeyTextSubstring(string text, string start, string length) => $"SUBSTRING({text}, {start}, {length})";
+
+    /// <inheritdoc />
+    protected override string KeyIntText(string integer) => $"CONVERT(varchar(12), {integer})";
+
+    /// <inheritdoc />
+    protected override string KeyTextInt(string text) => $"CONVERT(int, {text})";
+
+    /// <inheritdoc />
+    protected override string KeyTrimLeadingZeros(string text) =>
+        $"CASE WHEN PATINDEX('%[^0]%', {text}) = 0 THEN '' ELSE SUBSTRING({text}, PATINDEX('%[^0]%', {text}), 400) END";
+
+    /// <inheritdoc />
+    protected override string KeyTrimTrailingZeros(string text) =>
+        $"CASE WHEN PATINDEX('%[^0]%', {text}) = 0 THEN '' ELSE LEFT({text}, LEN({text}) - PATINDEX('%[^0]%', REVERSE({text})) + 1) END";
 
     /// <inheritdoc />
     /// <remarks>

@@ -64,11 +64,10 @@ namespace BifrostQL.Server.S3
     /// fails closed. It expires <see cref="S3Options.ContinuationTokenTtl"/> after it was
     /// issued.</para>
     ///
-    /// <para><b>Listable keys.</b> A key column must be an integer, UUID, or
-    /// variable-length text type (<see cref="S3ObjectKeyMap.SegmentKindOf"/>): those are
-    /// the types whose database text cast matches the C# key rendering. Listing a bucket
-    /// keyed by any other type (dates, decimals, fixed-length text) fails with a curated
-    /// error.</para>
+    /// <para><b>Listable keys.</b> The dialect renders every key column in SQL as the
+    /// exact text <see cref="S3ObjectKeyMap.KeyFor"/> builds from the value the reader
+    /// returns (<see cref="ISqlDialect.ObjectKeyExpression"/>). A key type an engine cannot
+    /// render byte-identically fails with a curated <c>InvalidArgument</c>.</para>
     /// </summary>
     public sealed class S3Listing
     {
@@ -246,9 +245,7 @@ namespace BifrostQL.Server.S3
             if (keyColumns.Count == 0 || request.Prefix.Any(c => c > '\u007F'))
                 return Page(request, contents, commonPrefixes, nextToken: null);
 
-            if (keyColumns.Any(c => S3ObjectKeyMap.SegmentKindOf(c) == null))
-                throw S3ProtocolException.InvalidArgument(
-                    "This bucket's primary key type cannot be listed in object-key order.");
+            var keyReadTypes = await KeyReadTypesAsync(table, keyColumns, userContext, cancellationToken);
 
             // Full-key bounds. The prefix is a fixed range; the scan position moves.
             var prefixFrom = request.Prefix.Length > 0 ? request.Prefix : null;
@@ -265,7 +262,7 @@ namespace BifrostQL.Server.S3
                 var columnPrefix = S3ObjectKeyMap.ColumnPrefix(column);
                 while (true)
                 {
-                    var range = SuffixRange(columnPrefix, scan, prefixFrom, prefixBefore);
+                    var range = SuffixRange(columnPrefix, scan, prefixFrom, prefixBefore, keyReadTypes);
                     if (range == null)
                         break; // the scan has nothing left in this column's key range
 
@@ -362,7 +359,8 @@ namespace BifrostQL.Server.S3
         /// B starts with the prefix (it becomes a bound on the suffix), B sorts below the
         /// prefix (every key is above it), or B sorts above it (every key is below it).
         /// </summary>
-        private static ObjectKeyRange? SuffixRange(string columnPrefix, ScanPosition scan, string? prefixFrom, string? prefixBefore)
+        private static ObjectKeyRange? SuffixRange(
+            string columnPrefix, ScanPosition scan, string? prefixFrom, string? prefixBefore, IReadOnlyList<Type?> keyReadTypes)
         {
             string? after = null, from = null, before = null;
 
@@ -385,7 +383,7 @@ namespace BifrostQL.Server.S3
                 }
             }
 
-            return new ObjectKeyRange(after, from, before);
+            return new ObjectKeyRange(after, from, before, keyReadTypes);
         }
 
         /// <summary>
@@ -452,14 +450,71 @@ namespace BifrostQL.Server.S3
             if (!keyColumns.Any(k => string.Equals(k.DbName, column.DbName, StringComparison.Ordinal)))
                 query.ScalarColumns.Add(new GqlObjectColumn(column.DbName, column.GraphQlName));
 
+            try
+            {
+                var result = await _reads.ExecuteAsync(new QueryIntent
+                {
+                    Query = query,
+                    UserContext = userContext,
+                    Endpoint = _options.Endpoint,
+                }, cancellationToken);
+                return result.Rows;
+            }
+            catch (NotSupportedException ex)
+            {
+                // The dialect has no byte-exact SQL rendering for a key column's type. The
+                // detail (type name) goes to the log, a fixed text to the wire.
+                _logger?.LogWarning(ex, "S3 listing of table {Table} refused: key type has no SQL object-key rendering.", table.DbName);
+                throw S3ProtocolException.InvalidArgument(
+                    "This bucket's primary key type cannot be listed in object-key order.");
+            }
+        }
+
+        /// <summary>
+        /// Per key column, the CLR type the read pipeline returns for it, observed on one row
+        /// and cached per table model. Some engines decide it from connection options the
+        /// schema does not show (MySQL reads <c>TINYINT(1)</c> as <see cref="bool"/> and
+        /// <c>CHAR(36)</c> as <see cref="Guid"/> by default), and the SQL key rendering must
+        /// follow the value C# actually formats. An empty table caches nothing: it has no
+        /// key to render.
+        /// </summary>
+        private async Task<IReadOnlyList<Type?>> KeyReadTypesAsync(
+            IDbTable table, IReadOnlyList<ColumnDto> keyColumns, IDictionary<string, object?> userContext,
+            CancellationToken cancellationToken)
+        {
+            if (KeyReadTypeCache.TryGetValue(table, out var cached))
+                return cached;
+
+            var query = new GqlObjectQuery
+            {
+                DbTable = table,
+                SchemaName = table.TableSchema,
+                TableName = table.DbName,
+                GraphQlName = table.GraphQlName,
+                Path = table.GraphQlName,
+                Limit = 1,
+            };
+            foreach (var keyColumn in keyColumns)
+                query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.DbName, keyColumn.GraphQlName));
             var result = await _reads.ExecuteAsync(new QueryIntent
             {
                 Query = query,
                 UserContext = userContext,
                 Endpoint = _options.Endpoint,
             }, cancellationToken);
-            return result.Rows;
+            if (result.Rows.Count == 0)
+                return new Type?[keyColumns.Count];
+
+            var row = result.Rows[0];
+            var types = keyColumns
+                .Select(k => row.TryGetValue(k.GraphQlName, out var v) ? v?.GetType() : null)
+                .ToArray();
+            KeyReadTypeCache.AddOrUpdate(table, types);
+            return types;
         }
+
+        /// <summary>Observed key read types, keyed weakly by table model (a schema reload drops them).</summary>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IDbTable, IReadOnlyList<Type?>> KeyReadTypeCache = new();
 
         /// <summary>
         /// The CommonPrefix <paramref name="key"/> rolls up into: the prefix plus the

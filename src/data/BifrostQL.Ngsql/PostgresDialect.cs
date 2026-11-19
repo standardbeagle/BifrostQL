@@ -177,17 +177,72 @@ public sealed class PostgresDialect : StandardConcatDialectBase
 
     /// <inheritdoc />
     /// <remarks>
-    /// Text: the UTF-8 bytes as uppercase hex, every byte pair prefixed with <c>%</c>, then
-    /// the unreserved bytes restored (<see cref="SqlDialectBase.RestoreUnreservedKeyBytes"/>).
+    /// A column the read projection casts to text (temporal types through
+    /// <c>to_jsonb</c>, uuid, bytea, money, enums, …) is keyed by that very projection.
+    /// Native types: integers and numeric by their text (numeric keeps its scale, as the
+    /// CLR decimal does), boolean as <c>True</c>/<c>False</c>, <c>char(n)</c> through
+    /// <c>format</c> (a cast to text would strip the padding Npgsql returns), and floats
+    /// from PostgreSQL's shortest round-trip text (12+, <c>extra_float_digits</c> &gt; 0,
+    /// which Npgsql sets) re-laid out in .NET notation.
     /// </remarks>
-    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    protected override KeySegmentText RenderKeySegment(ObjectKeySegmentColumn segment)
     {
-        ObjectKeySegmentKind.Integer => $"CAST({columnExpression} AS text)",
-        ObjectKeySegmentKind.Uuid => $"lower(CAST({columnExpression} AS text))",
-        ObjectKeySegmentKind.Text => RestoreUnreservedKeyBytes(
-            $"regexp_replace(upper(encode(convert_to(CAST({columnExpression} AS text), 'UTF8'), 'hex')), '(..)', '%\\1', 'g')"),
-        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
-    };
+        var x = segment.ColumnExpression;
+        var type = KeyTypeName(segment);
+        if (segment.ReadsAsText)
+            return type == "uuid" ? KeySegmentText.Ascii(segment.ReadExpression) : KeySegmentText.AnyText(segment.ReadExpression);
+
+        switch (type)
+        {
+            case "smallint" or "integer" or "int" or "bigint" or "int2" or "int4" or "int8"
+                or "smallserial" or "serial" or "bigserial":
+                return KeySegmentText.Ascii($"CAST({x} AS text)");
+            case "boolean" or "bool":
+                return KeySegmentText.Ascii($"CASE WHEN {x} THEN 'True' ELSE 'False' END");
+            case "numeric" or "decimal":
+                RequireClrDecimalScale(segment);
+                return KeySegmentText.Ascii($"CAST({x} AS text)", ".");
+            case "real" or "float4":
+                return KeySegmentText.Ascii(DotNetFloatText($"CAST({x} AS text)", single: true), ".+");
+            case "double precision" or "float8":
+                return KeySegmentText.Ascii(DotNetFloatText($"CAST({x} AS text)", single: false), ".+");
+            case "character varying" or "varchar" or "text" or "name" or "citext":
+                return KeySegmentText.AnyText($"CAST({x} AS text)");
+            case "character" or "char" or "bpchar":
+                return KeySegmentText.AnyText($"format('%s', {x})");
+            default:
+                throw UnsupportedKeyType(segment);
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The UTF-8 bytes as uppercase hex, every byte pair prefixed with <c>%</c>, then the
+    /// unreserved bytes restored (<see cref="SqlDialectBase.RestoreUnreservedKeyBytes"/>).
+    /// </remarks>
+    protected override string PercentEncodeUtf8(string textExpression) => RestoreUnreservedKeyBytes(
+        $"regexp_replace(upper(encode(convert_to({textExpression}, 'UTF8'), 'hex')), '(..)', '%\\1', 'g')");
+
+    /// <inheritdoc />
+    protected override string KeyTextLength(string text) => $"length({text})";
+
+    /// <inheritdoc />
+    protected override string KeyTextPosition(char needle, string text) => $"strpos({text}, '{needle}')";
+
+    /// <inheritdoc />
+    protected override string KeyTextSubstring(string text, string start, string length) => $"substr({text}, {start}, {length})";
+
+    /// <inheritdoc />
+    protected override string KeyIntText(string integer) => $"CAST({integer} AS text)";
+
+    /// <inheritdoc />
+    protected override string KeyTextInt(string text) => $"CAST({text} AS integer)";
+
+    /// <inheritdoc />
+    protected override string KeyTrimLeadingZeros(string text) => $"ltrim({text}, '0')";
+
+    /// <inheritdoc />
+    protected override string KeyTrimTrailingZeros(string text) => $"rtrim({text}, '0')";
 
     /// <inheritdoc />
     /// <remarks>The <c>"C"</c> collation compares bytes, which is UTF-8 order.</remarks>

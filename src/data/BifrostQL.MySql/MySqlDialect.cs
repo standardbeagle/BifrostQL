@@ -78,18 +78,100 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
 
     /// <inheritdoc />
     /// <remarks>
-    /// Text: <c>HEX</c> of the utf8mb4 bytes, every byte pair prefixed with <c>%</c>
-    /// (<c>REGEXP_REPLACE</c>, MySQL 8.0+), then the unreserved bytes restored
-    /// (<see cref="SqlDialectBase.RestoreUnreservedKeyBytes"/>).
+    /// The observed read type wins where MySqlConnector decides it from connection options
+    /// (<c>TINYINT(1)</c> read as <see cref="bool"/>, <c>CHAR(36)</c> as <see cref="Guid"/>).
+    /// Otherwise by declared type: integers and decimals by their text, dates as
+    /// <c>DateTime</c>'s round-trip form (seven fraction digits), <c>TIME</c> as
+    /// <c>TimeSpan</c>'s constant form, binary as base64, <c>DOUBLE</c> from MySQL's
+    /// shortest round-trip text (8.0+) re-laid out in .NET notation. <c>FLOAT</c> is
+    /// refused: MySQL prints it with six significant digits, not the shortest text that
+    /// reads back as the same single, and has no formatter that does.
     /// </remarks>
-    protected override string ObjectKeySegment(string columnExpression, ObjectKeySegmentKind kind) => kind switch
+    protected override KeySegmentText RenderKeySegment(ObjectKeySegmentColumn segment)
     {
-        ObjectKeySegmentKind.Integer => $"CAST({columnExpression} AS CHAR)",
-        ObjectKeySegmentKind.Uuid => $"LOWER(CAST({columnExpression} AS CHAR))",
-        ObjectKeySegmentKind.Text => RestoreUnreservedKeyBytes(
-            $"REGEXP_REPLACE(HEX(CONVERT({columnExpression} USING utf8mb4)), '(..)', '%$1')"),
-        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
-    };
+        var x = segment.ColumnExpression;
+        if (segment.ReadClrType == typeof(bool))
+            return KeySegmentText.Ascii($"CASE WHEN {x} <> 0 THEN 'True' ELSE 'False' END");
+        if (segment.ReadClrType == typeof(Guid))
+            return KeySegmentText.Ascii($"LOWER(CAST({x} AS CHAR))");
+
+        switch (KeyTypeName(segment))
+        {
+            case "tinyint" or "smallint" or "mediumint" or "int" or "integer" or "bigint" or "year":
+                return KeySegmentText.Ascii($"CAST({x} AS CHAR)");
+            case "bit":
+                return KeySegmentText.Ascii($"CAST({x} + 0 AS CHAR)");
+            case "decimal" or "numeric" or "fixed" or "dec":
+                RequireClrDecimalScale(segment);
+                return KeySegmentText.Ascii($"CAST({x} AS CHAR)", ".");
+            case "double" or "double precision" or "real":
+                return KeySegmentText.Ascii(DotNetFloatText($"CAST({x} AS CHAR(64))", single: false), ".+");
+            case "float":
+                throw UnsupportedKeyType(segment, "MySQL has no shortest round-trip text for a single-precision value");
+            case "date" or "datetime" or "timestamp":
+                return KeySegmentText.Ascii($"CONCAT(DATE_FORMAT({x}, '%Y-%m-%dT%H:%i:%s.%f'), '0')", ":.");
+            case "time":
+                return KeySegmentText.Ascii(TimeSpanText(x), ":.");
+            case "char" or "varchar" or "tinytext" or "text" or "mediumtext" or "longtext" or "enum" or "set":
+                return KeySegmentText.AnyText(x);
+            case "binary" or "varbinary" or "tinyblob" or "blob" or "mediumblob" or "longblob":
+                return KeySegmentText.Ascii($"REPLACE(TO_BASE64({x}), CHAR(10), '')", "+/=");
+            default:
+                throw UnsupportedKeyType(segment);
+        }
+    }
+
+    /// <summary>
+    /// A <c>TIME</c> as <c>TimeSpan.ToString("c")</c>: <c>[-][d.]hh:mm:ss[.fffffff]</c>.
+    /// <c>HOUR</c>/<c>MINUTE</c>/<c>SECOND</c>/<c>MICROSECOND</c> are magnitudes, so the sign
+    /// comes from the value's own text (<c>TIME_TO_SEC</c> loses it below one second).
+    /// </summary>
+    private static string TimeSpanText(string x) =>
+        $"CONCAT(CASE WHEN CAST({x} AS CHAR) LIKE '-%' AND (TIME_TO_SEC({x}) <> 0 OR MICROSECOND({x}) <> 0) THEN '-' ELSE '' END, "
+        + $"CASE WHEN HOUR({x}) >= 24 THEN CONCAT(HOUR({x}) DIV 24, '.') ELSE '' END, "
+        + $"LPAD(HOUR({x}) MOD 24, 2, '0'), ':', LPAD(MINUTE({x}), 2, '0'), ':', LPAD(SECOND({x}), 2, '0'), "
+        + $"CASE WHEN MICROSECOND({x}) > 0 THEN CONCAT('.', LPAD(MICROSECOND({x}), 6, '0'), '0') ELSE '' END)";
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Byte-wise <c>REPLACE</c> over the utf8mb4 bytes as a binary string: <c>%</c> first,
+    /// then every other byte outside <c>[A-Za-z0-9_-]</c> with its <c>%XX</c> token. No
+    /// replacement output holds a byte a later <c>REPLACE</c> matches. Plain string
+    /// functions only, so it runs on MySQL 5.7 and MariaDB alike (a regex backreference
+    /// is spelled differently on each).
+    /// </remarks>
+    protected override string PercentEncodeUtf8(string textExpression)
+    {
+        var sql = $"REPLACE(CAST(CONVERT({textExpression} USING utf8mb4) AS BINARY), '%', '%25')";
+        for (var b = 0; b < 256; b++)
+        {
+            if (b == '%' || Array.IndexOf(UnreservedKeyBytes, (byte)b) >= 0)
+                continue;
+            sql = $"REPLACE({sql}, UNHEX('{b:X2}'), '%{b:X2}')";
+        }
+        return sql;
+    }
+
+    /// <inheritdoc />
+    protected override string KeyTextLength(string text) => $"CHAR_LENGTH({text})";
+
+    /// <inheritdoc />
+    protected override string KeyTextPosition(char needle, string text) => $"LOCATE('{needle}', {text})";
+
+    /// <inheritdoc />
+    protected override string KeyTextSubstring(string text, string start, string length) => $"SUBSTRING({text}, {start}, {length})";
+
+    /// <inheritdoc />
+    protected override string KeyIntText(string integer) => $"CAST({integer} AS CHAR)";
+
+    /// <inheritdoc />
+    protected override string KeyTextInt(string text) => $"CAST({text} AS SIGNED)";
+
+    /// <inheritdoc />
+    protected override string KeyTrimLeadingZeros(string text) => $"TRIM(LEADING '0' FROM {text})";
+
+    /// <inheritdoc />
+    protected override string KeyTrimTrailingZeros(string text) => $"TRIM(TRAILING '0' FROM {text})";
 
     /// <inheritdoc />
     /// <remarks>A binary string compares bytes, independent of the connection's collation.</remarks>

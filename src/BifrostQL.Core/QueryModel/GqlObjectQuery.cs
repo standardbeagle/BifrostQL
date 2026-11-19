@@ -75,8 +75,8 @@ namespace BifrostQL.Core.QueryModel
         /// returns at most its window instead of the whole bucket. It replaces
         /// <see cref="Sort"/> and the primary-key tie-break (the key text is unique per row,
         /// so it is a total order). Only a flat root read may carry it: no sort, offset,
-        /// joins, aggregates, totals, or grouped aggregate. Every key column must have an
-        /// object-key rendering (<see cref="Storage.S3ObjectKeyMap.SegmentKindOf"/>).
+        /// joins, aggregates, totals, or grouped aggregate. The dialect refuses a key column
+        /// type it cannot render byte-identically (<see cref="NotSupportedException"/>).
         /// </summary>
         public ObjectKeyRange? ObjectKeyRange { get; set; }
 
@@ -266,7 +266,7 @@ namespace BifrostQL.Core.QueryModel
         {
             var tableRef = dialect.TableReference(SchemaName, TableName);
             var sortCols = ObjectKeyRange != null
-                ? new[] { $"{ObjectKeySql(dialect)} asc" }
+                ? new[] { $"{ObjectKeySql(dbModel, dialect)} asc" }
                 : RenderPagedSortColumns(dialect, DbTable, Sort);
             var pagination = dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
             return new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
@@ -364,7 +364,7 @@ namespace BifrostQL.Core.QueryModel
 
             var filter = ObjectKeyRange == null
                 ? GetFilterSqlParameterized(dbModel, dialect, parameters)
-                : RenderFilterSql(dbModel, dialect, parameters, null, ObjectKeyPredicate(dialect, parameters));
+                : RenderFilterSql(dbModel, dialect, parameters, null, ObjectKeyPredicate(dbModel, dialect, parameters));
             var sqlKeyName = queryLink == null ? KeyName : queryLink.Join.JoinName;
 
             if (fullColumns.Count > 0)
@@ -836,17 +836,28 @@ namespace BifrostQL.Core.QueryModel
 
         /// <summary>
         /// This node's object-key suffix as SQL text (<see cref="ISqlDialect.ObjectKeyExpression"/>),
-        /// over the key columns in declared order, each qualified with the table reference.
+        /// over the key columns in declared order, each qualified with the table reference. Each
+        /// segment carries the column's read projection, decided by the same
+        /// <see cref="ISqlDialect.RequiresTextCast(string, string)"/> test
+        /// <see cref="GqlObjectColumn"/> applies, so a column the SELECT casts to text is keyed by
+        /// that very text.
         /// </summary>
-        private string ObjectKeySql(ISqlDialect dialect)
+        private string ObjectKeySql(IDbModel dbModel, ISqlDialect dialect)
         {
             var tableRef = dialect.TableReference(SchemaName, TableName);
+            var readTypes = ObjectKeyRange?.KeyReadClrTypes;
             var segments = DbTable.KeyColumns
-                .Select(c => new ObjectKeySegmentColumn(
-                    $"{tableRef}.{dialect.EscapeIdentifier(c.DbName)}",
-                    Storage.S3ObjectKeyMap.SegmentKindOf(c)
-                        ?? throw new InvalidOperationException(
-                            $"Key column '{c.DbName}' of '{TableName}' ({c.DataType}) has no object-key rendering.")))
+                .Select((c, i) =>
+                {
+                    var column = $"{tableRef}.{dialect.EscapeIdentifier(c.DbName)}";
+                    var readsAsText = dialect.RequiresTextCast(c.DataType, dbModel.TypeMapper.GetGraphQlType(c.EffectiveDataType));
+                    return new ObjectKeySegmentColumn(
+                        column,
+                        readsAsText ? dialect.TextCast(column, c.DataType) : column,
+                        readsAsText,
+                        c,
+                        readTypes != null && i < readTypes.Count ? readTypes[i] : null);
+                })
                 .ToList();
             return dialect.ObjectKeyExpression(segments);
         }
@@ -855,7 +866,7 @@ namespace BifrostQL.Core.QueryModel
         /// <see cref="ObjectKeyRange"/>'s bounds as a predicate on the key text, every bound a
         /// parameter. Null when the range has no bounds.
         /// </summary>
-        private ParameterizedSql? ObjectKeyPredicate(ISqlDialect dialect, SqlParameterCollection parameters)
+        private ParameterizedSql? ObjectKeyPredicate(IDbModel dbModel, ISqlDialect dialect, SqlParameterCollection parameters)
         {
             var range = ObjectKeyRange!;
             var bounds = new List<(string Op, string Value)>();
@@ -865,7 +876,7 @@ namespace BifrostQL.Core.QueryModel
             if (bounds.Count == 0)
                 return null;
 
-            var key = ObjectKeySql(dialect);
+            var key = ObjectKeySql(dbModel, dialect);
             var bound = bounds.Select(b => (b.Op, Parameter: parameters.AddParameter(b.Value))).ToList();
             return new ParameterizedSql(
                 string.Join(" AND ", bound.Select(b => $"{key} {b.Op} {b.Parameter.Name}")),

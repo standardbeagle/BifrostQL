@@ -322,12 +322,60 @@ namespace BifrostQL.Server.Test
             var pending = Cookie(signIn);
 
             (await SendAsync(client, HttpMethod.Get, "/protected", pending)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-            (await SendAsync(client, HttpMethod.Get, "/auth/session", pending)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
             (await SendAsync(client, HttpMethod.Get, "/PROTECTED", pending)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
             (await SendAsync(client, HttpMethod.Post, "/auth/admin/unlock", pending, new { userId = "user-2" }))
                 .StatusCode.Should().Be(HttpStatusCode.Unauthorized, "the admin role does not apply to an enrollment-only session");
             (await SendAsync(client, HttpMethod.Post, "/auth/mfa/enroll", pending, new { })).StatusCode.Should().Be(HttpStatusCode.OK);
             (await LiveSessionsAsync("user-1")).Should().ContainSingle().Which.MfaPending.Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task SessionEndpoint_ForAnEnrollmentOnlySession_AnswersOnlyTheEnrollmentStatus()
+        {
+            var client = await StartAsync();
+            var pending = Cookie(await LoginAsync(client, Alice));
+
+            var session = await SendAsync(client, HttpMethod.Get, "/auth/session", pending);
+
+            session.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await JsonAsync(session);
+            body.GetProperty("status").GetString().Should().Be(LocalLoginMfaResponse.MfaEnrollmentRequired);
+            // Nothing else: no identity field, no secret, no challenge.
+            body.EnumerateObject().Select(p => p.Name).Should().Equal("status");
+            // The status read grants nothing past it.
+            (await SendAsync(client, HttpMethod.Get, "/protected", pending)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        [Fact]
+        public async Task SessionEndpoint_WithNoSession_OrAnExpiredEnrollmentOnlyOne_Answers401()
+        {
+            var client = await StartAsync(o => o.MfaEnrollmentTimeout = TimeSpan.FromMinutes(10));
+            var pending = Cookie(await LoginAsync(client, Alice));
+
+            (await SendAsync(client, HttpMethod.Get, "/auth/session")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            // Control: the same cookie reads as enrollment-only before the timeout.
+            (await SendAsync(client, HttpMethod.Get, "/auth/session", pending)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+            _clock.Advance(TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1));
+
+            var expired = await SendAsync(client, HttpMethod.Get, "/auth/session", pending);
+            expired.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await expired.Content.ReadAsStringAsync()).Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task SessionEndpoint_ForAFullSession_AnswersTheIdentity_AndNoStatus()
+        {
+            var client = await StartAsync();
+            var enrolled = await EnrollAsync(client, Alice);
+
+            var session = await SendAsync(client, HttpMethod.Get, "/auth/session", enrolled.Cookie);
+
+            session.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await JsonAsync(session);
+            body.GetProperty("id").GetString().Should().Be("user-1");
+            body.GetProperty("email").GetString().Should().Be(Alice);
+            body.TryGetProperty("status", out _).Should().BeFalse();
         }
 
         [Fact]

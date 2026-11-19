@@ -352,6 +352,9 @@ namespace BifrostQL.Server.Auth
                     // An enrollment-only session counts as signed in on the enrollment and logout
                     // endpoints alone. Everywhere else the request runs anonymous, whatever is mounted
                     // and in whatever order; the cookie is kept so the user can still finish enrolling.
+                    // The verdict is left on the request so the session endpoint can tell a client
+                    // reloading mid-enrollment where it stands (and nothing else).
+                    context.HttpContext.Items[EnrollmentOnlySessionItem] = true;
                     if (!IsEnrollmentOnlyPath(context.HttpContext.RequestServices.GetRequiredService<LocalAuthOptions>(),
                             context.HttpContext.Request.Path))
                     {
@@ -453,6 +456,13 @@ namespace BifrostQL.Server.Auth
             session.MfaPending
                 ? new LocalSessionCheck(LocalSessionVerdict.EnrollmentOnly, refreshed, now)
                 : new LocalSessionCheck(refreshed is null ? LocalSessionVerdict.Live : LocalSessionVerdict.Refreshed, refreshed, now);
+
+        /// <summary>
+        /// <see cref="HttpContext.Items"/> key set by <see cref="ValidateSessionAsync"/> when the cookie names a
+        /// live enrollment-only session. Read only by <see cref="HandleSessionAsync"/>; the principal itself
+        /// stays anonymous off the enrollment paths.
+        /// </summary>
+        private static readonly object EnrollmentOnlySessionItem = new();
 
         /// <summary>The paths an enrollment-only session may reach: enroll, confirm, logout. Exact match, any case.</summary>
         private static bool IsEnrollmentOnlyPath(LocalAuthOptions options, PathString path) =>
@@ -811,6 +821,10 @@ namespace BifrostQL.Server.Auth
         /// path the GraphQL pipeline uses. Returns 401 when the request carries no
         /// authenticated principal. Only the public AppIdentity fields are written: the
         /// database credentials and the raw cookie claims never reach the client.
+        /// A live enrollment-only session answers 200 <c>{"status":"mfa-enrollment-required"}</c>
+        /// (the login response's word) and nothing else, so a client reloaded mid-enrollment
+        /// resumes the enrollment step; the user's identity fields stay unreadable until the
+        /// second factor is confirmed.
         /// </summary>
         internal static async Task HandleSessionAsync(HttpContext context)
         {
@@ -823,6 +837,13 @@ namespace BifrostQL.Server.Auth
             var principal = context.User;
             if (principal?.Identity == null || !principal.Identity.IsAuthenticated)
             {
+                if (context.Items.ContainsKey(EnrollmentOnlySessionItem))
+                {
+                    await context.Response.WriteAsJsonAsync(
+                        new LocalSessionStatusResponse(LocalLoginMfaResponse.MfaEnrollmentRequired),
+                        context.RequestAborted).ConfigureAwait(false);
+                    return;
+                }
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;
             }
@@ -904,6 +925,12 @@ namespace BifrostQL.Server.Auth
         public const string MfaRequired = "mfa-required";
         public const string MfaEnrollmentRequired = "mfa-enrollment-required";
     }
+
+    /// <summary>
+    /// 200 body of <c>GET {SessionPath}</c> for a live enrollment-only session. <see cref="Status"/> is
+    /// <see cref="LocalLoginMfaResponse.MfaEnrollmentRequired"/>; no identity field is carried.
+    /// </summary>
+    public sealed record LocalSessionStatusResponse(string Status);
 
     /// <summary>JSON body of the local-auth password-change endpoint.</summary>
     public sealed record LocalPasswordChangeRequest

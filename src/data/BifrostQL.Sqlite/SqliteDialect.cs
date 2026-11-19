@@ -114,6 +114,14 @@ public sealed class SqliteDialect : StandardConcatDialectBase
             + $" ELSE {PercentEncodeUtf8(x)} END");
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// SQLite does not flatten a subquery that has an OFFSET. Unfenced, the float stages
+    /// compiled to about 38,000 opcodes for one integer key column, and preparing the
+    /// statement took most of each seek's time even though no row takes the float branch.
+    /// </remarks>
+    protected override string DerivedTableFence => " LIMIT -1 OFFSET 0";
+
     private const string HexDigits = "'0123456789ABCDEF'";
     private const string Base64Alphabet = "'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'";
 

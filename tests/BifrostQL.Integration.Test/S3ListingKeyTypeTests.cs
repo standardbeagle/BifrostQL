@@ -467,3 +467,36 @@ public sealed class S3ObjectKeySqlVersionFloorTests
         tokens.Should().NotContain(t => t.StartsWith("REGEXP", StringComparison.OrdinalIgnoreCase));
     }
 }
+
+/// <summary>
+/// SQLite compiles the object-key expression on every seek (no statement cache), so its
+/// compiled size is seek latency. Its float stages are fenced against flattening
+/// (<c>SqlDialectBase.DerivedTableFence</c>): flattened, one integer key column compiled to
+/// about 38,000 opcodes, and preparing a 1000-row seek cost about ten times running it.
+/// </summary>
+public sealed class SqliteObjectKeyCompileSizeTests
+{
+    [Fact]
+    public async Task An_integer_key_seek_compiles_to_a_few_thousand_opcodes()
+    {
+        var seg = new ObjectKeySegmentColumn("\"docs\".\"id\"", "\"docs\".\"id\"", false,
+            new ColumnDto { ColumnName = "id", DataType = "INTEGER" }, typeof(long));
+        var key = BifrostQL.Sqlite.SqliteDialect.Instance.ObjectKeyExpression(new[] { seg });
+        await using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
+        await conn.OpenAsync();
+        await using (var create = conn.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT)";
+            await create.ExecuteNonQueryAsync();
+        }
+        await using var explain = conn.CreateCommand();
+        explain.CommandText = $"EXPLAIN SELECT id FROM docs WHERE {key} > @p ORDER BY {key} LIMIT 1001";
+        explain.Parameters.AddWithValue("@p", "5000");
+        var opcodes = 0;
+        await using (var reader = await explain.ExecuteReaderAsync())
+            while (await reader.ReadAsync())
+                opcodes++;
+
+        opcodes.Should().BeInRange(1, 5000);
+    }
+}

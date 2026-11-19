@@ -585,6 +585,14 @@ public abstract class SqlDialectBase : ISqlDialect
     private const string RestLength = "400";
 
     /// <summary>
+    /// Appended to each derived table of the float formatter (<see cref="DotNetFloatText"/>)
+    /// to keep the engine from flattening it into its parent. Every stage names the previous
+    /// stage's columns several times, so flattening the chain substitutes each one again and
+    /// the compiled expression grows with the product of the references. Empty by default.
+    /// </summary>
+    protected virtual string DerivedTableFence => "";
+
+    /// <summary>
     /// The text <c>double.ToString(null, InvariantCulture)</c> (or <c>float</c>'s, when
     /// <paramref name="single"/>) produces for the value whose shortest round-trip digits
     /// <paramref name="shortestText"/> holds. <paramref name="shortestText"/> is any decimal
@@ -602,26 +610,26 @@ public abstract class SqlDialectBase : ISqlDialect
         string Sub(string t, string start, string len) => KeyTextSubstring(t, start, len);
         string Cat(params string[] parts) => LowerConcat(parts);
 
-        var s1 = $"(SELECT LOWER({shortestText}) AS t) AS k1";
+        var s1 = $"(SELECT LOWER({shortestText}) AS t{DerivedTableFence}) AS k1";
         var s2 = "(SELECT k1.t, CASE WHEN " + Sub("k1.t", "1", "1") + " = '-' THEN 1 ELSE 0 END AS neg, "
             + "CASE WHEN " + Sub("k1.t", "1", "1") + " = '-' THEN " + Sub("k1.t", "2", RestLength) + " ELSE k1.t END AS a"
-            + $" FROM {s1}) AS k2";
-        var s3 = $"(SELECT k2.t, k2.neg, k2.a, {KeyTextPosition('e', "k2.a")} AS pe FROM {s2}) AS k3";
+            + $" FROM {s1}{DerivedTableFence}) AS k2";
+        var s3 = $"(SELECT k2.t, k2.neg, k2.a, {KeyTextPosition('e', "k2.a")} AS pe FROM {s2}{DerivedTableFence}) AS k3";
         var s4 = "(SELECT k3.t, k3.neg, "
             + "CASE WHEN k3.pe > 0 THEN " + Sub("k3.a", "1", "k3.pe - 1") + " ELSE k3.a END AS m, "
             + "CASE WHEN k3.pe > 0 THEN " + KeyTextInt(Sub("k3.a", "k3.pe + 1", RestLength)) + " ELSE 0 END AS x"
-            + $" FROM {s3}) AS k4";
-        var s5 = $"(SELECT k4.t, k4.neg, k4.m, k4.x, {KeyTextPosition('.', "k4.m")} AS pd FROM {s4}) AS k5";
+            + $" FROM {s3}{DerivedTableFence}) AS k4";
+        var s5 = $"(SELECT k4.t, k4.neg, k4.m, k4.x, {KeyTextPosition('.', "k4.m")} AS pd FROM {s4}{DerivedTableFence}) AS k5";
         var s6 = "(SELECT k5.t, k5.neg, k5.x, "
             + "CASE WHEN k5.pd > 0 THEN " + Sub("k5.m", "1", "k5.pd - 1") + " ELSE k5.m END AS i, "
             + "CASE WHEN k5.pd > 0 THEN " + Sub("k5.m", "k5.pd + 1", RestLength) + " ELSE '' END AS f"
-            + $" FROM {s5}) AS k6";
+            + $" FROM {s5}{DerivedTableFence}) AS k6";
         var s7 = "(SELECT k6.t, k6.neg, k6.x, " + KeyTextLength("k6.i") + " AS li, " + Cat("k6.i", "k6.f") + " AS raw"
-            + $" FROM {s6}) AS k7";
+            + $" FROM {s6}{DerivedTableFence}) AS k7";
         var s8 = "(SELECT k7.t, k7.neg, k7.x, k7.li, " + KeyTextLength("k7.raw") + " AS lraw, "
-            + KeyTrimLeadingZeros("k7.raw") + " AS nz FROM " + s7 + ") AS k8";
+            + KeyTrimLeadingZeros("k7.raw") + " AS nz FROM " + s7 + DerivedTableFence + ") AS k8";
         var s9 = "(SELECT k8.t, k8.neg, " + KeyTrimTrailingZeros("k8.nz") + " AS d, "
-            + "k8.li - 1 - (k8.lraw - " + KeyTextLength("k8.nz") + ") + k8.x AS e FROM " + s8 + ") AS k9";
+            + "k8.li - 1 - (k8.lraw - " + KeyTextLength("k8.nz") + ") + k8.x AS e FROM " + s8 + DerivedTableFence + ") AS k9";
         return DotNetFloatLayout(s9, single);
     }
 
@@ -637,7 +645,7 @@ public abstract class SqlDialectBase : ISqlDialect
         var sciFrom = single ? 9 : 17;
         string Sub(string t, string start, string len) => KeyTextSubstring(t, start, len);
         string Cat(params string[] parts) => LowerConcat(parts);
-        var s10 = $"(SELECT k9.t, k9.neg, k9.d, k9.e, {KeyTextLength("k9.d")} AS ld FROM {parsed}) AS k10";
+        var s10 = $"(SELECT k9.t, k9.neg, k9.d, k9.e, {KeyTextLength("k9.d")} AS ld FROM {parsed}{DerivedTableFence}) AS k10";
 
         const string d = "k10.d", e = "k10.e", ld = "k10.ld";
         var sci = Cat(

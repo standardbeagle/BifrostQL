@@ -264,12 +264,11 @@ public sealed class SqlServerDialect : SqlDialectBase
             case "bit":
                 return KeySegmentText.Ascii($"CASE WHEN {x} = 1 THEN 'True' ELSE 'False' END");
             case "decimal" or "numeric":
-                RequireClrDecimalScale(segment);
-                return KeySegmentText.Ascii($"CONVERT(varchar(50), {x})", ".");
+                return ClrDecimalText(segment, $"CONVERT(varchar(50), {x})");
             case "money" or "smallmoney":
                 return KeySegmentText.Ascii($"CONVERT(varchar(30), {x}, 2)", ".");
             case "float" or "real":
-                throw UnsupportedKeyType(segment, "SQL Server has no correctly rounded shortest float text");
+                return Unrenderable(segment, "SQL Server has no correctly rounded shortest float text");
             case "date" or "datetime" or "datetime2" or "smalldatetime":
                 return KeySegmentText.Ascii(DateTimeText($"CONVERT(datetime2(7), {x})"), ":.");
             case "datetimeoffset":
@@ -285,7 +284,7 @@ public sealed class SqlServerDialect : SqlDialectBase
             case "binary" or "varbinary" or "timestamp" or "rowversion":
                 return KeySegmentText.Ascii($"ISNULL((SELECT {x} FOR XML PATH('')), '')", "+/=");
             default:
-                throw UnsupportedKeyType(segment);
+                return Unrenderable(segment);
         }
     }
 

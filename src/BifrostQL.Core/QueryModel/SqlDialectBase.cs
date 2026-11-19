@@ -414,20 +414,43 @@ public abstract class SqlDialectBase : ISqlDialect
         var parts = new List<string>(segments.Count * 2 - 1);
         foreach (var segment in segments)
         {
+            var text = RenderKeySegment(segment);
+            // A caller asks ObjectKeyRefusal before building a keyed query; reaching here
+            // with an unrenderable column is a routing defect, not a listing outcome.
+            if (text.Refusal != null)
+                throw new NotSupportedException(text.Refusal);
             if (parts.Count > 0)
                 parts.Add("'/'");
-            parts.Add(EscapeKeySegment(RenderKeySegment(segment)));
+            parts.Add(EscapeKeySegment(text));
         }
 
         return BinaryOrder(parts.Count == 1 ? parts[0] : LowerConcat(parts));
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The same <see cref="RenderKeySegment"/> call <see cref="ObjectKeyExpression"/> makes, so
+    /// the answer and the rendering cannot disagree. Refusals depend on the declared column
+    /// type only, never on <see cref="ObjectKeySegmentColumn.ReadClrType"/>.
+    /// </remarks>
+    public virtual string? ObjectKeyRefusal(IReadOnlyList<ObjectKeySegmentColumn> segments)
+    {
+        ArgumentNullException.ThrowIfNull(segments);
+        foreach (var segment in segments)
+        {
+            var refusal = RenderKeySegment(segment).Refusal;
+            if (refusal != null)
+                return refusal;
+        }
+        return null;
+    }
+
     /// <summary>
     /// One primary-key column as SQL text equal to <see cref="Storage.S3ObjectKeyMap"/>'s
     /// unescaped rendering (<c>Stringify</c>) of the value the reader returns for it, with
-    /// the set of characters that text can contain. Throws
-    /// <see cref="NotSupportedException"/> (<see cref="UnsupportedKeyType"/>) for a column
-    /// type this engine cannot render byte-identically.
+    /// the set of characters that text can contain, or <see cref="Unrenderable"/> for a
+    /// column type this engine cannot render byte-identically. Never throws for a type:
+    /// <see cref="ObjectKeyRefusal"/> asks the same question.
     /// </summary>
     protected abstract KeySegmentText RenderKeySegment(ObjectKeySegmentColumn segment);
 
@@ -445,8 +468,9 @@ public abstract class SqlDialectBase : ISqlDialect
     /// A rendered key segment. <see cref="ReservedChars"/> null means the text may hold any
     /// character (escaped by <see cref="PercentEncodeUtf8"/>); otherwise the text holds only
     /// unreserved bytes and these ASCII characters, escaped by one <c>REPLACE</c> each.
+    /// <see cref="Refusal"/> set means the type has no exact rendering (<see cref="Unrenderable"/>).
     /// </summary>
-    protected readonly record struct KeySegmentText(string Sql, string? ReservedChars)
+    protected readonly record struct KeySegmentText(string Sql, string? ReservedChars, string? Refusal = null)
     {
         /// <summary>Text of any characters.</summary>
         public static KeySegmentText AnyText(string sql) => new(sql, null);
@@ -535,11 +559,12 @@ public abstract class SqlDialectBase : ISqlDialect
     }
 
     /// <summary>
-    /// The refusal for a key column type this engine cannot render byte-identically to the
-    /// C# key. The message names the type only, never a value.
+    /// A key column type this engine cannot render byte-identically to the C# key. The
+    /// refusal names the type only, never a value.
     /// </summary>
-    protected static NotSupportedException UnsupportedKeyType(ObjectKeySegmentColumn segment, string? reason = null) =>
-        new($"Primary-key type '{segment.Column.DataType}' cannot be rendered as an S3 object key in SQL on this engine"
+    protected static KeySegmentText Unrenderable(ObjectKeySegmentColumn segment, string? reason = null) =>
+        new("", null,
+            $"Primary-key type '{segment.Column.DataType}' cannot be rendered as an S3 object key in SQL on this engine"
             + (reason == null ? "." : $": {reason}."));
 
     /// <summary>
@@ -548,12 +573,14 @@ public abstract class SqlDialectBase : ISqlDialect
     /// </summary>
     protected const int MaxClrDecimalScale = 28;
 
-    /// <summary>Refuses a decimal column whose declared scale the CLR value cannot hold.</summary>
-    protected static void RequireClrDecimalScale(ObjectKeySegmentColumn segment)
-    {
-        if (segment.Column.NumericScale is > MaxClrDecimalScale)
-            throw UnsupportedKeyType(segment, $"scale above {MaxClrDecimalScale} is rounded when read");
-    }
+    /// <summary>
+    /// A decimal column's text <paramref name="sql"/> (digits, sign and <c>.</c>), or
+    /// <see cref="Unrenderable"/> when its declared scale is more than the CLR value holds.
+    /// </summary>
+    protected static KeySegmentText ClrDecimalText(ObjectKeySegmentColumn segment, string sql) =>
+        segment.Column.NumericScale is > MaxClrDecimalScale
+            ? Unrenderable(segment, $"scale above {MaxClrDecimalScale} is rounded when read")
+            : KeySegmentText.Ascii(sql, ".");
 
     // ---- .NET float text -------------------------------------------------------------
 

@@ -843,24 +843,8 @@ namespace BifrostQL.Core.QueryModel
         /// that very text.
         /// </summary>
         private string ObjectKeySql(IDbModel dbModel, ISqlDialect dialect)
-        {
-            var tableRef = dialect.TableReference(SchemaName, TableName);
-            var readTypes = ObjectKeyRange?.KeyReadClrTypes;
-            var segments = DbTable.KeyColumns
-                .Select((c, i) =>
-                {
-                    var column = $"{tableRef}.{dialect.EscapeIdentifier(c.DbName)}";
-                    var readsAsText = dialect.RequiresTextCast(c.DataType, dbModel.TypeMapper.GetGraphQlType(c.EffectiveDataType));
-                    return new ObjectKeySegmentColumn(
-                        column,
-                        readsAsText ? dialect.TextCast(column, c.DataType) : column,
-                        readsAsText,
-                        c,
-                        readTypes != null && i < readTypes.Count ? readTypes[i] : null);
-                })
-                .ToList();
-            return dialect.ObjectKeyExpression(segments);
-        }
+            => dialect.ObjectKeyExpression(ObjectKeySegmentColumn.For(
+                DbTable, dialect.TableReference(SchemaName, TableName), dbModel, dialect, ObjectKeyRange?.KeyReadClrTypes));
 
         /// <summary>
         /// <see cref="ObjectKeyRange"/>'s bounds as a predicate on the key text, every bound a

@@ -87,7 +87,7 @@ public sealed class SqliteDialect : StandardConcatDialectBase
     /// digits, a real as .NET's shortest round-trip text (the first of 15/16/17
     /// significant digits that reads back equal, re-laid out in .NET notation; in 600
     /// seeded doubles every mismatch was a 17-digit value whose last digit SQLite's printf
-    /// rounds wrongly, which is why a REAL-affinity key is refused and only a real stored in
+    /// rounds wrongly, which is why a REAL-affinity key is not rendered (the listing sorts it in .NET) and only a real stored in
     /// a column of another affinity takes this path), a blob as
     /// base64 (what the reader turns a <c>byte[]</c> into), and text as stored.
     /// </remarks>
@@ -95,11 +95,11 @@ public sealed class SqliteDialect : StandardConcatDialectBase
     {
         // A REAL-affinity column holds floats by design, and SQLite's printf and text-to-real
         // are not correctly rounded at 17 digits: about one random double in seventy renders
-        // one digit off .NET's shortest text. Refused rather than listed out of order.
+        // one digit off .NET's shortest text. Unrenderable, so the listing sorts it in .NET.
         var type = KeyTypeName(segment);
         if (type.Contains("real", StringComparison.Ordinal) || type.Contains("floa", StringComparison.Ordinal)
             || type.Contains("doub", StringComparison.Ordinal))
-            throw UnsupportedKeyType(segment, "SQLite has no correctly rounded shortest float text");
+            return Unrenderable(segment, "SQLite has no correctly rounded shortest float text");
 
         var x = segment.ColumnExpression;
         var real = DotNetFloatText(

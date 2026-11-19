@@ -200,8 +200,7 @@ public sealed class PostgresDialect : StandardConcatDialectBase
             case "boolean" or "bool":
                 return KeySegmentText.Ascii($"CASE WHEN {x} THEN 'True' ELSE 'False' END");
             case "numeric" or "decimal":
-                RequireClrDecimalScale(segment);
-                return KeySegmentText.Ascii($"CAST({x} AS text)", ".");
+                return ClrDecimalText(segment, $"CAST({x} AS text)");
             case "real" or "float4":
                 return KeySegmentText.Ascii(DotNetFloatText($"CAST({x} AS text)", single: true), ".+");
             case "double precision" or "float8":
@@ -211,7 +210,7 @@ public sealed class PostgresDialect : StandardConcatDialectBase
             case "character" or "char" or "bpchar":
                 return KeySegmentText.AnyText($"format('%s', {x})");
             default:
-                throw UnsupportedKeyType(segment);
+                return Unrenderable(segment);
         }
     }
 

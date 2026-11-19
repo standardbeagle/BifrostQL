@@ -473,4 +473,13 @@ public interface ISqlDialect
     /// <param name="segments">The key columns in declared key order, already escaped and table-qualified.</param>
     string ObjectKeyExpression(IReadOnlyList<ObjectKeySegmentColumn> segments)
         => throw new NotSupportedException("This dialect does not compute object keys in SQL.");
+
+    /// <summary>
+    /// Why <see cref="ObjectKeyExpression"/> cannot render <paramref name="segments"/> byte for
+    /// byte, or null when it can. Decided by the declared key column types, without touching
+    /// the database, so a caller picks its listing strategy before it builds a query. Never
+    /// throws for a type.
+    /// </summary>
+    string? ObjectKeyRefusal(IReadOnlyList<ObjectKeySegmentColumn> segments)
+        => "This dialect does not compute object keys in SQL.";
 }

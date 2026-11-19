@@ -130,6 +130,14 @@ namespace BifrostQL.Core.Model
         ITypeMapper TypeMapper => AnsiSqlTypeMapper.Instance;
 
         /// <summary>
+        /// The SQL dialect of the connection this model was read from, set by
+        /// <see cref="DbModelLoader"/>. Null for a model built by hand without one; a surface
+        /// that needs the dialect's answers (such as which key types it renders in SQL)
+        /// fails fast on null.
+        /// </summary>
+        QueryModel.ISqlDialect? Dialect => null;
+
+        /// <summary>
         /// EAV (Entity-Attribute-Value) configurations linking meta tables to parent tables.
         /// When present, the parent table's GraphQL type gets a <c>_meta: String</c> field
         /// that returns all meta rows as a JSON object.
@@ -252,6 +260,9 @@ namespace BifrostQL.Core.Model
         private MetadataDictionary _metadata = new();
         public IDictionary<string, object?> Metadata { get => _metadata; init => _metadata = MetadataDictionary.ShareOrCopy(value); }
         public ITypeMapper TypeMapper { get; set; } = AnsiSqlTypeMapper.Instance;
+
+        /// <inheritdoc />
+        public QueryModel.ISqlDialect? Dialect { get; set; }
         public IReadOnlyList<EavConfig> EavConfigs { get; set; } = Array.Empty<EavConfig>();
         public BifrostQL.Core.Schema.EnumColumnMap? EnumColumns { get; set; }
         public string? GetMetadataValue(string property) => Metadata.TryGetValue(property, out var v) ? v?.ToString() : null;

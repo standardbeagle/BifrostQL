@@ -23,7 +23,31 @@ namespace BifrostQL.Core.QueryModel;
 /// and <c>CHAR(36)</c> read as <see cref="Guid"/>. Null when unknown.
 /// </param>
 public sealed record ObjectKeySegmentColumn(
-    string ColumnExpression, string ReadExpression, bool ReadsAsText, ColumnDto Column, Type? ReadClrType);
+    string ColumnExpression, string ReadExpression, bool ReadsAsText, ColumnDto Column, Type? ReadClrType)
+{
+    /// <summary>
+    /// <paramref name="table"/>'s key columns in declared order, each qualified with
+    /// <paramref name="tableReference"/> and carrying the read projection the SELECT applies:
+    /// decided by the same <see cref="ISqlDialect.RequiresTextCast(string, string)"/> test
+    /// <see cref="GqlObjectColumn"/> uses, so a column the SELECT casts to text is keyed by that
+    /// very text. <paramref name="readTypes"/> holds observed CLR read types (null: unknown).
+    /// </summary>
+    public static IReadOnlyList<ObjectKeySegmentColumn> For(
+        IDbTable table, string tableReference, IDbModel model, ISqlDialect dialect, IReadOnlyList<Type?>? readTypes)
+        => table.KeyColumns
+            .Select((c, i) =>
+            {
+                var column = $"{tableReference}.{dialect.EscapeIdentifier(c.DbName)}";
+                var readsAsText = dialect.RequiresTextCast(c.DataType, model.TypeMapper.GetGraphQlType(c.EffectiveDataType));
+                return new ObjectKeySegmentColumn(
+                    column,
+                    readsAsText ? dialect.TextCast(column, c.DataType) : column,
+                    readsAsText,
+                    c,
+                    readTypes != null && i < readTypes.Count ? readTypes[i] : null);
+            })
+            .ToList();
+}
 
 /// <summary>
 /// A keyset window over a row's object-key text: the primary-key segments joined by

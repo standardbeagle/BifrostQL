@@ -102,12 +102,11 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
             case "bit":
                 return KeySegmentText.Ascii($"CAST({x} + 0 AS CHAR)");
             case "decimal" or "numeric" or "fixed" or "dec":
-                RequireClrDecimalScale(segment);
-                return KeySegmentText.Ascii($"CAST({x} AS CHAR)", ".");
+                return ClrDecimalText(segment, $"CAST({x} AS CHAR)");
             case "double" or "double precision" or "real":
                 return KeySegmentText.Ascii(DotNetFloatText($"CAST({x} AS CHAR(64))", single: false), ".+");
             case "float":
-                throw UnsupportedKeyType(segment, "MySQL has no shortest round-trip text for a single-precision value");
+                return Unrenderable(segment, "MySQL has no shortest round-trip text for a single-precision value");
             case "date" or "datetime" or "timestamp":
                 return KeySegmentText.Ascii($"CONCAT(DATE_FORMAT({x}, '%Y-%m-%dT%H:%i:%s.%f'), '0')", ":.");
             case "time":
@@ -117,7 +116,7 @@ public sealed class MySqlDialect : LimitOffsetDialectBase
             case "binary" or "varbinary" or "tinyblob" or "blob" or "mediumblob" or "longblob":
                 return KeySegmentText.Ascii($"REPLACE(TO_BASE64({x}), CHAR(10), '')", "+/=");
             default:
-                throw UnsupportedKeyType(segment);
+                return Unrenderable(segment);
         }
     }
 

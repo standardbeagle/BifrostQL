@@ -16,11 +16,14 @@ namespace BifrostQL.Integration.Test;
 
 /// <summary>
 /// Every primary-key type that produces an S3 key lists on every engine. For each type the
-/// listing (ordered and bounded in SQL on the dialect's key expression) must equal the keys
-/// C# builds from the rows the read pipeline returns (<see cref="S3ObjectKeyMap.KeyFor"/>),
-/// sorted ordinally: same text byte for byte, no gap, no duplicate. Values include each
-/// type's boundaries (negatives, zero, extremes, padding, minimum and maximum dates).
-/// Pages are three keys, so every type crosses several keyset seeks.
+/// listing must equal the keys C# builds from the rows the read pipeline returns
+/// (<see cref="S3ObjectKeyMap.KeyFor"/>), sorted ordinally: same text byte for byte, no gap,
+/// no duplicate. Values include each type's boundaries (negatives, zero, -0.0, subnormals,
+/// extremes, padding, minimum and maximum dates). Pages are three keys, so every type
+/// crosses several pages. Each case also pins which strategy served it, from the SQL the
+/// listing ran: a keyset seek orders by the dialect's key expression, an in-memory sort
+/// (key types the engine cannot render, such as floats on SQL Server) orders by the
+/// primary key and carries no key window.
 /// </summary>
 public abstract class S3ListingKeyTypeTestBase
 {
@@ -30,9 +33,10 @@ public abstract class S3ListingKeyTypeTestBase
     /// <summary>
     /// A key type: a table <c>okt{Name} (k {Type} PRIMARY KEY, body text)</c> seeded with
     /// <see cref="Literals"/>. No empty value: an empty key segment is not addressable
-    /// (<see cref="S3ObjectKeyMap.KeyFor"/> refuses it).
+    /// (<see cref="S3ObjectKeyMap.KeyFor"/> refuses it). <see cref="SortsInSql"/> false: the
+    /// engine cannot render the key in SQL, so the listing sorts it in .NET.
     /// </summary>
-    protected sealed record KeyTypeCase(string Name, string Type, IReadOnlyList<string> Literals, bool Refused = false);
+    protected sealed record KeyTypeCase(string Name, string Type, IReadOnlyList<string> Literals, bool SortsInSql = true);
 
     protected abstract IIntegrationTestDatabase CreateDatabase();
     protected abstract bool Available { get; }
@@ -45,10 +49,13 @@ public abstract class S3ListingKeyTypeTestBase
     protected abstract string FloatLiteral(string roundTripText, bool single);
 
     /// <summary>
-    /// The column types of a double and a single column whose keys the engine renders; null
-    /// where it has no such type or refuses it (a refusal is pinned in <see cref="Cases"/>).
+    /// The column types of a double and a single column whose keys the engine renders in
+    /// SQL; null where it has no such type or sorts it in .NET (pinned in <see cref="Cases"/>).
     /// </summary>
     protected abstract (string? Double, string? Single) FloatTypes { get; }
+
+    /// <summary>A float key type this engine sorts in .NET, or null when it renders every float type.</summary>
+    protected abstract string? InMemoryFloatType { get; }
 
     /// <summary>True when the engine stores subnormal floats (SQL Server flushes them to zero).</summary>
     protected virtual bool StoresSubnormals => true;
@@ -137,13 +144,50 @@ public abstract class S3ListingKeyTypeTestBase
         page.IsTruncated.Should().BeFalse();
     }
 
+    /// <summary>
+    /// The in-memory sort is bounded by <see cref="S3Options.MaxInMemoryListKeys"/>: a bucket
+    /// holding exactly that many file rows lists whole, one more row is refused with
+    /// <c>InvalidArgument</c> (never a truncated listing). The NULL-file row does not count,
+    /// because the read filters it in SQL.
+    /// </summary>
+    [SkippableFact]
+    public async Task An_in_memory_bucket_past_MaxInMemoryListKeys_is_refused()
+    {
+        Skip.IfNot(Available, "test database connection string not set");
+        Skip.If(InMemoryFloatType == null, "this engine renders every float key in SQL");
+        var keyCase = new KeyTypeCase("capped", InMemoryFloatType!,
+            new[] { "0.5", "1.5", "2.5", "3.5" }.Select(v => FloatLiteral(v, single: false)).ToList(), SortsInSql: false);
+        await using var db = CreateDatabase();
+        await db.InitializeAsync();
+        await SeedAsync(db, new[] { keyCase });
+        var reader = await ReaderAsync(db, new[] { keyCase });
+        var bucket = TableName(keyCase);
+
+        var atCap = new S3Listing(reader, new S3Options
+        {
+            Endpoint = Endpoint, ContinuationTokenSecret = "s3-key-type-secret", MaxInMemoryListKeys = 4,
+        });
+        (await WalkAsync(atCap, bucket)).Should().Equal("body/0%2E5", "body/1%2E5", "body/2%2E5", "body/3%2E5");
+
+        var pastCap = new S3Listing(reader, new S3Options
+        {
+            Endpoint = Endpoint, ContinuationTokenSecret = "s3-key-type-secret", MaxInMemoryListKeys = 3,
+        });
+        var refused = async () => await pastCap.ListObjectsV2Async(bucket, null, null, 1000, null, null, Caller);
+        var thrown = await refused.Should().ThrowAsync<S3ProtocolException>();
+        thrown.Which.Code.Should().Be("InvalidArgument");
+        thrown.Which.Message.Should().Be(
+            "This bucket has more objects than the endpoint is configured to list in a single scan.");
+    }
+
     private async Task RunAsync(IReadOnlyList<KeyTypeCase> cases)
     {
         await using var db = CreateDatabase();
         await db.InitializeAsync();
         await SeedAsync(db, cases);
         var reader = await ReaderAsync(db, cases);
-        var lister = new S3Listing(reader, new S3Options { Endpoint = Endpoint, ContinuationTokenSecret = "s3-key-type-secret" });
+        var recorder = new RecordingReads(reader);
+        var lister = new S3Listing(recorder, new S3Options { Endpoint = Endpoint, ContinuationTokenSecret = "s3-key-type-secret" });
         var model = await reader.GetModelAsync(Endpoint);
 
         var failures = new List<string>();
@@ -151,17 +195,10 @@ public abstract class S3ListingKeyTypeTestBase
         {
             var bucket = TableName(keyCase);
             var table = model.Tables.Single(t => t.DbName == bucket);
-            if (keyCase.Refused)
-            {
-                var refused = async () => await lister.ListObjectsV2Async(bucket, null, null, 3, null, null, Caller);
-                var thrown = await refused.Should().ThrowAsync<S3ProtocolException>();
-                thrown.Which.Code.Should().Be("InvalidArgument");
-                continue;
-            }
-
             var expected = (await CSharpKeysAsync(reader, table))
                 .OrderBy(k => k, StringComparer.Ordinal).ToList();
             List<string> listed;
+            recorder.Reads.Clear();
             try
             {
                 listed = await WalkAsync(lister, bucket);
@@ -171,6 +208,10 @@ public abstract class S3ListingKeyTypeTestBase
                 failures.Add($"{keyCase.Name} ({keyCase.Type}): listing threw {ex.GetType().Name}: {ex.Message}");
                 continue;
             }
+
+            var strategyMiss = StrategyMiss(model, table, keyCase, recorder.Reads);
+            if (strategyMiss != null)
+                failures.Add($"{keyCase.Name} ({keyCase.Type}): {strategyMiss}");
 
             if (!listed.SequenceEqual(expected, StringComparer.Ordinal))
             {
@@ -184,6 +225,54 @@ public abstract class S3ListingKeyTypeTestBase
         }
 
         failures.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Null when every listing read (the reads with a file filter; the key read-type probe
+    /// has none) ran the strategy <paramref name="keyCase"/> expects, else what differed. A
+    /// seek orders by the dialect's key expression for this table; an in-memory read has no
+    /// key window and orders by the primary key column.
+    /// </summary>
+    private static string? StrategyMiss(
+        IDbModel model, IDbTable table, KeyTypeCase keyCase, IReadOnlyList<(GqlObjectQuery Query, string Sql)> reads)
+    {
+        var dialect = model.Dialect!;
+        var listingReads = reads.Where(r => r.Query.Filter != null).ToList();
+        if (listingReads.Count == 0)
+            return "the listing ran no read";
+        foreach (var (query, sql) in listingReads)
+        {
+            if (keyCase.SortsInSql)
+            {
+                var key = dialect.ObjectKeyExpression(ObjectKeySegmentColumn.For(
+                    table, dialect.TableReference(table.TableSchema, table.DbName), model, dialect,
+                    query.ObjectKeyRange?.KeyReadClrTypes));
+                if (query.ObjectKeyRange == null || !sql.Contains($"ORDER BY {key} asc", StringComparison.Ordinal))
+                    return "expected a keyset seek ordered by the key expression; ran: " + sql;
+            }
+            else if (query.ObjectKeyRange != null
+                || !sql.Contains($"ORDER BY {dialect.TableReference(table.TableSchema, table.DbName)}.{dialect.EscapeIdentifier("k")}", StringComparison.Ordinal)
+                    && !sql.Contains($"ORDER BY {dialect.EscapeIdentifier("k")}", StringComparison.Ordinal))
+            {
+                return "expected an in-memory read ordered by the primary key; ran: " + sql;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Passes reads through and records each one's query and executed SQL.</summary>
+    private sealed class RecordingReads(QueryIntentExecutor inner) : IQueryIntentExecutor
+    {
+        public List<(GqlObjectQuery Query, string Sql)> Reads { get; } = new();
+
+        public Task<IDbModel> GetModelAsync(string? endpoint = null) => inner.GetModelAsync(endpoint);
+
+        public async Task<QueryIntentResult> ExecuteAsync(QueryIntent intent, CancellationToken cancellationToken = default)
+        {
+            var result = await inner.ExecuteAsync(intent, cancellationToken);
+            Reads.Add((intent.Query, result.Sql));
+            return result;
+        }
     }
 
     /// <summary>The keys C# builds for every row with a file, through the read pipeline.</summary>
@@ -292,8 +381,19 @@ public abstract class S3ListingKeyTypeTestBase
     {
         "0", "-1.5", "0.1", "0.30000000000000004", "123", "1E-05", "0.0001", "0.00012", "1E+16", "1E+17",
         "1.5E+16", "12345678901234567", "1.2345678901234568E+20", "1.7976931348623157E+308", "-1.7976931348623157E+308",
-        "5E-324", "2.2250738585072014E-308", "100", "-0.001",
+        "5E-324", "2.2250738585072014E-308", "100", "-0.001", "1E+308",
     };
+
+    /// <summary>
+    /// -0.0 in a table of its own: it equals 0, so it cannot share a primary key with it.
+    /// <paramref name="sortsInSql"/> false for a type the engine sorts in .NET.
+    /// </summary>
+    protected KeyTypeCase NegativeZero(string type, bool single, bool sortsInSql) =>
+        new($"negzero{(single ? "s" : "d")}", type, new[] { FloatLiteral("-0", single), FloatLiteral("2", single) }, sortsInSql);
+
+    /// <summary>The exact double text of a single, for engines that parse a float literal as a double.</summary>
+    protected static string SingleAsDoubleText(string roundTripText) =>
+        ((double)float.Parse(roundTripText, CultureInfo.InvariantCulture)).ToString("R", CultureInfo.InvariantCulture);
 
     /// <summary>Single boundary and notation cases as round-trip text.</summary>
     protected static readonly string[] SingleValues =
@@ -309,12 +409,14 @@ public sealed class SqliteS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
     protected override bool Available => true;
     protected override string BodyType => "TEXT";
     protected override (string? Double, string? Single) FloatTypes => (null, null);
+    protected override string? InMemoryFloatType => "REAL";
     protected override string FloatLiteral(string roundTripText, bool single) => roundTripText;
 
     protected override IReadOnlyList<KeyTypeCase> Cases => new KeyTypeCase[]
     {
         new("int", "INTEGER", new[] { "-9223372036854775808", "-1", "0", "1", "10", "9", "9223372036854775807" }),
-        new("real", "REAL", new[] { "0.1", "1.5" }, Refused: true),
+        new("real", "REAL", StorableDoubles.ToList(), SortsInSql: false),
+        NegativeZero("REAL", single: false, sortsInSql: false),
         new("numeric", "NUMERIC", new[] { "1.50", "2", "'abc'", "-0.25", "1e20" }),
         new("text", "TEXT", new[] { "'a b'", "'café'", "'a/b'", "'Z'", "' a'" }),
         new("uuid", "UUID", new[] { "'A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11'", "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12'" }),
@@ -331,6 +433,7 @@ public sealed class PostgresS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
     protected override bool Available => PostgresTestDatabase.ConnectionString is not null;
     protected override string BodyType => "TEXT";
     protected override (string? Double, string? Single) FloatTypes => ("double precision", "real");
+    protected override string? InMemoryFloatType => null;
     protected override string FloatLiteral(string roundTripText, bool single) =>
         $"CAST('{roundTripText}' AS {(single ? "real" : "double precision")})";
 
@@ -344,6 +447,9 @@ public sealed class PostgresS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
         new("real", "real", SingleValues.Select(v => FloatLiteral(v, true)).ToList()),
         new("double", "double precision",
             DoubleValues.Select(v => FloatLiteral(v, false)).Concat(new[] { "'NaN'", "'Infinity'", "'-Infinity'" }).ToList()),
+        new("realspecial", "real", new[] { "'NaN'", "'Infinity'", "'-Infinity'", "1" }),
+        NegativeZero("double precision", single: false, sortsInSql: true),
+        NegativeZero("real", single: true, sortsInSql: true),
         new("bool", "boolean", new[] { "true", "false" }),
         new("char", "char(5)", new[] { "'ab'", "'a'", "'abcde'", "' a'", "'é'" }),
         new("varchar", "varchar(20)", new[] { "'ab'", "'a b'", "'é'", "'a/b'" }),
@@ -366,7 +472,9 @@ public sealed class MySqlS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
     protected override bool Available => MySqlTestDatabase.ConnectionString is not null;
     protected override string BodyType => "TEXT";
     protected override (string? Double, string? Single) FloatTypes => ("DOUBLE", null);
-    protected override string FloatLiteral(string roundTripText, bool single) => roundTripText;
+    protected override string? InMemoryFloatType => "FLOAT";
+    protected override string FloatLiteral(string roundTripText, bool single) =>
+        single ? SingleAsDoubleText(roundTripText) : roundTripText;
 
     protected override IReadOnlyList<KeyTypeCase> Cases => new KeyTypeCase[]
     {
@@ -383,7 +491,9 @@ public sealed class MySqlS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
         new("decimal", "DECIMAL(10,2)", new[] { "-99999999.99", "-0.50", "0", "0.50", "99999999.99" }),
         new("decimal28", "DECIMAL(30,28)", new[] { "1.0000000000000000000000000001", "-0.5", "0" }),
         new("double", "DOUBLE", DoubleValues),
-        new("float", "FLOAT", new[] { "0.1", "1" }, Refused: true),
+        new("float", "FLOAT", StorableSingles.Select(v => FloatLiteral(v, true)).ToList(), SortsInSql: false),
+        NegativeZero("DOUBLE", single: false, sortsInSql: true),
+        NegativeZero("FLOAT", single: true, sortsInSql: false),
         new("date", "DATE", new[] { "'1000-01-01'", "'2024-01-02'", "'9999-12-31'" }),
         new("datetime", "DATETIME(6)", new[] { "'1000-01-01 00:00:00'", "'2024-01-02 03:04:05.123456'", "'9999-12-31 23:59:59.999999'" }),
         new("datetime0", "DATETIME", new[] { "'2024-01-02 03:04:05'", "'2024-01-02 03:04:06'" }),
@@ -404,9 +514,13 @@ public sealed class SqlServerS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
     protected override bool Available => SqlServerTestDatabase.ConnectionString is not null;
     protected override string BodyType => "NVARCHAR(MAX)";
     protected override (string? Double, string? Single) FloatTypes => (null, null);
+    protected override string? InMemoryFloatType => "FLOAT";
     protected override bool StoresSubnormals => false;
     protected override string FloatLiteral(string roundTripText, bool single) =>
-        $"CAST({(roundTripText.Contains('E') ? roundTripText : roundTripText + "E0")} AS {(single ? "REAL" : "FLOAT")})";
+        FloatCast(single ? SingleAsDoubleText(roundTripText) : roundTripText, single ? "REAL" : "FLOAT");
+
+    private static string FloatCast(string text, string type) =>
+        $"CAST({(text.Contains('E') ? text : text + "E0")} AS {type})";
 
     protected override IReadOnlyList<KeyTypeCase> Cases => new KeyTypeCase[]
     {
@@ -419,8 +533,10 @@ public sealed class SqlServerS3ListingKeyTypeTests : S3ListingKeyTypeTestBase
         new("decimal28", "DECIMAL(28,10)", new[] { "123456789012345678.0123456789", "-0.0000000001", "0" }),
         new("money", "MONEY", new[] { "-922337203685477.5808", "0", "12.5", "922337203685477.5807" }),
         new("smallmoney", "SMALLMONEY", new[] { "-214748.3648", "1.25", "214748.3647" }),
-        new("float", "FLOAT", new[] { "0.1E0", "1.5E0" }, Refused: true),
-        new("real", "REAL", new[] { "CAST(0.1E0 AS REAL)" }, Refused: true),
+        new("float", "FLOAT", StorableDoubles.Select(v => FloatLiteral(v, false)).ToList(), SortsInSql: false),
+        new("real", "REAL", StorableSingles.Select(v => FloatLiteral(v, true)).ToList(), SortsInSql: false),
+        NegativeZero("FLOAT", single: false, sortsInSql: false),
+        NegativeZero("REAL", single: true, sortsInSql: false),
         new("date", "DATE", new[] { "'0001-01-01'", "'2024-01-02'", "'9999-12-31'" }),
         new("datetime", "DATETIME", new[] { "'1753-01-01T00:00:00'", "'2024-01-02T03:04:05.997'", "'9999-12-31T23:59:59.997'" }),
         new("datetime2", "DATETIME2", new[] { "'0001-01-01'", "'2024-01-02T03:04:05.1234567'", "'9999-12-31T23:59:59.9999999'" }),

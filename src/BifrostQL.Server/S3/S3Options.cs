@@ -74,6 +74,17 @@ namespace BifrostQL.Server.S3
         public int MaxKeysLimit { get; set; } = 1000;
 
         /// <summary>
+        /// The most file rows a <c>ListObjectsV2</c> page may read into memory for a bucket
+        /// whose key order the database cannot compute (float keys on SQL Server, MySQL
+        /// <c>FLOAT</c>, SQLite REAL-affinity key columns, decimals with a scale
+        /// above 28). Such a bucket is read whole on every page, sorted in .NET, and refused
+        /// with <c>InvalidArgument</c> when it holds more file rows than this, never listed
+        /// short. The model's <c>max-query-rows</c> narrows it further. Buckets with
+        /// SQL-orderable keys are paged by keyset seek and never read whole. Must be at least 1.
+        /// </summary>
+        public int MaxInMemoryListKeys { get; set; } = 10_000;
+
+        /// <summary>
         /// Optional HMAC secret binding and integrity-protecting continuation tokens.
         /// When set, tokens survive restarts and resolve across a scaled fleet; when
         /// unset, a per-instance random key is generated (tokens then live only for the

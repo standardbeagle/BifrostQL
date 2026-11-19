@@ -64,13 +64,21 @@ namespace BifrostQL.Server.S3
     /// fails closed. It expires <see cref="S3Options.ContinuationTokenTtl"/> after it was
     /// issued.</para>
     ///
-    /// <para><b>Listable keys.</b> The dialect renders every key column in SQL as the
-    /// exact text <see cref="S3ObjectKeyMap.KeyFor"/> builds from the value the reader
-    /// returns (<see cref="ISqlDialect.ObjectKeyExpression"/>). A key type an engine cannot
-    /// render byte-identically fails with a curated <c>InvalidArgument</c>. Rows whose file
-    /// column is NULL are filtered in SQL; a non-null but unreadable pointer is skipped
-    /// here, and together with CommonPrefix jumps that is why a page may need more than
-    /// one seek.</para>
+    /// <para><b>Key types the database cannot order.</b> <see cref="S3KeyListingStrategy"/>
+    /// decides per table, from the declared key types, whether the dialect renders every
+    /// key column as the exact text <see cref="S3ObjectKeyMap.KeyFor"/> builds. When it does
+    /// not (float keys on SQL Server, MySQL <c>FLOAT</c>, SQLite REAL-affinity
+    /// columns, decimals with a scale above 28), each page reads the bucket's raw key values
+    /// with the same file-column filter and projection as a seek, formats every key in C#,
+    /// and sorts ordinally. That read is bounded in the query by
+    /// <see cref="S3Options.MaxInMemoryListKeys"/> (one past it, through
+    /// <see cref="RowProbeWindow"/>); a bucket over the bound fails with a curated
+    /// <c>InvalidArgument</c>, never a truncated listing. Tokens and page assembly are the
+    /// seek path's.</para>
+    ///
+    /// <para>Rows whose file column is NULL are filtered in SQL on both paths; a non-null
+    /// but unreadable pointer is skipped here, and together with CommonPrefix jumps that is
+    /// why a seek page may need more than one seek.</para>
     /// </summary>
     public sealed class S3Listing
     {
@@ -102,6 +110,9 @@ namespace BifrostQL.Server.S3
             if (options.ContinuationTokenTtl <= TimeSpan.Zero)
                 throw new ArgumentOutOfRangeException(
                     nameof(options), options.ContinuationTokenTtl, "S3Options.ContinuationTokenTtl must be positive.");
+            if (options.MaxInMemoryListKeys < 1)
+                throw new ArgumentOutOfRangeException(
+                    nameof(options), options.MaxInMemoryListKeys, "S3Options.MaxInMemoryListKeys must be at least 1.");
 
             // A configured secret keeps continuation tokens valid across restarts and
             // across a horizontally-scaled fleet; without one we generate a per-instance
@@ -228,44 +239,57 @@ namespace BifrostQL.Server.S3
             string? EchoContinuationToken, string? EchoStartAfter, S3ListBinding Binding);
 
         /// <summary>
-        /// Builds one S3 page by seeking through the bucket in object-key order. Each file
-        /// column is a key range of its own (<c>{column}/…</c>), visited in key order; within
-        /// one, every seek reads the next <c>max-keys + 1</c> rows after the scan position,
-        /// ordered and bounded in SQL on the dialect-computed key text. Delimiter roll-up
-        /// runs here: once a CommonPrefix is emitted (or lies at or before the resume
-        /// position), the scan jumps past every key under it.
+        /// Builds one S3 page with the strategy <see cref="S3KeyListingStrategy"/> chose for
+        /// the table: a keyset seek ordered in SQL, or an in-memory sort of keys formatted in C#.
         /// </summary>
         private async Task<S3ListObjectsPage> ListPageAsync(
             IDbModel model, IDbTable table, IReadOnlyList<ColumnDto> fileColumns, PageRequest request,
             IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         {
-            var contents = new List<S3ObjectInfo>();
-            var commonPrefixes = new List<string>();
             var keyColumns = table.KeyColumns.ToList();
 
             // A keyless table has no addressable rows: an empty bucket. A prefix outside
             // ASCII matches nothing, because every key is percent-encoded ASCII.
             if (keyColumns.Count == 0 || request.Prefix.Any(c => c > '\u007F'))
-                return Page(request, contents, commonPrefixes, nextToken: null);
+                return Page(request, new PageAssembly(request), nextToken: null);
 
+            var strategy = S3KeyListingStrategy.For(model, table);
+            if (strategy.SortsInSql)
+                return await SeekPageAsync(model, table, keyColumns, fileColumns, request, userContext, cancellationToken);
+
+            _logger?.LogDebug(
+                "S3 listing of table {Table} sorts keys in memory: {Reason}", table.DbName, strategy.InMemoryReason);
+            return await InMemoryPageAsync(model, table, keyColumns, fileColumns, request, userContext, cancellationToken);
+        }
+
+        /// <summary>
+        /// Builds one S3 page by seeking through the bucket in object-key order. Each file
+        /// column is a key range of its own (<c>{column}/…</c>), visited in key order; within
+        /// one, every seek reads the next <c>max-keys + 1</c> rows after the scan position,
+        /// ordered and bounded in SQL on the dialect-computed key text. Delimiter roll-up
+        /// runs in <see cref="PageAssembly"/>: once a CommonPrefix is emitted (or lies at or
+        /// before the resume position), the scan jumps past every key under it.
+        /// </summary>
+        private async Task<S3ListObjectsPage> SeekPageAsync(
+            IDbModel model, IDbTable table, IReadOnlyList<ColumnDto> keyColumns, IReadOnlyList<ColumnDto> fileColumns,
+            PageRequest request, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        {
             var keyReadTypes = await KeyReadTypesAsync(table, keyColumns, userContext, cancellationToken);
 
             // Full-key bounds. The prefix is a fixed range; the scan position moves.
             var prefixFrom = request.Prefix.Length > 0 ? request.Prefix : null;
             var prefixBefore = request.Prefix.Length > 0 ? Successor(request.Prefix) : null;
-            var scan = new ScanPosition(request.ResumeAfter, null);
+            var page = new PageAssembly(request);
 
             var window = RowProbeWindow.For(model, request.MaxKeys);
             var seeks = 0;
-            var emitted = 0;
-            string? lastEmitted = null;
 
             foreach (var column in fileColumns.OrderBy(S3ObjectKeyMap.ColumnPrefix, StringComparer.Ordinal))
             {
                 var columnPrefix = S3ObjectKeyMap.ColumnPrefix(column);
                 while (true)
                 {
-                    var range = SuffixRange(columnPrefix, scan, prefixFrom, prefixBefore, keyReadTypes);
+                    var range = SuffixRange(columnPrefix, page.Scan, prefixFrom, prefixBefore, keyReadTypes);
                     if (range == null)
                         break; // the scan has nothing left in this column's key range
 
@@ -273,66 +297,24 @@ namespace BifrostQL.Server.S3
                     {
                         // Bounded work per request: hand back what this page found, resuming
                         // where the scan stopped. S3 allows a short (even empty) truncated page.
-                        var position = scan.Through ?? request.ResumeAfter ?? string.Empty;
-                        return Page(request, contents, commonPrefixes, Issue(position, request));
+                        return Page(request, page, Issue(page.ScanStop, request));
                     }
                     seeks++;
 
-                    var rows = await SeekAsync(table, keyColumns, column, range, window.Fetch, userContext, cancellationToken);
+                    var query = FileRowsQuery(table, keyColumns, column, window.Fetch);
+                    query.ObjectKeyRange = range;
+                    var rows = await ReadAsync(query, userContext, cancellationToken);
                     string? previousKey = null;
                     foreach (var row in rows)
                     {
-                        var primaryKey = new object?[keyColumns.Count];
-                        for (var i = 0; i < keyColumns.Count; i++)
-                            row.TryGetValue(keyColumns[i].GraphQlName, out primaryKey[i]);
-                        var key = S3ObjectKeyMap.KeyFor(column, primaryKey);
+                        var key = KeyOf(row, keyColumns, column);
                         AssertKeyOrder(key, previousKey, columnPrefix, range);
                         previousKey = key;
 
-                        // Rows the scan already jumped past (keys under an emitted
-                        // CommonPrefix) are skipped without moving it.
-                        if (!scan.Admits(key))
-                            continue;
-
-                        row.TryGetValue(column.GraphQlName, out var pointerValue);
-                        var pointer = pointerValue?.ToString();
-                        var metadata = string.IsNullOrWhiteSpace(pointer) ? null : FileMetadata.FromJson(pointer);
-                        if (metadata is null)
-                        {
-                            // A null or corrupt pointer is no object; the scan
-                            // still moves past it.
-                            scan = new ScanPosition(key, null);
-                            continue;
-                        }
-
-                        var commonPrefix = CommonPrefixOf(key, request.Prefix, request.Delimiter);
-                        var sortKey = commonPrefix ?? key;
-
-                        // Resume strictly after the cursor, on the representative key (a
-                        // CommonPrefix for a rolled-up key), so a page boundary on a
-                        // CommonPrefix skips that whole group instead of re-emitting it.
-                        var alreadyListed = request.ResumeAfter != null
-                            && string.CompareOrdinal(sortKey, request.ResumeAfter) <= 0;
-                        if (!alreadyListed)
-                        {
-                            if (emitted == request.MaxKeys)
-                            {
-                                // An item beyond a full page: the max-keys + 1 sentinel.
-                                var position = lastEmitted ?? request.ResumeAfter ?? string.Empty;
-                                return Page(request, contents, commonPrefixes, Issue(position, request));
-                            }
-
-                            if (commonPrefix == null)
-                                contents.Add(new S3ObjectInfo(key, metadata.UploadedAt, metadata.ETag, metadata.Size));
-                            else
-                                commonPrefixes.Add(commonPrefix);
-                            emitted++;
-                            lastEmitted = sortKey;
-                        }
-
-                        scan = commonPrefix == null
-                            ? new ScanPosition(key, null)
-                            : new ScanPosition(commonPrefix, Successor(commonPrefix));
+                        row.TryGetValue(column.GraphQlName, out var pointer);
+                        var sentinelAt = page.Offer(key, pointer);
+                        if (sentinelAt != null)
+                            return Page(request, page, Issue(sentinelAt, request));
                     }
 
                     if (rows.Count < window.Fetch)
@@ -340,7 +322,137 @@ namespace BifrostQL.Server.S3
                 }
             }
 
-            return Page(request, contents, commonPrefixes, nextToken: null);
+            return Page(request, page, nextToken: null);
+        }
+
+        /// <summary>
+        /// Builds one S3 page for a bucket whose key order the database cannot compute: reads
+        /// every file row (the same <see cref="FileRowsQuery"/> as a seek, without the key
+        /// window), formats each key with <see cref="S3ObjectKeyMap.KeyFor"/>, sorts ordinally,
+        /// and feeds the sorted keys to the same <see cref="PageAssembly"/>. The read is capped
+        /// in the query at <see cref="S3Options.MaxInMemoryListKeys"/> rows across all file
+        /// columns, plus one sentinel row; a bucket past the cap (or past the model's
+        /// <c>max-query-rows</c>, which <see cref="RowProbeWindow"/> folds in) is refused, never
+        /// listed short.
+        /// </summary>
+        private async Task<S3ListObjectsPage> InMemoryPageAsync(
+            IDbModel model, IDbTable table, IReadOnlyList<ColumnDto> keyColumns, IReadOnlyList<ColumnDto> fileColumns,
+            PageRequest request, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        {
+            var candidates = new List<(string Key, object? Pointer)>();
+            var rowsRead = 0;
+            foreach (var column in fileColumns)
+            {
+                var window = RowProbeWindow.For(model, _options.MaxInMemoryListKeys - rowsRead);
+                var query = FileRowsQuery(table, keyColumns, column, window.Fetch);
+                query.Sort = keyColumns.Select(c => $"{c.GraphQlName}_asc").ToList();
+                var rows = await ReadAsync(query, userContext, cancellationToken);
+                if (window.HasMore(rows.Count))
+                    throw S3ProtocolException.InvalidArgument(
+                        "This bucket has more objects than the endpoint is configured to list in a single scan.");
+                rowsRead += rows.Count;
+
+                foreach (var row in rows)
+                {
+                    var key = KeyOf(row, keyColumns, column);
+                    if (!key.StartsWith(request.Prefix, StringComparison.Ordinal))
+                        continue;
+                    row.TryGetValue(column.GraphQlName, out var pointer);
+                    candidates.Add((key, pointer));
+                }
+            }
+
+            candidates.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+            var page = new PageAssembly(request);
+            string? previousKey = null;
+            foreach (var (key, pointer) in candidates)
+            {
+                // Two rows with one key would make the resume position ambiguous.
+                if (previousKey != null && string.CompareOrdinal(key, previousKey) <= 0)
+                    throw new InvalidOperationException("Two rows of the bucket format to the same S3 object key.");
+                previousKey = key;
+
+                var sentinelAt = page.Offer(key, pointer);
+                if (sentinelAt != null)
+                    return Page(request, page, Issue(sentinelAt, request));
+            }
+
+            return Page(request, page, nextToken: null);
+        }
+
+        /// <summary>
+        /// One page's emitted keys and CommonPrefixes, fed keys in S3 key order by either
+        /// strategy. Applies the scan position (keys already jumped past), the resume
+        /// position, delimiter roll-up and the max-keys + 1 sentinel.
+        /// </summary>
+        private sealed class PageAssembly
+        {
+            private readonly PageRequest _request;
+            private int _emitted;
+            private string? _lastEmitted;
+
+            public PageAssembly(PageRequest request)
+            {
+                _request = request;
+                Scan = new ScanPosition(request.ResumeAfter, null);
+            }
+
+            public List<S3ObjectInfo> Contents { get; } = new();
+            public List<string> CommonPrefixes { get; } = new();
+
+            /// <summary>Where the scan stands; keys it does not admit are skipped.</summary>
+            public ScanPosition Scan { get; private set; }
+
+            /// <summary>The resume position for a page that stops before its sentinel.</summary>
+            public string ScanStop => Scan.Through ?? _request.ResumeAfter ?? string.Empty;
+
+            /// <summary>
+            /// Takes the next key in S3 key order and its file pointer. Returns the resume
+            /// position when <paramref name="key"/> is an item beyond a full page (the
+            /// max-keys + 1 sentinel), otherwise null.
+            /// </summary>
+            public string? Offer(string key, object? pointerValue)
+            {
+                // Rows the scan already jumped past (keys under an emitted CommonPrefix)
+                // are skipped without moving it.
+                if (!Scan.Admits(key))
+                    return null;
+
+                var pointer = pointerValue?.ToString();
+                var metadata = string.IsNullOrWhiteSpace(pointer) ? null : FileMetadata.FromJson(pointer);
+                if (metadata is null)
+                {
+                    // A corrupt pointer is no object; the scan still moves past it.
+                    Scan = new ScanPosition(key, null);
+                    return null;
+                }
+
+                var commonPrefix = CommonPrefixOf(key, _request.Prefix, _request.Delimiter);
+                var sortKey = commonPrefix ?? key;
+
+                // Resume strictly after the cursor, on the representative key (a CommonPrefix
+                // for a rolled-up key), so a page boundary on a CommonPrefix skips that whole
+                // group instead of re-emitting it.
+                var alreadyListed = _request.ResumeAfter != null
+                    && string.CompareOrdinal(sortKey, _request.ResumeAfter) <= 0;
+                if (!alreadyListed)
+                {
+                    if (_emitted == _request.MaxKeys)
+                        return _lastEmitted ?? _request.ResumeAfter ?? string.Empty;
+
+                    if (commonPrefix == null)
+                        Contents.Add(new S3ObjectInfo(key, metadata.UploadedAt, metadata.ETag, metadata.Size));
+                    else
+                        CommonPrefixes.Add(commonPrefix);
+                    _emitted++;
+                    _lastEmitted = sortKey;
+                }
+
+                Scan = commonPrefix == null
+                    ? new ScanPosition(key, null)
+                    : new ScanPosition(commonPrefix, Successor(commonPrefix));
+                return null;
+            }
         }
 
         /// <summary>
@@ -429,14 +541,14 @@ namespace BifrostQL.Server.S3
         }
 
         /// <summary>
-        /// One seek: the next <paramref name="fetch"/> rows of <paramref name="column"/>'s key
-        /// range inside <paramref name="range"/>, through the authorized read seam (tenant,
-        /// soft-delete, row policy, and column guards all apply), reading only the primary
-        /// key and the file-column pointer.
+        /// The read both strategies run: up to <paramref name="limit"/> rows of
+        /// <paramref name="table"/> that hold a file in <paramref name="column"/>, projecting
+        /// only the primary key and that column's pointer. A row without a file is no object,
+        /// so it is filtered in SQL and costs no page space. The caller adds the order (a key
+        /// window, or the primary key).
         /// </summary>
-        private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> SeekAsync(
-            IDbTable table, IReadOnlyList<ColumnDto> keyColumns, ColumnDto column, ObjectKeyRange range, int fetch,
-            IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        private static GqlObjectQuery FileRowsQuery(
+            IDbTable table, IReadOnlyList<ColumnDto> keyColumns, ColumnDto column, int limit)
         {
             var query = new GqlObjectQuery
             {
@@ -445,35 +557,40 @@ namespace BifrostQL.Server.S3
                 TableName = table.DbName,
                 GraphQlName = table.GraphQlName,
                 Path = table.GraphQlName,
-                Limit = fetch,
-                ObjectKeyRange = range,
-                // A row without a file is no object: filtered in SQL, so a run of empty
-                // rows costs no page space and no extra seek.
+                Limit = limit,
                 Filter = TableFilterBuilder.For(table).IsNull(column.GraphQlName, isNull: false).Build(),
             };
             foreach (var keyColumn in keyColumns)
                 query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.DbName, keyColumn.GraphQlName));
             if (!keyColumns.Any(k => string.Equals(k.DbName, column.DbName, StringComparison.Ordinal)))
                 query.ScalarColumns.Add(new GqlObjectColumn(column.DbName, column.GraphQlName));
+            return query;
+        }
 
-            try
+        /// <summary>
+        /// Runs <paramref name="query"/> through the authorized read seam: tenant,
+        /// soft-delete, row policy, and column guards all apply.
+        /// </summary>
+        private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ReadAsync(
+            GqlObjectQuery query, IDictionary<string, object?> userContext, CancellationToken cancellationToken)
+        {
+            var result = await _reads.ExecuteAsync(new QueryIntent
             {
-                var result = await _reads.ExecuteAsync(new QueryIntent
-                {
-                    Query = query,
-                    UserContext = userContext,
-                    Endpoint = _options.Endpoint,
-                }, cancellationToken);
-                return result.Rows;
-            }
-            catch (NotSupportedException ex)
-            {
-                // The dialect has no byte-exact SQL rendering for a key column's type. The
-                // detail (type name) goes to the log, a fixed text to the wire.
-                _logger?.LogWarning(ex, "S3 listing of table {Table} refused: key type has no SQL object-key rendering.", table.DbName);
-                throw S3ProtocolException.InvalidArgument(
-                    "This bucket's primary key type cannot be listed in object-key order.");
-            }
+                Query = query,
+                UserContext = userContext,
+                Endpoint = _options.Endpoint,
+            }, cancellationToken);
+            return result.Rows;
+        }
+
+        /// <summary>The object key of <paramref name="row"/>'s file in <paramref name="column"/>.</summary>
+        private static string KeyOf(
+            IReadOnlyDictionary<string, object?> row, IReadOnlyList<ColumnDto> keyColumns, ColumnDto column)
+        {
+            var primaryKey = new object?[keyColumns.Count];
+            for (var i = 0; i < keyColumns.Count; i++)
+                row.TryGetValue(keyColumns[i].GraphQlName, out primaryKey[i]);
+            return S3ObjectKeyMap.KeyFor(column, primaryKey);
         }
 
         /// <summary>
@@ -544,16 +661,15 @@ namespace BifrostQL.Server.S3
         private string Issue(string position, PageRequest request)
             => S3ContinuationToken.Issue(position, _clock.GetUtcNow(), request.Binding, _tokenSecret);
 
-        private static S3ListObjectsPage Page(
-            PageRequest request, List<S3ObjectInfo> contents, List<string> commonPrefixes, string? nextToken)
+        private static S3ListObjectsPage Page(PageRequest request, PageAssembly page, string? nextToken)
             => new(
                 Bucket: request.Bucket,
                 Prefix: request.Prefix,
                 Delimiter: request.Delimiter,
                 MaxKeys: request.MaxKeys,
                 IsTruncated: nextToken != null,
-                Objects: contents,
-                CommonPrefixes: commonPrefixes,
+                Objects: page.Contents,
+                CommonPrefixes: page.CommonPrefixes,
                 ContinuationToken: string.IsNullOrEmpty(request.EchoContinuationToken) ? null : request.EchoContinuationToken,
                 NextContinuationToken: nextToken,
                 StartAfter: string.IsNullOrEmpty(request.EchoStartAfter) ? null : request.EchoStartAfter);

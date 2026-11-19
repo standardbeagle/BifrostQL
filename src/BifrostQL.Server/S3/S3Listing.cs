@@ -67,7 +67,10 @@ namespace BifrostQL.Server.S3
     /// <para><b>Listable keys.</b> The dialect renders every key column in SQL as the
     /// exact text <see cref="S3ObjectKeyMap.KeyFor"/> builds from the value the reader
     /// returns (<see cref="ISqlDialect.ObjectKeyExpression"/>). A key type an engine cannot
-    /// render byte-identically fails with a curated <c>InvalidArgument</c>.</para>
+    /// render byte-identically fails with a curated <c>InvalidArgument</c>. Rows whose file
+    /// column is NULL are filtered in SQL; a non-null but unreadable pointer is skipped
+    /// here, and together with CommonPrefix jumps that is why a page may need more than
+    /// one seek.</para>
     /// </summary>
     public sealed class S3Listing
     {
@@ -444,6 +447,9 @@ namespace BifrostQL.Server.S3
                 Path = table.GraphQlName,
                 Limit = fetch,
                 ObjectKeyRange = range,
+                // A row without a file is no object: filtered in SQL, so a run of empty
+                // rows costs no page space and no extra seek.
+                Filter = TableFilterBuilder.For(table).IsNull(column.GraphQlName, isNull: false).Build(),
             };
             foreach (var keyColumn in keyColumns)
                 query.ScalarColumns.Add(new GqlObjectColumn(keyColumn.DbName, keyColumn.GraphQlName));

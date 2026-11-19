@@ -108,6 +108,35 @@ public abstract class S3ListingKeyTypeTestBase
         await RunAsync(cases);
     }
 
+    /// <summary>
+    /// Rows without a file are filtered in SQL, so a long run of them before the first object
+    /// costs neither page space nor seeks: one max-keys=1 page finds the object past 80 such
+    /// rows, where a C#-side skip would spend its whole seek budget
+    /// (<c>S3Listing.MaxSeeksPerPage</c> × 2 rows) and hand back an empty truncated page.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_long_run_of_rows_without_a_file_costs_no_seek()
+    {
+        Skip.IfNot(Available, "test database connection string not set");
+        var keyCase = new KeyTypeCase("nulls", Cases[0].Type, new[] { "99" });
+        await using var db = CreateDatabase();
+        await db.InitializeAsync();
+        await SeedAsync(db, new[] { keyCase }, withNullFileRow: false);
+        await using (var conn = db.ConnFactory.GetConnection())
+        {
+            await conn.OpenAsync();
+            for (var i = 1; i <= 80; i++)
+                await ExecAsync(conn, $"INSERT INTO {TableName(keyCase)} (k, body) VALUES ({i}, NULL)");
+        }
+        var lister = new S3Listing(await ReaderAsync(db, new[] { keyCase }),
+            new S3Options { Endpoint = Endpoint, ContinuationTokenSecret = "s3-key-type-secret" });
+
+        var page = await lister.ListObjectsV2Async(TableName(keyCase), null, null, 1, null, null, Caller);
+
+        page.Objects.Select(o => o.Key).Should().Equal("body/99");
+        page.IsTruncated.Should().BeFalse();
+    }
+
     private async Task RunAsync(IReadOnlyList<KeyTypeCase> cases)
     {
         await using var db = CreateDatabase();
@@ -194,7 +223,7 @@ public abstract class S3ListingKeyTypeTestBase
         return keys;
     }
 
-    private async Task SeedAsync(IIntegrationTestDatabase db, IReadOnlyList<KeyTypeCase> cases)
+    private async Task SeedAsync(IIntegrationTestDatabase db, IReadOnlyList<KeyTypeCase> cases, bool withNullFileRow = true)
     {
         await using var conn = db.ConnFactory.GetConnection();
         await conn.OpenAsync();
@@ -215,6 +244,8 @@ public abstract class S3ListingKeyTypeTestBase
         }
 
         // A row with no file is no object: it must not list (the filter runs in SQL).
+        if (!withNullFileRow)
+            return;
         var first = cases[0];
         await ExecAsync(conn, $"INSERT INTO {TableName(first)} (k, body) VALUES ({NullFileKeyLiteral(first)}, NULL)");
     }

@@ -304,7 +304,7 @@ public sealed class SqlServerDialect : SqlDialectBase
     /// Walks the value's UTF-16 code units (a non-supplementary binary collation, so a
     /// surrogate is one position) and writes each code point's UTF-8 bytes from
     /// <c>UNICODE()</c> arithmetic, concatenated in order with <c>FOR XML PATH('')</c>.
-    /// No <c>_UTF8</c> collation (2019) or <c>STRING_AGG</c> (2017): it runs on 2008+.
+    /// No <c>_UTF8</c> collation (2019) or <c>STRING_AGG</c> (2017), so neither version is a floor.
     /// The output is <c>[A-Za-z0-9_%-]</c>, which XML leaves as is.
     /// </remarks>
     protected override string PercentEncodeUtf8(string textExpression)

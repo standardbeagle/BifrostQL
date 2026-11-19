@@ -169,7 +169,8 @@ public abstract class S3ListingKeyTypeTestBase
         });
         (await WalkAsync(atCap, bucket)).Should().Equal("body/0%2E5", "body/1%2E5", "body/2%2E5", "body/3%2E5");
 
-        var pastCap = new S3Listing(reader, new S3Options
+        var recorder = new RecordingReads(reader);
+        var pastCap = new S3Listing(recorder, new S3Options
         {
             Endpoint = Endpoint, ContinuationTokenSecret = "s3-key-type-secret", MaxInMemoryListKeys = 3,
         });
@@ -178,6 +179,13 @@ public abstract class S3ListingKeyTypeTestBase
         thrown.Which.Code.Should().Be("InvalidArgument");
         thrown.Which.Message.Should().Be(
             "This bucket has more objects than the endpoint is configured to list in a single scan.");
+
+        // The cap is a query limit, not a count taken after an unbounded read: every listing
+        // read asks for at most cap+1 rows, so the over-cap verdict needs one row past it.
+        var listingReads = recorder.Reads.Where(r => r.Query.Filter != null).ToList();
+        listingReads.Should().NotBeEmpty("control: the refused listing did read the bucket");
+        listingReads.Should().OnlyContain(r => r.Query.Limit != null && r.Query.Limit > 0 && r.Query.Limit <= 4,
+            "an in-memory read is windowed at MaxInMemoryListKeys + 1 in SQL");
     }
 
     private async Task RunAsync(IReadOnlyList<KeyTypeCase> cases)

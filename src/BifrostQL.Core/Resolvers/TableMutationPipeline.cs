@@ -50,6 +50,13 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public Operations.IBifrostOperation? Operation { get; init; }
 
+        /// <summary>
+        /// Entries an operation hands its write (<c>BifrostOperationContext.InsertAsync</c>'s
+        /// <c>state</c>): copied into the write's <see cref="MutationTransformContext.MutationState"/>
+        /// before the chain runs, so the transformers and both hook phases start from them.
+        /// </summary>
+        public IReadOnlyDictionary<string, object?>? InitialMutationState { get; init; }
+
         /// <summary>Allows the deferred undo seam to target a soft-deleted row while preserving every other mutation transformer.</summary>
         public bool RestoreSoftDeleted { get; init; }
 
@@ -80,7 +87,8 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         private static MutationObserverContext HookContext(
             IDbTable table, MutationType mutationType, IDictionary<string, object?> data,
-            MutationPipelineContext ctx, DbConnection conn, DbTransaction? transaction, ISqlDialect dialect)
+            MutationPipelineContext ctx, DbConnection conn, DbTransaction? transaction, ISqlDialect dialect,
+            IDictionary<string, object?> mutationState)
             => new()
             {
                 Table = table,
@@ -94,9 +102,24 @@ namespace BifrostQL.Core.Resolvers
                 Dialect = dialect,
                 ConnFactory = ctx.ConnFactory,
                 CancellationToken = ctx.CancellationToken,
-                MutationState = MutationObserverContext.NewMutationState(),
+                MutationState = mutationState,
                 TransactionState = ctx.WriteScope?.TransactionState ?? MutationObserverContext.NewMutationState(),
             };
+
+        /// <summary>
+        /// One write's <see cref="MutationObserverContext.MutationState"/>: the bag its transformer
+        /// chain and both hook phases share, so a transformer that loaded the row can hand it to
+        /// the after-write hook. Fresh per write (never the transaction's), started from the
+        /// operation's <see cref="MutationPipelineContext.InitialMutationState"/> when it gave one.
+        /// </summary>
+        private static IDictionary<string, object?> NewWriteState(MutationPipelineContext ctx)
+        {
+            var state = MutationObserverContext.NewMutationState();
+            if (ctx.InitialMutationState is { } seed)
+                foreach (var (key, value) in seed)
+                    state[key] = value;
+            return state;
+        }
 
         /// <summary>
         /// The transformer context every chain run of this pipeline receives: the request's
@@ -105,10 +128,12 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         private static MutationTransformContext TransformContext(
             MutationPipelineContext ctx, DbConnection conn, DbTransaction transaction, ISqlDialect dialect,
+            IDictionary<string, object?> mutationState,
             IReadOnlyDictionary<string, object?>? currentRow = null,
             IReadOnlyDictionary<string, object?>? moduleArguments = null)
             => new()
             {
+                MutationState = mutationState,
                 Model = ctx.Model,
                 UserContext = ctx.UserContext,
                 CurrentRow = currentRow,
@@ -213,7 +238,7 @@ namespace BifrostQL.Core.Resolvers
             IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationPipelineContext ctx)
             => RunInTransactionAsync(ctx, async (conn, transaction) =>
                 (await ctx.Transformers.TransformAsync(
-                    table, mutationType, data, TransformContext(ctx, conn, transaction, ctx.ConnFactory.Dialect))).ThrowIfDenied());
+                    table, mutationType, data, TransformContext(ctx, conn, transaction, ctx.ConnFactory.Dialect, NewWriteState(ctx)))).ThrowIfDenied());
 
         /// <summary>
         /// Runs one write's transformer chain, hooks and SQL in a transaction: its own, or the
@@ -267,7 +292,8 @@ namespace BifrostQL.Core.Resolvers
             {
                 // Mutation transformers (e.g. the authorization policy engine) gate
                 // the insert before any SQL is built; non-empty Errors abort it.
-                var transformContext = TransformContext(ctx, conn, transaction, dialect);
+                var mutationState = NewWriteState(ctx);
+                var transformContext = TransformContext(ctx, conn, transaction, dialect, mutationState);
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Insert, data, transformContext);
                 transformResult.ThrowIfDenied();
 
@@ -283,7 +309,7 @@ namespace BifrostQL.Core.Resolvers
                     ? $"{insertInto}{returning};"
                     : $"{insertInto};SELECT {dialect.LastInsertedIdentity} ID;";
 
-                var hookContext = HookContext(table, MutationType.Insert, data, ctx, conn, transaction, dialect);
+                var hookContext = HookContext(table, MutationType.Insert, data, ctx, conn, transaction, dialect, mutationState);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
                 // The approval gate DIVERTS a gated write: it enqueued a pending_changes row
                 // on this transaction, so skip the target write and let the transaction commit
@@ -363,7 +389,7 @@ namespace BifrostQL.Core.Resolvers
                 {
                     await AnswerUnwritableUpdateShapeAsync(
                         ctx.Transformers, table, propertyInfo.data, propertyInfo.keyData, propertyInfo.standardData,
-                        TransformContext(ctx, conn, transaction, dialect));
+                        TransformContext(ctx, conn, transaction, dialect, NewWriteState(ctx)));
                     writable = false;
                     return;
                 }
@@ -373,7 +399,8 @@ namespace BifrostQL.Core.Resolvers
                 // The state load runs under this same context minus CurrentRow — that is
                 // what it is about to produce — so the chain can report the caller's row
                 // scope and the load can narrow itself to rows this update could reach.
-                var scopeContext = TransformContext(ctx, conn, transaction, dialect);
+                var mutationState = NewWriteState(ctx);
+                var scopeContext = TransformContext(ctx, conn, transaction, dialect, mutationState);
                 var currentRow = await MutationCommandExecutor.LoadCurrentStateMachineRow(
                     conn,
                     transaction,
@@ -383,7 +410,7 @@ namespace BifrostQL.Core.Resolvers
                     ctx.Transformers,
                     scopeContext,
                     ctx.CancellationToken);
-                var transformContext = TransformContext(ctx, conn, transaction, dialect, currentRow);
+                var transformContext = TransformContext(ctx, conn, transaction, dialect, mutationState, currentRow);
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, propertyInfo.data, transformContext);
                 transformResult.ThrowIfDenied();
 
@@ -406,7 +433,7 @@ namespace BifrostQL.Core.Resolvers
                 var hookData = new Dictionary<string, object?>(updatedData, StringComparer.OrdinalIgnoreCase);
                 foreach (var key in propertyInfo.keyData)
                     hookData[key.Key] = key.Value;
-                var hookContext = HookContext(table, MutationType.Update, hookData, ctx, conn, transaction, dialect);
+                var hookContext = HookContext(table, MutationType.Update, hookData, ctx, conn, transaction, dialect, mutationState);
                 await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
                 // Approval gate: the update was enqueued as a pending change — skip the write,
                 // commit the pending row, surface pending-approval after the transaction.
@@ -485,7 +512,8 @@ namespace BifrostQL.Core.Resolvers
             DeleteOutcome outcome = default;
             await RunInTransactionAsync(ctx, async (conn, transaction) =>
             {
-                var transformContext = TransformContext(ctx, conn, transaction, dialect, moduleArguments: ctx.ModuleArguments);
+                var mutationState = NewWriteState(ctx);
+                var transformContext = TransformContext(ctx, conn, transaction, dialect, mutationState, moduleArguments: ctx.ModuleArguments);
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, transformContext);
 
                 transformResult.ThrowIfDenied();
@@ -510,8 +538,8 @@ namespace BifrostQL.Core.Resolvers
                 // stamped); otherwise it stays a hard DELETE. Both scope their rows by the
                 // same client-supplied predicate columns (see SelectPredicateColumns).
                 outcome = transformResult.MutationType == MutationType.Update
-                    ? await ExecuteSoftDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter)
-                    : await ExecuteHardDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter);
+                    ? await ExecuteSoftDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter, mutationState)
+                    : await ExecuteHardDeleteAsync(table, dialect, ctx, conn, transaction, dbData, clientColumns, additionalFilter, mutationState);
             });
             // Thrown AFTER the commit so the enqueued pending row survives.
             if (outcome.PendingApproval is not null)
@@ -567,7 +595,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn, DbTransaction transaction,
             Dictionary<string, object?> dbData,
             HashSet<string> clientColumns,
-            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
+            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter,
+            IDictionary<string, object?> mutationState)
         {
             var keyData = SelectPredicateColumns(dbData, clientColumns, table);
             var setData = dbData
@@ -580,7 +609,7 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildUpdateSql(dialect, table, tableRef, setData.Keys, keyData, additionalFilter.WhereSuffix);
-            var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect);
+            var hookContext = HookContext(table, MutationType.Update, dbData, ctx, conn, transaction, dialect, mutationState);
             ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, MutationType.Delete);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
@@ -599,7 +628,8 @@ namespace BifrostQL.Core.Resolvers
             DbConnection conn, DbTransaction transaction,
             Dictionary<string, object?> dbData,
             HashSet<string> clientColumns,
-            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter)
+            (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter,
+            IDictionary<string, object?> mutationState)
         {
             var deleteData = SelectPredicateColumns(dbData, clientColumns, table);
 
@@ -609,7 +639,7 @@ namespace BifrostQL.Core.Resolvers
 
             var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
             var sql = MutationCommandExecutor.BuildDeleteSql(dialect, table, tableRef, deleteData, additionalFilter.WhereSuffix);
-            var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect);
+            var hookContext = HookContext(table, MutationType.Delete, deleteData, ctx, conn, transaction, dialect, mutationState);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
                 return new DeleteOutcome(0, divertMessage, MutationType.Delete, deleteData);

@@ -33,6 +33,7 @@ On `main` after v0.4.28; not yet on NuGet.
 ### Added — write-path fixes
 
 - `MutationTransformContext.Operation` names the server operation (`IBifrostOperation`) whose write this is, on every write a `BifrostOperationContext` makes, and is null on a generated write, including a sibling mutation field of the same request. Only the engine sets it, so a transformer can hold a rule for clients that an operation is exempt from (a column only an operation may set).
+- `MutationTransformContext.MutationState` is the per-write bag both hook phases of that write receive as `MutationObserverContext.MutationState`, so a transformer that locked and loaded the row (`LoadRowForUpdateAsync`) hands it to the after-write hook instead of the hook reading it again. It is fresh per write: per field, per `_batch` action, per tree-sync node. `BifrostOperationContext.InsertAsync`, `UpdateAsync` and `DeleteAsync` take an optional `state` whose entries start that write's bag.
 
 ### Breaking — fourth review pass (LDAP, RESP)
 

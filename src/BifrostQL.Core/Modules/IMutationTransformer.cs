@@ -216,9 +216,11 @@ public sealed class MutationTransformContext
     internal MutationTransformContext With(
         IReadOnlyDictionary<string, object?>? currentRow = null,
         IReadOnlyDictionary<string, object?>? moduleArguments = null,
-        (DbConnection Connection, DbTransaction? Transaction, ISqlDialect Dialect, CancellationToken CancellationToken)? write = null)
+        (DbConnection Connection, DbTransaction? Transaction, ISqlDialect Dialect, CancellationToken CancellationToken)? write = null,
+        IDictionary<string, object?>? mutationState = null)
         => new()
         {
+            MutationState = mutationState ?? MutationState,
             Model = Model,
             UserContext = UserContext,
             CurrentRow = currentRow ?? CurrentRow,
@@ -263,6 +265,16 @@ public sealed class MutationTransformContext
     /// reads it. Only the engine sets it, so a client cannot claim an operation's write.
     /// </summary>
     public Operations.IBifrostOperation? Operation { get; internal init; }
+
+    /// <summary>
+    /// This write's per-action bag: the same instance both of its hook phases receive as
+    /// <see cref="MutationObserverContext.MutationState"/>, so a transformer that loaded and
+    /// locked the row (<see cref="LoadRowForUpdateAsync"/>) hands it to the after-write hook
+    /// instead of the hook reading it again. Fresh per write and never shared with the next
+    /// action of a batch or request; an operation can start it with entries of its own. A
+    /// context built outside a write path gets an empty bag no hook will see.
+    /// </summary>
+    public IDictionary<string, object?> MutationState { get; internal init; } = MutationObserverContext.NewMutationState();
 }
 
 /// <summary>

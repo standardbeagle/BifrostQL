@@ -170,7 +170,13 @@ namespace BifrostQL.Core.Resolvers
                     ctx.ModuleArguments, ct, ctx.ConnFactory, transactionState);
                 foreach (var action in actions)
                 {
-                    var outcome = await ExecuteAction(execContext, action);
+                    // Per-ACTION state: one bag the action's chain and both hook phases share,
+                    // fresh for every row so one action's state is never read as the next's.
+                    var actionContext = execContext with
+                    {
+                        TransformContext = execContext.TransformContext.With(mutationState: MutationObserverContext.NewMutationState()),
+                    };
+                    var outcome = await ExecuteAction(actionContext, action);
                     if (outcome is not null)
                         outcomes.Add(outcome);
                 }
@@ -291,7 +297,7 @@ namespace BifrostQL.Core.Resolvers
             CancellationToken Ct,
             IDbConnFactory ConnFactory,
             // Per-TRANSACTION state, shared by every action of the batch (the deferred held
-            // change set). Per-ACTION state is built fresh in RunHookedWriteAsync.
+            // change set). Per-ACTION state is TransformContext.MutationState, fresh per action.
             IDictionary<string, object?> TransactionState);
 
         private static async Task<BatchActionOutcome?> ExecuteAction(BatchExecutionContext ctx, BatchAction action)
@@ -342,9 +348,10 @@ namespace BifrostQL.Core.Resolvers
                 Dialect = ctx.Dialect,
                 ConnFactory = ctx.ConnFactory,
                 CancellationToken = ctx.Ct,
-                // Per-ACTION scratchpad: fresh for every row, so one action's before-image,
-                // divert signal, or logical verb can never be read as the next action's.
-                MutationState = MutationObserverContext.NewMutationState(),
+                // Per-ACTION scratchpad, shared with this action's transformer chain and fresh
+                // for every row (RunActionsAsync), so one action's before-image, divert signal,
+                // or logical verb can never be read as the next action's.
+                MutationState = ctx.TransformContext.MutationState,
                 TransactionState = ctx.TransactionState,
             };
             if (logicalType is not null)

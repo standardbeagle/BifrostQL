@@ -286,6 +286,8 @@ public sealed class TreeSyncExecutor
                 StringComparer.OrdinalIgnoreCase);
             (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) additionalFilter
                 = ("", Array.Empty<SqlParameterInfo>());
+            // This node's per-action bag, shared by its transformer chain and both hook phases.
+            var nodeState = MutationObserverContext.NewMutationState();
 
             if (transformers != null)
             {
@@ -302,6 +304,7 @@ public sealed class TreeSyncExecutor
                     Transaction = transaction,
                     Dialect = _dialect,
                     RecordsOperationId = recordsOperationId,
+                    MutationState = nodeState,
                     CancellationToken = cancellationToken,
                 };
                 var result = await transformers.TransformAsync(op.Table, mutationType, data, ctx);
@@ -340,7 +343,7 @@ public sealed class TreeSyncExecutor
                     Dialect = _dialect,
                     ConnFactory = connFactory,
                     CancellationToken = cancellationToken,
-                    MutationState = MutationObserverContext.NewMutationState(),
+                    MutationState = nodeState,
                     TransactionState = treeTransactionState,
                 };
                 Approval.ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalMutationType);

@@ -166,37 +166,46 @@ public sealed class BifrostOperationContext
     /// <summary>
     /// Inserts one row of <paramref name="table"/> as the caller and returns its key. Runs the
     /// full mutation pipeline: policy, state machine, validation, tenant pinning, audit stamping,
-    /// encryption, and the before-commit and in-transaction hooks.
+    /// encryption, and the before-commit and in-transaction hooks. <paramref name="state"/>'s
+    /// entries start the write's <see cref="MutationTransformContext.MutationState"/>, which the
+    /// transformers and both hook phases of this write share (a row the operation already read,
+    /// so no hook reads it again).
     /// </summary>
-    public Task<object?> InsertAsync(string table, IReadOnlyDictionary<string, object?> values)
+    public Task<object?> InsertAsync(
+        string table, IReadOnlyDictionary<string, object?> values, IReadOnlyDictionary<string, object?>? state = null)
     {
         var dbTable = ResolveWritableTable(table);
         return TableMutationPipeline.InsertAsync(
-            dbTable, new Dictionary<string, object?>(values, StringComparer.OrdinalIgnoreCase), PipelineContext());
+            dbTable, new Dictionary<string, object?>(values, StringComparer.OrdinalIgnoreCase), PipelineContext(state));
     }
 
     /// <summary>
     /// Updates the row of <paramref name="table"/> whose key columns are in <paramref name="values"/>,
     /// as the caller, and returns the number of rows changed: 0 when the row does not exist or is
-    /// outside the caller's tenant or row scope.
+    /// outside the caller's tenant or row scope. <paramref name="state"/> starts the write's
+    /// <see cref="MutationTransformContext.MutationState"/>, as on <see cref="InsertAsync"/>.
     /// </summary>
-    public async Task<int> UpdateAsync(string table, IReadOnlyDictionary<string, object?> values)
+    public async Task<int> UpdateAsync(
+        string table, IReadOnlyDictionary<string, object?> values, IReadOnlyDictionary<string, object?>? state = null)
     {
         var dbTable = ResolveWritableTable(table);
         var (_, affectedRows) = await TableMutationPipeline.UpdateWithAffectedRowsAsync(
-            dbTable, MutationArgumentBinder.SplitProperties(dbTable, values, null), PipelineContext());
+            dbTable, MutationArgumentBinder.SplitProperties(dbTable, values, null), PipelineContext(state));
         return affectedRows;
     }
 
     /// <summary>
     /// Deletes the row of <paramref name="table"/> named by <paramref name="key"/>, as the caller
     /// (a soft delete where the table declares one), and returns the number of rows affected.
+    /// <paramref name="state"/> starts the write's <see cref="MutationTransformContext.MutationState"/>,
+    /// as on <see cref="InsertAsync"/>.
     /// </summary>
-    public async Task<int> DeleteAsync(string table, IReadOnlyDictionary<string, object?> key)
+    public async Task<int> DeleteAsync(
+        string table, IReadOnlyDictionary<string, object?> key, IReadOnlyDictionary<string, object?>? state = null)
     {
         var dbTable = ResolveWritableTable(table);
         var affected = await TableMutationPipeline.DeleteAsync(
-            dbTable, new Dictionary<string, object?>(key, StringComparer.OrdinalIgnoreCase), PipelineContext());
+            dbTable, new Dictionary<string, object?>(key, StringComparer.OrdinalIgnoreCase), PipelineContext(state));
         return Convert.ToInt32(affected);
     }
 
@@ -254,7 +263,7 @@ public sealed class BifrostOperationContext
         ?? throw new BifrostExecutionError(
             "A mutation operation's reads need the built-in SqlExecutionManager to join the operation's transaction.");
 
-    private MutationPipelineContext PipelineContext()
+    private MutationPipelineContext PipelineContext(IReadOnlyDictionary<string, object?>? state = null)
     {
         if (Operation.Kind != BifrostOperationKind.Mutation)
             throw new BifrostExecutionError(
@@ -269,6 +278,7 @@ public sealed class BifrostOperationContext
             CancellationToken = CancellationToken,
             WriteScope = _scope,
             Operation = Operation,
+            InitialMutationState = state,
         };
     }
 

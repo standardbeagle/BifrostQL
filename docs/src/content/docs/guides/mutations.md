@@ -260,6 +260,18 @@ required table are refused. Model load refuses
 cannot set `operation-id` at all. Like every metadata key, the mode belongs to one endpoint's
 model: another endpoint over the same database that does not declare it writes as usual.
 
+To cover every table, opt them in with a wildcard rule and take out, with `none`, the tables
+that cannot record: the hidden store, a table that requires `approval`, and a `required` table's
+engine-written neighbours (`retain`, `ttl`, `deferrable`, `encrypt`, chat stores). Later rules
+override earlier ones:
+
+```
+":root { operation-id-store: public.operation_ids }"
+"public.* { operation-id: required }"
+"public.operation_ids { visibility: hidden; operation-id: none }"
+"public.expense_reports { operation-id: none }"
+```
+
 A retry that carries the same id and the same request (table, verb, target key and arguments)
 answers with the recorded result, generated key included. Nothing else runs: no SQL write, no
 transformer and no hook, so a retry leaves no second row and no second audit line. The retry

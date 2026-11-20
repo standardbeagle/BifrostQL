@@ -6,7 +6,10 @@ namespace BifrostQL.Core.Modules.OperationId
     /// <summary>How a table treats a caller operation id (<see cref="MetadataKeys.OperationId.Mode"/>).</summary>
     public enum OperationIdMode
     {
-        /// <summary>The table does not opt in: an id is not read and nothing is recorded.</summary>
+        /// <summary>
+        /// The table does not opt in (no value, or <see cref="MetadataKeys.OperationId.None"/>):
+        /// an id is not read and nothing is recorded.
+        /// </summary>
         None,
 
         /// <summary>A write that carries an id records it; a write without one runs as before.</summary>
@@ -42,9 +45,10 @@ namespace BifrostQL.Core.Modules.OperationId
 
         /// <summary>
         /// The table's mode. Throws <see cref="InvalidOperationException"/> for a value other
-        /// than <see cref="MetadataKeys.OperationId.Optional"/> or
-        /// <see cref="MetadataKeys.OperationId.Required"/>: a typo must not leave a table that
-        /// reads as opted in recording nothing.
+        /// than <see cref="MetadataKeys.OperationId.Optional"/>,
+        /// <see cref="MetadataKeys.OperationId.Required"/> or
+        /// <see cref="MetadataKeys.OperationId.None"/>: a typo must not leave a table that reads
+        /// as opted in recording nothing.
         /// </summary>
         public static OperationIdMode ModeOf(IDbTable table)
         {
@@ -62,9 +66,11 @@ namespace BifrostQL.Core.Modules.OperationId
                 return OperationIdMode.Optional;
             if (string.Equals(value, MetadataKeys.OperationId.Required, StringComparison.OrdinalIgnoreCase))
                 return OperationIdMode.Required;
+            if (string.Equals(value, MetadataKeys.OperationId.None, StringComparison.OrdinalIgnoreCase))
+                return OperationIdMode.None;
             throw new InvalidOperationException(
-                $"'{MetadataKeys.OperationId.Mode}' must be '{MetadataKeys.OperationId.Optional}' or " +
-                $"'{MetadataKeys.OperationId.Required}'.");
+                $"'{MetadataKeys.OperationId.Mode}' must be '{MetadataKeys.OperationId.Optional}', " +
+                $"'{MetadataKeys.OperationId.Required}' or '{MetadataKeys.OperationId.None}'.");
         }
 
         /// <summary>

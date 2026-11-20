@@ -303,7 +303,7 @@ Records writes that carry a caller operation id. See
 
 | Property | Values | Applies to | Description |
 |----------|--------|-----------|-------------|
-| `operation-id` | `optional`, `required` | table | A write that carries `_operationId` or an `Idempotency-Key` header is recorded. Under `optional` a write without one runs as before; under `required` every write without one, on any path, is refused with `OPERATION_ID_REQUIRED`. Any other value fails model load, as does combining it with `approval`, combining `required` with `retain`, `ttl`, `deferrable`, an `encrypt` column, `chat-conversations` or `chat-messages`, or setting it on a hidden table |
+| `operation-id` | `optional`, `required`, `none` | table | A write that carries `_operationId` or an `Idempotency-Key` header is recorded. Under `optional` a write without one runs as before; under `required` every write without one, on any path, is refused with `OPERATION_ID_REQUIRED`. `none` opts the table out, as no value does, so a later rule can take a table out of a wildcard one (`public.* { operation-id: required }`). Any other value fails model load, as does combining it with `approval`, combining `required` with `retain`, `ttl`, `deferrable`, an `encrypt` column, `chat-conversations` or `chat-messages`, or setting it to anything but `none` on a hidden table |
 | `operation-id-store` | qualified table name | model | The table records are written to. **Required** once any table sets `operation-id`; the table must exist, be `visibility: hidden` and carry `tenant`, `caller`, `operation_id`, `field_name`, `table_name`, `action`, `target_key`, `input_hash`, `result`, `created_at`, with a primary key or unique index over exactly `(tenant, caller, operation_id, field_name)` |
 
 ```json

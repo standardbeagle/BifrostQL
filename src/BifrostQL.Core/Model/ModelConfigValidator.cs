@@ -890,15 +890,20 @@ namespace BifrostQL.Core.Model
         /// <see cref="OperationIdMode.Required"/> table is refused beside a feature whose engine
         /// writes it through the pipeline with no operation id (retention purge, deferred undo,
         /// the key-rotation sweep, the chat store): every such write would be refused. A hidden
-        /// table cannot set the mode at all: no client can address it, so no write to it could
-        /// ever carry an id, and its engine writes bypass the guard.
+        /// table cannot opt in (only <see cref="MetadataKeys.OperationId.None"/> is accepted, so
+        /// a wildcard rule can be undone on it): no client can address it, so no write to it
+        /// could ever carry an id, and its engine writes bypass the guard.
         /// </summary>
         private static void ValidateOperationIdStore(IDbModel model, List<string> errors)
         {
             var optedIn = new List<IDbTable>();
             foreach (var table in model.HiddenTables)
             {
-                if (table.GetMetadataValue(MetadataKeys.OperationId.Mode) is not null)
+                // 'none' is how a hidden table leaves a wildcard rule; any other value opts it in.
+                OperationIdMode hiddenMode;
+                try { hiddenMode = OperationIdConfig.ModeOf(table); }
+                catch (InvalidOperationException) { hiddenMode = OperationIdMode.Optional; }
+                if (hiddenMode != OperationIdMode.None)
                     errors.Add(
                         $"  {table.TableSchema}.{table.DbName} [{MetadataKeys.OperationId.Mode}]: a hidden table " +
                         "cannot record operation ids; no client write can reach it.");

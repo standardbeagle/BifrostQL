@@ -50,6 +50,10 @@ On `main` after v0.4.28; not yet on NuGet.
 
 - **The operation-id store gains a `field_name` column, and its unique key becomes `(tenant, caller, operation_id, field_name)`.** A record now belongs to one mutation field, keyed by the field's response name (its alias, else its name). One `Idempotency-Key` header can therefore cover a request of several mutation fields, and each field records and replays on its own; before, the second field answered `OPERATION_ID_REUSED` and wrote nothing. A retry must keep the fields' aliases. Model load refuses a store without the column or the key. To migrate, add `field_name` (text, not null; on MySQL `VARCHAR(128)` keeps the key under InnoDB's 3072 bytes), backfill existing rows with the field each one recorded (the table's field name, or `<table>_batch` for a batch), and widen the key.
 
+### Added — operation ids
+
+- `operation-id: none` opts a table out of operation ids, as no value does, so a later metadata rule can take a table out of a wildcard one: `public.* { operation-id: required }` then `public.operation_ids { visibility: hidden; operation-id: none }`. A hidden table accepts only `none`.
+
 ### Breaking — fourth review pass (LDAP, RESP)
 
 - **RESP write intents name the table schema-qualified** (`dbo.users`, was `users`), so a write lands on the table the key resolved to when two schemas share a name. Custom `IMutationIntentExecutor` implementations that match on the bare name must resolve the qualified one through `IDbModel.TryGetTableFromClientName`.

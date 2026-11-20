@@ -163,7 +163,34 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
             "main.notes { operation-id: sometimes }");
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
-            .Which.Message.Should().Contain("main.notes [operation-id]: 'operation-id' must be 'optional' or 'required'.");
+            .Which.Message.Should().Contain("main.notes [operation-id]: 'operation-id' must be 'optional', 'required' or 'none'.");
+    }
+
+    // A wildcard rule opts every table in; a later rule sets 'none' on the tables that cannot
+    // record (the hidden store, an approval-gated or engine-written table).
+    [Fact]
+    public async Task WildcardRequired_WithNoneOnTheTablesThatCannotRecord_Loads()
+    {
+        var load = () => LoadAsync(
+            ":root { operation-id-store: main.operation_ids }",
+            "main.* { operation-id: required }",
+            "main.operation_ids { visibility: hidden; operation-id: none }",
+            "main.ledger { operation-id: none; approval: enabled; approver-role: reviewer; ttl: 1d after created_at }");
+
+        await load.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task WildcardRequired_WithoutNoneOnTheHiddenStore_IsRefused()
+    {
+        var load = () => LoadAsync(
+            ":root { operation-id-store: main.operation_ids }",
+            "main.* { operation-id: required }",
+            "main.operation_ids { visibility: hidden }");
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain(
+                "main.operation_ids [operation-id]: a hidden table cannot record operation ids; no client write can reach it.");
     }
 
     [Theory]

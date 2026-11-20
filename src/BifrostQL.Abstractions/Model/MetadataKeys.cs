@@ -1222,6 +1222,14 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string Mode = "operation-id";
 
+            /// <summary>
+            /// The <see cref="Mode"/> value that opts a table out: no id is read and nothing is
+            /// recorded, as with no value. It lets a later rule take a table out of a wildcard
+            /// one (<c>public.* { operation-id: required }</c>): the hidden store, a table that
+            /// requires approval, or one whose engine writes carry no id.
+            /// </summary>
+            public const string None = "none";
+
             /// <summary>The <see cref="Mode"/> value that records an id when the write carries one.</summary>
             public const string Optional = "optional";
 

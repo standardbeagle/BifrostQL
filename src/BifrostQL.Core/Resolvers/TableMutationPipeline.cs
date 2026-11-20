@@ -158,6 +158,45 @@ namespace BifrostQL.Core.Resolvers
                && string.Equals(left.DbName, right.DbName, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
+        /// Whether an update's arguments have the shape the pipeline writes: a key, all of it,
+        /// and a non-key column to SET. Any other shape is answered by its shape (a no-op 0,
+        /// <see cref="MutationArgumentBinder.PartialPrimaryKeyCode"/>,
+        /// <see cref="MutationArgumentBinder.NoUpdateColumnsCode"/>), but only after
+        /// <see cref="AnswerUnwritableUpdateShapeAsync"/> has run the chain on it.
+        /// </summary>
+        internal static bool IsWritableUpdateShape(
+            IDbTable table, IReadOnlyDictionary<string, object?> keyData,
+            IReadOnlyCollection<KeyValuePair<string, object?>> standardData)
+        {
+            if (keyData.Count == 0 || standardData.Count == 0)
+                return false;
+            var keyColumns = table.KeyColumns.ToList();
+            return keyColumns.Count <= 1
+                || keyColumns.All(c => keyData.ContainsKey(c.ColumnName));
+        }
+
+        /// <summary>
+        /// Answers an update <see cref="IsWritableUpdateShape"/> refuses. Authorization lives in
+        /// the transformer chain, so the chain runs first on the data the request gave and its
+        /// refusal is the answer: a caller the chain denies never learns the shape check's
+        /// answer, and a denied write never reads as a no-op success. For a write the chain
+        /// passes, the shape answers as before: it returns (the caller answers a no-op 0) when
+        /// no key column was given, else throws the partial-key or no-SET-column error. Every update path calls this — the
+        /// single-row pipeline, the batch and the bulk staging — before its own shape checks.
+        /// </summary>
+        internal static async Task AnswerUnwritableUpdateShapeAsync(
+            IMutationTransformers transformers, IDbTable table, Dictionary<string, object?> data,
+            IReadOnlyDictionary<string, object?> keyData, IReadOnlyCollection<KeyValuePair<string, object?>> standardData,
+            MutationTransformContext transformContext)
+        {
+            (await transformers.TransformAsync(table, MutationType.Update, data, transformContext)).ThrowIfDenied();
+            if (keyData.Count == 0)
+                return;
+            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
+            MutationArgumentBinder.RequireSetColumns(standardData);
+        }
+
+        /// <summary>
         /// Runs one write's transformer chain, hooks and SQL in a transaction: its own, or the
         /// operation's shared <see cref="MutationPipelineContext.WriteScope"/> when it has one.
         /// </summary>
@@ -286,19 +325,6 @@ namespace BifrostQL.Core.Resolvers
         {
             GuardNotHistoryTarget(table, ctx.Model);
 
-            if (!propertyInfo.data.Any())
-                return (0, 0);
-
-            if (!propertyInfo.keyData.Any())
-                return (0, 0);
-
-            // A partial key would widen the WHERE from one row to every row sharing
-            // the supplied key columns. Checked before the state-machine load, which
-            // reads by the same predicate.
-            MutationArgumentBinder.RequireCompleteKey(table, propertyInfo.keyData.Keys, "Update");
-
-            MutationArgumentBinder.RequireSetColumns(propertyInfo.standardData);
-
             var dialect = ctx.ConnFactory.Dialect;
 
             // The state-machine load, mutation transformers, before-commit hooks and
@@ -308,8 +334,21 @@ namespace BifrostQL.Core.Resolvers
             int result = 0;
             string? pendingApproval = null;
             StateTransitionInfo? stateTransition = null;
+            var writable = true;
             await RunInTransactionAsync(ctx, async (conn, transaction) =>
             {
+                // No key, a partial key (it would widen the WHERE from one row to every row
+                // sharing the supplied key columns, and the state-machine load reads by the
+                // same predicate) or nothing to SET: the chain answers first, then the shape.
+                if (!IsWritableUpdateShape(table, propertyInfo.keyData, propertyInfo.standardData))
+                {
+                    await AnswerUnwritableUpdateShapeAsync(
+                        ctx.Transformers, table, propertyInfo.data, propertyInfo.keyData, propertyInfo.standardData,
+                        TransformContext(ctx, conn, transaction, dialect));
+                    writable = false;
+                    return;
+                }
+
                 // Mutation transformers (e.g. the authorization policy engine) gate
                 // the update before any SQL is built; non-empty Errors abort it.
                 // The state load runs under this same context minus CurrentRow — that is
@@ -382,6 +421,8 @@ namespace BifrostQL.Core.Resolvers
                 if (result > 0)
                     stateTransition = transformResult.StateTransition;
             });
+            if (!writable)
+                return (0, 0);
             if (pendingApproval is not null)
                 throw ApprovalInterceptMutationHook.PendingApprovalError(pendingApproval);
             // Observers fire only for a write that changed a row: a tenant/policy-scoped-away
@@ -408,9 +449,6 @@ namespace BifrostQL.Core.Resolvers
         {
             GuardNotHistoryTarget(table, ctx.Model);
 
-            if (!data.Any())
-                return 0;
-
             var dialect = ctx.ConnFactory.Dialect;
 
             // Snapshot the columns the caller actually supplied (in DB-name space),
@@ -432,6 +470,12 @@ namespace BifrostQL.Core.Resolvers
                 var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, transformContext);
 
                 transformResult.ThrowIfDenied();
+
+                // A delete naming no column deletes nothing, but only after the chain has run
+                // on it: a caller the chain refuses gets the refusal, never a 0 that reads as
+                // a delete that ran (see AnswerUnwritableUpdateShapeAsync).
+                if (data.Count == 0)
+                    return;
 
                 // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
                 // IS NULL) is ANDed onto the WHERE clause so it narrows — never

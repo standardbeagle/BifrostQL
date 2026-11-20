@@ -267,9 +267,8 @@ namespace BifrostQL.Core.Resolvers
             IMutationTransformers mutationTransformers, IDbTable table, IDbModel model,
             IDbConnFactory conFactory, OperationWriteScope? writeScope)
         {
+            // An empty delete still reaches the pipeline: it answers 0 only after the chain.
             var data = context.GetArgument<Dictionary<string, object?>>("delete") ?? new();
-            if (!data.Any())
-                return 0;
 
             var pkKeyData = ResolvePrimaryKeyArgument(context, table);
             if (pkKeyData != null)

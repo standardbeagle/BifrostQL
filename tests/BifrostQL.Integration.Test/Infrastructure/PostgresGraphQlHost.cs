@@ -50,7 +50,8 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
     /// <paramref name="services"/> (hooks, observers) registered beside BifrostQL's own.
     /// </summary>
     public static async Task<PostgresGraphQlHost> StartAsync(
-        string prefix, string ddl, IReadOnlyList<string> metadata, Action<IServiceCollection>? services = null)
+        string prefix, string ddl, IReadOnlyList<string> metadata, Action<IServiceCollection>? services = null,
+        Action<BifrostSetupOptions>? bifrost = null)
     {
         var master = Master ?? throw new InvalidOperationException(SkipReason);
         var dbName = $"{prefix}_{Guid.NewGuid():N}";
@@ -75,10 +76,14 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
             {
                 collection.AddRouting();
                 services?.Invoke(collection);
-                collection.AddBifrostQL(options => options
-                    .BindConfiguration(config.GetSection("Bifrost"))
-                    .BindConnectionString(connectionString)
-                    .BindProvider("postgres"));
+                collection.AddBifrostQL(options =>
+                {
+                    options
+                        .BindConfiguration(config.GetSection("Bifrost"))
+                        .BindConnectionString(connectionString)
+                        .BindProvider("postgres");
+                    bifrost?.Invoke(options);
+                });
             });
             web.Configure(app =>
             {

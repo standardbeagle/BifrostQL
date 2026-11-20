@@ -400,7 +400,6 @@ namespace BifrostQL.Core.Resolvers
 
         private static async Task<BatchActionOutcome?> ExecuteUpdate(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
-            if (data.Count == 0) return null;
             var table = ctx.Table;
             var dialect = ctx.Dialect;
 
@@ -411,14 +410,15 @@ namespace BifrostQL.Core.Resolvers
             // SET list is re-derived from the chain's (DB-named) output below.
             var (keyData, standardData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
 
-            if (!keyData.Any()) return null;
-
-            // Same rule as the single-row update (TableMutationPipeline): a partial
-            // composite key widens the WHERE from one row to every row sharing the
-            // supplied key columns. Checked before the state-machine load, which reads
-            // by the same predicate.
-            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
-            MutationArgumentBinder.RequireSetColumns(standardData);
+            // Same rule as the single-row update (TableMutationPipeline): no key, a partial
+            // composite key (it widens the WHERE, and the state-machine load reads by the same
+            // predicate) or nothing to SET is answered by the chain first, then by its shape.
+            if (!TableMutationPipeline.IsWritableUpdateShape(table, keyData, standardData))
+            {
+                await TableMutationPipeline.AnswerUnwritableUpdateShapeAsync(
+                    ctx.MutationTransformers, table, caseData, keyData, standardData, ctx.TransformContext);
+                return null;
+            }
 
             // Scoped by the same chain-derived row scope the UPDATE below carries, so the
             // state gate cannot read a row this caller could not write (see
@@ -478,7 +478,6 @@ namespace BifrostQL.Core.Resolvers
 
         private static async Task<BatchActionOutcome?> ExecuteDelete(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
-            if (data.Count == 0) return null;
             var table = ctx.Table;
             var dialect = ctx.Dialect;
 
@@ -502,6 +501,9 @@ namespace BifrostQL.Core.Resolvers
 
             var transformResult = await ctx.MutationTransformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             transformResult.ThrowIfDenied();
+
+            // An empty delete deletes nothing, answered only after the chain (single-row rule).
+            if (data.Count == 0) return null;
 
             // The transformer's AdditionalFilter (e.g. policy row-scope, soft-delete
             // IS NULL) is ANDed onto the WHERE clause so it narrows — never

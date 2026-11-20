@@ -25,6 +25,10 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Security — write-path fixes
+
+- An update or delete runs the mutation transformer chain before the pipeline answers by the request's shape. A caller the chain refuses used to get the shape's answer instead: `NO_UPDATE_COLUMNS` or `PARTIAL_PRIMARY_KEY` for a key-only or partial-key update, and a no-op `0` for an update with no key column (a keyless view) or a delete naming no column, which read as a write that ran. The chain's refusal is now the answer on the single-row, `_batch` and bulk paths; a write the chain passes is answered by its shape as before.
+
 ### Breaking — fourth review pass (LDAP, RESP)
 
 - **RESP write intents name the table schema-qualified** (`dbo.users`, was `users`), so a write lands on the table the key resolved to when two schemas share a name. Custom `IMutationIntentExecutor` implementations that match on the bare name must resolve the qualified one through `IDbModel.TryGetTableFromClientName`.

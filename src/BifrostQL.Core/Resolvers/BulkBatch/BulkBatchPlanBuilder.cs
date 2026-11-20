@@ -258,16 +258,18 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             IDbTable table, Dictionary<string, object?> data,
             MutationPipelineContext ctx, MutationTransformContext transformContext, ISqlDialect dialect)
         {
-            if (data.Count == 0) return null;
             var caseData = new Dictionary<string, object?>(data, StringComparer.OrdinalIgnoreCase);
             var (keyData, setData) = MutationArgumentBinder.SplitKeyAndSet(table, caseData);
-            if (keyData.Count == 0) return null;
 
-            // Same rule as the per-row pipelines: a partial composite key joins the
-            // staging table on part of the key, so ONE statement rewrites every row
-            // sharing the supplied columns.
-            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Update");
-            MutationArgumentBinder.RequireSetColumns(setData);
+            // Same rule as the per-row pipelines: no key, a partial composite key (it joins
+            // the staging table on part of the key, so ONE statement rewrites every row
+            // sharing the supplied columns) or nothing to SET is answered by the chain first.
+            if (!TableMutationPipeline.IsWritableUpdateShape(table, keyData, setData))
+            {
+                await TableMutationPipeline.AnswerUnwritableUpdateShapeAsync(
+                    ctx.Transformers, table, caseData, keyData, setData, transformContext);
+                return null;
+            }
 
             // No CurrentRow: state-machine tables were gated off, and only they read it.
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Update, caseData, transformContext);
@@ -287,7 +289,6 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             IDbTable table, Dictionary<string, object?> data,
             MutationPipelineContext ctx, MutationTransformContext transformContext, ISqlDialect dialect)
         {
-            if (data.Count == 0) return null;
             // Thread the captured module arguments (e.g. _hardDelete) exactly as the per-row
             // path does, so the soft-delete transformer sees the same rewrite decision.
             var deleteTransformContext = ctx.ModuleArguments.Count == 0
@@ -299,6 +300,8 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var transformResult = await ctx.Transformers.TransformAsync(table, MutationType.Delete, data, deleteTransformContext);
             transformResult.ThrowIfDenied();
+            // An empty delete deletes nothing, answered only after the chain (per-row rule).
+            if (data.Count == 0) return null;
             var filter = MutationCommandExecutor.RenderAdditionalFilter(transformResult.AdditionalFilter, dialect);
             var dbData = transformResult.Data;
             if (transformResult.MutationType == MutationType.Update)

@@ -231,6 +231,23 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
         (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1);
     }
 
+    [Fact]
+    public async Task Caller_the_policy_now_refuses_is_refused_before_a_reused_id_is_reported()
+    {
+        using var first = await SendAsync("""mutation { notes(insert: { title: "first" }, _operationId: "op-oracle") }""", Writer);
+        Data(first, "notes").ValueKind.Should().Be(JsonValueKind.Number);
+
+        // Another payload under the same id, from a caller the policy refuses: the answer must
+        // be the live refusal, not OPERATION_ID_REUSED, which would say the id holds a record.
+        using var retry = await SendAsync("""mutation { notes(insert: { title: "other" }, _operationId: "op-oracle") }""", Reader);
+        using var live = await SendAsync("""mutation { notes(insert: { title: "live" }) }""", Reader);
+
+        var refused = FirstError(retry);
+        refused.GetProperty("extensions").GetProperty("code").GetString().Should().Be("ACCESS_DENIED", retry.RootElement.GetRawText());
+        refused.GetProperty("message").GetString().Should().Be(FirstError(live).GetProperty("message").GetString());
+        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
+    }
+
     public const string ReusedMessage = "This operation id was already used for a different write.";
 
     [Theory]

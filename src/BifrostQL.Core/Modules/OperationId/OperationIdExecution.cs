@@ -79,10 +79,12 @@ namespace BifrostQL.Core.Modules.OperationId
         /// <paramref name="write"/> inside one operation scope, and records its result. A write
         /// that throws rolls the claim back with it, so a failed write leaves no record.
         ///
-        /// <para>When the caller already holds a committed record for the id with the same
-        /// <paramref name="fingerprint"/>, <paramref name="authorizeReplay"/> runs (it throws to
-        /// refuse) and the recorded result is returned: no write, transformer or hook runs. A
-        /// record with a different fingerprint is refused with <see cref="ReusedCode"/>.</para>
+        /// <para>When the caller already holds a committed record for the id,
+        /// <paramref name="authorizeReplay"/> runs first (it throws to refuse, so a refused
+        /// caller never learns whether the record matches). With the same
+        /// <paramref name="fingerprint"/> the recorded result is returned: no write, transformer
+        /// or hook runs. A record with a different fingerprint is refused with
+        /// <see cref="ReusedCode"/>.</para>
         ///
         /// <para>Two requests claiming one id at once: the second's claim waits on the first's
         /// uncommitted record. If the first rolls back, the waiting claim succeeds in place and the
@@ -142,12 +144,15 @@ namespace BifrostQL.Core.Modules.OperationId
                     store, dialect, scope.Connection, scope.Transaction, owner, operationId, cancellationToken);
                 if (recorded is not null)
                 {
+                    // Authorization first: a caller the policy now refuses gets the live refusal
+                    // for this request, never OPERATION_ID_REUSED, so a refused caller cannot
+                    // learn which of its own ids hold a record for another write.
+                    authorizeReplay();
                     if (recorded.Fingerprint != fingerprint)
                         throw new BifrostExecutionError("This operation id was already used for a different write.")
                         {
                             ErrorCode = ReusedCode,
                         };
-                    authorizeReplay();
                     return RecordedResult(recorded.ResultJson);
                 }
                 try

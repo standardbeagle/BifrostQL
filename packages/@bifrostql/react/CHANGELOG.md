@@ -37,9 +37,9 @@ the call-site update it requires.
 - **`useBifrostMutation` sends an `Idempotency-Key` with every call.** A
   new `crypto.randomUUID()` per call; the instance's next call after an
   unanswered one (failed fetch or non-2xx status) repeats its key, so a
-  server recording operation ids applies a resend once. The provider
-  forgets the key on a GraphQL answer, another instance's call, `reset()`
-  or unmount, and clears that instance's `error`.
+  server recording operation ids applies a resend once. The memory is the
+  instance's own: other instances' calls leave it. A GraphQL answer,
+  `reset()` or unmount forget it.
 
 ### Fixed
 

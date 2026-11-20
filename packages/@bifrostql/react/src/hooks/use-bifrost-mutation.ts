@@ -1,9 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useContext, useEffect, useRef } from 'react';
-import {
-  BifrostContext,
-  BifrostMutationContext,
-} from '../components/bifrost-provider';
+import { useCallback, useContext, useRef } from 'react';
+import { BifrostContext } from '../components/bifrost-provider';
 import { executeGraphQL, isGraphQLAnswer } from '../utils/graphql-client';
 import { invalidateBifrostQueries } from '../utils/invalidation';
 
@@ -34,10 +31,9 @@ export interface UseBifrostMutationOptions {
  * instance's next call after its last call ended unanswered (the fetch failed or the status was
  * not 2xx), whatever its variables. A retry repeats the key; the server answers an unchanged
  * retry with the first result, runs a changed one when the first rolled back, and refuses it
- * with `OPERATION_ID_REUSED` when the first applied. The provider forgets the unanswered call,
- * and clears this instance's `error`, on any GraphQL answer to it, a call sent through the
- * provider by another instance, `reset()`, or unmount.
- *
+ * with `OPERATION_ID_REUSED` when the first applied. The memory is this instance's alone: other
+ * instances' calls neither use nor end it. Only a GraphQL answer to the call, `reset()` or
+ * unmount forget it; call `reset()` when the control moves on to another intent. *
  * Use the `buildInsertMutation`, `buildUpdateMutation`, `buildUpsertMutation`,
  * or `buildDeleteMutation` helpers to construct the mutation string.
  *
@@ -67,33 +63,13 @@ export function useBifrostMutation<
     throw new Error('useBifrostMutation must be used within a BifrostProvider');
   }
 
-  const store = useContext(BifrostMutationContext);
-  if (!store) {
-    throw new Error('useBifrostMutation must be used within a BifrostProvider');
-  }
-
   const queryClient = useQueryClient();
-  const owner = useRef(Symbol('useBifrostMutation')).current;
-  const resetRef = useRef<() => void>(() => undefined);
-
-  const forgetOwn = useCallback(() => {
-    if (store.pending?.owner === owner) {
-      store.pending = null;
-    }
-  }, [store, owner]);
-
-  useEffect(() => forgetOwn, [forgetOwn]);
+  // The key of this instance's last call while it is unanswered: the next call repeats it.
+  const unansweredKey = useRef<string | null>(null);
 
   const result = useMutation<TData, Error, TVariables>({
     mutationFn: async (variables) => {
-      const pending = store.pending;
-      const isRetry = pending?.owner === owner;
-      if (pending && !isRetry) {
-        // Another instance's unanswered call: this call ends its life as a retry.
-        store.pending = null;
-        pending.forget();
-      }
-      const key = isRetry ? pending.key : crypto.randomUUID();
+      const key = unansweredKey.current ?? crypto.randomUUID();
       try {
         const data = await executeGraphQL<TData>(
           config.endpoint,
@@ -107,14 +83,10 @@ export function useBifrostMutation<
             onSessionExpired: config.onSessionExpired,
           },
         );
-        forgetOwn();
+        unansweredKey.current = null;
         return data;
       } catch (error) {
-        if (isGraphQLAnswer(error)) {
-          forgetOwn();
-        } else {
-          store.pending = { owner, key, forget: () => resetRef.current() };
-        }
+        unansweredKey.current = isGraphQLAnswer(error) ? null : key;
         throw error;
       }
     },
@@ -130,12 +102,12 @@ export function useBifrostMutation<
     },
     onError: options.onError,
   });
-  resetRef.current = result.reset;
 
+  const { reset: resetMutation } = result;
   const reset = useCallback(() => {
-    forgetOwn();
-    result.reset();
-  }, [forgetOwn, result]);
+    unansweredKey.current = null;
+    resetMutation();
+  }, [resetMutation]);
 
   return { ...result, reset };
 }

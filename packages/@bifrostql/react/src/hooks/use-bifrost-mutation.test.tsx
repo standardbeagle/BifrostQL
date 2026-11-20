@@ -530,9 +530,12 @@ describe('useBifrostMutation', () => {
       expect(next).not.toBe(retry);
     });
 
-    it('forgets an unanswered call, and clears its error, when another instance sends a call', async () => {
+    it("keeps an unanswered call's key while another instance's calls are answered", async () => {
       const fetchMock = vi
         .fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(answered())
+        .mockResolvedValueOnce(answered())
         .mockRejectedValueOnce(new TypeError('Failed to fetch'))
         .mockImplementation(() => Promise.resolve(answered()));
       globalThis.fetch = fetchMock;
@@ -542,13 +545,18 @@ describe('useBifrostMutation', () => {
       );
 
       await settle(result.current.a.mutateAsync({ detail: { name: 'a' } }));
-      await waitFor(() => expect(result.current.a.error).not.toBeNull());
       await settle(result.current.b.mutateAsync({ detail: { name: 'b' } }));
-      await waitFor(() => expect(result.current.a.error).toBeNull());
+      await settle(result.current.b.mutateAsync({ detail: { name: 'b' } }));
+      // A's same call, still unanswered (the fetch fails again), then a corrected one.
       await settle(result.current.a.mutateAsync({ detail: { name: 'a' } }));
+      await settle(result.current.a.mutateAsync({ detail: { name: 'corrected' } }));
 
-      const [aFirst, , aAgain] = sentKeys(fetchMock);
-      expect(aAgain).not.toBe(aFirst);
+      const [aFirst, bFirst, bSecond, aSame, aCorrected] = sentKeys(fetchMock);
+      expect(aFirst).toMatch(/^[0-9a-f-]{36}$/);
+      expect(bFirst).not.toBe(aFirst);
+      expect(bSecond).not.toBe(aFirst);
+      expect(aSame).toBe(aFirst);
+      expect(aCorrected).toBe(aFirst);
     });
 
     it('forgets an unanswered call on reset and on unmount', async () => {
@@ -573,7 +581,9 @@ describe('useBifrostMutation', () => {
 
       // reset() forgets the unanswered call.
       await settle(hook!.mutateAsync({ detail: { name: 'a' } }));
+      await waitFor(() => expect(hook!.error).not.toBeNull());
       act(() => hook!.reset());
+      await waitFor(() => expect(hook!.error).toBeNull());
       await settle(hook!.mutateAsync({ detail: { name: 'a' } }));
 
       // The second call failed unanswered too; a remount under the same provider forgets it.

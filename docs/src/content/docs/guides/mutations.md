@@ -394,6 +394,36 @@ A unique violation is recognized by the driver's own error code, never its messa
 quote the refused value in other errors, so a value that happens to read "duplicate key" never
 turns an invalid-value or truncation error into `CONFLICT`.
 
+### Answering a violation with your own code
+
+A host can answer a constraint violation itself, so it doesn't have to read first to repeat the
+constraint as a check (that read races and costs a statement). Register an `IDatabaseErrorMapper`:
+
+```csharp
+builder.Services.AddBifrostDatabaseErrorMapper<ProjectErrors>();
+
+sealed class ProjectErrors : IDatabaseErrorMapper
+{
+    public BifrostExecutionError? Map(DatabaseConstraintViolation violation)
+        => violation is { Kind: DatabaseConstraintKind.Unique, ConstraintName: "projects_name_unique" }
+            ? new BifrostExecutionError("name: a project with this name already exists.") { ErrorCode = "validation_failed" }
+            : null;
+}
+```
+
+The mapper gets the kind (`Unique`, `ForeignKey`, `Check`, `Exclusion`), the constraint's name
+and the table's schema and name. The names come from PostgreSQL only; other dialects report just
+a unique violation, with no names. The error it returns replaces BifrostQL's answer, and its
+message and code reach the client verbatim. Return null to keep BifrostQL's answer, including
+`DATABASE_ERROR` for an unmapped check. Mappers are asked in registration order, and the first
+non-null answer wins.
+
+The mapping applies to every GraphQL mutation field: a generated write, a `_batch`, `save`/`sync`
+and a server operation. A violation inside an operation still rolls the operation back. Inside
+the operation's own code, the error from `InsertAsync` and the other write methods is still
+BifrostQL's; the mapper answers when that error leaves the field. Other front doors (gRPC,
+pgwire, RESP, the MCP and protocol adapters) keep BifrostQL's answer.
+
 ## Statement timeouts
 
 A statement the database ends at its own time limit is the host's timeout, not a GraphQL error.

@@ -41,6 +41,33 @@ public class FromDatabaseExceptionTests
         error.Message.Should().NotContain("secret-value").And.NotContain(sqlState);
     }
 
+    [Theory]
+    [InlineData("23505", DatabaseConstraintKind.Unique)]
+    [InlineData("23503", DatabaseConstraintKind.ForeignKey)]
+    [InlineData("23P01", DatabaseConstraintKind.Exclusion)]
+    [InlineData("23514", DatabaseConstraintKind.Check)]
+    public void FromDatabaseException_RecordsTheViolation_ForAHostMapper(string sqlState, DatabaseConstraintKind kind)
+    {
+        var driver = new FakeDbException($"{sqlState}: violates rule Key (email)=(secret@x.io)", sqlState);
+        driver.Data["ConstraintName"] = "orders_rule";
+        driver.Data["SchemaName"] = "sales";
+        driver.Data["TableName"] = "orders";
+
+        var error = BifrostExecutionError.FromDatabaseException(new InvalidOperationException("wrapper", driver));
+
+        error.ConstraintViolation.Should().Be(new DatabaseConstraintViolation(kind, "orders_rule", "sales", "orders"));
+    }
+
+    [Theory]
+    [InlineData("42883")]
+    [InlineData("57014")]
+    [InlineData(null)]
+    public void FromDatabaseException_RecordsNoViolation_ForOtherFailures(string? sqlState)
+    {
+        BifrostExecutionError.FromDatabaseException(new FakeDbException("failed", sqlState))
+            .ConstraintViolation.Should().BeNull();
+    }
+
     public static TheoryData<Exception> StatementTimeouts => new()
     {
         // PostgreSQL statement_timeout: query_canceled, wrapped as the driver's caller sees it.

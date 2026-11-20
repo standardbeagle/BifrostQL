@@ -110,7 +110,7 @@ namespace BifrostQL.Core.Resolvers
             }
             catch (BifrostExecutionError ex)
             {
-                throw BifrostGraphQlError.From(ex);
+                throw BifrostGraphQlError.From(DatabaseErrorMapping.Apply(ex, context.RequestServices));
             }
         }
 

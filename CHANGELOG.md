@@ -58,6 +58,7 @@ On `main` after v0.4.28; not yet on NuGet.
 ### Added — database errors
 
 - A statement the database ends at its own time limit (PostgreSQL `statement_timeout`, SQLSTATE `57014`, or a driver command timeout) rolls its transaction back, and the GraphQL HTTP middleware throws `BifrostStatementTimeoutException` to the host with nothing written, in place of a `DATABASE_ERROR` under HTTP 200. That holds whether BifrostQL, a transformer or a hook issued the statement. A host middleware ahead of BifrostQL answers it with its own status (a 503, say); a request cancelled by its own token never raises it. Every other front door answers with the new code `STATEMENT_TIMEOUT` (`BifrostExecutionError.StatementTimeoutCode`). gRPC answers it `DEADLINE_EXCEEDED` with fixed text.
+- A host answers a constraint violation with its own code and sentence: register an `IDatabaseErrorMapper` with `AddBifrostDatabaseErrorMapper<T>()`. The mapper gets the kind (unique, foreign key, check, exclusion, from the SQLSTATE), the constraint's name and the table, on every GraphQL mutation field (a generated write, a `_batch`, a tree write, a server operation). The error it returns replaces BifrostQL's answer, and a null keeps it. `BifrostExecutionError.ConstraintViolation` carries the violation server-side.
 
 ### Breaking — fourth review pass (LDAP, RESP)
 

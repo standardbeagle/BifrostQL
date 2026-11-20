@@ -45,6 +45,15 @@ namespace BifrostQL.Core.Resolvers
         public string? ConstraintName { get; init; }
 
         /// <summary>
+        /// The constraint violation this error reports, set by <see cref="FromDatabaseException"/>
+        /// for a unique, foreign-key, check or exclusion violation. It is server-side only: a
+        /// host's <see cref="IDatabaseErrorMapper"/> reads it to answer with its own code, and
+        /// it never reaches the wire (only <see cref="ConstraintName"/> does, for the kinds that
+        /// already carried it).
+        /// </summary>
+        public DatabaseConstraintViolation? ConstraintViolation { get; init; }
+
+        /// <summary>
         /// <see cref="ErrorCode"/> for a unique or primary-key violation (PostgreSQL SQLSTATE
         /// <c>23505</c>), and for other conflicts with the stored rows.
         /// </summary>
@@ -241,6 +250,14 @@ namespace BifrostQL.Core.Resolvers
         private const string UniqueViolationSqlState = "23505";
         private const string ExclusionViolationSqlState = "23P01";
         private const string ForeignKeyViolationSqlState = "23503";
+        private const string CheckViolationSqlState = "23514";
+
+        /// <summary>
+        /// The <see cref="Exception.Data"/> keys under which Npgsql's <c>PostgresException</c>
+        /// carries the violated table's schema and name.
+        /// </summary>
+        private const string DriverSchemaNameKey = "SchemaName";
+        private const string DriverTableNameKey = "TableName";
 
         /// <summary>
         /// The <see cref="Exception.Data"/> key under which Npgsql's <c>PostgresException</c>
@@ -346,15 +363,27 @@ namespace BifrostQL.Core.Resolvers
                     ExclusionViolationSqlState => (ExclusionViolationCode, ExclusionViolationMessage),
                     _ => (ForeignKeyViolationCode, ForeignKeyViolationMessage),
                 };
+                var kind = violation.SqlState switch
+                {
+                    UniqueViolationSqlState => DatabaseConstraintKind.Unique,
+                    ExclusionViolationSqlState => DatabaseConstraintKind.Exclusion,
+                    _ => DatabaseConstraintKind.ForeignKey,
+                };
                 return new BifrostExecutionError(safeMessage, ex)
                 {
                     ErrorCode = code,
                     ConstraintName = violation.Data[DriverConstraintNameKey] as string,
+                    ConstraintViolation = ViolationOf(kind, violation),
                 };
             }
 
             if (IsUniqueViolation(ex))
-                return new BifrostExecutionError(ConflictMessage, ex) { ErrorCode = ConflictCode };
+                return new BifrostExecutionError(ConflictMessage, ex)
+                {
+                    ErrorCode = ConflictCode,
+                    // SQL Server, MySQL and SQLite name neither the constraint nor the table.
+                    ConstraintViolation = new DatabaseConstraintViolation(DatabaseConstraintKind.Unique, null, null, null),
+                };
 
             if (IsInvalidValue(ex))
                 return new BifrostExecutionError(InvalidValueMessage, ex) { ErrorCode = InvalidValueCode };
@@ -370,7 +399,30 @@ namespace BifrostQL.Core.Resolvers
                 ? $"Database error: {ex.Message}"
                 : "A database error occurred while processing the request.";
 
-            return new BifrostExecutionError(message, ex) { ErrorCode = "DATABASE_ERROR" };
+            return new BifrostExecutionError(message, ex)
+            {
+                ErrorCode = "DATABASE_ERROR",
+                // A check violation keeps the generic answer unless a host maps it.
+                ConstraintViolation = FindSqlState(ex, CheckViolationSqlState) is { } check
+                    ? ViolationOf(DatabaseConstraintKind.Check, check)
+                    : null,
+            };
+        }
+
+        private static DatabaseConstraintViolation ViolationOf(DatabaseConstraintKind kind, DbException driver)
+            => new(kind,
+                driver.Data[DriverConstraintNameKey] as string,
+                driver.Data[DriverSchemaNameKey] as string,
+                driver.Data[DriverTableNameKey] as string);
+
+        private static DbException? FindSqlState(Exception ex, string sqlState)
+        {
+            for (var current = ex; current != null; current = current.InnerException)
+            {
+                if (current is DbException db && db.SqlState == sqlState)
+                    return db;
+            }
+            return null;
         }
 
         /// <summary>

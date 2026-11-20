@@ -44,6 +44,12 @@ namespace BifrostQL.Core.Resolvers
         /// </summary>
         public bool RecordsOperationId { get; init; }
 
+        /// <summary>
+        /// The server operation making this write, null for a generated write; copied to every
+        /// transformer context (<see cref="MutationTransformContext.Operation"/>).
+        /// </summary>
+        public Operations.IBifrostOperation? Operation { get; init; }
+
         /// <summary>Allows the deferred undo seam to target a soft-deleted row while preserving every other mutation transformer.</summary>
         public bool RestoreSoftDeleted { get; init; }
 
@@ -111,6 +117,7 @@ namespace BifrostQL.Core.Resolvers
                 RestoreSoftDeleted = ctx.RestoreSoftDeleted,
                 RestoreHardDeleted = ctx.RestoreHardDeleted,
                 RecordsOperationId = ctx.RecordsOperationId,
+                Operation = ctx.Operation,
                 Connection = conn,
                 Transaction = transaction,
                 Dialect = dialect,

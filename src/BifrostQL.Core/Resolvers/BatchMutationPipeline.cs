@@ -91,6 +91,7 @@ namespace BifrostQL.Core.Resolvers
                 UserContext = ctx.UserContext,
                 Services = ctx.Services,
                 RecordsOperationId = ctx.RecordsOperationId,
+                Operation = ctx.Operation,
                 CancellationToken = ct,
             };
 

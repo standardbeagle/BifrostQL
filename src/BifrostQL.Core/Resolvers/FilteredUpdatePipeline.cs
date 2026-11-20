@@ -89,6 +89,7 @@ namespace BifrostQL.Core.Resolvers
                     Model = ctx.Model,
                     UserContext = ctx.UserContext,
                     Services = ctx.Services,
+                    Operation = ctx.Operation,
                     Connection = conn,
                     Transaction = transaction,
                     Dialect = dialect,

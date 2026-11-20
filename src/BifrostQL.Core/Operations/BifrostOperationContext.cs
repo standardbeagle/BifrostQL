@@ -268,6 +268,7 @@ public sealed class BifrostOperationContext
             Services = Services,
             CancellationToken = CancellationToken,
             WriteScope = _scope,
+            Operation = Operation,
         };
     }
 

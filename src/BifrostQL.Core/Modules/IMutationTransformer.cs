@@ -227,6 +227,7 @@ public sealed class MutationTransformContext
             RestoreSoftDeleted = RestoreSoftDeleted,
             RestoreHardDeleted = RestoreHardDeleted,
             RecordsOperationId = RecordsOperationId,
+            Operation = Operation,
             Connection = write?.Connection ?? Connection,
             Transaction = write is { } w ? w.Transaction : Transaction,
             Dialect = write?.Dialect ?? Dialect,
@@ -253,6 +254,15 @@ public sealed class MutationTransformContext
     /// (<see cref="OperationId.OperationIdConfig.EnsureCarriesIdWhenRequired"/>).
     /// </summary>
     internal bool RecordsOperationId { get; init; }
+
+    /// <summary>
+    /// The server operation whose write this is: set on every write a
+    /// <see cref="Operations.BifrostOperationContext"/> makes, null on a generated write,
+    /// including a sibling mutation field of the same request. A rule that holds for a
+    /// client and not for the host's own operation (a column only an operation may set)
+    /// reads it. Only the engine sets it, so a client cannot claim an operation's write.
+    /// </summary>
+    public Operations.IBifrostOperation? Operation { get; internal init; }
 }
 
 /// <summary>

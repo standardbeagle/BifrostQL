@@ -122,12 +122,38 @@ public sealed class BifrostOperationContext
     /// Inside a mutation operation the read runs in the operation's transaction and sees its
     /// uncommitted writes.
     /// </summary>
-    public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> QueryAsync(
+    public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> QueryAsync(
         string table,
         IReadOnlyDictionary<string, object?>? where = null,
         IReadOnlyCollection<string>? columns = null,
         int? limit = null,
         IReadOnlyCollection<string>? sort = null)
+        => ReadAsync(BuildReadQuery(table, where, columns, sort, limit, readsWholeSet: false));
+
+    /// <summary>
+    /// Reads EVERY row of <paramref name="table"/> that <see cref="QueryAsync"/> would, with no
+    /// row window: the same caller, tenant isolation, policy row scope, soft delete, column read
+    /// guards and decryption, in the operation's transaction with its uncommitted writes visible.
+    /// It is one statement, so every row comes from one snapshot. Paging cannot give an
+    /// operation that, because each window would be its own snapshot under READ COMMITTED.
+    /// The endpoint's <c>max-query-rows</c> ceiling guards the wire. This is the host's code,
+    /// and no client request reaches it; <see cref="QueryAsync"/> and every client read keep
+    /// the ceiling. <paramref name="sort"/> orders the rows, with the primary key as tie-break.
+    /// </summary>
+    public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> QueryAllAsync(
+        string table,
+        IReadOnlyDictionary<string, object?>? where = null,
+        IReadOnlyCollection<string>? columns = null,
+        IReadOnlyCollection<string>? sort = null)
+        => ReadAsync(BuildReadQuery(table, where, columns, sort, limit: null, readsWholeSet: true));
+
+    private GqlObjectQuery BuildReadQuery(
+        string table,
+        IReadOnlyDictionary<string, object?>? where,
+        IReadOnlyCollection<string>? columns,
+        IReadOnlyCollection<string>? sort,
+        int? limit,
+        bool readsWholeSet)
     {
         var dbTable = ResolveTable(table);
         var query = new GqlObjectQuery
@@ -138,6 +164,7 @@ public sealed class BifrostOperationContext
             GraphQlName = dbTable.GraphQlName,
             Path = dbTable.GraphQlName,
             Limit = limit,
+            ReadsWholeSet = readsWholeSet,
         };
         foreach (var column in columns is null ? dbTable.Columns : columns.Select(name => ResolveColumn(dbTable, name)))
             query.ScalarColumns.Add(new GqlObjectColumn(column.DbName, column.GraphQlName));
@@ -156,7 +183,11 @@ public sealed class BifrostOperationContext
 
         foreach (var token in sort ?? Array.Empty<string>())
             query.Sort.Add(ResolveSortToken(dbTable, token));
+        return query;
+    }
 
+    private async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ReadAsync(GqlObjectQuery query)
+    {
         var result = _scope is null
             ? await _reads.ExecuteIntentAsync(query, _userContext, _connFactory, CancellationToken, KeyManager)
             : await ScopedReads().ExecuteIntentAsync(query, _userContext, _connFactory, _scope, CancellationToken, KeyManager);

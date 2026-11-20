@@ -184,6 +184,15 @@ namespace BifrostQL.Core.QueryModel
         public const int DefaultRowWindow = 100;
 
         /// <summary>
+        /// The one read that takes no row window: <c>BifrostOperationContext.QueryAllAsync</c>,
+        /// the host's own code reading a whole set inside its operation, as one statement so
+        /// every row comes from one snapshot. Only the engine sets it (internal init); no client
+        /// surface reaches it, and every client-reachable read keeps <see cref="ResolveRowWindow"/>.
+        /// A root-only query: it carries no links, so no other statement pages it.
+        /// </summary>
+        internal bool ReadsWholeSet { get; init; }
+
+        /// <summary>
         /// The model's <c>max-query-rows</c> ceiling, or <see cref="DefaultMaxQueryRows"/>
         /// when unset. The one parse of the key: <see cref="ResolveRowWindow"/> clamps with
         /// it and <c>ModelConfigValidator</c> checks it at load, so the two cannot disagree.
@@ -268,7 +277,10 @@ namespace BifrostQL.Core.QueryModel
             var sortCols = ObjectKeyRange != null
                 ? new[] { $"{ObjectKeySql(dbModel, dialect)} asc" }
                 : RenderPagedSortColumns(dialect, DbTable, Sort);
-            var pagination = dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
+            // A whole-set read keeps the ORDER BY and takes no window (the dialects' -1).
+            var pagination = ReadsWholeSet
+                ? dialect.Pagination(sortCols, null, -1)
+                : dialect.Pagination(sortCols, Offset, ResolveRowWindow(dbModel, Limit));
             return new ParameterizedSql($"SELECT {projection} FROM {tableRef}", Array.Empty<SqlParameterInfo>())
                 .Append(filter)
                 .Append(pagination);

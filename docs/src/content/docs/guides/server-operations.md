@@ -93,6 +93,7 @@ Both checks run before `ExecuteAsync`. A grant denial returns
 | `UserContext` | The caller's user context, read-only |
 | `Model`, `Services`, `CancellationToken` | The endpoint model, request services, request token |
 | `QueryAsync(table, where, columns, limit, sort)` | Rows as the caller. See [Reading rows](#reading-rows). Tenant isolation, row scope, soft delete, column read guards and decryption apply. Rows are keyed by GraphQL field name. |
+| `QueryAllAsync(table, where, columns, sort)` | Every row `QueryAsync` would read, with no row window, as one statement. See [Reading a whole set](#reading-a-whole-set). |
 | `InsertAsync(table, values)` | One insert through the full mutation pipeline; returns the new key |
 | `UpdateAsync(table, values)` | One update keyed by the key columns in `values`; returns the rows changed (0 when out of scope, or when `values` has no key) |
 | `DeleteAsync(table, key)` | One delete (soft where the table declares it); returns the rows affected |
@@ -155,6 +156,18 @@ var latestStopped = await context.QueryAsync(
 - A column named in `where` or `sort` passes the same read guard as a selected one. Testing or
   ordering by a column the caller may not read is refused with `ACCESS_DENIED`, because either
   would reveal it.
+
+### Reading a whole set
+
+`QueryAllAsync(table, where, columns, sort)` reads every row `QueryAsync` would, with no row
+window: the same caller, scope, guards and decryption, and inside a mutation operation the same
+transaction and its uncommitted writes. It is one statement, so every row comes from one snapshot.
+Paging with `limit` cannot give you that: each window is its own snapshot under READ COMMITTED, so
+a row that leaves the set between two windows moves the next window past a row you never read.
+
+The `max-query-rows` ceiling exists so a client cannot pull a whole table over the wire. An
+operation is your own code, and `QueryAllAsync` is not reachable from a request. `QueryAsync` and
+every generated read keep the ceiling. Keep `where` narrow: the rows are held in memory.
 
 ## Serializing on a row
 

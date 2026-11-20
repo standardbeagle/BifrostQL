@@ -236,7 +236,7 @@ namespace BifrostQL.Core.Resolvers
         /// throws, rolling the write back: its keys could no longer be matched to its rows.
         /// </summary>
         public static async ValueTask<object?[]> ExecuteInsertMany(
-            DbConnection conn, DbTransaction transaction, ISqlDialect dialect, IDbTable table,
+            DbConnection conn, DbTransaction? transaction, ISqlDialect dialect, IDbTable table,
             IReadOnlyList<string> columns, IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
             CancellationToken cancellationToken = default)
         {

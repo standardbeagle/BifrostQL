@@ -24,12 +24,15 @@ public sealed class SetAwareHookTests : IAsyncLifetime
     private const string Ddl =
         """
         CREATE TABLE items (id SERIAL PRIMARY KEY, owner_id INT NOT NULL, n INT NOT NULL);
-        CREATE TABLE entries (id SERIAL PRIMARY KEY, owner_id INT NOT NULL, n INT NOT NULL);
+        CREATE TABLE notebooks (id SERIAL PRIMARY KEY, owner_id INT NOT NULL, n INT NOT NULL);
+        CREATE TABLE entries (id SERIAL PRIMARY KEY, notebook_id INT REFERENCES notebooks(id), owner_id INT NOT NULL, n INT NOT NULL);
         CREATE TABLE activity (id SERIAL PRIMARY KEY, row_id INT NOT NULL, owner_id INT NOT NULL, state TEXT NOT NULL);
         CREATE TABLE insert_statements (owner_id INT NOT NULL, table_name TEXT NOT NULL);
         CREATE FUNCTION count_insert() RETURNS trigger LANGUAGE plpgsql AS
             $$ BEGIN INSERT INTO insert_statements SELECT DISTINCT owner_id, TG_TABLE_NAME FROM written; RETURN NULL; END $$;
         CREATE TRIGGER items_insert_statements AFTER INSERT ON items
+            REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION count_insert();
+        CREATE TRIGGER notebooks_insert_statements AFTER INSERT ON notebooks
             REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION count_insert();
         CREATE TRIGGER entries_insert_statements AFTER INSERT ON entries
             REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION count_insert();
@@ -55,6 +58,7 @@ public sealed class SetAwareHookTests : IAsyncLifetime
                 ":root { operations: deltaInto[clerk] }",
                 "public.items.owner_id { populate: host }",
                 "public.entries.owner_id { populate: host }",
+                "public.notebooks.owner_id { populate: host }",
             },
             services: services => services
                 .AddSingleton<IInTransactionMutationHook>(new ActivityWriter(_setCalls))
@@ -145,6 +149,26 @@ public sealed class SetAwareHookTests : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task SetAwareHook_IsCalledOncePerLevel_OfASave()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+
+        var entries = string.Join(", ", Enumerable.Range(1, 10).Select(n => $"{{ n: {n} }}"));
+        var reply = await _host!.PostAsync($$"""mutation { notebooks(save: { n: 0, entries: [{{entries}}] }) }""", "16");
+
+        PostgresGraphQlHost.AssertNoErrors(reply);
+        var root = reply.RootElement.GetProperty("data").GetProperty("notebooks").GetInt32();
+        var calls = _setCalls.Where(c => c.User == "16").ToList();
+        calls.Select(c => c.Table).Should().Equal(new[] { "notebooks", "entries" }, "one call per level");
+        calls[0].Keys.Should().Equal(root);
+        calls[1].Ns.Should().Equal(Enumerable.Range(1, 10));
+        var rows = await _host.RowsAsync($"SELECT id FROM entries WHERE owner_id = 16 AND notebook_id = {root} ORDER BY n");
+        calls[1].Keys.Should().Equal(rows.Select(r => int.Parse(r["id"]!, CultureInfo.InvariantCulture)), "each key is its own row's");
+        (await _host.CountAsync("SELECT count(*) FROM insert_statements WHERE owner_id = 16"))
+            .Should().Be(4, "each level and its activity rows are one INSERT apiece");
+    }
+
+    [SkippableFact]
     public async Task PerRowHook_KeepsItsPerRowCalls()
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
@@ -177,7 +201,7 @@ public sealed class SetAwareHookTests : IAsyncLifetime
         public int Priority => 200;
 
         public bool AppliesTo(IDbTable table, MutationType mutationType, MutationTransformContext context)
-            => mutationType == MutationType.Insert && table.DbName is "items" or "entries";
+            => mutationType == MutationType.Insert && table.DbName is "items" or "entries" or "notebooks";
 
         public ValueTask<MutationTransformResult> TransformAsync(
             IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationTransformContext context)
@@ -191,7 +215,7 @@ public sealed class SetAwareHookTests : IAsyncLifetime
     /// <summary>Writes one activity row per inserted row, all in one INSERT, on the write's transaction.</summary>
     private sealed class ActivityWriter(ConcurrentQueue<SetCall> calls) : IInTransactionSetMutationHook
     {
-        public bool AppliesTo(IDbTable table) => table.DbName is "items" or "entries";
+        public bool AppliesTo(IDbTable table) => table.DbName is "items" or "entries" or "notebooks";
 
         public async ValueTask AfterSetWriteInTransactionAsync(MutationSetContext context)
         {

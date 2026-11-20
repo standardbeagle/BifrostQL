@@ -72,6 +72,7 @@ public sealed class TreeSyncExecutor
         if (operations.Count == 0)
             return null;
         GuardNotHistoryTargets(operations, model);
+        GuardTreeSize(operations, RootTable(operations));
         return await RunInTreeTransactionAsync(connFactory, conn => RunOperationsAsync(
             operations, conn, transaction: null, MutationObserverContext.NewMutationState(),
             connFactory, transformers, model, userContext, services, recordsOperationId: false, cancellationToken),
@@ -105,6 +106,7 @@ public sealed class TreeSyncExecutor
             var existing = await loader.LoadAsync(table, tree, conn, cancellationToken);
             var operations = engine.ComputeOperations(table, tree, existing);
             GuardNotHistoryTargets(operations, model);
+            GuardTreeSize(operations, table);
             if (operations.Count == 0)
                 return new TreeRun(null, null);
             return await RunOperationsAsync(
@@ -198,6 +200,7 @@ public sealed class TreeSyncExecutor
         if (operations.Count == 0)
             return null;
         GuardNotHistoryTargets(operations, model);
+        GuardTreeSize(operations, RootTable(operations));
 
         object? rootId = null;
         await scope.JoinAsync(async (conn, transaction) =>
@@ -228,7 +231,23 @@ public sealed class TreeSyncExecutor
     }
 
     /// <summary>
-    /// Runs every operation, in order, on <paramref name="conn"/> and
+    /// <c>batch-max-size</c> on the tree's root table bounds a tree's writes as it bounds a batch's
+    /// actions: a client's one request cannot fan out into an unbounded set. Checked before any
+    /// write, so a refused tree writes nothing.
+    /// </summary>
+    private static void GuardTreeSize(IReadOnlyList<TreeSyncOperation> operations, IDbTable rootTable)
+    {
+        var maxNodes = BatchMutationPipeline.GetMaxBatchSize(rootTable);
+        if (operations.Count > maxNodes)
+            throw new BifrostExecutionError(
+                $"Tree of {operations.Count} writes exceeds maximum allowed size of {maxNodes}.");
+    }
+
+    private static IDbTable RootTable(IReadOnlyList<TreeSyncOperation> operations)
+        => (operations.FirstOrDefault(op => op.Depth == 0) ?? operations[0]).Table;
+
+    /// <summary>
+    /// Runs every operation, level by level, on <paramref name="conn"/> and
     /// <paramref name="transaction"/> (null under the tree's own SQL-level transaction).
     /// <paramref name="recordsOperationId"/> marks a tree that records an operation id: every
     /// chain run carries it, and an approval divert is refused rather than left pending.
@@ -263,17 +282,92 @@ public sealed class TreeSyncExecutor
         object? rootId = null;
         string? pendingApproval = null;
 
-        foreach (var op in operations)
+        // One level at a time: a run of operations with the same verb, depth and table. Inserts
+        // are ordered by depth, so every parent of a level was written by an earlier level.
+        for (var start = 0; start < operations.Count;)
+        {
+            var first = operations[start];
+            var end = start + 1;
+            while (end < operations.Count
+                   && operations[end].OperationType == first.OperationType
+                   && operations[end].Depth == first.Depth
+                   && ReferenceEquals(operations[end].Table, first.Table))
+                end++;
+            var level = new List<TreeSyncOperation>(end - start);
+            for (var i = start; i < end; i++)
+                level.Add(operations[i]);
+            start = end;
+
+            var setRows = new List<MutationSetRow>();
+            // A level's inserts share one statement unless a per-row in-transaction hook applies:
+            // such a hook is called before the next row's statement. The raw-executor path
+            // (no model) runs no hooks at all.
+            var insertsShareAStatement = first.OperationType == TreeSyncOperationType.Insert
+                && MutationCommandExecutor.CanInsertMany(_dialect, first.Table)
+                && !(model != null && MutationNotifier.AnyPerRowInTransactionHookApplies(services, first.Table));
+            if (insertsShareAStatement)
+            {
+                var prepared = new List<PreparedNode>(level.Count);
+                foreach (var op in level)
+                {
+                    var node = await PrepareNodeAsync(op);
+                    if (node.DivertMessage is not null)
+                        pendingApproval = node.DivertMessage;
+                    else
+                        prepared.Add(node);
+                }
+                await WriteInsertLevelAsync(prepared, setRows);
+            }
+            else
+            {
+                foreach (var op in level)
+                {
+                    var node = await PrepareNodeAsync(op);
+                    if (node.DivertMessage is not null)
+                    {
+                        pendingApproval = node.DivertMessage;
+                        continue;
+                    }
+                    var (opResult, affectedRows) = await WriteNodeAsync(node);
+                    // After the write, still inside the same transaction: the CDC event
+                    // and the history row are written here, paired with this operation's
+                    // before-commit capture through the shared context's MutationState.
+                    if (node.HookContext != null)
+                        await MutationNotifier.RunPerRowInTransactionHooksAsync(services, node.HookContext, opResult, affectedRows);
+                    AddSetRow(setRows, node, opResult, affectedRows);
+                }
+            }
+
+            if (model != null && setRows.Count > 0)
+                await MutationNotifier.RunSetAwareInTransactionHooksAsync(services, new MutationSetContext
+                {
+                    Table = first.Table,
+                    Rows = setRows,
+                    UserContext = userContext ?? new Dictionary<string, object?>(),
+                    Connection = conn,
+                    Transaction = transaction,
+                    Model = model,
+                    Dialect = _dialect,
+                    ConnFactory = connFactory,
+                    TransactionState = treeTransactionState,
+                    CancellationToken = cancellationToken,
+                });
+        }
+
+        return new TreeRun(rootId, pendingApproval);
+
+        // Links the node to its parents, runs its transformer chain and its before-commit hooks,
+        // and reports an approval divert; writes nothing.
+        async Task<PreparedNode> PrepareNodeAsync(TreeSyncOperation op)
         {
             cancellationToken.ThrowIfCancellationRequested();
             // Resolve FK links BEFORE transforming so audit / policy see the
-            // final data (including the parent PK just inserted this run).
+            // final data (including the parent PK inserted by an earlier level).
             ResolveForeignKeys(op, idsByTable, idsByInstance);
 
             var mutationType = MapMutationType(op.OperationType);
-            var inferredTarget = op.Inferred;
-            var conflictOnNoRows = false;
             var logicalMutationType = mutationType;
+            var conflictOnNoRows = false;
             var data = op.Data;
             // The columns this operation actually carried, snapshotted (in DB-name
             // space) BEFORE the transformer chain runs. These — plus the primary key
@@ -319,15 +413,16 @@ public sealed class TreeSyncExecutor
                 additionalFilter = MutationCommandExecutor.RenderAdditionalFilter(result.AdditionalFilter, _dialect);
             }
 
-            // Before-commit hooks run immediately before this operation's write, on the
-            // SAME connection and transaction (null under the tree's own SQL BEGIN/COMMIT).
-            // A veto throws, and the tree's transaction rolls the whole tree back — a nested sync is one transaction, so a
-            // rejected node cannot leave its siblings committed. Only when the
-            // transformer pipeline is active: a model is required to resolve what a hook
-            // writes into, and the raw-executor test path supplies none. The context —
-            // and the state bag pairing the two hook phases — is scoped per operation
-            // in the tree, never across operations; only the per-transaction bag spans them.
+            // Before-commit hooks run before this operation's write, on the SAME connection and
+            // transaction (null under the tree's own SQL BEGIN/COMMIT). A veto throws, and the
+            // tree's transaction rolls the whole tree back — a nested sync is one transaction, so
+            // a rejected node cannot leave its siblings committed. Only when the transformer
+            // pipeline is active: a model is required to resolve what a hook writes into, and the
+            // raw-executor test path supplies none. The context — and the state bag pairing the
+            // two hook phases — is scoped per operation in the tree, never across operations;
+            // only the per-transaction bag spans them.
             MutationObserverContext? hookContext = null;
+            string? divertMessage = null;
             if (model != null)
             {
                 hookContext = new MutationObserverContext
@@ -355,7 +450,7 @@ public sealed class TreeSyncExecutor
                 // surfaces pending-approval after the commit. A gated node never inserts,
                 // so a child's deferred FK to it stays unresolved (its intent is enqueued,
                 // not applied) — consistent with "no SQL reaches a gated table".
-                if (Approval.ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                if (Approval.ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var message))
                 {
                     // A tree that records an operation id commits its record or nothing, so it
                     // cannot also leave a pending change behind: the pending error would roll
@@ -363,59 +458,106 @@ public sealed class TreeSyncExecutor
                     if (recordsOperationId)
                         throw new BifrostExecutionError("This write requires approval, so it cannot record an operation id.")
                         { ErrorCode = OperationId.OperationIdExecution.UnsupportedCode };
-                    pendingApproval = divertMessage;
-                    continue;
+                    divertMessage = message;
                 }
             }
 
-            object? opResult;
-            int affectedRows;
-            switch (mutationType)
+            return new PreparedNode(op, mutationType, data, clientColumns, additionalFilter,
+                conflictOnNoRows, nodeState, hookContext, divertMessage);
+        }
+
+        // One node's own statement.
+        async Task<(object? Result, int AffectedRows)> WriteNodeAsync(PreparedNode node)
+        {
+            var op = node.Op;
+            switch (node.MutationType)
             {
                 case MutationType.Insert:
-                    var id = await ExecuteInsertAsync(conn, transaction, op.Table, data, cancellationToken);
-                    idsByTable[op.Table.GraphQlName] = id;
-                    idsByInstance[op.InstanceId] = id;
-                    if (op.Depth == 0)
-                        rootId = id;
-                    opResult = id;
-                    affectedRows = 1;
-                    break;
+                    var id = await ExecuteInsertAsync(conn, transaction, op.Table, node.Data, cancellationToken);
+                    RecordInsertedKey(op, id);
+                    return (id, 1);
                 case MutationType.Update:
-                    var updated = await ExecuteUpdateAsync(conn, transaction, op.Table, data, additionalFilter, cancellationToken);
+                    var updated = await ExecuteUpdateAsync(conn, transaction, op.Table, node.Data, node.AdditionalFilter, cancellationToken);
                     MutationCommandExecutor.EnsureAffectedRows(
-                        updated, conflictOnNoRows, inferredTarget,
+                        updated, node.ConflictOnNoRows, op.Inferred,
                         $"{op.Table.TableSchema}.{op.Table.DbName}");
-                    opResult = updated;
-                    affectedRows = updated;
-                    break;
+                    return (updated, updated);
                 case MutationType.Delete:
-                    var deleteData = TableMutationPipeline.SelectPredicateColumns(data, clientColumns, op.Table);
+                    var deleteData = TableMutationPipeline.SelectPredicateColumns(node.Data, node.ClientColumns, op.Table);
                     if (deleteData.Count == 0)
                         throw new BifrostExecutionError(
                             "A delete requires a primary key or at least one predicate column to scope the affected rows.");
-                    var deleted = await ExecuteDeleteAsync(conn, transaction, op.Table, deleteData, additionalFilter, cancellationToken);
+                    var deleted = await ExecuteDeleteAsync(conn, transaction, op.Table, deleteData, node.AdditionalFilter, cancellationToken);
                     MutationCommandExecutor.EnsureAffectedRows(
-                        deleted, conflictOnNoRows, inferredTarget,
+                        deleted, node.ConflictOnNoRows, op.Inferred,
                         $"{op.Table.TableSchema}.{op.Table.DbName}");
-                    opResult = deleted;
-                    affectedRows = deleted;
-                    break;
+                    return (deleted, deleted);
                 default:
-                    opResult = null;
-                    affectedRows = 0;
-                    break;
+                    return (null, 0);
             }
-
-            // After the write, still inside the same transaction: the CDC event
-            // and the history row are written here, paired with this operation's
-            // before-commit capture through the shared context's MutationState.
-            if (hookContext != null)
-                await MutationNotifier.RunInTransactionHooksAsync(services, hookContext, opResult, affectedRows);
         }
 
-        return new TreeRun(rootId, pendingApproval);
+        // A level's inserts: one multi-row INSERT … RETURNING per column set, keys mapped back to
+        // their nodes in row order so each child links to its own parent. A transformer that
+        // rewrote a node's verb leaves the level to per-node statements.
+        async Task WriteInsertLevelAsync(List<PreparedNode> prepared, List<MutationSetRow> setRows)
+        {
+            if (prepared.Any(n => n.MutationType != MutationType.Insert))
+            {
+                foreach (var node in prepared)
+                {
+                    var (opResult, affectedRows) = await WriteNodeAsync(node);
+                    AddSetRow(setRows, node, opResult, affectedRows);
+                }
+                return;
+            }
+            var keys = new object?[prepared.Count];
+            foreach (var group in Enumerable.Range(0, prepared.Count).GroupBy(i => MutationCommandExecutor.ColumnSetKey(prepared[i].Data)))
+            {
+                var indices = group.ToList();
+                var groupKeys = await MutationCommandExecutor.ExecuteInsertMany(
+                    conn, transaction, _dialect, prepared[indices[0]].Op.Table, prepared[indices[0]].Data.Keys.ToList(),
+                    indices.Select(i => (IReadOnlyDictionary<string, object?>)prepared[i].Data).ToList(), cancellationToken);
+                for (var g = 0; g < indices.Count; g++)
+                    keys[indices[g]] = groupKeys[g];
+            }
+            for (var i = 0; i < prepared.Count; i++)
+            {
+                RecordInsertedKey(prepared[i].Op, keys[i]);
+                AddSetRow(setRows, prepared[i], keys[i], 1);
+            }
+        }
+
+        void RecordInsertedKey(TreeSyncOperation op, object? id)
+        {
+            idsByTable[op.Table.GraphQlName] = id;
+            idsByInstance[op.InstanceId] = id;
+            if (op.Depth == 0)
+                rootId = id;
+        }
+
+        static void AddSetRow(List<MutationSetRow> setRows, PreparedNode node, object? opResult, int affectedRows)
+        {
+            if (affectedRows <= 0)
+                return;
+            setRows.Add(new MutationSetRow(
+                node.MutationType, node.Data,
+                node.MutationType == MutationType.Insert ? opResult : MutationCommandExecutor.KeyOf(node.Op.Table, node.Data),
+                node.NodeState));
+        }
     }
+
+    /// <summary>A node after its chain and before-commit hooks, ready to write (or diverted).</summary>
+    private sealed record PreparedNode(
+        TreeSyncOperation Op,
+        MutationType MutationType,
+        Dictionary<string, object?> Data,
+        HashSet<string> ClientColumns,
+        (string WhereSuffix, IReadOnlyList<SqlParameterInfo> Parameters) AdditionalFilter,
+        bool ConflictOnNoRows,
+        IDictionary<string, object?> NodeState,
+        MutationObserverContext? HookContext,
+        string? DivertMessage);
 
     private static MutationType MapMutationType(TreeSyncOperationType type) => type switch
     {

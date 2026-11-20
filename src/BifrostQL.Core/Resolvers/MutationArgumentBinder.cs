@@ -151,12 +151,9 @@ namespace BifrostQL.Core.Resolvers
             IDbTable table, IEnumerable<string> suppliedDbColumns, string operation)
         {
             var keyColumns = table.KeyColumns.ToList();
-            if (keyColumns.Count <= 1)
-                return;
-
             var predicateColumns = new HashSet<string>(suppliedDbColumns, StringComparer.OrdinalIgnoreCase);
             var supplied = keyColumns.Count(c => predicateColumns.Contains(c.ColumnName));
-            if (supplied == 0 || supplied == keyColumns.Count)
+            if (IsCompleteOrAbsent(keyColumns.Count, supplied))
                 return;
 
             throw new BifrostExecutionError(
@@ -164,5 +161,20 @@ namespace BifrostQL.Core.Resolvers
                 $"but {keyColumns.Count} are expected. A partial primary key does not address a row.")
             { ErrorCode = PartialPrimaryKeyCode };
         }
+
+        /// <summary>
+        /// True when <see cref="RequireCompleteKey"/> would pass: the supplied columns carry the
+        /// whole primary key or none of it. Lets a path run the transformer chain before it
+        /// answers a partial key, so a refused caller gets the refusal, not the shape error.
+        /// </summary>
+        public static bool IsCompleteOrAbsentKey(IDbTable table, IEnumerable<string> suppliedDbColumns)
+        {
+            var keyColumns = table.KeyColumns.ToList();
+            var predicateColumns = new HashSet<string>(suppliedDbColumns, StringComparer.OrdinalIgnoreCase);
+            return IsCompleteOrAbsent(keyColumns.Count, keyColumns.Count(c => predicateColumns.Contains(c.ColumnName)));
+        }
+
+        private static bool IsCompleteOrAbsent(int keyColumnCount, int supplied)
+            => keyColumnCount <= 1 || supplied == 0 || supplied == keyColumnCount;
     }
 }

@@ -204,6 +204,18 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// Runs the transformer chain on a write the caller answers as a no-op without writing
+        /// (an empty upsert, a key-only upsert of an existing row), in the write's transaction,
+        /// and throws its refusal. Authorization lives in the chain, so a no-op answer given
+        /// before it would let a refused caller read a denied write as one that ran.
+        /// </summary>
+        internal static Task ThrowIfChainRefusesNoOpAsync(
+            IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationPipelineContext ctx)
+            => RunInTransactionAsync(ctx, async (conn, transaction) =>
+                (await ctx.Transformers.TransformAsync(
+                    table, mutationType, data, TransformContext(ctx, conn, transaction, ctx.ConnFactory.Dialect))).ThrowIfDenied());
+
+        /// <summary>
         /// Runs one write's transformer chain, hooks and SQL in a transaction: its own, or the
         /// operation's shared <see cref="MutationPipelineContext.WriteScope"/> when it has one.
         /// </summary>

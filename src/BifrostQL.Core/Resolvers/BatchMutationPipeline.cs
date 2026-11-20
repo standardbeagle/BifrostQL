@@ -571,7 +571,6 @@ namespace BifrostQL.Core.Resolvers
 
         private static async Task<BatchActionOutcome?> ExecuteUpsert(BatchExecutionContext ctx, Dictionary<string, object?> data)
         {
-            if (data.Count == 0) return null;
             var table = ctx.Table;
 
             // A true upsert is routed through the real Insert-or-Update decision
@@ -596,13 +595,26 @@ namespace BifrostQL.Core.Resolvers
             // An upsert's identity IS a primary key, so it must be whole before it is
             // used to decide insert-or-update: a partial key probes — and then updates
             // — rows it does not identify. Checked before the probe, so a partial key
-            // never reaches the database at all.
-            MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Upsert");
+            // never reaches the database at all. An empty upsert is a no-op. Both answer
+            // only after the chain, so a refused caller gets the refusal (single-row rule,
+            // DbTableMutateResolver.UpsertObject).
+            if (data.Count == 0 || !MutationArgumentBinder.IsCompleteOrAbsentKey(table, keyData.Keys))
+            {
+                (await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, ctx.TransformContext)).ThrowIfDenied();
+                if (data.Count == 0) return null;
+                MutationArgumentBinder.RequireCompleteKey(table, keyData.Keys, "Upsert");
+            }
 
             // A key-only upsert of an existing row is insert-or-nothing: there is
-            // nothing to SET, so it skips the update (which would refuse it).
+            // nothing to SET, so it skips the update (which would refuse it), but not the
+            // chain the update would have run.
             if (keyData.Count > 0 && await RowExistsAsync(ctx, keyData))
-                return setData.Count == 0 ? null : await ExecuteUpdate(ctx, data);
+            {
+                if (setData.Count > 0)
+                    return await ExecuteUpdate(ctx, data);
+                (await ctx.MutationTransformers.TransformAsync(table, MutationType.Update, caseData, ctx.TransformContext)).ThrowIfDenied();
+                return null;
+            }
 
             return await ExecuteInsert(ctx, data);
         }

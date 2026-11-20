@@ -41,7 +41,7 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Security — write-path fixes
 
-- An update or delete runs the mutation transformer chain before the pipeline answers by the request's shape. A caller the chain refuses used to get the shape's answer instead: `NO_UPDATE_COLUMNS` or `PARTIAL_PRIMARY_KEY` for a key-only or partial-key update, and a no-op `0` for an update with no key column (a keyless view) or a delete naming no column, which read as a write that ran. The chain's refusal is now the answer on the single-row, `_batch` and bulk paths; a write the chain passes is answered by its shape as before.
+- An update or delete runs the mutation transformer chain before the pipeline answers by the request's shape. A caller the chain refuses used to get the shape's answer instead: `NO_UPDATE_COLUMNS` or `PARTIAL_PRIMARY_KEY` for a key-only or partial-key update, and a no-op `0` for an update with no key column (a keyless view) or a delete naming no column, which read as a write that ran. The chain's refusal is now the answer on the single-row, `_batch` and bulk paths; a write the chain passes is answered by its shape as before. An upsert that writes nothing (empty, or key-only on an existing row) and a batch upsert with a partial key run the update chain first too.
 - An operation-id retry from a caller the policy now refuses gets the live `ACCESS_DENIED`, never `OPERATION_ID_REUSED`. The replay checked the recorded fingerprint before authorization, so a refused caller could tell which of its own ids held a record for another write.
 
 ### Added — write-path fixes

@@ -147,8 +147,14 @@ namespace BifrostQL.Core.Resolvers
             IDbConnFactory conFactory, ISqlDialect dialect, OperationWriteScope? writeScope)
         {
             var propertyInfo = GetPropertyInfo(context, _table, "upsert");
+            // An empty upsert writes nothing, answered only after the update chain: a caller
+            // the chain refuses gets the refusal, never a 0 that reads as a write that ran.
             if (!propertyInfo.data.Any())
+            {
+                await TableMutationPipeline.ThrowIfChainRefusesNoOpAsync(table, MutationType.Update, propertyInfo.data,
+                    BuildPipelineContext(context, model, conFactory, mutationTransformers, writeScope: writeScope));
                 return 0;
+            }
 
             // A true upsert is routed through the real Insert-or-Update decision
             // rather than a native single-statement UpsertSql. A single statement
@@ -178,7 +184,12 @@ namespace BifrostQL.Core.Resolvers
                 // to SET, so it answers that same 0 instead of reaching the update,
                 // which refuses a key-only update.
                 if (!propertyInfo.standardData.Any())
+                {
+                    // Same rule as the empty upsert: the update chain answers first.
+                    await TableMutationPipeline.ThrowIfChainRefusesNoOpAsync(table, MutationType.Update, propertyInfo.data,
+                        BuildPipelineContext(context, model, conFactory, mutationTransformers, writeScope: writeScope));
                     return 0;
+                }
                 return await UpdateObject(context, table, mutationTransformers, model, conFactory, writeScope, "upsert");
             }
 

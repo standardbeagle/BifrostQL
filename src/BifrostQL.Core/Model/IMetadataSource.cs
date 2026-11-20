@@ -339,6 +339,8 @@ namespace BifrostQL.Core.Model
             MetadataKeys.Security.AutoFilterBypassRole,
             MetadataKeys.Operations.Exposed,
             MetadataKeys.Operations.Tenant,
+            // Caller operation ids for mutation server operations (model-level mode).
+            MetadataKeys.OperationId.Mode,
             MetadataKeys.AppSchema.AutoDetect,
             MetadataKeys.AppSchema.App,
             MetadataKeys.AppSchema.Detected,

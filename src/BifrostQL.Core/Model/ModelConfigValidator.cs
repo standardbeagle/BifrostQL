@@ -937,15 +937,24 @@ namespace BifrostQL.Core.Model
                             "carry no operation id.");
             }
 
-            if (optedIn.Count == 0)
+            var operationsRecord = false;
+            try { operationsRecord = OperationIdConfig.OperationModeOf(model) != OperationIdMode.None; }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add($"  :root [{MetadataKeys.OperationId.Mode}]: {ex.Message}");
+            }
+
+            if (optedIn.Count == 0 && !operationsRecord)
                 return; // Operation ids not in use: the store is optional.
 
             var storeName = model.GetMetadataValue(MetadataKeys.OperationId.Store);
             if (string.IsNullOrWhiteSpace(storeName))
             {
-                errors.Add(
-                    $"  :root [{MetadataKeys.OperationId.Store}]: {optedIn.Count} table(s) set " +
-                    $"'{MetadataKeys.OperationId.Mode}' but no operation-id store is configured.");
+                errors.Add(optedIn.Count > 0
+                    ? $"  :root [{MetadataKeys.OperationId.Store}]: {optedIn.Count} table(s) set " +
+                      $"'{MetadataKeys.OperationId.Mode}' but no operation-id store is configured."
+                    : $"  :root [{MetadataKeys.OperationId.Store}]: ':root' sets " +
+                      $"'{MetadataKeys.OperationId.Mode}' for server operations but no operation-id store is configured.");
                 return;
             }
 

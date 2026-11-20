@@ -166,6 +166,27 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
             .Which.Message.Should().Contain("main.notes [operation-id]: 'operation-id' must be 'optional', 'required' or 'none'.");
     }
 
+    [Fact]
+    public async Task RootModeForOperations_WithoutStore_IsRefused()
+    {
+        var load = () => LoadAsync(":root { operation-id: required }");
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain(
+                ":root [operation-id-store]: ':root' sets 'operation-id' for server operations but no operation-id store is configured.");
+    }
+
+    [Fact]
+    public async Task RootModeForOperations_UnknownValue_IsRefused()
+    {
+        var load = () => LoadAsync(
+            ":root { operation-id: always; operation-id-store: main.operation_ids }",
+            "main.operation_ids { visibility: hidden }");
+
+        (await load.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain(":root [operation-id]: 'operation-id' must be 'optional', 'required' or 'none'.");
+    }
+
     // A wildcard rule opts every table in; a later rule sets 'none' on the tables that cannot
     // record (the hidden store, an approval-gated or engine-written table).
     [Fact]

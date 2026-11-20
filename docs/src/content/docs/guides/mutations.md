@@ -249,9 +249,10 @@ or node it recorded.
 
 A table that sets `operation-id: required` refuses every write that carries no id with
 `OPERATION_ID_REQUIRED`, and writes nothing. The check runs on every write path. Only a
-GraphQL `insert`, `update`, `upsert`, `delete`, `_batch` or `save` can carry an id, so `sync`,
-`delta`, `updateWhere`, file mutations, custom operations, LLM chat plan writes and protocol
-adapter writes cannot write such a table. A `save` with an id covers its whole tree, so the
+GraphQL `insert`, `update`, `upsert`, `delete`, `_batch` or `save`, or a recorded server
+operation (below), can carry an id, so `sync`, `delta`, `updateWhere`, file mutations, an
+unrecorded server operation, LLM chat plan writes and protocol adapter writes cannot write such
+a table. A `save` with an id covers its whole tree, so the
 tree's nested writes to a required table are recorded with it. That needs a root table that opts
 in: a `save` rooted on a table without `operation-id` takes no id, so its nested writes to a
 required table are refused. Model load refuses
@@ -271,6 +272,29 @@ override earlier ones:
 "public.operation_ids { visibility: hidden; operation-id: none }"
 "public.expense_reports { operation-id: none }"
 ```
+
+### Server operations
+
+`:root { operation-id: ... }` sets the mode of every mutation server operation
+(`IBifrostOperation`). It takes the same values as a table, and needs the store:
+
+```
+":root { operations: startTimer[writer]; operation-id: required; operation-id-store: public.operation_ids }"
+```
+
+An operation's id is the request's `Idempotency-Key` header; an operation has no `_operationId`
+argument. A run with an id is recorded like a generated write: the claim, every write the
+operation makes and the record share the operation's transaction. The record's table is
+`operation:<name>`, its verb `operation`, its target key `{}`, and its hash covers every argument
+the field carries. A retry with the same arguments answers the recorded result and runs nothing.
+Other arguments answer `OPERATION_ID_REUSED`. A run that throws records nothing, so its retry
+runs. Under `required` an operation without an id is refused with `OPERATION_ID_REQUIRED` before
+it runs. The operation's grant check runs on every request, the retry included.
+
+Every write a recorded run makes counts as carrying the id, so it reaches a `required` table.
+The result is recorded as JSON: an object result replays as a map whose keys match the result
+type's fields case-insensitively, a list as a list. A value JSON turns into text (a date, a
+GUID) replays as that text, and the field's scalar parses it again.
 
 A retry that carries the same id and the same request (table, verb, target key and arguments)
 answers with the recorded result, generated key included. Nothing else runs: no SQL write, no

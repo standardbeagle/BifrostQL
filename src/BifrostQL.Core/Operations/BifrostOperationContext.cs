@@ -62,6 +62,8 @@ public sealed class BifrostOperationContext
 
     private sealed record LessThanTest(object Value);
 
+    private readonly bool _recordsOperationId;
+
     internal BifrostOperationContext(
         IBifrostOperation operation,
         IBifrostFieldContext field,
@@ -69,8 +71,10 @@ public sealed class BifrostOperationContext
         IDbConnFactory connFactory,
         ISqlExecutionManager reads,
         IMutationTransformers transformers,
-        OperationWriteScope? scope)
+        OperationWriteScope? scope,
+        bool recordsOperationId = false)
     {
+        _recordsOperationId = recordsOperationId;
         Operation = operation;
         _field = field;
         _userContext = field.UserContext;
@@ -322,6 +326,9 @@ public sealed class BifrostOperationContext
                 $"Operation '{Operation.Name}' is a query operation; only a mutation operation may write.");
         return new MutationPipelineContext
         {
+            // A run recorded under the request's operation id covers every write it makes, so
+            // they reach a table that requires an id.
+            RecordsOperationId = _recordsOperationId,
             Model = Model,
             ConnFactory = _connFactory,
             Transformers = _transformers,

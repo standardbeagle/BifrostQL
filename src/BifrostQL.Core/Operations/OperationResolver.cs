@@ -1,5 +1,6 @@
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Modules;
+using BifrostQL.Core.Modules.OperationId;
 using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -9,7 +10,8 @@ namespace BifrostQL.Core.Operations;
 /// The resolver of one exposed server operation. It enforces the operation's declarative
 /// policy BEFORE the operation's code runs — the grant list from <c>operations</c> and the
 /// <c>operations-tenant</c> rule — so no operation can skip them, then runs the operation:
-/// a query directly, a mutation inside one <see cref="OperationWriteScope"/>.
+/// a query directly, a mutation inside one <see cref="OperationWriteScope"/>, recorded under the
+/// request's operation id when <c>:root</c> sets <c>operation-id</c>.
 /// Wired through <see cref="BifrostDispatcher"/>, so its errors take the same path to the
 /// wire as every generated field's.
 /// </summary>
@@ -19,7 +21,13 @@ internal sealed class OperationResolver : IBifrostResolver
     private readonly ExposedOperation _exposed;
     private static readonly PolicyEvaluator Policy = new();
 
-    public OperationResolver(ExposedOperation exposed) => _exposed = exposed;
+    private readonly IReadOnlyList<string> _argumentNames;
+
+    public OperationResolver(ExposedOperation exposed)
+    {
+        _exposed = exposed;
+        _argumentNames = ArgumentNamesOf(exposed.Operation);
+    }
 
     public async ValueTask<object?> ResolveAsync(IBifrostFieldContext context)
     {
@@ -36,10 +44,45 @@ internal sealed class OperationResolver : IBifrostResolver
             context.RequestServices?.GetService<IMutationTransformers>()
                 ?? throw new BifrostExecutionError("Mutation operations require the mutation transformer chain."),
             context.UserContext);
-        return await OperationWriteScope.RunAsync(request.ConnFactory, scope => operation.ExecuteAsync(
+
+        var operationId = OperationIdExecution.ResolveForOperation(context, request.Model);
+        if (operationId is null)
+            return await OperationWriteScope.RunAsync(request.ConnFactory, scope => Run(scope, recordsOperationId: false),
+                context.CancellationToken);
+
+        // Authorize already ran above, on this request, so a replay passes the live grant check.
+        return await OperationIdExecution.ExecuteAsync(
+            request.Model, request.ConnFactory, context.UserContext, operationId, OperationIdExecution.FieldOf(context),
+            OperationFingerprint.OfOperation(operation.Name, ArgumentsOf(context)),
+            authorizeReplay: () => { },
+            scope => Run(scope, recordsOperationId: true),
+            context.CancellationToken);
+
+        Task<object?> Run(OperationWriteScope scope, bool recordsOperationId) => operation.ExecuteAsync(
                 new BifrostOperationContext(
-                    operation, context, request.Model, request.ConnFactory, request.Executor, transformers, scope))
-            .AsTask(), context.CancellationToken);
+                    operation, context, request.Model, request.ConnFactory, request.Executor, transformers, scope,
+                    recordsOperationId))
+            .AsTask();
+    }
+
+    /// <summary>Every argument the field carries, by name, for the run's fingerprint.</summary>
+    private Dictionary<string, object?> ArgumentsOf(IBifrostFieldContext context)
+    {
+        var arguments = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var name in _argumentNames)
+        {
+            if (context.HasArgument(name))
+                arguments[name] = context.GetArgument<object?>(name);
+        }
+        return arguments;
+    }
+
+    /// <summary>The argument names <see cref="IBifrostOperation.Signature"/> declares.</summary>
+    private static IReadOnlyList<string> ArgumentNamesOf(IBifrostOperation operation)
+    {
+        var document = GraphQLParser.Parser.Parse($"type Operation {{ {operation.Name}{operation.Signature} }}");
+        var field = document.Definitions.OfType<GraphQLParser.AST.GraphQLObjectTypeDefinition>().Single().Fields!.Items.Single();
+        return field.Arguments?.Items.Select(a => a.Name.StringValue).ToArray() ?? Array.Empty<string>();
     }
 
     private void Authorize(BifrostContextAdapter request)

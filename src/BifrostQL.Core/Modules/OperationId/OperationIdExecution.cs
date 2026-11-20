@@ -57,14 +57,38 @@ namespace BifrostQL.Core.Modules.OperationId
             var fromArgument = context.HasArgument(OperationIdConfig.Argument)
                 ? context.GetArgument<string?>(OperationIdConfig.Argument)
                 : null;
-            var fromHeader = context.UserContext.TryGetValue(OperationIdConfig.UserContextKey, out var header)
-                ? header as string
-                : null;
+            var fromHeader = HeaderOf(context);
 
             if (fromArgument is not null && fromHeader is not null && !string.Equals(fromArgument, fromHeader, StringComparison.Ordinal))
                 throw Invalid("The operation id argument and the Idempotency-Key header carry different values.");
 
-            var id = fromArgument ?? fromHeader;
+            return Validated(fromArgument ?? fromHeader);
+        }
+
+        /// <summary>
+        /// The operation id a mutation server operation carries: the request's
+        /// <see cref="OperationIdConfig.Header"/> header (an operation's arguments are its own,
+        /// so there is no <see cref="OperationIdConfig.Argument"/>). Null when <c>:root</c> sets no
+        /// mode for operations (<see cref="OperationIdConfig.OperationModeOf"/>) or the request
+        /// carries no id; refused with <see cref="RequiredCode"/> when the mode is
+        /// <see cref="OperationIdMode.Required"/> and it carries none, before the operation runs.
+        /// </summary>
+        public static string? ResolveForOperation(IBifrostFieldContext context, IDbModel model)
+        {
+            var mode = OperationIdConfig.OperationModeOf(model);
+            if (mode == OperationIdMode.None)
+                return null;
+            var id = Validated(HeaderOf(context));
+            if (id is null && mode == OperationIdMode.Required)
+                throw new BifrostExecutionError("This operation requires an operation id.") { ErrorCode = RequiredCode };
+            return id;
+        }
+
+        private static string? HeaderOf(IBifrostFieldContext context)
+            => context.UserContext.TryGetValue(OperationIdConfig.UserContextKey, out var header) ? header as string : null;
+
+        private static string? Validated(string? id)
+        {
             if (id is null)
                 return null;
             if (string.IsNullOrWhiteSpace(id))
@@ -316,24 +340,33 @@ namespace BifrostQL.Core.Modules.OperationId
         /// <summary>
         /// The CLR value of a result recorded by <see cref="CanonicalJson"/>: text, a whole
         /// number as <see cref="int"/> or <see cref="long"/>, any other number as
-        /// <see cref="decimal"/> (<see cref="double"/> past its range), or null. The resolver coerces it to the field's scalar exactly
-        /// as it coerced the original result, so the replay serializes as the write did.
+        /// <see cref="decimal"/> (<see cref="double"/> past its range), a boolean, or null. The
+        /// resolver coerces it to the field's scalar exactly as it coerced the original result, so
+        /// the replay serializes as the write did. A server operation's object result replays as a
+        /// dictionary whose keys match field names case-insensitively (a returned object's
+        /// properties were recorded under their CLR names), and a list as a list.
         /// </summary>
         internal static object? RecordedResult(string resultJson)
         {
             using var document = System.Text.Json.JsonDocument.Parse(resultJson);
-            var value = document.RootElement;
-            return value.ValueKind switch
-            {
-                System.Text.Json.JsonValueKind.Null => null,
-                System.Text.Json.JsonValueKind.String => value.GetString(),
-                System.Text.Json.JsonValueKind.Number when value.TryGetInt32(out var i) => i,
-                System.Text.Json.JsonValueKind.Number when value.TryGetInt64(out var l) => l,
-                System.Text.Json.JsonValueKind.Number when value.TryGetDecimal(out var d) => d,
-                System.Text.Json.JsonValueKind.Number => value.GetDouble(),
-                _ => throw new BifrostExecutionError("The recorded operation result cannot be replayed."),
-            };
+            return Replayed(document.RootElement);
         }
+
+        private static object? Replayed(System.Text.Json.JsonElement value) => value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.Null => null,
+            System.Text.Json.JsonValueKind.String => value.GetString(),
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            System.Text.Json.JsonValueKind.Number when value.TryGetInt32(out var i) => i,
+            System.Text.Json.JsonValueKind.Number when value.TryGetInt64(out var l) => l,
+            System.Text.Json.JsonValueKind.Number when value.TryGetDecimal(out var d) => d,
+            System.Text.Json.JsonValueKind.Number => value.GetDouble(),
+            System.Text.Json.JsonValueKind.Array => value.EnumerateArray().Select(Replayed).ToList(),
+            System.Text.Json.JsonValueKind.Object => value.EnumerateObject().ToDictionary(
+                p => p.Name, p => Replayed(p.Value), StringComparer.OrdinalIgnoreCase),
+            _ => throw new BifrostExecutionError("The recorded operation result cannot be replayed."),
+        };
 
         private static BifrostExecutionError Invalid(string message)
             => new(message) { ErrorCode = BifrostExecutionError.InvalidValueCode };

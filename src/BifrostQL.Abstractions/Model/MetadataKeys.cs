@@ -1219,6 +1219,9 @@ namespace BifrostQL.Core.Model
             /// Table-level opt-in. <see cref="Optional"/> records a write that carries an
             /// operation id and runs a write without one exactly as before. <see cref="Required"/>
             /// records a write that carries one and refuses every write that does not.
+            /// On <c>:root</c> the same values set the mode of every mutation server operation
+            /// (<c>IBifrostOperation</c>), which is recorded under the request's
+            /// <c>Idempotency-Key</c> header.
             /// </summary>
             public const string Mode = "operation-id";
 

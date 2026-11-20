@@ -31,9 +31,34 @@ namespace BifrostQL.Core.Modules.OperationId
                 ["action"] = action,
                 ["arguments"] = arguments,
             });
-            var hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonicalInput))).ToLowerInvariant();
-            return new OperationFingerprint(qualified, action, CanonicalJson.Serialize(targetKey), hash);
+            return new OperationFingerprint(qualified, action, CanonicalJson.Serialize(targetKey), Hash(canonicalInput));
         }
+
+        /// <summary>The <see cref="Table"/> of a server operation's record: <c>operation:</c> and its name.</summary>
+        public const string OperationTablePrefix = "operation:";
+
+        /// <summary>The <see cref="Action"/> of a server operation's record.</summary>
+        public const string OperationAction = "operation";
+
+        /// <summary>
+        /// The fingerprint of one run of the mutation server operation <paramref name="name"/>:
+        /// its name, and a hash of every argument the field carries, by name. It addresses no
+        /// row, so its target key is <c>{}</c>.
+        /// </summary>
+        public static OperationFingerprint OfOperation(string name, IReadOnlyDictionary<string, object?> arguments)
+        {
+            var table = OperationTablePrefix + name;
+            var canonicalInput = CanonicalJson.Serialize(new Dictionary<string, object?>
+            {
+                ["table"] = table,
+                ["action"] = OperationAction,
+                ["arguments"] = arguments,
+            });
+            return new OperationFingerprint(table, OperationAction, "{}", Hash(canonicalInput));
+        }
+
+        private static string Hash(string canonicalInput)
+            => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonicalInput))).ToLowerInvariant();
     }
 
     /// <summary>

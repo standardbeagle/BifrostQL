@@ -42,6 +42,7 @@ namespace BifrostQL.Core.Modules.OperationId
         public const int MaxLength = 200;
 
         private static readonly ConditionalWeakTable<IDbTable, StrongBox<OperationIdMode>> ModeByTable = new();
+        private static readonly ConditionalWeakTable<IDbModel, StrongBox<OperationIdMode>> OperationModeByModel = new();
 
         /// <summary>
         /// The table's mode. Throws <see cref="InvalidOperationException"/> for a value other
@@ -53,12 +54,25 @@ namespace BifrostQL.Core.Modules.OperationId
         public static OperationIdMode ModeOf(IDbTable table)
         {
             ArgumentNullException.ThrowIfNull(table);
-            return ModeByTable.GetValue(table, t => new StrongBox<OperationIdMode>(Parse(t))).Value;
+            return ModeByTable.GetValue(
+                table, t => new StrongBox<OperationIdMode>(Parse(t.GetMetadataValue(MetadataKeys.OperationId.Mode)))).Value;
         }
 
-        private static OperationIdMode Parse(IDbTable table)
+        /// <summary>
+        /// The mode of every mutation server operation, from <c>:root</c>'s
+        /// <see cref="MetadataKeys.OperationId.Mode"/>; <see cref="OperationIdMode.None"/> when
+        /// absent. Throws <see cref="InvalidOperationException"/> for an unknown value, as
+        /// <see cref="ModeOf(IDbTable)"/> does.
+        /// </summary>
+        public static OperationIdMode OperationModeOf(IDbModel model)
         {
-            var raw = table.GetMetadataValue(MetadataKeys.OperationId.Mode);
+            ArgumentNullException.ThrowIfNull(model);
+            return OperationModeByModel.GetValue(
+                model, m => new StrongBox<OperationIdMode>(Parse(m.GetMetadataValue(MetadataKeys.OperationId.Mode)))).Value;
+        }
+
+        private static OperationIdMode Parse(string? raw)
+        {
             if (raw is null)
                 return OperationIdMode.None;
             var value = raw.Trim();

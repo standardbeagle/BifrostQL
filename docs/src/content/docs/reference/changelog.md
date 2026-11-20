@@ -43,7 +43,7 @@ On `main` after v0.4.28; not yet on NuGet.
 
 ### Added — database errors
 
-- A statement the database ends at its own time limit (PostgreSQL `statement_timeout`, SQLSTATE `57014`, or a driver command timeout) rolls its transaction back, and the GraphQL HTTP middleware throws `BifrostStatementTimeoutException` to the host with nothing written, in place of a `DATABASE_ERROR` under HTTP 200. That holds whether BifrostQL, a transformer or a hook issued the statement. A host middleware ahead of BifrostQL answers it with its own status (a 503, say); a request cancelled by its own token never raises it. Every other front door answers with the new code `STATEMENT_TIMEOUT` (`BifrostExecutionError.StatementTimeoutCode`).
+- A statement the database ends at its own time limit (PostgreSQL `statement_timeout`, SQLSTATE `57014`, or a driver command timeout) rolls its transaction back, and the GraphQL HTTP middleware throws `BifrostStatementTimeoutException` to the host with nothing written, in place of a `DATABASE_ERROR` under HTTP 200. That holds whether BifrostQL, a transformer or a hook issued the statement. A host middleware ahead of BifrostQL answers it with its own status (a 503, say); a request cancelled by its own token never raises it. Every other front door answers with the new code `STATEMENT_TIMEOUT` (`BifrostExecutionError.StatementTimeoutCode`). gRPC answers it `DEADLINE_EXCEEDED` with fixed text.
 
 ### Breaking — fourth review pass (LDAP, RESP)
 

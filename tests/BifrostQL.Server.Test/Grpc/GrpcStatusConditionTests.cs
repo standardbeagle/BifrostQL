@@ -90,6 +90,18 @@ namespace BifrostQL.Server.Test.Grpc
         }
 
         [Fact]
+        public void Statement_timeout_is_deadline_exceeded_with_fixed_text()
+        {
+            var timeout = BifrostExecutionError.FromDatabaseException(
+                new TimeoutException("Timeout during reading attempt on host db.internal"));
+
+            var status = GrpcStatusMapper.Map(timeout, new FakeServerCallContext(), NullLogger.Instance);
+
+            status.StatusCode.Should().Be(StatusCode.DeadlineExceeded);
+            status.Detail.Should().Be(BifrostExecutionError.StatementTimeoutMessage);
+        }
+
+        [Fact]
         public void Access_denied_outside_a_get_answers_like_an_absent_method()
         {
             var denied = new BifrostExecutionError("Tenant context missing for secret_table.") { ErrorCode = BifrostExecutionError.AccessDeniedCode };

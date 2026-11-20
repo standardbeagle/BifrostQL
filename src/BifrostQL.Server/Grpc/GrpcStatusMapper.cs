@@ -87,6 +87,12 @@ namespace BifrostQL.Server.Grpc
                     // Fixed text, since the exception's may name the table or constraint (invariant 3).
                     return new Status(StatusCode.Aborted, ConflictMessage);
 
+                case BifrostExecutionError timeout when timeout.ErrorCode == BifrostExecutionError.StatementTimeoutCode:
+                    // The database ended the statement at its own time limit and its transaction
+                    // rolled back: the caller may retry, which is DEADLINE_EXCEEDED's contract.
+                    // Fixed text, never the driver's (invariant 3).
+                    return new Status(StatusCode.DeadlineExceeded, BifrostExecutionError.StatementTimeoutMessage);
+
                 case BifrostExecutionError noSet when noSet.ErrorCode == MutationArgumentBinder.NoUpdateColumnsCode:
                     // An update that sets no non-key column is the caller's request to fix, not a
                     // server fault. The binder's constant text names no table or column.

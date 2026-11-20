@@ -208,8 +208,11 @@ The audit module auto-populates columns from the authenticated user context duri
 | `updated-by` | User audit key from context (on insert and update) |
 | `deleted-on` | Current timestamp (on soft-delete) |
 | `deleted-by` | User audit key from context (on soft-delete) |
+| `host` | Nothing from the audit module: your own mutation transformer stamps it |
 
-Populated columns are optional in the GraphQL input types and server-owned: a write overwrites any client-supplied value for the columns it stamps (`created-*` on insert, `updated-*` on insert and update, `deleted-*` on delete), and an update drops a client-supplied `created-*` value. There is no `update: none` key; the model loader rejects it.
+`populate: host` marks a column your transformer fills (an owner id from the caller's claims, a stored value derived from other columns). The column is optional in the insert input even when it is `NOT NULL`, so the schema keeps its constraint; the audit module leaves it alone, and an insert that reaches the database without a value fails on the constraint.
+
+Audit-populated columns are optional in the GraphQL input types and server-owned: a write overwrites any client-supplied value for the columns it stamps (`created-*` on insert, `updated-*` on insert and update, `deleted-*` on delete), and an update drops a client-supplied `created-*` value. There is no `update: none` key; the model loader rejects it.
 
 ## Query observers
 

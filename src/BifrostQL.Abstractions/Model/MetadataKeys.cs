@@ -298,6 +298,24 @@ namespace BifrostQL.Core.Model
                 {
                     CreatedOn, CreatedBy, UpdatedOn, UpdatedBy, DeletedOn, DeletedBy,
                 };
+
+            /// <summary>
+            /// The host's own mutation transformer stamps the column. Not an audit populator:
+            /// the audit module leaves the column alone. Like an audit populator it makes a
+            /// <c>NOT NULL</c> column optional in its table's insert input, and a write that
+            /// reaches the database without a value fails on the constraint.
+            /// </summary>
+            public const string Host = "host";
+
+            /// <summary>
+            /// True when the server stamps a column carrying this <see cref="Marker"/> value:
+            /// an audit populator (<see cref="KnownPopulators"/>) or <see cref="Host"/>. The one
+            /// rule for "the client need not send it" (insert input) and for the accepted values
+            /// (ModelConfigValidator).
+            /// </summary>
+            public static bool IsServerStamped(string? value)
+                => value is not null
+                   && (KnownPopulators.Contains(value) || string.Equals(value, Host, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>

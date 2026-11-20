@@ -109,14 +109,13 @@ namespace BifrostQL.Core.Schema
         }
 
         /// <summary>
-        /// True when the column carries an AutoPopulate marker whose value is one of
-        /// the recognized audit populators (created/updated/deleted on/by). Such
-        /// columns are stamped server-side, so their mutation-input field is emitted
-        /// nullable regardless of the underlying column's NOT NULL constraint.
+        /// True when the column carries an AutoPopulate marker the server stamps: an audit
+        /// populator (created/updated/deleted on/by) or <c>host</c> (the host's transformer).
+        /// Its mutation-input field is emitted nullable regardless of the column's NOT NULL
+        /// constraint.
         /// </summary>
         private static bool IsAutoPopulated(ColumnDto column)
-            => column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker) is { } value
-               && MetadataKeys.AutoPopulate.KnownPopulators.Contains(value);
+            => MetadataKeys.AutoPopulate.IsServerStamped(column.GetMetadataValue(MetadataKeys.AutoPopulate.Marker));
 
         /// <summary>
         /// True when some caller may see this column MASKED to null on read

@@ -805,11 +805,12 @@ namespace BifrostQL.Core.Model
             if (string.IsNullOrWhiteSpace(populate))
                 return;
 
-            if (!MetadataKeys.AutoPopulate.KnownPopulators.Contains(populate))
+            if (!MetadataKeys.AutoPopulate.IsServerStamped(populate))
                 errors.Add(
                     $"  {table.TableSchema}.{table.DbName}.{column.ColumnName} [{MetadataKeys.AutoPopulate.Marker}]: " +
-                    $"'{populate}' is not a recognized audit populator (expected one of " +
-                    $"{string.Join(", ", MetadataKeys.AutoPopulate.KnownPopulators.OrderBy(p => p))}); " +
+                    $"'{populate}' is not a recognized populator (expected one of " +
+                    $"{string.Join(", ", MetadataKeys.AutoPopulate.KnownPopulators.OrderBy(p => p))}, " +
+                    $"or {MetadataKeys.AutoPopulate.Host} for a column the host's transformer stamps); " +
                     "the column would silently never be stamped.");
         }
 

@@ -325,6 +325,7 @@ Records writes that carry a caller operation id. See
 | `updated-on` | Current timestamp (on insert and update) |
 | `deleted-on` | Current timestamp (on soft-delete) |
 | `deleted-by` | User audit key (on soft-delete) |
+| `host` | Stamped by the host's own mutation transformer; the audit module leaves it alone. A `NOT NULL` column is optional in the insert input |
 
 ### Rule ordering
 

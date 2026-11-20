@@ -129,7 +129,9 @@ public sealed class QueryTransformerService : IQueryTransformerService
             UserContext = userContext,
             QueryType = query.QueryType,
             Path = query.Path,
-            IsNestedQuery = isNested
+            IsNestedQuery = isNested,
+            // Captured before the blind-index rewrite and every transformer's addition.
+            Filter = query.Filter,
         };
 
         // Field-level encryption equality routing. BEFORE the read guard rejects a
@@ -285,14 +287,18 @@ public sealed class QueryTransformerService : IQueryTransformerService
         if (filter is null)
             return null;
 
-        // AND/OR wrapper: recurse into each branch, replacing it in place.
+        // Copy-on-write: a node with a rewritten descendant is a new node, and the request's
+        // tree stays as the client sent it, because QueryTransformContext.Filter hands that
+        // tree to every filter transformer (which must see the column the client named).
+
+        // AND/OR wrapper: recurse into each branch.
         if (filter.Next is null)
         {
-            for (var i = 0; i < filter.And.Count; i++)
-                filter.And[i] = RewriteBlindIndexEquality(filter.And[i], table, recordOriginal)!;
-            for (var i = 0; i < filter.Or.Count; i++)
-                filter.Or[i] = RewriteBlindIndexEquality(filter.Or[i], table, recordOriginal)!;
-            return filter;
+            var and = RewriteBranches(filter.And, table, recordOriginal);
+            var or = RewriteBranches(filter.Or, table, recordOriginal);
+            return and is null && or is null
+                ? filter
+                : CopyWith(filter, filter.Next, and ?? filter.And, or ?? filter.Or);
         }
 
         // Leaf predicate: `column: { _op: value }` — Next is the terminal operator node.
@@ -308,10 +314,44 @@ public sealed class QueryTransformerService : IQueryTransformerService
         // Relationship chain: ColumnName names a SingleLinks relationship into another
         // table; the remaining chain is attributed to that table.
         if (table.SingleLinks.TryGetValue(filter.ColumnName, out var link))
-            filter.Next = RewriteBlindIndexEquality(filter.Next, link.ParentTable, recordOriginal);
+        {
+            var next = RewriteBlindIndexEquality(filter.Next, link.ParentTable, recordOriginal);
+            if (!ReferenceEquals(next, filter.Next))
+                return CopyWith(filter, next, filter.And, filter.Or);
+        }
 
         return filter;
     }
+
+    /// <summary>The rewritten branch list, or null when no branch changed.</summary>
+    private List<TableFilter>? RewriteBranches(
+        List<TableFilter> branches, IDbTable table, Action<IDbTable, string> recordOriginal)
+    {
+        List<TableFilter>? rewritten = null;
+        for (var i = 0; i < branches.Count; i++)
+        {
+            var branch = RewriteBlindIndexEquality(branches[i], table, recordOriginal)!;
+            if (rewritten is null && ReferenceEquals(branch, branches[i]))
+                continue;
+            rewritten ??= branches.Take(i).ToList();
+            rewritten.Add(branch);
+        }
+        return rewritten;
+    }
+
+    private static TableFilter CopyWith(
+        TableFilter node, TableFilter? next, List<TableFilter> and, List<TableFilter> or) => new()
+        {
+            Table = node.Table,
+            ColumnName = node.ColumnName,
+            RelationName = node.RelationName,
+            Value = node.Value,
+            FilterType = node.FilterType,
+            Next = next,
+            ServerDerived = node.ServerDerived,
+            And = and,
+            Or = or,
+        };
 
     private TableFilter RewriteLeafPredicate(
         TableFilter leaf, IDbTable table, Action<IDbTable, string> recordOriginal)

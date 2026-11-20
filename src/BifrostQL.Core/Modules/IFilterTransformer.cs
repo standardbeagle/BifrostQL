@@ -119,6 +119,16 @@ public sealed class QueryTransformContext
     /// True if this is a nested query (via join/link), false if top-level.
     /// </summary>
     public bool IsNestedQuery { get; init; }
+
+    /// <summary>
+    /// This node's own filter as the request gave it (<c>filter</c> merged with
+    /// <c>_primaryKey</c>), before any transformer adds to it; null when the request gave
+    /// none. Set on top-level and nested nodes, so a transformer can refuse a read that pins
+    /// one record outside the caller's scope instead of only narrowing it to nothing. Null on
+    /// a context with no request filter of its own (an aggregate join hop, a filter traversal,
+    /// a guard check). Read it; never mutate it, the same tree is rendered to SQL.
+    /// </summary>
+    public TableFilter? Filter { get; init; }
 }
 
 /// <summary>

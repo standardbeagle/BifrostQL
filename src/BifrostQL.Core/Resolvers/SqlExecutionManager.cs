@@ -326,8 +326,6 @@ namespace BifrostQL.Core.Resolvers
                 forced = TableFilter.CombineAnd(forced, TableFilterFactory.Equals(target, scopeColumn, tenant));
             }
 
-            query.Filter = query.Filter is null ? forced : TableFilter.CombineAnd(query.Filter, forced);
-
             // Same fail-closed transformer pass as row queries over the TARGET table
             // (its own tenant/soft-delete/policy metadata still applies), into a
             // per-call overlay (sibling root fields resolve in parallel; the shared
@@ -336,6 +334,11 @@ namespace BifrostQL.Core.Resolvers
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, target, scopedContext);
             await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
+
+            // The server's pins go on after the transformer pass, so a filter transformer's
+            // QueryTransformContext.Filter is the client's filter alone. An AND narrows the
+            // same either way.
+            query.Filter = query.Filter is null ? forced : TableFilter.CombineAnd(query.Filter, forced);
             ApplyEnumFilterRewrite(query);
 
             var bifrost = new BifrostContextAdapter(context);

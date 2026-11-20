@@ -106,6 +106,51 @@ public class BlindIndexQueryRoutingTests
     }
 
     [Fact]
+    public async Task RequestFilter_AFilterTransformerSees_StillNamesTheColumnTheClientWrote()
+    {
+        // QueryTransformContext.Filter hands a filter transformer the request's own tree. The
+        // blind-index rewrite runs first and must not edit that tree in place: through an AND
+        // wrapper inside a relationship, the transformer still sees `ssn`, while the rendered
+        // SQL targets the sibling.
+        var model = AccountsWithSecretModel();
+        var accounts = model.GetTableFromDbName("accounts");
+        var filter = TableFilter.FromObject(new Dictionary<string, object?>
+        {
+            ["secret"] = new Dictionary<string, object?>
+            {
+                ["ssn"] = new Dictionary<string, object?> { ["_eq"] = "123-45-6789" },
+                ["id"] = new Dictionary<string, object?> { ["_eq"] = 5 },
+            },
+        }, accounts);
+        var query = GqlObjectQueryBuilder.Create().WithDbTable(accounts).WithColumns("id").WithFilter(filter).Build();
+        var recorder = new RequestFilterRecorder();
+        var service = new QueryTransformerService(new FilterTransformersWrap
+        {
+            Transformers = new IFilterTransformer[] { new EncryptedColumnReadGuard(), recorder },
+        }, NewManager());
+        await service.PrepareAsync(model);
+
+        service.ApplyTransformers(query, model, UserContext());
+
+        recorder.Seen.Should().BeSameAs(filter);
+        recorder.Seen!.Next!.And.Select(branch => branch.ColumnName).Should().Equal("ssn", "id");
+        var rendered = query.Filter!.RenderParts(model, SqliteDialect.Instance, new SqlParameterCollection(), null);
+        rendered.Joins.Should().Contain("ssn_bidx");
+    }
+
+    private sealed class RequestFilterRecorder : IFilterTransformer
+    {
+        public TableFilter? Seen { get; private set; }
+        public int Priority => 200;
+        public bool AppliesTo(IDbTable table, QueryTransformContext context) => table.DbName == "accounts";
+        public TableFilter? GetAdditionalFilter(IDbTable table, QueryTransformContext context)
+        {
+            Seen = context.Filter;
+            return null;
+        }
+    }
+
+    [Fact]
     public async Task EqualityOnEncryptedColumn_ViaRelationshipWithSiblingPredicate_IsRewritten_NotRejected()
     {
         // The encrypted _eq sits inside a relationship filter next to a SIBLING predicate:

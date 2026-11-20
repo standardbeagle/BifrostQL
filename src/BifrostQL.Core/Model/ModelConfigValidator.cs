@@ -54,6 +54,7 @@ namespace BifrostQL.Core.Model
                     && !string.Equals(policyDefault, "deny", StringComparison.OrdinalIgnoreCase))
                     errors.Add($"  :root [{MetadataKeys.Policy.Default}]: value must be 'allow' or 'deny'");
                 ValidateMaxQueryRows(model, errors);
+                ValidateMutationForms(model, errors);
             }
 
             var rootAdminRole = Auth.PolicyConfigCollector.NormalizeAdminRole(
@@ -182,6 +183,18 @@ namespace BifrostQL.Core.Model
         /// truncation sentinel, so a ceiling of 1 gives OData and gRPC List an empty page
         /// with no continuation.
         /// </summary>
+        private static void ValidateMutationForms(IDbModel model, List<string> errors)
+        {
+            try
+            {
+                Modules.MutationFormsConfig.FromModel(model);
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add($"  :root [{MetadataKeys.Model.MutationForms}]: {ex.Message}");
+            }
+        }
+
         private static void ValidateMaxQueryRows(IDbModel model, List<string> errors)
         {
             var raw = model.GetMetadataValue(MetadataKeys.Model.MaxQueryRows);

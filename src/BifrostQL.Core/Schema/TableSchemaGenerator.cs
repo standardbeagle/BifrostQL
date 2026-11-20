@@ -623,26 +623,37 @@ namespace BifrostQL.Core.Schema
         /// input types and flatten onto the batch pipeline (one transaction, batch caps,
         /// duplicate policy, bulk fast path).
         /// </summary>
-        public string GetDeltaParameterType()
+        /// <param name="rows">The row forms the delta carries (<c>mutation-forms</c>): an unlisted
+        /// form's list is not offered.</param>
+        public string GetDeltaParameterType(Modules.MutationForms rows = Modules.MutationForms.DeltaRowForms)
         {
             var result = new StringBuilder();
             result.AppendLine($"input {DeltaTypeName} {{");
-            result.AppendLine($"\tinserted: [{_table.GetActionTypeName(MutateActions.Insert)}!]");
-            result.AppendLine($"\tupdated: [{_table.GetActionTypeName(MutateActions.Update)}!]");
-            result.AppendLine($"\tdeleted: [{_table.GetActionTypeName(MutateActions.Delete)}!]");
+            if (rows.HasFlag(Modules.MutationForms.Insert))
+                result.AppendLine($"\tinserted: [{_table.GetActionTypeName(MutateActions.Insert)}!]");
+            if (rows.HasFlag(Modules.MutationForms.Update))
+                result.AppendLine($"\tupdated: [{_table.GetActionTypeName(MutateActions.Update)}!]");
+            if (rows.HasFlag(Modules.MutationForms.Delete))
+                result.AppendLine($"\tdeleted: [{_table.GetActionTypeName(MutateActions.Delete)}!]");
             result.AppendLine("}");
             return result.ToString();
         }
 
-        public string GetBatchMutationParameterType()
+        /// <param name="rows">The row forms a batch action carries (<c>mutation-forms</c>): an
+        /// unlisted form is not an action field.</param>
+        public string GetBatchMutationParameterType(Modules.MutationForms rows = Modules.MutationForms.BatchRowForms)
         {
             var result = new StringBuilder();
             var name = BatchInputTypeName(_table);
             result.AppendLine($"input {name} {{");
-            result.AppendLine($"insert: {_table.GetActionTypeName(MutateActions.Insert)}");
-            result.AppendLine($"update: {_table.GetActionTypeName(MutateActions.Update)}");
-            result.AppendLine($"upsert: {_table.GetActionTypeName(MutateActions.Upsert)}");
-            result.AppendLine($"delete: {_table.GetActionTypeName(MutateActions.Delete)}");
+            if (rows.HasFlag(Modules.MutationForms.Insert))
+                result.AppendLine($"insert: {_table.GetActionTypeName(MutateActions.Insert)}");
+            if (rows.HasFlag(Modules.MutationForms.Update))
+                result.AppendLine($"update: {_table.GetActionTypeName(MutateActions.Update)}");
+            if (rows.HasFlag(Modules.MutationForms.Upsert))
+                result.AppendLine($"upsert: {_table.GetActionTypeName(MutateActions.Upsert)}");
+            if (rows.HasFlag(Modules.MutationForms.Delete))
+                result.AppendLine($"delete: {_table.GetActionTypeName(MutateActions.Delete)}");
             result.AppendLine("}");
             return result.ToString();
         }
@@ -718,20 +729,70 @@ namespace BifrostQL.Core.Schema
         /// </summary>
         private string MutationResultType() => MutationResultScalar.Name(_table, _typeMapper);
 
-        public string GetInputFieldDefinition()
+        /// <summary>
+        /// The table's mutation field, carrying exactly the <paramref name="forms"/> the model
+        /// offers (<see cref="Modules.MutationFormsConfig"/>), and its <c>_batch</c> field when
+        /// <c>batch</c> is among them.
+        /// </summary>
+        public string GetInputFieldDefinition(Modules.MutationForms forms = Modules.MutationForms.All)
         {
             var result = new StringBuilder();
 
+            var arguments = new List<string>();
+            void Offer(Modules.MutationForms form, string argument)
+            {
+                if (forms.HasFlag(form)) arguments.Add(argument);
+            }
+            Offer(Modules.MutationForms.Insert, $"insert: {_table.GetActionTypeName(MutateActions.Insert)}");
+            Offer(Modules.MutationForms.Update, $"update: {_table.GetActionTypeName(MutateActions.Update)}");
+            Offer(Modules.MutationForms.Upsert, $"upsert: {_table.GetActionTypeName(MutateActions.Upsert)}");
+            Offer(Modules.MutationForms.Delete, $"delete: {_table.GetActionTypeName(MutateActions.Delete)}");
+            Offer(Modules.MutationForms.Sync, $"sync: {NestedSyncInsertTypeName}");
+            Offer(Modules.MutationForms.Save, $"save: {NestedSaveTypeName}");
+            Offer(Modules.MutationForms.Delta, $"delta: {DeltaTypeName}");
+            Offer(Modules.MutationForms.PrimaryKey, "_primaryKey: [String]");
             // The filtered set-update argument exists ONLY for opted-in tables: absent
             // metadata means the surface is not merely disabled but unprobeable.
-            var updateWhereArg = Modules.FilteredUpdateConfig.IsEnabled(_table)
-                ? $", updateWhere: {UpdateWhereTypeName}"
-                : "";
+            if (Modules.FilteredUpdateConfig.IsEnabled(_table))
+                arguments.Add($"updateWhere: {UpdateWhereTypeName}");
 
             result.AppendLine(
-                $"\t{_table.GraphQlName}(insert: {_table.GetActionTypeName(MutateActions.Insert)}, update: {_table.GetActionTypeName(MutateActions.Update)}, upsert: {_table.GetActionTypeName(MutateActions.Upsert)}, delete: {_table.GetActionTypeName(MutateActions.Delete)}, sync: {NestedSyncInsertTypeName}, save: {NestedSaveTypeName}, delta: {DeltaTypeName}, _primaryKey: [String]{updateWhereArg}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
+                $"\t{_table.GraphQlName}({string.Join(", ", arguments)}{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : {MutationResultType()}");
 
-            result.AppendLine($"{BatchFieldName(_table)}(actions: [{BatchInputTypeName(_table)}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
+            if (forms.HasFlag(Modules.MutationForms.Batch))
+                result.AppendLine($"{BatchFieldName(_table)}(actions: [{BatchInputTypeName(_table)}!]!{Modules.ModuleApiRegistry.MutationArgumentsSdl(_table)}) : Int");
+            return result.ToString();
+        }
+
+        /// <summary>
+        /// The input types the offered <paramref name="forms"/> reference, and no others: a row
+        /// form's type when the form itself, <c>batch</c> or <c>delta</c> carries it, and each
+        /// graph form's type only when it is offered. An unlisted form's input type is therefore
+        /// not in the schema, so a request naming it fails validation.
+        /// </summary>
+        public string GetMutationInputTypes(Modules.MutationForms forms)
+        {
+            var batchRows = forms.HasFlag(Modules.MutationForms.Batch) ? forms & Modules.MutationForms.BatchRowForms : Modules.MutationForms.None;
+            var deltaRows = forms.HasFlag(Modules.MutationForms.Delta) ? forms & Modules.MutationForms.DeltaRowForms : Modules.MutationForms.None;
+            var rowTypes = (forms | batchRows | deltaRows) & Modules.MutationForms.BatchRowForms;
+
+            var result = new StringBuilder();
+            if (rowTypes.HasFlag(Modules.MutationForms.Insert))
+                result.AppendLine(GetMutationParameterType(MutateActions.Insert, IdentityType.None));
+            if (rowTypes.HasFlag(Modules.MutationForms.Update))
+                result.AppendLine(GetMutationParameterType(MutateActions.Update, IdentityType.Required));
+            if (rowTypes.HasFlag(Modules.MutationForms.Upsert))
+                result.AppendLine(GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
+            if (rowTypes.HasFlag(Modules.MutationForms.Delete))
+                result.AppendLine(GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
+            if (forms.HasFlag(Modules.MutationForms.Batch))
+                result.AppendLine(GetBatchMutationParameterType(batchRows));
+            if (forms.HasFlag(Modules.MutationForms.Delta))
+                result.AppendLine(GetDeltaParameterType(deltaRows));
+            if (forms.HasFlag(Modules.MutationForms.Sync))
+                result.AppendLine(GetNestedSyncInputType());
+            if (forms.HasFlag(Modules.MutationForms.Save))
+                result.AppendLine(GetNestedSaveInputType());
             return result.ToString();
         }
 

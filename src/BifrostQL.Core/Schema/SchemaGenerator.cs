@@ -158,6 +158,7 @@ namespace BifrostQL.Core.Schema
         private static StringBuilder GetInputAndArgumentTypes(IDbModel model, List<TableSchemaGenerator> tableGenerators,
             IReadOnlyList<Operations.ExposedOperation> mutationOperations)
         {
+            var mutationForms = Modules.MutationFormsConfig.FromModel(model);
             var builder = new StringBuilder();
             var historyTargets = HistorySurface.ResolveTargets(model);
 
@@ -174,7 +175,7 @@ namespace BifrostQL.Core.Schema
                     // write's transaction, never through the mutation surface.
                     if (historyTargets.Contains(generator.Table))
                         continue;
-                    builder.AppendLine(generator.GetInputFieldDefinition());
+                    builder.AppendLine(generator.GetInputFieldDefinition(mutationForms));
                 }
                 foreach (var operation in mutationOperations)
                     builder.AppendLine(OperationFieldDefinition(operation));
@@ -206,14 +207,7 @@ namespace BifrostQL.Core.Schema
                 // types below stay: the `<table>History` trail field uses them.
                 if (!historyTargets.Contains(generator.Table))
                 {
-                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Insert, IdentityType.None));
-                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Update, IdentityType.Required));
-                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Upsert, IdentityType.Optional));
-                    builder.AppendLine(generator.GetMutationParameterType(MutateActions.Delete, IdentityType.Optional, true));
-                    builder.AppendLine(generator.GetBatchMutationParameterType());
-                    builder.AppendLine(generator.GetDeltaParameterType());
-                    builder.AppendLine(generator.GetNestedSyncInputType());
-                    builder.AppendLine(generator.GetNestedSaveInputType());
+                    builder.AppendLine(generator.GetMutationInputTypes(mutationForms));
                     if (Modules.FilteredUpdateConfig.IsEnabled(generator.Table))
                     {
                         builder.AppendLine(generator.GetSetParameterType());

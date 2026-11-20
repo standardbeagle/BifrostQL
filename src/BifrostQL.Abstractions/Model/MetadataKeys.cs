@@ -748,6 +748,15 @@ namespace BifrostQL.Core.Model
             /// </summary>
             public const string MaxQueryRows = "max-query-rows";
 
+            /// <summary>
+            /// Model-level list of the write forms every table's generated mutation surface offers,
+            /// among <c>insert</c>, <c>update</c>, <c>upsert</c>, <c>delete</c>, <c>sync</c>,
+            /// <c>save</c>, <c>delta</c>, <c>_primaryKey</c> and <c>batch</c>. An unlisted form's
+            /// argument, field and input types are not in the schema. Absent, every form is
+            /// offered. Server-side writes are not affected.
+            /// </summary>
+            public const string MutationForms = "mutation-forms";
+
             /// <summary>Model-level toggle for generic table query fields.</summary>
             public const string EnableGenericTable = "enable-generic-table";
 

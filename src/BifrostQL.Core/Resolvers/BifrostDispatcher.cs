@@ -127,6 +127,7 @@ namespace BifrostQL.Core.Resolvers
             var mut = builder.Types.For(mutationType);
 
             var historyTargets = Schema.HistorySurface.ResolveTargets(_model);
+            var offersBatch = Modules.MutationFormsConfig.FromModel(_model).HasFlag(Modules.MutationForms.Batch);
 
             foreach (var table in _model.Tables)
             {
@@ -138,7 +139,8 @@ namespace BifrostQL.Core.Resolvers
                 {
                     query.FieldFor(table.GraphQlName).Resolver = this;
                     mut.FieldFor(table.GraphQlName).Resolver = this;
-                    mut.FieldFor($"{table.GraphQlName}_batch").Resolver = this;
+                    if (offersBatch)
+                        mut.FieldFor($"{table.GraphQlName}_batch").Resolver = this;
 
                     WireAggregateResolvers(builder, table);
                     WirePivotResolver(builder, table);

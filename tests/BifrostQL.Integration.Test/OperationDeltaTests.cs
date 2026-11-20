@@ -39,7 +39,7 @@ public sealed class OperationDeltaTests : IAsyncLifetime
             REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION count_write();
         """;
 
-    private readonly ConcurrentQueue<(string User, bool SawConnection)> _chainRuns = new();
+    private readonly ConcurrentQueue<(string User, bool SawConnection, string? Operation)> _chainRuns = new();
     private PostgresGraphQlHost? _host;
 
     public async Task InitializeAsync()
@@ -78,7 +78,7 @@ public sealed class OperationDeltaTests : IAsyncLifetime
             (await _host.CountAsync($"SELECT count(*) FROM items WHERE owner_id = {user}")).Should().Be(count);
             (await _host.RowsAsync($"SELECT kind FROM write_statements WHERE owner_id = {user}"))
                 .Select(r => r["kind"]).Should().Equal(new[] { "INSERT" }, "{0} rows, one INSERT and no other write", count);
-            _chainRuns.Where(r => r.User == user).Should().HaveCount(count).And.OnlyContain(r => r.SawConnection);
+            _chainRuns.Where(r => r.User == user).Should().HaveCount(count).And.OnlyContain(r => r.SawConnection && r.Operation == "insertRows");
         }
 
         var thrown = await _host!.PostAsync("""mutation { insertRowsThenThrow }""", "10", "clerk");
@@ -132,7 +132,7 @@ public sealed class OperationDeltaTests : IAsyncLifetime
     /// Requires the write transaction; stamps the caller as owner, records whether it saw the
     /// write's connection, and refuses caller 9's row whose <c>n</c> is 13.
     /// </summary>
-    private sealed class StampOwner_RefuseThirteen(ConcurrentQueue<(string, bool)> runs) : IMutationTransformer
+    private sealed class StampOwner_RefuseThirteen(ConcurrentQueue<(string, bool, string?)> runs) : IMutationTransformer
     {
         public int Priority => 200;
 
@@ -145,7 +145,7 @@ public sealed class OperationDeltaTests : IAsyncLifetime
             IDbTable table, MutationType mutationType, Dictionary<string, object?> data, MutationTransformContext context)
         {
             var user = PolicyIdentity.FromUserContext(context.UserContext).Id;
-            runs.Enqueue((user, context.Connection is not null && context.Transaction is not null));
+            runs.Enqueue((user, context.Connection is not null && context.Transaction is not null, context.Operation?.Name));
             data["owner_id"] = int.Parse(user, CultureInfo.InvariantCulture);
             var refused = user == "9" && Convert.ToInt32(data["n"], CultureInfo.InvariantCulture) == 13;
             return ValueTask.FromResult(new MutationTransformResult

@@ -7,8 +7,8 @@ namespace BifrostQL.Integration.Test;
 /// <summary>
 /// <c>:root { mutation-forms: insert, update }</c> on a live host: a client request naming an
 /// unlisted form (<c>save</c>, <c>delete</c>, <c>orders_batch</c>) fails GraphQL validation and
-/// writes nothing, while a listed form still writes. A server operation's own delete is not a
-/// client form and still runs.
+/// writes nothing, while a listed form still writes. A server operation's own delete and
+/// <c>DeltaAsync</c> are not client forms and still run.
 /// </summary>
 public sealed class PostgresMutationFormsTests : IAsyncLifetime
 {
@@ -64,6 +64,8 @@ public sealed class PostgresMutationFormsTests : IAsyncLifetime
         PostgresGraphQlHost.AssertNoErrors(reply);
         (await _host.CountAsync("SELECT count(*) FROM orders WHERE total = 20")).Should().Be(0,
             "delete is not a client form here, but the operation's server-side delete still runs");
+        (await _host.CountAsync("SELECT count(*) FROM orders WHERE total IN (30, 31)")).Should().Be(2,
+            "delta is not a client form here, but the operation's DeltaAsync still writes");
     }
 
     private static string? Code(System.Text.Json.JsonDocument reply) =>
@@ -78,6 +80,14 @@ public sealed class PostgresMutationFormsTests : IAsyncLifetime
         public async ValueTask<object?> ExecuteAsync(BifrostOperationContext context)
         {
             await context.DeleteAsync("orders", new Dictionary<string, object?> { ["id"] = 2 });
+            await context.DeltaAsync("orders", new BifrostDelta
+            {
+                Inserted = new IReadOnlyDictionary<string, object?>[]
+                {
+                    new Dictionary<string, object?> { ["total"] = 30 },
+                    new Dictionary<string, object?> { ["total"] = 31 },
+                },
+            });
             return 1;
         }
     }

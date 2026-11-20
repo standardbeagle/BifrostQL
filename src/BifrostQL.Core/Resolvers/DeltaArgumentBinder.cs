@@ -24,6 +24,19 @@ namespace BifrostQL.Core.Resolvers
             return actions;
         }
 
+        /// <summary>A host's own delta (<see cref="Operations.BifrostDelta"/>), as the same batch actions.</summary>
+        public static IReadOnlyList<BatchMutationPipeline.BatchAction> Bind(
+            IEnumerable<IReadOnlyDictionary<string, object?>> inserted,
+            IEnumerable<IReadOnlyDictionary<string, object?>> updated,
+            IEnumerable<IReadOnlyDictionary<string, object?>> deleted)
+            => inserted.Select(r => Action(MutationAction.Insert, r))
+                .Concat(updated.Select(r => Action(MutationAction.Update, r)))
+                .Concat(deleted.Select(r => Action(MutationAction.Delete, r)))
+                .ToList();
+
+        private static BatchMutationPipeline.BatchAction Action(MutationAction action, IReadOnlyDictionary<string, object?> row)
+            => new(action, new Dictionary<string, object?>(row, StringComparer.OrdinalIgnoreCase));
+
         private static void Append(
             List<BatchMutationPipeline.BatchAction> actions,
             Dictionary<string, object?> delta, string section, MutationAction action)

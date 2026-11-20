@@ -81,18 +81,33 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
-        /// The after-write in-transaction phase of a write of many rows: set hooks once with every
-        /// row, per-row hooks once per row (see <see cref="InTransactionMutationHooks.RunSetAsync"/>).
-        /// A throw rolls the whole write back.
+        /// One row of a write of many rows, right after its statement: the in-transaction hooks
+        /// that are not set-aware (<see cref="InTransactionMutationHooks.RunPerRowAsync"/>).
         /// </summary>
-        public static async ValueTask RunInTransactionSetHooksAsync(
-            IServiceProvider? services, MutationSetContext set, Func<MutationSetRow, MutationObserverContext> rowContext)
+        public static async ValueTask RunPerRowInTransactionHooksAsync(
+            IServiceProvider? services, MutationObserverContext context, object? result, int affectedRows)
         {
             var hooks = services?.GetService<InTransactionMutationHooks>();
             if (hooks is null)
                 return;
-            await hooks.RunSetAsync(set, rowContext);
+            await hooks.RunPerRowAsync(context with { Result = result, AffectedRows = affectedRows });
         }
+
+        /// <summary>
+        /// A write of many rows, once every row is written: each set-aware in-transaction hook
+        /// once with every changed row. A throw rolls the whole write back.
+        /// </summary>
+        public static async ValueTask RunSetAwareInTransactionHooksAsync(IServiceProvider? services, MutationSetContext set)
+        {
+            var hooks = services?.GetService<InTransactionMutationHooks>();
+            if (hooks is null)
+                return;
+            await hooks.RunSetAwareAsync(set);
+        }
+
+        /// <summary>Whether a per-row in-transaction hook applies to <paramref name="table"/>.</summary>
+        public static bool AnyPerRowInTransactionHookApplies(IServiceProvider? services, IDbTable table)
+            => services?.GetService<InTransactionMutationHooks>()?.AnyPerRowApplies(table) == true;
 
         public static async ValueTask NotifyStateTransitionAsync(
             IServiceProvider? services,

@@ -234,6 +234,19 @@ public sealed class InTransactionMutationHooks
         return false;
     }
 
+    /// <summary>
+    /// True when a hook that is not set-aware applies to <paramref name="table"/>: such a hook is
+    /// called around each row's own statement, so the table's rows cannot share one statement.
+    /// </summary>
+    public bool AnyPerRowApplies(IDbTable table)
+    {
+        foreach (var hook in _hooks)
+            if (hook is not IInTransactionSetMutationHook && hook.AppliesTo(table))
+                return true;
+        return false;
+    }
+
+    /// <summary>A single-row write: every applying hook, a set-aware one with a one-row set.</summary>
     public async ValueTask RunAsync(MutationObserverContext context)
     {
         foreach (var hook in _hooks)
@@ -243,27 +256,28 @@ public sealed class InTransactionMutationHooks
         }
     }
 
+    /// <summary>One row of a write of many rows: the applying hooks that are not set-aware.</summary>
+    public async ValueTask RunPerRowAsync(MutationObserverContext context)
+    {
+        foreach (var hook in _hooks)
+        {
+            if (hook is not IInTransactionSetMutationHook && hook.AppliesTo(context.Table))
+                await hook.AfterWriteInTransactionAsync(context);
+        }
+    }
+
     /// <summary>
-    /// Runs the after-write phase of one write of many rows: each applying
-    /// <see cref="IInTransactionSetMutationHook"/> once with every row, each other applying hook
-    /// once per row with that row's context (from <paramref name="rowContext"/>), in registration
-    /// order. <paramref name="set"/> holds only rows the write changed; an empty set runs nothing.
+    /// A write of many rows, once it is written: each applying set-aware hook once with every row
+    /// the write changed, in row order. An empty set runs nothing.
     /// </summary>
-    public async ValueTask RunSetAsync(MutationSetContext set, Func<MutationSetRow, MutationObserverContext> rowContext)
+    public async ValueTask RunSetAwareAsync(MutationSetContext set)
     {
         if (set.Rows.Count == 0)
             return;
         foreach (var hook in _hooks)
         {
-            if (!hook.AppliesTo(set.Table))
-                continue;
-            if (hook is IInTransactionSetMutationHook setHook)
-            {
+            if (hook is IInTransactionSetMutationHook setHook && hook.AppliesTo(set.Table))
                 await setHook.AfterSetWriteInTransactionAsync(set);
-                continue;
-            }
-            foreach (var row in set.Rows)
-                await hook.AfterWriteInTransactionAsync(rowContext(row));
         }
     }
 }

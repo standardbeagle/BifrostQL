@@ -215,24 +215,21 @@ public sealed class BifrostOperationContext
     }
 
     /// <summary>
-    /// Inserts <paramref name="rows"/> into <paramref name="table"/> as the caller, in the
-    /// operation's transaction, and returns each row's key in row order (the key value, or a
-    /// column → value map for a composite key). Each row runs the transformer chain with its own
-    /// <see cref="MutationTransformContext.MutationState"/> (started from <paramref name="state"/>),
-    /// and a refusal of any row refuses the whole call before anything is written. Rows that write
-    /// the same columns go in one <c>INSERT</c>; in-transaction hooks that implement
-    /// <see cref="Modules.IInTransactionSetMutationHook"/> are called once with every row. Needs a
-    /// database that returns a multi-row insert's keys in row order (PostgreSQL); elsewhere it
-    /// refuses.
+    /// Writes <paramref name="delta"/>'s rows into <paramref name="table"/> through the batch
+    /// pipeline, as the caller, in the operation's own transaction (no <c>BEGIN</c> or
+    /// <c>COMMIT</c> of its own), and returns the number of rows affected. The transformer chain
+    /// runs for each row with the write's connection, and a refusal of any row refuses the call.
+    /// A run of inserted rows naming the same columns is one <c>INSERT … RETURNING</c> on a
+    /// database that returns a multi-row insert's keys in row order (PostgreSQL), when every
+    /// in-transaction hook on the table is set-aware; otherwise the rows go one by one. The table's
+    /// <c>batch-max-size</c> and <c>bulk-batch-threshold</c> do not apply: both bound a client's
+    /// request, and this set is the host's own.
     /// </summary>
-    public Task<IReadOnlyList<object?>> InsertManyAsync(
-        string table, IEnumerable<IReadOnlyDictionary<string, object?>> rows, IReadOnlyDictionary<string, object?>? state = null)
+    public Task<int> DeltaAsync(string table, BifrostDelta delta)
     {
         var dbTable = ResolveWritableTable(table);
-        return TableMutationPipeline.InsertManyAsync(
-            dbTable,
-            rows.Select(r => new Dictionary<string, object?>(r, StringComparer.OrdinalIgnoreCase)).ToList(),
-            PipelineContext(state));
+        return BatchMutationPipeline.ExecuteBatchAsync(
+            dbTable, DeltaArgumentBinder.Bind(delta.Inserted, delta.Updated, delta.Deleted), PipelineContext(state: null));
     }
 
     /// <summary>

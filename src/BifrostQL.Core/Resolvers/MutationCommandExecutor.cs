@@ -209,6 +209,14 @@ namespace BifrostQL.Core.Resolvers
             return (affected == 0 ? null : identity, affected);
         }
 
+        /// <summary>The written column set of one row, the grouping key of a multi-row insert.</summary>
+        internal static string ColumnSetKey(IReadOnlyDictionary<string, object?> row)
+            => string.Join("\u0000", row.Keys.Order(StringComparer.OrdinalIgnoreCase));
+
+        /// <summary>Whether <paramref name="table"/>'s inserts can share one statement on <paramref name="dialect"/>.</summary>
+        internal static bool CanInsertMany(ISqlDialect dialect, IDbTable table)
+            => dialect.OrderedInsertReturningParameterLimit is not null && table.KeyColumns.Any();
+
         /// <summary>
         /// Inserts <paramref name="rows"/>, which all write the same <paramref name="columns"/>, with
         /// as few multi-row <c>INSERT … VALUES (…),(…) RETURNING &lt;keys&gt;</c> statements as the

@@ -87,7 +87,7 @@ public sealed class ReactBatchPostgresBulkContractTests : IAsyncLifetime
 
         fast.Reply.Should().Contain($"\"items_batch\":{bulk.GetProperty("reply").GetProperty("data").GetProperty("items_batch").GetInt32()}");
         fast.WriteStatements.Should().Equal(new[] { "I2", "U1", "D1" }, "the fast path writes both inserts in one statement");
-        perRow.WriteStatements.Should().Equal(new[] { "I1", "I1", "U1", "D1" }, "the per-row loop writes one statement per insert");
+        perRow.WriteStatements.Should().Equal(new[] { "I2", "U1", "D1" }, "the per-row loop writes a run of inserts as one statement");
         fast.Rows.Should().Equal(perRow.Rows);
         fast.Rows.Should().Equal("1|sku-1|renamed", "2|sku-2|two", "100|sku-a|a", "101|sku-b|b");
     }
@@ -137,11 +137,12 @@ public sealed class ReactBatchPostgresBulkContractTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// The semantics the two paths do not share. A foreign key is checked at the end of a statement,
-    /// and a run of rows is one statement on the fast path and one statement per row on the per-row
-    /// path, so rows that only satisfy the key together pass the one and are refused by the other.
-    /// Nothing is left violating the key either way. Pinned so the docs' "same semantics" stays
-    /// honest about this exception, and so a change that closes it has to say so.
+    /// The semantics the two paths do not share. A foreign key is checked at the end of a statement.
+    /// A run of inserts is one statement on both paths, so inserts that only satisfy the key
+    /// together pass on both. Deletes are one statement on the fast path and one per row on the
+    /// per-row path, so deletes that only satisfy the key together pass the one and are refused by
+    /// the other. Nothing is left violating the key either way. Pinned so the docs' "same
+    /// semantics" stays honest about this exception, and so a change that closes it has to say so.
     /// </summary>
     [SkippableFact]
     public async Task RowsThatSatisfyAForeignKeyOnlyTogether_PassAsOneRun_ButNotRowByRow()
@@ -151,7 +152,11 @@ public sealed class ReactBatchPostgresBulkContractTests : IAsyncLifetime
         var childThenParent = BatchRequest(
             new { insert = new { sku = "child", name = "child", parent_id = 101 } },
             new { insert = new { sku = "parent", name = "parent", parent_id = (int?)null } });
-        await AssertPerRowRefusesWhatTheFastPathAppliesAsync(childThenParent, null, expectedRows: 5);
+        var perRowInserts = await RunAsync(childThenParent, PerRow);
+        perRowInserts.Reply.Should().NotContain("\"errors\"", "a run of inserts is one statement on the per-row path too");
+        var fastInserts = await RunAsync(childThenParent, FastPath);
+        fastInserts.Reply.Should().Be(perRowInserts.Reply);
+        fastInserts.Rows.Should().Equal(perRowInserts.Rows).And.HaveCount(5);
 
         const string family = "INSERT INTO items (id, sku, name) VALUES (21, 'parent', 'parent'); " +
                               "INSERT INTO items (id, sku, name, parent_id) VALUES (20, 'child', 'child', 21);";

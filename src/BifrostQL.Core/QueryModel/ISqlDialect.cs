@@ -230,7 +230,7 @@ public interface ISqlDialect
     /// The most bound parameters one multi-row <c>INSERT … VALUES (…),(…) RETURNING &lt;keys&gt;</c>
     /// may carry, on an engine that returns that statement's keys one per VALUES row in row
     /// order. Null when the engine cannot (no RETURNING, or no row order), and an insert of many
-    /// rows in one statement (<c>BifrostOperationContext.InsertManyAsync</c>) refuses on it
+    /// rows in one statement (a run of inserts in a batch, a <c>delta</c> or <c>DeltaAsync</c>) goes row by row on it
     /// rather than guess which key belongs to which row.
     /// </summary>
     int? OrderedInsertReturningParameterLimit => null;

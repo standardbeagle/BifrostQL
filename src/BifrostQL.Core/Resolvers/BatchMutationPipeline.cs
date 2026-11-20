@@ -73,8 +73,10 @@ namespace BifrostQL.Core.Resolvers
             if (actions.Count == 0)
                 return 0;
 
+            // The cap bounds a client's request. An operation's set (DeltaAsync) is the host's
+            // own, as its whole-set read is, so the cap does not apply to it.
             var maxBatchSize = GetMaxBatchSize(table);
-            if (actions.Count > maxBatchSize)
+            if (ctx.Operation is null && actions.Count > maxBatchSize)
                 throw new BifrostExecutionError(
                     $"Batch size {actions.Count} exceeds maximum allowed size of {maxBatchSize}.");
 
@@ -160,26 +162,49 @@ namespace BifrostQL.Core.Resolvers
             // per-action executors share the same table/dialect/model, connection + transaction,
             // and captured contexts; bundle them once so the executors take only their
             // per-action data. Every per-row chain run of the batch sees the batch's connection
-            // and transaction, so a guard reads (and locks) state that commits with it.
+            // and transaction, so a guard reads (and locks) state that commits with it. A run of
+            // consecutive inserts shares one statement when no per-row in-transaction hook needs
+            // to run between them; the set-aware hooks run once, after the last action.
             async Task RunActionsAsync(DbConnection conn, DbTransaction transaction, IDictionary<string, object?> transactionState)
             {
                 var dialect = ctx.ConnFactory.Dialect;
                 var execContext = new BatchExecutionContext(
                     table, ctx.Transformers, ctx.Model, dialect, conn, transaction,
                     ctx.UserContext, transformContext.With(write: (conn, transaction, dialect, ct)),
-                    ctx.ModuleArguments, ct, ctx.ConnFactory, transactionState);
-                foreach (var action in actions)
+                    ctx.ModuleArguments, ct, ctx.ConnFactory, transactionState, new List<MutationSetRow>());
+                var insertsShareAStatement = MutationCommandExecutor.CanInsertMany(dialect, table)
+                    && !MutationNotifier.AnyPerRowInTransactionHookApplies(ctx.Services, table);
+                for (var i = 0; i < actions.Count;)
                 {
-                    // Per-ACTION state: one bag the action's chain and both hook phases share,
-                    // fresh for every row so one action's state is never read as the next's.
-                    var actionContext = execContext with
+                    var run = 1;
+                    while (insertsShareAStatement && actions[i].Action == MutationAction.Insert
+                        && i + run < actions.Count && actions[i + run].Action == MutationAction.Insert)
+                        run++;
+                    if (run > 1)
                     {
-                        TransformContext = execContext.TransformContext.With(mutationState: MutationObserverContext.NewMutationState()),
-                    };
-                    var outcome = await ExecuteAction(actionContext, action);
-                    if (outcome is not null)
-                        outcomes.Add(outcome);
+                        outcomes.AddRange(await ExecuteInsertRun(execContext, actions.Skip(i).Take(run).Select(a => a.Data).ToList()));
+                    }
+                    else
+                    {
+                        var outcome = await ExecuteAction(WithFreshMutationState(execContext), actions[i]);
+                        if (outcome is not null)
+                            outcomes.Add(outcome);
+                    }
+                    i += run;
                 }
+                await MutationNotifier.RunSetAwareInTransactionHooksAsync(ctx.Services, new MutationSetContext
+                {
+                    Table = table,
+                    Rows = execContext.SetRows,
+                    UserContext = ctx.UserContext,
+                    Connection = conn,
+                    Transaction = transaction,
+                    Model = ctx.Model,
+                    Dialect = dialect,
+                    ConnFactory = ctx.ConnFactory,
+                    TransactionState = transactionState,
+                    CancellationToken = ct,
+                });
             }
         }
 
@@ -298,7 +323,94 @@ namespace BifrostQL.Core.Resolvers
             IDbConnFactory ConnFactory,
             // Per-TRANSACTION state, shared by every action of the batch (the deferred held
             // change set). Per-ACTION state is TransformContext.MutationState, fresh per action.
-            IDictionary<string, object?> TransactionState);
+            IDictionary<string, object?> TransactionState,
+            // Every row the batch changed so far, in action order, for the set-aware hooks.
+            List<MutationSetRow> SetRows);
+
+        /// <summary>
+        /// Per-ACTION state: one bag the action's chain and both hook phases share, fresh for
+        /// every row so one action's state is never read as the next's.
+        /// </summary>
+        private static BatchExecutionContext WithFreshMutationState(BatchExecutionContext ctx) => ctx with
+        {
+            TransformContext = ctx.TransformContext.With(mutationState: MutationObserverContext.NewMutationState()),
+        };
+
+        /// <summary>
+        /// A run of consecutive inserts as one write: each row runs the transformer chain and the
+        /// before-commit hooks with its own state bag (a refusal of any row refuses the batch
+        /// before anything is written), a row the approval gate diverts is held, and the rest are
+        /// written by one multi-row <c>INSERT … RETURNING</c> per distinct column set, their keys
+        /// joining the set the set-aware hooks receive. Only taken when no per-row in-transaction
+        /// hook applies (each would need its call before the next row's statement).
+        /// </summary>
+        private static async Task<List<BatchActionOutcome>> ExecuteInsertRun(
+            BatchExecutionContext ctx, IReadOnlyList<Dictionary<string, object?>> rows)
+        {
+            var outcomes = new List<BatchActionOutcome>(rows.Count);
+            var written = new List<(Dictionary<string, object?> Data, IDictionary<string, object?> State, StateTransitionInfo? Transition)>();
+            foreach (var row in rows)
+            {
+                var rowContext = WithFreshMutationState(ctx);
+                var transformResult = await ctx.MutationTransformers.TransformAsync(
+                    ctx.Table, MutationType.Insert, row, rowContext.TransformContext);
+                transformResult.ThrowIfDenied();
+                var hookContext = HookContext(rowContext, MutationType.Insert, transformResult.Data);
+                await MutationNotifier.RunBeforeCommitHooksAsync(ctx.TransformContext.Services, hookContext);
+                if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
+                {
+                    outcomes.Add(new BatchActionOutcome(0, MutationType.Insert, transformResult.Data, null, divertMessage));
+                    continue;
+                }
+                written.Add((transformResult.Data, rowContext.TransformContext.MutationState, transformResult.StateTransition));
+            }
+
+            var keys = new object?[written.Count];
+            foreach (var group in Enumerable.Range(0, written.Count).GroupBy(i => MutationCommandExecutor.ColumnSetKey(written[i].Data)))
+            {
+                var indices = group.ToList();
+                var groupKeys = await MutationCommandExecutor.ExecuteInsertMany(
+                    ctx.Conn, ctx.Transaction, ctx.Dialect, ctx.Table, written[indices[0]].Data.Keys.ToList(),
+                    indices.Select(i => (IReadOnlyDictionary<string, object?>)written[i].Data).ToList(), ctx.Ct);
+                for (var g = 0; g < indices.Count; g++)
+                    keys[indices[g]] = groupKeys[g];
+            }
+            for (var i = 0; i < written.Count; i++)
+            {
+                ctx.SetRows.Add(new MutationSetRow(MutationType.Insert, written[i].Data, keys[i], written[i].State));
+                outcomes.Add(new BatchActionOutcome(1, MutationType.Insert, written[i].Data, written[i].Transition));
+            }
+            return outcomes;
+        }
+
+        private static MutationObserverContext HookContext(BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data) => new()
+        {
+            Table = ctx.Table,
+            MutationType = type,
+            Data = data,
+            Result = null,
+            UserContext = ctx.UserContext,
+            Connection = ctx.Conn,
+            Transaction = ctx.Transaction,
+            Model = ctx.Model,
+            Dialect = ctx.Dialect,
+            ConnFactory = ctx.ConnFactory,
+            CancellationToken = ctx.Ct,
+            // Per-ACTION scratchpad, shared with this action's transformer chain and fresh
+            // for every row, so one action's before-image, divert signal, or logical verb can
+            // never be read as the next action's.
+            MutationState = ctx.TransformContext.MutationState,
+            TransactionState = ctx.TransactionState,
+        };
+
+        /// <summary>The key of an updated or deleted row, from its data: a value, or a column → value map.</summary>
+        private static object? KeyOf(IDbTable table, IDictionary<string, object?> data)
+        {
+            var keyColumns = table.KeyColumns.Select(k => k.ColumnName).ToList();
+            return keyColumns.Count == 1
+                ? data.TryGetValue(keyColumns[0], out var value) ? value : null
+                : keyColumns.ToDictionary(c => c, c => data.TryGetValue(c, out var v) ? v : null, StringComparer.OrdinalIgnoreCase);
+        }
 
         private static async Task<BatchActionOutcome?> ExecuteAction(BatchExecutionContext ctx, BatchAction action)
         {
@@ -335,25 +447,7 @@ namespace BifrostQL.Core.Resolvers
             BatchExecutionContext ctx, MutationType type, IDictionary<string, object?> data,
             Func<Task<T>> write, Func<T, int> affectedRows, MutationType? logicalType = null)
         {
-            var hookContext = new MutationObserverContext
-            {
-                Table = ctx.Table,
-                MutationType = type,
-                Data = data,
-                Result = null,
-                UserContext = ctx.UserContext,
-                Connection = ctx.Conn,
-                Transaction = ctx.Transaction,
-                Model = ctx.Model,
-                Dialect = ctx.Dialect,
-                ConnFactory = ctx.ConnFactory,
-                CancellationToken = ctx.Ct,
-                // Per-ACTION scratchpad, shared with this action's transformer chain and fresh
-                // for every row (RunActionsAsync), so one action's before-image, divert signal,
-                // or logical verb can never be read as the next action's.
-                MutationState = ctx.TransformContext.MutationState,
-                TransactionState = ctx.TransactionState,
-            };
+            var hookContext = HookContext(ctx, type, data);
             if (logicalType is not null)
                 ApprovalInterceptMutationHook.SetLogicalMutationType(hookContext, logicalType.Value);
             await MutationNotifier.RunBeforeCommitHooksAsync(ctx.TransformContext.Services, hookContext);
@@ -363,7 +457,13 @@ namespace BifrostQL.Core.Resolvers
             if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out var divertMessage))
                 return (default!, divertMessage);
             var result = await write();
-            await MutationNotifier.RunInTransactionHooksAsync(ctx.TransformContext.Services, hookContext, result, affectedRows(result));
+            var affected = affectedRows(result);
+            // Per-row hooks run now, before the next row's statement; set-aware hooks get this
+            // row with the rest once the batch is written.
+            await MutationNotifier.RunPerRowInTransactionHooksAsync(ctx.TransformContext.Services, hookContext, result, affected);
+            if (affected > 0)
+                ctx.SetRows.Add(new MutationSetRow(
+                    type, data, type == MutationType.Insert ? result : KeyOf(ctx.Table, data), hookContext.MutationState));
             return (result, null);
         }
 

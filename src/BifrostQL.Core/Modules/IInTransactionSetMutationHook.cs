@@ -4,11 +4,13 @@ using BifrostQL.Core.QueryModel;
 
 namespace BifrostQL.Core.Modules;
 
-/// <summary>One written row of a set write: its data as written, its key and its own state bag.</summary>
+/// <summary>One written row of a set write: its verb, its data as written, its key and its own state bag.</summary>
+/// <param name="MutationType">The row's own verb: one write (a batch, a delta) can mix them.</param>
 /// <param name="Data">The row's data after the transformer chain, keyed by database column name.</param>
 /// <param name="Key">The row's key: the generated identity on an insert, the key value(s) otherwise.</param>
 /// <param name="MutationState">The bag this row's transformer chain and before-commit hooks wrote into.</param>
 public sealed record MutationSetRow(
+    MutationType MutationType,
     IDictionary<string, object?> Data,
     object? Key,
     IDictionary<string, object?> MutationState);
@@ -20,7 +22,6 @@ public sealed record MutationSetRow(
 public sealed record MutationSetContext
 {
     public required IDbTable Table { get; init; }
-    public required MutationType MutationType { get; init; }
 
     /// <summary>Every row the write changed, in the order the caller gave them. Never empty.</summary>
     public required IReadOnlyList<MutationSetRow> Rows { get; init; }
@@ -44,8 +45,7 @@ public sealed record MutationSetContext
     internal static MutationSetContext FromRow(MutationObserverContext context) => new()
     {
         Table = context.Table,
-        MutationType = context.MutationType,
-        Rows = new[] { new MutationSetRow(context.Data, context.Result, context.MutationState) },
+        Rows = new[] { new MutationSetRow(context.MutationType, context.Data, context.Result, context.MutationState) },
         UserContext = context.UserContext,
         Connection = context.Connection
             ?? throw new InvalidOperationException("An in-transaction hook ran without the write's connection."),

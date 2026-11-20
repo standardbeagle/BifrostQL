@@ -110,6 +110,8 @@ mutation {
 
 Rules: a node's `_op` (`insert`/`update`/`delete`) wins; absent, a node carrying its full primary key updates and one without inserts. Unlisted children are untouched — `save` never infers deletes. Root delete is legal and returns the submitted key. The whole graph is one transaction; each node runs the full transformer chain (a soft-delete table's `_op: delete` becomes the soft-delete UPDATE), and a fresh parent's generated key flows to its children's foreign keys. A `save` skips `sync`'s current-state load entirely, so it is also the faster graph write.
 
+`save` and `sync` write level by level. On a database that returns a multi-row insert's keys in row order (PostgreSQL), the new nodes of one table at one depth are one `INSERT … RETURNING`, and each returned key goes to that node's own children, so a root with 20 children of 3 grandchildren each is 3 INSERTs. A table with an in-transaction hook that is not set-aware (history, CDC, deferred effects) writes its nodes one by one. Updates and deletes are one statement per node. The root table's `batch-max-size` (default 100) bounds a tree's writes as it bounds a batch's actions: a larger tree is refused before anything is written.
+
 ## Filtered set-updates (`updateWhere`)
 
 SQL's `UPDATE ... SET ... WHERE` as a mutation — **opt-in per table**:

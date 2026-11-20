@@ -44,6 +44,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - An update or delete runs the mutation transformer chain before the pipeline answers by the request's shape. A caller the chain refuses used to get the shape's answer instead: `NO_UPDATE_COLUMNS` or `PARTIAL_PRIMARY_KEY` for a key-only or partial-key update, and a no-op `0` for an update with no key column (a keyless view) or a delete naming no column, which read as a write that ran. The chain's refusal is now the answer on the single-row, `_batch` and bulk paths; a write the chain passes is answered by its shape as before. An upsert that writes nothing (empty, or key-only on an existing row) and a batch upsert with a partial key run the update chain first too.
 - An operation-id retry from a caller the policy now refuses gets the live `ACCESS_DENIED`, never `OPERATION_ID_REUSED`. The replay checked the recorded fingerprint before authorization, so a refused caller could tell which of its own ids held a record for another write.
 
+### Breaking — write-path fixes
+
+- The root table's `batch-max-size` (default 100) now bounds the writes of a `save` or `sync`, as it bounds a batch's actions. A larger tree is refused whole, before anything is written. Raise `batch-max-size` on the root table if your clients send larger trees.
+
 ### Added — write-path fixes
 
 - `MutationTransformContext.Operation` names the server operation (`IBifrostOperation`) whose write this is, on every write a `BifrostOperationContext` makes, and is null on a generated write, including a sibling mutation field of the same request. Only the engine sets it, so a transformer can hold a rule for clients that an operation is exempt from (a column only an operation may set).
@@ -55,6 +59,7 @@ On `main` after v0.4.28; not yet on NuGet.
 - `BifrostOperationContext.DeltaAsync(table, BifrostDelta)` writes many rows (`Inserted`, `Updated`, `Deleted`, the `delta` argument's shape) through the batch pipeline inside the operation's transaction, with no `BEGIN`/`COMMIT` of its own, and returns the rows affected. The transformer chain runs per row with the write's connection, a refusal of any row refuses the call, and `batch-max-size` / `bulk-batch-threshold` do not apply (they bound a client's request).
 - `IInTransactionSetMutationHook`: an in-transaction hook called once per write with every written row's verb, data, key and `MutationState` (`MutationSetContext`, `MutationSetRow`), instead of once per row: one row for a single-row write, every changed row of a `<table>_batch`, a `delta` or a `DeltaAsync`. Per-row hooks keep their per-row calls, each before the next row's statement.
 - On PostgreSQL the batch pipeline's per-row loop writes a run of adjacent inserts as one `INSERT … RETURNING` when no per-row in-transaction hook applies to the table, so a table whose hooks are all set-aware keeps its insert runs in one statement. Inserts that satisfy a self-referencing foreign key only together (`[insert child, insert parent]`) now pass on that loop too.
+- `save` and `sync` write level by level: on PostgreSQL the new nodes of one table at one depth are one `INSERT … RETURNING`, keys mapped back to their own children, unless a per-row in-transaction hook applies to the table. Set-aware hooks are called once per level.
 
 ### Added — database errors
 

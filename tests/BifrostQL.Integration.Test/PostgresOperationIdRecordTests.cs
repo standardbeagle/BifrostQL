@@ -42,6 +42,16 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         END $$;
         CREATE TRIGGER operation_ids_refuse_unrecordable BEFORE UPDATE ON operation_ids
             FOR EACH ROW WHEN (NEW.operation_id = 'op-unrecordable') EXECUTE FUNCTION refuse_unrecordable();
+        -- BifrostQL never deletes a record: an expiry would let a retry that outlives it apply a
+        -- second time. Any DELETE or TRUNCATE of the store fails the write that issues it.
+        CREATE FUNCTION refuse_record_removal() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'operation records are never removed';
+        END $$;
+        CREATE TRIGGER operation_ids_refuse_delete BEFORE DELETE ON operation_ids
+            FOR EACH STATEMENT EXECUTE FUNCTION refuse_record_removal();
+        CREATE TRIGGER operation_ids_refuse_truncate BEFORE TRUNCATE ON operation_ids
+            FOR EACH STATEMENT EXECUTE FUNCTION refuse_record_removal();
         INSERT INTO notes (title) VALUES ('first'), ('second'), ('third');
         """;
 
@@ -178,7 +188,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
     }
 
     [SkippableFact]
-    public async Task WriteTheDatabaseRefuses_LeavesNoRecord()
+    public async Task WriteTheDatabaseRefuses_LeavesNoRecord_SoTheRetryRuns()
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
 
@@ -187,6 +197,37 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         PostgresGraphQlHost.FirstError(reply);
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'refused'")).Should().Be(0);
         (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(0);
+
+        // The corrected retry carries the same id: nothing applied, so it runs, not OPERATION_ID_REUSED.
+        var (_, retry) = await SendAsync("""mutation { notes(insert: { title: "corrected" }, _operationId: "op-refused") }""");
+
+        PostgresGraphQlHost.AssertNoErrors(retry);
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'corrected'")).Should().Be(1);
+        (await SingleRecordAsync("op-refused"))["action"].Should().Be("insert");
+    }
+
+    [SkippableFact]
+    public async Task RepeatedId_IsStillHonoured_AfterAThousandLaterIds()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+
+        const string early = """mutation { notes(insert: { title: "early" }, _operationId: "op-early") }""";
+        var (_, first) = await SendAsync(early);
+        PostgresGraphQlHost.AssertNoErrors(first);
+
+        foreach (var chunk in Enumerable.Range(0, 1000).Chunk(50))
+        {
+            var replies = await Task.WhenAll(chunk.Select(i =>
+                SendAsync($$"""mutation { notes(insert: { title: "later {{i}}" }, _operationId: "op-later-{{i}}") }""")));
+            foreach (var (_, reply) in replies) PostgresGraphQlHost.AssertNoErrors(reply);
+        }
+
+        var (_, repeat) = await SendAsync(early);
+
+        PostgresGraphQlHost.AssertNoErrors(repeat);
+        repeat.RootElement.GetProperty("data").GetRawText().Should().Be(first.RootElement.GetProperty("data").GetRawText());
+        (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'early'")).Should().Be(1);
+        (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(1001);
     }
 
     [SkippableFact]

@@ -974,6 +974,7 @@ namespace BifrostQL.Core.Model
             MetadataKeys.OperationId.Column.Tenant,
             MetadataKeys.OperationId.Column.Caller,
             MetadataKeys.OperationId.Column.OperationId,
+            MetadataKeys.OperationId.Column.Field,
         ];
 
         /// <summary>

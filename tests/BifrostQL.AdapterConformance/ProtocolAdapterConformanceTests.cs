@@ -351,10 +351,10 @@ namespace BifrostQL.AdapterConformance
                 await Exec(
                     """
                     CREATE TABLE operation_ids (
-                        tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL,
+                        tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL,
                         table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL,
                         input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL,
-                        PRIMARY KEY (tenant, caller, operation_id)
+                        PRIMARY KEY (tenant, caller, operation_id, field_name)
                     )
                     """);
             }

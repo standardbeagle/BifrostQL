@@ -44,14 +44,14 @@ public sealed class OperationIdMySqlConcurrencyTests : IAsyncLifetime
         CREATE TABLE operation_ids (
             tenant VARCHAR(200) NOT NULL,
             caller VARCHAR(200) NOT NULL,
-            operation_id VARCHAR(200) NOT NULL,
+            operation_id VARCHAR(200) NOT NULL, field_name VARCHAR(128) NOT NULL,
             table_name VARCHAR(200) NOT NULL,
             action VARCHAR(20) NOT NULL,
             target_key TEXT NOT NULL,
             input_hash VARCHAR(100) NOT NULL,
             result TEXT NULL,
             created_at DATETIME(6) NOT NULL,
-            PRIMARY KEY (tenant, caller, operation_id))
+            PRIMARY KEY (tenant, caller, operation_id, field_name))
         """,
         // Refuses the first insert of each 'flaky-*' title only. MyISAM is not transactional, so
         // the rolled-back attempt still counts.

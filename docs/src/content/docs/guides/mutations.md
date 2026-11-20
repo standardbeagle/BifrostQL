@@ -190,22 +190,27 @@ and the model names the table the records live in with `operation-id-store`:
 
 The host creates the store table. It must be `visibility: hidden`, because its rows hold every
 tenant's write results, and it needs these columns and a primary key or unique index over
-exactly `(tenant, caller, operation_id)`. The model refuses to load without that key, because it
-is what makes two concurrent writes under one id commit once. For example:
+exactly `(tenant, caller, operation_id, field_name)`. The model refuses to load without that key,
+because it is what makes two concurrent writes under one id commit once. For example:
 
 ```sql
 CREATE TABLE operation_ids (
     tenant       TEXT        NOT NULL,
     caller       TEXT        NOT NULL,
     operation_id TEXT        NOT NULL,
+    field_name   TEXT        NOT NULL,
     table_name   TEXT        NOT NULL,
     action       TEXT        NOT NULL,
     target_key   TEXT        NOT NULL,
     input_hash   TEXT        NOT NULL,
     result       TEXT        NULL,
     created_at   TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (tenant, caller, operation_id));
+    PRIMARY KEY (tenant, caller, operation_id, field_name));
 ```
+
+On MySQL the key must fit InnoDB's 3072-byte limit, which is 768 `utf8mb4` characters across
+the four columns: for example `VARCHAR(200)` for `tenant`, `caller` and `operation_id`, and
+`VARCHAR(128)` for `field_name`.
 
 The id rides the `_operationId` argument, which only opted-in tables have, or the
 `Idempotency-Key` header on a `/graphql` request:
@@ -218,7 +223,7 @@ mutation {
 
 An `insert`, `update`, `upsert` or `delete` that carries an id writes one store row on the
 write's own transaction. The row holds the caller's tenant (empty when there is none) and user
-id, the id, the table, the verb, the key the write addressed (`{}` for a key the database generates), a
+id, the id, the field's response name (its alias, else its name), the table, the verb, the key the write addressed (`{}` for a key the database generates), a
 SHA-256 of the write's arguments and the field's result. A write the database refuses leaves no
 record. On an `optional` table a write without an id runs exactly as before.
 
@@ -283,12 +288,11 @@ space would answer one of them with another's recorded result. The same caller's
 an id runs as usual on an `optional` table; a `required` table cannot be written without a user
 id.
 
-The `Idempotency-Key` header applies to every opted-in mutation field in the request. A
-document with two such fields records both under one id: the second answers
-`OPERATION_ID_REUSED` and writes nothing, unless it is the same request as the first, in which
-case it is answered as a retry of the first.
-Send one write per request with the header, or omit the header and give each field its own
-`_operationId`. A field whose `_operationId` differs from the header is refused with `INVALID_VALUE`.
+The `Idempotency-Key` header applies to every opted-in mutation field in the request. Each field
+is its own record, keyed by its response name (its alias, else its name), so a document with two
+such fields records both under one id, and a retry of the document replays each. The response
+name is part of the record's identity: a retry must keep the fields' aliases. A field whose
+`_operationId` differs from the header is refused with `INVALID_VALUE`.
 
 | Case | Answer |
 |------|--------|

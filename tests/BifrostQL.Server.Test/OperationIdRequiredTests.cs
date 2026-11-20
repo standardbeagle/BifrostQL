@@ -37,9 +37,9 @@ public sealed class OperationIdRequiredTests : IAsyncLifetime
         await ExecAsync(
             "CREATE TABLE ledger (id INTEGER PRIMARY KEY, title TEXT NOT NULL);" +
             "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL);" +
-            "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, " +
+            "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, " +
             "table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, " +
-            "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));" +
+            "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id, field_name));" +
             "INSERT INTO ledger (id, title) VALUES (1, 'seed');");
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

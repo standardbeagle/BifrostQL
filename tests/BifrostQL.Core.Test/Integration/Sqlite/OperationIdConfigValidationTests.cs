@@ -37,35 +37,35 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
         await Exec(
             """
             CREATE TABLE operation_ids (
-                tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL,
+                tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, table_name TEXT NOT NULL,
                 action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL,
                 result TEXT NULL, created_at TEXT NOT NULL,
-                PRIMARY KEY (tenant, caller, operation_id))
+                PRIMARY KEY (tenant, caller, operation_id, field_name))
             """);
         // Every store column but result.
         await Exec(
             """
             CREATE TABLE short_store (
-                tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL,
+                tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, table_name TEXT NOT NULL,
                 action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                PRIMARY KEY (tenant, caller, operation_id))
+                PRIMARY KEY (tenant, caller, operation_id, field_name))
             """);
-        // Every column, but nothing makes (tenant, caller, operation_id) unique: two concurrent
+        // Every column, but nothing makes (tenant, caller, operation_id, field_name) unique: two concurrent
         // claims of one id would both insert, and both writes would commit.
         await Exec("CREATE TABLE unkeyed_store (id INTEGER PRIMARY KEY, " +
-            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL, " +
+            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, table_name TEXT NOT NULL, " +
             "action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL)");
         // Unique, but over the id alone: two callers' ids would collide instead of staying apart.
         await Exec("CREATE TABLE id_only_store (id INTEGER PRIMARY KEY, " +
-            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL, " +
+            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, table_name TEXT NOT NULL, " +
             "action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL)");
         await Exec("CREATE UNIQUE INDEX ux_id_only ON id_only_store (operation_id)");
-        // A unique index over the three key columns, in another order, instead of the primary key.
+        // A unique index over the four key columns, in another order, instead of the primary key.
         await Exec("CREATE TABLE indexed_store (id INTEGER PRIMARY KEY, " +
-            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, table_name TEXT NOT NULL, " +
+            "tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, table_name TEXT NOT NULL, " +
             "action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NULL, created_at TEXT NOT NULL)");
-        await Exec("CREATE UNIQUE INDEX ux_indexed ON indexed_store (operation_id, caller, tenant)");
+        await Exec("CREATE UNIQUE INDEX ux_indexed ON indexed_store (operation_id, field_name, caller, tenant)");
     }
 
     public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
@@ -93,7 +93,7 @@ public sealed class OperationIdConfigValidationTests : IAsyncLifetime
 
         (await load.Should().ThrowAsync<InvalidOperationException>())
             .Which.Message.Should().Contain(
-                $"store table 'main.{store}' needs a primary key or unique index over exactly (tenant, caller, operation_id)");
+                $"store table 'main.{store}' needs a primary key or unique index over exactly (tenant, caller, operation_id, field_name)");
     }
 
     [Theory]

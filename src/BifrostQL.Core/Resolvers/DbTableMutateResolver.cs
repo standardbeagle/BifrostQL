@@ -57,7 +57,7 @@ namespace BifrostQL.Core.Resolvers
                 // A replayed result is coerced like the original was; coercion is idempotent,
                 // so a written result passes through it twice unchanged.
                 return Coerce(await OperationIdExecution.ExecuteAsync(
-                    model, conFactory, context.UserContext, operationId, fingerprint,
+                    model, conFactory, context.UserContext, operationId, OperationIdExecution.FieldOf(context), fingerprint,
                     () => AuthorizeReplay(context, model.TypeMapper, table, action),
                     async scope => Coerce(await DispatchAsync(action, context, table, mutationTransformers, model, conFactory, dialect, scope)),
                     context.CancellationToken));

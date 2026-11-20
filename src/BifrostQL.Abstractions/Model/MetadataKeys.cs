@@ -1197,8 +1197,9 @@ namespace BifrostQL.Core.Model
         /// Metadata keys for caller operation ids (inbound write idempotency). A table opts in
         /// with <see cref="Mode"/>; the model names the host-created store table with
         /// <see cref="Store"/>, the same shape as the CDC outbox
-        /// (<see cref="Cdc.OutboxTable"/>). Every write that carries an operation id records
-        /// one store row in its own transaction:
+        /// (<see cref="Cdc.OutboxTable"/>). Every mutation field that carries an operation id
+        /// records one store row in its own transaction, keyed by the field's response name, so
+        /// one id covers every field of a request:
         ///   ":root { operation-id-store: public.operation_ids }"
         ///   "public.operation_ids { visibility: hidden }"
         ///   "public.invoices { operation-id: optional }"
@@ -1235,8 +1236,8 @@ namespace BifrostQL.Core.Model
             /// <see cref="Store"/> carries every column, so a misconfigured store fails at
             /// model load rather than on the first write that carries an id. The host also
             /// declares a unique key over (<see cref="Column.Tenant"/>, <see cref="Column.Caller"/>,
-            /// <see cref="Column.OperationId"/>): it is what makes one id one record, and gives
-            /// each caller its own id space.
+            /// <see cref="Column.OperationId"/>, <see cref="Column.Field"/>): it is what makes one
+            /// id one record per field, and gives each caller its own id space.
             /// </summary>
             public static class Column
             {
@@ -1249,6 +1250,11 @@ namespace BifrostQL.Core.Model
                 public const string Caller = "caller";
                 /// <summary>The caller's operation id.</summary>
                 public const string OperationId = "operation_id";
+                /// <summary>
+                /// The mutation field's response name (its alias, else its name), so one id sent
+                /// with a request of several mutation fields records each field on its own.
+                /// </summary>
+                public const string Field = "field_name";
                 /// <summary>The written table, qualified (<c>schema.name</c>).</summary>
                 public const string Table = "table_name";
                 /// <summary>The mutation verb: <c>insert</c>, <c>update</c>, <c>upsert</c>, <c>delete</c>.</summary>
@@ -1265,7 +1271,7 @@ namespace BifrostQL.Core.Model
 
             public static readonly IReadOnlyList<string> Columns = new[]
             {
-                Column.Tenant, Column.Caller, Column.OperationId, Column.Table, Column.Action,
+                Column.Tenant, Column.Caller, Column.OperationId, Column.Field, Column.Table, Column.Action,
                 Column.TargetKey, Column.InputHash, Column.Result, Column.CreatedAt,
             };
         }

@@ -49,9 +49,9 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
             cmd.CommandText =
                 "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL);" +
                 "CREATE TABLE codes (code TEXT PRIMARY KEY, label TEXT NOT NULL);" +
-                "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, " +
+                "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, " +
                 "table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, " +
-                "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));" +
+                "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id, field_name));" +
                 "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL);" +
                 "CREATE TABLE memos (id INTEGER PRIMARY KEY, body TEXT NULL);" +
                 "CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL);" +
@@ -251,7 +251,8 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
     public const string ReusedMessage = "This operation id was already used for a different write.";
 
     [Theory]
-    [InlineData("table", """mutation { codes(insert: { code: "x", label: "a" }, _operationId: "op-reused") }""")]
+    // A record is keyed by the field's response name, so the other table's field is aliased to the first's.
+    [InlineData("table", """mutation { notes: codes(insert: { code: "x", label: "a" }, _operationId: "op-reused") }""")]
     [InlineData("action", """mutation { notes(delete: { id: 1 }, _operationId: "op-reused") }""")]
     [InlineData("target", """mutation { notes(update: { id: 2, title: "a" }, _operationId: "op-reused") }""")]
     [InlineData("input", """mutation { notes(update: { id: 1, title: "b" }, _operationId: "op-reused") }""")]
@@ -274,19 +275,19 @@ public sealed class OperationIdReplayTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Header_shared_by_two_different_fields_refuses_the_second_as_reused()
+    public async Task Header_shared_by_two_fields_records_each_and_its_retry_replays_both()
     {
-        using var reply = await SendWithHeadersAsync(
-            """mutation { a: notes(insert: { title: "first" }) b: notes(insert: { title: "second" }) }""", Writer,
-            ("Idempotency-Key", "op-two-fields"));
+        const string twoFields = """mutation { a: notes(insert: { title: "first" }) b: notes(insert: { title: "second" }) }""";
 
-        reply.RootElement.GetProperty("data").GetProperty("a").ValueKind.Should().Be(JsonValueKind.Number, reply.RootElement.GetRawText());
-        reply.RootElement.GetProperty("data").GetProperty("b").ValueKind.Should().Be(JsonValueKind.Null);
-        var error = FirstError(reply);
-        error.GetProperty("extensions").GetProperty("code").GetString().Should().Be("OPERATION_ID_REUSED", reply.RootElement.GetRawText());
-        error.GetProperty("path")[0].GetString().Should().Be("b");
-        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(1);
-        (await CountAsync("SELECT count(*) FROM notes WHERE title = 'second'")).Should().Be(0);
+        using var reply = await SendWithHeadersAsync(twoFields, Writer, ("Idempotency-Key", "op-two-fields"));
+        using var retry = await SendWithHeadersAsync(twoFields, Writer, ("Idempotency-Key", "op-two-fields"));
+
+        Data(reply, "a").ValueKind.Should().Be(JsonValueKind.Number, reply.RootElement.GetRawText());
+        Data(reply, "b").ValueKind.Should().Be(JsonValueKind.Number, reply.RootElement.GetRawText());
+        retry.RootElement.GetProperty("data").GetRawText().Should().Be(reply.RootElement.GetProperty("data").GetRawText());
+        (await CountAsync("SELECT count(*) FROM notes")).Should().Be(2);
+        (await CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(2);
+        _hookCalls.Should().Be(2, "the retry ran neither write");
     }
 
     [Fact]

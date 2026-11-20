@@ -26,14 +26,14 @@ public sealed class OperationIdConcurrencyTests : IAsyncLifetime
         CREATE TABLE operation_ids (
             tenant TEXT NOT NULL,
             caller TEXT NOT NULL,
-            operation_id TEXT NOT NULL,
+            operation_id TEXT NOT NULL, field_name TEXT NOT NULL,
             table_name TEXT NOT NULL,
             action TEXT NOT NULL,
             target_key TEXT NOT NULL,
             input_hash TEXT NOT NULL,
             result TEXT NULL,
             created_at TIMESTAMPTZ NOT NULL,
-            PRIMARY KEY (tenant, caller, operation_id));
+            PRIMARY KEY (tenant, caller, operation_id, field_name));
         -- Refuses the first 'flaky' insert only: a sequence advances outside the transaction,
         -- so the rolled-back attempt still counts.
         CREATE SEQUENCE flaky_attempts;

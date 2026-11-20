@@ -26,13 +26,14 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
             tenant TEXT NOT NULL,
             caller TEXT NOT NULL,
             operation_id TEXT NOT NULL,
+            field_name TEXT NOT NULL,
             table_name TEXT NOT NULL,
             action TEXT NOT NULL,
             target_key TEXT NOT NULL,
             input_hash TEXT NOT NULL,
             result TEXT NULL,
             created_at TIMESTAMPTZ NOT NULL,
-            PRIMARY KEY (tenant, caller, operation_id));
+            PRIMARY KEY (tenant, caller, operation_id, field_name));
         -- Refuses to record the result of one id, so a write that ran can still fail at its
         -- record: what the write did must roll back with it.
         CREATE FUNCTION refuse_unrecordable() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -79,6 +80,7 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
         var record = await SingleRecordAsync("op-insert");
         record["tenant"].Should().BeEmpty();
         record["caller"].Should().Be(DefaultUser);
+        record["field_name"].Should().Be("notes");
         record["table_name"].Should().Be("public.notes");
         record["action"].Should().Be("insert");
         record["target_key"].Should().Be("{}");
@@ -278,6 +280,25 @@ public sealed class PostgresOperationIdRecordTests : IAsyncLifetime
             .Should().Be("DATABASE_ERROR", reply.RootElement.GetRawText());
         (await _host.CountAsync("SELECT count(*) FROM notes WHERE title = 'unrecorded'")).Should().Be(0);
         (await _host.CountAsync("SELECT count(*) FROM operation_ids")).Should().Be(0);
+    }
+
+    [SkippableFact]
+    public async Task OneHeader_OverTwoFields_RecordsEachField_AndTheRetryReplaysBoth()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+        const string twoFields =
+            """mutation { a: notes(insert: { title: "multi-a" }) b: notes(insert: { title: "multi-b" }) }""";
+
+        var (_, first) = await SendAsync(twoFields, ("Idempotency-Key", "op-multi"));
+        var (_, retry) = await SendAsync(twoFields, ("Idempotency-Key", "op-multi"));
+
+        PostgresGraphQlHost.AssertNoErrors(first);
+        PostgresGraphQlHost.AssertNoErrors(retry);
+        retry.RootElement.GetProperty("data").GetRawText().Should().Be(first.RootElement.GetProperty("data").GetRawText());
+        (await _host!.CountAsync("SELECT count(*) FROM notes WHERE title IN ('multi-a', 'multi-b')")).Should().Be(2);
+        var fields = (await _host.RowsAsync("SELECT field_name FROM operation_ids ORDER BY field_name"))
+            .Select(r => r["field_name"]);
+        fields.Should().Equal("a", "b");
     }
 
     [SkippableFact]

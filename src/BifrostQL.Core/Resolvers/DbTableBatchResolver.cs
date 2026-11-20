@@ -73,7 +73,7 @@ namespace BifrostQL.Core.Resolvers
                 return await BatchMutationPipeline.ExecuteBatchAsync(_table, parsed, PipelineContext(writeScope: null));
 
             return await OperationIdExecution.ExecuteAsync(
-                bifrost.Model, bifrost.ConnFactory, context.UserContext, operationId,
+                bifrost.Model, bifrost.ConnFactory, context.UserContext, operationId, OperationIdExecution.FieldOf(context),
                 Fingerprint(actions, moduleArguments),
                 () =>
                 {

@@ -14,21 +14,15 @@ namespace BifrostQL.Core.Modules.OperationId
     internal static class OperationIdStore
     {
         /// <summary>
-        /// The committed record <paramref name="owner"/> holds for <paramref name="operationId"/>,
-        /// read on the write's transaction; null when there is none.
+        /// The committed record under <paramref name="key"/>, read on the write's transaction;
+        /// null when there is none.
         /// </summary>
         public static async Task<OperationRecord?> FindAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,
-            OperationOwner owner, string operationId, CancellationToken cancellationToken)
+            OperationRecordKey key, CancellationToken cancellationToken)
         {
-            var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [Col.Tenant] = owner.Tenant,
-                [Col.Caller] = owner.Caller,
-                [Col.OperationId] = operationId,
-            };
             var row = await MutationCommandExecutor.LoadRowByKey(
-                connection, transaction, dialect, store, RecordColumns, key, cancellationToken: cancellationToken);
+                connection, transaction, dialect, store, RecordColumns, key.Columns(), cancellationToken: cancellationToken);
             if (row is null)
                 return null;
             return new OperationRecord(
@@ -43,28 +37,23 @@ namespace BifrostQL.Core.Modules.OperationId
                ?? throw new BifrostExecutionError("The operation record is incomplete, so the write did not run.");
 
         /// <summary>
-        /// Inserts the record for <paramref name="operationId"/> before the write runs, with no
-        /// result yet. The store's unique key over (tenant, caller, operation id) makes a second
-        /// transaction claiming the same id wait for the first. If the first commits, the
+        /// Inserts the record under <paramref name="key"/> before the write runs, with no
+        /// result yet. The store's unique key over (tenant, caller, operation id, field) makes a
+        /// second transaction claiming the same id for the same field wait for the first. If the first commits, the
         /// waiting claim fails with a unique violation; <see cref="OperationIdExecution.ExecuteAsync"/>
         /// then reads the committed outcome in a fresh transaction. If the first rolls back,
         /// the waiting claim succeeds and the second transaction runs the write.
         /// </summary>
         public static async Task ClaimAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,
-            OperationOwner owner, string operationId, OperationFingerprint fingerprint, CancellationToken cancellationToken)
+            OperationRecordKey key, OperationFingerprint fingerprint, CancellationToken cancellationToken)
         {
-            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [Col.Tenant] = owner.Tenant,
-                [Col.Caller] = owner.Caller,
-                [Col.OperationId] = operationId,
-                [Col.Table] = fingerprint.Table,
-                [Col.Action] = fingerprint.Action,
-                [Col.TargetKey] = fingerprint.TargetKey,
-                [Col.InputHash] = fingerprint.InputHash,
-                [Col.CreatedAt] = DateTime.UtcNow,
-            };
+            var row = key.Columns();
+            row[Col.Table] = fingerprint.Table;
+            row[Col.Action] = fingerprint.Action;
+            row[Col.TargetKey] = fingerprint.TargetKey;
+            row[Col.InputHash] = fingerprint.InputHash;
+            row[Col.CreatedAt] = DateTime.UtcNow;
             var tableRef = dialect.TableReference(store.TableSchema, store.DbName);
             var sql = MutationCommandExecutor.BuildInsertInto(dialect, store, tableRef, row.Keys) + ";";
             await MutationCommandExecutor.ExecuteNonQuery(connection, transaction, sql, row, cancellationToken: cancellationToken);
@@ -73,24 +62,35 @@ namespace BifrostQL.Core.Modules.OperationId
         /// <summary>Writes the mutation field's result onto the claimed record.</summary>
         public static async Task RecordResultAsync(
             IDbTable store, ISqlDialect dialect, DbConnection connection, DbTransaction transaction,
-            OperationOwner owner, string operationId, string resultJson, CancellationToken cancellationToken)
+            OperationRecordKey key, string resultJson, CancellationToken cancellationToken)
         {
-            var key = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                [Col.Tenant] = owner.Tenant,
-                [Col.Caller] = owner.Caller,
-                [Col.OperationId] = operationId,
-            };
-            var data = new Dictionary<string, object?>(key, StringComparer.OrdinalIgnoreCase)
+            var keyColumns = key.Columns();
+            var data = new Dictionary<string, object?>(keyColumns, StringComparer.OrdinalIgnoreCase)
             {
                 [Col.Result] = resultJson,
             };
             var tableRef = dialect.TableReference(store.TableSchema, store.DbName);
-            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, store, tableRef, new[] { Col.Result }, key, "");
+            var sql = MutationCommandExecutor.BuildUpdateSql(dialect, store, tableRef, new[] { Col.Result }, keyColumns, "");
             var affected = await MutationCommandExecutor.ExecuteNonQuery(connection, transaction, sql, data, cancellationToken: cancellationToken);
             if (affected != 1)
                 throw new BifrostExecutionError("The operation record could not be completed, so the write was rolled back.");
         }
+    }
+
+    /// <summary>
+    /// What one store record is keyed by: the owner (tenant and caller), the caller's operation
+    /// id, and the response name of the mutation field it records.
+    /// </summary>
+    internal readonly record struct OperationRecordKey(OperationOwner Owner, string OperationId, string Field)
+    {
+        /// <summary>The key as store column values, in a fresh dictionary the caller may extend.</summary>
+        public Dictionary<string, object?> Columns() => new(StringComparer.OrdinalIgnoreCase)
+        {
+            [Col.Tenant] = Owner.Tenant,
+            [Col.Caller] = Owner.Caller,
+            [Col.OperationId] = OperationId,
+            [Col.Field] = Field,
+        };
     }
 
     /// <summary>A committed operation record: the request it was recorded for and the field's result as JSON.</summary>

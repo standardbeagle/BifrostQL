@@ -53,9 +53,9 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
             "CREATE TABLE ledger (id INTEGER PRIMARY KEY, title TEXT NOT NULL);" +
             // A column whose name differs from its GraphQL field (rate_pct), denied to the clerk.
             "CREATE TABLE royalties (id INTEGER PRIMARY KEY, author_id INTEGER NOT NULL REFERENCES authors(id), \"rate-pct\" INTEGER NULL);" +
-            "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, " +
+            "CREATE TABLE operation_ids (tenant TEXT NOT NULL, caller TEXT NOT NULL, operation_id TEXT NOT NULL, field_name TEXT NOT NULL, " +
             "table_name TEXT NOT NULL, action TEXT NOT NULL, target_key TEXT NOT NULL, input_hash TEXT NOT NULL, " +
-            "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id));");
+            "result TEXT NULL, created_at TEXT NOT NULL, PRIMARY KEY (tenant, caller, operation_id, field_name));");
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -189,7 +189,8 @@ public sealed class OperationIdBatchSaveTests : IAsyncLifetime
 
     [Theory]
     [InlineData("actions", """mutation { notes_batch(actions: [{ insert: { title: "other" } }], _operationId: "op-batch") }""")]
-    [InlineData("verb", """mutation { notes(insert: { title: "a" }, _operationId: "op-batch") }""")]
+    // A record is keyed by the field's response name, so the other field is aliased to the batch's.
+    [InlineData("verb", """mutation { notes_batch: notes(insert: { title: "a" }, _operationId: "op-batch") }""")]
     public async Task Same_operation_id_on_a_different_write_than_the_recorded_batch_is_refused_as_reused(string differs, string mutation)
     {
         using var first = await SendAsync(

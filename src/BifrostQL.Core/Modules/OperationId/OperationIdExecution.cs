@@ -75,9 +75,12 @@ namespace BifrostQL.Core.Modules.OperationId
         }
 
         /// <summary>
-        /// Answers a retry of a recorded write, or claims <paramref name="operationId"/>, runs
-        /// <paramref name="write"/> inside one operation scope, and records its result. A write
-        /// that throws rolls the claim back with it, so a failed write leaves no record.
+        /// Answers a retry of a recorded write, or claims <paramref name="operationId"/> for
+        /// <paramref name="field"/> (the mutation field's response name, see
+        /// <see cref="FieldOf"/>), runs <paramref name="write"/> inside one operation scope, and
+        /// records its result. A write that throws rolls the claim back with it, so a failed write
+        /// leaves no record. Each field of a request is its own record, so one id sent for a
+        /// request of several mutation fields records, and replays, each field.
         ///
         /// <para>When the caller already holds a committed record for the id,
         /// <paramref name="authorizeReplay"/> runs first (it throws to refuse, so a refused
@@ -100,14 +103,14 @@ namespace BifrostQL.Core.Modules.OperationId
         /// </summary>
         public static async Task<object?> ExecuteAsync(
             IDbModel model, IDbConnFactory connFactory, IDictionary<string, object?> userContext,
-            string operationId, OperationFingerprint fingerprint, Action authorizeReplay,
+            string operationId, string field, OperationFingerprint fingerprint, Action authorizeReplay,
             Func<OperationWriteScope, Task<object?>> write, CancellationToken cancellationToken)
         {
             // ModelConfigValidator refuses a model whose opted-in tables have no store, so a miss
             // here is a model that skipped validation: fail closed rather than write unrecorded.
             var store = OperationIdConfig.FindStore(model)
                 ?? throw new BifrostExecutionError("The operation id could not be recorded, so the write did not run.");
-            var owner = OwnerOf(model, userContext);
+            var key = new OperationRecordKey(OwnerOf(model, userContext), operationId, field);
             var dialect = connFactory.Dialect;
 
             var claimLost = false;
@@ -141,7 +144,7 @@ namespace BifrostQL.Core.Modules.OperationId
             Task<object?> RunOnceAsync(bool lastAttempt) => OperationWriteScope.RunAsync(connFactory, async scope =>
             {
                 var recorded = await OperationIdStore.FindAsync(
-                    store, dialect, scope.Connection, scope.Transaction, owner, operationId, cancellationToken);
+                    store, dialect, scope.Connection, scope.Transaction, key, cancellationToken);
                 if (recorded is not null)
                 {
                     // Authorization first: a caller the policy now refuses gets the live refusal
@@ -158,7 +161,7 @@ namespace BifrostQL.Core.Modules.OperationId
                 try
                 {
                     await OperationIdStore.ClaimAsync(
-                        store, dialect, scope.Connection, scope.Transaction, owner, operationId, fingerprint, cancellationToken);
+                        store, dialect, scope.Connection, scope.Transaction, key, fingerprint, cancellationToken);
                 }
                 catch (Exception ex) when (BifrostExecutionError.IsUniqueViolation(ex))
                 {
@@ -181,11 +184,14 @@ namespace BifrostQL.Core.Modules.OperationId
                 }
                 var result = await write(scope);
                 await OperationIdStore.RecordResultAsync(
-                    store, dialect, scope.Connection, scope.Transaction, owner, operationId,
+                    store, dialect, scope.Connection, scope.Transaction, key,
                     CanonicalJson.Serialize(result), cancellationToken);
                 return result;
             }, cancellationToken);
         }
+
+        /// <summary>The response name a field's record is keyed by: its alias, else its name.</summary>
+        internal static string FieldOf(IBifrostFieldContext context) => context.FieldAlias ?? context.FieldName;
 
         /// <summary>
         /// Whether <paramref name="ex"/> (or an inner exception) is a driver error saying the

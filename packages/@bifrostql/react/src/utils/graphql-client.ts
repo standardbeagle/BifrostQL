@@ -55,6 +55,18 @@ export class BifrostGraphQLError extends Error {
 }
 
 /**
+ * Whether a request that threw got a GraphQL answer from the server (its `errors` list), as
+ * opposed to ending with none: the fetch failed, the status was not 2xx, or the body was not a
+ * GraphQL response. Only a request with no answer may have applied unseen.
+ */
+export function isGraphQLAnswer(error: unknown): boolean {
+  return (
+    error instanceof BifrostGraphQLError ||
+    (error instanceof BifrostAuthError && error.cause instanceof BifrostGraphQLError)
+  );
+}
+
+/**
  * Optional auth-recovery hooks passed to {@link executeGraphQL}. These mirror
  * the `refreshToken` / `onSessionExpired` fields on `BifrostConfig` and are
  * forwarded by the hook layer.
@@ -180,7 +192,8 @@ async function sendRequest<T>(
   if (json.errors) {
     const error = new BifrostGraphQLError(json.errors);
     if (json.errors.some(isAuthError)) {
-      throw new BifrostAuthError(error.message);
+      // The cause marks the failure as a GraphQL answer, not a transport failure.
+      throw new BifrostAuthError(error.message, error);
     }
     throw error;
   }

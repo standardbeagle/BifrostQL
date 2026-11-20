@@ -68,6 +68,7 @@ On `main` after v0.4.28; not yet on NuGet.
 
 - `operation-id: none` opts a table out of operation ids, as no value does, so a later metadata rule can take a table out of a wildcard one: `public.* { operation-id: required }` then `public.operation_ids { visibility: hidden; operation-id: none }`. A hidden table accepts only `none`.
 - `:root { operation-id: optional | required }` records every mutation server operation (`IBifrostOperation`) under the request's `Idempotency-Key`, in the operation's own transaction. A retry with the same arguments answers the recorded result (an object result included) and runs nothing; other arguments answer `OPERATION_ID_REUSED`; a run that throws records nothing. Under `required` an operation without a key is refused with `OPERATION_ID_REQUIRED` before it runs. Writes a recorded run makes reach an `operation-id: required` table.
+- `@bifrostql/react`: `useBifrostMutation` sends an `Idempotency-Key` on every call and repeats it on the same instance's next call after an unanswered one (failed fetch or non-2xx status), so a lost response is not applied twice.
 
 ### Breaking — fourth review pass (LDAP, RESP)
 

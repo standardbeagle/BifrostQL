@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, render, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BifrostProvider } from '../components/bifrost-provider';
@@ -139,6 +139,7 @@ describe('useBifrostMutation', () => {
     expect(fetchOptions.headers).toEqual({
       'Content-Type': 'application/json',
       Authorization: 'Bearer test-token',
+      'Idempotency-Key': expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
   });
 
@@ -414,5 +415,178 @@ describe('useBifrostMutation', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(result.current.isIdle).toBe(false);
+  });
+
+  describe('Idempotency-Key', () => {
+    const insert =
+      'mutation Insert($detail: Insert_users) { users(insert: $detail) }';
+    const answered = () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () => Promise.resolve({ data: { users: 1 } }),
+    });
+    const graphQlError = () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: () =>
+        Promise.resolve({
+          errors: [{ message: 'refused', extensions: { code: 'CONFLICT' } }],
+        }),
+    });
+    const serverError = () => ({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      json: () => Promise.reject(new Error('no body')),
+    });
+
+    /** The Idempotency-Key header each fetch call sent, in order. */
+    function sentKeys(fetchMock: ReturnType<typeof vi.fn>): string[] {
+      return fetchMock.mock.calls.map(
+        (call) =>
+          (call[1] as { headers: Record<string, string> }).headers[
+            'Idempotency-Key'
+          ],
+      );
+    }
+
+    async function settle(promise: Promise<unknown>) {
+      await act(async () => {
+        await promise.catch(() => undefined);
+      });
+    }
+
+    it('sends a new Idempotency-Key with each call', async () => {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(answered()));
+      globalThis.fetch = fetchMock;
+      const { result } = renderHook(() => useBifrostMutation(insert), {
+        wrapper: createWrapper(),
+      });
+
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+
+      const [first, second] = sentKeys(fetchMock);
+      expect(first).toMatch(/^[0-9a-f-]{36}$/);
+      expect(second).toMatch(/^[0-9a-f-]{36}$/);
+      expect(second).not.toBe(first);
+    });
+
+    it('sends the same key when the instance repeats its unanswered call', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockImplementation(() => Promise.resolve(answered()));
+      globalThis.fetch = fetchMock;
+      const { result } = renderHook(() => useBifrostMutation(insert), {
+        wrapper: createWrapper(),
+      });
+
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+
+      const [first, retry] = sentKeys(fetchMock);
+      expect(first).toMatch(/^[0-9a-f-]{36}$/);
+      expect(retry).toBe(first);
+    });
+
+    it("sends the same key when the instance's next call has other variables", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(serverError())
+        .mockImplementation(() => Promise.resolve(answered()));
+      globalThis.fetch = fetchMock;
+      const { result } = renderHook(() => useBifrostMutation(insert), {
+        wrapper: createWrapper(),
+      });
+
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+      await settle(result.current.mutateAsync({ detail: { name: 'corrected' } }));
+
+      const [first, retry] = sentKeys(fetchMock);
+      expect(first).toMatch(/^[0-9a-f-]{36}$/);
+      expect(retry).toBe(first);
+    });
+
+    it('draws a new key once a call is answered', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockResolvedValueOnce(graphQlError())
+        .mockImplementation(() => Promise.resolve(answered()));
+      globalThis.fetch = fetchMock;
+      const { result } = renderHook(() => useBifrostMutation(insert), {
+        wrapper: createWrapper(),
+      });
+
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+      await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
+
+      const [first, retry, next] = sentKeys(fetchMock);
+      expect(retry).toBe(first);
+      expect(next).not.toBe(retry);
+    });
+
+    it('forgets an unanswered call, and clears its error, when another instance sends a call', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockImplementation(() => Promise.resolve(answered()));
+      globalThis.fetch = fetchMock;
+      const { result } = renderHook(
+        () => ({ a: useBifrostMutation(insert), b: useBifrostMutation(insert) }),
+        { wrapper: createWrapper() },
+      );
+
+      await settle(result.current.a.mutateAsync({ detail: { name: 'a' } }));
+      await waitFor(() => expect(result.current.a.error).not.toBeNull());
+      await settle(result.current.b.mutateAsync({ detail: { name: 'b' } }));
+      await waitFor(() => expect(result.current.a.error).toBeNull());
+      await settle(result.current.a.mutateAsync({ detail: { name: 'a' } }));
+
+      const [aFirst, , aAgain] = sentKeys(fetchMock);
+      expect(aAgain).not.toBe(aFirst);
+    });
+
+    it('forgets an unanswered call on reset and on unmount', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockImplementation(() => Promise.resolve(answered()));
+      globalThis.fetch = fetchMock;
+
+      let hook: ReturnType<typeof useBifrostMutation> | undefined;
+      function Probe() {
+        hook = useBifrostMutation(insert);
+        return null;
+      }
+      const Wrapper = createWrapper();
+      const view = render(
+        <Wrapper>
+          <Probe key="first" />
+        </Wrapper>,
+      );
+
+      // reset() forgets the unanswered call.
+      await settle(hook!.mutateAsync({ detail: { name: 'a' } }));
+      act(() => hook!.reset());
+      await settle(hook!.mutateAsync({ detail: { name: 'a' } }));
+
+      // The second call failed unanswered too; a remount under the same provider forgets it.
+      view.rerender(
+        <Wrapper>
+          <Probe key="second" />
+        </Wrapper>,
+      );
+      await settle(hook!.mutateAsync({ detail: { name: 'a' } }));
+
+      const [first, afterReset, afterRemount] = sentKeys(fetchMock);
+      expect(afterReset).not.toBe(first);
+      expect(afterRemount).not.toBe(afterReset);
+    });
   });
 });

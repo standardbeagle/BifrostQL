@@ -1,7 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useContext } from 'react';
-import { BifrostContext } from '../components/bifrost-provider';
-import { executeGraphQL } from '../utils/graphql-client';
+import { useCallback, useContext, useEffect, useRef } from 'react';
+import {
+  BifrostContext,
+  BifrostMutationContext,
+} from '../components/bifrost-provider';
+import { executeGraphQL, isGraphQLAnswer } from '../utils/graphql-client';
 import { invalidateBifrostQueries } from '../utils/invalidation';
 
 /** Options for the {@link useBifrostMutation} hook. */
@@ -25,6 +28,15 @@ export interface UseBifrostMutationOptions {
 
 /**
  * Hook for executing GraphQL mutations with automatic query invalidation.
+ *
+ * Every call sends an `Idempotency-Key` header, so a server that records operation ids applies
+ * one intent once. A call sends a new `crypto.randomUUID()`, unless it is a retry: this
+ * instance's next call after its last call ended unanswered (the fetch failed or the status was
+ * not 2xx), whatever its variables. A retry repeats the key; the server answers an unchanged
+ * retry with the first result, runs a changed one when the first rolled back, and refuses it
+ * with `OPERATION_ID_REUSED` when the first applied. The provider forgets the unanswered call,
+ * and clears this instance's `error`, on any GraphQL answer to it, a call sent through the
+ * provider by another instance, `reset()`, or unmount.
  *
  * Use the `buildInsertMutation`, `buildUpdateMutation`, `buildUpsertMutation`,
  * or `buildDeleteMutation` helpers to construct the mutation string.
@@ -55,22 +67,57 @@ export function useBifrostMutation<
     throw new Error('useBifrostMutation must be used within a BifrostProvider');
   }
 
-  const queryClient = useQueryClient();
+  const store = useContext(BifrostMutationContext);
+  if (!store) {
+    throw new Error('useBifrostMutation must be used within a BifrostProvider');
+  }
 
-  return useMutation<TData, Error, TVariables>({
-    mutationFn: (variables) =>
-      executeGraphQL<TData>(
-        config.endpoint,
-        config.headers ?? {},
-        mutation,
-        variables,
-        undefined,
-        config.getToken,
-        {
-          refreshToken: config.refreshToken,
-          onSessionExpired: config.onSessionExpired,
-        },
-      ),
+  const queryClient = useQueryClient();
+  const owner = useRef(Symbol('useBifrostMutation')).current;
+  const resetRef = useRef<() => void>(() => undefined);
+
+  const forgetOwn = useCallback(() => {
+    if (store.pending?.owner === owner) {
+      store.pending = null;
+    }
+  }, [store, owner]);
+
+  useEffect(() => forgetOwn, [forgetOwn]);
+
+  const result = useMutation<TData, Error, TVariables>({
+    mutationFn: async (variables) => {
+      const pending = store.pending;
+      const isRetry = pending?.owner === owner;
+      if (pending && !isRetry) {
+        // Another instance's unanswered call: this call ends its life as a retry.
+        store.pending = null;
+        pending.forget();
+      }
+      const key = isRetry ? pending.key : crypto.randomUUID();
+      try {
+        const data = await executeGraphQL<TData>(
+          config.endpoint,
+          { ...config.headers, 'Idempotency-Key': key },
+          mutation,
+          variables,
+          undefined,
+          config.getToken,
+          {
+            refreshToken: config.refreshToken,
+            onSessionExpired: config.onSessionExpired,
+          },
+        );
+        forgetOwn();
+        return data;
+      } catch (error) {
+        if (isGraphQLAnswer(error)) {
+          forgetOwn();
+        } else {
+          store.pending = { owner, key, forget: () => resetRef.current() };
+        }
+        throw error;
+      }
+    },
     onSuccess: (data) => {
       if (options.invalidateQueries) {
         invalidateBifrostQueries(
@@ -83,4 +130,12 @@ export function useBifrostMutation<
     },
     onError: options.onError,
   });
+  resetRef.current = result.reset;
+
+  const reset = useCallback(() => {
+    forgetOwn();
+    result.reset();
+  }, [forgetOwn, result]);
+
+  return { ...result, reset };
 }

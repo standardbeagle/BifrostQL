@@ -9,6 +9,24 @@ import type { BifrostConfig } from '../types';
 
 export const BifrostContext = createContext<BifrostConfig | null>(null);
 
+/**
+ * The one mutation call a provider remembers for a retry: the last call sent through it, while
+ * it is unanswered (it ended with no GraphQL answer) and the hook instance that sent it is
+ * mounted. `owner` identifies that instance; `forget` clears the instance's `error`.
+ */
+export interface PendingMutationCall {
+  owner: symbol;
+  key: string;
+  forget: () => void;
+}
+
+/** Per-provider holder of the {@link PendingMutationCall}, read by `useBifrostMutation`. */
+export interface PendingMutationStore {
+  pending: PendingMutationCall | null;
+}
+
+export const BifrostMutationContext = createContext<PendingMutationStore | null>(null);
+
 export interface BifrostProviderProps {
   config: BifrostConfig;
   queryClient?: QueryClient;
@@ -50,9 +68,16 @@ export function BifrostProvider({
   }
 
   const queryClient = externalClient ?? (parentClient ? null : internalClient);
+  const [pendingMutation] = useState<PendingMutationStore>(() => ({
+    pending: null,
+  }));
 
   const contextContent = (
-    <BifrostContext.Provider value={config}>{children}</BifrostContext.Provider>
+    <BifrostContext.Provider value={config}>
+      <BifrostMutationContext.Provider value={pendingMutation}>
+        {children}
+      </BifrostMutationContext.Provider>
+    </BifrostContext.Provider>
   );
 
   if (queryClient) {

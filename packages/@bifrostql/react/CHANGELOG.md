@@ -32,6 +32,15 @@ the call-site update it requires.
   the `id`, retargeting the update at another row. The mutation now rejects
   without sending; change a key with a dedicated mutation.
 
+### Added
+
+- **`useBifrostMutation` sends an `Idempotency-Key` with every call.** A
+  new `crypto.randomUUID()` per call; the instance's next call after an
+  unanswered one (failed fetch or non-2xx status) repeats its key, so a
+  server recording operation ids applies a resend once. The provider
+  forgets the key on a GraphQL answer, another instance's call, `reset()`
+  or unmount, and clears that instance's `error`.
+
 ### Fixed
 
 - **Composite primary keys.** `useBifrostTable`/`BifrostTable` `rowKey`,

@@ -81,6 +81,8 @@ insert.mutate({ detail: { name: 'Alice', email: 'alice@example.com' } });
 
 `buildInsertMutation`, `buildUpdateMutation`, `buildUpsertMutation`, and `buildDeleteMutation` cover the four mutation shapes.
 
+Every call sends an `Idempotency-Key` header, a fresh `crypto.randomUUID()`, so a server that [records operation ids](/guides/mutations/#operation-ids) applies one intent once. When a call ends with no GraphQL answer (the fetch failed, or the status was not 2xx), the provider remembers its key, and the same hook instance's next call sends it again, even with corrected variables. The server answers an unchanged retry with the first result, runs a changed one when the first rolled back, and refuses it with `OPERATION_ID_REUSED` when the first applied. The provider forgets the key, and clears that instance's `error`, on any GraphQL answer, a call from another `useBifrostMutation` instance under the same provider, `reset()`, or unmount.
+
 ### Efficient writes
 
 - **`useBifrostDiff`** previews and submits only the fields that actually changed, and flags conflicts if the server row drifted since you loaded it.

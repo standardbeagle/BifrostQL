@@ -211,6 +211,27 @@ public sealed class BifrostOperationContext
     }
 
     /// <summary>
+    /// Inserts <paramref name="rows"/> into <paramref name="table"/> as the caller, in the
+    /// operation's transaction, and returns each row's key in row order (the key value, or a
+    /// column → value map for a composite key). Each row runs the transformer chain with its own
+    /// <see cref="MutationTransformContext.MutationState"/> (started from <paramref name="state"/>),
+    /// and a refusal of any row refuses the whole call before anything is written. Rows that write
+    /// the same columns go in one <c>INSERT</c>; in-transaction hooks that implement
+    /// <see cref="Modules.IInTransactionSetMutationHook"/> are called once with every row. Needs a
+    /// database that returns a multi-row insert's keys in row order (PostgreSQL); elsewhere it
+    /// refuses.
+    /// </summary>
+    public Task<IReadOnlyList<object?>> InsertManyAsync(
+        string table, IEnumerable<IReadOnlyDictionary<string, object?>> rows, IReadOnlyDictionary<string, object?>? state = null)
+    {
+        var dbTable = ResolveWritableTable(table);
+        return TableMutationPipeline.InsertManyAsync(
+            dbTable,
+            rows.Select(r => new Dictionary<string, object?>(r, StringComparer.OrdinalIgnoreCase)).ToList(),
+            PipelineContext(state));
+    }
+
+    /// <summary>
     /// Updates the row of <paramref name="table"/> whose key columns are in <paramref name="values"/>,
     /// as the caller, and returns the number of rows changed: 0 when the row does not exist or is
     /// outside the caller's tenant or row scope. <paramref name="state"/> starts the write's

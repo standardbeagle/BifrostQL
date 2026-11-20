@@ -62,6 +62,9 @@ public abstract class SqlDialectBase : ISqlDialect
     public virtual string? ReturningIdentityClauseFor(IReadOnlyList<string> keyColumns) => ReturningIdentityClause;
 
     /// <inheritdoc />
+    public virtual int? OrderedInsertReturningParameterLimit => null;
+
+    /// <inheritdoc />
     public virtual string AssignmentPlaceholder(string columnName, string? dataType)
         => CastParameterReference($"{ParameterPrefix}{SqlParameterNames.Sanitize(columnName)}", dataType);
 

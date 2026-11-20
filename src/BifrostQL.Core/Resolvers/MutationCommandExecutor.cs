@@ -209,6 +209,79 @@ namespace BifrostQL.Core.Resolvers
             return (affected == 0 ? null : identity, affected);
         }
 
+        /// <summary>
+        /// Inserts <paramref name="rows"/>, which all write the same <paramref name="columns"/>, with
+        /// as few multi-row <c>INSERT … VALUES (…),(…) RETURNING &lt;keys&gt;</c> statements as the
+        /// dialect's parameter limit allows (one for any set under it), and returns each row's key
+        /// in row order: the key value for a single-column key, a column → value map for a
+        /// composite key. Values bind by position (<c>@p0…</c>), the namespace no column name can
+        /// take. A statement that returns fewer keys than it had rows (a trigger dropped one)
+        /// throws, rolling the write back: its keys could no longer be matched to its rows.
+        /// </summary>
+        public static async ValueTask<object?[]> ExecuteInsertMany(
+            DbConnection conn, DbTransaction transaction, ISqlDialect dialect, IDbTable table,
+            IReadOnlyList<string> columns, IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+            CancellationToken cancellationToken = default)
+        {
+            var parameterLimit = dialect.OrderedInsertReturningParameterLimit
+                ?? throw new BifrostExecutionError(
+                    $"Inserting many rows in one statement needs a database that returns their keys in row order; {dialect.GetType().Name} does not.");
+            var keyColumns = table.KeyColumns.Select(k => k.ColumnName).ToList();
+            if (keyColumns.Count == 0)
+                throw new BifrostExecutionError($"Inserting many rows in one statement needs a primary key to return; '{table.DbName}' has none.");
+            if (columns.Count == 0)
+                throw new BifrostExecutionError("Inserting many rows in one statement needs at least one column per row.");
+
+            var tableRef = dialect.TableReference(table.TableSchema, table.DbName);
+            var columnList = string.Join(",", columns.Select(dialect.EscapeIdentifier));
+            var returning = string.Join(",", keyColumns.Select(dialect.EscapeIdentifier));
+            var columnTypes = columns.Select(c => table.ColumnLookup.TryGetValue(c, out var col) ? col.DataType : null).ToList();
+            var rowsPerStatement = Math.Max(1, parameterLimit / columns.Count);
+
+            var keys = new object?[rows.Count];
+            for (var start = 0; start < rows.Count; start += rowsPerStatement)
+            {
+                var count = Math.Min(rowsPerStatement, rows.Count - start);
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = transaction;
+                var values = new System.Text.StringBuilder();
+                var index = 0;
+                for (var r = 0; r < count; r++)
+                {
+                    values.Append(r == 0 ? "(" : ",(");
+                    for (var c = 0; c < columns.Count; c++)
+                    {
+                        if (c > 0) values.Append(',');
+                        values.Append(dialect.CastParameterReference(
+                            $"{dialect.ParameterPrefix}{SqlParameterNames.Generated(index)}", columnTypes[c]));
+                        AddPositionalParameter(cmd, index, rows[start + r][columns[c]]);
+                        index++;
+                    }
+                    values.Append(')');
+                }
+                cmd.CommandText = $"INSERT INTO {tableRef}({columnList}) VALUES {values} RETURNING {returning};";
+
+                var returned = 0;
+                await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        if (returned == count)
+                            throw new BifrostExecutionError("A multi-row insert returned more keys than it had rows.");
+                        keys[start + returned] = keyColumns.Count == 1
+                            ? HandleDecimals(reader.GetValue(0))
+                            : keyColumns.Select((k, i) => (k, HandleDecimals(reader.GetValue(i))))
+                                .ToDictionary(p => p.k, p => p.Item2, StringComparer.OrdinalIgnoreCase);
+                        returned++;
+                    }
+                }
+                if (returned != count)
+                    throw new BifrostExecutionError(
+                        $"A multi-row insert into '{table.DbName}' wrote {returned} of {count} rows (a trigger dropped one), so its keys cannot be matched to its rows.");
+            }
+            return keys;
+        }
+
         // transaction may be null when the caller manages the transaction at the SQL
         // level (dialect BEGIN/COMMIT keywords) rather than through the ADO.NET
         // DbTransaction API — the TreeSync path. A null cmd.Transaction then runs the

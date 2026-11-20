@@ -80,6 +80,20 @@ namespace BifrostQL.Core.Resolvers
             await hooks.RunAsync(context with { Result = result, AffectedRows = affectedRows });
         }
 
+        /// <summary>
+        /// The after-write in-transaction phase of a write of many rows: set hooks once with every
+        /// row, per-row hooks once per row (see <see cref="InTransactionMutationHooks.RunSetAsync"/>).
+        /// A throw rolls the whole write back.
+        /// </summary>
+        public static async ValueTask RunInTransactionSetHooksAsync(
+            IServiceProvider? services, MutationSetContext set, Func<MutationSetRow, MutationObserverContext> rowContext)
+        {
+            var hooks = services?.GetService<InTransactionMutationHooks>();
+            if (hooks is null)
+                return;
+            await hooks.RunSetAsync(set, rowContext);
+        }
+
         public static async ValueTask NotifyStateTransitionAsync(
             IServiceProvider? services,
             StateTransitionInfo? transition,

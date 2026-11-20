@@ -338,6 +338,93 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// Inserts many rows as one write, in one transaction (the operation's, when the context
+        /// carries a <see cref="MutationPipelineContext.WriteScope"/>): each row runs the
+        /// transformer chain and the before-commit hooks with its own state bag, and a refusal of
+        /// any row refuses the whole call before anything is written. The rows are then written by
+        /// one multi-row INSERT per distinct column set (one, when every row writes the same
+        /// columns), the in-transaction hooks run once for the set (a set hook) or once per row (a
+        /// per-row hook), and the keys come back in row order. Notifications fire per row after
+        /// commit. A table under an approval gate cannot take a set write: the gate diverts one row
+        /// at a time, so the call is refused rather than half-diverted.
+        /// </summary>
+        public static async Task<IReadOnlyList<object?>> InsertManyAsync(
+            IDbTable table, IReadOnlyList<Dictionary<string, object?>> rows, MutationPipelineContext ctx)
+        {
+            GuardNotHistoryTarget(table, ctx.Model);
+            if (rows.Count == 0)
+                return Array.Empty<object?>();
+            var dialect = ctx.ConnFactory.Dialect;
+
+            var written = new Dictionary<string, object?>[rows.Count];
+            var states = new IDictionary<string, object?>[rows.Count];
+            object?[] keys = Array.Empty<object?>();
+            await RunInTransactionAsync(ctx, async (conn, transaction) =>
+            {
+                for (var i = 0; i < rows.Count; i++)
+                {
+                    var mutationState = NewWriteState(ctx);
+                    var transformResult = await ctx.Transformers.TransformAsync(
+                        table, MutationType.Insert, rows[i], TransformContext(ctx, conn, transaction, dialect, mutationState));
+                    transformResult.ThrowIfDenied();
+                    var hookContext = HookContext(table, MutationType.Insert, transformResult.Data, ctx, conn, transaction, dialect, mutationState);
+                    await MutationNotifier.RunBeforeCommitHooksAsync(ctx.Services, hookContext);
+                    if (ApprovalInterceptMutationHook.TryGetDivertMessage(hookContext, out _))
+                        throw new BifrostExecutionError(
+                            $"'{table.GraphQlName}' is under an approval gate, which holds rows one at a time; insert them one by one.");
+                    written[i] = transformResult.Data;
+                    states[i] = mutationState;
+                }
+
+                keys = new object?[rows.Count];
+                foreach (var group in Enumerable.Range(0, rows.Count).GroupBy(i => ColumnSetKey(written[i])))
+                {
+                    var indices = group.ToList();
+                    var groupKeys = await MutationCommandExecutor.ExecuteInsertMany(
+                        conn, transaction, dialect, table, written[indices[0]].Keys.ToList(),
+                        indices.Select(i => (IReadOnlyDictionary<string, object?>)written[i]).ToList(),
+                        ctx.CancellationToken);
+                    for (var g = 0; g < indices.Count; g++)
+                        keys[indices[g]] = groupKeys[g];
+                }
+
+                var set = new MutationSetContext
+                {
+                    Table = table,
+                    MutationType = MutationType.Insert,
+                    Rows = Enumerable.Range(0, rows.Count).Select(i => new MutationSetRow(written[i], keys[i], states[i])).ToList(),
+                    UserContext = ctx.UserContext,
+                    Connection = conn,
+                    Transaction = transaction,
+                    Model = ctx.Model,
+                    Dialect = dialect,
+                    ConnFactory = ctx.ConnFactory,
+                    TransactionState = ctx.WriteScope?.TransactionState ?? MutationObserverContext.NewMutationState(),
+                    CancellationToken = ctx.CancellationToken,
+                };
+                await MutationNotifier.RunInTransactionSetHooksAsync(ctx.Services, set, row =>
+                    HookContext(table, MutationType.Insert, row.Data, ctx, conn, transaction, dialect, row.MutationState) with
+                    {
+                        Result = row.Key,
+                        AffectedRows = 1,
+                        TransactionState = set.TransactionState,
+                    });
+            });
+
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var (data, key) = (written[i], keys[i]);
+                await AfterCommitAsync(ctx, () => MutationNotifier.NotifyMutationAsync(
+                    ctx.Services, table, MutationType.Insert, data, key, ctx.UserContext, 1));
+            }
+            return keys;
+        }
+
+        /// <summary>The written column set of one row, the grouping key of a multi-row insert.</summary>
+        private static string ColumnSetKey(Dictionary<string, object?> row)
+            => string.Join("\u0000", row.Keys.Order(StringComparer.OrdinalIgnoreCase));
+
+        /// <summary>
         /// Executes an update and returns ONLY the mutation field's scalar value.
         ///
         /// <para><b>That value is not an affected-row count and must never be read

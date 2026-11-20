@@ -117,6 +117,14 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// Binds the positional value <c>@p&lt;index&gt;</c> (<see cref="SqlParameterNames.Generated"/>),
+        /// for a statement that names its values by position instead of by column (a multi-row
+        /// INSERT binds one value per row per column).
+        /// </summary>
+        public static void AddPositionalParameter(DbCommand cmd, int index, object? value)
+            => Bind(cmd, $"@{SqlParameterNames.Generated(index)}", value, dbType: null);
+
+        /// <summary>
         /// Binds the <c>@p0/@p1/…</c> parameters carried by a rendered
         /// AdditionalFilter. Their names come from SqlParameterCollection, whose
         /// generated shape <see cref="SqlParameterNames"/> reserves against

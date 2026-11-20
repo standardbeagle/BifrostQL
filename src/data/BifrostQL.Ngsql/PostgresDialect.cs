@@ -80,6 +80,14 @@ public sealed class PostgresDialect : StandardConcatDialectBase
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// PostgreSQL's wire protocol carries at most 65535 parameters per statement, and a
+    /// multi-row <c>INSERT … VALUES … RETURNING</c> returns its rows in VALUES order (the
+    /// order Npgsql's and EF Core's batched inserts map keys by).
+    /// </remarks>
+    public override int? OrderedInsertReturningParameterLimit => 65535;
+
+    /// <inheritdoc />
     public override bool ComparesAsUuid(string? dataType) => StringNormalizer.NormalizeType(dataType) is "uuid";
 
     /// <inheritdoc />

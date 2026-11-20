@@ -242,6 +242,30 @@ public sealed class InTransactionMutationHooks
                 await hook.AfterWriteInTransactionAsync(context);
         }
     }
+
+    /// <summary>
+    /// Runs the after-write phase of one write of many rows: each applying
+    /// <see cref="IInTransactionSetMutationHook"/> once with every row, each other applying hook
+    /// once per row with that row's context (from <paramref name="rowContext"/>), in registration
+    /// order. <paramref name="set"/> holds only rows the write changed; an empty set runs nothing.
+    /// </summary>
+    public async ValueTask RunSetAsync(MutationSetContext set, Func<MutationSetRow, MutationObserverContext> rowContext)
+    {
+        if (set.Rows.Count == 0)
+            return;
+        foreach (var hook in _hooks)
+        {
+            if (!hook.AppliesTo(set.Table))
+                continue;
+            if (hook is IInTransactionSetMutationHook setHook)
+            {
+                await setHook.AfterSetWriteInTransactionAsync(set);
+                continue;
+            }
+            foreach (var row in set.Rows)
+                await hook.AfterWriteInTransactionAsync(rowContext(row));
+        }
+    }
 }
 
 public sealed class MutationObservers

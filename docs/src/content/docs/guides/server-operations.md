@@ -95,6 +95,7 @@ Both checks run before `ExecuteAsync`. A grant denial returns
 | `QueryAsync(table, where, columns, limit, sort)` | Rows as the caller. See [Reading rows](#reading-rows). Tenant isolation, row scope, soft delete, column read guards and decryption apply. Rows are keyed by GraphQL field name. |
 | `QueryAllAsync(table, where, columns, sort)` | Every row `QueryAsync` would read, with no row window, as one statement. See [Reading a whole set](#reading-a-whole-set). |
 | `InsertAsync(table, values)` | One insert through the full mutation pipeline; returns the new key |
+| `InsertManyAsync(table, rows)` | Many inserts as one write: the chain runs per row, a refusal of any row refuses the call, rows go in one `INSERT`, keys come back in row order. See [Inserting many rows](#inserting-many-rows). |
 | `UpdateAsync(table, values)` | One update keyed by the key columns in `values`; returns the rows changed (0 when out of scope, or when `values` has no key) |
 | `DeleteAsync(table, key)` | One delete (soft where the table declares it); returns the rows affected |
 | `LockRowAsync(table, key)` | Locks one row until the transaction ends. See [Serializing on a row](#serializing-on-a-row). |
@@ -168,6 +169,24 @@ a row that leaves the set between two windows moves the next window past a row y
 The `max-query-rows` ceiling exists so a client cannot pull a whole table over the wire. An
 operation is your own code, and `QueryAllAsync` is not reachable from a request. `QueryAsync` and
 every generated read keep the ceiling. Keep `where` narrow: the rows are held in memory.
+
+### Inserting many rows
+
+`InsertManyAsync(table, rows)` writes rows the way N `InsertAsync` calls would (as the caller, in
+the operation's transaction, each row through the transformer chain and before-commit hooks with
+its own `MutationState`) but in one `INSERT … VALUES (…),(…) RETURNING`. It returns each row's key
+in row order: the key value, or a column → value map for a composite key. A refusal of any row
+refuses the whole call before anything is written.
+
+Rows that write different column sets go in one statement per set, still in row order. A set larger
+than the database's parameter limit splits into as few statements as the limit allows. Hooks that
+implement `IInTransactionSetMutationHook` are called once with every row (see
+[mutation hooks](/guides/mutation-hooks/)); per-row hooks are called once per row.
+
+It needs a database that returns a multi-row insert's keys in row order, which today is PostgreSQL;
+on another database the call refuses. A table under an approval gate refuses it too, since the gate
+holds rows one at a time. A trigger that drops a row fails the call, because its keys could no longer
+be matched to its rows.
 
 ## Serializing on a row
 

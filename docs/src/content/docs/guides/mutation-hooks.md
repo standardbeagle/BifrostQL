@@ -118,6 +118,29 @@ builder.Services.AddSingleton<IInTransactionMutationHook, OrderTimelineHook>();
 
 The composite collects the hooks the first time it is resolved, so a hook registered after `AddBifrostQL` is still picked up. Hooks run in DI registration order: registered after `AddBifrostQL`, yours run after the built-ins it adds (change history, deferred effects, CDC outbox).
 
+### One call per write: `IInTransactionSetMutationHook`
+
+A hook that writes a sibling row per written row costs one statement per row when it is called once per row. Implement `IInTransactionSetMutationHook` instead and it is called **once per write**, after the write and before commit, on the write's connection and transaction, with every written row in row order. Each `MutationSetRow` carries the row's `Data` as written, its `Key` (the generated identity on an insert) and its own `MutationState`. A single-row write calls it with one row; a write that changed no row does not call it. A throw rolls the whole write back.
+
+```csharp
+public sealed class ActivityHook : IInTransactionSetMutationHook
+{
+    public bool AppliesTo(IDbTable table) => table.DbName == "time_entries";
+
+    public async ValueTask AfterSetWriteInTransactionAsync(MutationSetContext context)
+    {
+        await using var cmd = context.Connection.CreateCommand();
+        cmd.Transaction = context.Transaction;
+        // One INSERT … VALUES (…),(…) built from context.Rows: one event per entry.
+        await cmd.ExecuteNonQueryAsync(context.CancellationToken);
+    }
+}
+
+builder.Services.AddSingleton<IInTransactionMutationHook, ActivityHook>();
+```
+
+Register it as an `IInTransactionMutationHook`, like any in-transaction hook: the composite sees the set form and never also calls it per row. A hook that implements only `IInTransactionMutationHook` keeps one call per row on every path. Today `BifrostOperationContext.InsertManyAsync` is the write that hands a set hook many rows; every single-row write hands it one.
+
 ## 2. Hooks apply to every table unless you say otherwise
 
 Both hook interfaces carry a default method:

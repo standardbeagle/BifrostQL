@@ -227,6 +227,15 @@ public interface ISqlDialect
     string? ReturningIdentityClauseFor(IReadOnlyList<string> keyColumns) => ReturningIdentityClause;
 
     /// <summary>
+    /// The most bound parameters one multi-row <c>INSERT … VALUES (…),(…) RETURNING &lt;keys&gt;</c>
+    /// may carry, on an engine that returns that statement's keys one per VALUES row in row
+    /// order. Null when the engine cannot (no RETURNING, or no row order), and an insert of many
+    /// rows in one statement (<c>BifrostOperationContext.InsertManyAsync</c>) refuses on it
+    /// rather than guess which key belongs to which row.
+    /// </summary>
+    int? OrderedInsertReturningParameterLimit => null;
+
+    /// <summary>
     /// Renders the bound-parameter placeholder for an assignment context (INSERT VALUES /
     /// UPDATE SET) targeting a column of the given SQL type. The default returns the bare
     /// <c>@column</c>. Dialects whose driver binds string values as an explicit text type —

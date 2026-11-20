@@ -95,7 +95,7 @@ Both checks run before `ExecuteAsync`. A grant denial returns
 | `QueryAsync(table, where, columns, limit, sort)` | Rows as the caller. See [Reading rows](#reading-rows). Tenant isolation, row scope, soft delete, column read guards and decryption apply. Rows are keyed by GraphQL field name. |
 | `QueryAllAsync(table, where, columns, sort)` | Every row `QueryAsync` would read, with no row window, as one statement. See [Reading a whole set](#reading-a-whole-set). |
 | `InsertAsync(table, values)` | One insert through the full mutation pipeline; returns the new key |
-| `InsertManyAsync(table, rows)` | Many inserts as one write: the chain runs per row, a refusal of any row refuses the call, rows go in one `INSERT`, keys come back in row order. See [Inserting many rows](#inserting-many-rows). |
+| `DeltaAsync(table, delta)` | Many rows as one write through the batch pipeline, in the operation's transaction: the chain runs per row, a refusal of any row refuses the call, a run of inserts is one `INSERT`; returns the rows affected. See [Writing many rows](#writing-many-rows). |
 | `UpdateAsync(table, values)` | One update keyed by the key columns in `values`; returns the rows changed (0 when out of scope, or when `values` has no key) |
 | `DeleteAsync(table, key)` | One delete (soft where the table declares it); returns the rows affected |
 | `LockRowAsync(table, key)` | Locks one row until the transaction ends. See [Serializing on a row](#serializing-on-a-row). |
@@ -170,23 +170,38 @@ The `max-query-rows` ceiling exists so a client cannot pull a whole table over t
 operation is your own code, and `QueryAllAsync` is not reachable from a request. `QueryAsync` and
 every generated read keep the ceiling. Keep `where` narrow: the rows are held in memory.
 
-### Inserting many rows
+### Writing many rows
 
-`InsertManyAsync(table, rows)` writes rows the way N `InsertAsync` calls would (as the caller, in
-the operation's transaction, each row through the transformer chain and before-commit hooks with
-its own `MutationState`) but in one `INSERT … VALUES (…),(…) RETURNING`. It returns each row's key
-in row order: the key value, or a column → value map for a composite key. A refusal of any row
-refuses the whole call before anything is written.
+`DeltaAsync(table, delta)` takes the shape of a table's `delta` argument, a `BifrostDelta` of
+`Inserted`, `Updated` and `Deleted` rows, and runs it through the same batch pipeline as
+`<table>_batch` and `delta`, as the caller, on the operation's open connection and transaction. It
+issues no `BEGIN` or `COMMIT` of its own, so a later throw in the operation rolls its rows back. It
+returns the number of rows affected.
 
-Rows that write different column sets go in one statement per set, still in row order. A set larger
-than the database's parameter limit splits into as few statements as the limit allows. Hooks that
-implement `IInTransactionSetMutationHook` are called once with every row (see
-[mutation hooks](/guides/mutation-hooks/)); per-row hooks are called once per row.
+```csharp
+var written = await context.DeltaAsync("time_entries", new BifrostDelta
+{
+    Inserted = yesterday.Select(e => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+    {
+        ["project_id"] = e.ProjectId,
+        ["minutes"] = e.Minutes,
+    }).ToList(),
+});
+```
 
-It needs a database that returns a multi-row insert's keys in row order, which today is PostgreSQL;
-on another database the call refuses. A table under an approval gate refuses it too, since the gate
-holds rows one at a time. A trigger that drops a row fails the call, because its keys could no longer
-be matched to its rows.
+Each row runs the transformer chain with the write's `Connection` and its own `MutationState`, so a
+transformer that requires the write transaction runs as it does on `InsertAsync`. A refusal of any
+row refuses the whole call. On a database that returns a multi-row insert's keys in row order
+(PostgreSQL), a run of inserted rows naming the same columns is one `INSERT … VALUES (…),(…)
+RETURNING`, whatever its size, when every in-transaction hook on the table implements
+`IInTransactionSetMutationHook`; such hooks are called once with every row (see
+[mutation hooks](/guides/mutation-hooks/)). A per-row hook keeps one call per row, so its table's
+rows go one by one, as they do on another database. Updates and deletes go one by one.
+
+The table's `batch-max-size` and `bulk-batch-threshold` do not apply: both bound a client's request,
+and this set is your own, as `QueryAllAsync`'s read is. A row the approval gate diverts is held, as
+in a batch. A trigger that drops an inserted row fails the call, because the run's keys could no
+longer be matched to its rows.
 
 ## Serializing on a row
 

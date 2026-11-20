@@ -13,7 +13,7 @@ Method: median of 5 iterations after 1 warmup, wall clock, via `dotnet run -c Re
 
 The three series:
 
-- **per-row** — the batch pipeline with the fast path disabled (`bulk-batch-threshold: 0`): one statement per row on a shared transaction. Every deployment gets at least this.
+- **per-row** — the batch pipeline with the fast path disabled (`bulk-batch-threshold: 0`): one statement per row on a shared transaction. Every deployment gets at least this. On PostgreSQL the per-row loop now writes a run of adjacent inserts as one multi-row `INSERT … RETURNING` (see [Insert runs on the per-row loop](#insert-runs-on-the-per-row-loop)); the PostgreSQL "insert per-row" rows below were measured before that and are now an upper bound.
 - **bulk** — the set-based fast path (full transformer chain per row, staging, set-based apply).
 - **floor** — the provider's native bulk API (`SqlBulkCopy`, binary `COPY`, `MySqlBulkCopy`) writing straight into the target table with **no** pipeline, transactions-per-op, or result accounting. This is the theoretical ceiling; the gap between *bulk* and *floor* is the price of the security/consistency pipeline.
 
@@ -83,10 +83,14 @@ The fast path merges only **adjacent** rows with the same verb, the same columns
 
 **What this costs.** One statement per run, so the fast path pays off when runs are long. 10,000 rows of one verb and one column set are one statement. A batch that changes verb or column set on every row is one statement per row, and past 8 runs the whole batch takes the per-row loop, so it gets no speedup. That includes an insert-only batch that alternates an optional column. Send rows with the same columns next to each other if the batch has a choice.
 
-**The exception.** Constraints are checked per statement, and a run is one statement on the fast path and one per row on the per-row path. Inside a run the two can part:
+**The exception.** Constraints are checked per statement, and a run is one statement on the fast path and one per row on the per-row path (except a run of inserts on PostgreSQL, below). Inside a run the two can part:
 
-- A foreign key is checked when the statement ends. Rows that satisfy it only together, such as `[insert child, insert parent]` or `[delete parent, delete child]` on a self-referencing table, apply on the fast path and fail per row, with `FOREIGN_KEY_VIOLATION` on PostgreSQL and `DATABASE_ERROR` on a dialect that reports no SQLSTATE. `RowsThatSatisfyAForeignKeyOnlyTogether_PassAsOneRun_ButNotRowByRow` pins this on PostgreSQL. The key holds afterwards either way. Nothing tells a caller which path ran, so a document that relies on this works only above the threshold.
+- A foreign key is checked when the statement ends. Deletes that satisfy it only together, such as `[delete parent, delete child]` on a self-referencing table, apply on the fast path and fail per row, with `FOREIGN_KEY_VIOLATION` on PostgreSQL and `DATABASE_ERROR` on a dialect that reports no SQLSTATE. Inserts that satisfy it only together, such as `[insert child, insert parent]`, apply on both paths on PostgreSQL, where the per-row loop writes the run as one statement too, and fail per row on the other dialects. `RowsThatSatisfyAForeignKeyOnlyTogether_PassAsOneRun_ButNotRowByRow` pins both on PostgreSQL. The key holds afterwards either way. Nothing tells a caller which path ran, so a document that relies on this works only above the threshold, or for inserts on PostgreSQL.
 - A non-deferrable unique index is checked per row, in the order the query plan visits them, which the statement does not fix to document order. Update chains that hand a value down (`[a -> z, b -> a]`, and the same in reverse) matched the per-row result in every case we measured, up to 5,000 rows on PostgreSQL, but no test can pin a planner's choice. A document that depends on the order inside one update run should set `bulk-batch-threshold: 0` on that table.
+
+## Insert runs on the per-row loop
+
+On a database that returns a multi-row insert's keys in row order (PostgreSQL), the per-row loop writes a run of adjacent inserts as one `INSERT … VALUES (…),(…) RETURNING <keys>` per column set, inside the batch's transaction. The transformer chain and the before-commit hooks still run once per row, before the statement, and a refusal of any row refuses the batch. The run is split only when an in-transaction hook that is not set-aware applies to the table, because such a hook is called before the next row's statement. A hook that implements `IInTransactionSetMutationHook` gets every row once the batch is written, so a table whose hooks are all set-aware keeps its insert runs in one statement. The same loop writes an operation's `DeltaAsync`, inside the operation's transaction (see [server operations](/guides/server-operations/)).
 
 ## Streaming staging loads
 
@@ -106,7 +110,7 @@ On PostgreSQL, binary `COPY` refuses text for most non-text columns, and the chu
 - Lower `bulk-batch-threshold` (default 50) toward 1 if your batches are small but frequent; set `0` to pin a table to the per-row path.
 - For machine-driven ingest, prefer the intent API (or a protocol adapter) over GraphQL text to skip document parsing.
 - The RESP (Redis-protocol) adapter's multi-key `MSET` and `DEL` route as one batch per table, so a command with ≥ threshold keys rides the fast path automatically (see the RESP guide's write-command table for their semantics).
-- Tables with approval/history/CDC hooks always take the per-row path today; if you need bulk loads on such tables, batch into a staging table of your own and promote via a hook-free table, or disable the feature for the load window deliberately.
+- Tables with approval/history/CDC hooks always take the per-row loop. On PostgreSQL that loop still writes a run of inserts as one statement when every in-transaction hook on the table is set-aware; the built-in history and CDC hooks are per-row, so their tables write row by row. For bulk loads there, batch into a staging table of your own and promote via a hook-free table, or disable the feature for the load window deliberately.
 
 ## Reproducing
 

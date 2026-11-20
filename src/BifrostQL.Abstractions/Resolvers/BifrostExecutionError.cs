@@ -87,6 +87,17 @@ namespace BifrostQL.Core.Resolvers
         /// a variable fails to coerce, so a client handles one word for both.
         /// </summary>
         public const string InvalidValueCode = "INVALID_VALUE";
+
+        /// <summary>
+        /// <see cref="ErrorCode"/> for a statement the database cancelled at its own time limit
+        /// (<see cref="IsStatementTimeout"/>). The GraphQL HTTP middleware throws such a request to
+        /// the host as <see cref="BifrostStatementTimeoutException"/>; every other front door
+        /// answers with this code, which the caller may retry.
+        /// </summary>
+        public const string StatementTimeoutCode = "STATEMENT_TIMEOUT";
+
+        /// <summary>Message for a <see cref="StatementTimeoutCode"/> error.</summary>
+        public const string StatementTimeoutMessage = "The database cancelled the statement at its time limit.";
         
         /// <summary>
         /// Suggested actions the user can take to resolve this error.
@@ -271,6 +282,44 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// PostgreSQL's <c>query_canceled</c>: raised by <c>statement_timeout</c>, and also by a
+        /// cancel the client sent, which is why <see cref="IsStatementTimeout"/> is asked only
+        /// while the request's own token is live.
+        /// </summary>
+        private const string QueryCanceledSqlState = "57014";
+
+        /// <summary>
+        /// The Win32 error a SQL Server client command timeout carries as its inner exception
+        /// (<c>WAIT_TIMEOUT</c>), the documented way to tell it from other <c>SqlException</c>s
+        /// without referencing the driver.
+        /// </summary>
+        private const int WaitTimeoutNativeError = 258;
+
+        /// <summary>
+        /// True when the exception chain says the database, or the driver's command timeout, ended
+        /// a statement at its time limit: SQLSTATE <c>57014</c> (PostgreSQL <c>statement_timeout</c>),
+        /// a <see cref="TimeoutException"/> (Npgsql's and MySqlConnector's command timeouts) or a
+        /// Win32 <c>WAIT_TIMEOUT</c> (SQL Server's). A query cancel also raises <c>57014</c>, so a
+        /// caller asks this only when the request's own token is not cancelled. MySQL's server-side
+        /// <c>max_execution_time</c> (error 3024, SQLSTATE <c>HY000</c>) is not recognised: its
+        /// SQLSTATE is shared with unrelated errors.
+        /// </summary>
+        public static bool IsStatementTimeout(Exception? ex)
+        {
+            for (var current = ex; current != null; current = current.InnerException)
+            {
+                switch (current)
+                {
+                    case DbException { SqlState: QueryCanceledSqlState }:
+                    case TimeoutException:
+                    case System.ComponentModel.Win32Exception { NativeErrorCode: WaitTimeoutNativeError }:
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Wraps an exception raised while executing SQL for client return.
         /// Intentional <see cref="BifrostExecutionError"/>s (validation, tenant,
         /// policy) carry safe, authored messages and pass through unchanged.
@@ -309,6 +358,9 @@ namespace BifrostQL.Core.Resolvers
 
             if (IsInvalidValue(ex))
                 return new BifrostExecutionError(InvalidValueMessage, ex) { ErrorCode = InvalidValueCode };
+
+            if (IsStatementTimeout(ex))
+                return new BifrostExecutionError(StatementTimeoutMessage, ex) { ErrorCode = StatementTimeoutCode };
 
             var expose = Environment.GetEnvironmentVariable(ExposeDbErrorsEnvVar);
             var reveal = string.Equals(expose, "1", StringComparison.Ordinal)

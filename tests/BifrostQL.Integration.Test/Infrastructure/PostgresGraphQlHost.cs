@@ -48,16 +48,24 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
     /// Creates a database named for <paramref name="prefix"/>, runs <paramref name="ddl"/> in it,
     /// and starts a server over it with <paramref name="metadata"/> rules and any extra
     /// <paramref name="services"/> (hooks, observers) registered beside BifrostQL's own.
+    /// <paramref name="beforeBifrost"/> adds middleware ahead of BifrostQL (a host's own error
+    /// handling), and <paramref name="serverConnection"/> edits only the server's connection
+    /// string (session settings such as <c>statement_timeout</c>); <see cref="ConnectionString"/>
+    /// stays the plain one the test's own reads use.
     /// </summary>
     public static async Task<PostgresGraphQlHost> StartAsync(
         string prefix, string ddl, IReadOnlyList<string> metadata, Action<IServiceCollection>? services = null,
-        Action<BifrostSetupOptions>? bifrost = null)
+        Action<BifrostSetupOptions>? bifrost = null, Action<IApplicationBuilder>? beforeBifrost = null,
+        Action<NpgsqlConnectionStringBuilder>? serverConnection = null)
     {
         var master = Master ?? throw new InvalidOperationException(SkipReason);
         var dbName = $"{prefix}_{Guid.NewGuid():N}";
         await ExecAsync(master, $"CREATE DATABASE \"{dbName}\"");
         var connectionString = new NpgsqlConnectionStringBuilder(master) { Database = dbName }.ConnectionString;
         await ExecAsync(connectionString, ddl);
+        var serverBuilder = new NpgsqlConnectionStringBuilder(connectionString);
+        serverConnection?.Invoke(serverBuilder);
+        var serverConnectionString = serverBuilder.ConnectionString;
 
         var settings = new Dictionary<string, string?>
         {
@@ -80,7 +88,7 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
                 {
                     options
                         .BindConfiguration(config.GetSection("Bifrost"))
-                        .BindConnectionString(connectionString)
+                        .BindConnectionString(serverConnectionString)
                         .BindProvider("postgres");
                     bifrost?.Invoke(options);
                 });
@@ -100,6 +108,7 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
                     }
                     return next(context);
                 });
+                beforeBifrost?.Invoke(app);
                 app.UseBifrostQL();
             });
         }).StartAsync();
@@ -138,6 +147,19 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
             request.Headers.TryAddWithoutValidation(name, value);
         using var response = await _client.SendAsync(request);
         return (response.StatusCode, JsonDocument.Parse(await response.Content.ReadAsStringAsync()));
+    }
+
+    /// <summary>
+    /// Posts <paramref name="query"/> under <paramref name="cancellationToken"/> and returns the
+    /// raw response, for a test that cancels the request or reads a host-written body.
+    /// </summary>
+    public Task<HttpResponseMessage> PostRawAsync(string query, CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/graphql")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { query }), Encoding.UTF8, "application/json"),
+        };
+        return _client.SendAsync(request, cancellationToken);
     }
 
     /// <summary>Every row <paramref name="sql"/> returns, each column read as text (null stays null).</summary>

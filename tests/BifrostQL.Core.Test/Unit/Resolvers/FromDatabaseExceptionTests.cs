@@ -19,7 +19,8 @@ public class FromDatabaseExceptionTests
     {
         private readonly string? _sqlState;
 
-        public FakeDbException(string message, string? sqlState = null) : base(message) => _sqlState = sqlState;
+        public FakeDbException(string message, string? sqlState = null, Exception? inner = null)
+            : base(message, inner) => _sqlState = sqlState;
 
         public override string? SqlState => _sqlState;
     }
@@ -38,6 +39,39 @@ public class FromDatabaseExceptionTests
 
         error.ErrorCode.Should().Be(BifrostExecutionError.InvalidValueCode);
         error.Message.Should().NotContain("secret-value").And.NotContain(sqlState);
+    }
+
+    public static TheoryData<Exception> StatementTimeouts => new()
+    {
+        // PostgreSQL statement_timeout: query_canceled, wrapped as the driver's caller sees it.
+        new InvalidOperationException("wrapper", new FakeDbException("57014: canceling statement due to statement timeout", "57014")),
+        // Npgsql and MySqlConnector command timeouts carry a TimeoutException.
+        new FakeDbException("Exception while reading from stream", null, new TimeoutException("Timeout during reading attempt")),
+        // SQL Server's client command timeout carries Win32 WAIT_TIMEOUT (258).
+        new FakeDbException("Execution Timeout Expired.", null, new System.ComponentModel.Win32Exception(258)),
+    };
+
+    [Theory]
+    [MemberData(nameof(StatementTimeouts))]
+    public void FromDatabaseException_StatementTimeout_IsItsOwnCode_WithNoDriverText(Exception timeout)
+    {
+        BifrostExecutionError.IsStatementTimeout(timeout).Should().BeTrue();
+
+        var error = BifrostExecutionError.FromDatabaseException(timeout);
+
+        error.ErrorCode.Should().Be(BifrostExecutionError.StatementTimeoutCode);
+        error.Message.Should().Be(BifrostExecutionError.StatementTimeoutMessage);
+        error.InnerException.Should().BeSameAs(timeout);
+    }
+
+    [Theory]
+    [InlineData("57P01")] // admin_shutdown: a neighbour of 57014 in class 57
+    [InlineData("40001")] // serialization_failure
+    public void IsStatementTimeout_IsFalse_ForOtherCancellationsAndFailures(string sqlState)
+    {
+        BifrostExecutionError.IsStatementTimeout(new FakeDbException("failed", sqlState)).Should().BeFalse();
+        BifrostExecutionError.IsStatementTimeout(
+            new FakeDbException("failed", null, new System.ComponentModel.Win32Exception(5))).Should().BeFalse();
     }
 
     [Theory]

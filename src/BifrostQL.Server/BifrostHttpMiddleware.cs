@@ -116,6 +116,10 @@ namespace BifrostQL.Server
                 _logger.LogDebug("GraphQL request canceled: client disconnected.");
                 return;
             }
+            catch (Exception ex) when (StatementTimeoutOf(ex, context.RequestAborted) is { } timeout)
+            {
+                throw new BifrostStatementTimeoutException(timeout);
+            }
             catch (Exception ex)
             {
                 // Log full exception with stack trace server-side; never expose details to clients.
@@ -130,10 +134,31 @@ namespace BifrostQL.Server
                 };
             }
 
+            // A statement the database cancelled at its own time limit is the host's timeout, not
+            // a GraphQL error: its transaction has rolled back, nothing is written yet, and the
+            // host's middleware answers it (503, say). Thrown for any field of the document, so a
+            // sibling field's committed write is reported by the host, not by this body.
+            if (result.Errors is { } errors)
+            {
+                foreach (var error in errors)
+                {
+                    if (StatementTimeoutOf(error, context.RequestAborted) is { } timeout)
+                        throw new BifrostStatementTimeoutException(timeout);
+                }
+            }
+
             context.Response.ContentType = "application/json";
             context.Response.StatusCode = 200;
             await _serializer.WriteAsync(context.Response.Body, result, context.RequestAborted);
         }
+
+        /// <summary>
+        /// The exception in <paramref name="ex"/>'s chain that says the database ended a statement
+        /// at its time limit (<see cref="BifrostExecutionError.IsStatementTimeout"/>), or null. A
+        /// request whose own token is cancelled has none: its <c>57014</c> is the client leaving.
+        /// </summary>
+        private static Exception? StatementTimeoutOf(Exception ex, CancellationToken requestAborted)
+            => !requestAborted.IsCancellationRequested && BifrostExecutionError.IsStatementTimeout(ex) ? ex : null;
 
         /// <summary>
         /// The one error writer for this mount's funnel: a GraphQL-shaped

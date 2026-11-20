@@ -394,6 +394,36 @@ A unique violation is recognized by the driver's own error code, never its messa
 quote the refused value in other errors, so a value that happens to read "duplicate key" never
 turns an invalid-value or truncation error into `CONFLICT`.
 
+## Statement timeouts
+
+A statement the database ends at its own time limit is the host's timeout, not a GraphQL error.
+That covers PostgreSQL's `statement_timeout` (SQLSTATE `57014`) and a driver's command timeout
+(Npgsql and MySqlConnector raise a `TimeoutException`, SQL Server a Win32 `WAIT_TIMEOUT`). The
+statement's transaction rolls back, and the GraphQL HTTP middleware throws
+`BifrostStatementTimeoutException` before it writes anything. It doesn't matter whether BifrostQL,
+a transformer or a hook issued the statement on the write's connection. A middleware ahead of
+BifrostQL answers it:
+
+```csharp
+app.Use(async (context, next) =>
+{
+    try { await next(context); }
+    catch (BifrostStatementTimeoutException)
+    {
+        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new { error = "request_timeout" });
+    }
+});
+```
+
+Any timed-out field throws, so a sibling mutation field that already committed is reported by
+the host, not by a GraphQL body. A request cancelled by its own token is the client leaving: it
+writes nothing and never raises the exception. Every other front door answers the timeout with
+`extensions.code` `STATEMENT_TIMEOUT` (message: "The database cancelled the statement at its time
+limit."), and the caller may retry it. MySQL's server-side `max_execution_time` (error 3024) shares
+SQLSTATE `HY000` with unrelated errors, so it stays `DATABASE_ERROR`. A timeout while the schema
+loads, on a server's first request, still answers "Database connection failed."
+
 ## Return values
 
 Table mutation fields return scalar values, not row objects:

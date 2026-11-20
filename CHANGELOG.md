@@ -55,6 +55,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - `BifrostOperationContext.InsertManyAsync(table, rows)` inserts many rows as one write inside the operation's transaction: the transformer chain runs per row, a refusal of any row refuses the call, the rows go in one `INSERT … RETURNING`, and the keys come back in row order. PostgreSQL only for now (`ISqlDialect.OrderedInsertReturningParameterLimit`); elsewhere the call refuses.
 - `IInTransactionSetMutationHook`: an in-transaction hook called once per write with every written row's data, key and `MutationState` (`MutationSetContext`), instead of once per row. A single-row write hands it one row; per-row hooks keep their per-row calls.
 
+### Added — database errors
+
+- A statement the database ends at its own time limit (PostgreSQL `statement_timeout`, SQLSTATE `57014`, or a driver command timeout) rolls its transaction back, and the GraphQL HTTP middleware throws `BifrostStatementTimeoutException` to the host with nothing written, in place of a `DATABASE_ERROR` under HTTP 200. That holds whether BifrostQL, a transformer or a hook issued the statement. A host middleware ahead of BifrostQL answers it with its own status (a 503, say); a request cancelled by its own token never raises it. Every other front door answers with the new code `STATEMENT_TIMEOUT` (`BifrostExecutionError.StatementTimeoutCode`).
+
 ### Breaking — fourth review pass (LDAP, RESP)
 
 - **RESP write intents name the table schema-qualified** (`dbo.users`, was `users`), so a write lands on the table the key resolved to when two schemas share a name. Custom `IMutationIntentExecutor` implementations that match on the bare name must resolve the qualified one through `IDbModel.TryGetTableFromClientName`.

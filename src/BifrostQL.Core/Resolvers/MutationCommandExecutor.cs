@@ -213,6 +213,15 @@ namespace BifrostQL.Core.Resolvers
         internal static string ColumnSetKey(IReadOnlyDictionary<string, object?> row)
             => string.Join("\u0000", row.Keys.Order(StringComparer.OrdinalIgnoreCase));
 
+        /// <summary>The key of an updated or deleted row, from its data: a value, or a column → value map.</summary>
+        internal static object? KeyOf(IDbTable table, IDictionary<string, object?> data)
+        {
+            var keyColumns = table.KeyColumns.Select(k => k.ColumnName).ToList();
+            return keyColumns.Count == 1
+                ? data.TryGetValue(keyColumns[0], out var value) ? value : null
+                : keyColumns.ToDictionary(c => c, c => data.TryGetValue(c, out var v) ? v : null, StringComparer.OrdinalIgnoreCase);
+        }
+
         /// <summary>Whether <paramref name="table"/>'s inserts can share one statement on <paramref name="dialect"/>.</summary>
         internal static bool CanInsertMany(ISqlDialect dialect, IDbTable table)
             => dialect.OrderedInsertReturningParameterLimit is not null && table.KeyColumns.Any();

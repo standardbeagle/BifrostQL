@@ -111,6 +111,23 @@ public sealed class SetAwareHookTests : IAsyncLifetime
     }
 
     [SkippableFact]
+    public async Task SetAwareHook_GetsTheRowsKey_OnASingleRowUpdate()
+    {
+        Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
+
+        PostgresGraphQlHost.AssertNoErrors(await _host!.PostAsync("""mutation { entries(insert: { n: 1 }) }""", "15"));
+        var second = await _host.PostAsync("""mutation { entries(insert: { n: 2 }) }""", "15");
+        var key = second.RootElement.GetProperty("data").GetProperty("entries").GetInt32();
+
+        var reply = await _host.PostAsync($$"""mutation { entries(update: { id: {{key}}, n: 3 }) }""", "15");
+
+        PostgresGraphQlHost.AssertNoErrors(reply);
+        var update = _setCalls.Where(c => c.User == "15").Last();
+        update.Types.Should().Equal(MutationType.Update);
+        update.Keys.Should().Equal(new[] { key }, "an update's key is the row's key, not its affected-row count");
+    }
+
+    [SkippableFact]
     public async Task HookedTable_KeepsTheBulkPath_WhenItsHooksAreSetAware()
     {
         Skip.If(_host is null, PostgresGraphQlHost.SkipReason);
@@ -171,7 +188,7 @@ public sealed class SetAwareHookTests : IAsyncLifetime
         }
     }
 
-    /// <summary>Writes one activity row per written row, all in one INSERT, on the write's transaction.</summary>
+    /// <summary>Writes one activity row per inserted row, all in one INSERT, on the write's transaction.</summary>
     private sealed class ActivityWriter(ConcurrentQueue<SetCall> calls) : IInTransactionSetMutationHook
     {
         public bool AppliesTo(IDbTable table) => table.DbName is "items" or "entries";
@@ -184,15 +201,18 @@ public sealed class SetAwareHookTests : IAsyncLifetime
                 context.Rows.Select(r => r.MutationType).ToList(),
                 context.Rows.Select(r => Convert.ToInt32(r.Key, CultureInfo.InvariantCulture)).ToList(),
                 context.Rows.Select(r => Convert.ToInt32(r.Data["n"], CultureInfo.InvariantCulture)).ToList()));
+            var inserted = context.Rows.Where(r => r.MutationType == MutationType.Insert).ToList();
+            if (inserted.Count == 0)
+                return;
             await using var cmd = context.Connection.CreateCommand();
             cmd.Transaction = context.Transaction;
             var values = new List<string>();
-            for (var i = 0; i < context.Rows.Count; i++)
+            for (var i = 0; i < inserted.Count; i++)
             {
                 values.Add($"(@k{i}, @o{i}, @s{i})");
-                AddParameter(cmd, $"k{i}", Convert.ToInt32(context.Rows[i].Key, CultureInfo.InvariantCulture));
-                AddParameter(cmd, $"o{i}", context.Rows[i].Data["owner_id"]);
-                AddParameter(cmd, $"s{i}", context.Rows[i].MutationState["activity.state"]);
+                AddParameter(cmd, $"k{i}", Convert.ToInt32(inserted[i].Key, CultureInfo.InvariantCulture));
+                AddParameter(cmd, $"o{i}", inserted[i].Data["owner_id"]);
+                AddParameter(cmd, $"s{i}", inserted[i].MutationState["activity.state"]);
             }
             cmd.CommandText = $"INSERT INTO activity (row_id, owner_id, state) VALUES {string.Join(",", values)}";
             await cmd.ExecuteNonQueryAsync(context.CancellationToken);

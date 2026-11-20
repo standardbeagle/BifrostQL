@@ -45,7 +45,17 @@ public sealed record MutationSetContext
     internal static MutationSetContext FromRow(MutationObserverContext context) => new()
     {
         Table = context.Table,
-        Rows = new[] { new MutationSetRow(context.MutationType, context.Data, context.Result, context.MutationState) },
+        // An insert's Result is its generated key; an update's or delete's is a row count, so
+        // their key comes from the data the write was keyed by.
+        Rows = new[]
+        {
+            new MutationSetRow(
+                context.MutationType, context.Data,
+                context.MutationType == MutationType.Insert
+                    ? context.Result
+                    : Resolvers.MutationCommandExecutor.KeyOf(context.Table, context.Data),
+                context.MutationState),
+        },
         UserContext = context.UserContext,
         Connection = context.Connection
             ?? throw new InvalidOperationException("An in-transaction hook ran without the write's connection."),

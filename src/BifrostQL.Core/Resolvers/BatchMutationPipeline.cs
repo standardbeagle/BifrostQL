@@ -403,15 +403,6 @@ namespace BifrostQL.Core.Resolvers
             TransactionState = ctx.TransactionState,
         };
 
-        /// <summary>The key of an updated or deleted row, from its data: a value, or a column → value map.</summary>
-        private static object? KeyOf(IDbTable table, IDictionary<string, object?> data)
-        {
-            var keyColumns = table.KeyColumns.Select(k => k.ColumnName).ToList();
-            return keyColumns.Count == 1
-                ? data.TryGetValue(keyColumns[0], out var value) ? value : null
-                : keyColumns.ToDictionary(c => c, c => data.TryGetValue(c, out var v) ? v : null, StringComparer.OrdinalIgnoreCase);
-        }
-
         private static async Task<BatchActionOutcome?> ExecuteAction(BatchExecutionContext ctx, BatchAction action)
         {
             return action.Action switch
@@ -463,7 +454,7 @@ namespace BifrostQL.Core.Resolvers
             await MutationNotifier.RunPerRowInTransactionHooksAsync(ctx.TransformContext.Services, hookContext, result, affected);
             if (affected > 0)
                 ctx.SetRows.Add(new MutationSetRow(
-                    type, data, type == MutationType.Insert ? result : KeyOf(ctx.Table, data), hookContext.MutationState));
+                    type, data, type == MutationType.Insert ? result : MutationCommandExecutor.KeyOf(ctx.Table, data), hookContext.MutationState));
             return (result, null);
         }
 

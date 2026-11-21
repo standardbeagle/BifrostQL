@@ -29,6 +29,11 @@ namespace BifrostQL.Core.Modules.Crypto
         private readonly HashSet<string> _roles;
         private readonly bool _isAdmin;
 
+        // Columns whose decrypt failure this projector already reported. A projector lives
+        // for one read, so a table full of undecryptable values logs once per column, not
+        // once per row.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _reportedColumns = new();
+
         /// <summary>
         /// Builds a projector for a caller's roles after loading every DEK version the model's
         /// encrypted columns can name, so <see cref="Project"/> decrypts per row without I/O.
@@ -133,16 +138,30 @@ namespace BifrostQL.Core.Modules.Crypto
                 // mid-request) is not in the cache and redacts.
                 var version = FieldCipher.PeekKeyVersion(envelope);
                 if (!_keyManager.TryGetCachedDataKey(keyRef, version, out var dek))
+                {
+                    ReportRedaction(table, column, $"no data key '{keyRef}' version {version?.ToString() ?? "legacy"} is loaded", null);
                     return null;
+                }
                 var aad = CryptoAad.Build(table.TableSchema, table.DbName, column.ColumnName);
                 return FieldCipher.Decrypt(dek, envelope, aad);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // Never surface ciphertext or crypto errors as data. A decrypt failure
-                // (wrong key, tampered value, legacy plaintext) redacts.
+                // (wrong key, tampered value, legacy plaintext) redacts, and is logged so a
+                // key misconfiguration or tampering does not look like a normal masked read.
+                ReportRedaction(table, column, "the stored value did not decrypt", ex);
                 return null;
             }
+        }
+
+        private void ReportRedaction(IDbTable table, ColumnDto column, string reason, Exception? exception)
+        {
+            var columnRef = $"{table.TableSchema}.{table.DbName}.{column.ColumnName}";
+            if (_reportedColumns.TryAdd(columnRef, 0))
+                Resolvers.BifrostErrorSink.Handled(nameof(CryptoReadProjector),
+                    $"Redacted encrypted column {columnRef}: {reason}. Further failures on this column in this read are not logged.",
+                    exception);
         }
 
         private static string Mask(string maskMode, string plaintext)

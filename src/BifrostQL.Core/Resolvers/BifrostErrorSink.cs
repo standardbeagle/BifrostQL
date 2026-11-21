@@ -99,6 +99,17 @@ namespace BifrostQL.Core.Resolvers
         }
 
         /// <summary>
+        /// Logs a failure the caller handled by degrading instead of failing (it redacted a
+        /// value, hid a table, skipped a row, retried, or left cleanup undone) at Warning, so
+        /// the degradation is never silent. <paramref name="detail"/> may carry identifiers;
+        /// nothing here reaches the wire. Use this instead of an empty catch.
+        /// </summary>
+        public static void Handled(string site, string detail, Exception? exception = null)
+        {
+            Logger?.LogWarning(exception, "Handled failure at {Site}: {Detail}", site, detail);
+        }
+
+        /// <summary>
         /// Same log/sanitize pair as <see cref="LookupMiss"/> for a condition that is
         /// not a lookup miss (the lost-update <c>CONFLICT</c> raised by every keyed-write
         /// seam, and the transformer's pre-write missing/unbumpable-token rejects). The

@@ -29,6 +29,7 @@ On `main` after v0.4.28; not yet on NuGet.
 
 - **An encrypted column on a table whose name exists in two schemas is masked again.** `CryptoReadProjector` looked the table up again by bare name. In a model with, say, `dbo.users` and `audit.users`, that lookup threw, and a catch-all returned the stored value unprojected: ciphertext, or legacy plaintext, went to callers who should have seen it redacted. `CryptoReadProjector.Project` now takes the resolved `IDbTable` instead of a table name.
 - **A corrupt saved-object file fails the read instead of reading as absent.** `FileSavedObjectStore` treated a file it could not parse as missing. List and get hid it, and a version-0 create overwrote it with no conflict and no trace. Get, list and put now throw `InvalidDataException`, as `DbSavedObjectStore` already did for a corrupt row. `SavedObjectJson.TryDeserializeStored` is replaced by `DeserializeStored`.
+- **An encrypted value that cannot be decrypted is still redacted, and now logged.** `CryptoReadProjector` redacted a value whose data key was not loaded or whose ciphertext failed to decrypt with no trace, so a missing key or corrupted column looked like an access rule. It now logs a warning through `BifrostErrorSink` once per column per read, naming the column and the reason (never the value). `BifrostErrorSink.Handled(site, detail, exception)` is the new seam for any failure handled by degrading.
 
 ### Fixed — benchmark harness
 

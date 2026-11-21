@@ -13,6 +13,7 @@ namespace BifrostQL.Core.Test;
 /// fail-closed redaction when no key manager is available, and passthrough of
 /// non-encrypted columns.
 /// </summary>
+[Collection(ErrorSinkLoggerCollection.Name)]
 public class CryptoReadProjectorTests
 {
     private const string Redacted = "••••••";
@@ -164,5 +165,27 @@ public class CryptoReadProjectorTests
         masked.Project(table, "ssn", cipher).Should().Be(Redacted);
         var unmasked = await CryptoReadProjector.CreateAsync(model, manager, new[] { "compliance" });
         unmasked.Project(table, "ssn", cipher).Should().Be("secret");
+    }
+
+    [Fact]
+    public async Task DecryptFailure_Redacts_AndLogsOncePerColumn()
+    {
+        // A wrong key or a tampered value must not look like a normal masked read: the
+        // redaction is logged, once per column per read however many rows fail.
+        var (model, manager, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskRedact, "compliance", "secret");
+        var bytes = Convert.FromBase64String(cipher);
+        bytes[^1] ^= 0xFF;
+        var tampered = Convert.ToBase64String(bytes);
+        var table = model.GetTableFromDbName("secrets");
+        var projector = await CryptoReadProjector.CreateAsync(model, manager, new[] { "compliance" });
+
+        using var log = new ErrorSinkCapture();
+        projector.Project(table, "ssn", tampered).Should().Be(Redacted);
+        projector.Project(table, "ssn", tampered).Should().Be(Redacted);
+        projector.Project(table, "ssn", cipher).Should().Be("secret");
+
+        log.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("Redacted encrypted column dbo.secrets.ssn: the stored value did not decrypt");
+        log.Warnings.Single().Should().NotContain(tampered);
     }
 }

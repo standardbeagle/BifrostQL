@@ -141,7 +141,7 @@ Returns the raw serialized string:
 }
 ```
 
-Plan to decode these client-side. The detector does mark the affected columns — `wp_options.option_value` plus the `meta_value` column of the four meta tables — with `type: php_serialized` and `format: php`, so a consumer can find them from the schema metadata instead of hard-coding a list. The repository ships a `PhpSerializer` with a working `ToJson`, but it is not yet wired into the read path.
+Plan to decode these client-side. The detector does mark the affected columns — `wp_options.option_value` plus the `meta_value` column of the four meta tables — with `type: php_serialized` and `format: php`, so a consumer can find them from the schema metadata instead of hard-coding a list. BifrostQL does not decode them server-side.
 
 ## Example queries
 

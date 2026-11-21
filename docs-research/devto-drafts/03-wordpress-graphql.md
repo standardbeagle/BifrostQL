@@ -124,7 +124,7 @@ Table names are not transformed, so `wp_posts` stays `wp_posts` for both the roo
 
 ## PHP serialized values come back as stored
 
-WordPress writes structured option and meta values using PHP's `serialize()` format. The detector marks those columns — `options.option_value` plus the four `meta_value` columns — with `type: php_serialized`, and the repository ships a `PhpSerializer` with a working `ToJson`. What it does not yet ship is a call site: `PhpSerializer` has no consumer in `src/` outside its own file, and the query result confirms it. Asking for `active_plugins` returns the raw string:
+WordPress writes structured option and meta values using PHP's `serialize()` format. The detector marks those columns — `options.option_value` plus the four `meta_value` columns — with `type: php_serialized`, but nothing decodes them server-side, and the query result confirms it. Asking for `active_plugins` returns the raw string:
 
 ```json
 {"option_name":"active_plugins",

@@ -5,7 +5,7 @@ The WordPress Schema Bundle provides comprehensive support for WordPress databas
 ## Features
 
 - **Automatic Detection**: Automatically detects WordPress schemas by looking for signature tables (`users`, `posts`, `options`)
-- **PHP Serialization**: Handles PHP serialized data in `meta_value` and `option_value` columns
+- **PHP Serialization**: Marks the `meta_value` and `option_value` columns that hold PHP-serialized data, so clients know to decode them
 - **EAV Flattening**: Flattens Entity-Attribute-Value meta tables (`postmeta`, `usermeta`, `termmeta`, `commentmeta`) into JSON fields
 - **File Storage**: Supports WordPress attachment file uploads and downloads
 - **Foreign Keys**: Injects implicit WordPress foreign key relationships
@@ -66,7 +66,7 @@ services.AddWordPressBundle(WordPressBundleConfiguration.FullFeatured(storageCon
 | Option | Default | Description |
 |--------|---------|-------------|
 | `EnableAutoDetection` | `true` | Enable automatic WordPress schema detection |
-| `EnablePhpSerialization` | `true` | Handle PHP serialized data in meta columns |
+| `EnablePhpSerialization` | `true` | Mark PHP-serialized meta and option columns (`type: php_serialized`). Values are returned as stored; decode them client-side |
 | `EnableEavFlattening` | `true` | Enable EAV flattening for meta tables |
 | `EnableFileStorage` | `false` | Enable file storage for attachments |
 | `HideActionSchedulerTables` | `true` | Hide Action Scheduler tables by default |
@@ -107,11 +107,7 @@ wp_3_users, wp_3_posts, wp_3_options (site 3)
 
 ## PHP Serialization
 
-WordPress stores serialized PHP data in several columns. The bundle automatically:
-
-1. Detects columns containing PHP serialized data
-2. Deserializes the data when reading
-3. Serializes data when writing (if needed)
+WordPress stores serialized PHP data in several columns. The bundle marks those columns with `type: php_serialized` metadata. It does not decode or encode the values: reads return the stored PHP `serialize()` text, and writes store what the client sends. Decode on the client (see the [WordPress guide](src/content/docs/guides/wordpress.md)).
 
 ### Affected Columns
 
@@ -129,7 +125,7 @@ query {
     ID
     post_title
     _flattened_postmeta {
-      _meta  # PHP serialized data is automatically deserialized
+      _meta  # serialized values arrive as stored PHP serialize() text
     }
   }
 }
@@ -359,7 +355,7 @@ dotnet test --filter "FullyQualifiedName~WordPressSchemaBundleTests"
 
 1. Check column metadata includes `type: php_serialized`
 2. Verify the column exists in the table
-3. Review logs for deserialization errors
+3. Values are never decoded server-side; decode the stored text on the client
 
 ### EAV Flattening Not Working
 

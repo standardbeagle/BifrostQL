@@ -314,6 +314,21 @@ namespace BifrostQL.Server.Test.S3
         }
 
         [Fact]
+        public async Task Corrupt_pointer_is_left_out_of_a_listing_and_logged()
+        {
+            // The listing skips row 7 as GetObject treats it (no object), but an object that
+            // vanishes from listings must leave a server-side trace.
+            var ctx = S3TestSigner.BuildHeaderSigned(method: "GET", path: "/assets", query: "?list-type=2",
+                signTime: SignTime, secret: SecretA, accessKeyId: KeyA);
+            var (status, bodyText, _) = await RunText(ctx);
+
+            status.Should().Be(200);
+            bodyText.Should().Contain("<Key>data/1</Key>").And.NotContain("data/7");
+            _logSink.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning
+                && e.Message.Contains("skipped key data/7") && e.Message.Contains("not parseable file metadata"));
+        }
+
+        [Fact]
         public async Task Policy_read_denied_get_is_NoSuchKey_not_500_or_error_log()
         {
             // The vault table grants create only, so PolicyFilterTransformer throws a
@@ -361,7 +376,7 @@ namespace BifrostQL.Server.Test.S3
                 databaseDefaultConfig: new StorageBucketConfig { BucketName = _tempDir, ProviderType = "local" });
             var seam = _harness.Seam(storage, opts);
             RequestDelegate next = _ => Task.CompletedTask;
-            return new S3Middleware(next, opts, verifier, _harness.Listing(opts), seam, _logSink.Logger<S3Middleware>());
+            return new S3Middleware(next, opts, verifier, _harness.Listing(opts, logger: _logSink.Logger<S3Listing>()), seam, _logSink.Logger<S3Middleware>());
         }
 
         private DefaultHttpContext SignedA(string path, string method = "GET", string? range = null)
@@ -429,7 +444,7 @@ namespace BifrostQL.Server.Test.S3
         /// </summary>
         private sealed class CapturingLoggerSink
         {
-            public readonly record struct Entry(LogLevel Level);
+            public readonly record struct Entry(LogLevel Level, string Message);
 
             public List<Entry> Entries { get; } = new();
 
@@ -442,7 +457,7 @@ namespace BifrostQL.Server.Test.S3
                 public void Log<TState>(
                     LogLevel logLevel, EventId eventId, TState state, Exception? exception,
                     Func<TState, Exception?, string> formatter)
-                    => owner.Entries.Add(new Entry(logLevel));
+                    => owner.Entries.Add(new Entry(logLevel, formatter(state, exception)));
                 public void Dispose() { }
             }
         }

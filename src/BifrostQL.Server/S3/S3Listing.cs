@@ -251,7 +251,7 @@ namespace BifrostQL.Server.S3
             // A keyless table has no addressable rows: an empty bucket. A prefix outside
             // ASCII matches nothing, because every key is percent-encoded ASCII.
             if (keyColumns.Count == 0 || request.Prefix.Any(c => c > '\u007F'))
-                return Page(request, new PageAssembly(request), nextToken: null);
+                return Page(request, new PageAssembly(request, _logger), nextToken: null);
 
             var strategy = S3KeyListingStrategy.For(model, table);
             if (strategy.SortsInSql)
@@ -279,7 +279,7 @@ namespace BifrostQL.Server.S3
             // Full-key bounds. The prefix is a fixed range; the scan position moves.
             var prefixFrom = request.Prefix.Length > 0 ? request.Prefix : null;
             var prefixBefore = request.Prefix.Length > 0 ? Successor(request.Prefix) : null;
-            var page = new PageAssembly(request);
+            var page = new PageAssembly(request, _logger);
 
             var window = RowProbeWindow.For(model, request.MaxKeys);
             var seeks = 0;
@@ -363,7 +363,7 @@ namespace BifrostQL.Server.S3
             }
 
             candidates.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
-            var page = new PageAssembly(request);
+            var page = new PageAssembly(request, _logger);
             string? previousKey = null;
             foreach (var (key, pointer) in candidates)
             {
@@ -388,12 +388,14 @@ namespace BifrostQL.Server.S3
         private sealed class PageAssembly
         {
             private readonly PageRequest _request;
+            private readonly ILogger? _logger;
             private int _emitted;
             private string? _lastEmitted;
 
-            public PageAssembly(PageRequest request)
+            public PageAssembly(PageRequest request, ILogger? logger)
             {
                 _request = request;
+                _logger = logger;
                 Scan = new ScanPosition(request.ResumeAfter, null);
             }
 
@@ -422,7 +424,13 @@ namespace BifrostQL.Server.S3
                 var metadata = string.IsNullOrWhiteSpace(pointer) ? null : FileMetadata.FromJson(pointer);
                 if (metadata is null)
                 {
-                    // A corrupt pointer is no object; the scan still moves past it.
+                    // A corrupt pointer is no object (GetObject answers NoSuchKey for it too);
+                    // the scan still moves past it. Logged, so the object does not vanish
+                    // from listings unnoticed.
+                    if (!string.IsNullOrWhiteSpace(pointer))
+                        _logger?.LogWarning(
+                            "S3 listing of bucket {Bucket} skipped key {Key}: its stored file pointer is not parseable file metadata",
+                            _request.Bucket, key);
                     Scan = new ScanPosition(key, null);
                     return null;
                 }

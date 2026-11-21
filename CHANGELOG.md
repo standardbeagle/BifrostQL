@@ -46,6 +46,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **An encrypted value that cannot be decrypted is still redacted, and now logged.** `CryptoReadProjector` redacted a value whose data key was not loaded or whose ciphertext failed to decrypt with no trace, so a missing key or corrupted column looked like an access rule. It now logs a warning through `BifrostErrorSink` once per column per read, naming the column and the reason (never the value). `BifrostErrorSink.Handled(site, detail, exception)` is the new seam for any failure handled by degrading.
 - **A table or column hidden because its read policy failed to evaluate is now logged.** `SchemaReadVisibility` hid it fail-closed with a bare `catch`, so a policy that slipped past model validation made the table vanish from the schema with no explanation, even for an admin. It still hides it, and logs a warning naming the table (or column) through `BifrostErrorSink`.
 
+### Fixed — silent fallbacks
+
+- **S3 `ListObjectsV2` logs a key it leaves out because its stored file pointer does not parse.** The object vanished from listings silently. `FileMetadata.FromJson` also catches only `JsonException` now, so a non-parse fault is no longer read as "no file".
+
 ### Fixed — benchmark harness
 
 - **`--bulk-paths` and `--transport` report a failing scenario and keep going.** Before, one throw (for example the MySQL floor without `AllowLoadLocalInfile`) aborted the rest of that provider's scenarios. Now a failed scenario prints a `FAILED` row, writes the error to stderr, and makes the process exit 1. The bulk harness also fails a bulk row that did not stream its staging load, adds `AllowLoadLocalInfile=true` to the MySQL connection string itself, and logs a failed drop of its throwaway database instead of swallowing it.

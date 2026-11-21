@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace BifrostQL.Server.Test.S3
 {
@@ -86,8 +87,8 @@ namespace BifrostQL.Server.Test.S3
         public IMutationIntentExecutor Writes => _host.Services.GetRequiredService<IMutationIntentExecutor>();
 
         /// <summary>Builds a lister over the real executor with the given options (default options when null).</summary>
-        public S3Listing Listing(S3Options? options = null, TimeProvider? clock = null)
-            => new(Reads, options ?? new S3Options { Endpoint = EndpointPath }, clock: clock);
+        public S3Listing Listing(S3Options? options = null, TimeProvider? clock = null, ILogger<S3Listing>? logger = null)
+            => new(Reads, options ?? new S3Options { Endpoint = EndpointPath }, logger: logger, clock: clock);
 
         /// <summary>
         /// Builds a file-object seam over the real read/write pipeline. A caller that

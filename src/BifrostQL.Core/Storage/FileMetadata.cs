@@ -66,7 +66,9 @@ namespace BifrostQL.Core.Storage
         }
 
         /// <summary>
-        /// Deserializes file metadata from a JSON string
+        /// Deserializes file metadata from a JSON string. Returns null for an empty value or
+        /// malformed JSON, which every caller treats as a corrupt pointer; any other failure
+        /// propagates.
         /// </summary>
         public static FileMetadata? FromJson(string? json)
         {
@@ -77,7 +79,7 @@ namespace BifrostQL.Core.Storage
             {
                 return System.Text.Json.JsonSerializer.Deserialize<FileMetadata>(json);
             }
-            catch
+            catch (System.Text.Json.JsonException)
             {
                 return null;
             }

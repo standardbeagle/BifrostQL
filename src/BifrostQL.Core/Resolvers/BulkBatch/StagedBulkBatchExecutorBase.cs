@@ -88,11 +88,12 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
             var outName = $"bifrost_out_{suffix}";
             var tableRef = dialect.TableReference(plan.TableSchema, plan.TableDbName);
 
+            BulkStagingLoad stagingLoad;
             try
             {
                 foreach (var ddl in BuildStagingDdl(tableRef, stagingName, outName, plan.StagingColumns))
                     await ExecuteTextAsync(connection, ddl, cancellationToken);
-                await LoadStagingAsync(connection, dialect, stagingName, plan, cancellationToken);
+                stagingLoad = await LoadStagingAsync(connection, dialect, stagingName, plan, cancellationToken);
                 if (BuildPostLoadSql(stagingName) is { } postLoad)
                     await ExecuteTextAsync(connection, postLoad, cancellationToken);
             }
@@ -158,20 +159,35 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
                     affectedSeqs.Add(Convert.ToInt32(reader.GetValue(0), CultureInfo.InvariantCulture));
             }
 
-            return new BulkBatchResult(totalAffected, affectedSeqs);
+            return new BulkBatchResult(totalAffected, affectedSeqs, stagingLoad);
         }
 
         /// <summary>
-        /// The staging load strategy. The default is the chunked parameterized INSERT
-        /// (<see cref="LoadStagingChunkedAsync"/>); a provider with a streaming bulk-load
-        /// protocol overrides this to stream first and MUST fall back to the chunked load
+        /// The staging load strategy: stream through the provider's bulk-load protocol first
+        /// (<see cref="LoadStreamingOrChunkedAsync"/>) and fall back to the chunked parameterized
+        /// INSERT (<see cref="LoadStagingChunkedAsync"/>). A provider MUST fall back to the chunked load
         /// (after clearing any partial rows) when streaming is unavailable or fails on a
         /// value the engine's parameter coercion would have accepted — streaming is a
-        /// performance strategy, never a semantics change.
+        /// performance strategy, never a semantics change. Returns how the table was loaded,
+        /// naming the reason whenever the stream was not used.
         /// </summary>
-        protected virtual Task LoadStagingAsync(
-            DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
-            => LoadStagingChunkedAsync(connection, dialect, stagingName, plan, ct);
+        protected abstract Task<BulkStagingLoad> LoadStagingAsync(
+            DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct);
+
+        /// <summary>
+        /// Runs a provider's streaming load (<paramref name="tryStream"/> returns null when it
+        /// loaded every row, else why it did not) and, when it did not, the chunked load.
+        /// </summary>
+        protected static async Task<BulkStagingLoad> LoadStreamingOrChunkedAsync(
+            DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan,
+            Func<Task<string?>> tryStream, CancellationToken ct)
+        {
+            var chunkedReason = await tryStream();
+            if (chunkedReason is null)
+                return BulkStagingLoad.Stream;
+            await LoadStagingChunkedAsync(connection, dialect, stagingName, plan, ct);
+            return BulkStagingLoad.Chunked(chunkedReason);
+        }
 
         /// <summary>
         /// Loads the staged rows in chunked multi-row INSERTs. Every value binds as a named

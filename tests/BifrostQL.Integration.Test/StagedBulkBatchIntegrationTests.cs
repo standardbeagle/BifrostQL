@@ -7,6 +7,7 @@ using FluentAssertions;
 using GraphQL;
 using GraphQL.Types;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace BifrostQL.Integration.Test;
@@ -87,10 +88,15 @@ public abstract class StagedBulkBatchIntegrationTestBase : IAsyncLifetime
         return model;
     }
 
+    /// <summary>Every "BifrostQL.BulkBatch" log line from <see cref="ExecuteAsync"/>, as
+    /// "Level: message", so a test sees whether the staging load streamed.</summary>
+    private readonly BulkBatchLog _bulkBatchLog = new();
+
     private async Task<ExecutionResult> ExecuteAsync(IDbModel model, string query, IDictionary<string, object?>? userContext = null)
     {
         var schema = DbSchema.FromModel(model);
         var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Debug).AddProvider(_bulkBatchLog));
         services.AddSingleton<IMutationTransformers>(new MutationTransformersWrap
         {
             Transformers = new IMutationTransformer[]
@@ -171,6 +177,23 @@ public abstract class StagedBulkBatchIntegrationTestBase : IAsyncLifetime
         fastState.Should().HaveCount(4);
         fastState.Should().Contain(r => r.StartsWith("2|") && r.Contains("paid"));
         fastState.Should().NotContain(r => r.StartsWith("3|"));
+    }
+
+    [SkippableFact]
+    public async Task FastPath_StreamsTheStagingLoad_WithoutFallingBackToChunkedInserts()
+    {
+        Skip.If(!Available, "test database environment variable not set");
+
+        await SeedOrdersAsync();
+        BatchTotal(await ExecuteAsync(await LoadModelAsync(bulkThreshold: "1"), MixedBatchMutation), "orders_batch")
+            .Should().Be(4);
+
+        // The chunked load writes the same rows, so only the log tells the two apart. A test
+        // database that cannot stream (MySQL without local_infile) fails here instead of
+        // silently testing the fallback.
+        _bulkBatchLog.Lines.Should().Contain(line => line.StartsWith("Debug: Bulk batch for orders streamed 4 rows"),
+            "the staging load must stream; log: {0}", string.Join(" | ", _bulkBatchLog.Lines));
+        _bulkBatchLog.Lines.Should().NotContain(line => line.StartsWith("Warning:"));
     }
 
     // ---- parity: a later row of a verb depends on another verb's row between them ----
@@ -331,6 +354,26 @@ public abstract class StagedBulkBatchIntegrationTestBase : IAsyncLifetime
         fast.Error.Should().Contain("concurrency token no longer matches");
         fast.State.Should().Equal(slow.State);
         fast.State.Should().Contain("1|new|1").And.Contain("2|new|5");
+    }
+}
+
+internal sealed class BulkBatchLog : ILoggerProvider
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+
+    public IReadOnlyList<string> Lines => _lines.ToArray();
+
+    public ILogger CreateLogger(string categoryName)
+        => categoryName == "BifrostQL.BulkBatch" ? new Sink(_lines) : Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
+    public void Dispose() { }
+
+    private sealed class Sink(System.Collections.Concurrent.ConcurrentQueue<string> lines) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => lines.Enqueue($"{logLevel}: {formatter(state, exception)}");
     }
 }
 

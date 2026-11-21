@@ -88,7 +88,7 @@ public sealed class SqlServerBulkBatchExecutor : IBulkBatchExecutor
                 affectedSeqs.Add(seqReader.GetInt32(0));
         }
 
-        return new BulkBatchResult(totalAffected, affectedSeqs);
+        return new BulkBatchResult(totalAffected, affectedSeqs, BulkStagingLoad.Stream);
     }
 
     private static IEnumerable<SqlParameterInfo> DistinctFilterParameters(IReadOnlyList<BulkOpGroup> groups)

@@ -102,7 +102,14 @@ The staging load itself streams where the engine allows, and falls back to chunk
 | PostgreSQL | binary `COPY` | none — always streams; falls back if a column type is unmappable |
 | MySQL | `MySqlBulkCopy` (`LOAD DATA LOCAL INFILE`) | `AllowLoadLocalInfile=true` in the connection string **and** `local_infile=1` on the server; otherwise chunked INSERTs (still fast) |
 
-On PostgreSQL, binary `COPY` refuses text for most non-text columns, and the chunked load then fails too, so the batch takes the per-row loop with no error and no sign in the reply. Measured with text values, as GraphQL sends them, on `date`, `timestamp`, `timestamptz`, `time`, `interval`, `inet`, `cidr`, `macaddr`, `bytea` and `money`. Canonical `uuid` text is converted and stays on the fast path, as `GeneratedBatch_WithTextKeys_StaysOneStatementPerRun` pins.
+On PostgreSQL, binary `COPY` refuses text for most non-text columns, and the chunked load then fails too, so the batch takes the per-row loop with no error in the reply (the log carries a warning, below). Measured with text values, as GraphQL sends them, on `date`, `timestamp`, `timestamptz`, `time`, `interval`, `inet`, `cidr`, `macaddr`, `bytea` and `money`. Canonical `uuid` text is converted and stays on the fast path, as `GeneratedBatch_WithTextKeys_StaysOneStatementPerRun` pins.
+
+Every fallback is logged under the `BifrostQL.BulkBatch` category, so you can see which load ran:
+
+- **Debug** `Bulk batch for <table> streamed <n> rows into staging`: the stream ran.
+- **Warning** `Bulk batch for <table> loaded <n> rows with the chunked INSERT, not the streaming load: <reason>`: the chunked load ran. The reason names the cause, for example a MySQL connection string without `AllowLoadLocalInfile=true`, or a server with `local_infile` off ("Loading local data is disabled").
+- **Warning** `Bulk batch staging failed for <table>; running the <n>-row batch on the per-row path instead`: staging failed outright, with the exception attached.
+- **Debug** `Bulk batch fast path skipped for <table>: <reason>`: the batch never qualified (see "When the fast path runs").
 
 ## Tuning guidance
 

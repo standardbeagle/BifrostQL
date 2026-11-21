@@ -13,12 +13,13 @@ namespace BifrostQL.Ngsql;
 /// types, so each column's <see cref="NpgsqlDbType"/> is read back from the staging table
 /// itself (a schema-only SELECT) and every value is written AS that type — Npgsql's handlers
 /// then convert compatible CLR values. Any failure aborts the COPY (nothing persists),
-/// clears the staging table, and reports false so the caller falls back to the chunked
+/// clears the staging table, and reports why so the caller falls back to the chunked
 /// parameterized load — streaming is a performance strategy, never a semantics change.
 /// </summary>
 internal static class PostgresStagingStream
 {
-    public static async Task<bool> TryLoadAsync(
+    /// <summary>Returns null when every row streamed, else why the chunked load must run.</summary>
+    public static async Task<string?> TryLoadAsync(
         NpgsqlConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
     {
         var stage = dialect.EscapeIdentifier(stagingName);
@@ -36,7 +37,7 @@ internal static class PostgresStagingStream
         {
             var columnTypes = await ReadColumnTypesAsync(connection, stage, escapedColumns, ct);
             if (columnTypes is null)
-                return false; // a column's NpgsqlDbType is unknown — let the parameterized load coerce
+                return "a staging column has no binary COPY type mapping"; // let the parameterized load coerce
 
             await using var importer = await connection.BeginBinaryImportAsync(
                 $"COPY {stage} ({string.Join(",", escapedColumns)}) FROM STDIN (FORMAT BINARY)", ct);
@@ -54,7 +55,7 @@ internal static class PostgresStagingStream
                 }
             }
             await importer.CompleteAsync(ct);
-            return true;
+            return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -63,7 +64,7 @@ internal static class PostgresStagingStream
             await using var truncate = connection.CreateCommand();
             truncate.CommandText = $"TRUNCATE {stage};";
             await truncate.ExecuteNonQueryAsync(CancellationToken.None);
-            return false;
+            return $"binary COPY failed: {ex.GetType().Name}: {ex.Message}";
         }
     }
 

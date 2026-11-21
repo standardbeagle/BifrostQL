@@ -25,6 +25,15 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Breaking — bulk staging visibility
+
+- **`BulkBatchResult` gains a `StagingLoad` (`BulkStagingLoad`) member, and `StagedBulkBatchExecutorBase.LoadStagingAsync` is abstract and returns `Task<BulkStagingLoad>`.** A custom `IBulkBatchExecutor` reports whether it streamed its staging load, or why it did not. A subclass of the staged base streams through `LoadStreamingOrChunkedAsync`, passing a delegate that returns null on success or the reason the chunked load must run.
+
+### Fixed — bulk staging visibility
+
+- **A bulk batch that falls back from the streaming staging load now logs why.** Before, the MySQL and PostgreSQL streaming loads swallowed every failure and fell back silently, and a staging failure reran the batch on the per-row path silently. Now each case logs a warning under `BifrostQL.BulkBatch` (a successful stream logs at debug). The silence had hidden that the shared MySQL test container ran with `local_infile` off, so no test ever exercised MySQL streaming.
+- **The MySQL test environment streams.** `docker-compose.test.yml` starts MySQL with `--local-infile=1`. CI sets `local_infile=1` at runtime. Both `BIFROST_TEST_MYSQL` strings (CI and `local-databases.runsettings`) carry `AllowLoadLocalInfile=true`. A new integration test fails on MySQL or PostgreSQL when the staging load does not stream. Recreate a running `bifrost-mysql` container to pick this up: `docker compose -f docker-compose.test.yml up -d mysql`.
+
 ### Security — write-path fixes
 
 - An update or delete runs the mutation transformer chain before the pipeline answers by the request's shape. A caller the chain refuses used to get the shape's answer instead: `NO_UPDATE_COLUMNS` or `PARTIAL_PRIMARY_KEY` for a key-only or partial-key update, and a no-op `0` for an update with no key column (a keyless view) or a delete naming no column, which read as a write that ran. The chain's refusal is now the answer on the single-row, `_batch` and bulk paths; a write the chain passes is answered by its shape as before. An upsert that writes nothing (empty, or key-only on an existing row) and a batch upsert with a partial key run the update chain first too.

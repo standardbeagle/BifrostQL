@@ -64,7 +64,21 @@ namespace BifrostQL.Core.Resolvers.BulkBatch
     /// affected — a seq repeats when its predicate matched several rows, and a scoped-away row
     /// is absent (inserts always affect exactly one row and are not listed).
     /// </summary>
-    public sealed record BulkBatchResult(int TotalAffected, IReadOnlyList<int> AffectedSeqs);
+    /// <param name="StagingLoad">How the staging table was loaded, so a fallback from the
+    /// streaming load is visible to logs and tests instead of silent.</param>
+    public sealed record BulkBatchResult(int TotalAffected, IReadOnlyList<int> AffectedSeqs, BulkStagingLoad StagingLoad);
+
+    /// <summary>
+    /// How an executor loaded its staging table: streamed through the provider's bulk protocol
+    /// (SqlBulkCopy, binary COPY, MySqlBulkCopy), or by the chunked parameterized INSERT, with the
+    /// reason the stream was not used. Both load the same rows; the chunked load is slower.
+    /// </summary>
+    public sealed record BulkStagingLoad(bool Streamed, string? ChunkedReason)
+    {
+        public static readonly BulkStagingLoad Stream = new(true, null);
+
+        public static BulkStagingLoad Chunked(string reason) => new(false, reason);
+    }
 
     /// <summary>
     /// A dialect's set-based batch capability: stage the plan's rows on the given open

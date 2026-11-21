@@ -32,15 +32,13 @@ public sealed class PostgresBulkBatchExecutor : StagedBulkBatchExecutorBase
 
     /// <summary>Streams via binary COPY first; falls back to the chunked parameterized load
     /// when a column type is unmappable or a value refuses binary conversion.</summary>
-    protected override async Task LoadStagingAsync(
+    protected override Task<BulkStagingLoad> LoadStagingAsync(
         System.Data.Common.DbConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
-    {
-        if (connection is not Npgsql.NpgsqlConnection npgsqlConnection ||
-            !await PostgresStagingStream.TryLoadAsync(npgsqlConnection, dialect, stagingName, plan, ct))
-        {
-            await LoadStagingChunkedAsync(connection, dialect, stagingName, plan, ct);
-        }
-    }
+        => LoadStreamingOrChunkedAsync(connection, dialect, stagingName, plan,
+            () => connection is Npgsql.NpgsqlConnection npgsqlConnection
+                ? PostgresStagingStream.TryLoadAsync(npgsqlConnection, dialect, stagingName, plan, ct)
+                : Task.FromResult<string?>($"the connection is a {connection.GetType().Name}, not an NpgsqlConnection"),
+            ct);
 }
 
 /// <summary>

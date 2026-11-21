@@ -8,8 +8,8 @@ namespace BifrostQL.MySql;
 /// Streams staged rows into the temp staging table with <see cref="MySqlBulkCopy"/> (built
 /// on <c>LOAD DATA LOCAL INFILE</c>). The capability is opt-in on BOTH sides — the
 /// connection string must set <c>AllowLoadLocalInfile=true</c> and the server must enable
-/// <c>local_infile</c> — so absence of either simply reports false and the caller uses the
-/// chunked parameterized load. LOAD DATA coerces bad values into WARNINGS rather than
+/// <c>local_infile</c> — so absence of either reports why and the caller uses the chunked
+/// parameterized load. LOAD DATA coerces bad values into WARNINGS rather than
 /// errors, so a load that inserted a different row count or produced any warning is treated
 /// as a FAILURE: the staging table is cleared and the chunked load (whose parameter
 /// semantics match the per-row path exactly) takes over — streaming is a performance
@@ -17,13 +17,15 @@ namespace BifrostQL.MySql;
 /// </summary>
 internal static class MySqlStagingStream
 {
-    public static async Task<bool> TryLoadAsync(
+    /// <summary>Returns null when every row streamed, else why the chunked load must run.</summary>
+    public static async Task<string?> TryLoadAsync(
         MySqlConnection connection, ISqlDialect dialect, string stagingName, BulkBatchPlan plan, CancellationToken ct)
     {
         if (!new MySqlConnectionStringBuilder(connection.ConnectionString).AllowLoadLocalInfile)
-            return false;
+            return "the connection string does not set AllowLoadLocalInfile=true";
 
         var stage = dialect.EscapeIdentifier(stagingName);
+        string reason;
         try
         {
             var bulkCopy = new MySqlBulkCopy(connection) { DestinationTableName = stage };
@@ -35,11 +37,15 @@ internal static class MySqlStagingStream
 
             var result = await bulkCopy.WriteToServerAsync(reader, ct);
             if (result.RowsInserted == plan.Rows.Count && result.Warnings.Count == 0)
-                return true;
+                return null;
+            reason = result.Warnings.Count > 0
+                ? $"LOAD DATA raised {result.Warnings.Count} warning(s); first: {result.Warnings[0].ErrorCode} {result.Warnings[0].Message}"
+                : $"LOAD DATA inserted {result.RowsInserted} of {plan.Rows.Count} rows";
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // fall through to the cleanup + chunked fallback below
+            // Includes a server with local_infile off: the client refuses the LOAD DATA.
+            reason = $"LOAD DATA failed: {ex.GetType().Name}: {ex.Message}";
         }
 
         // Partial or warned load: clear the staging table so the chunked fallback never
@@ -47,6 +53,6 @@ internal static class MySqlStagingStream
         await using var truncate = connection.CreateCommand();
         truncate.CommandText = $"TRUNCATE {stage};";
         await truncate.ExecuteNonQueryAsync(CancellationToken.None);
-        return false;
+        return reason;
     }
 }

@@ -5,6 +5,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Approval;
 using BifrostQL.Core.QueryModel;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using static BifrostQL.Core.Resolvers.DbParameterBinder;
 
 namespace BifrostQL.Core.Resolvers
@@ -220,6 +221,7 @@ namespace BifrostQL.Core.Resolvers
             BulkBatch.IBulkBatchExecutor executor, BulkBatch.BulkBatchPlanBuilder.BuiltBulkBatch built)
         {
             var ct = ctx.CancellationToken;
+            var logger = ctx.Services?.GetService<ILoggerFactory>()?.CreateLogger("BifrostQL.BulkBatch");
             BulkBatch.BulkBatchResult result;
             await using (var conn = ctx.ConnFactory.GetConnection())
             {
@@ -228,8 +230,11 @@ namespace BifrostQL.Core.Resolvers
                     await conn.OpenAsync(ct);
                     result = await executor.ExecuteAsync(built.Plan, conn, ct);
                 }
-                catch (BulkBatch.BulkBatchStagingException)
+                catch (BulkBatch.BulkBatchStagingException ex)
                 {
+                    logger?.LogWarning(ex,
+                        "Bulk batch staging failed for {Table}; running the {Rows}-row batch on the per-row path instead",
+                        table.DbName, built.Plan.Rows.Count);
                     return null;
                 }
                 catch (BifrostExecutionError)
@@ -245,6 +250,13 @@ namespace BifrostQL.Core.Resolvers
                     throw BifrostExecutionError.FromDatabaseException(ex);
                 }
             }
+
+            if (result.StagingLoad.Streamed)
+                logger?.LogDebug("Bulk batch for {Table} streamed {Rows} rows into staging", table.DbName, built.Plan.Rows.Count);
+            else
+                logger?.LogWarning(
+                    "Bulk batch for {Table} loaded {Rows} rows with the chunked INSERT, not the streaming load: {Reason}",
+                    table.DbName, built.Plan.Rows.Count, result.StagingLoad.ChunkedReason);
 
             // Inserts always land exactly one row (a failure aborted the transaction);
             // updates/deletes report per-row via the executor's affected seq entries — one per

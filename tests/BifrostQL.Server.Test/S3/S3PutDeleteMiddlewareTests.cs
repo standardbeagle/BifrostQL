@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -372,7 +373,7 @@ namespace BifrostQL.Server.Test.S3
             // post-authorization internal failure that left storage behind — the wire answers a
             // sanitized 500 (no seam detail on the wire, invariant 3) and the orphan is logged at
             // Error WITH its storage key, never swallowed at Debug.
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var seam = ResidueSeam(new DeleteFailingProvider(), scopeAwayWrites: true);
             var ctx = PutA("/assets/data/5", "orphaned"u8.ToArray(), "text/plain");
             var (status, xml) = await RunErrorWithSeam(ctx, seam, log);
@@ -381,9 +382,9 @@ namespace BifrostQL.Server.Test.S3
             xml.Element("Code")!.Value.Should().Be("InternalError");
             xml.ToString().Should().NotContain("orphan", "the seam's internal residue detail must not reach the wire");
 
-            var error = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+            var error = log.Collector.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
             error.Message.Should().Contain("residue");
-            log.Entries.Should().NotContain(
+            log.Collector.GetSnapshot().Should().NotContain(
                 e => e.Level == LogLevel.Debug,
                 "the orphan must be operator-visible at Error, not swallowed at Debug");
         }
@@ -395,14 +396,14 @@ namespace BifrostQL.Server.Test.S3
             // fails: the object is now unreferenced residue an operator must reclaim. DELETE
             // stays idempotent (204), but the orphan is surfaced at Error WITH its storage
             // key — never swallowed at Debug (the exact regression this rework fixes).
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var (status, ctx) = await RunWith(DeleteA("/assets/data/1"), new DeleteFailingProvider(), log);
 
             status.Should().Be(204);
-            var error = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+            var error = log.Collector.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
             error.Message.Should().Contain("blobs/existing", "the orphaned storage key must be in the operator log");
             error.Message.Should().Contain("residue");
-            log.Entries.Should().NotContain(
+            log.Collector.GetSnapshot().Should().NotContain(
                 e => e.Level == LogLevel.Debug,
                 "the orphan must be operator-visible at Error, not swallowed at Debug");
 
@@ -698,7 +699,7 @@ namespace BifrostQL.Server.Test.S3
             // delete also fails: the just-uploaded object is orphaned residue. As with PutObject,
             // the wire answers a sanitized 500 (no seam detail, invariant 3) and the orphan is
             // logged at Error WITH its storage key — never swallowed at Debug.
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var seam = ResidueSeam(new DeleteFailingProvider(), scopeAwayWrites: true);
             var (status, xml) = await RunErrorWithSeam(CopyA("/assets/data/5", "/assets/data/1"), seam, log);
 
@@ -706,9 +707,9 @@ namespace BifrostQL.Server.Test.S3
             xml.Element("Code")!.Value.Should().Be("InternalError");
             xml.ToString().Should().NotContain("orphan", "the seam's internal residue detail must not reach the wire");
 
-            var error = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+            var error = log.Collector.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
             error.Message.Should().Contain("residue");
-            log.Entries.Should().NotContain(
+            log.Collector.GetSnapshot().Should().NotContain(
                 e => e.Level == LogLevel.Debug,
                 "the orphan must be operator-visible at Error, not swallowed at Debug");
         }
@@ -952,22 +953,6 @@ namespace BifrostQL.Server.Test.S3
                 => Task.FromResult(new MutationIntentResult { AffectedRows = 0 });
             public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
                 => Task.FromResult(new MutationBatchIntentResult { TotalAffected = 0 });
-        }
-
-        /// <summary>Captures every log entry so a test can assert the operator-visible level (Error/Warning, not Debug).</summary>
-        private sealed class CapturingLogger<T> : ILogger<T>
-        {
-            public readonly record struct Entry(LogLevel Level, string Message, Exception? Exception);
-
-            public List<Entry> Entries { get; } = new();
-
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(
-                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-                => Entries.Add(new Entry(logLevel, formatter(state, exception), exception));
         }
     }
 }

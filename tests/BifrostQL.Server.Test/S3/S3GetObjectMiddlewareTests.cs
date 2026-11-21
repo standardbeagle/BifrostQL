@@ -5,6 +5,7 @@ using BifrostQL.Server.S3;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.S3
@@ -35,7 +36,7 @@ namespace BifrostQL.Server.Test.S3
 
         private string _tempDir = null!;
         private S3ListingRealDbHarness _harness = null!;
-        private readonly CapturingLoggerSink _logSink = new();
+        private readonly FakeLogCollector _log = new();
 
         // Two principals bound to two tenants, to prove the tenant boundary end to end.
         private const string KeyA = "AKIATENANTA";
@@ -310,7 +311,7 @@ namespace BifrostQL.Server.Test.S3
             XElement.Parse(bodyText).Element("Code")!.Value.Should().Be("NoSuchKey");
             // Non-enumeration: a corrupt pointer is a routine addressing outcome, not a
             // server fault — it must not surface at Error level (which a 500 would).
-            _logSink.Entries.Should().NotContain(e => e.Level == LogLevel.Error);
+            _log.GetSnapshot().Should().NotContain(e => e.Level == LogLevel.Error);
         }
 
         [Fact]
@@ -324,7 +325,7 @@ namespace BifrostQL.Server.Test.S3
 
             status.Should().Be(200);
             bodyText.Should().Contain("<Key>data/1</Key>").And.NotContain("data/7");
-            _logSink.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning
+            _log.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Warning
                 && e.Message.Contains("skipped key data/7") && e.Message.Contains("not parseable file metadata"));
         }
 
@@ -341,7 +342,7 @@ namespace BifrostQL.Server.Test.S3
             status.Should().Be(404);
             status.Should().NotBe(500);
             XElement.Parse(bodyText).Element("Code")!.Value.Should().Be("NoSuchKey");
-            _logSink.Entries.Should().NotContain(e => e.Level == LogLevel.Error);
+            _log.GetSnapshot().Should().NotContain(e => e.Level == LogLevel.Error);
         }
 
         // ---- cancellation ---------------------------------------------------------
@@ -376,7 +377,7 @@ namespace BifrostQL.Server.Test.S3
                 databaseDefaultConfig: new StorageBucketConfig { BucketName = _tempDir, ProviderType = "local" });
             var seam = _harness.Seam(storage, opts);
             RequestDelegate next = _ => Task.CompletedTask;
-            return new S3Middleware(next, opts, verifier, _harness.Listing(opts, logger: _logSink.Logger<S3Listing>()), seam, _logSink.Logger<S3Middleware>());
+            return new S3Middleware(next, opts, verifier, _harness.Listing(opts, logger: new FakeLogger<S3Listing>(_log)), seam, new FakeLogger<S3Middleware>(_log));
         }
 
         private DefaultHttpContext SignedA(string path, string method = "GET", string? range = null)
@@ -435,31 +436,6 @@ namespace BifrostQL.Server.Test.S3
         private sealed class FixedClock(DateTimeOffset now) : TimeProvider
         {
             public override DateTimeOffset GetUtcNow() => now;
-        }
-
-        /// <summary>
-        /// Captures every log entry the middleware emits so a test can assert that a
-        /// routine non-enumerating outcome (corrupt pointer, policy read-deny) is NOT
-        /// surfaced at Error level — the signal a leaked 500 would produce.
-        /// </summary>
-        private sealed class CapturingLoggerSink
-        {
-            public readonly record struct Entry(LogLevel Level, string Message);
-
-            public List<Entry> Entries { get; } = new();
-
-            public ILogger<T> Logger<T>() => new Sink<T>(this);
-
-            private sealed class Sink<T>(CapturingLoggerSink owner) : ILogger<T>, IDisposable
-            {
-                public IDisposable BeginScope<TState>(TState state) where TState : notnull => this;
-                public bool IsEnabled(LogLevel logLevel) => true;
-                public void Log<TState>(
-                    LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                    Func<TState, Exception?, string> formatter)
-                    => owner.Entries.Add(new Entry(logLevel, formatter(state, exception)));
-                public void Dispose() { }
-            }
         }
     }
 }

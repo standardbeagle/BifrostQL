@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using System.Security.Claims;
 using Xunit;
+using Microsoft.Extensions.Logging.Testing;
 
 namespace BifrostQL.Server.Test
 {
@@ -155,7 +156,7 @@ namespace BifrostQL.Server.Test
                 "the same condition must produce the same wire shape across profiles");
             alpha.result.ErrorMessage.Should().NotContain("alpha").And.NotContain("admin")
                 .And.NotContain("beta").And.NotContain("superuser");
-            alpha.logger.Messages.Should().Contain(m => m.Contains("admin"),
+            alpha.logger.Collector.GetSnapshot().Should().Contain(r => r.Message.Contains("admin"),
                 "the required role is diagnostic detail: logged server-side, never on the wire");
         }
 
@@ -177,10 +178,10 @@ namespace BifrostQL.Server.Test
             alpha.result.ErrorMessage.Should().Be(beta.result.ErrorMessage);
             alpha.result.ErrorMessage.Should().NotContain("alpha").And.NotContain("admin")
                 .And.NotContain("beta").And.NotContain("superuser");
-            alpha.logger.Messages.Should().Contain(m => m.Contains("admin"));
+            alpha.logger.Collector.GetSnapshot().Should().Contain(r => r.Message.Contains("admin"));
         }
 
-        private static (BifrostProfileResolution result, ListLogger logger) ResolveRoleGated(
+        private static (BifrostProfileResolution result, FakeLogger logger) ResolveRoleGated(
             BifrostProfileRegistry registry, string profile, bool authenticated, string[] roles)
         {
             var context = new DefaultHttpContext();
@@ -193,23 +194,8 @@ namespace BifrostQL.Server.Test
                 context.User = new ClaimsPrincipal(identity);
             }
 
-            var logger = new ListLogger();
+            var logger = new FakeLogger();
             return (BifrostProfileResolver.Resolve(registry, context, logger), logger);
-        }
-
-        private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger
-        {
-            public List<string> Messages { get; } = new();
-
-            IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
-            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
-            public void Log<TState>(
-                Microsoft.Extensions.Logging.LogLevel logLevel,
-                Microsoft.Extensions.Logging.EventId eventId,
-                TState state,
-                Exception? exception,
-                Func<TState, Exception?, string> formatter)
-                => Messages.Add(formatter(state, exception));
         }
     }
 }

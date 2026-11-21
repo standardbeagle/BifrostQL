@@ -16,6 +16,7 @@
   <ItemGroup>
     <PackageReference Include="FluentAssertions" Version="8.11.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" Version="11.0.0" />
     <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="180.154.0" />
     <!-- TestHost must track the ASP.NET Core shared framework of each TFM. -->
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.34" Condition="'$(TargetFramework)'=='net8.0'" />

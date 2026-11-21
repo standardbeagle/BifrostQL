@@ -5,6 +5,7 @@ using BifrostQL.Server.OData;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
@@ -81,11 +82,11 @@ namespace BifrostQL.Server.Test.OData
         public async Task Cleartext_opt_out_accepts_Basic_and_warns_at_construction()
         {
             var store = new CountingStore();
-            var logger = new CapturingLogger();
+            var logger = new FakeLogger<ODataAuthenticator>();
             var auth = new ODataAuthenticator(BifrostAuthContextFactory.Instance, store, logger,
                 options: new ODataOptions { AllowCleartextBasicAuth = true });
 
-            logger.Warnings.Should().ContainSingle(w => w.Contains("AllowCleartextBasicAuth is ON"));
+            logger.Collector.GetSnapshot().Should().ContainSingle(r => r.Level == LogLevel.Warning && r.Message.Contains("AllowCleartextBasicAuth is ON"));
             var userContext = await auth.AuthenticateAsync(BasicRequest(https: false), CancellationToken.None);
             userContext.Should().NotBeEmpty();
         }
@@ -93,11 +94,11 @@ namespace BifrostQL.Server.Test.OData
         [Fact]
         public void Default_options_log_no_cleartext_warning()
         {
-            var logger = new CapturingLogger();
+            var logger = new FakeLogger<ODataAuthenticator>();
             _ = new ODataAuthenticator(BifrostAuthContextFactory.Instance, new CountingStore(), logger);
 
             new ODataOptions().AllowCleartextBasicAuth.Should().BeFalse();
-            logger.Warnings.Should().BeEmpty();
+            logger.Collector.GetSnapshot().Should().NotContain(r => r.Level == LogLevel.Warning);
         }
 
         [Fact]
@@ -122,19 +123,6 @@ namespace BifrostQL.Server.Test.OData
             {
                 Lookups++;
                 return _inner.FindAsync(username, cancellationToken);
-            }
-        }
-
-        private sealed class CapturingLogger : ILogger<ODataAuthenticator>
-        {
-            public List<string> Warnings { get; } = new();
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-            {
-                if (logLevel == LogLevel.Warning) Warnings.Add(formatter(state, exception));
             }
         }
     }

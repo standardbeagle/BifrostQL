@@ -4,6 +4,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using Microsoft.Extensions.Logging.Testing;
 
 namespace BifrostQL.Server.Test
 {
@@ -129,7 +130,7 @@ namespace BifrostQL.Server.Test
         {
             // Arrange: an OIDC identity whose mapper grants permission "x" — the
             // pre-resolver set is NON-empty, so the fail-closed wipe is observable.
-            var loggerFactory = new ListLoggerFactory();
+            var log = new FakeLogCollector();
             var context = new DefaultHttpContext
             {
                 User = OidcPrincipalWithPermissions(),
@@ -138,7 +139,7 @@ namespace BifrostQL.Server.Test
                     {
                         new KeyValuePair<string, IOidcClaimMapper>("https://idp.test", new PermissionMapper()),
                     }))
-                    .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory>(loggerFactory)
+                    .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory>(new Microsoft.Extensions.Logging.LoggerFactory(new[] { new FakeLoggerProvider(log) }))
                     .AddBifrostGrantResolver((identity, sp, ct) =>
                         throw new InvalidOperationException("grant store down"))
                     .BuildServiceProvider(),
@@ -150,7 +151,7 @@ namespace BifrostQL.Server.Test
             // Assert: the pre-resolver permission "x" is gone — a throwing resolver
             // never yields the pre-resolver set — and a Warning names the identity id.
             BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext).Should().BeEmpty();
-            loggerFactory.Entries.Should().Contain(e =>
+            log.GetSnapshot().Should().Contain(e =>
                 e.Level == Microsoft.Extensions.Logging.LogLevel.Warning &&
                 e.Message.Contains("user-1"));
         }
@@ -159,12 +160,12 @@ namespace BifrostQL.Server.Test
         public void CreateUserContext_ResolverReturnsNull_TreatedAsEmpty_NoWarning()
         {
             // Arrange
-            var loggerFactory = new ListLoggerFactory();
+            var log = new FakeLogCollector();
             var context = new DefaultHttpContext
             {
                 User = AuthenticatedLocalPrincipal(),
                 RequestServices = new ServiceCollection()
-                    .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory>(loggerFactory)
+                    .AddSingleton<Microsoft.Extensions.Logging.ILoggerFactory>(new Microsoft.Extensions.Logging.LoggerFactory(new[] { new FakeLoggerProvider(log) }))
                     .AddBifrostGrantResolver((identity, sp, ct) =>
                         new ValueTask<IReadOnlyCollection<string>>((IReadOnlyCollection<string>)null!))
                     .BuildServiceProvider(),
@@ -176,7 +177,7 @@ namespace BifrostQL.Server.Test
             // Assert: null is an empty grant set — the identity's own (empty) permissions
             // remain and nothing is logged.
             BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext).Should().BeEmpty();
-            loggerFactory.Entries.Should().BeEmpty();
+            log.GetSnapshot().Should().BeEmpty();
         }
 
         [Fact]
@@ -203,27 +204,6 @@ namespace BifrostQL.Server.Test
             public string Provider => "oidc:test";
             public BifrostQL.Core.Auth.AppIdentity Map(ClaimsPrincipal principal) =>
                 new("user-1", Provider, permissions: new[] { "x" });
-        }
-
-        private sealed class ListLoggerFactory : Microsoft.Extensions.Logging.ILoggerFactory
-        {
-            public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = new();
-            public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
-            public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new ListLogger(Entries);
-            public void Dispose() { }
-
-            private sealed class ListLogger : Microsoft.Extensions.Logging.ILogger
-            {
-                private readonly List<(Microsoft.Extensions.Logging.LogLevel, string)> _entries;
-                public ListLogger(List<(Microsoft.Extensions.Logging.LogLevel, string)> entries) => _entries = entries;
-                public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-                public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
-                public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
-                    TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-                {
-                    lock (_entries) _entries.Add((logLevel, formatter(state, exception)));
-                }
-            }
         }
 
         private static ClaimsPrincipal AuthenticatedLocalPrincipal() => new(new ClaimsIdentity(new[]

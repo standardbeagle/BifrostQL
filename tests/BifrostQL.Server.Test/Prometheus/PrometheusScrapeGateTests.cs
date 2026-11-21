@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using BifrostQL.Server.Prometheus;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Prometheus
@@ -115,57 +116,35 @@ namespace BifrostQL.Server.Test.Prometheus
         [Fact]
         public void Arming_logs_a_posture_warning_without_the_secret()
         {
-            var logger = new CapturingLogger<PrometheusScrapeGate>();
+            var logger = new FakeLogger<PrometheusScrapeGate>();
             _ = Armed(logger);
 
-            logger.Warnings.Should().ContainSingle();
-            logger.Warnings[0].Should().Contain("ENABLED");
+            logger.Collector.GetSnapshot().Where(r => r.Level == LogLevel.Warning).Should().ContainSingle()
+                .Which.Message.Should().Contain("ENABLED");
             // The credential material must never appear in any log line.
-            logger.Warnings[0].Should().NotContain(Secret);
+            logger.Collector.GetSnapshot().Should().OnlyContain(r => !r.Message.Contains(Secret));
         }
 
         [Fact]
         public void A_disarmed_surface_logs_no_posture_note()
         {
-            var logger = new CapturingLogger<PrometheusScrapeGate>();
+            var logger = new FakeLogger<PrometheusScrapeGate>();
             _ = new PrometheusScrapeGate(new PrometheusScrapeSecurityOptions(), logger);
 
-            logger.Warnings.Should().BeEmpty();
+            logger.Collector.GetSnapshot().Should().NotContain(r => r.Level == LogLevel.Warning);
         }
 
         [Fact]
         public void The_secret_never_appears_in_any_log_regardless_of_presented_value()
         {
-            var logger = new CapturingLogger<PrometheusScrapeGate>();
+            var logger = new FakeLogger<PrometheusScrapeGate>();
             var gate = Armed(logger);
 
             // Exercising the compare path emits no logs at all (and certainly not the secret).
             gate.IsAuthorized(Secret);
             gate.IsAuthorized("wrong");
 
-            logger.Warnings.Should().OnlyContain(w => !w.Contains(Secret));
-        }
-
-        private sealed class CapturingLogger<T> : ILogger<T>
-        {
-            public List<string> Warnings { get; } = new();
-
-            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(
-                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-            {
-                if (logLevel == LogLevel.Warning)
-                    Warnings.Add(formatter(state, exception));
-            }
-
-            private sealed class NullScope : IDisposable
-            {
-                public static readonly NullScope Instance = new();
-                public void Dispose() { }
-            }
+            logger.Collector.GetSnapshot().Should().OnlyContain(r => !r.Message.Contains(Secret));
         }
     }
 }

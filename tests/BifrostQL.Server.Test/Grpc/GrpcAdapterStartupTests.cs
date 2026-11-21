@@ -3,6 +3,7 @@ using BifrostQL.Core.Resolvers;
 using BifrostQL.Server.Grpc;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using NSubstitute;
 using Xunit;
 
@@ -108,50 +109,28 @@ namespace BifrostQL.Server.Test.Grpc
         public async Task Start_with_writes_enabled_logs_a_startup_warning()
         {
             // Enabling the write surface is a posture change worth surfacing (criterion 1).
-            var logger = new CapturingLogger<GrpcWireAdapter>();
+            var logger = new FakeLogger<GrpcWireAdapter>();
             var adapter = new GrpcWireAdapter(
                 new GrpcWireOptions { EnableWrites = true }, AnyProvider(), logger);
 
             await adapter.StartAsync(default);
 
-            logger.Warnings.Should().Contain(w => w.Contains("WRITES ARE ENABLED"));
+            logger.Collector.GetSnapshot().Should().Contain(r => r.Level == LogLevel.Warning && r.Message.Contains("WRITES ARE ENABLED"));
         }
 
         [Fact]
         public async Task Start_with_writes_disabled_logs_no_write_warning()
         {
-            var logger = new CapturingLogger<GrpcWireAdapter>();
+            var logger = new FakeLogger<GrpcWireAdapter>();
             var adapter = new GrpcWireAdapter(new GrpcWireOptions(), AnyProvider(), logger);
 
             await adapter.StartAsync(default);
 
-            logger.Warnings.Should().NotContain(w => w.Contains("WRITES ARE ENABLED"));
+            logger.Collector.GetSnapshot().Should().NotContain(r => r.Message.Contains("WRITES ARE ENABLED"));
         }
 
         private static IDictionary<string, object?> Admin() =>
             new Dictionary<string, object?> { ["user_id"] = "u", ["roles"] = new[] { "admin" } };
-
-        private sealed class CapturingLogger<T> : ILogger<T>
-        {
-            public List<string> Warnings { get; } = new();
-
-            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(
-                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-            {
-                if (logLevel == LogLevel.Warning)
-                    Warnings.Add(formatter(state, exception));
-            }
-
-            private sealed class NullScope : IDisposable
-            {
-                public static readonly NullScope Instance = new();
-                public void Dispose() { }
-            }
-        }
 
         // ---- fixtures (mirror the schema-generator test helpers) ----
 

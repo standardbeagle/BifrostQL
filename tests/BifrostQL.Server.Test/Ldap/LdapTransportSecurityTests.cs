@@ -5,6 +5,7 @@ using BifrostQL.Server.Ldap;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Ldap
@@ -61,29 +62,6 @@ namespace BifrostQL.Server.Test.Ldap
 
         /// <summary>confidentialityRequired (RFC 4511 §4.1.9); named as a literal until the enum carries it.</summary>
         private const LdapResultCode ConfidentialityRequired = (LdapResultCode)13;
-
-        /// <summary>Collects warning-level log lines so a startup posture warning can be asserted.</summary>
-        private sealed class CapturingLogger<T> : ILogger<T>
-        {
-            public List<string> Warnings { get; } = new();
-
-            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(
-                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-            {
-                if (logLevel == LogLevel.Warning)
-                    Warnings.Add(formatter(state, exception));
-            }
-
-            private sealed class NullScope : IDisposable
-            {
-                public static readonly NullScope Instance = new();
-                public void Dispose() { }
-            }
-        }
 
         private static LdapBindAuthenticator Authenticator(RecordingStore store, LdapWireOptions options) =>
             new(store, new Hasher(), new Factory(), options);
@@ -170,16 +148,16 @@ namespace BifrostQL.Server.Test.Ldap
         [Fact]
         public async Task InsecureSimpleBind_WhenEnabled_IsAnnouncedAtStartup()
         {
-            var quiet = new CapturingLogger<LdapWireAdapter>();
+            var quiet = new FakeLogger<LdapWireAdapter>();
             await new LdapWireAdapter(new LdapWireOptions(), quiet).StartAsync(CancellationToken.None);
-            quiet.Warnings.Should().BeEmpty("the secure default needs no warning");
+            quiet.Collector.GetSnapshot().Should().NotContain(r => r.Level == LogLevel.Warning,"the secure default needs no warning");
 
-            var loud = new CapturingLogger<LdapWireAdapter>();
+            var loud = new FakeLogger<LdapWireAdapter>();
             await new LdapWireAdapter(new LdapWireOptions { AllowInsecureSimpleBind = true }, loud)
                 .StartAsync(CancellationToken.None);
 
-            loud.Warnings.Should().ContainSingle()
-                .Which.Should().Contain("AllowInsecureSimpleBind",
+            loud.Collector.GetSnapshot().Where(r => r.Level == LogLevel.Warning).Should().ContainSingle()
+                .Which.Message.Should().Contain("AllowInsecureSimpleBind",
                     "an operator must be told the front door accepts passwords in the clear");
         }
     }

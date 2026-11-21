@@ -6,6 +6,7 @@ using BifrostQL.Server.S3;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.S3
@@ -88,7 +89,7 @@ namespace BifrostQL.Server.Test.S3
         [MemberData(nameof(FaultsByOpClass))]
         public async Task A_read_fault_answers_500_and_logs_at_error_not_404(string fault, string op)
         {
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var reads = new ThrowingReads(Fault(fault));
             var ctx = op switch
             {
@@ -102,7 +103,7 @@ namespace BifrostQL.Server.Test.S3
             if (op != "HEAD")
                 code.Should().Be("InternalError");
             body.Should().NotContain(SecretDetail, "fault detail never reaches the wire (invariant 3)");
-            log.Entries.Should().Contain(e => e.Level == LogLevel.Error && e.Exception != null,
+            log.Collector.GetSnapshot().Should().Contain(e => e.Level == LogLevel.Error && e.Exception != null,
                 "an operator must see the fault above Debug");
         }
 
@@ -113,7 +114,7 @@ namespace BifrostQL.Server.Test.S3
         [InlineData(BifrostExecutionError.NotFoundCode)]
         public async Task A_denial_or_absence_code_answers_no_such_key(string errorCode)
         {
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var reads = new ThrowingReads(new BifrostExecutionError(SecretDetail) { ErrorCode = errorCode });
 
             var (status, code, body) = await Run(Signed("GET", "/assets/data/1"), Build(reads, _harness.Writes, log));
@@ -121,7 +122,7 @@ namespace BifrostQL.Server.Test.S3
             status.Should().Be(404);
             code.Should().Be("NoSuchKey");
             body.Should().NotContain(SecretDetail);
-            log.Entries.Should().NotContain(e => e.Level >= LogLevel.Warning);
+            log.Collector.GetSnapshot().Should().NotContain(e => e.Level >= LogLevel.Warning);
         }
 
         // ---- conflicts answer 409 -----------------------------------------------------------
@@ -131,7 +132,7 @@ namespace BifrostQL.Server.Test.S3
         [InlineData(BifrostExecutionError.ExclusionViolationCode)]
         public async Task A_conflicting_write_answers_409_not_404(string errorCode)
         {
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var writes = new ThrowingWrites(new BifrostExecutionError(SecretDetail) { ErrorCode = errorCode });
             var body = "replacement"u8.ToArray();
             var ctx = S3TestSigner.BuildHeaderSigned(
@@ -152,7 +153,7 @@ namespace BifrostQL.Server.Test.S3
         [Fact]
         public async Task A_delete_whose_write_faults_is_500_and_the_object_survives()
         {
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
             var writes = new ThrowingWrites(BifrostExecutionError.FromDatabaseException(new InvalidOperationException(SecretDetail)));
 
             var (status, code, body) = await Run(Signed("DELETE", "/assets/data/1"), Build(_harness.Reads, writes, log));
@@ -160,7 +161,7 @@ namespace BifrostQL.Server.Test.S3
             status.Should().Be(500, "the pointer was not cleared, so the delete did not happen");
             code.Should().Be("InternalError");
             body.Should().NotContain(SecretDetail);
-            log.Entries.Should().Contain(e => e.Level == LogLevel.Error);
+            log.Collector.GetSnapshot().Should().Contain(e => e.Level == LogLevel.Error);
             (await GetStatus()).Should().Be(200, "the object is still there");
         }
 
@@ -169,7 +170,7 @@ namespace BifrostQL.Server.Test.S3
         {
             // The caller can see the row, but the pointer write affected no rows (scoped away by
             // the write pipeline). The object is still stored and still readable, so 204 would lie.
-            var log = new CapturingLogger<S3Middleware>();
+            var log = new FakeLogger<S3Middleware>();
 
             var (status, code, _) = await Run(
                 Signed("DELETE", "/assets/data/1"), Build(_harness.Reads, new ZeroRowWrites(), log));
@@ -186,7 +187,7 @@ namespace BifrostQL.Server.Test.S3
             // Control for the two facts above: the 204 they forbid is still produced where the
             // object is absent from the caller's view.
             var (status, _, _) = await Run(
-                Signed("DELETE", "/assets/data/999"), Build(_harness.Reads, _harness.Writes, new CapturingLogger<S3Middleware>()));
+                Signed("DELETE", "/assets/data/999"), Build(_harness.Reads, _harness.Writes, new FakeLogger<S3Middleware>()));
 
             status.Should().Be(204);
         }
@@ -207,7 +208,7 @@ namespace BifrostQL.Server.Test.S3
         {
             var ctx = Signed("GET", "/assets/data/1");
             ctx.Response.Body = new MemoryStream();
-            await Build(_harness.Reads, _harness.Writes, new CapturingLogger<S3Middleware>()).InvokeAsync(ctx);
+            await Build(_harness.Reads, _harness.Writes, new FakeLogger<S3Middleware>()).InvokeAsync(ctx);
             return ctx.Response.StatusCode;
         }
 
@@ -281,21 +282,6 @@ namespace BifrostQL.Server.Test.S3
 
             public Task<MutationBatchIntentResult> ExecuteBatchAsync(MutationBatchIntent intent, CancellationToken cancellationToken = default)
                 => Task.FromResult(new MutationBatchIntentResult { TotalAffected = 0 });
-        }
-
-        private sealed class CapturingLogger<T> : ILogger<T>
-        {
-            public readonly record struct Entry(LogLevel Level, string Message, Exception? Exception);
-
-            public List<Entry> Entries { get; } = new();
-
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-
-            public void Log<TState>(
-                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-                => Entries.Add(new Entry(logLevel, formatter(state, exception), exception));
         }
     }
 }

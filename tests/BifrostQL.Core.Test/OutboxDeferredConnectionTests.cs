@@ -8,6 +8,7 @@ using BifrostQL.Core.Schema;
 using FluentAssertions;
 using GraphQL;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Core.Test;
@@ -33,14 +34,14 @@ public sealed class OutboxDeferredConnectionTests
             cts.Cancel();
             throw new ConnectionNotConfiguredException();
         });
-        var logger = new CaptureLogger();
+        var logger = new FakeLogger<OutboxDispatcher>();
         var dispatcher = new OutboxDispatcher(pathCache, sink: null, jitter: () => 0.0, logger: logger);
 
         // Act
         await dispatcher.RunAsync(cts.Token);
 
         // Assert: quiet — at most debug chatter, no error-level "drain pass failed" spam.
-        logger.Entries.Should().NotContain(e => e.Level >= LogLevel.Warning);
+        logger.Collector.GetSnapshot().Should().NotContain(e => e.Level >= LogLevel.Warning);
     }
 
     [Fact]
@@ -54,14 +55,14 @@ public sealed class OutboxDeferredConnectionTests
             cts.Cancel();
             throw new InvalidOperationException("boom");
         });
-        var logger = new CaptureLogger();
+        var logger = new FakeLogger<OutboxDispatcher>();
         var dispatcher = new OutboxDispatcher(pathCache, sink: null, jitter: () => 0.0, logger: logger);
 
         // Act
         await dispatcher.RunAsync(cts.Token);
 
         // Assert
-        logger.Entries.Should().Contain(e => e.Level == LogLevel.Error);
+        logger.Collector.GetSnapshot().Should().Contain(e => e.Level == LogLevel.Error);
     }
 
     [Fact]
@@ -79,25 +80,12 @@ public sealed class OutboxDeferredConnectionTests
             throw new ConnectionNotConfiguredException();
         });
         pathCache.AddLoader("/b", () => throw new ConnectionNotConfiguredException());
-        var logger = new CaptureLogger();
+        var logger = new FakeLogger<OutboxDispatcher>();
         var dispatcher = new OutboxDispatcher(pathCache, sink: null, jitter: () => 0.0, logger: logger);
 
         await dispatcher.RunAsync(cts.Token);
 
-        logger.Entries.Where(e => e.Level == LogLevel.Warning && e.Message.Contains("single endpoint"))
+        logger.Collector.GetSnapshot().Where(e => e.Level == LogLevel.Warning && e.Message.Contains("single endpoint"))
             .Should().ContainSingle("a multi-DB host must be told CDC drains only the first endpoint");
-    }
-
-    private sealed class CaptureLogger : ILogger
-    {
-        public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-            Exception? exception, Func<TState, Exception?, string> formatter)
-            => Entries.Add((logLevel, formatter(state, exception) +
-                (exception is null ? "" : $" [{exception.GetType().FullName}: {exception.Message}]"), exception));
     }
 }

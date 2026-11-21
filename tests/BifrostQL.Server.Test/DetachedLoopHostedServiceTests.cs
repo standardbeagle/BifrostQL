@@ -1,6 +1,7 @@
 using BifrostQL.Server;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test
@@ -16,7 +17,7 @@ namespace BifrostQL.Server.Test
         [Fact]
         public async Task Faulting_loop_is_logged_and_shutdown_completes()
         {
-            var logger = new ListLogger();
+            var logger = new FakeLogger<DetachedLoopHostedService>();
             var host = new DetachedLoopHostedService(
                 "test-loop",
                 _ => throw new InvalidOperationException("boom"),
@@ -25,14 +26,14 @@ namespace BifrostQL.Server.Test
             await host.StartAsync(CancellationToken.None);
             await host.StopAsync(CancellationToken.None);
 
-            logger.Errors.Should().ContainSingle(m => m.Contains("test-loop") && m.Contains("faulted"),
+            logger.Collector.GetSnapshot().Should().ContainSingle(r => r.Level >= LogLevel.Error && r.Message.Contains("test-loop") && r.Message.Contains("faulted"),
                 "a faulting loop must be logged with the loop name — never a bare catch {}");
         }
 
         [Fact]
         public async Task Cancellation_escaping_the_loop_body_during_shutdown_is_a_clean_exit()
         {
-            var logger = new ListLogger();
+            var logger = new FakeLogger<DetachedLoopHostedService>();
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var host = new DetachedLoopHostedService(
                 "test-loop",
@@ -49,22 +50,7 @@ namespace BifrostQL.Server.Test
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await host.StopAsync(CancellationToken.None);
 
-            logger.Errors.Should().BeEmpty("a shutdown cancellation is a clean exit, not a fault");
-        }
-
-        private sealed class ListLogger : ILogger
-        {
-            public List<string> Errors { get; } = new();
-
-            IDisposable? ILogger.BeginScope<TState>(TState state) => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(
-                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-            {
-                if (logLevel >= LogLevel.Error)
-                    Errors.Add(formatter(state, exception));
-            }
+            logger.Collector.GetSnapshot().Should().NotContain(r => r.Level >= LogLevel.Error,"a shutdown cancellation is a clean exit, not a fault");
         }
     }
 }

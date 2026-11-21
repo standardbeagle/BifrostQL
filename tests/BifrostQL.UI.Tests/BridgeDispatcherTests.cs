@@ -2,6 +2,7 @@ using System.Text.Json;
 using BifrostQL.UI.NativeBridge;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.UI.Tests;
@@ -162,14 +163,14 @@ public sealed class BridgeDispatcherTests
     [Fact]
     public async Task HandlerThrows_LogsScrubbedMessage_WithoutExceptionObject()
     {
-        var logger = new CapturingLogger();
+        var logger = new FakeLogger<BridgeDispatcher>();
         var d = new BridgeDispatcher(_sent.Add, jsonOptions: null, logger: logger);
         d.Register("boom", (_, _) =>
             throw new InvalidOperationException("connect failed: Password=hunter2;Host=h"));
 
         await d.DispatchAsync("""{"id":"r","kind":"boom"}""");
 
-        var entry = logger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+        var entry = logger.Collector.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
         entry.Exception.Should().BeNull(
             "the default logging formatter calls ex.ToString(), bypassing the scrubber");
         entry.Message.Should().Contain(nameof(InvalidOperationException));
@@ -180,7 +181,7 @@ public sealed class BridgeDispatcherTests
     [Fact]
     public async Task InvokeAsync_HandlerThrows_LogsScrubbedMessage_WithoutExceptionObject()
     {
-        var logger = new CapturingLogger();
+        var logger = new FakeLogger<BridgeDispatcher>();
         var d = new BridgeDispatcher(_sent.Add, jsonOptions: null, logger: logger);
         d.Register("boom", (_, _) =>
             throw new InvalidOperationException("connect failed: Password=hunter2;Host=h"));
@@ -189,30 +190,10 @@ public sealed class BridgeDispatcherTests
 
         found.Should().BeTrue();
         error.Should().NotBeNull();
-        var entry = logger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+        var entry = logger.Collector.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
         entry.Exception.Should().BeNull(
             "the default logging formatter calls ex.ToString(), bypassing the scrubber");
         entry.Message.Should().NotContain("hunter2");
         entry.Message.Should().Contain("Password=****");
-    }
-
-    private sealed class CapturingLogger : ILogger
-    {
-        public List<(LogLevel Level, Exception? Exception, string Message)> Entries { get; } = [];
-
-        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter)
-            => Entries.Add((logLevel, exception, formatter(state, exception)));
-
-        private sealed class NullScope : IDisposable
-        {
-            public static readonly NullScope Instance = new();
-            public void Dispose() { }
-        }
     }
 }

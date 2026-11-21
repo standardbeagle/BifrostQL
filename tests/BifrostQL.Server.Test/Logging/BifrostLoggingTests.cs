@@ -2,6 +2,7 @@ using GraphQL;
 using GraphQL.Validation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,11 +18,7 @@ namespace BifrostQL.Server.Test.Logging
         public void LoggingModule_HandleGraphQLError_LogsErrorCorrectly()
         {
             // Arrange
-            var logMessages = new List<(LogLevel Level, string Message)>();
-            var loggerFactory = new LoggerFactory();
-            loggerFactory.AddProvider(new TestLoggerProvider(logMessages));
-
-            var logger = loggerFactory.CreateLogger<BifrostLoggingModule>();
+            var logger = new FakeLogger<BifrostLoggingModule>();
             var config = new BifrostLoggingConfiguration();
             var module = new BifrostLoggingModule(logger, config);
 
@@ -35,23 +32,18 @@ namespace BifrostQL.Server.Test.Logging
             module.HandleGraphQLError(executionError);
 
             // Assert
-            Assert.Single(logMessages);
-            var (level, message) = logMessages[0];
-            Assert.Equal(LogLevel.Error, level);
-            Assert.Contains("Test error message", message);
-            Assert.Contains("TEST_ERROR", message);
-            Assert.Contains("query/field", message);
+            var record = Assert.Single(logger.Collector.GetSnapshot());
+            Assert.Equal(LogLevel.Error, record.Level);
+            Assert.Contains("Test error message", record.Message);
+            Assert.Contains("TEST_ERROR", record.Message);
+            Assert.Contains("query/field", record.Message);
         }
 
         [Fact]
         public void LoggingModule_HandleValidationError_LogsAsWarning()
         {
             // Arrange
-            var logMessages = new List<(LogLevel Level, string Message)>();
-            var loggerFactory = new LoggerFactory();
-            loggerFactory.AddProvider(new TestLoggerProvider(logMessages));
-
-            var logger = loggerFactory.CreateLogger<BifrostLoggingModule>();
+            var logger = new FakeLogger<BifrostLoggingModule>();
             var config = new BifrostLoggingConfiguration();
             var module = new BifrostLoggingModule(logger, config);
 
@@ -61,10 +53,9 @@ namespace BifrostQL.Server.Test.Logging
             module.HandleGraphQLError(validationError);
 
             // Assert
-            Assert.Single(logMessages);
-            var (level, message) = logMessages[0];
-            Assert.Equal(LogLevel.Warning, level);
-            Assert.Contains("Test validation error", message);
+            var record = Assert.Single(logger.Collector.GetSnapshot());
+            Assert.Equal(LogLevel.Warning, record.Level);
+            Assert.Contains("Test validation error", record.Message);
         }
 
         [Fact]
@@ -72,7 +63,7 @@ namespace BifrostQL.Server.Test.Logging
         {
             // Arrange — GraphQL.NET surfaces a canceled resolver as an ExecutionError
             // with code OPERATION_CANCELED; a client abort is routine, not a fault.
-            var (module, logMessages) = CreateModule();
+            var (module, log) = CreateModule();
             var canceledError = new ExecutionError("The operation was canceled.")
             {
                 Code = "OPERATION_CANCELED"
@@ -82,8 +73,7 @@ namespace BifrostQL.Server.Test.Logging
             module.HandleGraphQLError(canceledError);
 
             // Assert
-            Assert.Single(logMessages);
-            Assert.Equal(LogLevel.Debug, logMessages[0].Level);
+            Assert.Equal(LogLevel.Debug, Assert.Single(log.GetSnapshot()).Level);
         }
 
         [Fact]
@@ -91,15 +81,14 @@ namespace BifrostQL.Server.Test.Logging
         {
             // Arrange — a cancellation wrapped into an ExecutionError without the code
             // (e.g. by intermediate error handling) must also stay quiet.
-            var (module, logMessages) = CreateModule();
+            var (module, log) = CreateModule();
             var wrapped = new ExecutionError("Canceled", new OperationCanceledException());
 
             // Act
             module.HandleGraphQLError(wrapped);
 
             // Assert
-            Assert.Single(logMessages);
-            Assert.Equal(LogLevel.Debug, logMessages[0].Level);
+            Assert.Equal(LogLevel.Debug, Assert.Single(log.GetSnapshot()).Level);
         }
 
         [Fact]
@@ -108,7 +97,7 @@ namespace BifrostQL.Server.Test.Logging
             // Arrange — the execution's own token is canceled (client abort) and the
             // pipeline throws OperationCanceledException: the middleware must rethrow
             // without producing an error-level "unhandled error" log entry.
-            var (module, logMessages) = CreateModule();
+            var (module, log) = CreateModule();
             var middleware = new BifrostErrorLoggingMiddleware(module);
             using var cts = new System.Threading.CancellationTokenSource();
             cts.Cancel();
@@ -117,7 +106,7 @@ namespace BifrostQL.Server.Test.Logging
             // Act / Assert
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
                 middleware.ExecuteAsync(options, _ => throw new OperationCanceledException(cts.Token)));
-            Assert.DoesNotContain(logMessages, m => m.Level >= LogLevel.Warning);
+            Assert.DoesNotContain(log.GetSnapshot(), m => m.Level >= LogLevel.Warning);
 
             // A cancellation thrown WITHOUT the token being canceled is a real fault:
             // it must NOT be swallowed by the client-abort filter — it flows through the
@@ -126,42 +115,40 @@ namespace BifrostQL.Server.Test.Logging
             var faultOptions = new ExecutionOptions { CancellationToken = default };
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
                 middleware.ExecuteAsync(faultOptions, _ => throw new OperationCanceledException()));
-            Assert.Contains(logMessages, m => m.Message.Contains("An unhandled error has occurred."));
+            Assert.Contains(log.GetSnapshot(), m => m.Message.Contains("An unhandled error has occurred."));
 
             // Non-cancellation exceptions stay at error level, unchanged.
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 middleware.ExecuteAsync(faultOptions, _ => throw new InvalidOperationException("boom")));
-            Assert.Contains(logMessages, m => m.Level == LogLevel.Error);
+            Assert.Contains(log.GetSnapshot(), m => m.Level == LogLevel.Error);
         }
 
         [Fact]
         public void LoggingModule_LogsTheInnerException_SoTheFaultStackIsKept()
         {
-            var (module, _, exceptions) = CreateModuleWithExceptions();
+            var (module, log) = CreateModule();
             var cause = new InvalidOperationException("driver detail");
 
             module.HandleGraphQLError(new ExecutionError("An unhandled error has occurred.", cause));
 
-            Assert.Single(exceptions);
-            Assert.Same(cause, exceptions[0]);
+            Assert.Same(cause, Assert.Single(log.GetSnapshot(), r => r.Exception is not null).Exception);
         }
 
         [Fact]
         public async System.Threading.Tasks.Task SlowQueryWarning_OmitsSql_UnlessLogSqlIsOn()
         {
-            var messages = new List<(LogLevel Level, string Message)>();
-            var factory = new LoggerFactory();
-            factory.AddProvider(new TestLoggerProvider(messages));
+            var log = new FakeLogCollector();
             var context = SlowQueryContext("SELECT secret_column FROM t");
 
-            var quiet = new QueryLoggingObserver(factory.CreateLogger<QueryLoggingObserver>(),
+            var quiet = new QueryLoggingObserver(new FakeLogger<QueryLoggingObserver>(log),
                 new BifrostLoggingConfiguration { LogSql = false, SlowQueryThresholdMs = 0 });
             await quiet.OnQueryPhaseAsync(BifrostQL.Core.Modules.QueryPhase.AfterExecute, context);
 
-            var verbose = new QueryLoggingObserver(factory.CreateLogger<QueryLoggingObserver>(),
+            var verbose = new QueryLoggingObserver(new FakeLogger<QueryLoggingObserver>(log),
                 new BifrostLoggingConfiguration { LogSql = true, SlowQueryThresholdMs = 0 });
             await verbose.OnQueryPhaseAsync(BifrostQL.Core.Modules.QueryPhase.AfterExecute, context);
 
+            var messages = log.GetSnapshot();
             Assert.Equal(2, messages.Count);
             Assert.All(messages, m => Assert.Equal(LogLevel.Warning, m.Level));
             Assert.DoesNotContain("secret_column", messages[0].Message);
@@ -185,73 +172,10 @@ namespace BifrostQL.Server.Test.Logging
             };
         }
 
-        private static (BifrostLoggingModule Module, List<(LogLevel Level, string Message)> Messages, List<Exception> Exceptions) CreateModuleWithExceptions()
+        private static (BifrostLoggingModule Module, FakeLogCollector Log) CreateModule()
         {
-            var messages = new List<(LogLevel Level, string Message)>();
-            var exceptions = new List<Exception>();
-            var factory = new LoggerFactory();
-            factory.AddProvider(new TestLoggerProvider(messages, exceptions));
-            return (new BifrostLoggingModule(factory.CreateLogger<BifrostLoggingModule>(), new BifrostLoggingConfiguration()), messages, exceptions);
-        }
-
-        private static (BifrostLoggingModule Module, List<(LogLevel Level, string Message)> Messages) CreateModule()
-        {
-            var logMessages = new List<(LogLevel Level, string Message)>();
-            var loggerFactory = new LoggerFactory();
-            loggerFactory.AddProvider(new TestLoggerProvider(logMessages));
-            var logger = loggerFactory.CreateLogger<BifrostLoggingModule>();
-            var module = new BifrostLoggingModule(logger, new BifrostLoggingConfiguration());
-            return (module, logMessages);
-        }
-    }
-
-    public class TestLoggerProvider : ILoggerProvider
-    {
-        private readonly List<(LogLevel Level, string Message)> _logMessages;
-        private readonly List<Exception>? _exceptions;
-
-        public TestLoggerProvider(List<(LogLevel Level, string Message)> logMessages, List<Exception>? exceptions = null)
-        {
-            _logMessages = logMessages;
-            _exceptions = exceptions;
-        }
-
-        public ILogger CreateLogger(string categoryName)
-        {
-            return new TestLogger(_logMessages, _exceptions);
-        }
-
-        public void Dispose() { }
-    }
-
-    internal class TestLogger : ILogger
-    {
-        private readonly List<(LogLevel Level, string Message)> _logMessages;
-        private readonly List<Exception>? _exceptions;
-
-        public TestLogger(List<(LogLevel Level, string Message)> logMessages, List<Exception>? exceptions = null)
-        {
-            _logMessages = logMessages;
-            _exceptions = exceptions;
-        }
-
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            if (!IsEnabled(logLevel)) return;
-
-            var message = formatter(state, exception);
-            _logMessages.Add((logLevel, message));
-            if (exception != null)
-                _exceptions?.Add(exception);
+            var logger = new FakeLogger<BifrostLoggingModule>();
+            return (new BifrostLoggingModule(logger, new BifrostLoggingConfiguration()), logger.Collector);
         }
     }
 }

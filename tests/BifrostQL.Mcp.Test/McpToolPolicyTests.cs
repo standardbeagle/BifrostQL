@@ -11,6 +11,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -86,12 +87,12 @@ namespace BifrostQL.Mcp.Test
             // Criterion 1: warn past the configured threshold, naming the declared-tool count and the
             // configured budget. Thresholds are options, not baked-in constants: a low WarnThreshold
             // trips the warning against the real declared surface.
-            var logger = new ListLogger();
+            var logger = new FakeLogger();
             var policy = new McpToolPolicyOptions { Budget = new McpToolBudgetOptions { WarnThreshold = 5, HardCap = 100 } };
 
             _ = BifrostMcpServerFactory.CreateServerOptions(_executor, EndpointPath, toolPolicy: policy, logger: logger);
 
-            var warning = logger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning).Subject;
+            var warning = logger.Collector.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Warning).Subject;
             warning.Message.Should().MatchRegex(@"declares \d+ tools")   // names the declared-tool count
                 .And.Contain("warn threshold of 5")                       // names the configured budget
                 .And.Contain("hard cap 100");
@@ -117,11 +118,11 @@ namespace BifrostQL.Mcp.Test
         {
             // The default warn threshold (12) is well above the shipped read surface, so a default budget
             // logs nothing — proves the threshold is a real option, not a constant that always fires.
-            var logger = new ListLogger();
+            var logger = new FakeLogger();
 
             _ = BifrostMcpServerFactory.CreateServerOptions(_executor, EndpointPath, logger: logger);
 
-            logger.Entries.Should().NotContain(e => e.Level == LogLevel.Warning);
+            logger.Collector.GetSnapshot().Should().NotContain(e => e.Level == LogLevel.Warning);
         }
 
         // ---- Per-identity tool filtering -------------------------------------------------------
@@ -427,17 +428,5 @@ namespace BifrostQL.Mcp.Test
             }
         }
 
-        private sealed record LogEntry(LogLevel Level, string Message);
-
-        /// <summary>Minimal <see cref="ILogger"/> that records entries so a test can assert the budget warning.</summary>
-        private sealed class ListLogger : ILogger
-        {
-            public List<LogEntry> Entries { get; } = new();
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-                Exception? exception, Func<TState, Exception?, string> formatter)
-                => Entries.Add(new LogEntry(logLevel, formatter(state, exception)));
-        }
     }
 }

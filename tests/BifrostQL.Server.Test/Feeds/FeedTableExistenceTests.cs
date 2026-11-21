@@ -5,6 +5,7 @@ using BifrostQL.Server.Test.S3;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 
 namespace BifrostQL.Server.Test.Feeds
@@ -42,19 +43,7 @@ namespace BifrostQL.Server.Test.Feeds
         };
 
         private S3ListingRealDbHarness _harness = null!;
-        private readonly ExceptionLog _log = new();
-
-        /// <summary>Keeps the server-side exception text, which the wire withholds, for failure messages.</summary>
-        private sealed class ExceptionLog : ILogger<FeedMiddleware>
-        {
-            private readonly StringBuilder _text = new();
-            public string Text => _text.ToString();
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-                Func<TState, Exception?, string> formatter)
-                => _text.Append(logLevel).Append(' ').Append(formatter(state, exception)).Append(' ').Append(exception).Append('\n');
-        }
+        private readonly FakeLogger<FeedMiddleware> _log = new();
 
         public async Task InitializeAsync()
             => _harness = await S3ListingRealDbHarness.StartAsync(nameof(FeedTableExistenceTests), MetadataRules, SeedSql);
@@ -73,9 +62,13 @@ namespace BifrostQL.Server.Test.Feeds
             var missing = await ProbeAsync(method, "/ghost" + suffix, query);
             var readable = await ProbeAsync(method, "/posts" + suffix, query);
 
-            readable.Should().StartWith("200", "control: the probe reaches a feed the caller can read; logged: {0}", _log.Text);
+            readable.Should().StartWith("200", "control: the probe reaches a feed the caller can read; logged: {0}", LoggedText());
             denied.Should().Be(missing);
         }
+
+        /// <summary>The server-side log, including exception text the wire withholds, for failure messages.</summary>
+        private string LoggedText()
+            => string.Join('\n', _log.Collector.GetSnapshot().Select(r => $"{r.Level} {r.Message} {r.Exception}"));
 
         private async Task<string> ProbeAsync(string method, string path, string query)
         {

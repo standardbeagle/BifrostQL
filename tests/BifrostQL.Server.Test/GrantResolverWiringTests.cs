@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -97,7 +98,7 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
 
     private ServiceProvider BuildRequestServices(
         Func<BifrostQL.Core.Auth.AppIdentity, IServiceProvider, CancellationToken, ValueTask<IReadOnlyCollection<string>>>? resolver,
-        ListLoggerFactory? loggerFactory = null)
+        FakeLogCollector? log = null)
     {
         var filterTransformers = new FilterTransformersWrap
         {
@@ -123,8 +124,8 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
         services.AddSingleton(pathCache);
         services.AddSingleton(_profileRegistry);
         services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
-        if (loggerFactory != null)
-            services.AddSingleton<ILoggerFactory>(loggerFactory);
+        if (log != null)
+            services.AddSingleton<ILoggerFactory>(new LoggerFactory(new[] { new FakeLoggerProvider(log) }));
         if (resolver != null)
             services.AddBifrostGrantResolver(resolver);
         return services.BuildServiceProvider();
@@ -133,7 +134,7 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
     private async Task<GraphQlResponse> ExecuteGraphQlAsync(
         string query,
         Func<BifrostQL.Core.Auth.AppIdentity, IServiceProvider, CancellationToken, ValueTask<IReadOnlyCollection<string>>>? resolver,
-        ListLoggerFactory? loggerFactory = null)
+        FakeLogCollector? log = null)
     {
         var middleware = new BifrostHttpMiddleware(
             next: _ => Task.CompletedTask,
@@ -141,7 +142,7 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
             documentExecutor: new DocumentExecuter(),
             logger: NullLogger<BifrostHttpMiddleware>.Instance);
 
-        await using var provider = BuildRequestServices(resolver, loggerFactory);
+        await using var provider = BuildRequestServices(resolver, log);
         var context = new DefaultHttpContext { RequestServices = provider };
         context.RequestServices.GetRequiredService<IHttpContextAccessor>().HttpContext = context;
 
@@ -209,18 +210,18 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
     [Fact]
     public async Task GraphQl_ThrowingResolver_EmptyGrants_PolicyDeny_NotServerError()
     {
-        var loggerFactory = new ListLoggerFactory();
+        var log = new FakeLogCollector();
 
         var response = await ExecuteGraphQlAsync(
             "query { vault { data { id } } }",
             (identity, sp, ct) => throw new InvalidOperationException("grant store down"),
-            loggerFactory);
+            log);
 
         // The deny is the policy engine's answer for a caller with no permissions —
         // carried in the GraphQL error envelope (HTTP 200), never an exception/500.
         response.Errors.Should().ContainSingle()
             .Which.Should().Be("Access denied by authorization policy.");
-        loggerFactory.Entries.Should().Contain(e =>
+        log.GetSnapshot().Should().Contain(e =>
             e.Level == LogLevel.Warning && e.Message.Contains("user-1"),
             "a resolver fault must log a Warning naming the identity id");
     }
@@ -317,27 +318,6 @@ public sealed class GrantResolverWiringTests : IAsyncLifetime
         public string? SalaryOfFirstDoc()
         {
             return _data.GetProperty("docs").GetProperty("data")[0].GetProperty("salary").GetString();
-        }
-    }
-
-    private sealed class ListLoggerFactory : ILoggerFactory
-    {
-        public List<(LogLevel Level, string Message)> Entries { get; } = new();
-        public void AddProvider(ILoggerProvider provider) { }
-        public ILogger CreateLogger(string categoryName) => new ListLogger(Entries);
-        public void Dispose() { }
-
-        private sealed class ListLogger : ILogger
-        {
-            private readonly List<(LogLevel, string)> _entries;
-            public ListLogger(List<(LogLevel, string)> entries) => _entries = entries;
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId,
-                TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            {
-                lock (_entries) _entries.Add((logLevel, formatter(state, exception)));
-            }
         }
     }
 }

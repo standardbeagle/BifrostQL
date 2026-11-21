@@ -14,6 +14,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 
 namespace BifrostQL.Integration.Test.Feeds
 {
@@ -91,11 +92,11 @@ namespace BifrostQL.Integration.Test.Feeds
                 Description = "A deterministic conformance feed",
             };
 
-            var logs = new CapturedLogs();
+            var logs = new FakeLogCollector();
             var builder = new HostBuilder().ConfigureWebHost(web =>
             {
                 web.UseTestServer();
-                web.ConfigureLogging(l => l.AddProvider(new CapturingLoggerProvider(logs)));
+                web.ConfigureLogging(l => l.AddProvider(new FakeLoggerProvider(logs)));
                 web.ConfigureServices(services =>
                 {
                     services.AddBifrostEndpoints(o =>
@@ -144,7 +145,7 @@ namespace BifrostQL.Integration.Test.Feeds
         }
 
         /// <summary>Captured server-side log records (for diagnosing sanitized 4xx/5xx responses).</summary>
-        public CapturedLogs Logs { get; private init; } = new();
+        public FakeLogCollector Logs { get; private init; } = new();
 
         public HttpClient Client => _host.GetTestClient();
 
@@ -268,37 +269,6 @@ namespace BifrostQL.Integration.Test.Feeds
         };
 
         private static string Sql(string value) => value.Replace("'", "''");
-    }
-
-    /// <summary>Thread-safe capture of server log records including their exceptions.</summary>
-    internal sealed class CapturedLogs
-    {
-        private readonly ConcurrentQueue<string> _records = new();
-        public void Add(string record) => _records.Enqueue(record);
-        public IReadOnlyList<string> Records => _records.ToArray();
-        public string Dump() => string.Join("\n", _records);
-    }
-
-    internal sealed class CapturingLoggerProvider : ILoggerProvider
-    {
-        private readonly CapturedLogs _logs;
-        public CapturingLoggerProvider(CapturedLogs logs) => _logs = logs;
-        public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _logs);
-        public void Dispose() { }
-
-        private sealed class CapturingLogger : ILogger
-        {
-            private readonly string _category;
-            private readonly CapturedLogs _logs;
-            public CapturingLogger(string category, CapturedLogs logs) { _category = category; _logs = logs; }
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            {
-                if (!IsEnabled(logLevel)) return;
-                _logs.Add($"[{logLevel}] {_category}: {formatter(state, exception)}{(exception is null ? "" : " || " + exception)}");
-            }
-        }
     }
 
     /// <summary>

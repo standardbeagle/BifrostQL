@@ -15,6 +15,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Testing;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -954,15 +955,16 @@ namespace BifrostQL.Mcp.Test
         {
             // Criterion 2: enabling the anonymous/dev opt-in logs a startup warning mirroring
             // RespWireAdapter's EnableWrites posture warning.
-            var captured = new CapturingLoggerFactory();
+            var captured = new FakeLogCollector();
+            using var loggerFactory = new LoggerFactory(new[] { new FakeLoggerProvider(captured) });
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
-            var adapter = new BifrostMcpAdapter(executor, factory, _host.Services, captured,
+            var adapter = new BifrostMcpAdapter(executor, factory, _host.Services, loggerFactory,
                 new McpAuthOptions { Mode = McpAuthMode.AnonymousDev });
 
             adapter.ConfigureAuth();
 
-            captured.Entries.Should().ContainSingle(e => e.Level == LogLevel.Warning)
+            captured.GetSnapshot().Should().ContainSingle(e => e.Level == LogLevel.Warning)
                 .Which.Message.Should().Contain("ANONYMOUS/DEV").And.Contain("deliberate opt-in");
         }
 
@@ -970,14 +972,15 @@ namespace BifrostQL.Mcp.Test
         public void DefaultFailClosedMode_LogsNoStartupWarning()
         {
             // The safe default is silent — only the deliberate opt-in warns.
-            var captured = new CapturingLoggerFactory();
+            var captured = new FakeLogCollector();
+            using var loggerFactory = new LoggerFactory(new[] { new FakeLoggerProvider(captured) });
             var factory = _host.Services.GetRequiredService<IBifrostAuthContextFactory>();
             var executor = _host.Services.GetRequiredService<IQueryIntentExecutor>();
-            var adapter = new BifrostMcpAdapter(executor, factory, _host.Services, captured, new McpAuthOptions());
+            var adapter = new BifrostMcpAdapter(executor, factory, _host.Services, loggerFactory, new McpAuthOptions());
 
             adapter.ConfigureAuth();
 
-            captured.Entries.Should().NotContain(e => e.Level == LogLevel.Warning);
+            captured.GetSnapshot().Should().NotContain(e => e.Level == LogLevel.Warning);
         }
 
         [Fact]
@@ -1423,29 +1426,5 @@ namespace BifrostQL.Mcp.Test
                 $"Could not locate src/BifrostQL.Mcp from {AppContext.BaseDirectory}");
         }
 
-        private sealed record LogEntry(LogLevel Level, string Message);
-
-        /// <summary>
-        /// Minimal <see cref="ILoggerFactory"/> that records every log entry so a test can assert
-        /// on the startup posture warning without engaging the stdio transport.
-        /// </summary>
-        private sealed class CapturingLoggerFactory : ILoggerFactory
-        {
-            public List<LogEntry> Entries { get; } = new();
-            public ILogger CreateLogger(string categoryName) => new CapturingLogger(Entries);
-            public void AddProvider(ILoggerProvider provider) { }
-            public void Dispose() { }
-
-            private sealed class CapturingLogger : ILogger
-            {
-                private readonly List<LogEntry> _entries;
-                public CapturingLogger(List<LogEntry> entries) => _entries = entries;
-                public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-                public bool IsEnabled(LogLevel logLevel) => true;
-                public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-                    Exception? exception, Func<TState, Exception?, string> formatter)
-                    => _entries.Add(new LogEntry(logLevel, formatter(state, exception)));
-            }
-        }
     }
 }

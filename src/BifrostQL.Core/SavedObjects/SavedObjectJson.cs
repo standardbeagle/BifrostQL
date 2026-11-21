@@ -116,21 +116,20 @@ public static class SavedObjectJson
     }
 
     /// <summary>
-    /// Parses a trusted, already-persisted object (file contents / DB column JSON)
-    /// without the request-level validation. Returns null on malformed JSON so one
-    /// corrupt record cannot fail a whole list read.
+    /// Parses a trusted, already-persisted object (file contents) without the request-level
+    /// validation. A corrupt record throws <see cref="InvalidDataException"/>, as the DB store
+    /// does: reading it as absent would let a version-0 create overwrite it unnoticed.
     /// </summary>
-    public static SavedObject? TryDeserializeStored(string json)
+    public static SavedObject DeserializeStored(string json, string source)
     {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
         try
         {
-            return JsonSerializer.Deserialize<SavedObject>(json, Options);
+            return JsonSerializer.Deserialize<SavedObject>(json, Options)
+                ?? throw new InvalidDataException($"Stored saved object '{source}' is empty.");
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            return null;
+            throw new InvalidDataException($"Stored saved object '{source}' is corrupt.", ex);
         }
     }
 

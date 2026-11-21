@@ -206,6 +206,23 @@ public sealed class SavedObjectStoreTests : IDisposable
         (await store.GetAsync(Alice, SavedObjectType.Form, "f1"))!.Name.Should().Be("first");
     }
 
+    [Fact]
+    public async Task FileStore_CorruptFile_FailsReads_AndIsNeverOverwrittenByACreate()
+    {
+        var store = FileStore();
+        await store.PutAsync(Alice, Obj(SavedObjectType.Form, "f1", "first", 0));
+        var file = Directory.EnumerateFiles(_tempDirs[^1], "*.json", SearchOption.AllDirectories).Single();
+        await File.WriteAllTextAsync(file, "{ not json");
+
+        // Read as absent, the corrupt file would let a version-0 create replace it with no
+        // conflict and no trace. Every read fails loudly instead, as the DB store does.
+        var recreate = () => store.PutAsync(Alice, Obj(SavedObjectType.Form, "f1", "second", 0));
+        await recreate.Should().ThrowAsync<InvalidDataException>();
+        (await File.ReadAllTextAsync(file)).Should().Be("{ not json");
+        await store.Invoking(s => s.GetAsync(Alice, SavedObjectType.Form, "f1")).Should().ThrowAsync<InvalidDataException>();
+        await store.Invoking(s => s.ListAsync(Alice, SavedObjectType.Form)).Should().ThrowAsync<InvalidDataException>();
+    }
+
     [Theory]
     [MemberData(nameof(Backends))]
     public async Task OneOwnersObjects_AreInvisibleToAnother(string backend)

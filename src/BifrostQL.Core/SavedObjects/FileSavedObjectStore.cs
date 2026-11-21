@@ -163,7 +163,6 @@ public sealed class FileSavedObjectStore : ISavedObjectStore
         if (!File.Exists(path))
             return null;
         var text = await File.ReadAllTextAsync(path, cancellationToken);
-        // A corrupt file returns null rather than failing a whole list read.
-        return SavedObjectJson.TryDeserializeStored(text);
+        return SavedObjectJson.DeserializeStored(text, path);
     }
 }

@@ -141,12 +141,14 @@ jobs:
       - name: Test UI
         # Pure xunit logic tests for the desktop tool — no GUI/display needed.
         run: dotnet test tests/BifrostQL.UI.Tests/BifrostQL.UI.Tests.csproj --no-build --verbosity normal --configuration Release
-      - name: Raise MySQL max_connections
+      - name: Configure MySQL (max_connections, local_infile)
         # GH Actions services don't expose post-image server args, so the
-        # default 151 connection ceiling is lifted at runtime via SET GLOBAL.
-        # The parallel xunit fixtures otherwise blow past it with
-        # `Too many connections`.
-        run: mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbifrost_ci_test -e "SET GLOBAL max_connections=500;"
+        # server is configured at runtime via SET GLOBAL. The default 151
+        # connection ceiling is lifted because the parallel xunit fixtures
+        # otherwise blow past it with `Too many connections`. local_infile
+        # lets the MySQL bulk batch stream its staging load; without it the
+        # tests only exercise the chunked fallback (and the streaming test fails).
+        run: mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbifrost_ci_test -e "SET GLOBAL max_connections=500; SET GLOBAL local_infile=1;"
 
       - name: Test Integration (Sqlite + SqlServer + Postgres + MySQL)
         # Sqlite tests use in-memory shared cache and always run. The other
@@ -156,7 +158,7 @@ jobs:
         env:
           BIFROST_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False"
           BIFROST_TEST_POSTGRES: "Host=localhost;Port=5432;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test"
-          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred"
+          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred;AllowLoadLocalInfile=true"
         run: dotnet test tests/BifrostQL.Integration.Test/BifrostQL.Integration.Test.csproj --no-build --verbosity normal --configuration Release
 
   # Release tier: the pre-release gate. Runs only on version tags and
@@ -251,13 +253,13 @@ jobs:
         run: dotnet restore -p:ReleaseTests=true
       - name: Build (full test matrix)
         run: dotnet build --no-restore --configuration Release -p:ReleaseTests=true
-      - name: Raise MySQL max_connections
-        run: mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbifrost_ci_test -e "SET GLOBAL max_connections=500;"
+      - name: Configure MySQL (max_connections, local_infile)
+        run: mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbifrost_ci_test -e "SET GLOBAL max_connections=500; SET GLOBAL local_infile=1;"
       - name: Test (full matrix, all engines, including Fuzz)
         env:
           BIFROST_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User Id=sa;Password=Bifrost!CI!Test1234;TrustServerCertificate=True;Encrypt=False"
           BIFROST_TEST_POSTGRES: "Host=localhost;Port=5432;Database=bifrost_ci;Username=postgres;Password=bifrost_ci_test"
-          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred"
+          BIFROST_TEST_MYSQL: "Server=localhost;Port=3306;Database=bifrost_ci;User Id=root;Password=bifrost_ci_test;AllowPublicKeyRetrieval=True;SslMode=Preferred;AllowLoadLocalInfile=true"
         run: dotnet test BifrostQL.sln --no-build --verbosity normal --configuration Release -p:ReleaseTests=true
 
   pack-publish:

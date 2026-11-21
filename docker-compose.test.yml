@@ -54,7 +54,9 @@ services:
     restart: unless-stopped
     # CI raises max_connections to 500 before the release tier (dotnet.yml); the
     # net8/net9/net10 test hosts run in parallel and exhaust the default 151.
-    command: --max-connections=500
+    # local_infile lets the MySQL bulk batch stream its staging load (MySqlBulkCopy);
+    # without it the tests only ever exercise the chunked fallback.
+    command: --max-connections=500 --local-infile=1
     environment:
       MYSQL_ROOT_PASSWORD: bifrost_ci_test
       MYSQL_DATABASE: bifrost_ci

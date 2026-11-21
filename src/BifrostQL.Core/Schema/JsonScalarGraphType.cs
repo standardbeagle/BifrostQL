@@ -56,14 +56,15 @@ namespace BifrostQL.Core.Schema
 
         /// <summary>
         /// Called when receiving mutation input variables.
-        /// Converts JSON objects/arrays to a JSON string for database storage.
+        /// Converts JSON objects/arrays to a JSON string for database storage. A string is
+        /// JSON text and must parse: invalid text is refused here, not stored.
         /// </summary>
         public override object? ParseValue(object? value)
         {
             return value switch
             {
                 null => null,
-                string s => s,
+                string s => RequireJsonText(s),
                 JsonElement element => element.GetRawText(),
                 _ => JsonSerializer.Serialize(value, SerializerOptions),
             };
@@ -77,25 +78,41 @@ namespace BifrostQL.Core.Schema
             return value switch
             {
                 GraphQLNullValue => null,
-                GraphQLStringValue sv => sv.Value.ToString(),
+                GraphQLStringValue sv => RequireJsonText(sv.Value.ToString()),
                 _ => throw new InvalidOperationException(
                     $"Cannot parse GraphQL literal of type {value.GetType().Name} as JSON. Use a JSON string or pass JSON via variables.")
             };
         }
 
+        private static string RequireJsonText(string text)
+        {
+            try
+            {
+                using var _ = JsonDocument.Parse(text);
+                return text;
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("A JSON value must be valid JSON text.", ex);
+            }
+        }
+
+        // A stored value that does not parse fails the field. Returned as a plain string, it
+        // was indistinguishable from a real JSON string value.
         private static object? DeserializeJson(string json)
         {
+            JsonElement element;
             try
             {
                 // Deserialize<JsonElement> owns its document, so the number elements
                 // returned below stay valid after this method returns.
-                var element = JsonSerializer.Deserialize<JsonElement>(json);
-                return ConvertJsonElement(element);
+                element = JsonSerializer.Deserialize<JsonElement>(json);
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
-                return json;
+                throw new InvalidOperationException("A JSON field holds a stored value that is not valid JSON.", ex);
             }
+            return ConvertJsonElement(element);
         }
 
         private static object? ConvertJsonElement(JsonElement element)

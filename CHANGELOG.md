@@ -46,6 +46,10 @@ On `main` after v0.4.28; not yet on NuGet.
 - **An encrypted value that cannot be decrypted is still redacted, and now logged.** `CryptoReadProjector` redacted a value whose data key was not loaded or whose ciphertext failed to decrypt with no trace, so a missing key or corrupted column looked like an access rule. It now logs a warning through `BifrostErrorSink` once per column per read, naming the column and the reason (never the value). `BifrostErrorSink.Handled(site, detail, exception)` is the new seam for any failure handled by degrading.
 - **A table or column hidden because its read policy failed to evaluate is now logged.** `SchemaReadVisibility` hid it fail-closed with a bare `catch`, so a policy that slipped past model validation made the table vanish from the schema with no explanation, even for an admin. It still hides it, and logs a warning naming the table (or column) through `BifrostErrorSink`.
 
+### Breaking — silent fallbacks
+
+- **The `JSON` scalar rejects text that is not valid JSON, in both directions.** A string variable or inline literal for a `JSON` argument must parse as JSON, or the request fails with a validation error; it used to be stored as-is. A stored value that does not parse now fails its field instead of being returned as a plain string, which a client could not tell apart from a real JSON string value. To store a JSON string, send it encoded (`"\"hello\""`).
+
 ### Fixed — silent fallbacks
 
 - **S3 `ListObjectsV2` logs a key it leaves out because its stored file pointer does not parse.** The object vanished from listings silently. `FileMetadata.FromJson` also catches only `JsonException` now, so a non-parse fault is no longer read as "no file".

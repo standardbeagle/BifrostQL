@@ -1,3 +1,4 @@
+using FluentAssertions;
 using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel.TestFixtures;
@@ -84,10 +85,11 @@ public class JsonScalarGraphTypeTests
     }
 
     [Fact]
-    public void Serialize_InvalidJson_ReturnsOriginalString()
+    public void Serialize_InvalidStoredJson_FailsTheField()
     {
-        var result = _scalar.Serialize("not valid json {");
-        Assert.Equal("not valid json {", result);
+        // Returned as-is, invalid stored JSON looked exactly like a real JSON string value.
+        var act = () => _scalar.Serialize("not valid json {");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*not valid JSON*");
     }
 
     [Fact]
@@ -162,6 +164,23 @@ public class JsonScalarGraphTypeTests
     {
         var result = _scalar.ParseValue("{\"key\":\"value\"}");
         Assert.Equal("{\"key\":\"value\"}", result);
+    }
+
+    [Theory]
+    [InlineData("not valid json {")]
+    [InlineData("hello")]
+    [InlineData("")]
+    public void ParseValue_InvalidJsonText_IsRefused(string text)
+    {
+        var act = () => _scalar.ParseValue(text);
+        act.Should().Throw<FormatException>();
+    }
+
+    [Fact]
+    public void ParseLiteral_InvalidJsonText_IsRefused()
+    {
+        var act = () => _scalar.ParseLiteral(new GraphQLStringValue("{ broken"));
+        act.Should().Throw<FormatException>();
     }
 
     [Fact]

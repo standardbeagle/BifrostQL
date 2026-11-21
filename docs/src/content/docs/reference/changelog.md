@@ -36,6 +36,7 @@ On `main` after v0.4.28; not yet on NuGet.
 
 - **S3 `ListObjectsV2` logs a key it leaves out because its stored file pointer does not parse.** The object vanished from listings silently. `FileMetadata.FromJson` also catches only `JsonException` now, so a non-parse fault is no longer read as "no file".
 - **A file upload whose row write fails, and whose orphan cleanup then fails too, logs the object left in storage.** `FileUploadResolver` swallowed the cleanup error. The caller still sees the original write error.
+- **Tree sync logs each rerun after SQL Server picks it as a deadlock victim.** The retry was silent, so frequent deadlocks never showed up.
 
 ### Fixed — benchmark harness
 

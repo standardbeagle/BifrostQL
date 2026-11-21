@@ -19,6 +19,7 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// <see cref="DbException"/> with no SqlState and the error number under
 /// <c>Data["HelpLink.EvtID"]</c>.
 /// </summary>
+[Collection(BifrostQL.Core.Test.ErrorSinkLoggerCollection.Name)]
 public sealed class TreeSyncDeadlockRetryTests : IAsyncLifetime
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"bifrost-sync-deadlock-{Guid.NewGuid():N}.db");
@@ -55,6 +56,7 @@ public sealed class TreeSyncDeadlockRetryTests : IAsyncLifetime
     {
         var injected = new List<DbException>();
         var loads = 0;
+        using var log = new BifrostQL.Core.Test.ErrorSinkCapture();
 
         await SyncRenameAsync(sql =>
         {
@@ -65,6 +67,8 @@ public sealed class TreeSyncDeadlockRetryTests : IAsyncLifetime
         });
 
         loads.Should().Be(TreeSyncExecutor.MaxDeadlockVictimAttempts, "every victim run reloads from scratch");
+        log.Warnings.Should().HaveCount(TreeSyncExecutor.MaxDeadlockVictimAttempts - 1, "each rerun is logged")
+            .And.AllSatisfy(l => l.Should().Contain("chosen as a deadlock victim"));
         (await BlogNameAsync()).Should().Be("renamed");
     }
 

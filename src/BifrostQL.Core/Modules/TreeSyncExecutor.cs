@@ -140,6 +140,8 @@ public sealed class TreeSyncExecutor
                                        && !cancellationToken.IsCancellationRequested
                                        && OperationId.OperationIdExecution.IsDeadlock(ex))
             {
+                BifrostErrorSink.Handled(nameof(TreeSyncExecutor),
+                    $"Tree sync was chosen as a deadlock victim on run {run} of {MaxDeadlockVictimAttempts}; rerunning it", ex);
             }
         }
     }

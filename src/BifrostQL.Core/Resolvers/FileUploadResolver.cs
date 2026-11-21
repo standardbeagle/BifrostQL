@@ -141,9 +141,9 @@ namespace BifrostQL.Core.Resolvers
         /// <summary>
         /// Best-effort cleanup of an object that was just uploaded but whose
         /// corresponding row write failed or affected zero rows, so a rejected
-        /// upload does not leave an orphan in storage. Failures here are swallowed:
-        /// the caller is already about to raise the original error, and a cleanup
-        /// failure must not mask it or crash the request.
+        /// upload does not leave an orphan in storage. A failure here is logged, not
+        /// thrown: the caller is already about to raise the original error, and a cleanup
+        /// failure must not mask it, but an orphan left in storage must not go unnoticed.
         /// </summary>
         private async Task TryDeleteOrphanBlobAsync(
             IDbTable table, ColumnDto column, IDbModel model, FileMetadata fileMetadata, CancellationToken cancellationToken)
@@ -152,9 +152,12 @@ namespace BifrostQL.Core.Resolvers
             {
                 await _storageService.DeleteFileAsync(table, column, model, fileMetadata, cancellationToken);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best-effort cleanup only; the original failure is what surfaces to the caller.
+                // The original failure is what surfaces to the caller.
+                BifrostErrorSink.Handled(nameof(FileUploadResolver),
+                    $"Could not delete orphaned upload {fileMetadata.FileKey} for {table.TableSchema}.{table.DbName}.{column.ColumnName} after its row write failed; it remains in storage",
+                    ex);
             }
         }
     }

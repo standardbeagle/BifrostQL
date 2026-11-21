@@ -27,6 +27,7 @@ namespace BifrostQL.Core.Test.Sqlite;
 /// real <see cref="LocalStorageProvider"/> writing to a temp directory, asserting
 /// against actual DB row state and actual files on disk.
 /// </summary>
+[Collection(BifrostQL.Core.Test.ErrorSinkLoggerCollection.Name)]
 public sealed class FileResolverSecurityTests : IAsyncLifetime
 {
     private string _connectionString = null!;
@@ -307,6 +308,38 @@ public sealed class FileResolverSecurityTests : IAsyncLifetime
 
         await act.Should().ThrowAsync<BifrostExecutionError>();
         CountFilesInBucket().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Upload_WhoseRowWriteFails_LogsAnOrphanTheCleanupCouldNotDelete()
+    {
+        var model = await LoadModelAsync();
+        var services = BuildServices(mutationTransformers: new IMutationTransformer[]
+        {
+            new TenantMutationTransformer(), new VetoMutationTransformer(),
+        });
+        var providerFactory = new StorageProviderFactory();
+        providerFactory.RegisterProvider(new DeleteFailingStorageProvider());
+        var resolver = new FileUploadResolver(new FileStorageService(providerFactory));
+
+        var context = BuildContext(model, services, Tenant(1), new Dictionary<string, object?>
+        {
+            ["table"] = "documents",
+            ["column"] = "file_data",
+            ["recordId"] = "1",
+            ["file"] = new byte[] { 1, 2, 3, 4 },
+            ["filename"] = "vetoed.bin",
+            ["contentType"] = "application/octet-stream",
+        });
+
+        using var log = new BifrostQL.Core.Test.ErrorSinkCapture();
+        var act = async () => await resolver.ResolveAsync(context);
+
+        // The veto is what the caller sees; the blob the failed cleanup left behind is logged.
+        await act.Should().ThrowAsync<BifrostExecutionError>().WithMessage("*vetoed by policy*");
+        CountFilesInBucket().Should().Be(1, "the delete failed, so the upload is still in storage");
+        log.Warnings.Should().ContainSingle(l => l.Contains("Could not delete orphaned upload")
+            && l.Contains("main.documents.file_data") && l.Contains("it remains in storage"));
     }
 
     [Fact]

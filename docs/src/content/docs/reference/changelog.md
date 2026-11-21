@@ -35,6 +35,7 @@ On `main` after v0.4.28; not yet on NuGet.
 ### Breaking — silent fallbacks
 
 - **The `JSON` scalar rejects text that is not valid JSON, in both directions.** A string variable or inline literal for a `JSON` argument must parse as JSON, or the request fails with a validation error; it used to be stored as-is. A stored value that does not parse now fails its field instead of being returned as a plain string, which a client could not tell apart from a real JSON string value. To store a JSON string, send it encoded (`"\"hello\""`).
+- **`DbAuthConfig`, `DbAuthMode` and `DbAuthConnectionWrapper` are removed.** Nothing constructed them and no config key reached them, so the impersonation, per-user and session-context modes never ran. The wrapper also swallowed a failed `REVERT`, which would have handed a pooled connection back still impersonating the last user. No public replacement exists; per-request identity reaches SQL through the filter and mutation transformers.
 
 ### Fixed — silent fallbacks
 

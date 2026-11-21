@@ -24,6 +24,7 @@ namespace BifrostQL.Core.Test.Unit.Auth;
 /// <para>Plus the fail-closed rule: an unparseable policy excludes the table even for admin,
 /// because <c>PolicyConfigCollector.FromTable</c> throws before the evaluator's admin bypass.</para>
 /// </summary>
+[Collection(ErrorSinkLoggerCollection.Name)]
 public class SchemaReadVisibilityTests
 {
     private static IDictionary<string, object?> Ctx(string userId, params string[] roles) =>
@@ -95,8 +96,12 @@ public class SchemaReadVisibilityTests
     [Fact]
     public void An_unparseable_policy_excludes_the_table_even_for_admin()
     {
+        using var log = new ErrorSinkCapture();
         var visible = SchemaReadVisibility.Project(
             Model(), Ctx("root", "admin"));
+
+        // Hidden, but never silently: a policy that slipped past model validation is a bug.
+        log.Warnings.Should().ContainSingle(l => l.Contains("Hid table dbo.broken from the schema"));
 
         visible.Select(v => v.Table.DbName).Should().NotContain("broken",
             "FromTable throws before the evaluator's admin bypass can run — fail closed");

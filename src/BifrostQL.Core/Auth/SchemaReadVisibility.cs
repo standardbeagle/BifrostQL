@@ -245,11 +245,14 @@ public static class SchemaReadVisibility
             if (!Evaluator.CanAct(policy, PolicyAction.Read, identity).Allowed)
                 return null;
         }
-        catch
+        catch (Exception ex)
         {
             // Fail closed: a table whose policy cannot be parsed or evaluated is hidden, never
             // included on a benefit-of-the-doubt basis — and never for admin either, because
-            // FromTable throws before the evaluator's admin bypass can run.
+            // FromTable throws before the evaluator's admin bypass can run. Model validation
+            // rejects an unparseable policy at load, so reaching here is a bug: log it.
+            Resolvers.BifrostErrorSink.Handled(nameof(SchemaReadVisibility),
+                $"Hid table {table.TableSchema}.{table.DbName} from the schema: its read policy failed to evaluate", ex);
             return null;
         }
 
@@ -277,9 +280,11 @@ public static class SchemaReadVisibility
                 allowed = Evaluator.GetReadDisposition(policy, column.DbName, identity)
                     != ReadColumnDisposition.Refuse;
             }
-            catch
+            catch (Exception ex)
             {
                 allowed = false; // fail closed on any column-evaluation fault
+                Resolvers.BifrostErrorSink.Handled(nameof(SchemaReadVisibility),
+                    $"Hid column {table.TableSchema}.{table.DbName}.{column.DbName} from the schema: its read policy failed to evaluate", ex);
             }
 
             if (allowed)

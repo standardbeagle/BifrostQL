@@ -100,7 +100,7 @@ namespace BifrostQL.Core.Resolvers
             // Decrypt/mask on read. A column is never both an enum and encrypted, so the
             // enum step above is a passthrough for encrypted columns; apply crypto to the
             // (enum-passed-through) value. Non-encrypted columns pass through untouched.
-            return _cryptoRead != null ? _cryptoRead.Project(table.DbName, field, mapped) : mapped;
+            return _cryptoRead != null ? _cryptoRead.Project(table, field, mapped) : mapped;
         }
 
         private object? MapEnumOnly(IDbTable table, string field, object? raw)

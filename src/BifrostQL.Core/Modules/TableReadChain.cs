@@ -228,7 +228,7 @@ public sealed class TableReadChain
     /// <see cref="ReadProjection"/>, pass-through otherwise.
     /// </summary>
     public object? ProjectValue(string columnDbName, object? raw) =>
-        MaskedColumns.Contains(columnDbName) ? null : _crypto.Project(Table.DbName, columnDbName, raw);
+        MaskedColumns.Contains(columnDbName) ? null : _crypto.Project(Table, columnDbName, raw);
 
     /// <summary>
     /// Projects every value of a materialized row in place and returns it.

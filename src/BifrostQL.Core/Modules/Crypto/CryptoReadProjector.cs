@@ -25,7 +25,6 @@ namespace BifrostQL.Core.Modules.Crypto
     {
         private const string Redacted = "••••••";
 
-        private readonly IDbModel _model;
         private readonly EnvelopeKeyManager? _keyManager;
         private readonly HashSet<string> _roles;
         private readonly bool _isAdmin;
@@ -71,7 +70,6 @@ namespace BifrostQL.Core.Modules.Crypto
 
         private CryptoReadProjector(IDbModel model, EnvelopeKeyManager? keyManager, IEnumerable<string> callerRoles, bool unmaskAll)
         {
-            _model = model ?? throw new ArgumentNullException(nameof(model));
             _keyManager = keyManager;
             _roles = new HashSet<string>(callerRoles ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             _isAdmin = unmaskAll || Auth.PolicyEvaluator.AdminRoleOf(model) is { } adminRole && _roles.Contains(adminRole);
@@ -79,13 +77,15 @@ namespace BifrostQL.Core.Modules.Crypto
 
         /// <summary>
         /// Projects <paramref name="raw"/> for the column identified by
-        /// <paramref name="fieldName"/> (a GraphQL field name or DB column name) on the
-        /// table with DB name <paramref name="tableDbName"/>. Returns <paramref name="raw"/>
-        /// unchanged for non-encrypted columns.
+        /// <paramref name="fieldName"/> (a GraphQL field name or DB column name) on
+        /// <paramref name="table"/>. Returns <paramref name="raw"/> unchanged for
+        /// non-encrypted columns. The caller passes the resolved table, never a bare name:
+        /// one name can exist in two schemas, and a lookup miss here would skip decryption
+        /// and masking and return the stored value as-is.
         /// </summary>
-        public object? Project(string tableDbName, string fieldName, object? raw)
+        public object? Project(IDbTable table, string fieldName, object? raw)
         {
-            var column = ResolveColumn(tableDbName, fieldName);
+            var column = ResolveColumn(table, fieldName);
             if (column is null)
                 return raw;
 
@@ -96,7 +96,6 @@ namespace BifrostQL.Core.Modules.Crypto
             if (raw is null)
                 return null;
 
-            var table = _model.GetTableFromDbName(tableDbName);
             var keyRef = column.GetMetadataValue(MetadataKeys.Crypto.KeyRef);
             var canUnmask = _isAdmin || HoldsUnmaskRole(column);
 
@@ -168,13 +167,8 @@ namespace BifrostQL.Core.Modules.Crypto
             return Redacted;
         }
 
-        private ColumnDto? ResolveColumn(string tableDbName, string fieldName)
+        private static ColumnDto? ResolveColumn(IDbTable table, string fieldName)
         {
-            IDbTable table;
-            try { table = _model.GetTableFromDbName(tableDbName); }
-            catch { return null; }
-            if (table is null)
-                return null;
             if (table.GraphQlLookup.TryGetValue(fieldName, out var byGraphQl))
                 return byGraphQl;
             if (table.ColumnLookup.TryGetValue(fieldName, out var byDb))

@@ -39,6 +39,9 @@ apply each breaking or behaviour-change step on the way.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Security — silent fallbacks
+
+- **An encrypted column on a table whose name exists in two schemas is masked again.** `CryptoReadProjector` looked the table up again by bare name. In a model with, say, `dbo.users` and `audit.users`, that lookup threw, and a catch-all returned the stored value unprojected: ciphertext, or legacy plaintext, went to callers who should have seen it redacted. `CryptoReadProjector.Project` now takes the resolved `IDbTable` instead of a table name.
 ### Fixed — benchmark harness
 
 - **`--bulk-paths` and `--transport` report a failing scenario and keep going.** Before, one throw (for example the MySQL floor without `AllowLoadLocalInfile`) aborted the rest of that provider's scenarios. Now a failed scenario prints a `FAILED` row, writes the error to stderr, and makes the process exit 1. The bulk harness also fails a bulk row that did not stream its staging load, adds `AllowLoadLocalInfile=true` to the MySQL connection string itself, and logs a failed drop of its throwaway database instead of swallowing it.

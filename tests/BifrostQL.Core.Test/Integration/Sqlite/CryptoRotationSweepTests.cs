@@ -122,14 +122,14 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
 
         // An unmask-role caller decrypts BOTH rows across the version boundary.
         var unmask = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "compliance" }));
-        unmask.Project("secrets", "ssn", raw[0].ssn).Should().Be(Plain1);
-        unmask.Project("secrets", "ssn", raw[1].ssn).Should().Be(Plain2);
+        unmask.Project(_model.GetTableFromDbName("secrets"), "ssn", raw[0].ssn).Should().Be(Plain1);
+        unmask.Project(_model.GetTableFromDbName("secrets"), "ssn", raw[1].ssn).Should().Be(Plain2);
 
         // A denied caller gets the mask for BOTH — never the plaintext, never the ciphertext.
         var denied = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "viewer" }));
         foreach (var (row, plain) in new[] { (raw[0], Plain1), (raw[1], Plain2) })
         {
-            var masked = denied.Project("secrets", "ssn", row.ssn)?.ToString();
+            var masked = denied.Project(_model.GetTableFromDbName("secrets"), "ssn", row.ssn)?.ToString();
             masked.Should().NotBe(plain).And.NotBe(row.ssn, "the raw ciphertext is never returned");
             masked.Should().EndWith(plain[^4..]);
         }
@@ -161,9 +161,9 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
 
         // Every row — swept, un-swept, natively-new — still decrypts to its original plaintext.
         var unmask = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "compliance" }));
-        unmask.Project("secrets", "ssn", raw[id1]).Should().Be(Plain1);
-        unmask.Project("secrets", "ssn", raw[id2]).Should().Be(Plain2);
-        unmask.Project("secrets", "ssn", raw[id3]).Should().Be(Plain3);
+        unmask.Project(_model.GetTableFromDbName("secrets"), "ssn", raw[id1]).Should().Be(Plain1);
+        unmask.Project(_model.GetTableFromDbName("secrets"), "ssn", raw[id2]).Should().Be(Plain2);
+        unmask.Project(_model.GetTableFromDbName("secrets"), "ssn", raw[id3]).Should().Be(Plain3);
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class CryptoRotationSweepTests : IAsyncLifetime
         result.RowsReEncrypted.Should().Be(1);
         result.RowsAffected.Should().Be(0, "the stored envelope no longer matches the snapshot");
         var unmask = (await CryptoReadProjector.CreateAsync(_model, _manager, new[] { "compliance" }));
-        unmask.Project("secrets", "ssn", (await ReadRawAsync()).Single(r => r.id == id).ssn)
+        unmask.Project(_model.GetTableFromDbName("secrets"), "ssn", (await ReadRawAsync()).Single(r => r.id == id).ssn)
             .Should().Be(Plain2, "the user's newer value must not be overwritten with the snapshot's plaintext");
     }
 

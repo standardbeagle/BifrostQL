@@ -69,7 +69,7 @@ public class CryptoReadProjectorTests
     {
         var (model, manager, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskRedact, "compliance", "secret-value");
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "compliance" }));
-        projector.Project("secrets", "ssn", cipher).Should().Be("secret-value");
+        projector.Project(model.GetTableFromDbName("secrets"), "ssn", cipher).Should().Be("secret-value");
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class CryptoReadProjectorTests
         var (model, _, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskRedact, "compliance", "secret");
         // No manager at all — redact must still work (it needs no plaintext).
         var projector = (await CryptoReadProjector.CreateAsync(model, keyManager: null, new[] { "viewer" }));
-        projector.Project("secrets", "ssn", cipher).Should().Be(Redacted);
+        projector.Project(model.GetTableFromDbName("secrets"), "ssn", cipher).Should().Be(Redacted);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class CryptoReadProjectorTests
         // redact rather than leak the ciphertext.
         var (model, _, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskLast4, "compliance", "123456789");
         var projector = (await CryptoReadProjector.CreateAsync(model, keyManager: null, new[] { "viewer" }));
-        projector.Project("secrets", "ssn", cipher).Should().Be(Redacted);
+        projector.Project(model.GetTableFromDbName("secrets"), "ssn", cipher).Should().Be(Redacted);
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public class CryptoReadProjectorTests
     {
         var (model, manager, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskEmail, "compliance", "alice@example.com");
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "viewer" }));
-        var masked = (string)projector.Project("secrets", "ssn", cipher)!;
+        var masked = (string)projector.Project(model.GetTableFromDbName("secrets"), "ssn", cipher)!;
         masked.Should().StartWith("a").And.EndWith("@example.com").And.NotContain("lice");
     }
 
@@ -110,7 +110,7 @@ public class CryptoReadProjectorTests
         // (e.g. a 4-digit PIN) — it redacts entirely instead.
         var (model, manager, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskLast4, "compliance", plaintext);
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "viewer" }));
-        var masked = (string)projector.Project("secrets", "ssn", cipher)!;
+        var masked = (string)projector.Project(model.GetTableFromDbName("secrets"), "ssn", cipher)!;
         masked.Should().Be(Redacted).And.NotContain(plaintext);
     }
 
@@ -119,7 +119,7 @@ public class CryptoReadProjectorTests
     {
         var (model, manager, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskLast4, "compliance", "123456789");
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "viewer" }));
-        var masked = (string)projector.Project("secrets", "ssn", cipher)!;
+        var masked = (string)projector.Project(model.GetTableFromDbName("secrets"), "ssn", cipher)!;
         masked.Should().EndWith("6789").And.NotContain("12345");
     }
 
@@ -128,7 +128,7 @@ public class CryptoReadProjectorTests
     {
         var (model, manager, _) = await BuildAsync(MetadataKeys.Crypto.MaskRedact, "compliance", "x");
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "viewer" }));
-        projector.Project("secrets", "note", "plain text").Should().Be("plain text");
+        projector.Project(model.GetTableFromDbName("secrets"), "note", "plain text").Should().Be("plain text");
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public class CryptoReadProjectorTests
     {
         var (model, manager, _) = await BuildAsync(MetadataKeys.Crypto.MaskLast4, "compliance", "x");
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "viewer" }));
-        projector.Project("secrets", "ssn", null).Should().BeNull();
+        projector.Project(model.GetTableFromDbName("secrets"), "ssn", null).Should().BeNull();
     }
 
     [Fact]
@@ -147,6 +147,22 @@ public class CryptoReadProjectorTests
         bytes[^1] ^= 0xFF;
         var tampered = Convert.ToBase64String(bytes);
         var projector = (await CryptoReadProjector.CreateAsync(model, manager, new[] { "compliance" }));
-        projector.Project("secrets", "ssn", tampered).Should().Be(Redacted);
+        projector.Project(model.GetTableFromDbName("secrets"), "ssn", tampered).Should().Be(Redacted);
+    }
+
+    [Fact]
+    public async Task SameTableNameInTwoSchemas_StillMasks_TheResolvedTable()
+    {
+        // A bare-name lookup is ambiguous when dbo.secrets and audit.secrets both exist (the
+        // real model throws). The projector must use the table it is handed, never look the
+        // name up again: a miss used to return the stored ciphertext unmasked.
+        var (model, manager, cipher) = await BuildAsync(MetadataKeys.Crypto.MaskRedact, "compliance", "secret");
+        var table = model.GetTableFromDbName("secrets");
+        model.GetTableFromDbName("secrets").Returns<IDbTable>(_ => throw new InvalidOperationException("ambiguous table name"));
+
+        var masked = await CryptoReadProjector.CreateAsync(model, manager, Array.Empty<string>());
+        masked.Project(table, "ssn", cipher).Should().Be(Redacted);
+        var unmasked = await CryptoReadProjector.CreateAsync(model, manager, new[] { "compliance" });
+        unmasked.Project(table, "ssn", cipher).Should().Be("secret");
     }
 }

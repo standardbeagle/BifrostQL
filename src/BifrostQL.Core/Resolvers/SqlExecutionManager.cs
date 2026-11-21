@@ -484,7 +484,7 @@ namespace BifrostQL.Core.Resolvers
                 }
                 else if (encryptedColumns.Contains(column) && value.ValueKind == System.Text.Json.JsonValueKind.String)
                 {
-                    projected[column] = cryptoRead.Project(trackedTable.DbName, column, value.GetString());
+                    projected[column] = cryptoRead.Project(trackedTable, column, value.GetString());
                     changed = true;
                 }
                 else
@@ -818,7 +818,7 @@ namespace BifrostQL.Core.Resolvers
                     if (ordinal < row.Length)
                         map[column] = IsMaskedColumn(query, query.DbTable, column)
                             ? null
-                            : cryptoRead.Project(query.DbTable.DbName, column, ReaderEnum.DbConvert(row[ordinal]));
+                            : cryptoRead.Project(query.DbTable, column, ReaderEnum.DbConvert(row[ordinal]));
                 }
                 rows.Add(map);
             }
@@ -897,7 +897,7 @@ namespace BifrostQL.Core.Resolvers
                         map[$"{connectedTable}.{colName}"] =
                             IsMaskedColumn(join.ConnectedTable, join.ConnectedTable.DbTable, colName)
                                 ? null
-                                : cryptoRead.Project(connectedTable, colName, ReaderEnum.DbConvert(jr[idx]));
+                                : cryptoRead.Project(join.ConnectedTable.DbTable, colName, ReaderEnum.DbConvert(jr[idx]));
                     }
                 }
             }

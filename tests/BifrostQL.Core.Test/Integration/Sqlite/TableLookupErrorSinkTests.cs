@@ -46,19 +46,6 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
         if (_conn != null) await _conn.DisposeAsync();
     }
 
-    private sealed class CapturingLogger : ILogger
-    {
-        public List<string> Messages { get; } = new();
-        IDisposable? ILogger.BeginScope<TState>(TState state) => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-            Exception? exception, Func<TState, Exception?, string> formatter)
-            => Messages.Add(formatter(state, exception));
-    }
-
-    private static IDisposable CaptureSink(CapturingLogger logger)
-        => BifrostErrorSink.OverrideForTesting(logger);
-
     private static MutationIntentExecutor BuildMutationExecutor()
     {
         var pathCache = new PathCache<Inputs>();
@@ -102,8 +89,7 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
     [Fact]
     public async Task MutationIntent_UnknownTable_LogsRawNameServerSide()
     {
-        var logger = new CapturingLogger();
-        using (CaptureSink(logger))
+        using (var logger = new BifrostQL.Core.Test.ErrorSinkCapture())
         {
             var executor = BuildMutationExecutor();
 
@@ -126,8 +112,7 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
     [Fact]
     public async Task QueryIntent_UnknownTable_LogsRawNameServerSide()
     {
-        var logger = new CapturingLogger();
-        using (CaptureSink(logger))
+        using (var logger = new BifrostQL.Core.Test.ErrorSinkCapture())
         {
             var executor = BuildQueryExecutor();
             var phantom = DbModelTestFixture.Create()
@@ -161,9 +146,8 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
     [Fact]
     public async Task MutationIntent_UnknownTable_LogsRawNameWithForeignLoggerAttached()
     {
-        using var foreign = CaptureSink(new CapturingLogger());
-        var logger = new CapturingLogger();
-        using var local = CaptureSink(logger);
+        using var foreign = new BifrostQL.Core.Test.ErrorSinkCapture();
+        using var logger = new BifrostQL.Core.Test.ErrorSinkCapture();
         var executor = BuildMutationExecutor();
 
         var act = () => executor.ExecuteAsync(new MutationIntent
@@ -182,8 +166,7 @@ public sealed class TableLookupErrorSinkTests : IAsyncLifetime
     [Fact]
     public async Task MutationIntent_ConcurrentNoServiceExecutorCannotClobberCapturedLogger()
     {
-        var logger = new CapturingLogger();
-        using var local = CaptureSink(logger);
+        using var logger = new BifrostQL.Core.Test.ErrorSinkCapture();
         var task = Task.Run(BuildMutationExecutor);
         var executor = BuildMutationExecutor();
         var act = () => executor.ExecuteAsync(new MutationIntent

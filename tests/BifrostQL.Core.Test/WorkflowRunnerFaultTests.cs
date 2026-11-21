@@ -54,12 +54,11 @@ public class WorkflowRunnerFaultTests
     [Fact]
     public async Task RunAsync_WhenAStepFaults_LogsTheFaultAndReportsStepFailed()
     {
-        var logger = new CapturingLogger();
         var runner = Runner(new FaultingExecutor(_ => new InvalidOperationException("driver said no")), out var workflow);
 
         WorkflowRunResult result;
-        using (BifrostErrorSink.OverrideForTesting(logger))
-            result = await runner.RunAsync(workflow, new Dictionary<string, object?>(), new Dictionary<string, object?>());
+        using var logger = new ErrorSinkCapture();
+        result = await runner.RunAsync(workflow, new Dictionary<string, object?>(), new Dictionary<string, object?>());
 
         result.Error!.Code.Should().Be("step_failed");
         result.Trace.Single().Error.Should().NotContain("driver said no", "the trace keeps the fixed step text");
@@ -86,15 +85,5 @@ public class WorkflowRunnerFaultTests
 
         public Task TransitionAsync(WorkflowTransition transition, IDictionary<string, object?> userContext, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-    }
-
-    private sealed class CapturingLogger : ILogger
-    {
-        public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
-        IDisposable? ILogger.BeginScope<TState>(TState state) => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-            Exception? exception, Func<TState, Exception?, string> formatter)
-            => Entries.Add((logLevel, formatter(state, exception), exception));
     }
 }

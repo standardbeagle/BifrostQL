@@ -363,8 +363,7 @@ public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
     [Fact]
     public async Task LostUpdate_SanitizesWire_AndLogsQualifiedTable()
     {
-        var logger = new ConflictCapturingLogger();
-        using var scope = BifrostErrorSink.OverrideForTesting(logger);
+        using var logger = new BifrostQL.Core.Test.ErrorSinkCapture();
         var thrown = await Record.ExceptionAsync(() => BuildExecutor(new List<CapturedSql>()).ExecuteAsync(
             new MutationIntent { Table = "vault", Action = MutationIntentAction.Update,
                 Data = new Dictionary<string, object?> { ["id"] = 9, ["body"] = "x", ["version"] = 7 },
@@ -373,15 +372,6 @@ public sealed class KeyedWriteSeamCharacterizationTests : IAsyncLifetime
         var error = thrown.Should().BeOfType<BifrostExecutionError>().Subject;
         error.Message.Should().NotContain("main.vault");
         logger.Messages.Should().Contain(m => m.Contains("main.vault", StringComparison.Ordinal));
-    }
-
-    private sealed class ConflictCapturingLogger : ILogger
-    {
-        public List<string> Messages { get; } = new();
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 
     // ---- batch seam: BatchMutationPipeline ------------------------------

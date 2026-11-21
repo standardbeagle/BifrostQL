@@ -52,16 +52,6 @@ public sealed class ConcurrencyMutationTransformerTests
                 .WithMetadata(MetadataKeys.Concurrency.Token, "row_version"))
             .Build();
 
-    private sealed class CapturingLogger : ILogger
-    {
-        public List<string> Messages { get; } = new();
-        IDisposable? ILogger.BeginScope<TState>(TState state) => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-            Exception? exception, Func<TState, Exception?, string> formatter)
-            => Messages.Add(formatter(state, exception));
-    }
-
     [Fact]
     public void Priority_IsSixty()
         => new ConcurrencyMutationTransformer().Priority.Should().Be(60);
@@ -209,8 +199,7 @@ public sealed class ConcurrencyMutationTransformerTests
         // CONTROL for the absence assertion above: the name IS still recorded, through
         // the shared sink — otherwise "not on the wire" is indistinguishable from
         // "the name was never produced at all".
-        var logger = new CapturingLogger();
-        using (BifrostErrorSink.OverrideForTesting(logger))
+        using (var logger = new BifrostQL.Core.Test.ErrorSinkCapture())
         {
             var model = IntTokenModel();
             var table = model.GetTableFromDbName("Orders");
@@ -247,8 +236,7 @@ public sealed class ConcurrencyMutationTransformerTests
     [Fact]
     public async Task UnbumpableToken_LogsTableIdentityServerSide()
     {
-        var logger = new CapturingLogger();
-        using (BifrostErrorSink.OverrideForTesting(logger))
+        using (var logger = new BifrostQL.Core.Test.ErrorSinkCapture())
         {
             var model = UnsupportedTokenModel();
             var table = model.GetTableFromDbName("Orders");

@@ -25,6 +25,10 @@ their fixes are in the full changelog.
 
 On `main` after v0.4.28; not yet on NuGet.
 
+### Fixed — benchmark harness
+
+- **`--bulk-paths` and `--transport` report a failing scenario and keep going.** Before, one throw (for example the MySQL floor without `AllowLoadLocalInfile`) aborted the rest of that provider's scenarios. Now a failed scenario prints a `FAILED` row, writes the error to stderr, and makes the process exit 1. The bulk harness also fails a bulk row that did not stream its staging load, adds `AllowLoadLocalInfile=true` to the MySQL connection string itself, and logs a failed drop of its throwaway database instead of swallowing it.
+
 ### Breaking — bulk staging visibility
 
 - **`BulkBatchResult` gains a `StagingLoad` (`BulkStagingLoad`) member, and `StagedBulkBatchExecutorBase.LoadStagingAsync` is abstract and returns `Task<BulkStagingLoad>`.** A custom `IBulkBatchExecutor` reports whether it streamed its staging load, or why it did not. A subclass of the staged base streams through `LoadStreamingOrChunkedAsync`, passing a delegate that returns null on success or the reason the chunked load must run.

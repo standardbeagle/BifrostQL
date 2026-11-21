@@ -6,6 +6,8 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
 using BifrostQL.Model;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MySqlConnector;
 using Npgsql;
 using NpgsqlTypes;
@@ -37,6 +39,15 @@ public static class BulkPathBenchRunner
 {
     private const int Iterations = 5;
 
+    /// <summary>Records the "BifrostQL.BulkBatch" log, so a bulk scenario can prove it streamed
+    /// instead of timing a silent fallback (chunked load, per-row path, plan skip).</summary>
+    private static readonly BulkBatchLog Log = new();
+
+    private static readonly IServiceProvider Services =
+        new ServiceCollection().AddSingleton<ILoggerFactory>(Log).BuildServiceProvider();
+
+    private static int _failures;
+
     private sealed record Provider(
         string Name,
         string? MasterConnString,
@@ -47,7 +58,9 @@ public static class BulkPathBenchRunner
         string TableDdl,
         Func<System.Data.Common.DbConnection, int, Task> RawFloorInsert);
 
-    public static async Task RunAsync()
+    /// <summary>Runs every scenario and returns the number that failed. A failed scenario
+    /// prints a FAILED row and its reason, and the rest still run.</summary>
+    public static async Task<int> RunAsync()
     {
         var providers = new[]
         {
@@ -89,7 +102,9 @@ public static class BulkPathBenchRunner
                 Env("BIFROST_BENCH_MYSQL", "BIFROST_TEST_MYSQL"),
                 async (master, db) => await ExecAsync(new MySqlConnection(master), $"CREATE DATABASE `{db}`"),
                 async (master, db) => await ExecAsync(new MySqlConnection(master), $"DROP DATABASE `{db}`"),
-                (master, db) => new MySqlConnectionStringBuilder(master) { Database = db }.ConnectionString,
+                // The floor (MySqlBulkCopy) and the streaming staging load both need
+                // LOAD DATA LOCAL; the server must also run with local_infile=1.
+                (master, db) => new MySqlConnectionStringBuilder(master) { Database = db, AllowLoadLocalInfile = true }.ConnectionString,
                 cs => new MySql.MySqlDbConnFactory(cs),
                 """
                 CREATE TABLE bench_rows (
@@ -112,8 +127,19 @@ public static class BulkPathBenchRunner
                 Console.Error.WriteLine($"-- {provider.Name}: connection string not set, skipping");
                 continue;
             }
-            await RunProviderAsync(provider);
+            try
+            {
+                await RunProviderAsync(provider);
+            }
+            catch (Exception ex)
+            {
+                ReportFailure(provider.Name, "setup", 0, ex);
+            }
         }
+
+        if (_failures > 0)
+            Console.Error.WriteLine($"-- {_failures} scenario(s) FAILED; their rows are missing numbers");
+        return _failures;
     }
 
     private static async Task RunProviderAsync(Provider provider)
@@ -142,7 +168,7 @@ public static class BulkPathBenchRunner
                     () => RunBatchAsync(perRowModel, factory, InsertActions(rows)));
             foreach (var rows in new[] { 100, 1000, 10000 })
                 await ReportAsync(provider.Name, "insert bulk", rows, factory,
-                    () => RunBatchAsync(bulkModel, factory, InsertActions(rows)));
+                    () => RunBatchAsync(bulkModel, factory, InsertActions(rows)), streams: true);
             foreach (var rows in new[] { 1000, 10000 })
                 await ReportAsync(provider.Name, "insert floor", rows, factory, async () =>
                 {
@@ -155,11 +181,11 @@ public static class BulkPathBenchRunner
             await ReportAsync(provider.Name, "update per-row", 1000, factory,
                 () => RunBatchAsync(perRowModel, factory, UpdateActions(1000)), seedRows: 1000, bulkSeedModel: bulkModel);
             await ReportAsync(provider.Name, "update bulk", 1000, factory,
-                () => RunBatchAsync(bulkModel, factory, UpdateActions(1000)), seedRows: 1000, bulkSeedModel: bulkModel);
+                () => RunBatchAsync(bulkModel, factory, UpdateActions(1000)), seedRows: 1000, bulkSeedModel: bulkModel, streams: true);
             await ReportAsync(provider.Name, "delete per-row", 1000, factory,
                 () => RunBatchAsync(perRowModel, factory, DeleteActions(1000)), seedRows: 1000, bulkSeedModel: bulkModel);
             await ReportAsync(provider.Name, "delete bulk", 1000, factory,
-                () => RunBatchAsync(bulkModel, factory, DeleteActions(1000)), seedRows: 1000, bulkSeedModel: bulkModel);
+                () => RunBatchAsync(bulkModel, factory, DeleteActions(1000)), seedRows: 1000, bulkSeedModel: bulkModel, streams: true);
 
             // Full GraphQL document execution over the bulk path: shows parse + validation
             // cost of a large _batch mutation on top of the pipeline. Schema construction is
@@ -167,12 +193,12 @@ public static class BulkPathBenchRunner
             var schema = Core.Schema.DbSchema.FromModel(bulkModel);
             var mutation = BuildInsertMutation(1000);
             await ReportAsync(provider.Name, "insert graphql+bulk", 1000, factory,
-                () => RunGraphQlAsync(bulkModel, schema, factory, mutation));
+                () => RunGraphQlAsync(bulkModel, schema, factory, mutation), streams: true);
         }
         finally
         {
             try { await provider.DropDb(provider.MasterConnString!, dbName); }
-            catch { /* best effort */ }
+            catch (Exception ex) { Console.Error.WriteLine($"-- {provider.Name}: could not drop {dbName}: {ex.Message}"); }
         }
     }
 
@@ -180,23 +206,41 @@ public static class BulkPathBenchRunner
 
     private static async Task ReportAsync(
         string providerName, string scenario, int rows, IDbConnFactory factory,
-        Func<Task> run, int seedRows = 0, IDbModel? bulkSeedModel = null)
+        Func<Task> run, int seedRows = 0, IDbModel? bulkSeedModel = null, bool streams = false)
     {
         var samples = new List<double>(Iterations);
-        for (var i = 0; i <= Iterations; i++)
+        try
         {
-            await ResetAsync(factory);
-            if (seedRows > 0)
-                await RunBatchAsync(bulkSeedModel!, factory, InsertActions(seedRows));
-            var sw = Stopwatch.StartNew();
-            await run();
-            sw.Stop();
-            if (i > 0) // first iteration is warmup
-                samples.Add(sw.Elapsed.TotalMilliseconds);
+            for (var i = 0; i <= Iterations; i++)
+            {
+                await ResetAsync(factory);
+                if (seedRows > 0)
+                    await RunBatchAsync(bulkSeedModel!, factory, InsertActions(seedRows));
+                Log.Clear();
+                var sw = Stopwatch.StartNew();
+                await run();
+                sw.Stop();
+                if (streams)
+                    Log.EnsureStreamed();
+                if (i > 0) // first iteration is warmup
+                    samples.Add(sw.Elapsed.TotalMilliseconds);
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(providerName, scenario, rows, ex);
+            return;
         }
         samples.Sort();
         var median = samples[samples.Count / 2];
         Console.WriteLine($"| {providerName} | {scenario} | {rows:N0} | {median:F1} | {rows / median * 1000:N0} |");
+    }
+
+    private static void ReportFailure(string providerName, string scenario, int rows, Exception ex)
+    {
+        _failures++;
+        Console.WriteLine($"| {providerName} | {scenario} | {rows:N0} | FAILED | {ex.GetType().Name} |");
+        Console.Error.WriteLine($"-- {providerName} {scenario} {rows:N0} FAILED: {ex}");
     }
 
     private static async Task ResetAsync(IDbConnFactory factory)
@@ -255,6 +299,7 @@ public static class BulkPathBenchRunner
             ConnFactory = factory,
             Transformers = new MutationTransformersWrap(),
             UserContext = new Dictionary<string, object?>(),
+            Services = Services,
         });
         if (total != actions.Count)
             throw new InvalidOperationException($"expected {actions.Count} affected, got {total}");
@@ -277,6 +322,7 @@ public static class BulkPathBenchRunner
             services, new MutationTransformersWrap());
         Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<IFilterTransformers>(
             services, new FilterTransformersWrap());
+        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<ILoggerFactory>(services, Log);
         await using var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
 
         var executor = new SqlExecutionManager(model, schema, BifrostQL.Core.Modules.NullQueryTransformerService.Instance);
@@ -355,5 +401,37 @@ public static class BulkPathBenchRunner
             cmd.CommandText = sql;
             await cmd.ExecuteNonQueryAsync();
         }
+    }
+}
+
+/// <summary>The "BifrostQL.BulkBatch" log lines of the scenario being timed.</summary>
+internal sealed class BulkBatchLog : ILoggerFactory
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+
+    public void Clear() => _lines.Clear();
+
+    /// <summary>Throws unless every batch in the run streamed its staging load.</summary>
+    public void EnsureStreamed()
+    {
+        var lines = _lines.ToArray();
+        if (!lines.Any(l => l.Contains(" streamed ")) || lines.Any(l => !l.Contains(" streamed ")))
+            throw new InvalidOperationException(
+                "the bulk path did not stream; BifrostQL.BulkBatch log: " + (lines.Length == 0 ? "(empty)" : string.Join(" | ", lines)));
+    }
+
+    public ILogger CreateLogger(string categoryName)
+        => categoryName == "BifrostQL.BulkBatch" ? new Sink(_lines) : Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
+    public void AddProvider(ILoggerProvider provider) => throw new NotSupportedException();
+
+    public void Dispose() { }
+
+    private sealed class Sink(System.Collections.Concurrent.ConcurrentQueue<string> lines) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => lines.Enqueue($"{logLevel}: {formatter(state, exception)}");
     }
 }

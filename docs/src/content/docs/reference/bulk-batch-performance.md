@@ -125,8 +125,12 @@ Every fallback is logged under the `BifrostQL.BulkBatch` category, so you can se
 ```bash
 export BIFROST_BENCH_SQLSERVER="Server=...;User Id=...;Password=...;TrustServerCertificate=True"
 export BIFROST_BENCH_POSTGRES="Host=...;Username=...;Password=..."
-export BIFROST_BENCH_MYSQL="Server=...;Uid=...;Pwd=...;AllowLoadLocalInfile=true"
+export BIFROST_BENCH_MYSQL="Server=...;Uid=...;Pwd=..."
 dotnet run --project benchmarks/BifrostQL.Benchmarks -c Release -- --bulk-paths
 ```
 
-Each provider gets a throwaway database (`bifrost_bench_<guid>`), dropped afterward. Unset providers are skipped.
+Each provider gets a throwaway database (`bifrost_bench_<guid>`), dropped afterward. Unset providers are skipped. Without a `BIFROST_BENCH_*` variable, the harness reads the matching `BIFROST_TEST_*` one.
+
+The harness adds `AllowLoadLocalInfile=true` to the MySQL connection string itself. The MySQL server must still run with `local_infile=1` (`--local-infile=1`, as `docker-compose.test.yml` does).
+
+A scenario that throws prints a `FAILED` row naming the exception type, writes the full error to stderr, and the remaining scenarios still run. A bulk scenario also fails when any of its batches did not stream the staging load, so a "bulk" row never times the chunked fallback or the per-row path. The process exits 1 when any scenario failed.

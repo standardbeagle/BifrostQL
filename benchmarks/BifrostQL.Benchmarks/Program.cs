@@ -9,13 +9,14 @@ if (args.Length > 0 && args[0] == "--sizes")
 
 if (args.Length > 0 && args[0] == "--transport")
 {
-    await TransportBenchRunner.RunAsync(args);
+    Environment.ExitCode = await TransportBenchRunner.RunAsync(args) > 0 ? 1 : 0;
     return;
 }
 
 if (args.Length > 0 && args[0] == "--bulk-paths")
 {
-    await BulkPathBenchRunner.RunAsync();
+    // Non-zero when any scenario failed, so a scripted run cannot mistake a partial table for a full one.
+    Environment.ExitCode = await BulkPathBenchRunner.RunAsync() > 0 ? 1 : 0;
     return;
 }
 

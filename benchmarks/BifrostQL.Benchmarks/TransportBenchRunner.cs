@@ -39,7 +39,11 @@ public static class TransportBenchRunner
     private const string SocketPath = "/bifrost-ws";
     private const int TableRows = 20_000;
 
-    public static async Task RunAsync(string[] args)
+    private static int _failures;
+
+    /// <summary>Runs every scenario and returns the number that failed. A failed scenario
+    /// prints a FAILED row and its reason, and the rest still run.</summary>
+    public static async Task<int> RunAsync(string[] args)
     {
         var iterations = IntArg(args, "--iterations", 30);
         var burst = IntArg(args, "--burst", 8);
@@ -82,6 +86,10 @@ public static class TransportBenchRunner
         await app.StopAsync();
         SqliteConnection.ClearAllPools();
         File.Delete(dbPath);
+
+        if (_failures > 0)
+            Console.Error.WriteLine($"-- {_failures} scenario(s) FAILED; their rows are missing numbers");
+        return _failures;
     }
 
     private static string GridQuery(int limit) =>
@@ -118,25 +126,28 @@ public static class TransportBenchRunner
 
     private static async Task ReportAsync(string scenario, string transport, int iterations, Func<Task<int>> run)
     {
+        var times = new double[iterations];
+        var bytes = 0;
+        long allocatedBefore;
         try
         {
             await run(); // warmup
             await run();
+            GC.Collect();
+            allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+            for (var i = 0; i < iterations; i++)
+            {
+                var sw = Stopwatch.StartNew();
+                bytes = await run();
+                times[i] = sw.Elapsed.TotalMilliseconds;
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"| {scenario} | {transport} | fails: {ex.Message} | | | |");
+            _failures++;
+            Console.WriteLine($"| {scenario} | {transport} | FAILED | | | |");
+            Console.Error.WriteLine($"-- {scenario} {transport} FAILED: {ex}");
             return;
-        }
-        var times = new double[iterations];
-        var bytes = 0;
-        GC.Collect();
-        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
-        for (var i = 0; i < iterations; i++)
-        {
-            var sw = Stopwatch.StartNew();
-            bytes = await run();
-            times[i] = sw.Elapsed.TotalMilliseconds;
         }
         var allocated = (GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore) / iterations;
         Array.Sort(times);

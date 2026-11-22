@@ -207,7 +207,7 @@ namespace BifrostQL.Server
             // (unmapped OIDC issuer, subject-less principal) is 403 — never a degraded
             // identity, and the projection fault never escapes to the host. The shared
             // gate is the ONLY projection on this mount (M13).
-            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (outcome == BifrostIdentityOutcome.Anonymous)
             {
                 await WriteErrorAsync(context, StatusCodes.Status401Unauthorized,

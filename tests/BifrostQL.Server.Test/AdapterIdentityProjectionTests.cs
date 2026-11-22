@@ -27,84 +27,90 @@ public class AdapterIdentityProjectionTests
     private static IServiceProvider EmptyServices() => new ServiceCollection().BuildServiceProvider();
 
     [Fact]
-    public void Project_AnIdentityBearingPrincipal_YieldsItsUserContext()
+    public async Task Project_AnIdentityBearingPrincipal_YieldsItsUserContext()
     {
         var principal = new ClaimsPrincipal(new ClaimsIdentity(
             new[] { new Claim(ClaimTypes.NameIdentifier, "user-1") }, "test"));
 
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             BifrostAuthContextFactory.Instance, EmptyServices(), principal,
-            NullLogger.Instance, "test", out var userContext);
+            NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeTrue();
-        userContext.Should().NotBeEmpty();
+        userContext!.Should().NotBeEmpty();
     }
 
     [Fact]
-    public void Project_APrincipalThatYieldsNoIdentity_IsRefused()
+    public async Task Project_APrincipalThatYieldsNoIdentity_IsRefused()
     {
         // An unauthenticated / claim-less principal projects to nothing. An empty user context is
         // NOT a refusal — it only gates tables that declare tenant metadata — so the projection
         // itself must refuse rather than hand one back.
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             BifrostAuthContextFactory.Instance, EmptyServices(), new ClaimsPrincipal(new ClaimsIdentity()),
-            NullLogger.Instance, "test", out var userContext);
+            NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeFalse();
-        userContext.Should().BeEmpty();
+        userContext.Should().BeNull();
     }
 
     [Fact]
-    public void Project_AFaultingFactory_IsRefused_NotDegradedToAnonymous()
+    public async Task Project_AFaultingFactory_IsRefused_NotDegradedToAnonymous()
     {
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             new ThrowingAuthContextFactory(), EmptyServices(),
             new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "u") }, "t")),
-            NullLogger.Instance, "test", out var userContext);
+            NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeFalse("a subject-less principal or an unmapped issuer fails closed");
-        userContext.Should().BeEmpty();
+        userContext.Should().BeNull();
     }
 
     [Fact]
-    public void Project_AHostFactorysOrdinalContext_IsNormalisedToCaseInsensitiveKeys()
+    public async Task Project_AHostFactorysOrdinalContext_IsNormalisedToCaseInsensitiveKeys()
     {
         // A host factory returns an ordinal dictionary keyed "Org_Id"; the model reads "org_id".
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             new FixedAuthContextFactory(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["id"] = "u", ["Org_Id"] = "acme",
             }),
-            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", out var userContext);
+            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeTrue();
-        userContext.TryGetValue("org_id", out var tenant).Should().BeTrue();
+        userContext!.TryGetValue("org_id", out var tenant).Should().BeTrue();
         tenant.Should().Be("acme");
     }
 
     [Fact]
-    public void Project_AHostFactorysTwinCaseKeys_AreRefused()
+    public async Task Project_AHostFactorysTwinCaseKeys_AreRefused()
     {
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             new FixedAuthContextFactory(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["id"] = "u", ["org_id"] = "acme", ["Org_Id"] = "globex",
             }),
-            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", out var userContext);
+            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeFalse("which of two case-variant tenant keys a module reads is undefined");
-        userContext.Should().BeEmpty();
+        userContext.Should().BeNull();
     }
 
     [Fact]
-    public void Project_AHostFactoryReturningNull_IsRefused()
+    public async Task Project_AHostFactoryReturningNull_IsRefused()
     {
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             new FixedAuthContextFactory(null!),
-            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", out var userContext);
+            EmptyServices(), AuthenticatedPrincipal(), NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeFalse("no projection is no identity");
-        userContext.Should().BeEmpty();
+        userContext.Should().BeNull();
     }
 
     private static ClaimsPrincipal AuthenticatedPrincipal()
@@ -138,7 +144,8 @@ public class AdapterIdentityProjectionTests
         // Whole-file text: a C# argument list wraps freely, so a per-line scan reads a wrapped
         // call as a miss and a real offender passes.
         var perFile = files.ToDictionary(f => f, File.ReadAllText);
-        var projectionCall = new Regex(@"CreateUserContext\s*\(", RegexOptions.Compiled | RegexOptions.Singleline);
+        var projectionCall = new Regex(@"\b(?:CreateUserContext|BifrostAuthContextFactory\s*\.\s*ProjectAsync)\s*\(",
+            RegexOptions.Compiled | RegexOptions.Singleline);
 
         var home = Path.Combine(serverRoot!, "ProtocolAdapter.cs");
         projectionCall.Matches(File.ReadAllText(home)).Count.Should().BeGreaterThan(0,
@@ -153,7 +160,7 @@ public class AdapterIdentityProjectionTests
     }
 
     [Fact]
-    public void Project_FromRootProviderCarrier_ScopedGrantResolverStillRuns()
+    public async Task Project_FromRootProviderCarrier_ScopedGrantResolverStillRuns()
     {
         // The raw-wire handlers (pgwire/RESP/LDAP) are singletons holding the ROOT
         // provider, and the carrier they build carries it as RequestServices. A scoped
@@ -170,12 +177,13 @@ public class AdapterIdentityProjectionTests
         var principal = new ClaimsPrincipal(new ClaimsIdentity(
             new[] { new Claim(ClaimTypes.NameIdentifier, "user-1") }, "test"));
 
-        var projected = AdapterIdentityProjection.TryProject(
+        var userContext = await AdapterIdentityProjection.TryProjectAsync(
             BifrostAuthContextFactory.Instance, provider, principal,
-            NullLogger.Instance, "test", out var userContext);
+            NullLogger.Instance, "test", CancellationToken.None);
+        var projected = userContext is not null;
 
         projected.Should().BeTrue();
-        userContext[BifrostQL.Core.Model.MetadataKeys.Auth.DefaultPermissionsContextKey]
+        userContext![BifrostQL.Core.Model.MetadataKeys.Auth.DefaultPermissionsContextKey]
             .Should().BeAssignableTo<IEnumerable<string>>()
             .Which.Should().Contain("grant-x",
                 "the scoped resolver must run even when the carrier holds the root provider");

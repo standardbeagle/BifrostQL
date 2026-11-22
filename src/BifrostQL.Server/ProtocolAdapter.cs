@@ -87,8 +87,10 @@ namespace BifrostQL.Server
     /// metadata, so every other table stays readable by a caller with no identity
     /// (protocol-adapter-security invariant 12). Both failure arms — a projection that throws
     /// (subject-less principal, unmapped OIDC issuer) and one that yields nothing — therefore
-    /// return false and an EMPTY out-parameter the caller must not use, never a degraded
-    /// anonymous session.</para>
+    /// return null, never a degraded anonymous session.</para>
+    ///
+    /// <para>Asynchronous: the default factory awaits the host's grant resolver here, on the
+    /// adapter's own login path, so no connection thread blocks on it.</para>
     ///
     /// <para>One copy, deliberately: pgwire, RESP and LDAP each carried their own, and three
     /// copies of one fail-closed decision is three places for it to drift OPEN.</para>
@@ -97,49 +99,49 @@ namespace BifrostQL.Server
     {
         /// <param name="adapter">Front-door name for the server-side log line only; it never
         /// reaches a client wire.</param>
-        public static bool TryProject(
+        /// <returns>The projected, non-empty user context, or null when the login is refused.</returns>
+        public static async ValueTask<IDictionary<string, object?>?> TryProjectAsync(
             IBifrostAuthContextFactory authFactory,
             IServiceProvider services,
             System.Security.Claims.ClaimsPrincipal principal,
             Microsoft.Extensions.Logging.ILogger logger,
             string adapter,
-            out IDictionary<string, object?> userContext)
+            CancellationToken cancellationToken)
         {
-            userContext = new Dictionary<string, object?>();
             try
             {
                 // The connection-oriented handlers (pgwire, RESP, LDAP) are singletons, so
                 // <paramref name="services"/> here is commonly the ROOT provider. Project
                 // inside a dedicated scope: the per-request IGrantResolver (S2) is scoped,
                 // and resolving it from the root throws under scope validation (turning
-                // every login (TryProject false). With validation off, it makes the resolver
+                // every login (TryProjectAsync null). With validation off, it makes the resolver
                 // root-captive. A null provider
                 // (handler wiring that omits it) keeps the null carrier as before.
-                using var scope = services is null
-                    ? null
+                await using var scope = services is null
+                    ? (Microsoft.Extensions.DependencyInjection.AsyncServiceScope?)null
                     : Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
-                        .CreateScope(services);
+                        .CreateAsyncScope(services);
                 var carrier = new Microsoft.AspNetCore.Http.DefaultHttpContext
                 {
                     RequestServices = scope?.ServiceProvider ?? services!,
                     User = principal,
                 };
                 // Normalised inside the try: keys differing only in case refuse the login.
-                var projected = BifrostQL.Core.Auth.UserContexts.Copy(authFactory.CreateUserContext(carrier));
+                var projected = BifrostQL.Core.Auth.UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
+                    authFactory, carrier, carrier.RequestServices, cancellationToken));
                 if (projected.Count == 0)
                 {
                     Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(
                         logger, "{Adapter} login projected to an empty user context; rejecting.", adapter);
-                    return false;
+                    return null;
                 }
-                userContext = projected;
-                return true;
+                return projected;
             }
             catch (Exception ex)
             {
                 Microsoft.Extensions.Logging.LoggerExtensions.LogWarning(
                     logger, ex, "{Adapter} identity projection failed; rejecting login.", adapter);
-                return false;
+                return null;
             }
         }
     }

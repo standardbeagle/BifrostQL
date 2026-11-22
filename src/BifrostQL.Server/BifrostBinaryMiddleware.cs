@@ -245,7 +245,7 @@ namespace BifrostQL.Server
                 // an unknown caller, a subject-less principal and an unmappable token, so it is
                 // no account-existence oracle.
                 if (_requireAuthenticatedIdentity
-                    && BifrostIdentityGate.Project(context, out _) != BifrostIdentityOutcome.Projected)
+                    && (await BifrostIdentityGate.ProjectAsync(context)).Outcome != BifrostIdentityOutcome.Projected)
                 {
                     _logger.LogWarning(
                         "Closed binary WebSocket: the endpoint this mount serves requires authentication");
@@ -1261,7 +1261,7 @@ namespace BifrostQL.Server
                 // OIDC issuer, subject-less principal) becomes an error frame here instead
                 // of escaping the message loop (M13). It projects against this message's scope,
                 // so a scoped grant resolver is never shared by two concurrent messages.
-                var outcome = BifrostIdentityGate.Project(httpContext, scope.ServiceProvider, out var userContext);
+                var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(httpContext, scope.ServiceProvider);
                 if (outcome == BifrostIdentityOutcome.Unprojectable)
                 {
                     response.Type = BifrostMessageType.Error;

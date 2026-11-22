@@ -116,8 +116,9 @@ namespace BifrostQL.Server.Ldap
                 // projects to an empty context (rejected); an unmapped issuer throws (rejected). Both
                 // are failure classes 4 & 5 and return the same uniform invalidCredentials — never a
                 // degraded anonymous identity.
-                if (!AdapterIdentityProjection.TryProject(
-                        _authFactory, _services!, record!.Principal, _logger, "ldap", out var userContext))
+                var userContext = await AdapterIdentityProjection.TryProjectAsync(
+                    _authFactory, _services!, record!.Principal, _logger, "ldap", ct);
+                if (userContext is null)
                     return Fail(LdapBindOutcome.InvalidCredentials, account, source);
 
                 Audit(LdapBindOutcome.Success, account, source);

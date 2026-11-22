@@ -55,20 +55,27 @@ namespace BifrostQL.Server.Grpc
                         http.Response.StatusCode = StatusCodes.Status404NotFound;
                         return Task.CompletedTask;
                     }
-                    if (isCatchAll && !CallerAuthenticates(http))
-                        return WriteTrailersOnlyStatusAsync(http, GrpcRequestException.Unauthenticated());
-                    return inner(http);
+                    return isCatchAll ? AuthenticateCatchAllAsync(http, inner) : inner(http);
                 };
             });
         }
 
-        private static bool CallerAuthenticates(HttpContext http)
+        private static async Task AuthenticateCatchAllAsync(HttpContext http, RequestDelegate inner)
+        {
+            if (await CallerAuthenticatesAsync(http))
+                await inner(http);
+            else
+                await WriteTrailersOnlyStatusAsync(http, GrpcRequestException.Unauthenticated());
+        }
+
+        private static async Task<bool> CallerAuthenticatesAsync(HttpContext http)
         {
             var services = http.RequestServices;
             var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(GrpcIdentityGate));
             try
             {
-                GrpcIdentityGate.ResolveIdentity(http, services.GetRequiredService<IBifrostAuthContextFactory>(), logger);
+                await GrpcIdentityGate.ResolveIdentityAsync(
+                    http, services.GetRequiredService<IBifrostAuthContextFactory>(), logger);
                 return true;
             }
             catch (GrpcRequestException)

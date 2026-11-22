@@ -242,7 +242,8 @@ namespace BifrostQL.Mcp
                 if (principal is not null)
                     carrier.User = principal;
 
-                return NormalizeProjection(authContextFactory.CreateUserContext(carrier));
+                return NormalizeProjection(await BifrostAuthContextFactory.ProjectAsync(
+                    authContextFactory, carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
             };
 
         /// <summary>
@@ -338,16 +339,18 @@ namespace BifrostQL.Mcp
         /// declaring tenant metadata — so no shipped caller reaches this with a null principal; the
         /// refusal happens at the seam that decides identity. An unmapped issuer throws here and the
         /// throw is deferred to each tool call so the handler sanitizes it onto the wire — never an
-        /// empty/anonymous context.
+        /// empty/anonymous context. Asynchronous because the projection awaits the host's
+        /// grant resolver.
         /// </summary>
-        internal static Func<IDictionary<string, object?>> CreateProjectionProvider(
-            IBifrostAuthContextFactory authContextFactory, IServiceProvider services, ClaimsPrincipal? principal)
+        internal static async Task<Func<IDictionary<string, object?>>> CreateProjectionProviderAsync(
+            IBifrostAuthContextFactory authContextFactory, IServiceProvider services, ClaimsPrincipal? principal,
+            CancellationToken cancellationToken = default)
         {
             // Project inside a dedicated child scope: <paramref name="services"/> is the
             // session-initiating request's scope, but a child scope keeps the scoped
             // IGrantResolver (S2) resolution correct regardless of which provider the
             // caller hands in, and the snapshot below outlives both.
-            using var scope = services.CreateScope();
+            await using var scope = services.CreateAsyncScope();
             var carrier = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
             if (principal is not null)
                 carrier.User = principal;
@@ -355,7 +358,8 @@ namespace BifrostQL.Mcp
             IDictionary<string, object?> frozen;
             try
             {
-                frozen = NormalizeProjection(authContextFactory.CreateUserContext(carrier));
+                frozen = NormalizeProjection(await BifrostAuthContextFactory.ProjectAsync(
+                    authContextFactory, carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
             }
             catch (Exception ex) when (ex is UnmappedOidcIssuerException or McpIdentityException)
             {

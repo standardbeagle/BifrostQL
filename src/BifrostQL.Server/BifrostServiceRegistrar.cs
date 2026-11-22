@@ -507,35 +507,6 @@ namespace BifrostQL.Server
         }
 
         /// <summary>
-        /// The mount's own schema-resolution rule (BifrostHttpMiddleware.ResolveExtensionsAsync),
-        /// applied to the request an app endpoint is answering: a registered GraphQL path in
-        /// PathBase or Path picks that database; otherwise the single registered endpoint is the
-        /// answer, and with more than one the gate refuses rather than guess — the mount throws
-        /// UnknownBifrostEndpointException there, so an app endpoint must not be answered from
-        /// whichever database happened to register first.
-        /// </summary>
-        private static Inputs ResolvePolicyGateInputs(PathCache<Inputs> cache, HttpContext http)
-        {
-            var pathBase = http.Request.PathBase.Value?.ToLowerInvariant();
-            if (!string.IsNullOrEmpty(pathBase) && cache.HasPath(pathBase))
-                return cache.GetValueAsync(pathBase).GetAwaiter().GetResult();
-
-            var path = http.Request.Path.Value?.ToLowerInvariant();
-            if (!string.IsNullOrEmpty(path) && cache.HasPath(path))
-                return cache.GetValueAsync(path).GetAwaiter().GetResult();
-
-            if (cache.Count > 1)
-                throw new InvalidOperationException(
-                    "IPolicyGate could not resolve a database model: more than one GraphQL endpoint is " +
-                    $"registered and the request path '{http.Request.PathBase}{http.Request.Path}' is not one " +
-                    "of them. Mount the endpoint under a registered GraphQL path so the gate resolves that " +
-                    "endpoint's model, as the GraphQL mount does.");
-
-            return cache.GetFirstValueAsync().GetAwaiter().GetResult()
-                ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
-        }
-
-        /// <summary>
         /// Registers the GraphQL pipeline (System.Text.Json, the bounded depth/complexity
         /// analyzer, error logging) plus, when auth is enabled and JWT settings are bound, the
         /// cookie + OIDC authentication handlers. The complexity guard is applied even when
@@ -549,23 +520,12 @@ namespace BifrostQL.Server
             int? maxComplexity,
             IConfigurationSection? loggingConfig)
         {
-            services.AddScoped<IPolicyGate>(sp =>
-            {
-                var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext
-                    ?? throw new InvalidOperationException("IPolicyGate requires an active HttpContext.");
-                // One identity decision per assembly (M13): the gate runs the caller through
-                // BifrostIdentityGate like every HTTP mount does, never through a second
-                // CreateUserContext call that would drift from it. A caller the gate cannot
-                // project — anonymous, or a principal whose claims map to nothing — gets the
-                // gate that refuses everything, so the endpoint answers ACCESS_DENIED the way
-                // the GraphQL mount refuses that same caller, instead of a 500 out of DI.
-                if (BifrostIdentityGate.Project(http, out var context) != BifrostIdentityOutcome.Projected)
-                    return PolicyGate.Refused;
-                var inputs = ResolvePolicyGateInputs(sp.GetRequiredService<PathCache<Inputs>>(), http);
-                var model = (inputs["model"] as BifrostQL.Core.Model.IDbModel)
-                    ?? throw new InvalidOperationException("IPolicyGate model is unavailable.");
-                return new PolicyGate(model, PolicyIdentity.FromUserContext(context));
-            });
+            // App endpoints await IPolicyGateAccessor.GetAsync for the request's gate. The gate is
+            // built lazily, on the endpoint's await, because building it projects the caller (the
+            // grant resolver is async) and loads the model (PathCache is async): a scoped
+            // IPolicyGate DI factory could only block on both, and only routes that ask for a gate
+            // may trigger a model load.
+            services.AddScoped<IPolicyGateAccessor, PolicyGateAccessor>();
             // Single identity seam for every transport gate (HTTP, binary WebSocket,
             // protocol frontend, workflow endpoints). TryAdd so a host can substitute
             // its own factory before AddBifrostQL runs.

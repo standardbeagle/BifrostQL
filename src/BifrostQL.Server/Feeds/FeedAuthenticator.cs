@@ -73,7 +73,7 @@ namespace BifrostQL.Server.Feeds
             // the principal on HttpContext.User. Project it as-is through the shared seam — a full
             // identity the pipeline scopes; no per-token table allow-list applies here.
             if (context.User?.Identity?.IsAuthenticated == true)
-                return FeedAuthentication.Unscoped(ProjectCandidate(context, context.User));
+                return FeedAuthentication.Unscoped(await ProjectCandidateAsync(context, context.User, cancellationToken));
 
             // Scoped feed-token path. Read the token from the request (Bearer header the host did NOT
             // validate as a JWT, or the ?token= query param feed readers can carry), resolve it
@@ -100,7 +100,7 @@ namespace BifrostQL.Server.Feeds
                 throw FeedAuthException.Unauthorized();
 
             return FeedAuthentication.Scoped(
-                ProjectCandidate(context, credential!.Principal), credential.AllowedTables);
+                await ProjectCandidateAsync(context, credential!.Principal, cancellationToken), credential.AllowedTables);
         }
 
         /// <summary>
@@ -147,12 +147,14 @@ namespace BifrostQL.Server.Feeds
         /// yields no identity all fail closed with the uniform 401; the detail is logged server-side
         /// only (invariants 3, 9/10).
         /// </summary>
-        private IDictionary<string, object?> ProjectCandidate(HttpContext context, ClaimsPrincipal principal)
+        private async Task<IDictionary<string, object?>> ProjectCandidateAsync(
+            HttpContext context, ClaimsPrincipal principal, CancellationToken cancellationToken)
         {
             try
             {
                 context.User = principal;
-                var projected = UserContexts.Copy(_authFactory.CreateUserContext(context));
+                var projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
+                    _authFactory, context, context.RequestServices, cancellationToken));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("Feed identity projected to an empty user context; failing closed.");

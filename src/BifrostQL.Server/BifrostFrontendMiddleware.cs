@@ -63,7 +63,7 @@ namespace BifrostQL.Server
             // caller who presented nothing. The refusal states only that authentication failed:
             // it does not vary with what exists behind the mount, and carries no exception text
             // (.claude/rules/protocol-adapter-security.md invariant 3).
-            var outcome = BifrostIdentityGate.Project(context, out var identityContext);
+            var (outcome, identityContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (outcome == BifrostIdentityOutcome.Unprojectable)
             {
                 // Token from an OIDC issuer this deployment mapped nothing for, or a

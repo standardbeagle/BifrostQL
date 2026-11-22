@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Http;
 namespace BifrostQL.Server
 {
     /// <summary>
-    /// Raised by <see cref="HttpContextWorkflowExtensions.GetBifrostUserContext"/> when the
+    /// Raised by <see cref="HttpContextWorkflowExtensions.GetBifrostUserContextAsync"/> when the
     /// request carries an AUTHENTICATED principal that the shared identity projection refuses
     /// (a token from an OIDC issuer this deployment has no claim mapper for, or a principal
     /// with no subject claim). The message is a constant and carries no issuer, claim or
@@ -45,13 +45,14 @@ namespace BifrostQL.Server
         /// an authenticated caller Bifrost cannot identify is never served as
         /// anonymous, because an empty context is not a refusal (invariant 12)
         /// and the sidecar's own <c>IsAuthenticated</c> gate has already let the
-        /// principal through. Catch it and answer 403.
+        /// principal through. Catch it and answer 403. Asynchronous because the
+        /// projection awaits the host's grant resolver (<c>AddBifrostGrantResolver</c>).
         /// </summary>
-        public static IDictionary<string, object?> GetBifrostUserContext(this HttpContext context)
+        public static async Task<IDictionary<string, object?>> GetBifrostUserContextAsync(this HttpContext context)
         {
             ArgumentNullException.ThrowIfNull(context);
 
-            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (outcome == BifrostIdentityOutcome.Unprojectable)
                 throw new BifrostIdentityRejectedException();
             return userContext;

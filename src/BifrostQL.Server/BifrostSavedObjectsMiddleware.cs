@@ -90,7 +90,7 @@ namespace BifrostQL.Server
             // (or throws), and either must be a 401 here exactly as it is on the GraphQL, binary,
             // gRPC and MCP gates. A projection FAULT is refused even when the mount does not require auth —
             // opting out of authentication is not opting into accepting a broken credential.
-            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (BifrostIdentityGate.Refuses(outcome, _requiresAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

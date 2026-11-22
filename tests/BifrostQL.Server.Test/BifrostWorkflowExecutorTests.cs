@@ -172,7 +172,8 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
     /// <summary>
     /// Constructs the executor against a real <see cref="DocumentExecuter"/>,
     /// and a user context for the given role/tenant — the same context shape
-    /// <see cref="HttpContextWorkflowExtensions.GetBifrostUserContext"/> yields.
+    /// <see cref="HttpContextWorkflowExtensions.GetBifrostUserContextAsync"/> yields (no grant
+    /// resolver is registered, so the synchronous projection is the same one).
     /// </summary>
     private (BifrostWorkflowExecutor Executor, IDictionary<string, object?> UserContext, ServiceProvider Provider)
         BuildExecutor(string role, int tenantId)
@@ -204,7 +205,7 @@ public sealed class BifrostWorkflowExecutorTests : IAsyncLifetime
         };
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, authenticationType: "Test"));
         var context = new DefaultHttpContext { User = principal };
-        return context.GetBifrostUserContext();
+        return BifrostQL.Core.Auth.UserContexts.Copy(BifrostAuthContextFactory.Instance.CreateUserContext(context));
     }
 
     // ---- The executor runs through the policy pipeline ----

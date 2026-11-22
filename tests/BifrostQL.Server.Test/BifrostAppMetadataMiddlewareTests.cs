@@ -266,7 +266,7 @@ namespace BifrostQL.Server.Test
             context.Request.Path = "/_app-metadata";
             context.Response.Body = new MemoryStream();
 
-            BifrostIdentityGate.Project(context, out _).Should().Be(BifrostIdentityOutcome.Anonymous,
+            (await BifrostIdentityGate.ProjectAsync(context)).Outcome.Should().Be(BifrostIdentityOutcome.Anonymous,
                 "fixture precondition: the principal is authenticated but projects to an empty context");
             await middleware.InvokeAsync(context);
 

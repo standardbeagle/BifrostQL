@@ -29,6 +29,11 @@ namespace BifrostQL.Server
         Projected,
     }
 
+    /// <summary>The outcome of <see cref="BifrostIdentityGate.ProjectAsync(HttpContext)"/> and the
+    /// context it yields: empty for every outcome but <see cref="BifrostIdentityOutcome.Projected"/>.</summary>
+    internal readonly record struct BifrostIdentityProjection(
+        BifrostIdentityOutcome Outcome, IDictionary<string, object?> UserContext);
+
     /// <summary>
     /// The one identity projection every HTTP surface in this assembly runs its callers
     /// through (M13) — the GraphQL mount (<see cref="BifrostHttpMiddleware"/>), the
@@ -49,26 +54,25 @@ namespace BifrostQL.Server
         /// <summary>
         /// Projects <paramref name="context"/>'s caller through the SHARED
         /// <see cref="IBifrostAuthContextFactory"/> — never a second identity rule — and fails
-        /// closed. <paramref name="userContext"/> is the projected context for
+        /// closed. The projection's <c>UserContext</c> is the projected context for
         /// <see cref="BifrostIdentityOutcome.Projected"/> and an empty dictionary otherwise, so a
         /// caller that ignores the outcome still cannot read an identity out of a refused request.
+        /// Asynchronous because the default factory awaits the host's grant resolver here; it
+        /// runs only on the requests a mount actually serves, never on health or static routes.
         /// </summary>
-        internal static BifrostIdentityOutcome Project(
-            HttpContext context, out IDictionary<string, object?> userContext)
-            => Project(context, context.RequestServices, out userContext);
+        internal static ValueTask<BifrostIdentityProjection> ProjectAsync(HttpContext context)
+            => ProjectAsync(context, context.RequestServices);
 
         /// <summary>
-        /// <see cref="Project(HttpContext, out IDictionary{string, object?})"/> with the factory
-        /// and the default factory's scoped services (grant resolver) taken from
-        /// <paramref name="services"/>: the binary transport passes each message's own scope.
+        /// <see cref="ProjectAsync(HttpContext)"/> with the factory and the default factory's
+        /// scoped services (grant resolver) taken from <paramref name="services"/>: the binary
+        /// transport passes each message's own scope.
         /// </summary>
-        internal static BifrostIdentityOutcome Project(
-            HttpContext context, IServiceProvider? services, out IDictionary<string, object?> userContext)
+        internal static async ValueTask<BifrostIdentityProjection> ProjectAsync(
+            HttpContext context, IServiceProvider? services)
         {
-            userContext = new Dictionary<string, object?>();
-
             if (!(context.User?.Identity?.IsAuthenticated ?? false))
-                return BifrostIdentityOutcome.Anonymous;
+                return new(BifrostIdentityOutcome.Anonymous, new Dictionary<string, object?>());
 
             IDictionary<string, object?> projected;
             try
@@ -77,10 +81,8 @@ namespace BifrostQL.Server
                 // surfaces that read the context directly must agree with the ones that copy it.
                 // Keys differing only in case throw inside this try and are refused like any
                 // other unprojectable identity.
-                var factory = BifrostAuthContextFactory.Resolve(services);
-                projected = UserContexts.Copy(factory is BifrostAuthContextFactory shared
-                    ? shared.CreateUserContext(context, services)
-                    : factory.CreateUserContext(context));
+                projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
+                    BifrostAuthContextFactory.Resolve(services), context, services, context.RequestAborted));
             }
             catch (Exception ex)
             {
@@ -91,14 +93,12 @@ namespace BifrostQL.Server
                 context.RequestServices?.GetService<ILoggerFactory>()
                     ?.CreateLogger(typeof(BifrostIdentityGate))
                     .LogWarning(ex, "Caller identity could not be projected; refusing the request.");
-                return BifrostIdentityOutcome.Unprojectable;
+                return new(BifrostIdentityOutcome.Unprojectable, new Dictionary<string, object?>());
             }
 
-            if (projected.Count == 0)
-                return BifrostIdentityOutcome.Anonymous;
-
-            userContext = projected;
-            return BifrostIdentityOutcome.Projected;
+            return projected.Count == 0
+                ? new(BifrostIdentityOutcome.Anonymous, new Dictionary<string, object?>())
+                : new(BifrostIdentityOutcome.Projected, projected);
         }
 
         /// <summary>

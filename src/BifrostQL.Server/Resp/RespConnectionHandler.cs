@@ -584,8 +584,9 @@ namespace BifrostQL.Server.Resp
             // The password proved the caller holds the secret; it does NOT by itself grant a
             // Bifrost identity. Project the candidate principal through the shared auth seam and
             // refuse unless it yields a real (non-empty) user context — fail closed, never anonymous.
-            if (!AdapterIdentityProjection.TryProject(
-                    _authFactory, _services, login.Principal, _logger, "resp", out var userContext))
+            var userContext = await AdapterIdentityProjection.TryProjectAsync(
+                _authFactory, _services, login.Principal, _logger, "resp", ct);
+            if (userContext is null)
                 return false;
 
             session.Authenticate(userContext);

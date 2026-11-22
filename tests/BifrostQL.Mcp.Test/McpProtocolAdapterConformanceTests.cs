@@ -194,7 +194,7 @@ namespace BifrostQL.Mcp.Test
             // Host.Services is the root provider (never disposed), so a null principal projects an
             // empty (fail-closed) context and a tenant principal projects its scope — the same shared
             // factory seam every transport uses.
-            var provider = BifrostMcpAdapter.CreateProjectionProvider(factory, Host.Services, principal);
+            var provider = await BifrostMcpAdapter.CreateProjectionProviderAsync(factory, Host.Services, principal);
             var options = BifrostMcpServerFactory.CreateServerOptions(
                 executor, EndpointPath, userContextProvider: provider,
                 mutationExecutor: mutation, enableWrites: enableWrites);

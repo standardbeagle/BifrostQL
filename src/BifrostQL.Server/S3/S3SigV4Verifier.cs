@@ -114,7 +114,7 @@ namespace BifrostQL.Server.S3
             if (!(signatureMatches && keyUsable))
                 throw S3ProtocolException.SignatureDoesNotMatch();
 
-            return ProjectIdentity(request, key!.Principal);
+            return await ProjectIdentityAsync(request, key!.Principal, ct);
         }
 
         /// <summary>
@@ -123,12 +123,15 @@ namespace BifrostQL.Server.S3
         /// yields no identity all fail closed as AccessDenied — never a degraded/anonymous
         /// context. No projection detail reaches the wire (logged server-side only).
         /// </summary>
-        private IDictionary<string, object?> ProjectIdentity(HttpRequest request, ClaimsPrincipal principal)
+        private async Task<IDictionary<string, object?>> ProjectIdentityAsync(
+            HttpRequest request, ClaimsPrincipal principal, CancellationToken ct)
         {
             try
             {
-                request.HttpContext.User = principal;
-                var projected = UserContexts.Copy(_authFactory.CreateUserContext(request.HttpContext));
+                var context = request.HttpContext;
+                context.User = principal;
+                var projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
+                    _authFactory, context, context.RequestServices, ct));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("S3 access key projected to an empty user context; rejecting.");

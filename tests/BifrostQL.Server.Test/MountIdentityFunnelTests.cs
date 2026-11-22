@@ -252,30 +252,31 @@ namespace BifrostQL.Server.Test
         /// on an empty context. A refused identity throws a typed, constant-message exception.
         /// </summary>
         [Fact]
-        public void WorkflowHelper_SubjectlessPrincipal_ThrowsRejected_NeverAnEmptyContext()
+        public async Task WorkflowHelper_SubjectlessPrincipal_ThrowsRejected_NeverAnEmptyContext()
         {
             var context = new DefaultHttpContext { User = SubjectlessPrincipal() };
 
-            var act = () => context.GetBifrostUserContext();
+            var act = () => context.GetBifrostUserContextAsync();
 
-            var thrown = act.Should().Throw<BifrostIdentityRejectedException>(
-                "an authenticated caller Bifrost cannot identify must be refused, not served as anonymous").Which;
+            var thrown = (await act.Should().ThrowAsync<BifrostIdentityRejectedException>(
+                "an authenticated caller Bifrost cannot identify must be refused, not served as anonymous")).Which;
             thrown.Message.Should().Be(BifrostIdentityRejectedException.WireMessage);
             thrown.Message.Should().NotContain("subject claim", "exception detail never reaches the wire");
         }
 
         [Fact]
-        public void WorkflowHelper_AnonymousRequest_YieldsEmptyContext()
+        public async Task WorkflowHelper_AnonymousRequest_YieldsEmptyContext()
         {
             var context = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity()) };
 
-            context.GetBifrostUserContext().Should().BeEmpty(
+            (await context.GetBifrostUserContextAsync()).Should().BeEmpty(
                 "an unauthenticated request is the sidecar's own gate to refuse; the helper stays a projection");
         }
 
         /// <summary>
         /// Source-scan guard (M13 flow item 3): the HTTP mounts must never project a caller
-        /// directly — <c>.CreateUserContext(</c> may appear only in
+        /// directly — <c>.CreateUserContext(</c> or <c>BifrostAuthContextFactory.ProjectAsync(</c>
+        /// may appear only in the factory itself,
         /// <c>BifrostIdentityGate.cs</c> and in the non-HTTP protocol-adapter authenticators,
         /// which project their own carrier types rather than an <c>HttpContext</c> mount. The
         /// positive anchor on the gate is asserted too, so a drifted regex cannot read as GREEN.
@@ -293,7 +294,9 @@ namespace BifrostQL.Server.Test
                 .ToList();
             files.Should().NotBeEmpty("the scan must actually match source files to guard anything");
 
-            var projectionCall = new Regex(@"\.CreateUserContext\(", RegexOptions.Compiled);
+            // The sync contract and the async projection the gates await (it runs the grant resolver).
+            var projectionCall = new Regex(
+                @"(?:\.CreateUserContext|BifrostAuthContextFactory\s*\.\s*ProjectAsync)\s*\(", RegexOptions.Compiled);
             var perFile = files.ToDictionary(f => f, File.ReadAllText);
 
             // Non-HTTP protocol adapters project their own carrier (LDAP bind, RESP AUTH, S3
@@ -303,7 +306,7 @@ namespace BifrostQL.Server.Test
             // entry shorter than the number of adapters that project.
             var adapterHomes = new HashSet<string>(StringComparer.Ordinal)
             {
-                "ProtocolAdapter.cs", "FeedAuthenticator.cs",
+                "BifrostAuthContextFactory.cs", "ProtocolAdapter.cs", "FeedAuthenticator.cs",
                 "PrometheusScrapeScopeResolver.cs", "ODataAuthenticator.cs", "GrpcIdentityGate.cs",
                 "S3SigV4Verifier.cs",
             };
@@ -319,7 +322,7 @@ namespace BifrostQL.Server.Test
                          && projectionCall.IsMatch(perFile[f]))
                 .ToList();
             offenders.Should().BeEmpty(
-                "every HTTP mount's identity projection lives in BifrostIdentityGate.Project; " +
+                "every HTTP mount's identity projection lives in BifrostIdentityGate.ProjectAsync; " +
                 "a second copy is a second identity decision that will drift. Offenders: "
                 + string.Join(", ", offenders.Select(Path.GetFileName)));
         }

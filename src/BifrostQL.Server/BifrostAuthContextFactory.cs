@@ -15,6 +15,10 @@ namespace BifrostQL.Server
     /// an authenticated principal yields the full claim projection, an unauthenticated
     /// request yields an empty context, and a token from an unmapped OIDC issuer throws
     /// (the caller translates that to 403/error, never a degraded identity).
+    /// The contract is synchronous, so it cannot run a registered <see cref="IGrantResolver"/>:
+    /// Bifrost's own gates project the default factory asynchronously and await the resolver,
+    /// and a direct call to the default <see cref="CreateUserContext"/> with a resolver
+    /// registered refuses an authenticated caller (throws) rather than block on it.
     /// </summary>
     public interface IBifrostAuthContextFactory
     {
@@ -61,32 +65,61 @@ namespace BifrostQL.Server
         internal static IBifrostAuthContextFactory Resolve(IServiceProvider? services)
             => services?.GetService<IBifrostAuthContextFactory>() ?? Instance;
 
-        public IDictionary<string, object?> CreateUserContext(HttpContext context)
-            => CreateUserContext(context, context.RequestServices);
-
         /// <summary>
-        /// Projects the caller with scoped services (the grant resolver and the DbContext it
-        /// reads) taken from <paramref name="services"/> rather than the request's own scope.
-        /// The binary transport passes each message's scope: the upgrade request's scope lives
-        /// for the whole socket and is shared by its concurrent messages.
+        /// The synchronous public projection. It cannot run a registered
+        /// <see cref="IGrantResolver"/>: the resolver is asynchronous, and finishing it here
+        /// would block the calling thread. With a resolver registered in
+        /// <c>context.RequestServices</c> an authenticated caller is therefore refused (throws,
+        /// which every gate maps to an unprojectable identity) rather than served without its
+        /// grants. Bifrost's own transport gates project through <see cref="ProjectAsync"/>,
+        /// which awaits the resolver.
         /// </summary>
-        internal IDictionary<string, object?> CreateUserContext(HttpContext context, IServiceProvider? services)
+        public IDictionary<string, object?> CreateUserContext(HttpContext context)
         {
-            var user = context.User;
-            if (user?.Identity?.IsAuthenticated == true)
-            {
-                var userContext = new BifrostContext(context);
-                ApplyGrantResolver(context, services, userContext);
-                return userContext;
-            }
-
-            return new Dictionary<string, object?>();
+            if (!IsAuthenticated(context))
+                return new Dictionary<string, object?>();
+            if (context.RequestServices?.GetService<IGrantResolver>() is not null)
+                throw new InvalidOperationException(
+                    "An IGrantResolver is registered, and the synchronous CreateUserContext cannot run it " +
+                    "without blocking. The caller is refused; Bifrost's transport gates project asynchronously.");
+            return new BifrostContext(context);
         }
 
         /// <summary>
+        /// The one asynchronous projection every transport gate in Bifrost awaits. The default
+        /// factory awaits the registered grant resolver, taking scoped services (the resolver and
+        /// the DbContext it reads) from <paramref name="services"/> rather than the request's own
+        /// scope: the binary transport passes each message's scope, and the raw-wire adapters a
+        /// per-login scope. A host-registered factory has only the synchronous contract and runs
+        /// no grant resolver, so it is called as before.
+        /// </summary>
+        internal static ValueTask<IDictionary<string, object?>> ProjectAsync(
+            IBifrostAuthContextFactory factory, HttpContext context, IServiceProvider? services,
+            CancellationToken cancellationToken)
+            => factory is BifrostAuthContextFactory shared
+                ? shared.CreateUserContextAsync(context, services, cancellationToken)
+                : new ValueTask<IDictionary<string, object?>>(factory.CreateUserContext(context));
+
+        private async ValueTask<IDictionary<string, object?>> CreateUserContextAsync(
+            HttpContext context, IServiceProvider? services, CancellationToken cancellationToken)
+        {
+            if (!IsAuthenticated(context))
+                return new Dictionary<string, object?>();
+
+            var userContext = new BifrostContext(context);
+            var resolver = services?.GetService<IGrantResolver>();
+            if (resolver is not null)
+                await ApplyGrantResolverAsync(context, services!, resolver, userContext, cancellationToken);
+            return userContext;
+        }
+
+        private static bool IsAuthenticated(HttpContext context)
+            => context.User?.Identity?.IsAuthenticated == true;
+
+        /// <summary>
         /// The S2 grant-loading hook: when the host registered an
-        /// <see cref="IGrantResolver"/> (<c>AddBifrostGrantResolver</c>), run it once for
-        /// this request and UNION its grants into the <c>permissions</c> context key —
+        /// <see cref="IGrantResolver"/> (<c>AddBifrostGrantResolver</c>), await it once for
+        /// this projection and UNION its grants into the <c>permissions</c> context key —
         /// after the identity mapping (which ran inside <see cref="BifrostContext"/>) and
         /// before any transformer sees the context. Runs for authenticated principals
         /// only; the identity handed to the resolver is the canonical
@@ -99,18 +132,15 @@ namespace BifrostQL.Server
         /// gets <c>TenantId = null</c> while the tenant filter scopes by that claim; it reads
         /// the claim from <see cref="AppIdentity.Claims"/>, which holds the principal's claims.
         ///
-        /// Fail closed (E9): a throwing resolver leaves the request with an EMPTY
+        /// Fail closed (E9): a throwing resolver leaves the caller with an EMPTY
         /// permission set — the pre-resolver permissions are wiped — and logs a Warning
         /// naming the identity id; the exception never escapes. A null result is an
         /// empty grant set: nothing is unioned, the identity's own permissions remain.
         /// </summary>
-        private static void ApplyGrantResolver(
-            HttpContext context, IServiceProvider? services, IDictionary<string, object?> userContext)
+        private static async ValueTask ApplyGrantResolverAsync(
+            HttpContext context, IServiceProvider services, IGrantResolver resolver,
+            IDictionary<string, object?> userContext, CancellationToken cancellationToken)
         {
-            var resolver = services?.GetService<IGrantResolver>();
-            if (resolver is null)
-                return;
-
             // The factory runs before any model is resolved, so the tenant comes from the key the
             // identity mapper writes it under (tenant_id), the identity's own tenant. The key-less
             // overload projects no tenant, which handed every resolver TenantId = null.
@@ -122,15 +152,11 @@ namespace BifrostQL.Server
             IReadOnlyCollection<string>? grants;
             try
             {
-                // The factory contract is synchronous (every transport gate consumes it
-                // that way); the resolver runs to completion inline. A resolver is
-                // expected to do one bounded DB read per request.
-                grants = resolver.ResolveAsync(identity, context.RequestAborted)
-                    .AsTask().GetAwaiter().GetResult();
+                grants = await resolver.ResolveAsync(identity, cancellationToken);
             }
             catch (Exception ex)
             {
-                services?.GetService<ILoggerFactory>()
+                services.GetService<ILoggerFactory>()
                     ?.CreateLogger("BifrostQL.Server.BifrostAuthContextFactory")
                     .LogWarning(ex,
                         "Grant resolver failed for identity '{IdentityId}'; continuing with an empty permission set.",

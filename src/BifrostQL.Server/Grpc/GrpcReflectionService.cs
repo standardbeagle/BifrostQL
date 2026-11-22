@@ -54,7 +54,7 @@ namespace BifrostQL.Server.Grpc
                 // introspection surface and must fail closed under the data path's own
                 // authorization (invariant 4), returning the identical status for the identical
                 // condition (invariants 9, 10).
-                var userContext = GrpcIdentityGate.ResolveIdentity(context, _authFactory, _logger);
+                var userContext = await GrpcIdentityGate.ResolveIdentityAsync(context, _authFactory, _logger);
                 var visibleSet = FileDescriptorSet.Parser.ParseFrom(_contracts.Generate(userContext).DescriptorSet);
 
                 await foreach (var request in requestStream.ReadAllAsync(context.CancellationToken))

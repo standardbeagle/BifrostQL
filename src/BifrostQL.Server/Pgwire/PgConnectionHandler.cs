@@ -203,8 +203,9 @@ namespace BifrostQL.Server.Pgwire
                 // the connection unless it yields a real (non-empty) user context. Any
                 // projection failure (subject-less principal, unmapped OIDC issuer) is a
                 // rejection, never a fall-through to an anonymous session.
-                if (!AdapterIdentityProjection.TryProject(
-                        _authFactory, _services, login.Principal, _logger, "pgwire", out var _userContext))
+                var _userContext = await AdapterIdentityProjection.TryProjectAsync(
+                    _authFactory, _services, login.Principal, _logger, "pgwire", ct);
+                if (_userContext is null)
                 {
                     await RejectAsync(stream, PgWireProtocol.SqlStateInvalidAuthorization,
                         "authenticated login does not map to an authorized identity.", ct);

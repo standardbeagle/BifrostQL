@@ -71,7 +71,7 @@ namespace BifrostQL.Server
             // the branch gate UseBifrostEndpoints installs, not in this middleware. A FAULTED
             // projection (unmapped OIDC issuer, subject-less principal) is refused here and
             // never escapes to the host as an unhandled fault.
-            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (outcome == BifrostIdentityOutcome.Unprojectable)
             {
                 await WriteErrorAsync(context, StatusCodes.Status403Forbidden,

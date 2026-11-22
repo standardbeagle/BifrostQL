@@ -336,9 +336,9 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void ProjectionProvider_HostFactoryTwinCaseKeys_RefusesOnEveryCall_NotAtSetup()
+        public async Task ProjectionProvider_HostFactoryTwinCaseKeys_RefusesOnEveryCall_NotAtSetup()
         {
-            var provider = BifrostMcpAdapter.CreateProjectionProvider(
+            var provider = await BifrostMcpAdapter.CreateProjectionProviderAsync(
                 new FixedAuthContextFactory(TwinTenantKeys), _host.Services, TenantPrincipal("user-a", "tenant-a"));
 
             FluentActions.Invoking(() => provider()).Should().Throw<McpIdentityException>();
@@ -374,9 +374,9 @@ namespace BifrostQL.Mcp.Test
         }
 
         [Fact]
-        public void ProjectionProvider_HostFactoryReturnsNull_RefusesOnEveryCall_NotAtSetup()
+        public async Task ProjectionProvider_HostFactoryReturnsNull_RefusesOnEveryCall_NotAtSetup()
         {
-            var provider = BifrostMcpAdapter.CreateProjectionProvider(
+            var provider = await BifrostMcpAdapter.CreateProjectionProviderAsync(
                 new FixedAuthContextFactory(() => null!), _host.Services, TenantPrincipal("user-a", "tenant-a"));
 
             FluentActions.Invoking(() => provider()).Should().Throw<McpIdentityException>();

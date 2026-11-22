@@ -31,9 +31,9 @@ namespace BifrostQL.Server.Grpc
         /// </summary>
         internal const int MaxAuthorizationChars = 8 * 1024;
 
-        public static IDictionary<string, object?> ResolveIdentity(
+        public static Task<IDictionary<string, object?>> ResolveIdentityAsync(
             ServerCallContext context, IBifrostAuthContextFactory authFactory, ILogger logger)
-            => ResolveIdentity(context.GetHttpContext(), authFactory, logger);
+            => ResolveIdentityAsync(context.GetHttpContext(), authFactory, logger);
 
         /// <summary>
         /// The same gate for a request that has no <see cref="ServerCallContext"/> yet: the host's
@@ -41,7 +41,7 @@ namespace BifrostQL.Server.Grpc
         /// too keeps an anonymous caller from telling a registered table RPC (UNAUTHENTICATED) from
         /// an unregistered one (UNIMPLEMENTED) — an existence oracle that needs no credential.
         /// </summary>
-        public static IDictionary<string, object?> ResolveIdentity(
+        public static async Task<IDictionary<string, object?>> ResolveIdentityAsync(
             HttpContext http, IBifrostAuthContextFactory authFactory, ILogger logger)
         {
 
@@ -59,7 +59,8 @@ namespace BifrostQL.Server.Grpc
             IDictionary<string, object?> projected;
             try
             {
-                projected = UserContexts.Copy(authFactory.CreateUserContext(http));
+                projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
+                    authFactory, http, http.RequestServices, http.RequestAborted));
             }
             catch (Exception ex)
             {

@@ -2,7 +2,6 @@ using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Workflows;
 using BifrostQL.Server;
-using System.Diagnostics.CodeAnalysis;
 
 namespace BifrostQL.Samples.HostedSpa;
 
@@ -16,7 +15,7 @@ namespace BifrostQL.Samples.HostedSpa;
 /// internal write traverses the SAME GraphQL mutation pipeline as a direct
 /// <c>/graphql</c> request — <c>tenant-filter</c> and the policy engine still
 /// apply — and each endpoint also runs a pre-flight gate through the shared
-/// <see cref="IPolicyGate"/> (the same evaluator and metadata the GraphQL door
+/// <see cref="IPolicyGate"/>, awaited from <see cref="IPolicyGateAccessor"/> (the same evaluator and metadata the GraphQL door
 /// runs) so the whole operation is rejected up front rather than failing
 /// partway through. Every operation writes exactly one
 /// <c>audit_log</c> row naming the action (<c>payment.recorded</c>,
@@ -112,13 +111,15 @@ public static class MembershipWorkflowEndpoints
         RecordPaymentRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        IPolicyGate policy)
+        IPolicyGateAccessor policyGates)
     {
         if (request.AmountCents <= 0)
             return Results.BadRequest("Payment amount must be positive.");
 
-        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+        var (userContext, identityRefusal) = await GetUserContextAsync(http);
+        if (identityRefusal is not null)
             return identityRefusal;
+        var policy = await policyGates.GetAsync(http.RequestAborted);
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses. dues_payments
@@ -158,13 +159,15 @@ public static class MembershipWorkflowEndpoints
         RenewMembershipRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        IPolicyGate policy)
+        IPolicyGateAccessor policyGates)
     {
         if (string.IsNullOrWhiteSpace(request.NewEndDate))
             return Results.BadRequest("A new end date is required to renew a membership.");
 
-        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+        var (userContext, identityRefusal) = await GetUserContextAsync(http);
+        if (identityRefusal is not null)
             return identityRefusal;
+        var policy = await policyGates.GetAsync(http.RequestAborted);
 
         // Pre-flight gate: the workflow updates member_memberships, so the
         // gating action is Update.
@@ -200,10 +203,12 @@ public static class MembershipWorkflowEndpoints
         CheckInRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        IPolicyGate policy)
+        IPolicyGateAccessor policyGates)
     {
-        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+        var (userContext, identityRefusal) = await GetUserContextAsync(http);
+        if (identityRefusal is not null)
             return identityRefusal;
+        var policy = await policyGates.GetAsync(http.RequestAborted);
 
         // Pre-flight gate: reject the whole workflow before any write, using the
         // SAME evaluator and TablePolicy the mutation pipeline uses.
@@ -240,10 +245,12 @@ public static class MembershipWorkflowEndpoints
         LinkIdentityRequest request,
         HttpContext http,
         IWorkflowRunner workflows,
-        IPolicyGate policy)
+        IPolicyGateAccessor policyGates)
     {
-        if (!TryGetUserContext(http, out var userContext, out var identityRefusal))
+        var (userContext, identityRefusal) = await GetUserContextAsync(http);
+        if (identityRefusal is not null)
             return identityRefusal;
+        var policy = await policyGates.GetAsync(http.RequestAborted);
 
         // Pre-flight gate: the workflow updates members, so the gating action is
         // Update. Linking an identity is a privileged operation — it must be
@@ -265,35 +272,30 @@ public static class MembershipWorkflowEndpoints
 
     /// <summary>
     /// Projects the request's caller through
-    /// <see cref="HttpContextWorkflowExtensions.GetBifrostUserContext"/>,
+    /// <see cref="HttpContextWorkflowExtensions.GetBifrostUserContextAsync"/>,
     /// translating a refused AUTHENTICATED identity (unmapped OIDC issuer,
     /// subject-less principal) into the same 403 every HTTP mount answers for
     /// that condition — an unhandled <see cref="BifrostIdentityRejectedException"/>
     /// would escape to the host as a 500. All four endpoints gate through this
-    /// one helper so the refusal shape cannot drift between routes.
+    /// one helper so the refusal shape cannot drift between routes. Exactly one
+    /// of the two results is non-null.
     /// </summary>
-    private static bool TryGetUserContext(
-        HttpContext http,
-        out IDictionary<string, object?> userContext,
-        [NotNullWhen(false)] out IResult? refusal)
+    private static async Task<(IDictionary<string, object?> UserContext, IResult? Refusal)> GetUserContextAsync(
+        HttpContext http)
     {
         try
         {
-            userContext = http.GetBifrostUserContext();
-            refusal = null;
-            return true;
+            return (await http.GetBifrostUserContextAsync(), null);
         }
         catch (BifrostIdentityRejectedException)
         {
-            userContext = new Dictionary<string, object?>();
-            refusal = Results.StatusCode(StatusCodes.Status403Forbidden);
-            return false;
+            return (new Dictionary<string, object?>(), Results.StatusCode(StatusCodes.Status403Forbidden));
         }
     }
 
     /// <summary>
     /// The answer a policy refusal gets: 403 with an empty body — the same wire
-    /// shape <see cref="TryGetUserContext"/> gives a refused identity and the
+    /// shape <see cref="GetUserContextAsync"/> gives a refused identity and the
     /// GraphQL mount gives the same caller, with no policy detail on the wire.
     /// </summary>
     private static IResult PolicyRefused() =>

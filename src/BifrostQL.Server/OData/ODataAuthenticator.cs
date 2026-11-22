@@ -119,7 +119,7 @@ namespace BifrostQL.Server.OData
             if (context.User?.Identity?.IsAuthenticated != true)
                 throw ODataProtocolException.Unauthorized();
 
-            return ProjectIdentity(context, context.User);
+            return await ProjectIdentityAsync(context, context.User, ct);
         }
 
         private async Task<IDictionary<string, object?>> AuthenticateBasicAsync(
@@ -161,7 +161,7 @@ namespace BifrostQL.Server.OData
             // attempt is refunded; the refusal above already ran before any lookup or hashing.
             _basicAttempts.RefundVerified(admission);
 
-            return ProjectIdentity(context, credential!.Principal);
+            return await ProjectIdentityAsync(context, credential!.Principal, ct);
         }
 
         private static (string Username, string Password) DecodeBasic(string authHeader)
@@ -190,12 +190,14 @@ namespace BifrostQL.Server.OData
         /// principal, an unmapped OIDC issuer, or a projection that yields no identity all fail
         /// closed as 403 — never a degraded/anonymous context.
         /// </summary>
-        private IDictionary<string, object?> ProjectIdentity(HttpContext context, ClaimsPrincipal principal)
+        private async Task<IDictionary<string, object?>> ProjectIdentityAsync(
+            HttpContext context, ClaimsPrincipal principal, CancellationToken ct)
         {
             try
             {
                 context.User = principal;
-                var projected = UserContexts.Copy(_authFactory.CreateUserContext(context));
+                var projected = UserContexts.Copy(await BifrostAuthContextFactory.ProjectAsync(
+                    _authFactory, context, context.RequestServices, ct));
                 if (projected.Count == 0)
                 {
                     _logger?.LogWarning("OData identity projected to an empty user context; rejecting.");

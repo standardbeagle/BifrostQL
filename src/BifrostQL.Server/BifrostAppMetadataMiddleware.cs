@@ -99,7 +99,7 @@ namespace BifrostQL.Server
             // loaded — and refused by the same rule /_saved-objects and /_blob use. IsAuthenticated
             // alone is not an identity: an authenticated principal that projects to an EMPTY
             // context used to be served the overlay here while both siblings answered 401.
-            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (BifrostIdentityGate.Refuses(outcome, _requiresAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

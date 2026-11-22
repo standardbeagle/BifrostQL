@@ -429,7 +429,7 @@ public class MembershipWorkflowEndpointsTests
     {
         // Arrange: a host whose default authentication scheme always succeeds
         // with an authenticated principal carrying NO subject claim — the
-        // projection fault GetBifrostUserContext surfaces as
+        // projection fault GetBifrostUserContextAsync surfaces as
         // BifrostIdentityRejectedException. The sidecar must catch it and
         // answer 403, the status every HTTP mount answers for the condition.
         await using var factory = new SubjectlessWorkflowFactory();

@@ -133,7 +133,7 @@ namespace BifrostQL.Mcp.Test
             // Criteria 2 & 3: bifrost_aggregate is gated to role "analyst". A "reader" identity — whose
             // roles come ONLY from the factory-projected user context — must not see it in the list, and a
             // direct call by name must be refused (fail-closed).
-            var provider = ProviderForRoles("reader");
+            var provider = await ProviderForRolesAsync("reader");
             provider()["roles"].Should().BeEquivalentTo(new[] { "reader" },
                 "roles are derived from the shared factory's user-context projection, not bespoke claim reading");
 
@@ -157,7 +157,7 @@ namespace BifrostQL.Mcp.Test
         {
             // Criterion 4: a tool named by NO allow-list stays visible to all authenticated identities —
             // gating one tool must not silently hide the default surface.
-            var provider = ProviderForRoles("reader");
+            var provider = await ProviderForRolesAsync("reader");
             var policy = GateAggregateToAnalyst();
             await using var session = await StartSessionAsync(provider, policy);
 
@@ -176,7 +176,7 @@ namespace BifrostQL.Mcp.Test
         {
             // Criteria 2 & 3 (allowed path): the "analyst" identity sees the gated tool and its call is NOT
             // refused by the gate (it reaches the real handler).
-            var provider = ProviderForRoles("analyst");
+            var provider = await ProviderForRolesAsync("analyst");
             var policy = GateAggregateToAnalyst();
             await using var session = await StartSessionAsync(provider, policy);
 
@@ -225,7 +225,7 @@ namespace BifrostQL.Mcp.Test
             // gate the built-in tools honor, agreeing across list and call.
             var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup");
             var policy = GateToolToRole("widget_lookup", "analyst");
-            await using var session = await StartSessionAsync(ProviderForRoles("reader"), policy, declarative);
+            await using var session = await StartSessionAsync(await ProviderForRolesAsync("reader"), policy, declarative);
 
             var listed = await session.Client.ListToolsAsync();
             listed.Select(t => t.Name).Should()
@@ -247,7 +247,7 @@ namespace BifrostQL.Mcp.Test
             // path, returning the stable found/data envelope.
             var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup");
             var policy = GateToolToRole("widget_lookup", "analyst");
-            await using var session = await StartSessionAsync(ProviderForRoles("analyst"), policy, declarative);
+            await using var session = await StartSessionAsync(await ProviderForRolesAsync("analyst"), policy, declarative);
 
             var listed = await session.Client.ListToolsAsync();
             listed.Select(t => t.Name).Should().Contain("widget_lookup");
@@ -276,7 +276,7 @@ namespace BifrostQL.Mcp.Test
         {
             var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup", allowedRoles: "support");
             await using var session = await StartSessionAsync(
-                ProviderForRoles("reader"), new McpToolPolicyOptions(), declarative);
+                await ProviderForRolesAsync("reader"), new McpToolPolicyOptions(), declarative);
 
             var listed = await session.Client.ListToolsAsync();
             listed.Select(t => t.Name).Should().NotContain("widget_lookup");
@@ -293,7 +293,7 @@ namespace BifrostQL.Mcp.Test
         {
             var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup", allowedRoles: "support");
             await using var session = await StartSessionAsync(
-                ProviderForRoles("support"), new McpToolPolicyOptions(), declarative);
+                await ProviderForRolesAsync("support"), new McpToolPolicyOptions(), declarative);
 
             (await session.Client.ListToolsAsync()).Select(t => t.Name).Should().Contain("widget_lookup");
             var result = await session.Client.CallToolAsync(
@@ -309,7 +309,7 @@ namespace BifrostQL.Mcp.Test
         {
             var declarative = await DeclarativeWidgetLookupDocAsync("widget_lookup", allowedRoles: "support");
             await using var session = await StartSessionAsync(
-                ProviderForRoles(), new McpToolPolicyOptions(), declarative);
+                await ProviderForRolesAsync(), new McpToolPolicyOptions(), declarative);
 
             (await session.Client.ListToolsAsync()).Select(t => t.Name).Should().NotContain("widget_lookup");
             var result = await session.Client.CallToolAsync(
@@ -370,12 +370,12 @@ namespace BifrostQL.Mcp.Test
             },
         };
 
-        private Func<IDictionary<string, object?>> ProviderForRoles(params string[] roles)
+        private Task<Func<IDictionary<string, object?>>> ProviderForRolesAsync(params string[] roles)
         {
             var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, "user-" + string.Join("-", roles)) };
             claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
             var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, authenticationType: "Test"));
-            return BifrostMcpAdapter.CreateProjectionProvider(_factory, _host.Services, principal);
+            return BifrostMcpAdapter.CreateProjectionProviderAsync(_factory, _host.Services, principal);
         }
 
         private async Task<McpSession> StartSessionAsync(

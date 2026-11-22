@@ -74,7 +74,7 @@ namespace BifrostQL.Server.Grpc
                     // Deny equals absent (invariant 9): on a Get it is INDISTINGUISHABLE from a
                     // missing row; on every other RPC it is the status the host gives a method that
                     // is not registered, which is also what a table the caller may not read answers
-                    // (ResolveReader). PERMISSION_DENIED here told a caller the table exists and is
+                    // (ResolveReaderAsync). PERMISSION_DENIED here told a caller the table exists and is
                     // merely closed to them. The text is fixed: the exception's names the table/tenant
                     // key and must not reach the wire (invariant 3).
                     return denialIsNotFound

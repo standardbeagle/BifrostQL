@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Net;
 using System.Security.Claims;
 using System.Text;
@@ -5,6 +6,8 @@ using System.Text.Json;
 using BifrostQL.Core.Auth;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Schema;
+using GraphQL;
 using BifrostQL.Sqlite;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
@@ -25,7 +28,7 @@ namespace BifrostQL.Server.Test;
 /// everything below drives one real host — <c>AddBifrostQL</c> over a SQLite model carrying
 /// policy metadata, a registered <see cref="IGrantResolver"/>, and a minimal-API
 /// <c>POST /payments</c> beside the <c>/graphql</c> mount — so the gate is proven through DI,
-/// through <c>BifrostIdentityGate.Project</c>, and against the wire shape the GraphQL mount
+/// through <c>BifrostIdentityGate.ProjectAsync</c>, and against the wire shape the GraphQL mount
 /// gives the same caller.
 /// </summary>
 public sealed class PolicyGateTests
@@ -98,20 +101,32 @@ public sealed class PolicyGateTests
         public IHost Inner { get; }
         public HttpClient Client { get; }
         public IServiceCollection Services { get; }
+
+        /// <summary>
+        /// Schema loads run on behalf of a request (an HttpContext is current): the production
+        /// loader, counted. Background loops (CDC outbox) load without one and are not counted.
+        /// </summary>
+        public int RequestModelLoads => Volatile.Read(ref _modelLoads.Value);
+        private readonly StrongBox<int> _modelLoads;
         private readonly string _dbPath;
 
-        private GateHost(IHost inner, IServiceCollection services, string dbPath)
+        private GateHost(IHost inner, IServiceCollection services, string dbPath, StrongBox<int> modelLoads)
         {
+            _modelLoads = modelLoads;
             Inner = inner;
             Services = services;
             Client = inner.GetTestClient();
             _dbPath = dbPath;
         }
 
-        public static async Task<GateHost> StartAsync()
+        /// <param name="databaseDown">Point the endpoint at a database that cannot be opened, so
+        /// every schema load faults and PathCache retries it on every access.</param>
+        public static async Task<GateHost> StartAsync(bool databaseDown = false)
         {
             var dbPath = Path.Combine(Path.GetTempPath(), $"s12-policy-gate-{Guid.NewGuid():N}.db");
-            CreateDatabase(dbPath);
+            if (!databaseDown)
+                CreateDatabase(dbPath);
+            var connectionString = databaseDown ? $"Data Source={dbPath};Mode=ReadOnly" : $"Data Source={dbPath}";
 
             var configValues = new Dictionary<string, string?>
             {
@@ -124,6 +139,7 @@ public sealed class PolicyGateTests
             var config = new ConfigurationBuilder().AddInMemoryCollection(configValues).Build();
 
             IServiceCollection captured = null!;
+            var modelLoads = new StrongBox<int>();
             var builder = new HostBuilder().ConfigureWebHost(web =>
             {
                 web.UseTestServer();
@@ -132,11 +148,26 @@ public sealed class PolicyGateTests
                     services.AddRouting();
                     services.AddBifrostQL(o => o
                         .BindConfiguration(config.GetSection("Bifrost"))
-                        .BindConnectionString($"Data Source={dbPath}")
+                        .BindConnectionString(connectionString)
                         .BindProvider("sqlite"));
                     services.AddBifrostGrantResolver((identity, sp, ct) =>
                         new ValueTask<IReadOnlyCollection<string>>(
                             identity.Id == GrantedUserId ? ResolverGrants : Array.Empty<string>()));
+                    // Count request-attributed loads of the production schema loader: a cache in
+                    // front of AddBifrostQL's own, delegating to it, so every consumer goes
+                    // through it. The HttpContext is read from the accessor the host populates.
+                    var production = (PathCache<Inputs>)services
+                        .Last(d => d.ServiceType == typeof(PathCache<Inputs>)).ImplementationInstance!;
+                    var counting = new PathCache<Inputs>();
+                    var requestContext = new HttpContextAccessor();
+                    foreach (var path in production.Paths)
+                        counting.AddLoader(path, () =>
+                        {
+                            if (requestContext.HttpContext is not null)
+                                Interlocked.Increment(ref modelLoads.Value);
+                            return production.GetValueAsync(path);
+                        });
+                    services.AddSingleton(counting);
                     captured = services;
                 });
                 web.Configure(app =>
@@ -148,22 +179,27 @@ public sealed class PolicyGateTests
                     app.UseEndpoints(endpoints =>
                     {
                         // The documented shape (authorization guide, "and your own endpoints").
-                        endpoints.MapPost("/payments", (IPolicyGate policy) =>
+                        // A route that never asks for a gate, like a health check.
+                        endpoints.MapGet("/health", () => Results.Ok());
+
+                        endpoints.MapPost("/payments", async (IPolicyGateAccessor gates) =>
                         {
+                            var policy = await gates.GetAsync();
                             policy.Require(Table, PolicyAction.Create);
                             return Results.Ok();
                         });
 
                         // Probes: every answer the gate gives, read through the real DI gate
                         // inside a real request so the assertions run against host wiring.
-                        endpoints.MapGet("/probe/can-act", (IPolicyGate policy, string table, string action) =>
-                            Results.Json(new { allowed = policy.CanAct(table, Enum.Parse<PolicyAction>(action, true)).Allowed }));
-                        endpoints.MapGet("/probe/can-write", (IPolicyGate policy, string table, string column) =>
-                            Results.Json(new { allowed = policy.CanWriteColumn(table, column).Allowed }));
-                        endpoints.MapGet("/probe/can-read", (IPolicyGate policy, string table, string column) =>
-                            Results.Json(new { allowed = policy.CanReadColumn(table, column).Allowed }));
-                        endpoints.MapGet("/probe/require", (IPolicyGate policy, string table, string action) =>
+                        endpoints.MapGet("/probe/can-act", async (IPolicyGateAccessor gates, string table, string action) =>
+                            Results.Json(new { allowed = (await gates.GetAsync()).CanAct(table, Enum.Parse<PolicyAction>(action, true)).Allowed }));
+                        endpoints.MapGet("/probe/can-write", async (IPolicyGateAccessor gates, string table, string column) =>
+                            Results.Json(new { allowed = (await gates.GetAsync()).CanWriteColumn(table, column).Allowed }));
+                        endpoints.MapGet("/probe/can-read", async (IPolicyGateAccessor gates, string table, string column) =>
+                            Results.Json(new { allowed = (await gates.GetAsync()).CanReadColumn(table, column).Allowed }));
+                        endpoints.MapGet("/probe/require", async (IPolicyGateAccessor gates, string table, string action) =>
                         {
+                            var policy = await gates.GetAsync();
                             try
                             {
                                 policy.Require(table, Enum.Parse<PolicyAction>(action, true));
@@ -174,14 +210,14 @@ public sealed class PolicyGateTests
                                 return Results.Json(new { threw = true, code = ex.ErrorCode, message = ex.Message });
                             }
                         });
-                        endpoints.MapGet("/probe/refused", (IPolicyGate policy) =>
-                            Results.Json(new { refused = ReferenceEquals(policy, PolicyGate.Refused) }));
+                        endpoints.MapGet("/probe/refused", async (IPolicyGateAccessor gates) =>
+                            Results.Json(new { refused = ReferenceEquals(await gates.GetAsync(), PolicyGate.Refused) }));
                     });
                 });
             });
 
             var host = await builder.StartAsync();
-            return new GateHost(host, captured, dbPath);
+            return new GateHost(host, captured, dbPath, modelLoads);
         }
 
         public async ValueTask DisposeAsync()
@@ -406,23 +442,47 @@ public sealed class PolicyGateTests
     // ---- 6. DI lifetime, no-HttpContext resolution, anonymous caller ----
 
     [Fact]
-    public async Task IPolicyGate_IsRegisteredScoped_ByAddBifrostQL()
+    public async Task IPolicyGateAccessor_IsRegisteredScoped_AndIPolicyGateIsNotInjectable()
     {
         await using var host = await GateHost.StartAsync();
 
-        var descriptor = host.Services.Single(d => d.ServiceType == typeof(IPolicyGate));
+        var descriptor = host.Services.Single(d => d.ServiceType == typeof(IPolicyGateAccessor));
         descriptor.Lifetime.Should().Be(ServiceLifetime.Scoped);
+        host.Services.Should().NotContain(d => d.ServiceType == typeof(IPolicyGate),
+            "a DI-built IPolicyGate could only block on the async identity projection and model load");
     }
 
     [Fact]
-    public async Task IPolicyGate_ResolvedWithoutAnHttpContext_ThrowsAClearInvalidOperation()
+    public async Task IPolicyGate_AwaitedWithoutAnHttpContext_ThrowsAClearInvalidOperation()
     {
         await using var host = await GateHost.StartAsync();
         using var scope = host.Inner.Services.CreateScope();
 
-        var act = () => scope.ServiceProvider.GetRequiredService<IPolicyGate>();
+        var act = async () => await scope.ServiceProvider.GetRequiredService<IPolicyGateAccessor>().GetAsync();
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*HttpContext*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*HttpContext*");
+    }
+
+    [Fact]
+    public async Task DatabaseDown_HealthRoute_TriggersNoModelLoad_WhileAGateRouteRetriesIt()
+    {
+        // The gate is built on the endpoint's await, never per request. PathCache drops a
+        // faulted load and retries it on the next access, so with the database down any
+        // per-request model resolution would retry the load on every health check.
+        await using var host = await GateHost.StartAsync(databaseDown: true);
+
+        for (var i = 0; i < 3; i++)
+        {
+            using var health = await host.Client.SendAsync(Request(HttpMethod.Get, "/health", GrantedUserId));
+            health.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+        host.RequestModelLoads.Should().Be(0, "an identified caller on a gate-less route triggers no schema load");
+
+        // Paired control: the same caller on a gate route does attempt the load (and fails,
+        // the database being down), so the counter observes the production loader.
+        var act = async () => await host.Client.SendAsync(RestPayment(GrantedUserId));
+        await act.Should().ThrowAsync<Exception>("the gate cannot be built without a model");
+        host.RequestModelLoads.Should().Be(1, "control: the gate route attempted the schema load");
     }
 
     [Fact]
@@ -476,7 +536,7 @@ public sealed class PolicyGateTests
 
         /// <summary>
         /// An AddBifrostEndpoints host with <paramref name="endpointCount"/> GraphQL mounts, each
-        /// over its own SQLite file, plus a probe that reports whether IPolicyGate resolves for
+        /// over its own SQLite file, plus a probe that reports whether the IPolicyGate resolves for
         /// a request whose path is none of the mounts.
         /// </summary>
         public static async Task<MultiEndpointHost> StartAsync(int endpointCount)
@@ -518,11 +578,11 @@ public sealed class PolicyGateTests
                     app.UseRouting();
                     app.UseEndpoints(endpoints =>
                     {
-                        endpoints.MapGet("/probe/resolve", (IServiceProvider sp) =>
+                        endpoints.MapGet("/probe/resolve", async (IServiceProvider sp) =>
                         {
                             try
                             {
-                                var gate = sp.GetRequiredService<IPolicyGate>();
+                                var gate = await sp.GetRequiredService<IPolicyGateAccessor>().GetAsync();
                                 return Results.Json(new
                                 {
                                     resolved = true,

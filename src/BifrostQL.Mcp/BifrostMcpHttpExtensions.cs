@@ -228,7 +228,8 @@ namespace BifrostQL.Mcp
                 // An unmapped OIDC issuer throws UnmappedOidcIssuerException here; it is in
                 // the same funnelled set and is sanitized onto the wire, never swallowed.
                 httpContext.Items[ContextItemKey] =
-                    BifrostMcpAdapter.NormalizeProjection(factory.CreateUserContext(carrier));
+                    BifrostMcpAdapter.NormalizeProjection(await BifrostAuthContextFactory.ProjectAsync(
+                        factory, carrier, carrier.RequestServices, cancellationToken).ConfigureAwait(false));
             }
 
             /// <summary>

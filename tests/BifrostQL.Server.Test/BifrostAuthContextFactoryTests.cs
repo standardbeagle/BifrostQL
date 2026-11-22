@@ -104,8 +104,38 @@ namespace BifrostQL.Server.Test
 
         // ---- IGrantResolver hook (S2) ----
 
+        /// <summary>The async projection every transport gate awaits; it runs the grant resolver.</summary>
+        private static ValueTask<IDictionary<string, object?>> ProjectAsync(HttpContext context)
+            => BifrostAuthContextFactory.ProjectAsync(Factory, context, context.RequestServices, CancellationToken.None);
+
         [Fact]
-        public void CreateUserContext_GrantResolverRegistered_UnionsGrantsIntoPermissions()
+        public void CreateUserContext_SyncContract_WithAGrantResolver_RefusesInsteadOfBlocking()
+        {
+            // The synchronous public contract cannot await the resolver. It must neither block on
+            // it nor serve the caller without its grants: it throws, which every gate maps to an
+            // unprojectable identity (fail closed). The resolver is never invoked.
+            var invoked = false;
+            var context = new DefaultHttpContext
+            {
+                User = AuthenticatedLocalPrincipal(),
+                RequestServices = new ServiceCollection()
+                    .AddBifrostGrantResolver((identity, sp, ct) =>
+                    {
+                        invoked = true;
+                        return new ValueTask<IReadOnlyCollection<string>>(new[] { "x" });
+                    })
+                    .BuildServiceProvider(),
+            };
+
+            var act = () => Factory.CreateUserContext(context);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*IGrantResolver*");
+            invoked.Should().BeFalse();
+        }
+
+
+        [Fact]
+        public async Task ProjectAsync_GrantResolverRegistered_UnionsGrantsIntoPermissions()
         {
             // Arrange: a local-auth principal plus a resolver granting "x".
             var context = new DefaultHttpContext
@@ -118,7 +148,7 @@ namespace BifrostQL.Server.Test
             };
 
             // Act
-            var userContext = Factory.CreateUserContext(context);
+            var userContext = await ProjectAsync(context);
 
             // Assert: the resolver's grant is unioned into the owned permissions key.
             BifrostQL.Core.Auth.PolicyIdentity.ExtractPermissions(userContext)
@@ -126,7 +156,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public void CreateUserContext_GrantResolver_ReceivesTheIdentityTenant()
+        public async Task ProjectAsync_GrantResolver_ReceivesTheIdentityTenant()
         {
             // A host's resolver typically loads grants per (user, tenant). The identity it is
             // handed carries the tenant the identity mapper wrote (tenant_id), not null.
@@ -147,14 +177,14 @@ namespace BifrostQL.Server.Test
                     .BuildServiceProvider(),
             };
 
-            Factory.CreateUserContext(context);
+            await ProjectAsync(context);
 
             seen.Should().NotBeNull();
             seen!.TenantId.Should().Be("acme");
         }
 
         [Fact]
-        public void CreateUserContext_GrantResolver_SeesTheRawClaimsOfThePrincipal()
+        public async Task ProjectAsync_GrantResolver_SeesTheRawClaimsOfThePrincipal()
         {
             // With tenant-context-key: org_id fed by a raw org_id claim, the resolver gets
             // TenantId = null. The documented answer is to read the claim; the resolver is handed
@@ -177,7 +207,7 @@ namespace BifrostQL.Server.Test
                     .BuildServiceProvider(),
             };
 
-            Factory.CreateUserContext(context);
+            await ProjectAsync(context);
 
             seen.Should().NotBeNull();
             seen!.TenantId.Should().BeNull("control: the raw claim is not the identity's own tenant");
@@ -186,7 +216,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public void CreateUserContext_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
+        public async Task ProjectAsync_ResolverThrows_YieldsEmptyPermissions_AndLogsWarning()
         {
             // Arrange: an OIDC identity whose mapper grants permission "x" — the
             // pre-resolver set is NON-empty, so the fail-closed wipe is observable.
@@ -206,7 +236,7 @@ namespace BifrostQL.Server.Test
             };
 
             // Act
-            var userContext = Factory.CreateUserContext(context);
+            var userContext = await ProjectAsync(context);
 
             // Assert: the pre-resolver permission "x" is gone — a throwing resolver
             // never yields the pre-resolver set — and a Warning names the identity id.
@@ -217,7 +247,7 @@ namespace BifrostQL.Server.Test
         }
 
         [Fact]
-        public void CreateUserContext_ResolverReturnsNull_TreatedAsEmpty_NoWarning()
+        public async Task ProjectAsync_ResolverReturnsNull_TreatedAsEmpty_NoWarning()
         {
             // Arrange
             var log = new FakeLogCollector();
@@ -232,7 +262,7 @@ namespace BifrostQL.Server.Test
             };
 
             // Act
-            var userContext = Factory.CreateUserContext(context);
+            var userContext = await ProjectAsync(context);
 
             // Assert: null is an empty grant set — the identity's own (empty) permissions
             // remain and nothing is logged.

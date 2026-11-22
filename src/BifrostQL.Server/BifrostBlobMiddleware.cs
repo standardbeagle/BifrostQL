@@ -117,7 +117,7 @@ namespace BifrostQL.Server
 
             // Identity through the SHARED gate — the same seam every other transport
             // gate uses; an unprojectable credential is refused even without RequireAuth.
-            var outcome = BifrostIdentityGate.Project(context, out var userContext);
+            var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(context);
             if (BifrostIdentityGate.Refuses(outcome, _requiresAuth))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

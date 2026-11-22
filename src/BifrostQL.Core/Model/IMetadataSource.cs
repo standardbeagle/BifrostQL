@@ -73,7 +73,8 @@ namespace BifrostQL.Core.Model
     }
 
     /// <summary>
-    /// Validates metadata dictionaries against known keys and expected value types.
+    /// The known-key allow-lists and the consumer-extension prefix that
+    /// <see cref="ModelConfigValidator"/> enforces at model load.
     /// </summary>
     public static class MetadataValidator
     {
@@ -388,47 +389,5 @@ namespace BifrostQL.Core.Model
         /// </summary>
         public static bool IsConsumerExtensionKey(string key)
             => !string.IsNullOrEmpty(key) && key.StartsWith(ConsumerExtensionPrefix, StringComparison.OrdinalIgnoreCase);
-
-        /// <summary>
-        /// Validates a metadata dictionary and returns any warnings about unknown keys.
-        /// </summary>
-        public static IReadOnlyList<string> ValidateTableMetadata(string tableName, IDictionary<string, object?> metadata)
-        {
-            var warnings = new List<string>();
-            foreach (var key in metadata.Keys)
-            {
-                if (!KnownTableKeys.Contains(key))
-                    warnings.Add($"Unknown table metadata key '{key}' on table '{tableName}'");
-            }
-            return warnings;
-        }
-
-        /// <summary>
-        /// Validates column metadata and returns any warnings about unknown keys.
-        /// </summary>
-        public static IReadOnlyList<string> ValidateColumnMetadata(string tableName, string columnName, IDictionary<string, object?> metadata)
-        {
-            var warnings = new List<string>();
-            foreach (var key in metadata.Keys)
-            {
-                if (!KnownColumnKeys.Contains(key))
-                    warnings.Add($"Unknown column metadata key '{key}' on column '{tableName}.{columnName}'");
-            }
-            return warnings;
-        }
-
-        /// <summary>
-        /// Validates database-level metadata and returns any warnings about unknown keys.
-        /// </summary>
-        public static IReadOnlyList<string> ValidateDatabaseMetadata(IDictionary<string, object?> metadata)
-        {
-            var warnings = new List<string>();
-            foreach (var key in metadata.Keys)
-            {
-                if (!KnownDatabaseKeys.Contains(key))
-                    warnings.Add($"Unknown database metadata key '{key}'");
-            }
-            return warnings;
-        }
     }
 }

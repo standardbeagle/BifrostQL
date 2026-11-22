@@ -887,10 +887,9 @@ namespace BifrostQL.Core.QueryModel
         /// <summary>
         /// This node's object-key suffix as SQL text (<see cref="ISqlDialect.ObjectKeyExpression"/>),
         /// over the key columns in declared order, each qualified with the table reference. Each
-        /// segment carries the column's read projection, decided by the same
-        /// <see cref="ISqlDialect.RequiresTextCast(string, string)"/> test
-        /// <see cref="GqlObjectColumn"/> applies, so a column the SELECT casts to text is keyed by
-        /// that very text.
+        /// segment carries the column's read projection (<see cref="ColumnReadProjection"/>, as
+        /// <see cref="GqlObjectColumn"/> renders it), so a column the SELECT casts to text is keyed
+        /// by that very text.
         /// </summary>
         private string ObjectKeySql(IDbModel dbModel, ISqlDialect dialect)
             => dialect.ObjectKeyExpression(ObjectKeySegmentColumn.For(

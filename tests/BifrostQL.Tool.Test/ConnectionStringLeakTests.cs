@@ -102,19 +102,62 @@ public sealed class ConnectionStringLeakTests : IDisposable
             JsonDocument.Parse(text).RootElement.GetProperty("success").GetBoolean().Should().BeFalse();
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Router_UnhandledException_PrintsTheTypeNotTheMessage(bool json)
+    // The exception families whose message can quote connection-string text: a provider's
+    // connection-string parse (ArgumentException), a driver error (DbException), and either one
+    // wrapped as the inner exception of something else.
+    public static TheoryData<string, bool> WithheldShapes() => new()
     {
-        var router = new CommandRouter().Register(new ThrowingCommand(new InvalidOperationException($"Password=ab;{Fragment}=ef")));
+        { nameof(ArgumentException), true }, { nameof(ArgumentException), false },
+        { nameof(SqliteException), true }, { nameof(SqliteException), false },
+        { "WrappedArgumentException", true }, { "WrappedArgumentException", false },
+        { "WrappedDbException", true }, { "WrappedDbException", false },
+    };
+
+    [Theory]
+    [MemberData(nameof(WithheldShapes))]
+    public async Task Router_ConnectionStringFamilyException_PrintsTheTypeNotTheMessage(string shape, bool json)
+    {
+        var leaking = $"Password=ab;{Fragment}=ef";
+        Exception exception = shape switch
+        {
+            nameof(ArgumentException) => new ArgumentException(leaking),
+            nameof(SqliteException) => new SqliteException(leaking, 1),
+            "WrappedArgumentException" => new InvalidOperationException("outer", new ArgumentException(leaking)),
+            "WrappedDbException" => new IOException("outer", new SqliteException(leaking, 1)),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+        var router = new CommandRouter().Register(new ThrowingCommand(exception));
 
         var (exit, text) = await RunAsync(router, json, "throws");
 
         exit.Should().Be(1);
-        text.Should().Contain(nameof(InvalidOperationException)).And.NotContain(Fragment);
+        text.Should().Contain(exception.GetType().Name).And.Contain(CliErrorText.UnhandledFailure)
+            .And.NotContain(Fragment).And.NotContain("outer");
         if (json)
             JsonDocument.Parse(text).RootElement.GetProperty("success").GetBoolean().Should().BeFalse();
+    }
+
+    // Port in use on serve, a bad export path: the message is the diagnosis, and it carries no
+    // connection-string text, so it is printed.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Router_OtherException_PrintsTheMessage(bool json)
+    {
+        const string message = "Failed to bind to address http://127.0.0.1:5000: address already in use.";
+        var router = new CommandRouter().Register(new ThrowingCommand(new IOException(message)));
+
+        var (exit, text) = await RunAsync(router, json, "throws");
+
+        exit.Should().Be(1);
+        text.Should().Contain(nameof(IOException)).And.Contain(message).And.NotContain(CliErrorText.UnhandledFailure);
+        if (json)
+        {
+            var root = JsonDocument.Parse(text).RootElement;
+            root.GetProperty("success").GetBoolean().Should().BeFalse();
+            root.GetProperty("error").GetString().Should().Be(message);
+            root.GetProperty("exceptionType").GetString().Should().Be(typeof(IOException).FullName);
+        }
     }
 
     private static Task<(int Exit, string Text)> RunRoutedAsync(bool json, params string[] args)

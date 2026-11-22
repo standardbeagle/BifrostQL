@@ -1,3 +1,5 @@
+using System.Data.Common;
+
 namespace BifrostQL.Tool.Commands;
 
 /// <summary>
@@ -13,4 +15,20 @@ internal static class CliErrorText
 
     public const string UnhandledFailure =
         "Command failed. The exception message is withheld because it can quote connection-string text.";
+
+    /// <summary>
+    /// True when <paramref name="exception"/>, or any exception it wraps, is of a family whose
+    /// message can quote connection-string text: <see cref="ArgumentException"/> (every
+    /// provider's connection-string parse error) or <see cref="DbException"/> (driver errors).
+    /// Other exceptions (a port already in use, a bad export path) carry no connection-string
+    /// text, and their message is the diagnosis.
+    /// </summary>
+    public static bool MayQuoteConnectionString(Exception exception)
+    {
+        if (exception is ArgumentException or DbException)
+            return true;
+        if (exception is AggregateException aggregate)
+            return aggregate.InnerExceptions.Any(MayQuoteConnectionString);
+        return exception.InnerException is { } inner && MayQuoteConnectionString(inner);
+    }
 }

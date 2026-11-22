@@ -41,6 +41,8 @@ On `main` after v0.4.28; not yet on NuGet.
 - **`transition-not-by` no longer lets an author self-approve when the actor is a large number written in exponent form** (`1E+17` against `100000000000000000`).
 - **A host `IBifrostAuthContextFactory` context is normalised to case-insensitive keys at every identity seam, so reads and writes agree; keys that differ only in case are refused.** Reads scoped by `Org_Id` while writes answered "Tenant context required", and on MCP twin keys crashed session setup instead of refusing.
 - **`transition-not-by` compares exponent-form actors as doubles,** so a non-round large double (`1.2345678901234568E+17`) no longer lets its author self-approve.
+- **The HTTP identity projection is memoized per DI scope (request, binary message, hub invocation), not per `HttpContext`,** so a revoked grant takes effect on the next message instead of at reconnect, and concurrent callers in one request share one grant-resolver call. SignalR hubs use the new `GetBifrostUserContextAsync(scope)` overload.
+- **Callers of a memoized identity projection no longer share mutable collection values** (roles, permissions, host-returned lists).
 
 ### Breaking — fifth review pass
 
@@ -120,7 +122,9 @@ On `main` after v0.4.28; not yet on NuGet.
 - **gRPC retries the contract build after a failed model load** instead of rethrowing the first fault for the life of the process.
 - **Concurrent `IPolicyGateAccessor.GetAsync` calls in one request share one build,** and one caller's cancellation no longer faults the others.
 - **`bifrost serve --connection-string … --config f.json` refuses the same wrong-shaped config files `config-validate` refuses.**
-- **The grant resolver runs once per HTTP request** even when an endpoint projects the caller and then asks for the policy gate.
+- **`AddIdentity`/`AddClaim`/`RemoveClaim` on the same principal within a request re-projects the caller.**
+- **A host auth factory's internal timeout no longer faults the whole Prometheus scrape;** only the row-scoped metric is excluded.
+- **A grant-resolver projection cut short by the caller's cancellation is refused** instead of served, and memoized, with empty permissions.
 
 ### Security — silent fallbacks
 

@@ -123,6 +123,21 @@ public sealed class AuditMutationTransformer : IMutationTransformer, IModuleName
         if (value is System.Collections.IEnumerable and not string)
             throw new BifrostExecutionError(NonScalarActorMessage);
 
+        // A host auth context can carry a JSON token claim as a JsonElement, a struct that is not
+        // IEnumerable: an array or object passed the check above, and every JsonElement reached
+        // the provider as the struct, which it cannot bind (a database error, not this refusal).
+        // A JSON scalar is one author and is stamped as its CLR value.
+        if (value is System.Text.Json.JsonElement element)
+            return element.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => element.GetString(),
+                System.Text.Json.JsonValueKind.Number => element.TryGetInt64(out var integer) ? (object)integer : element.GetDecimal(),
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                System.Text.Json.JsonValueKind.Null => null,
+                _ => throw new BifrostExecutionError(NonScalarActorMessage),
+            };
+
         return value;
     }
 

@@ -32,6 +32,7 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
 
     private string _dbPath = null!;
     private IHost? _host;
+    private IDictionary<string, object?>? _hostAuthContext;
 
     public async Task InitializeAsync()
     {
@@ -225,6 +226,47 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
         (await ScalarAsync("SELECT count(*) FROM notes WHERE body = 'raw-sub'")).Should().Be(0L);
     }
 
+    [Theory]
+    [InlineData("""["dana","eve"]""")]
+    [InlineData("""{"id":"dana"}""")]
+    public async Task HostSuppliedJsonElementActor_ThatIsNotAScalar_IsRefused(string json)
+    {
+        // A host's IBifrostAuthContextFactory can project a JSON token claim as a JsonElement.
+        // JsonElement is a struct that is not IEnumerable, so an array or object passed the
+        // sequence refusal and reached the actor column's parameter.
+        _hostAuthContext = new Dictionary<string, object?> { ["emp"] = JsonDocument.Parse(json).RootElement.Clone() };
+        await StartAsync(
+            ":root { user-audit-key: emp }",
+            "main.notes.created_by { populate: created-by }");
+
+        using var reply = await SendGraphQlAsync(
+            """mutation { notes(insert: { body: "json-actor" }) }""",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1")));
+
+        Errors(reply).Should().ContainSingle().Which.Should().Be(AuditMutationTransformer.NonScalarActorMessage);
+        (await ScalarAsync("SELECT count(*) FROM notes WHERE body = 'json-actor'")).Should().Be(0L);
+    }
+
+    [Theory]
+    [InlineData("\"dana\"", "dana")]
+    [InlineData("42", "42")]
+    public async Task HostSuppliedJsonElementActor_ThatIsAScalar_StampsItsValue(string json, string expected)
+    {
+        // A JSON string or number is one author: it is stamped as its value, not bound as the
+        // JsonElement struct.
+        _hostAuthContext = new Dictionary<string, object?> { ["emp"] = JsonDocument.Parse(json).RootElement.Clone() };
+        await StartAsync(
+            ":root { user-audit-key: emp }",
+            "main.notes.created_by { populate: created-by }");
+
+        using var reply = await SendGraphQlAsync(
+            """mutation { notes(insert: { body: "json-scalar-actor" }) }""",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1")));
+
+        Errors(reply).Should().BeEmpty();
+        (await ScalarAsync("SELECT created_by FROM notes WHERE body = 'json-scalar-actor'")).Should().Be(expected);
+    }
+
     [Fact]
     public async Task MapperActorKey_StampsTheSubject()
     {
@@ -293,6 +335,8 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
                     .BindConnectionString($"Data Source={_dbPath}")
                     .BindProvider("sqlite"));
                 services.AddBifrostEngine();
+                if (_hostAuthContext is not null)
+                    services.AddSingleton<IBifrostAuthContextFactory>(new FixedAuthContextFactory(_hostAuthContext));
             });
             web.Configure(app =>
             {
@@ -364,6 +408,13 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
         cmd.CommandText = sql;
         var value = await cmd.ExecuteScalarAsync();
         return value is DBNull ? null : value;
+    }
+
+    /// <summary>A host's auth context factory that projects every caller to a fixed context.</summary>
+    private sealed class FixedAuthContextFactory(IDictionary<string, object?> context) : IBifrostAuthContextFactory
+    {
+        public IDictionary<string, object?> CreateUserContext(Microsoft.AspNetCore.Http.HttpContext httpContext)
+            => new Dictionary<string, object?>(context);
     }
 
     /// <summary>

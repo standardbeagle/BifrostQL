@@ -156,6 +156,17 @@ public sealed class GenericTableFilterAndPagingTests : IAsyncLifetime
         result.TotalCount.Should().Be(3, "the total still counts every row in scope");
     }
 
+    // An explicit `limit: null` is "not supplied". GraphQL reports the argument as present
+    // and reads a null Int as 0, which made it the empty page that only `limit: 0` asks for.
+    [Fact]
+    public async Task Limit_ExplicitNull_ReadsLikeAnOmittedLimit()
+    {
+        var result = await QueryAsync(new() { ["limit"] = null });
+
+        Codes(result).Should().Equal("a", "b", "c");
+        result.TotalCount.Should().Be(3);
+    }
+
     private sealed class FieldContext : IBifrostFieldContext
     {
         public string FieldName => "_table";
@@ -173,6 +184,7 @@ public sealed class GenericTableFilterAndPagingTests : IAsyncLifetime
         public IDictionary<string, object?> Arguments { get; init; } = new Dictionary<string, object?>();
 
         public bool HasArgument(string name) => Arguments.ContainsKey(name);
-        public T? GetArgument<T>(string name) => Arguments.TryGetValue(name, out var v) ? (T?)v : default;
+        // As GraphQL.NET binds it: a null argument reads as default(T), so an Int reads 0.
+        public T? GetArgument<T>(string name) => Arguments.TryGetValue(name, out var v) && v is not null ? (T?)v : default;
     }
 }

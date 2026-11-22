@@ -37,9 +37,9 @@ namespace BifrostQL.Core.Resolvers
             // own generic-table-max-rows. An unspecified limit asks for the surface
             // maximum; `limit: 0` is an empty page and a negative limit takes the
             // ceiling, exactly as ResolveRowWindow treats them on every other surface.
-            var requestedLimit = context.HasArgument("limit")
-                ? context.GetArgument<int>("limit")
-                : _config.MaxRows;
+            // An explicit `limit: null` is unspecified: HasArgument is true for it, and
+            // reading it as int gave 0, the empty page only `limit: 0` asks for.
+            var requestedLimit = context.GetArgument<int?>("limit") ?? _config.MaxRows;
             var limit = Math.Min(GqlObjectQuery.ResolveRowWindow(_model, requestedLimit), _config.MaxRows);
             var offset = context.HasArgument("offset")
                 ? context.GetArgument<int>("offset")

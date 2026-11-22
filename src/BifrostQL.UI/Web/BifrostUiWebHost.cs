@@ -3,6 +3,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.SavedObjects;
 using BifrostQL.Server;
 using BifrostQL.UI.Vault;
+using Microsoft.AspNetCore.HostFiltering;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BifrostQL.UI.Web
@@ -17,6 +18,9 @@ namespace BifrostQL.UI.Web
     /// </summary>
     public static class BifrostUiWebHost
     {
+        /// <summary>The Host-header names a loopback bind serves.</summary>
+        internal static readonly string[] LoopbackHostNames = ["localhost", "127.0.0.1", "[::1]"];
+
         /// <param name="expose">
         /// When <c>false</c> (default) the host binds <c>127.0.0.1</c> only — the
         /// desktop window and local processes can reach it, but the LAN cannot.
@@ -90,6 +94,14 @@ namespace BifrostQL.UI.Web
                 ? Path.GetDirectoryName(Path.GetFullPath(vaultPath)) ?? VaultStore.DefaultConfigDir
                 : VaultStore.DefaultConfigDir;
             builder.Services.AddBifrostSavedObjects(new FileSavedObjectStore(savedObjectsDir));
+
+            // DNS rebinding: a page whose own name re-resolves to 127.0.0.1 reaches this host
+            // as same-origin, so the CORS policy below never fires. Its Host header still names
+            // the attacker's domain, so on the loopback bind only loopback names are served
+            // (any port); the desktop window loads http://localhost:<port>. An --expose bind
+            // has already warned the operator and its reachable names are unknown.
+            if (!expose)
+                builder.Services.Configure<HostFilteringOptions>(o => o.AllowedHosts = LoopbackHostNames.ToList());
 
             builder.Services.AddCors();
             builder.Services.AddEndpointsApiExplorer();

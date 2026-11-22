@@ -226,10 +226,12 @@ public sealed class SqlServerPivotLabelTests
             rows[PivotSqlGenerator.ColumnAlias(0)].Should().Be(1, "one row has 'cafe'");
             rows[PivotSqlGenerator.ColumnAlias(1)].Should().Be(2, "two rows have 'café'");
         }
-        finally
+        // A failing drop must not replace the test's own failure.
+        catch (Exception testFailure)
         {
-            await Infrastructure.TestDatabaseDrop.SqlServerAsync(master!, database);
+            await Infrastructure.TestDatabaseDrop.RethrowAfterDropAsync(testFailure, () => Infrastructure.TestDatabaseDrop.SqlServerAsync(master!, database));
         }
+        await Infrastructure.TestDatabaseDrop.SqlServerAsync(master!, database);
     }
 
     /// <summary>

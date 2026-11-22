@@ -89,10 +89,12 @@ public sealed class ColumnDefaultAndComputedReaderTests
 
             AssertFlags(cols);
         }
-        finally
+        // A failing drop must not replace the test's own failure.
+        catch (Exception testFailure)
         {
-            await TestDatabaseDrop.MySqlAsync(masterConnString!, dbName);
+            await TestDatabaseDrop.RethrowAfterDropAsync(testFailure, () => TestDatabaseDrop.MySqlAsync(masterConnString!, dbName));
         }
+        await TestDatabaseDrop.MySqlAsync(masterConnString!, dbName);
     }
 
     [SkippableFact]

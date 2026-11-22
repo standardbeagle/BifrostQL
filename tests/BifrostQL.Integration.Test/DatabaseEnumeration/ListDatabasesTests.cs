@@ -74,10 +74,12 @@ public sealed class PostgresListDatabasesTests
             var databases = await factory.ListDatabasesAsync();
             databases.Should().Contain(testDbName);
         }
-        finally
+        // A failing drop must not replace the test's own failure.
+        catch (Exception testFailure)
         {
-            await TestDatabaseDrop.PostgresAsync(ConnString!, testDbName);
+            await TestDatabaseDrop.RethrowAfterDropAsync(testFailure, () => TestDatabaseDrop.PostgresAsync(ConnString!, testDbName));
         }
+        await TestDatabaseDrop.PostgresAsync(ConnString!, testDbName);
     }
 }
 
@@ -130,10 +132,12 @@ public sealed class MySqlListDatabasesTests
             var databases = await factory.ListDatabasesAsync();
             databases.Should().Contain(testDbName);
         }
-        finally
+        // A failing drop must not replace the test's own failure.
+        catch (Exception testFailure)
         {
-            await TestDatabaseDrop.MySqlAsync(ConnString!, testDbName);
+            await TestDatabaseDrop.RethrowAfterDropAsync(testFailure, () => TestDatabaseDrop.MySqlAsync(ConnString!, testDbName));
         }
+        await TestDatabaseDrop.MySqlAsync(ConnString!, testDbName);
     }
 }
 

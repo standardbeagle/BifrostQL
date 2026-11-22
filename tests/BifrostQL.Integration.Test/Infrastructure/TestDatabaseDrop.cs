@@ -57,10 +57,12 @@ public static class TestDatabaseDrop
     }
 
     /// <summary>
-    /// Runs <paramref name="drop"/> after a setup failure and rethrows the setup failure, so a
-    /// cleanup error never replaces it. When the drop fails too, both surface together.
+    /// Runs <paramref name="drop"/> after a setup or test-body failure and rethrows that
+    /// failure, so a cleanup error never replaces it. When the drop fails too, both surface
+    /// together. Use it from a catch, never a finally: a finally drop that throws replaces the
+    /// test's own failure.
     /// </summary>
-    public static async Task RethrowAfterDropAsync(Exception setupFailure, Func<Task> drop)
+    public static async Task RethrowAfterDropAsync(Exception failure, Func<Task> drop)
     {
         try
         {
@@ -68,8 +70,8 @@ public static class TestDatabaseDrop
         }
         catch (Exception dropFailure)
         {
-            throw new AggregateException("Test setup failed, and dropping its database failed too.", setupFailure, dropFailure);
+            throw new AggregateException("The test failed, and dropping its database failed too.", failure, dropFailure);
         }
-        ExceptionDispatchInfo.Capture(setupFailure).Throw();
+        ExceptionDispatchInfo.Capture(failure).Throw();
     }
 }

@@ -483,23 +483,23 @@ const options = parseTableParams(searchParams);
 
 These are also exported from the main entry point for direct use.
 
-| Utility                                                | Purpose                                                  |
-| ------------------------------------------------------ | -------------------------------------------------------- |
+| Utility                                                | Purpose                                                                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
 | `buildGraphqlQuery(table, options)`                    | Build `{ query, variables }` for a table read; the filter travels as `$filter: TableFilter<table>Input` |
-| `executeGraphQL(endpoint, headers, query, variables?)` | Execute a GraphQL request via `fetch`                    |
-| `buildMutation(table, type)`                           | Build a mutation string for any operation type           |
-| `buildInsertMutation(table)`                           | Shorthand for insert mutations                           |
-| `buildUpdateMutation(table)`                           | Shorthand for update mutations                           |
-| `buildUpsertMutation(table)`                           | Shorthand for upsert mutations                           |
-| `buildDeleteMutation(table)`                           | Shorthand for delete mutations                           |
-| `diff(original, updated, strategy?)`                   | Compute changed fields between two objects               |
-| `detectConflicts(base, current, incoming)`             | Detect three-way merge conflicts                         |
-| `serializeSort(sort)`                                  | Serialize sort state to a URL-safe string                |
-| `parseSort(raw)`                                       | Parse a serialized sort string                           |
-| `serializeFilter(filter)`                              | Serialize filter state to JSON                           |
-| `parseFilter(raw)`                                     | Parse a serialized filter string                         |
-| `writeToUrl(state, prefix)`                            | Write table state to URL search parameters               |
-| `readFromUrl(prefix)`                                  | Read table state from URL search parameters              |
+| `executeGraphQL(endpoint, headers, query, variables?)` | Execute a GraphQL request via `fetch`                                                                   |
+| `buildMutation(table, type)`                           | Build a mutation string for any operation type                                                          |
+| `buildInsertMutation(table)`                           | Shorthand for insert mutations                                                                          |
+| `buildUpdateMutation(table)`                           | Shorthand for update mutations                                                                          |
+| `buildUpsertMutation(table)`                           | Shorthand for upsert mutations                                                                          |
+| `buildDeleteMutation(table)`                           | Shorthand for delete mutations                                                                          |
+| `diff(original, updated, strategy?)`                   | Compute changed fields between two objects                                                              |
+| `detectConflicts(base, current, incoming)`             | Detect three-way merge conflicts                                                                        |
+| `serializeSort(sort)`                                  | Serialize sort state to a URL-safe string                                                               |
+| `parseSort(raw)`                                       | Parse a serialized sort string                                                                          |
+| `serializeFilter(filter)`                              | Serialize filter state to JSON                                                                          |
+| `parseFilter(raw)`                                     | Parse a serialized filter string                                                                        |
+| `writeToUrl(state, prefix)`                            | Write table state to URL search parameters                                                              |
+| `readFromUrl(prefix)`                                  | Read table state from URL search parameters                                                             |
 
 ## API Reference
 

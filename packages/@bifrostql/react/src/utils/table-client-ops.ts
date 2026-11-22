@@ -63,12 +63,17 @@ interface ExactDecimal {
  */
 function exactDecimal(value: unknown): ExactDecimal | null {
   if (typeof value === 'number') {
-    return Number.isSafeInteger(value) ? { coefficient: BigInt(value), scale: 0 } : null;
+    return Number.isSafeInteger(value)
+      ? { coefficient: BigInt(value), scale: 0 }
+      : null;
   }
   if (typeof value !== 'string') return null;
   const match = CANONICAL_DECIMAL.exec(value);
   if (!match) return null;
-  return { coefficient: BigInt(value.replace('.', '')), scale: match[1]?.length ?? 0 };
+  return {
+    coefficient: BigInt(value.replace('.', '')),
+    scale: match[1]?.length ?? 0,
+  };
 }
 
 function rescale(value: ExactDecimal, scale: number): bigint {
@@ -304,12 +309,17 @@ export function computeBuiltinAggregate(
   if (values.length === 0) return 0;
   if (fn === 'count') return values.length;
   if (values.some((v) => typeof v !== 'number')) {
-    const exact = values.map((v) => (typeof v === 'number' ? exactDecimal(v) : v));
-    if (exact.every((v): v is ExactDecimal => v !== null)) return exactAggregate(fn, exact);
+    const exact = values.map((v) =>
+      typeof v === 'number' ? exactDecimal(v) : v,
+    );
+    if (exact.every((v): v is ExactDecimal => v !== null))
+      return exactAggregate(fn, exact);
     // A fractional number among the exact values: no exact result exists.
     return computeBuiltinAggregate(
       fn,
-      values.map((v) => (typeof v === 'number' ? v : Number(exactDecimalText(v)))),
+      values.map((v) =>
+        typeof v === 'number' ? v : Number(exactDecimalText(v)),
+      ),
     );
   }
   const nums = values as number[];
@@ -325,10 +335,16 @@ export function computeBuiltinAggregate(
   }
 }
 
-function exactAggregate(fn: Exclude<AggregateFn, 'count'>, values: ExactDecimal[]): number | string {
+function exactAggregate(
+  fn: Exclude<AggregateFn, 'count'>,
+  values: ExactDecimal[],
+): number | string {
   const sum = (): ExactDecimal => {
     const scale = Math.max(...values.map((v) => v.scale));
-    return { coefficient: values.reduce((a, v) => a + rescale(v, scale), 0n), scale };
+    return {
+      coefficient: values.reduce((a, v) => a + rescale(v, scale), 0n),
+      scale,
+    };
   };
   let result: ExactDecimal;
   switch (fn) {
@@ -368,7 +384,10 @@ export function formatAggregateValue(
   if (formattable === null) return String(value ?? '');
   switch (format) {
     case 'currency':
-      return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(formattable);
+      return new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: 'USD',
+      }).format(formattable);
     case 'percentage':
       return new Intl.NumberFormat(undefined, {
         style: 'percent',

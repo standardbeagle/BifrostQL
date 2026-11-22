@@ -62,7 +62,8 @@ export class BifrostGraphQLError extends Error {
 export function isGraphQLAnswer(error: unknown): boolean {
   return (
     error instanceof BifrostGraphQLError ||
-    (error instanceof BifrostAuthError && error.cause instanceof BifrostGraphQLError)
+    (error instanceof BifrostAuthError &&
+      error.cause instanceof BifrostGraphQLError)
   );
 }
 

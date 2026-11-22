@@ -444,7 +444,13 @@ describe('useBifrostBatch', () => {
 
   describe('invalidation', () => {
     const invalidateQueries = ['{ users { id } }'];
-    const invalidated = { queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id } }'] };
+    const invalidated = {
+      queryKey: [
+        'bifrost',
+        'http://localhost:5000/graphql',
+        '{ users { id } }',
+      ],
+    };
 
     it('invalidates when the batch commits', async () => {
       mockFetchReplies({ data: { users_batch: 1 } });

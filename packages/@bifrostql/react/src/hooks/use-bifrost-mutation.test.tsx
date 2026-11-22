@@ -319,10 +319,18 @@ describe('useBifrostMutation', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id } }'],
+      queryKey: [
+        'bifrost',
+        'http://localhost:5000/graphql',
+        '{ users { id } }',
+      ],
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['bifrost', 'http://localhost:5000/graphql', '{ users { id name } }'],
+      queryKey: [
+        'bifrost',
+        'http://localhost:5000/graphql',
+        '{ users { id name } }',
+      ],
     });
   });
 
@@ -341,7 +349,12 @@ describe('useBifrostMutation', () => {
     // table-name form must find this entry through the query text.
     const usersText =
       '{\n  users {\n    total\n    data {\n      id\n    }\n  }\n}';
-    const usersKey = ['bifrost', 'http://localhost:5000/graphql', usersText, {}];
+    const usersKey = [
+      'bifrost',
+      'http://localhost:5000/graphql',
+      usersText,
+      {},
+    ];
     const ordersKey = [
       'bifrost',
       'http://localhost:5000/graphql',
@@ -459,7 +472,9 @@ describe('useBifrostMutation', () => {
     }
 
     it('sends a new Idempotency-Key with each call', async () => {
-      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(answered()));
+      const fetchMock = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(answered()));
       globalThis.fetch = fetchMock;
       const { result } = renderHook(() => useBifrostMutation(insert), {
         wrapper: createWrapper(),
@@ -503,7 +518,9 @@ describe('useBifrostMutation', () => {
       });
 
       await settle(result.current.mutateAsync({ detail: { name: 'a' } }));
-      await settle(result.current.mutateAsync({ detail: { name: 'corrected' } }));
+      await settle(
+        result.current.mutateAsync({ detail: { name: 'corrected' } }),
+      );
 
       const [first, retry] = sentKeys(fetchMock);
       expect(first).toMatch(/^[0-9a-f-]{36}$/);
@@ -540,7 +557,10 @@ describe('useBifrostMutation', () => {
         .mockImplementation(() => Promise.resolve(answered()));
       globalThis.fetch = fetchMock;
       const { result } = renderHook(
-        () => ({ a: useBifrostMutation(insert), b: useBifrostMutation(insert) }),
+        () => ({
+          a: useBifrostMutation(insert),
+          b: useBifrostMutation(insert),
+        }),
         { wrapper: createWrapper() },
       );
 
@@ -549,7 +569,9 @@ describe('useBifrostMutation', () => {
       await settle(result.current.b.mutateAsync({ detail: { name: 'b' } }));
       // A's same call, still unanswered (the fetch fails again), then a corrected one.
       await settle(result.current.a.mutateAsync({ detail: { name: 'a' } }));
-      await settle(result.current.a.mutateAsync({ detail: { name: 'corrected' } }));
+      await settle(
+        result.current.a.mutateAsync({ detail: { name: 'corrected' } }),
+      );
 
       const [aFirst, bFirst, bSecond, aSame, aCorrected] = sentKeys(fetchMock);
       expect(aFirst).toMatch(/^[0-9a-f-]{36}$/);

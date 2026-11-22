@@ -382,10 +382,10 @@ export function useBifrostBatch(options: UseBifrostBatchOptions = {}) {
         (error instanceof BatchError && error.results.length > 0);
       if (!committed) return;
       invalidateBifrostQueries(
-          queryClient,
-          config.endpoint,
-          options.invalidateQueries,
-        );
+        queryClient,
+        config.endpoint,
+        options.invalidateQueries,
+      );
     },
   });
 

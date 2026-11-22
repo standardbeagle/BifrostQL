@@ -45,7 +45,11 @@ namespace BifrostQL.Server.Pgwire
         /// <summary>UTF-8 bytes of SQL text held by NAMED prepared statements.</summary>
         private long _statementBytes;
 
-        /// <summary>Encoded DataRow bytes retained by suspended portals for row-limited resume.</summary>
+        /// <summary>
+        /// Bytes held by open portals: the received Bind parameter bytes, the SQL text of the
+        /// statement a portal pins (it outlives a re-Parse or Close('S')), and the encoded DataRows suspended portals
+        /// retain for row-limited resume. One budget, so no shape of portal state is free.
+        /// </summary>
         private long _portalBytes;
 
         private readonly Dictionary<string, PgPreparedStatement> _statements = new(StringComparer.Ordinal);
@@ -147,7 +151,8 @@ namespace BifrostQL.Server.Pgwire
             // Per-session SQL-text budget. The count cap alone admitted 200 statements of up to a
             // frame each (~200 MiB per connection); this bounds the bytes the named map retains.
             // The unnamed statement replaces and stays exempt, bounded by the frame cap.
-            var sqlBytes = statementName.Length > 0 ? Encoding.UTF8.GetByteCount(sql) : 0;
+            var textBytes = Encoding.UTF8.GetByteCount(sql);
+            var sqlBytes = statementName.Length > 0 ? textBytes : 0;
             var replacedBytes = statementName.Length > 0 && _statements.TryGetValue(statementName, out var replaced)
                 ? replaced.SqlBytes : 0;
             if (_statementBytes - replacedBytes + sqlBytes > _maxStatementBytes)
@@ -158,7 +163,7 @@ namespace BifrostQL.Server.Pgwire
             }
 
             _statementBytes += sqlBytes - replacedBytes;
-            _statements[statementName] = new PgPreparedStatement(sql, paramOids.ToArray(), sqlBytes);
+            _statements[statementName] = new PgPreparedStatement(sql, paramOids.ToArray(), sqlBytes, textBytes);
             // A prepared statement replaces the destination name; any portal built from the
             // prior version is implicitly invalidated by a fresh Bind, so nothing else to do.
             await SendEmptyAsync(PgWireProtocol.ParseComplete, ct);
@@ -215,6 +220,7 @@ namespace BifrostQL.Server.Pgwire
             }
 
             var values = new List<object?>();
+            long parameterBytes = 0;
             for (var i = 0; i < valueCount; i++)
             {
                 values.Add(null); // slot for this parameter; overwritten below unless SQL NULL
@@ -229,6 +235,7 @@ namespace BifrostQL.Server.Pgwire
                 var length = reader.ReadInt32();
                 if (length == PgWireProtocol.NullValueLength) { values[i] = null; continue; }
                 var raw = reader.ReadBytes(length);
+                parameterBytes += raw.Length;
                 var oid = i < statement.ParameterTypeOids.Length ? statement.ParameterTypeOids[i] : 0;
                 try
                 {
@@ -260,8 +267,27 @@ namespace BifrostQL.Server.Pgwire
                 }
             }
 
+            // Per-session portal byte budget. A portal holds its received parameter bytes until
+            // Close('P') or the end of the implicit transaction, and it keeps its statement's text
+            // alive after a re-Parse or Close('S') drops the statement from the map (the unnamed
+            // statement is replaced by every Parse("")). Counting only suspended result rows let
+            // Bind p1..pN with 1 MiB values, or a fresh 1 MiB statement per portal, pin hundreds
+            // of MiB per session with no Sync. The text is charged per portal because which
+            // statements a later Parse will orphan is unknown at Bind.
+            var boundBytes = parameterBytes + statement.TextBytes;
+            var replacedPortalBytes = _portals.TryGetValue(portalName, out var replacedPortal)
+                ? replacedPortal.BoundBytes + replacedPortal.RetainedBytes : 0;
+            if (_portalBytes - replacedPortalBytes + boundBytes > _maxPortalBytes)
+            {
+                await FailAsync(PgWireProtocol.SqlStateConfigurationLimitExceeded,
+                    $"bound portals for this session would retain more than {_maxPortalBytes} bytes of parameters and SQL; "
+                    + "close portals with Close('P') or end the batch with Sync.", ct);
+                return;
+            }
+
             ClosePortal(portalName);
-            _portals[portalName] = new PgPortal(statement, values.ToArray());
+            _portals[portalName] = new PgPortal(statement, values.ToArray()) { BoundBytes = boundBytes };
+            _portalBytes += boundBytes;
             await SendEmptyAsync(PgWireProtocol.BindComplete, ct);
         }
 
@@ -514,11 +540,13 @@ namespace BifrostQL.Server.Pgwire
             portal.Retained = null;
         }
 
-        /// <summary>Drops a portal and returns its retained bytes to the session budget.</summary>
+        /// <summary>Drops a portal and returns its bound and retained bytes to the session budget.</summary>
         private void ClosePortal(string name)
         {
-            if (_portals.Remove(name, out var portal))
-                ReleaseRetained(portal);
+            if (!_portals.Remove(name, out var portal))
+                return;
+            ReleaseRetained(portal);
+            _portalBytes -= portal.BoundBytes;
         }
 
         /// <summary>
@@ -775,7 +803,9 @@ namespace BifrostQL.Server.Pgwire
     /// type OIDs (may be shorter than the actual <c>$N</c> count, in which case the extra
     /// placeholders are inferred). Immutable — re-Parse replaces the map entry.
     /// </summary>
-    internal sealed record PgPreparedStatement(PgSql Sql, int[] ParameterTypeOids, int SqlBytes = 0);
+    /// <param name="SqlBytes">SQL bytes charged to the session statement budget (0 for the unnamed statement).</param>
+    /// <param name="TextBytes">UTF-8 size of the SQL text, charged to every portal bound from the statement.</param>
+    internal sealed record PgPreparedStatement(PgSql Sql, int[] ParameterTypeOids, int SqlBytes = 0, int TextBytes = 0);
 
     /// <summary>
     /// A bound portal: the prepared statement plus this bind's parameter values, and the
@@ -804,6 +834,12 @@ namespace BifrostQL.Server.Pgwire
 
         /// <summary>Bytes of <see cref="Retained"/> not yet written, as charged to the session budget.</summary>
         public long RetainedBytes { get; set; }
+
+        /// <summary>
+        /// Received parameter bytes plus the pinned statement's SQL text, charged to the session
+        /// portal budget at Bind and refunded when the portal closes.
+        /// </summary>
+        public long BoundBytes { get; init; }
 
         /// <summary>Next index into <see cref="Retained"/>; advanced by each row-limited Execute.</summary>
         public int Position { get; set; }

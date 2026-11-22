@@ -98,10 +98,12 @@ namespace BifrostQL.Server.Pgwire
         public long MaxSessionStatementBytes { get; set; } = 8L * 1024 * 1024;
 
         /// <summary>
-        /// Total bytes of encoded result rows the suspended portals of one session may retain for
-        /// row-limited Execute resume. Portals close at Sync (end of the implicit transaction), so
-        /// this bounds what one Sync batch can pin; an Execute whose suspension would cross it is
-        /// refused with <c>53400</c> before any row is sent. Default 32 MiB.
+        /// Total bytes the open portals of one session may hold: each portal's received Bind
+        /// parameter bytes and the SQL text of the statement it pins, plus the encoded result rows
+        /// suspended portals retain for row-limited Execute resume. Portals close at Sync (end of
+        /// the implicit transaction) or Close('P'), so this bounds what one Sync batch can pin. A
+        /// Bind that would cross it is refused with <c>53400</c>, as is an Execute whose suspension
+        /// would cross it (before any row is sent). Default 32 MiB.
         /// </summary>
         public long MaxSessionPortalBytes { get; set; } = 32L * 1024 * 1024;
 

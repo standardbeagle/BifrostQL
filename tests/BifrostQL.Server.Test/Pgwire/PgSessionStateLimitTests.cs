@@ -192,6 +192,60 @@ namespace BifrostQL.Server.Test.Pgwire
         }
 
         [Fact]
+        public async Task Bound_portals_are_capped_by_received_parameter_bytes_and_close_refunds_them()
+        {
+            // MaxSessionPortalBytes counted only retained result rows, so Bind parameters (held in
+            // the portal until Sync) were free: Bind p1..p200 with 1 MiB each, no Sync, pinned
+            // ~200 MiB per session. 16 KiB values against a 40 KiB budget: two fit, the third binds.
+            var executor = PgWireTestHarness.UsersExecutor(OneUser(), out _);
+            await using var harness = new PgWireTestHarness(executor, maxSessionPortalBytes: 40_000);
+            var client = (await harness.OpenSessionAsync()).Client;
+            var value = new string('v', 16_000);
+
+            await client.SendParseAsync("s", "SELECT id FROM users WHERE name = $1");
+            await client.SendBindAsync("p0", "s", value);
+            await client.SendBindAsync("p1", "s", value);
+            await client.SendBindAsync("p2", "s", value);
+            await client.SendSyncAsync();
+            var refused = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            refused.MessageOrder.Count(t => t == PgWireProtocol.BindComplete).Should().Be(2);
+            refused.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateConfigurationLimitExceeded);
+
+            // Sync ended the implicit transaction, refunding every portal; Close('P') refunds one.
+            await client.SendBindAsync("p0", "s", value);
+            await client.SendBindAsync("p1", "s", value);
+            await client.SendClosePortalAsync("p0");
+            await client.SendBindAsync("p2", "s", value);
+            await client.SendSyncAsync();
+            var refunded = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            refunded.HasError.Should().BeFalse();
+            refunded.MessageOrder.Count(t => t == PgWireProtocol.BindComplete).Should().Be(3);
+        }
+
+        [Theory]
+        [InlineData("")]   // the unnamed statement: exempt from the statement budget, replaced by every Parse("")
+        [InlineData("s")]  // a named statement re-Parsed: its old bytes leave the statement budget
+        public async Task Portals_pinning_replaced_statements_are_charged_their_SQL_bytes(string statementName)
+        {
+            // A replaced statement's text stays alive through the portals bound from it, so
+            // Parse + Bind(pN) in a loop pinned a fresh frame of SQL per portal that no budget
+            // saw. Each portal is charged the SQL it pins.
+            var executor = PgWireTestHarness.UsersExecutor(OneUser(), out _);
+            await using var harness = new PgWireTestHarness(executor, maxSessionPortalBytes: 40_000);
+            var client = (await harness.OpenSessionAsync()).Client;
+
+            for (var i = 0; i < 3; i++)
+            {
+                await client.SendParseAsync(statementName, "SELECT id FROM users" + new string(' ', 16_000 + i));
+                await client.SendBindAsync($"p{i}", statementName);
+            }
+            await client.SendSyncAsync();
+            var refused = await client.ReadExtendedUntilReadyAsync().WaitAsync(Timeout);
+            refused.MessageOrder.Count(t => t == PgWireProtocol.BindComplete).Should().Be(2);
+            refused.ErrorSqlState.Should().Be(PgWireProtocol.SqlStateConfigurationLimitExceeded);
+        }
+
+        [Fact]
         public async Task Named_statements_are_capped_by_total_SQL_bytes()
         {
             var executor = PgWireTestHarness.UsersExecutor(OneUser(), out _);

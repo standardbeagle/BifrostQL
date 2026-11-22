@@ -323,7 +323,7 @@ namespace BifrostQL.Core.Resolvers
                 var mutations = context.RequestServices?.GetService<IMutationIntentExecutor>()
                     ?? throw new BifrostExecutionError("Deferred review requires the mutation intent executor.");
                 var identity = PolicyIdentity.FromUserContext(request.UserContext,
-                    request.Model.GetMetadataValue(MetadataKeys.Security.TenantContextKey));
+                    Modules.TenantFilterTransformer.ResolveTenantContextKey(request.Model));
                 var queue = new DeferredReviewQueue(request.Model, request.ConnFactory, mutations, new PolicyEvaluator(),
                     endpoint: request.Endpoint,
                     logger: context.RequestServices?.GetService<ILogger<DeferredReviewQueue>>());

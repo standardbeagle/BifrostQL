@@ -683,6 +683,39 @@ public sealed class DeferredDeltaMutationHookTests : IAsyncLifetime
         (await ScalarAsync("SELECT state FROM change_sets WHERE id=104")).Should().Be("held");
     }
 
+    // A present-but-blank tenant-context-key is a misconfigured security key. The tenant
+    // transformers fail fast on it (ResolveTenantContextKey); the review paths read the raw value,
+    // so list/approve silently scoped by tenant_id and reject threw a generic ArgumentException.
+    [Fact]
+    public async Task GraphQlReviewQueue_WithABlankTenantContextKey_FailsFastInsteadOfScopingByTenantId()
+    {
+        var model = await ReviewModelAsync();
+        model.Metadata[MetadataKeys.Security.TenantContextKey] = "  ";
+        await SeedReviewHoldAsync(105, "requester", "tenant-1");
+
+        var listed = await ExecuteReviewGraphQlAsync(model,
+            "query { deferredReviewQueue { changeSetId } }", Reviewer("reviewer", "tenant-1"));
+
+        listed.Errors.Should().ContainSingle().Which.Message.Should().StartWith("Metadata 'tenant-context-key' must be a non-empty string");
+        GraphQlJson(listed).Should().NotContain("\"changeSetId\"");
+    }
+
+    [Fact]
+    public async Task ReviewRejection_WithABlankTenantContextKey_FailsWithTheMetadataError()
+    {
+        var model = await ReviewModelAsync();
+        await SeedReviewHoldAsync(106, "requester", "tenant-1");
+        var queue = new DeferredReviewQueue(model, new SqliteDbConnFactory(ConnString),
+            BuildMutationExecutor(model), new PolicyEvaluator());
+        model.Metadata[MetadataKeys.Security.TenantContextKey] = "  ";
+
+        var reject = async () => await queue.RejectAsync(106, Reviewer("reviewer", "tenant-1"));
+
+        await reject.Should().ThrowAsync<BifrostExecutionError>()
+            .WithMessage("Metadata 'tenant-context-key' must be a non-empty string*");
+        (await ScalarAsync("SELECT state FROM change_sets WHERE id=106")).Should().Be("held");
+    }
+
     [Fact]
     public async Task GraphQlReviewQueue_ExcludesChangeSetWhenPolicyCannotBeEvaluated()
     {

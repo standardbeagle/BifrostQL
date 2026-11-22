@@ -35,51 +35,43 @@ public class PostgresSchemaLoadingTests : IAsyncLifetime
         var createCmd = new NpgsqlCommand($"CREATE DATABASE {_testDbName}", masterConn);
         await createCmd.ExecuteNonQueryAsync();
 
-        var builder = new NpgsqlConnectionStringBuilder(masterConnString)
+        try
         {
-            Database = _testDbName
-        };
-        _connectionString = builder.ConnectionString;
+            var builder = new NpgsqlConnectionStringBuilder(masterConnString)
+            {
+                Database = _testDbName
+            };
+            _connectionString = builder.ConnectionString;
 
-        // Create complex schema
-        await using var conn = new NpgsqlConnection(_connectionString);
-        await conn.OpenAsync();
-        await CreateComplexSchemaAsync(conn);
+            // Create complex schema
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync();
+            await CreateComplexSchemaAsync(conn);
 
-        // Load schema using DbModelLoader
-        var factory = new PostgresDbConnFactory(_connectionString);
-        var metadataLoader = new MetadataLoader(Array.Empty<string>());
-        var loader = new DbModelLoader(factory, metadataLoader);
-        _loadedModel = await loader.LoadAsync();
+            // Load schema using DbModelLoader
+            var factory = new PostgresDbConnFactory(_connectionString);
+            var metadataLoader = new MetadataLoader(Array.Empty<string>());
+            var loader = new DbModelLoader(factory, metadataLoader);
+            _loadedModel = await loader.LoadAsync();
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await TestDatabaseDrop.PostgresAsync(masterConnString, name);
+            });
+        }
     }
 
     public async Task DisposeAsync()
     {
         if (_testDbName == null) return;
 
-        try
-        {
-            var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_POSTGRES");
-            if (masterConnString == null) return;
-
-            await using var conn = new NpgsqlConnection(masterConnString);
-            await conn.OpenAsync();
-
-            // Terminate connections before dropping
-            var terminateCmd = new NpgsqlCommand($@"
-                SELECT pg_terminate_backend(pg_stat_activity.pid)
-                FROM pg_stat_activity
-                WHERE pg_stat_activity.datname = '{_testDbName}'
-                AND pid <> pg_backend_pid()", conn);
-            await terminateCmd.ExecuteNonQueryAsync();
-
-            var dropCmd = new NpgsqlCommand($"DROP DATABASE IF EXISTS {_testDbName}", conn);
-            await dropCmd.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        await TestDatabaseDrop.PostgresAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_POSTGRES")!, _testDbName);
     }
 
     private static async Task CreateComplexSchemaAsync(NpgsqlConnection conn)

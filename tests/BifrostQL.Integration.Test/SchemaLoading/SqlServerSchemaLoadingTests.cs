@@ -34,41 +34,43 @@ public class SqlServerSchemaLoadingTests : IAsyncLifetime
         var createCmd = new SqlCommand($"CREATE DATABASE [{_testDbName}]", masterConn);
         await createCmd.ExecuteNonQueryAsync();
 
-        var builder = new SqlConnectionStringBuilder(masterConnString)
+        try
         {
-            InitialCatalog = _testDbName
-        };
-        _connectionString = builder.ConnectionString;
+            var builder = new SqlConnectionStringBuilder(masterConnString)
+            {
+                InitialCatalog = _testDbName
+            };
+            _connectionString = builder.ConnectionString;
 
-        // Create complex schema
-        await using var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync();
-        await CreateComplexSchemaAsync(conn);
+            // Create complex schema
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+            await CreateComplexSchemaAsync(conn);
 
-        // Load schema using DbModelLoader
-        var factory = new SqlServerDbConnFactory(_connectionString);
-        var metadataLoader = new MetadataLoader(Array.Empty<string>());
-        var loader = new DbModelLoader(factory, metadataLoader);
-        _loadedModel = await loader.LoadAsync();
+            // Load schema using DbModelLoader
+            var factory = new SqlServerDbConnFactory(_connectionString);
+            var metadataLoader = new MetadataLoader(Array.Empty<string>());
+            var loader = new DbModelLoader(factory, metadataLoader);
+            _loadedModel = await loader.LoadAsync();
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await TestDatabaseDrop.SqlServerAsync(masterConnString, name);
+            });
+        }
     }
 
     public async Task DisposeAsync()
     {
         if (_testDbName == null) return;
 
-        try
-        {
-            var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")
-                ?? "Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
-            await using var conn = new SqlConnection(masterConnString);
-            await conn.OpenAsync();
-            var dropCmd = new SqlCommand($"DROP DATABASE IF EXISTS [{_testDbName}]", conn);
-            await dropCmd.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        await TestDatabaseDrop.SqlServerAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!, _testDbName);
     }
 
     private static async Task CreateComplexSchemaAsync(SqlConnection conn)

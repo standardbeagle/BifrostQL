@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Model;
@@ -51,8 +52,7 @@ public sealed class SqlServerTreeSyncChildLockTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (_master is null || _dbName is null) return;
-        SqlConnection.ClearAllPools();
-        await ExecAsync(_master, $"ALTER DATABASE [{_dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_dbName}];");
+        await TestDatabaseDrop.SqlServerAsync(_master, _dbName);
     }
 
     [SkippableFact]

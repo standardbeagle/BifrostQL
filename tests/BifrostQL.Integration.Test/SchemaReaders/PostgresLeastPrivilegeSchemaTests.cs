@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
@@ -197,8 +198,7 @@ public sealed class PostgresLeastPrivilegeSchemaTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (_master is null) return;
-        NpgsqlConnection.ClearAllPools();
-        await ExecAsync(_master, $"DROP DATABASE IF EXISTS {_dbName} WITH (FORCE)");
+        await TestDatabaseDrop.PostgresAsync(_master, _dbName);
         await ExecAsync(_master, $"DROP ROLE IF EXISTS {_owner}");
         await ExecAsync(_master, $"DROP ROLE IF EXISTS {_app}");
     }

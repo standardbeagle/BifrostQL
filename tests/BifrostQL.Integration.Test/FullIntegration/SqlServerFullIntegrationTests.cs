@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using FluentAssertions;
 using GraphQL;
@@ -44,43 +45,26 @@ public class SqlServerFullIntegrationTests : FullIntegrationTestBase, IAsyncLife
             var factory = new SqlServerDbConnFactory(_connectionString);
             await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync);
         }
-        catch
+        catch (Exception setupFailure)
         {
-            // Drop here rather than rely on DisposeAsync after a failed InitializeAsync.
-            await base.CleanupAsync();
-            await DropTestDatabaseAsync(masterConnString);
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
             _testDbName = null;
-            throw;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await base.CleanupAsync();
+                await TestDatabaseDrop.SqlServerAsync(masterConnString, name);
+            });
         }
     }
 
     public async Task DisposeAsync()
     {
         await base.CleanupAsync();
-
         if (_testDbName == null) return;
 
-        await DropTestDatabaseAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!);
-    }
-
-    // Pooled connections keep the database in use, so a bare DROP fails with error 3702. Clearing
-    // the pool and forcing SINGLE_USER WITH ROLLBACK IMMEDIATE ends every session first. A failed
-    // drop throws: swallowing it leaked one BifrostFullInt_* database per test.
-    private async Task DropTestDatabaseAsync(string masterConnString)
-    {
-        if (_connectionString != null)
-            SqlConnection.ClearPool(new SqlConnection(_connectionString));
-
-        await using var conn = new SqlConnection(masterConnString);
-        await conn.OpenAsync();
-        var dropCmd = new SqlCommand($"""
-            IF DB_ID(N'{_testDbName}') IS NOT NULL
-            BEGIN
-                ALTER DATABASE [{_testDbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-                DROP DATABASE [{_testDbName}];
-            END
-            """, conn);
-        await dropCmd.ExecuteNonQueryAsync();
+        await TestDatabaseDrop.SqlServerAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!, _testDbName);
     }
 
     private static async Task CreateSchemaAsync(System.Data.Common.DbConnection conn)

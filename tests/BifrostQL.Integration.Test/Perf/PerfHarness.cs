@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
@@ -97,14 +98,11 @@ public sealed class PerfDatabase : IAsyncDisposable
     {
         if (_engine == PerfEngine.Postgres)
         {
-            NpgsqlConnection.ClearAllPools();
-            await ExecAsync(new NpgsqlConnection(_master), $"DROP DATABASE IF EXISTS \"{_name}\" WITH (FORCE)");
+            await TestDatabaseDrop.PostgresAsync(_master, _name);
         }
         else
         {
-            SqlConnection.ClearAllPools();
-            await ExecAsync(new SqlConnection(_master),
-                $"ALTER DATABASE [{_name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_name}]");
+            await TestDatabaseDrop.SqlServerAsync(_master, _name);
         }
     }
 }

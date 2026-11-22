@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
@@ -42,42 +43,42 @@ public sealed class SqlServerBulkBatchIntegrationTests : IAsyncLifetime
             await create.ExecuteNonQueryAsync();
         }
 
-        _connString = new SqlConnectionStringBuilder(_masterConnString) { InitialCatalog = _dbName }.ConnectionString;
-        _connFactory = new SqlServerDbConnFactory(_connString);
+        try
+        {
+            _connString = new SqlConnectionStringBuilder(_masterConnString) { InitialCatalog = _dbName }.ConnectionString;
+            _connFactory = new SqlServerDbConnFactory(_connString);
 
-        await ExecuteSqlAsync("""
-            CREATE TABLE orders (
-                id INT NOT NULL PRIMARY KEY,
-                tenant_id INT NOT NULL,
-                status NVARCHAR(50) NOT NULL,
-                total DECIMAL(18,2) NOT NULL
-            );
-            CREATE TABLE versioned (
-                id INT NOT NULL PRIMARY KEY,
-                status NVARCHAR(50) NOT NULL,
-                version INT NOT NULL
-            );
-            """);
+            await ExecuteSqlAsync("""
+                CREATE TABLE orders (
+                    id INT NOT NULL PRIMARY KEY,
+                    tenant_id INT NOT NULL,
+                    status NVARCHAR(50) NOT NULL,
+                    total DECIMAL(18,2) NOT NULL
+                );
+                CREATE TABLE versioned (
+                    id INT NOT NULL PRIMARY KEY,
+                    status NVARCHAR(50) NOT NULL,
+                    version INT NOT NULL
+                );
+                """);
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _dbName!;
+            _dbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await TestDatabaseDrop.SqlServerAsync(_masterConnString, name);
+            });
+        }
     }
 
     public async Task DisposeAsync()
     {
         if (_dbName is null || _masterConnString is null) return;
-        try
-        {
-            await using var master = new SqlConnection(_masterConnString);
-            await master.OpenAsync();
-            await using var drop = master.CreateCommand();
-            drop.CommandText = $"""
-                ALTER DATABASE [{_dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-                DROP DATABASE [{_dbName}];
-                """;
-            await drop.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        await TestDatabaseDrop.SqlServerAsync(_masterConnString, _dbName);
     }
 
     private async Task ExecuteSqlAsync(string sql)

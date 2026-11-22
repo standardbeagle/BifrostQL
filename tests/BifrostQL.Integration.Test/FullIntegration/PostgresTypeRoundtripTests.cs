@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Ngsql;
 using FluentAssertions;
 using GraphQL;
@@ -35,9 +36,24 @@ public sealed class PostgresTypeRoundtripTests : FullIntegrationTestBase, IAsync
         await using (var createCmd = new NpgsqlCommand($"CREATE DATABASE {_testDbName}", masterConn))
             await createCmd.ExecuteNonQueryAsync();
 
-        var builder = new NpgsqlConnectionStringBuilder(masterConnString) { Database = _testDbName };
-        var factory = new PostgresDbConnFactory(builder.ConnectionString);
-        await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync);
+        try
+        {
+            var builder = new NpgsqlConnectionStringBuilder(masterConnString) { Database = _testDbName };
+            var factory = new PostgresDbConnFactory(builder.ConnectionString);
+            await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync);
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await base.CleanupAsync();
+                await TestDatabaseDrop.PostgresAsync(masterConnString, name);
+            });
+        }
     }
 
     private async Task InitializeContainerAsync()
@@ -70,25 +86,7 @@ public sealed class PostgresTypeRoundtripTests : FullIntegrationTestBase, IAsync
 
         if (_testDbName == null) return;
 
-        try
-        {
-            var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_POSTGRES");
-            if (masterConnString == null) return;
-
-            await using var conn = new NpgsqlConnection(masterConnString);
-            await conn.OpenAsync();
-            await using var cmd = new NpgsqlCommand($@"
-                SELECT pg_terminate_backend(pid)
-                FROM pg_stat_activity
-                WHERE datname = '{_testDbName}' AND pid <> pg_backend_pid();
-                DROP DATABASE IF EXISTS ""{_testDbName}"";
-                ", conn);
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup.
-        }
+        await TestDatabaseDrop.PostgresAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_POSTGRES")!, _testDbName);
     }
 
     private static async Task CreateSchemaAsync(System.Data.Common.DbConnection conn)

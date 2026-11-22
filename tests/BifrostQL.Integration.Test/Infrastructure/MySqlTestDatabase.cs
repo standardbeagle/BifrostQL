@@ -36,45 +36,48 @@ public sealed class MySqlTestDatabase : IIntegrationTestDatabase
         createCmd.CommandText = $"CREATE DATABASE `{_testDbName}`";
         await createCmd.ExecuteNonQueryAsync();
 
-        // Build conn string for test database
-        var builder = new MySqlConnectionStringBuilder(connString)
+        try
         {
-            Database = _testDbName
-        };
-        ConnFactory = new MySqlDbConnFactory(builder.ConnectionString);
-        DbModel = TestSchema.BuildDbModel();
+            // Build conn string for test database
+            var builder = new MySqlConnectionStringBuilder(connString)
+            {
+                Database = _testDbName
+            };
+            ConnFactory = new MySqlDbConnFactory(builder.ConnectionString);
+            DbModel = TestSchema.BuildDbModel();
 
-        using var conn = ConnFactory.GetConnection();
-        await conn.OpenAsync();
+            using var conn = ConnFactory.GetConnection();
+            await conn.OpenAsync();
 
-        // MySQL needs statements executed individually
-        var ddl = TestSchema.GetCreateTablesSql(Dialect);
-        foreach (var statement in ddl.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (string.IsNullOrWhiteSpace(statement)) continue;
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = statement;
-            await cmd.ExecuteNonQueryAsync();
+            // MySQL needs statements executed individually
+            var ddl = TestSchema.GetCreateTablesSql(Dialect);
+            foreach (var statement in ddl.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (string.IsNullOrWhiteSpace(statement)) continue;
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = statement;
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            await TestSchema.SeedDataAsync(conn, Dialect);
         }
-
-        await TestSchema.SeedDataAsync(conn, Dialect);
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await TestDatabaseDrop.MySqlAsync(connString, name);
+            });
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_testDbName == null || _masterConnString == null) return;
 
-        try
-        {
-            await using var conn = new MySqlConnection(_masterConnString);
-            await conn.OpenAsync();
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = $"DROP DATABASE IF EXISTS `{_testDbName}`";
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        await TestDatabaseDrop.MySqlAsync(_masterConnString, _testDbName);
     }
 }

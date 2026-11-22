@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.MySql;
 using MySqlConnector;
 using Xunit;
@@ -33,8 +34,23 @@ public class MySqlEnumColumnTests : EnumColumnIntegrationTestBase, IAsyncLifetim
         var builder = new MySqlConnectionStringBuilder(masterConnString) { Database = _testDbName };
         _connectionString = builder.ConnectionString;
 
-        var factory = new MySqlDbConnFactory(_connectionString);
-        await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync, EnumMetadataRules);
+        try
+        {
+            var factory = new MySqlDbConnFactory(_connectionString);
+            await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync, EnumMetadataRules);
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await base.CleanupAsync();
+                await TestDatabaseDrop.MySqlAsync(masterConnString, name);
+            });
+        }
     }
 
     public async Task DisposeAsync()
@@ -42,17 +58,7 @@ public class MySqlEnumColumnTests : EnumColumnIntegrationTestBase, IAsyncLifetim
         await base.CleanupAsync();
         if (_testDbName == null) return;
 
-        try
-        {
-            var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_MYSQL");
-            if (masterConnString == null) return;
-
-            await using var conn = new MySqlConnection(masterConnString);
-            await conn.OpenAsync();
-            var dropCmd = new MySqlCommand($"DROP DATABASE IF EXISTS `{_testDbName}`", conn);
-            await dropCmd.ExecuteNonQueryAsync();
-        }
-        catch { }
+        await TestDatabaseDrop.MySqlAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_MYSQL")!, _testDbName);
     }
 
     // Lowercase identifiers: MySQL on Linux is case-sensitive by default.

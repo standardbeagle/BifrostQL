@@ -36,43 +36,43 @@ public sealed class PostgresTestDatabase : IIntegrationTestDatabase
         createCmd.CommandText = $"CREATE DATABASE \"{_testDbName}\"";
         await createCmd.ExecuteNonQueryAsync();
 
-        // Build conn string for test database
-        var builder = new NpgsqlConnectionStringBuilder(connString)
+        try
         {
-            Database = _testDbName
-        };
-        ConnFactory = new PostgresDbConnFactory(builder.ConnectionString);
-        DbModel = TestSchema.BuildDbModel();
+            // Build conn string for test database
+            var builder = new NpgsqlConnectionStringBuilder(connString)
+            {
+                Database = _testDbName
+            };
+            ConnFactory = new PostgresDbConnFactory(builder.ConnectionString);
+            DbModel = TestSchema.BuildDbModel();
 
-        using var conn = ConnFactory.GetConnection();
-        await conn.OpenAsync();
+            using var conn = ConnFactory.GetConnection();
+            await conn.OpenAsync();
 
-        var ddl = TestSchema.GetCreateTablesSql(Dialect);
-        var cmd = conn.CreateCommand();
-        cmd.CommandText = ddl;
-        await cmd.ExecuteNonQueryAsync();
+            var ddl = TestSchema.GetCreateTablesSql(Dialect);
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = ddl;
+            await cmd.ExecuteNonQueryAsync();
 
-        await TestSchema.SeedDataAsync(conn, Dialect);
+            await TestSchema.SeedDataAsync(conn, Dialect);
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await TestDatabaseDrop.PostgresAsync(connString, name);
+            });
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_testDbName == null || _masterConnString == null) return;
 
-        try
-        {
-            await using var conn = new NpgsqlConnection(_masterConnString);
-            await conn.OpenAsync();
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{_testDbName}';
-                DROP DATABASE IF EXISTS "{_testDbName}";
-                """;
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        await TestDatabaseDrop.PostgresAsync(_masterConnString, _testDbName);
     }
 }

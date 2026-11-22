@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.MySql;
 using BifrostQL.Ngsql;
@@ -90,9 +91,7 @@ public sealed class ColumnDefaultAndComputedReaderTests
         }
         finally
         {
-            await using var master = new MySqlConnection(masterConnString);
-            await master.OpenAsync();
-            await ExecAsync(master, $"DROP DATABASE IF EXISTS `{dbName}`");
+            await TestDatabaseDrop.MySqlAsync(masterConnString!, dbName);
         }
     }
 

@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
@@ -134,7 +135,7 @@ public sealed class OperationIdMySqlConcurrencyTests : IAsyncLifetime
         await _host.StopAsync();
         _host.Dispose();
         MySqlConnection.ClearAllPools();
-        await ExecAsync(_master!, $"DROP DATABASE IF EXISTS `{_dbName}`");
+        await TestDatabaseDrop.MySqlAsync(_master!, _dbName);
     }
 
     [SkippableFact]

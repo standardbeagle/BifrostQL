@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -74,8 +75,7 @@ public sealed class PostgresUuidKeyTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (Master is null) return;
-        NpgsqlConnection.ClearAllPools();
-        await ExecAsync(Master, $"DROP DATABASE IF EXISTS \"{_dbName}\" WITH (FORCE)");
+        await TestDatabaseDrop.PostgresAsync(Master, _dbName);
     }
 
     // ---- generated mutations, over HTTP ----

@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using Microsoft.Data.SqlClient;
 using Xunit;
@@ -13,6 +14,8 @@ public class SqlServerEnumColumnTests : EnumColumnIntegrationTestBase, IAsyncLif
 {
     private string? _connectionString;
     private string? _testDbName;
+
+    internal string? TestDatabaseName => _testDbName;
 
     public async Task InitializeAsync()
     {
@@ -33,8 +36,23 @@ public class SqlServerEnumColumnTests : EnumColumnIntegrationTestBase, IAsyncLif
         var builder = new SqlConnectionStringBuilder(masterConnString) { InitialCatalog = _testDbName };
         _connectionString = builder.ConnectionString;
 
-        var factory = new SqlServerDbConnFactory(_connectionString);
-        await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync, EnumMetadataRules);
+        try
+        {
+            var factory = new SqlServerDbConnFactory(_connectionString);
+            await base.InitializeAsync(factory, CreateSchemaAsync, SeedDataAsync, EnumMetadataRules);
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await base.CleanupAsync();
+                await TestDatabaseDrop.SqlServerAsync(masterConnString, name);
+            });
+        }
     }
 
     public async Task DisposeAsync()
@@ -42,16 +60,7 @@ public class SqlServerEnumColumnTests : EnumColumnIntegrationTestBase, IAsyncLif
         await base.CleanupAsync();
         if (_testDbName == null) return;
 
-        try
-        {
-            var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")
-                ?? "Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True";
-            await using var conn = new SqlConnection(masterConnString);
-            await conn.OpenAsync();
-            var dropCmd = new SqlCommand($"DROP DATABASE IF EXISTS [{_testDbName}]", conn);
-            await dropCmd.ExecuteNonQueryAsync();
-        }
-        catch { }
+        await TestDatabaseDrop.SqlServerAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!, _testDbName);
     }
 
     private static async Task CreateSchemaAsync(System.Data.Common.DbConnection conn)

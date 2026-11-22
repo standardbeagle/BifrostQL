@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.History;
@@ -67,8 +68,7 @@ public sealed class PostgresHistoryErasureTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (_dbName is null) return;
-        NpgsqlConnection.ClearAllPools();
-        await ExecAsync(Master!, $"DROP DATABASE IF EXISTS \"{_dbName}\" WITH (FORCE)");
+        await TestDatabaseDrop.PostgresAsync(Master!, _dbName);
     }
 
     [SkippableFact]

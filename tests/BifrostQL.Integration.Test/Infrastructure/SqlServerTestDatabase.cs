@@ -35,44 +35,44 @@ public sealed class SqlServerTestDatabase : IIntegrationTestDatabase
         createCmd.CommandText = $"CREATE DATABASE [{_testDbName}]";
         await createCmd.ExecuteNonQueryAsync();
 
-        // Build conn string for test database
-        var builder = new SqlConnectionStringBuilder(connString)
+        try
         {
-            InitialCatalog = _testDbName
-        };
-        ConnFactory = new SqlServerDbConnFactory(builder.ConnectionString);
-        DbModel = TestSchema.BuildDbModel();
+            // Build conn string for test database
+            var builder = new SqlConnectionStringBuilder(connString)
+            {
+                InitialCatalog = _testDbName
+            };
+            ConnFactory = new SqlServerDbConnFactory(builder.ConnectionString);
+            DbModel = TestSchema.BuildDbModel();
 
-        using var conn = ConnFactory.GetConnection();
-        await conn.OpenAsync();
+            using var conn = ConnFactory.GetConnection();
+            await conn.OpenAsync();
 
-        var ddl = TestSchema.GetCreateTablesSql(Dialect);
-        var cmd = conn.CreateCommand();
-        cmd.CommandText = ddl;
-        await cmd.ExecuteNonQueryAsync();
+            var ddl = TestSchema.GetCreateTablesSql(Dialect);
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = ddl;
+            await cmd.ExecuteNonQueryAsync();
 
-        await TestSchema.SeedDataAsync(conn, Dialect);
+            await TestSchema.SeedDataAsync(conn, Dialect);
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await TestDatabaseDrop.SqlServerAsync(connString, name);
+            });
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         if (_testDbName == null || _masterConnString == null) return;
 
-        try
-        {
-            await using var conn = new SqlConnection(_masterConnString);
-            await conn.OpenAsync();
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = $"""
-                ALTER DATABASE [{_testDbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-                DROP DATABASE [{_testDbName}];
-                """;
-            await cmd.ExecuteNonQueryAsync();
-        }
-        catch
-        {
-            // Best effort cleanup
-        }
+        await TestDatabaseDrop.SqlServerAsync(_masterConnString, _testDbName);
         GC.SuppressFinalize(this);
     }
 }

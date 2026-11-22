@@ -39,28 +39,38 @@ public sealed class SqlServerZeroRowWindowTests : FullIntegrationTestBase, IAsyn
             await create.ExecuteNonQueryAsync();
         }
 
-        var builder = new SqlConnectionStringBuilder(masterConnString) { InitialCatalog = _testDbName };
-        _factory = new SqlServerDbConnFactory(builder.ConnectionString);
-        await base.InitializeAsync(_factory, conn => ExecAsync(conn, """
-            CREATE TABLE customers (id INT PRIMARY KEY, name NVARCHAR(50) NOT NULL);
-            CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT NOT NULL, region NVARCHAR(20) NOT NULL,
-                CONSTRAINT FK_orders_customers FOREIGN KEY (customer_id) REFERENCES customers(id));
-            """), conn => ExecAsync(conn, """
-            INSERT INTO customers VALUES (1, N'a'), (2, N'b'), (3, N'c');
-            INSERT INTO orders VALUES (10, 1, N'north'), (11, 1, N'south'), (12, 2, N'north');
-            """));
+        try
+        {
+            var builder = new SqlConnectionStringBuilder(masterConnString) { InitialCatalog = _testDbName };
+            _factory = new SqlServerDbConnFactory(builder.ConnectionString);
+            await base.InitializeAsync(_factory, conn => ExecAsync(conn, """
+                CREATE TABLE customers (id INT PRIMARY KEY, name NVARCHAR(50) NOT NULL);
+                CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT NOT NULL, region NVARCHAR(20) NOT NULL,
+                    CONSTRAINT FK_orders_customers FOREIGN KEY (customer_id) REFERENCES customers(id));
+                """), conn => ExecAsync(conn, """
+                INSERT INTO customers VALUES (1, N'a'), (2, N'b'), (3, N'c');
+                INSERT INTO orders VALUES (10, 1, N'north'), (11, 1, N'south'), (12, 2, N'north');
+                """));
+        }
+        catch (Exception setupFailure)
+        {
+            // Drop here: DisposeAsync does not run after a failed InitializeAsync. The setup
+            // failure is what the test reports, never a cleanup error.
+            var name = _testDbName!;
+            _testDbName = null;
+            await TestDatabaseDrop.RethrowAfterDropAsync(setupFailure, async () =>
+            {
+                await base.CleanupAsync();
+                await TestDatabaseDrop.SqlServerAsync(masterConnString, name);
+            });
+        }
     }
 
     public async Task DisposeAsync()
     {
         await base.CleanupAsync();
         if (_testDbName == null) return;
-        var masterConnString = Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!;
-        SqlConnection.ClearAllPools();
-        await using var master = new SqlConnection(masterConnString);
-        await master.OpenAsync();
-        await using var drop = new SqlCommand($"DROP DATABASE IF EXISTS [{_testDbName}]", master);
-        await drop.ExecuteNonQueryAsync();
+        await TestDatabaseDrop.SqlServerAsync(Environment.GetEnvironmentVariable("BIFROST_TEST_SQLSERVER")!, _testDbName);
     }
 
     [SkippableFact]

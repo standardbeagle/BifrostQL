@@ -207,8 +207,7 @@ public sealed class PostgresGraphQlHost : IAsyncDisposable
         _client.Dispose();
         await _host.StopAsync();
         _host.Dispose();
-        NpgsqlConnection.ClearAllPools();
-        await ExecAsync(Master!, $"DROP DATABASE IF EXISTS \"{_dbName}\" WITH (FORCE)");
+        await TestDatabaseDrop.PostgresAsync(Master!, _dbName);
     }
 
     private static async Task ExecAsync(string connectionString, string sql)

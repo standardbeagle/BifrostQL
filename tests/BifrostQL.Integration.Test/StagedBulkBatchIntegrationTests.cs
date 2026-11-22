@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Resolvers;
@@ -46,8 +47,7 @@ public abstract class StagedBulkBatchIntegrationTestBase : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (_dbName is null) return;
-        try { await DropDatabaseAsync(_dbName); }
-        catch { /* best effort cleanup */ }
+        await DropDatabaseAsync(_dbName);
     }
 
     private async Task ExecuteSqlAsync(string sql)
@@ -373,14 +373,7 @@ public sealed class PostgresBulkBatchIntegrationTests : StagedBulkBatchIntegrati
         await cmd.ExecuteNonQueryAsync();
     }
 
-    protected override async Task DropDatabaseAsync(string dbName)
-    {
-        await using var conn = new Npgsql.NpgsqlConnection(MasterConnectionString);
-        await conn.OpenAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DROP DATABASE \"{dbName}\" WITH (FORCE)";
-        await cmd.ExecuteNonQueryAsync();
-    }
+    protected override Task DropDatabaseAsync(string dbName) => TestDatabaseDrop.PostgresAsync(MasterConnectionString!, dbName);
 
     protected override IDbConnFactory CreateConnFactory(string dbName)
         => new BifrostQL.Ngsql.PostgresDbConnFactory(
@@ -414,14 +407,7 @@ public sealed class MySqlBulkBatchIntegrationTests : StagedBulkBatchIntegrationT
         await cmd.ExecuteNonQueryAsync();
     }
 
-    protected override async Task DropDatabaseAsync(string dbName)
-    {
-        await using var conn = new MySqlConnector.MySqlConnection(MasterConnectionString);
-        await conn.OpenAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DROP DATABASE `{dbName}`";
-        await cmd.ExecuteNonQueryAsync();
-    }
+    protected override Task DropDatabaseAsync(string dbName) => TestDatabaseDrop.MySqlAsync(MasterConnectionString!, dbName);
 
     protected override IDbConnFactory CreateConnFactory(string dbName)
         => new BifrostQL.MySql.MySqlDbConnFactory(

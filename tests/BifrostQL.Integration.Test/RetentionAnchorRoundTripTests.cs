@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.Modules.Retention;
@@ -197,14 +198,7 @@ public sealed class PostgresRetentionAnchorRoundTripTests : RetentionAnchorRound
         await cmd.ExecuteNonQueryAsync();
     }
 
-    protected override async Task DropDatabaseAsync(string dbName)
-    {
-        await using var conn = new Npgsql.NpgsqlConnection(Master);
-        await conn.OpenAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DROP DATABASE \"{dbName}\" WITH (FORCE)";
-        await cmd.ExecuteNonQueryAsync();
-    }
+    protected override Task DropDatabaseAsync(string dbName) => TestDatabaseDrop.PostgresAsync(Master!, dbName);
 
     protected override IDbConnFactory CreateConnFactory(string dbName)
         => new BifrostQL.Ngsql.PostgresDbConnFactory(
@@ -242,11 +236,7 @@ public sealed class MySqlRetentionAnchorRoundTripTests : RetentionAnchorRoundTri
     {
         await using (var pooled = new MySqlConnector.MySqlConnection(ConnectionStringFor(dbName)))
             await MySqlConnector.MySqlConnection.ClearPoolAsync(pooled);
-        await using var conn = new MySqlConnector.MySqlConnection(Master);
-        await conn.OpenAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"DROP DATABASE `{dbName}`";
-        await cmd.ExecuteNonQueryAsync();
+        await TestDatabaseDrop.MySqlAsync(Master!, dbName);
     }
 
     protected override IDbConnFactory CreateConnFactory(string dbName)
@@ -283,15 +273,7 @@ public sealed class SqlServerRetentionAnchorRoundTripTests : RetentionAnchorRoun
         await cmd.ExecuteNonQueryAsync();
     }
 
-    protected override async Task DropDatabaseAsync(string dbName)
-    {
-        Microsoft.Data.SqlClient.SqlConnection.ClearAllPools();
-        await using var conn = new Microsoft.Data.SqlClient.SqlConnection(Master);
-        await conn.OpenAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"ALTER DATABASE [{dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{dbName}]";
-        await cmd.ExecuteNonQueryAsync();
-    }
+    protected override Task DropDatabaseAsync(string dbName) => TestDatabaseDrop.SqlServerAsync(Master!, dbName);
 
     protected override IDbConnFactory CreateConnFactory(string dbName)
         => new BifrostQL.SqlServer.SqlServerDbConnFactory(

@@ -1,3 +1,4 @@
+using BifrostQL.Integration.Test.Infrastructure;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
@@ -55,8 +56,7 @@ public sealed class SqlServerDateTimeParameterTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (_dbName is null) return;
-        SqlConnection.ClearAllPools();
-        await ExecOnMasterAsync($"ALTER DATABASE [{_dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_dbName}]");
+        await TestDatabaseDrop.SqlServerAsync(Master!, _dbName);
     }
 
     [SkippableFact]

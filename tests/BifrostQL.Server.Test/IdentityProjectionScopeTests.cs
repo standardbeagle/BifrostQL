@@ -170,6 +170,41 @@ public sealed class IdentityProjectionScopeTests
             "a collection value is frozen into an array the caller owns");
     }
 
+    [Fact]
+    public async Task AStepUpIdentityAddedToTheSamePrincipal_IsProjectedAfresh()
+    {
+        var host = new Host();
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var before = await http.GetBifrostUserContextAsync();
+        http.User.AddIdentity(new ClaimsIdentity(new[] { new Claim(ClaimTypes.Role, "approver") }, "step-up"));
+        var after = await http.GetBifrostUserContextAsync();
+
+        PolicyIdentity.FromUserContext(before).Roles.Should().NotContain("approver");
+        PolicyIdentity.FromUserContext(after).Roles.Should().Contain("approver",
+            "an identity added to the same principal instance re-projects, never serves the old memo");
+        host.ResolverCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task AClaimRemovedFromTheSamePrincipal_IsProjectedAfresh()
+    {
+        var host = new Host();
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+
+        var before = await http.GetBifrostUserContextAsync();
+        var identity = (ClaimsIdentity)http.User.Identity!;
+        identity.RemoveClaim(identity.FindFirst(ClaimTypes.Role));
+        var after = await http.GetBifrostUserContextAsync();
+
+        PolicyIdentity.FromUserContext(before).Roles.Should().Contain("clerk");
+        PolicyIdentity.FromUserContext(after).Roles.Should().NotContain("clerk",
+            "a claim removed from the same principal instance re-projects, never serves the old memo");
+        host.ResolverCalls.Should().Be(2);
+    }
+
     // ---- fixtures ----
 
     private sealed class ListValuedFactory : IBifrostAuthContextFactory

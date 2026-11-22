@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using BifrostQL.Core.Crypto;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Core.Modules.Crypto
 {
@@ -139,8 +140,8 @@ namespace BifrostQL.Core.Modules.Crypto
                 // The snapshot's envelopes guard the update (EncryptOnWriteMutationTransformer),
                 // so a value written after the snapshot is never overwritten with the old plaintext.
                 var rowContext = userContext is null
-                    ? new Dictionary<string, object?>()
-                    : new Dictionary<string, object?>(userContext);
+                    ? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                    : UserContexts.Copy(userContext);
                 rowContext[EncryptOnWriteMutationTransformer.ReEncryptionGuardKey] =
                     new EncryptOnWriteMutationTransformer.ReEncryptionGuard(expectedEnvelopes);
 

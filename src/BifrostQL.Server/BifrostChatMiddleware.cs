@@ -13,6 +13,7 @@ using BifrostQL.Server.Auth;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server
 {
@@ -626,11 +627,9 @@ namespace BifrostQL.Server
             if (toolSet.IsEmpty)
                 return null;
 
-            var toolContext = new Dictionary<string, object?>(userContext)
-            {
-                [ChatPlanConfirmationRegistry.ConversationContextKey] =
-                    ChatPlanConfirmationRegistry.CanonicalConversationKey(conversationId),
-            };
+            var toolContext = UserContexts.Copy(userContext);
+            toolContext[ChatPlanConfirmationRegistry.ConversationContextKey] =
+                ChatPlanConfirmationRegistry.CanonicalConversationKey(conversationId);
 
             return new ChatCompletionRequestOptions
             {

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Server;
+using BifrostQL.Core.Auth;
 
 [assembly: InternalsVisibleTo("BifrostQL.Mcp.Test")]
 
@@ -342,8 +343,8 @@ namespace BifrostQL.Mcp
                 return () => throw ex;
             }
 
-            var frozen = new Dictionary<string, object?>(projected);
-            return () => new Dictionary<string, object?>(frozen);
+            var frozen = UserContexts.Copy(projected);
+            return () => UserContexts.Copy(frozen);
         }
 
         /// <summary>

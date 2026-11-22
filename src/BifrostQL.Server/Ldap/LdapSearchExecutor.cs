@@ -529,7 +529,7 @@ namespace BifrostQL.Server.Ldap
                     // A defensive COPY of the session's identity: this executor is shared across
                     // connections, so nothing downstream may hold or mutate the dictionary a
                     // session owns, and no request may observe another's context.
-                    UserContext = new Dictionary<string, object?>(userContext),
+                    UserContext = UserContexts.Copy(userContext),
                     Endpoint = _options.Endpoint,
                 },
                 ct);

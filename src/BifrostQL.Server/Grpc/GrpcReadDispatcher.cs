@@ -1,6 +1,7 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server.Grpc
 {
@@ -72,7 +73,7 @@ namespace BifrostQL.Server.Grpc
             GqlObjectQuery query, IDictionary<string, object?> userContext, string? endpoint) => new()
             {
                 Query = query,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 

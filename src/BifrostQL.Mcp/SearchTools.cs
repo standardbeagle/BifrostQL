@@ -161,7 +161,7 @@ namespace BifrostQL.Mcp
                     result = await executor.ExecuteAsync(new QueryIntent
                     {
                         Query = BuildSearchQuery(table, stringColumns, term),
-                        UserContext = new Dictionary<string, object?>(userContext),
+                        UserContext = UserContexts.Copy(userContext),
                         Endpoint = endpoint,
                     }, cancellationToken);
                 }

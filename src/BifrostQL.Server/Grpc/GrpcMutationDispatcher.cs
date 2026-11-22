@@ -1,5 +1,6 @@
 using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server.Grpc
 {
@@ -44,7 +45,7 @@ namespace BifrostQL.Server.Grpc
                 // the pipeline enforces required columns and supplies defaults for the omitted ones. The
                 // positional PrimaryKey is left null — an insert addresses no existing row.
                 Data = new Dictionary<string, object?>(requestValues, StringComparer.OrdinalIgnoreCase),
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 
@@ -71,7 +72,7 @@ namespace BifrostQL.Server.Grpc
                 Action = MutationIntentAction.Update,
                 Data = data,
                 PrimaryKey = primaryKey,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 
@@ -99,7 +100,7 @@ namespace BifrostQL.Server.Grpc
                 // (invariant 7c).
                 Data = new Dictionary<string, object?>(),
                 PrimaryKey = KeyValues(table, requestValues),
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 

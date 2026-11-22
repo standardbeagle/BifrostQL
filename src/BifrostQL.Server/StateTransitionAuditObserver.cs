@@ -48,7 +48,7 @@ public sealed class StateTransitionAuditObserver : IStateTransitionObserver
         // The audit row is the engine's bookkeeping for a transition the caller was already
         // allowed to make, so it passes the audit table's policy grants as the engine, never
         // through a role a caller could also hold.
-        var auditContext = new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase);
+        var auditContext = UserContexts.Copy(userContext);
         auditContext[PolicyIdentity.EngineContextKey] = PolicyIdentity.EngineMarker;
         return auditContext;
     }

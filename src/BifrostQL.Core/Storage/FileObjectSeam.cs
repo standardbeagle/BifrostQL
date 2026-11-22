@@ -3,6 +3,7 @@ using BifrostQL.Core.Modules;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.Logging;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Core.Storage;
 
@@ -503,7 +504,7 @@ public sealed class FileObjectSeam
             {
                 [located.Column.ColumnName] = pointerJson,
             },
-            UserContext = new Dictionary<string, object?>(located.UserContext),
+            UserContext = UserContexts.Copy(located.UserContext),
             Endpoint = _options.Endpoint,
         }, cancellationToken);
 

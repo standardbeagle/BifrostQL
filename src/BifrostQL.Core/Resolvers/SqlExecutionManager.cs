@@ -185,7 +185,7 @@ namespace BifrostQL.Core.Resolvers
             // the shared (non-thread-safe) Dictionary from concurrent resolvers
             // races. The scoped keys are ephemeral to this node's transform pass,
             // so a private overlay is the correct scope regardless.
-            var scopedContext = new Dictionary<string, object?>(userContext);
+            var scopedContext = UserContexts.Copy(userContext);
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
 
             var transformStart = Stopwatch.GetTimestamp();
@@ -255,7 +255,7 @@ namespace BifrostQL.Core.Resolvers
             // per-call context overlay (sibling root fields resolve in parallel; the
             // shared UserContext is not thread-safe). Tenant/soft-delete scope thus
             // constrains the grouped rows before aggregation.
-            var scopedContext = new Dictionary<string, object?>(context.UserContext);
+            var scopedContext = UserContexts.Copy(context.UserContext);
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, dbTable, scopedContext);
             await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
@@ -340,7 +340,7 @@ namespace BifrostQL.Core.Resolvers
             // (its own tenant/soft-delete/policy metadata still applies), into a
             // per-call overlay (sibling root fields resolve in parallel; the shared
             // UserContext is not thread-safe).
-            var scopedContext = new Dictionary<string, object?>(context.UserContext);
+            var scopedContext = UserContexts.Copy(context.UserContext);
             Modules.ModuleApiRegistry.CaptureQueryArguments(context, target, scopedContext);
             await _transformerService.PrepareAsync(_dbModel, context.CancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);
@@ -542,7 +542,7 @@ namespace BifrostQL.Core.Resolvers
             // and `_agg` all reject — and the discovery query then returned the distinct
             // CIPHERTEXT set with per-value row counts. PredicateColumns puts them in the
             // same position as the <table>Aggregate surface's group/value columns.
-            var scopedContext = new Dictionary<string, object?>(context.UserContext);
+            var scopedContext = UserContexts.Copy(context.UserContext);
             ModuleApiRegistry.CaptureQueryArguments(context, table, scopedContext);
 
             var query = new GqlObjectQuery
@@ -809,7 +809,7 @@ namespace BifrostQL.Core.Resolvers
 
             // Same fail-closed transformer pass as GraphQL row queries, into a
             // per-call overlay so a shared caller context is never mutated.
-            var scopedContext = new Dictionary<string, object?>(userContext);
+            var scopedContext = UserContexts.Copy(userContext);
             var transformStart = Stopwatch.GetTimestamp();
             await _transformerService.PrepareAsync(_dbModel, cancellationToken);
             _transformerService.ApplyTransformers(query, _dbModel, scopedContext);

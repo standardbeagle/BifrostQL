@@ -9,6 +9,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Observers;
 using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.Logging;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server.Prometheus
 {
@@ -198,10 +199,8 @@ namespace BifrostQL.Server.Prometheus
         // caller's context — so nothing else that reads the context observes the marker.
         private static IDictionary<string, object?> ScrapeInternalContext(IDictionary<string, object?> userContext)
         {
-            var copy = new Dictionary<string, object?>(userContext)
-            {
-                [EngineMetricsQueryObserver.ScrapeInternalContextKey] = EngineMetricsScrapeMarker.Instance,
-            };
+            var copy = UserContexts.Copy(userContext);
+            copy[EngineMetricsQueryObserver.ScrapeInternalContextKey] = EngineMetricsScrapeMarker.Instance;
             return copy;
         }
 

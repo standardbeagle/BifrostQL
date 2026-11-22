@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using BifrostQL.Core.Resolvers;
 using ModelContextProtocol.Protocol;
 using static BifrostQL.Mcp.ToolJson;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Mcp
 {
@@ -194,7 +195,7 @@ namespace BifrostQL.Mcp
                 Table = table,
                 Action = MutationIntentAction.Insert,
                 Data = values,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
         }
@@ -212,7 +213,7 @@ namespace BifrostQL.Mcp
                 Action = MutationIntentAction.Update,
                 Data = set,
                 PrimaryKey = ReadPrimaryKey(args, keyColumnCount),
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
         }
@@ -226,7 +227,7 @@ namespace BifrostQL.Mcp
                 Action = MutationIntentAction.Delete,
                 Data = new Dictionary<string, object?>(),
                 PrimaryKey = ReadPrimaryKey(args, keyColumnCount),
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 

@@ -94,10 +94,8 @@ public sealed class WorkflowTriggerHost : IStateTransitionObserver, IMutationObs
         IDictionary<string, object?> userContext,
         CancellationToken cancellationToken)
     {
-        var scopedContext = new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase)
-        {
-            [SuppressTriggersKey] = WorkflowTriggerSuppression.Instance,
-        };
+        var scopedContext = UserContexts.Copy(userContext);
+        scopedContext[SuppressTriggersKey] = WorkflowTriggerSuppression.Instance;
         await _runner.RunAsync(workflow, inputs, scopedContext, cancellationToken);
     }
 

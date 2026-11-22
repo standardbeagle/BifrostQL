@@ -140,6 +140,33 @@ public sealed class RawClaimTenantIsolationHttpTests : IAsyncLifetime
         reply.RootElement.GetProperty("data").GetProperty("widgetsHistory").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
+    [Fact]
+    public async Task CaseVariantClaimType_ScopesRead_Mutation_AndHistoryAlike()
+    {
+        // The token says "Org_Id", the model says "org_id". The HTTP user context compares keys
+        // case-insensitively, so every surface must find the tenant, not just the ones that read
+        // the request context without copying it.
+        await ExecAsync(
+            "INSERT INTO __history (entity, entity_id, op, org, changed_at) VALUES " +
+            "('main.widgets', '1', 'update', 'acme', '2026-01-01'), ('main.widgets', '2', 'update', 'globex', '2026-01-01');");
+        var acmeCaseVariant = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim(ClaimTypes.NameIdentifier, "a-1"), new Claim("Org_Id", "acme") }, authenticationType: "test"));
+
+        using var read = await SendGraphQlAsync("{ widgets { data { name } } }", acmeCaseVariant);
+        using var history = await SendGraphQlAsync("{ widgetsHistory { data { org } } }", acmeCaseVariant);
+        using var write = await SendGraphQlAsync(
+            """mutation { widgets(update: { id: 1, name: "acme-edited", version: 1 }) }""", acmeCaseVariant);
+
+        Errors(read).Should().BeEmpty();
+        read.RootElement.GetProperty("data").GetProperty("widgets").GetProperty("data").EnumerateArray()
+            .Select(row => row.GetProperty("name").GetString()).Should().Equal("acme-widget");
+        Errors(history).Should().BeEmpty();
+        history.RootElement.GetProperty("data").GetProperty("widgetsHistory").GetProperty("data").EnumerateArray()
+            .Select(row => row.GetProperty("org").GetString()).Should().Equal("acme");
+        Errors(write).Should().BeEmpty();
+        (await ScalarAsync("SELECT tenant FROM change_sets")).Should().Be("acme");
+    }
+
     private async Task<long> AcmeEditsItsWidgetAsync()
     {
         using var reply = await SendGraphQlAsync(

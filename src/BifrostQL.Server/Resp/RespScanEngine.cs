@@ -5,6 +5,7 @@ using System.Text.Json;
 using BifrostQL.Core.Model;
 using BifrostQL.Core.QueryModel;
 using BifrostQL.Core.Resolvers;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server.Resp
 {
@@ -65,7 +66,7 @@ namespace BifrostQL.Server.Resp
             var intent = new QueryIntent
             {
                 Query = query,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
             var result = await executor.ExecuteAsync(intent, cancellationToken);

@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Mcp
 {
@@ -237,7 +238,7 @@ namespace BifrostQL.Mcp
             internal IDictionary<string, object?> Current()
                 => _accessor.HttpContext?.Items.TryGetValue(ContextItemKey, out var value) == true
                     && value is IDictionary<string, object?> context
-                    ? new Dictionary<string, object?>(context)
+                    ? UserContexts.Copy(context)
                     : throw new McpIdentityException();
 
             /// <summary>

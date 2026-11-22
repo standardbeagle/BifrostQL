@@ -4,6 +4,7 @@ using BifrostQL.Core.Model;
 using BifrostQL.Core.Resolvers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server.Resp
 {
@@ -352,7 +353,7 @@ namespace BifrostQL.Server.Resp
                 Action = MutationIntentAction.Update,
                 Data = data,
                 PrimaryKey = key.KeyValues,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 
@@ -365,7 +366,7 @@ namespace BifrostQL.Server.Resp
                 Action = MutationIntentAction.Delete,
                 Data = new Dictionary<string, object?>(),
                 PrimaryKey = key.KeyValues,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 
@@ -390,7 +391,7 @@ namespace BifrostQL.Server.Resp
                             ?? throw new BifrostExecutionError(
                                 $"RESP DEL key for '{IntentTableName(table)}' resolved no primary key values.")))
                     .ToList(),
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 
@@ -422,7 +423,7 @@ namespace BifrostQL.Server.Resp
                         return new MutationBatchAction(MutationIntentAction.Update, data);
                     })
                     .ToList(),
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 

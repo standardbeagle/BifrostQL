@@ -9,6 +9,7 @@ using GraphQL.Types;
 using System.Globalization;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
+using BifrostQL.Core.Auth;
 
 namespace BifrostQL.Server
 {
@@ -98,11 +99,9 @@ namespace BifrostQL.Server
                 ?? throw new ArgumentException(
                     $"'{transition.StateColumn}' is not a column of '{dbTable.DbName}'.", nameof(transition));
 
-            var guardedContext = new Dictionary<string, object?>(userContext, StringComparer.OrdinalIgnoreCase)
-            {
-                [WorkflowTransitionGuard.ContextKey] = new WorkflowTransitionGuard(
-                    dbTable, keys[0].DbName, transition.Id, stateColumn.DbName, transition.From),
-            };
+            var guardedContext = UserContexts.Copy(userContext);
+            guardedContext[WorkflowTransitionGuard.ContextKey] = new WorkflowTransitionGuard(
+                dbTable, keys[0].DbName, transition.Id, stateColumn.DbName, transition.From);
             await MutateAsync(dbTable, "update", new Dictionary<string, object?>
             {
                 [keys[0].DbName] = transition.Id,

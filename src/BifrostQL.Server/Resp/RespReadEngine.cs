@@ -457,7 +457,7 @@ namespace BifrostQL.Server.Resp
             new()
             {
                 Query = query,
-                UserContext = new Dictionary<string, object?>(userContext),
+                UserContext = UserContexts.Copy(userContext),
                 Endpoint = endpoint,
             };
 

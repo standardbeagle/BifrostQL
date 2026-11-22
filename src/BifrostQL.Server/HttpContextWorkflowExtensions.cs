@@ -66,7 +66,10 @@ namespace BifrostQL.Server
         /// scope, and the projection is memoized there. A SignalR hub passes its invocation's
         /// <see cref="IServiceProvider"/> (inject it into the hub), because the connection's
         /// HttpContext and its RequestServices live for the whole connection, and a memo there
-        /// would serve a revoked grant until reconnect.
+        /// would serve a revoked grant until reconnect. The root provider (<c>app.Services</c>) is
+        /// no scope: nothing is memoized there, every call projects afresh, and a caller whose
+        /// scoped grant resolver cannot be resolved from the root is refused
+        /// (<see cref="BifrostIdentityRejectedException"/>).
         /// </summary>
         public static Task<IDictionary<string, object?>> GetBifrostUserContextAsync(
             this HttpContext context, IServiceProvider scope)

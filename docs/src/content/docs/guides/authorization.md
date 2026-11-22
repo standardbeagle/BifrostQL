@@ -388,8 +388,10 @@ the rest of the request. Building it projects the caller, which awaits your gran
 loads the endpoint's database model. Both steps are asynchronous and run only when an endpoint
 awaits the accessor, so health checks and static routes never trigger a schema load. A caller
 with no projectable identity gets a gate that refuses everything, and the model is not loaded.
-`GetAsync` throws `InvalidOperationException` when there is no active request, or when more than
-one GraphQL endpoint is registered and the request path names none of them. `IPolicyGate` itself
+`GetAsync` throws `InvalidOperationException` when there is no active request, when more than
+one GraphQL endpoint is registered and the request path names none of them, or when the accessor
+was resolved from the root service provider (a singleton that captured it): such an accessor's gate
+would be shared by every caller, so it refuses instead. `IPolicyGate` itself
 is not registered in DI: resolving it there could only block on those two steps.
 
 ## Related

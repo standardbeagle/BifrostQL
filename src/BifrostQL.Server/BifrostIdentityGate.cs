@@ -78,15 +78,21 @@ namespace BifrostQL.Server
         /// scope's <see cref="IdentityProjectionMemo"/>: the binary transport passes each message's
         /// own scope, so the message's projection and a hook's <see cref="PolicyGateAccessor"/> in
         /// that scope share one resolver call, and the next message projects afresh. Without a
-        /// scope, or in a scope with no registered memo, the projection is not memoized.
+        /// scope, in a scope with no registered memo, or in the ROOT provider, the projection is not
+        /// memoized: a scoped memo resolved from the root lives for the process, and a host whose
+        /// auth handler hands one cached principal to every request would be served the first
+        /// request's grants. The root is never asked for the scoped memo, so scope validation cannot
+        /// turn that lookup into an unhandled fault; the fresh projection there fails closed when the
+        /// scoped grant resolver cannot be resolved.
         /// </summary>
         internal static ValueTask<BifrostIdentityProjection> ProjectAsync(
             HttpContext context, IServiceProvider? scope)
         {
-            var memo = scope?.GetService<IdentityProjectionMemo>();
-            if (memo is null || !(context.User?.Identity?.IsAuthenticated ?? false))
+            if (scope is null || RootServiceProvider.IsRoot(scope)
+                || !(context.User?.Identity?.IsAuthenticated ?? false)
+                || scope.GetService<IdentityProjectionMemo>() is not { } memo)
                 return ProjectFreshAsync(context, scope);
-            return memo.ProjectAsync(context, scope!, BifrostAuthContextFactory.Resolve(scope));
+            return memo.ProjectAsync(context, scope, BifrostAuthContextFactory.Resolve(scope));
         }
 
         /// <summary>The unmemoized projection, with the factory and its scoped services taken from

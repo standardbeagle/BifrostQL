@@ -37,8 +37,20 @@ namespace BifrostQL.Server
             _scope = scope;
         }
 
+        /// <summary>
+        /// Refuses (throws) when this accessor was resolved from the root provider, as one a
+        /// singleton captured is: its memoized gate would be the first caller's gate, served to
+        /// every later caller. Resolve the accessor per request instead.
+        /// </summary>
         public ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default)
-            => new(CurrentBuild().WaitAsync(cancellationToken));
+        {
+            if (RootServiceProvider.IsRoot(_scope))
+                throw new InvalidOperationException(
+                    "IPolicyGateAccessor was resolved from the root service provider (a singleton captured it), " +
+                    "so its gate would be shared by every caller. Resolve IPolicyGateAccessor from the request's " +
+                    "scope (HttpContext.RequestServices or an injected scoped service) on each request.");
+            return new(CurrentBuild().WaitAsync(cancellationToken));
+        }
 
         /// <summary>
         /// The request's shared build, starting one when none exists or the last one faulted or was

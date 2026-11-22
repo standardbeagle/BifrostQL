@@ -13,7 +13,8 @@ public interface IPolicyGateAccessor
     /// The gate for the current request, built on the first call and reused for the rest of
     /// the request. A caller with no projectable identity gets a gate that refuses everything.
     /// Throws <see cref="System.InvalidOperationException"/> when no request is active or the
-    /// request cannot be tied to one database model.
+    /// request cannot be tied to one database model, and when the accessor was resolved from the
+    /// root service provider (a singleton captured it), whose gate every caller would share.
     /// </summary>
     ValueTask<IPolicyGate> GetAsync(CancellationToken cancellationToken = default);
 }

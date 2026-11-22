@@ -529,6 +529,8 @@ namespace BifrostQL.Server
             // The identity projection memo, one per DI scope (request, binary message, hub
             // invocation): never on the HttpContext, which can span a whole session.
             services.AddScoped<IdentityProjectionMemo>();
+            // Lets both seams tell the root provider from a scope: neither memoizes in the root.
+            services.TryAddSingleton<RootServiceProvider>();
             // Single identity seam for every transport gate (HTTP, binary WebSocket,
             // protocol frontend, workflow endpoints). TryAdd so a host can substitute
             // its own factory before AddBifrostQL runs.

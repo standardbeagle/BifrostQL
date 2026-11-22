@@ -9,7 +9,9 @@ namespace BifrostQL.Server
     /// binary WebSocket message, per hub invocation (invariant 13: per request, never per session).
     /// It lives in the scope, not on the <see cref="HttpContext"/>, because one HttpContext can
     /// span a whole WebSocket or SignalR session while every message or invocation gets its own
-    /// scope; a memo on the HttpContext served a revoked grant until reconnect.
+    /// scope; a memo on the HttpContext served a revoked grant until reconnect. Never used from the
+    /// root provider (<see cref="RootServiceProvider.IsRoot"/>): resolved there, it would span
+    /// every request.
     ///
     /// <para>Concurrent callers in one scope share one projection task, published lock-free by
     /// compare-exchange (the <see cref="PolicyGateAccessor"/> pattern), so the grant resolver runs
@@ -87,5 +89,30 @@ namespace BifrostQL.Server
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The root service provider, captured by a singleton (a singleton's injected
+    /// <see cref="IServiceProvider"/> is the root). Scoped services resolved from the root live for
+    /// the process, so a memo there spans every request, and a <see cref="PolicyGateAccessor"/>
+    /// captured by a singleton served its first caller's gate to everyone.
+    /// <see cref="IsRoot"/> lets the identity seams refuse to memoize in it.
+    /// </summary>
+    internal sealed class RootServiceProvider
+    {
+        private readonly IServiceProvider _root;
+
+        public RootServiceProvider(IServiceProvider root) => _root = root;
+
+        /// <summary>
+        /// True when <paramref name="provider"/> is the root provider (the host's
+        /// <c>app.Services</c>, or the provider injected into a root-resolved service). A scope
+        /// resolves <see cref="IServiceProvider"/> to itself, the root to the root. False when
+        /// <see cref="RootServiceProvider"/> is not registered, which is the case only where the
+        /// memo and the accessor are not registered either.
+        /// </summary>
+        internal static bool IsRoot(IServiceProvider provider)
+            => provider.GetService(typeof(RootServiceProvider)) is RootServiceProvider marker
+               && ReferenceEquals(provider.GetService(typeof(IServiceProvider)), marker._root);
     }
 }

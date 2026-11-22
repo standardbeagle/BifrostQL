@@ -205,6 +205,66 @@ public sealed class IdentityProjectionScopeTests
         host.ResolverCalls.Should().Be(2);
     }
 
+    [Fact]
+    public async Task UserContext_ProjectedInTheRootProvider_ProjectsOnEachCall_AndARevokedGrantTakesEffect()
+    {
+        // A host auth handler that caches one ClaimsPrincipal per API key hands the SAME principal
+        // instance to every request. A memo resolved from the root provider lives for the process,
+        // so it served the first request's grants to every later one.
+        var host = new Host(validateScopes: false);
+        var http = host.LongLivedContext(webSocket: false);
+
+        var first = await http.GetBifrostUserContextAsync(host.Root);
+        host.Revoked = true;
+        var second = await http.GetBifrostUserContextAsync(host.Root);
+
+        PolicyIdentity.ExtractPermissions(first).Should().Contain(Grants);
+        PolicyIdentity.ExtractPermissions(second).Should().NotContain(Grants,
+            "the root provider is no request scope, so nothing projected in it is memoized");
+        host.ResolverCalls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task UserContext_ProjectedInTheRootProvider_WithScopeValidation_IsRefused_NotAnUnhandledFault()
+    {
+        // With scope validation on, resolving the scoped memo from the root provider threw outside
+        // the projection's try, and the host answered 500. The scoped grant resolver cannot be
+        // resolved from the root either, so the caller is refused (403), never served.
+        var host = new Host();
+        var http = host.LongLivedContext(webSocket: false);
+
+        var call = () => http.GetBifrostUserContextAsync(host.Root);
+
+        await call.Should().ThrowAsync<BifrostIdentityRejectedException>();
+        var (outcome, userContext) = await BifrostIdentityGate.ProjectAsync(http, host.Root);
+        outcome.Should().Be(BifrostIdentityOutcome.Unprojectable);
+        userContext.Should().BeEmpty();
+        host.ResolverCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ACaptiveGateAccessor_RefusesLoudly_RatherThanServeOneCallersGateToAnother()
+    {
+        // A singleton that captures IPolicyGateAccessor holds one resolved from the root provider.
+        // Its gate was memoized for the process: the second caller got the first caller's gate.
+        var host = new Host(validateScopes: false);
+        var accessor = host.Root.GetRequiredService<IPolicyGateAccessor>();
+
+        await using var request1 = host.Root.CreateAsyncScope();
+        host.RequestContext(request1.ServiceProvider, userId: "user-1");
+        var first = async () => await accessor.GetAsync();
+        (await first.Should().ThrowAsync<InvalidOperationException>())
+            .WithMessage("*resolved from the root service provider*");
+
+        await using var request2 = host.Root.CreateAsyncScope();
+        host.RequestContext(request2.ServiceProvider, userId: "user-2");
+        host.Revoked = true;
+        var second = async () => await accessor.GetAsync();
+        await second.Should().ThrowAsync<InvalidOperationException>(
+            "a captive accessor never serves one caller's gate to another");
+        host.ResolverCalls.Should().Be(0, "a captive accessor projects no one");
+    }
+
     // ---- fixtures ----
 
     private sealed class ListValuedFactory : IBifrostAuthContextFactory
@@ -224,7 +284,7 @@ public sealed class IdentityProjectionScopeTests
         private readonly HttpContextHolder _accessor = new();
         private int _resolverCalls;
 
-        public Host(Action<int>? onResolve = null, IBifrostAuthContextFactory? factory = null)
+        public Host(Action<int>? onResolve = null, IBifrostAuthContextFactory? factory = null, bool validateScopes = true)
         {
             var services = new ServiceCollection();
             if (factory is not null)
@@ -243,7 +303,7 @@ public sealed class IdentityProjectionScopeTests
                 onResolve?.Invoke(call);
                 return new ValueTask<IReadOnlyCollection<string>>(Revoked ? Array.Empty<string>() : Grants);
             });
-            Root = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+            Root = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = validateScopes });
         }
 
         public IServiceProvider Root { get; }
@@ -259,12 +319,12 @@ public sealed class IdentityProjectionScopeTests
             return http;
         }
 
-        public HttpContext RequestContext(IServiceProvider requestServices)
+        public HttpContext RequestContext(IServiceProvider requestServices, string userId = "user-1")
         {
             var http = new DefaultHttpContext
             {
                 User = new ClaimsPrincipal(new ClaimsIdentity(
-                    new[] { new Claim(ClaimTypes.NameIdentifier, "user-1"), new Claim(ClaimTypes.Role, "clerk") }, "test")),
+                    new[] { new Claim(ClaimTypes.NameIdentifier, userId), new Claim(ClaimTypes.Role, "clerk") }, "test")),
                 RequestServices = requestServices,
             };
             http.Request.Path = "/payments";

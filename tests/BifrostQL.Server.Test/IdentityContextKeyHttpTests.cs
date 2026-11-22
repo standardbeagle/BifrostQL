@@ -225,6 +225,34 @@ public sealed class IdentityContextKeyHttpTests : IAsyncLifetime
         (await ScalarAsync("SELECT created_by FROM notes WHERE body = 'mapped-sub'")).Should().Be("dana");
     }
 
+    // ---- I3: what an anonymous write stamps ----
+
+    [Theory]
+    [InlineData("id")]
+    [InlineData("user_id")]
+    public async Task AnonymousWrite_UnderDisableAuth_StampsANullActor(string auditKey)
+    {
+        // The shipped Host's Development config (DisableAuth) with its actor key. An
+        // unauthenticated caller projects to an EMPTY user context: no "anonymous" id is
+        // assigned, so the actor column is stamped NULL. Pinned, not endorsed: whether an
+        // anonymous write should be refused instead is a product decision.
+        await StartAsync(
+            $":root {{ user-audit-key: {auditKey} }}",
+            "main.notes.created_by { populate: created-by }");
+
+        using var anonymous = await SendGraphQlAsync(
+            """mutation { notes(insert: { body: "anon-write" }) }""", principal: null);
+        using var signedIn = await SendGraphQlAsync(
+            """mutation { notes(insert: { body: "signed-in-write" }) }""",
+            Principal(new Claim(ClaimTypes.NameIdentifier, "u-1")));
+
+        Errors(anonymous).Should().BeEmpty();
+        Errors(signedIn).Should().BeEmpty();
+        (await ScalarAsync("SELECT count(*) FROM notes WHERE body = 'anon-write' AND created_by IS NULL")).Should().Be(1L);
+        (await ScalarAsync("SELECT created_by FROM notes WHERE body = 'signed-in-write'")).Should().Be("u-1",
+            "control: the same stamp records an authenticated caller");
+    }
+
     // ---- host ----
 
     private async Task StartAsync(params string[] metadata)

@@ -365,7 +365,7 @@ For development and testing, set `DisableAuth` to `true`:
 }
 ```
 
-With auth disabled, all requests are treated as unauthenticated. Modules that depend on user context (tenant isolation, audit columns) will not function.
+With auth disabled, all requests are treated as unauthenticated, and an unauthenticated caller gets an empty user context. No placeholder identity is assigned. Tenant-filtered tables refuse every request, and actor columns (`created-by`, `updated-by`, `deleted-by`, `soft-delete-by`) and the history `actor` are stamped NULL, so a NOT NULL actor column fails the write.
 
 ## CORS
 

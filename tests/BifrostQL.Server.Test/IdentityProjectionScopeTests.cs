@@ -138,7 +138,7 @@ public sealed class IdentityProjectionScopeTests
         // memo's projection must already be published by then, so the second joins it.
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
-        var host = new Host(onResolve: call =>
+        var host = new Host(onResolve: (call, _) =>
         {
             if (call == 1)
             {
@@ -223,6 +223,35 @@ public sealed class IdentityProjectionScopeTests
         secondProfile["regions"].Should().BeOfType<object[]>().Which.Should().Equal(1);
         TenantFilterTransformer.ReadTenantValue(second, "org_ids").Should().Be("7",
             "a boxed-int snapshot reads as its single tenant value");
+    }
+
+    [Fact]
+    public async Task AResolverThrowingANonCancellationException_UnderACancelledToken_IsRefused_NotDegradedAndMemoized()
+    {
+        // SqlClient raises SqlException ("Operation cancelled by user"), not an
+        // OperationCanceledException, when the caller's token cancels a command. Keyed on the
+        // exception type, the factory degraded that to empty permissions (E9) and the memo kept it.
+        using var aborted = new CancellationTokenSource();
+        var host = new Host(onResolve: (call, ct) =>
+        {
+            if (call != 1) return;
+            aborted.Cancel();
+            if (ct.IsCancellationRequested)
+                throw new InvalidOperationException("Operation cancelled by user.");
+        });
+        await using var request = host.Root.CreateAsyncScope();
+        var http = host.RequestContext(request.ServiceProvider);
+        http.RequestAborted = aborted.Token;
+
+        var (cancelled, _) = await BifrostIdentityGate.ProjectAsync(http);
+        http.RequestAborted = CancellationToken.None;
+        var (next, userContext) = await BifrostIdentityGate.ProjectAsync(http);
+
+        cancelled.Should().Be(BifrostIdentityOutcome.Unprojectable,
+            "a projection whose resolver failed under the caller's cancelled token is no identity");
+        next.Should().Be(BifrostIdentityOutcome.Projected);
+        PolicyIdentity.ExtractPermissions(userContext).Should().Contain(Grants, "the refusal was not memoized");
+        host.ResolverCalls.Should().Be(2);
     }
 
     [Fact]
@@ -379,7 +408,7 @@ public sealed class IdentityProjectionScopeTests
         private readonly HttpContextHolder _accessor = new();
         private int _resolverCalls;
 
-        public Host(Action<int>? onResolve = null, IBifrostAuthContextFactory? factory = null, bool validateScopes = true)
+        public Host(Action<int, CancellationToken>? onResolve = null, IBifrostAuthContextFactory? factory = null, bool validateScopes = true)
         {
             var services = new ServiceCollection();
             if (factory is not null)
@@ -395,7 +424,7 @@ public sealed class IdentityProjectionScopeTests
                 // Counted unconditionally: `onResolve?.Invoke(Increment(...))` skips the increment
                 // when no callback is set.
                 var call = Interlocked.Increment(ref _resolverCalls);
-                onResolve?.Invoke(call);
+                onResolve?.Invoke(call, ct);
                 return new ValueTask<IReadOnlyCollection<string>>(Revoked ? Array.Empty<string>() : Grants);
             });
             Root = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = validateScopes });
